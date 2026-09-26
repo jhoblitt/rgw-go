@@ -271,6 +271,59 @@ var _ = Describe("mapping go-ceph errors", func() {
 	})
 })
 
+// go-ceph's WriteOp builds the same OperationError for a synchronous Operate
+// and for AioCompletion.Err, in callback and pipe mode alike: OpError carries
+// librados's return code whenever it is nonzero, and a write step whose
+// prval is nonzero reports it under the step's index.
+var _ = Describe("a positive librados return", func() {
+	var (
+		op   *radosclient.WriteOp
+		exec *radosclient.ExecResult
+	)
+
+	BeforeEach(func() {
+		op = radosclient.NewWriteOp()
+		op.WriteFull([]byte("x"))
+		exec = op.Exec("hello", "write_return_data", nil)
+	})
+
+	DescribeTable("is success for a write op and its steps",
+		func(err error) {
+			Expect(goceph.CompleteWrite(&writeRecorder{}, op, err)).To(Succeed())
+			out, execErr := exec.Bytes()
+			Expect(execErr).NotTo(HaveOccurred())
+			Expect(out).To(BeNil())
+		},
+		Entry("on the op", rados.OperationError{OpError: codeErr(2300)}),
+		Entry("on the op and the exec step's prval",
+			rados.OperationError{OpError: codeErr(42), StepErrors: map[int]error{1: codeErr(42)}}),
+		Entry("on the exec step's prval alone", rados.OperationError{StepErrors: map[int]error{1: codeErr(42)}}),
+		Entry("as a bare errno", codeErr(2300)),
+	)
+
+	It("leaves a step's own negative return an error", func() {
+		mixed := rados.OperationError{OpError: codeErr(2300), StepErrors: map[int]error{0: codeErr(42), 1: codeErr(-61)}}
+		Expect(goceph.CompleteWrite(&writeRecorder{}, op, mixed)).To(MatchError(radosclient.ErrNoData))
+		_, err := exec.Bytes()
+		Expect(err).To(MatchError(radosclient.ErrNoData))
+		Expect(goceph.StepError("write obj", mixed, 0)).To(Succeed())
+		Expect(goceph.StepError("write obj", mixed, 1)).To(MatchError(radosclient.ErrNoData))
+	})
+
+	DescribeTable("leaves a negative return as it was",
+		func(err error) {
+			Expect(goceph.CompleteWrite(&writeRecorder{}, op, err)).To(MatchError(radosclient.ErrBusyResharding))
+			_, execErr := exec.Bytes()
+			Expect(execErr).To(MatchError(radosclient.ErrBusyResharding))
+		},
+		Entry("on the op", rados.OperationError{OpError: codeErr(-2300)}),
+		Entry("on the op, over a positive step",
+			rados.OperationError{OpError: codeErr(-2300), StepErrors: map[int]error{1: codeErr(42)}}),
+		Entry("on the exec step's prval", rados.OperationError{StepErrors: map[int]error{1: codeErr(-2300)}}),
+		Entry("as a bare errno", codeErr(-2300)),
+	)
+})
+
 var _ = Describe("Config", func() {
 	It("defaults to the ceph cluster, client.admin and callback completions", func() {
 		cfg := goceph.WithDefaults(goceph.Config{})

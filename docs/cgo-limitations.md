@@ -134,6 +134,7 @@ These come from the OSD, not from cgo, so a pure-Go client has them too.
 | Empty or nil buffers panicked in `WriteOp.SetXattr` and the steps behind `Write`, `WriteFull`, `WriteSame`, `CmpExt` and `ReadOp.Read` (`&b[0]` with no length check) | Task 12 planning | Fixed in fork commit 18b1ab8 |
 | The same unguarded `&b[0]` in `IOContext.WriteFull`, `Append`, `GetXattr`, `SetXattr`, the ioctx buffer loops, the striper and `Checksum` | Fork follow-up | Open; rgw-go uses only the op builders |
 | `ReadOp.Operate` reported a positive return as an error, breaking CmpXattr guards and discarding later steps' results | Task 11 review | Fixed in fork commit 15b021a |
+| go-ceph's WriteOp reports a positive librados return as an error, although the OSD committed the write | Task 14 (rgw guard sign experiment) | Worked around in goceph: positive returns are success at the seam; fork fix open |
 | `rados_read_op_stat2` needs Reef or later and was not version-gated | Task 11 review | Fixed |
 | No async write with an mtime (`rados_aio_write_op_operate2` unbound), so mtime writes fall back to a blocking call | Task 12 review | Fixed in fork commit 0478f8c (now dd2812c after trailer rewrite): `WriteOp.OperateAsyncWithMtime`, Reef or later |
 | The object-list iterator drops the locator (`rados_nobjects_list_next2` unbound) | Task 12 review | Fixed in the fork: `Iter.Locator()` (dd2812c) |

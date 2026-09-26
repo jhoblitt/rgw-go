@@ -99,6 +99,23 @@ func decodeVersionRead(b []byte) (uint64, string) {
 	return ver, tag
 }
 
+// encodeGuardResharding encodes cls_rgw_guard_bucket_resharding_op{ret_err}.
+func encodeGuardResharding(retErr int32) []byte {
+	e := denc.NewEncoder()
+	op := e.BeginStruct(1, 1)
+	e.I32(retErr)
+	e.EndStruct(op)
+	return e.Bytes()
+}
+
+// removeObject deletes a scratch object a spec wrote.
+func removeObject(p radosclient.Pool, oid string) {
+	w := radosclient.NewWriteOp()
+	w.Remove()
+	_, err := p.Write(context.Background(), oid, w, radosclient.OpFlagNone)
+	Expect(err).NotTo(HaveOccurred())
+}
+
 // isClosed reports whether err is the seam error a closed Pool or Cluster returns.
 func isClosed(err error) bool {
 	var seamErr *radosclient.Error
@@ -321,6 +338,57 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
 				Expect(xs.Err).NotTo(HaveOccurred())
 				Expect(xs.Xattrs).To(HaveKeyWithValue("foo", []byte("bar")))
+			})
+
+			It("reports a write op whose class method returns a positive value as a success", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.Create(false)
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(removeObject, pool, oid)
+
+				// cls_hello write_return_data sets xattr foo=bar and returns
+				// 42, which librados passes through only with ReturnVec set.
+				wr := radosclient.NewWriteOp()
+				res := wr.Exec("hello", "write_return_data", nil)
+				_, err = pool.Write(ctx, oid, wr, radosclient.OpFlagReturnVec)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = res.Bytes()
+				Expect(err).NotTo(HaveOccurred())
+
+				after := radosclient.NewReadOp()
+				xs := after.GetXattrs()
+				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
+				Expect(xs.Err).NotTo(HaveOccurred())
+				Expect(xs.Xattrs).To(HaveKeyWithValue("foo", []byte("bar")))
+			})
+
+			It("passes a write guarded by guard_bucket_resharding with a positive ret_err on a shard not resharding", func(ctx SpecContext) {
+				ns, err := cluster.Pool(ctx, testPool, "guard-ns-"+oid)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
+
+				initOp := radosclient.NewWriteOp()
+				initOp.Create(true)
+				initRes := initOp.Exec("rgw", "bucket_init_index", nil)
+				_, err = ns.Write(ctx, oid, initOp, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = initRes.Bytes()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(removeObject, ns, oid)
+
+				guarded := radosclient.NewWriteOp()
+				guardRes := guarded.Exec("rgw", "guard_bucket_resharding", encodeGuardResharding(2300))
+				guarded.SetXattr("user.rgw.guarded", []byte("yes"))
+				_, err = ns.Write(ctx, oid, guarded, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = guardRes.Bytes()
+				Expect(err).NotTo(HaveOccurred())
+
+				after := radosclient.NewReadOp()
+				xs := after.GetXattrs()
+				Expect(ns.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
+				Expect(xs.Xattrs).To(HaveKeyWithValue("user.rgw.guarded", []byte("yes")))
 			})
 
 			It("reports a class method's errno through its result", func(ctx SpecContext) {
