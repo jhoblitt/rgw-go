@@ -35,8 +35,9 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      # The Makefile is the one home of the build tags.
       - name: Test with race detector and coverage
-        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test "-tags=$(make -s print-go-tags)" -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Upload coverage profile
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -105,6 +106,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install librados headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends librados-dev
+
+      # The action takes no build tags; go/packages reads them from GOFLAGS,
+      # and the Makefile is the one home of the tags.
+      - name: Read the build tags
+        run: echo "GOFLAGS=-tags=$(make -s print-go-tags)" >> "$GITHUB_ENV"
 
       - name: govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0

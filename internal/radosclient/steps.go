@@ -12,7 +12,10 @@ type ExecStep struct {
 	Result        *ExecResult
 }
 
-// ReadStep reads Length bytes at Offset.
+// ReadStep reads Length bytes at Offset. A Length of 0 asks RADOS for
+// everything from Offset to the end of the object, into an empty buffer: it
+// succeeds with no data when nothing lies past Offset and fails the step with
+// ERANGE otherwise, so read a known size.
 type ReadStep struct {
 	Offset, Length uint64
 	Result         *ReadResult
