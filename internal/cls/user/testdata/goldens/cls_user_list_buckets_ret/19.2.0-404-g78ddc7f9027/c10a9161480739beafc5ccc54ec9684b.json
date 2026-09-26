@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-w1pkpjgzhoi6lzoi-83",
+                "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.95",
+                "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.95"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2024-09-29T09:56:50.396365Z",
+            "count": 0,
+            "user_stats_sync": true
+        }
+    ],
+    "marker": "",
+    "truncated": false
+}
+

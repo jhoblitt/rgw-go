@@ -1,0 +1,31 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "testbuck2",
+                "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.603",
+                "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.603"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2024-09-29T10:01:13.683642Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "yournamehere-z846q2ici1ccnh4e-591",
+                "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.605",
+                "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.605"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2024-09-29T10:01:15.688988Z",
+            "count": 0,
+            "user_stats_sync": true
+        }
+    ],
+    "marker": "",
+    "truncated": false
+}
+

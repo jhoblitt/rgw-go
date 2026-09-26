@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-lei6t89dwkij5eit-157",
+                "marker": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.173",
+                "bucket_id": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.173"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2021-04-12T11:55:41.731216Z",
+            "count": 0,
+            "user_stats_sync": false
+        }
+    ],
+    "add": true,
+    "time": "2021-04-12T11:55:41.749497Z"
+}
+

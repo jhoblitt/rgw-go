@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-x1o5eks772zdsffv-428",
+                "marker": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.447",
+                "bucket_id": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.447"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "0.000000",
+            "count": 0,
+            "user_stats_sync": false
+        }
+    ],
+    "add": false,
+    "time": "2020-04-15T21:31:13.777393Z"
+}
+

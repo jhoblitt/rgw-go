@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-g7lm0izxsf9j6k6d-14",
+                "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.38",
+                "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.38"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2024-09-29T09:55:49.153873Z",
+            "count": 0,
+            "user_stats_sync": false
+        }
+    ],
+    "add": true,
+    "time": "2024-09-29T09:55:49.161266Z"
+}
+

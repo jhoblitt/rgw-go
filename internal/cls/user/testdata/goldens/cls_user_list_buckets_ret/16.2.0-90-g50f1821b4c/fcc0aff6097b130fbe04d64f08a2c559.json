@@ -1,0 +1,43 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-9olp9xplyil8svro-1",
+                "marker": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.1",
+                "bucket_id": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.1"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2021-04-12T11:54:31.456035Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "yournamehere-9olp9xplyil8svro-2",
+                "marker": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.2",
+                "bucket_id": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.2"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2021-04-12T11:54:34.770146Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "yournamehere-9olp9xplyil8svro-3",
+                "marker": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.3",
+                "bucket_id": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.3"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2021-04-12T11:54:34.812769Z",
+            "count": 0,
+            "user_stats_sync": true
+        }
+    ],
+    "marker": "",
+    "truncated": false
+}
+

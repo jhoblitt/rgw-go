@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "s3testbucket-qzci40vd700d90h6-313",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.757",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.757"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "0.000000",
+            "count": 0,
+            "user_stats_sync": false
+        }
+    ],
+    "add": false,
+    "time": "2019-04-24T10:01:02.859905Z"
+}
+

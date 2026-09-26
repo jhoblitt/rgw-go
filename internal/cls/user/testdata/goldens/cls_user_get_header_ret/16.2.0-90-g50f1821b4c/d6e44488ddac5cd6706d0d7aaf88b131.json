@@ -1,0 +1,12 @@
+{
+    "header": {
+        "stats": {
+            "total_entries": 0,
+            "total_bytes": 0,
+            "total_bytes_rounded": 0
+        },
+        "last_stats_sync": "0.000000",
+        "last_stats_update": "0.000000"
+    }
+}
+
