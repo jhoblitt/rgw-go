@@ -11,7 +11,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 .PHONY: help
 help: ## Print this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make <target>\n\nTargets:\n"} \
-	     /^[a-zA-Z_-]+:.*?##/ { printf "  %-16s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	     /^[a-zA-Z_-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 .PHONY: print-golangci-version
 print-golangci-version: ## Print the pinned golangci-lint version (CI reads this)
@@ -78,3 +78,24 @@ test: ## Run every suite with the race detector
 
 .PHONY: check
 check: generate-check fmt-check vet lint fix-check tidy-check test ## The local gate
+
+# Disposable single-node Ceph clusters with a radosgw on 127.0.0.1:7480
+# (hack/cluster/README.md). One release runs at a time.
+RELEASE ?=
+
+.PHONY: cluster-up-squid
+cluster-up-squid: ## Start the disposable Squid cluster and its radosgw
+	hack/cluster/up.sh squid
+
+.PHONY: cluster-up-tentacle
+cluster-up-tentacle: ## Start the disposable Tentacle cluster and its radosgw
+	hack/cluster/up.sh tentacle
+
+.PHONY: cluster-down
+cluster-down: ## Remove the disposable clusters, their volumes and output
+	hack/cluster/down.sh
+
+.PHONY: populate
+populate: ## Write the fixed data set through the radosgw (RELEASE=squid|tentacle)
+	@test -n "$(RELEASE)" || { echo "populate needs RELEASE=squid or RELEASE=tentacle"; exit 1; }
+	hack/cluster/populate.sh $(RELEASE)
