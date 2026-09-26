@@ -23,7 +23,7 @@
 - Fork work follows go-ceph's conventions: new API in files with `//go:build ceph_preview`, one topic per file, tests in go-ceph's testify suite, commits `rados: <subject>` with a `Signed-off-by` trailer, `make api-update` before the PR.
 - Commits are Conventional Commits with the two trailers used in this repository (`Co-Authored-By` and `Claude-Session`); every PR opens as a draft assigned to the author, CI is watched, and merges on green with a merge commit under the user's standing authorization.
 - Every GitHub Action `uses:` is pinned to a 40-hex SHA with a `# vX.Y.Z` comment; `pinact run` and `actionlint` before committing a workflow.
-- Never touch the ambient Kubernetes or Ceph cluster. All cluster work uses the compose clusters this plan creates.
+- Never touch the ambient Kubernetes or Ceph cluster. All cluster work uses the disposable clusters this plan creates (`hack/cluster/up.sh`).
 - Any material change to `docs/exclusions.md` is announced to the rgw-rs session.
 - The librados headers on this machine are absent; until `librados-devel` is installed, cgo builds use `CGO_CFLAGS=-I/home/jhoblitt/github/ceph/src/include` and `CGO_LDFLAGS=-L<dir>` where `<dir>` holds a `librados.so` symlink to `/usr/lib64/librados.so.2`. Task 1 records this in the repository CLAUDE.md.
 
@@ -54,9 +54,9 @@ internal/cls/refcount/                   cls_refcount client
 internal/cls/user/                       cls_user client
 internal/cls/rgw/                        cls_rgw client (index, obj, usage, gc omap-era)
 internal/cls/gc/                         cls_rgw_gc client (queue-era)
-hack/cluster/compose.squid.yml           disposable Squid cluster with radosgw
-hack/cluster/compose.tentacle.yml        disposable Tentacle cluster with radosgw
+hack/cluster/entrypoint.sh               per-role container entrypoint (mon, mgr, osd, rgw)
 hack/cluster/populate.sh                 writes users, buckets, objects; emits a manifest
+hack/cluster/up.sh                       disposable Squid or Tentacle cluster with radosgw
 hack/goldens/gen.sh                      regenerates goldens with ceph-dencoder from the Ceph image
 hack/goldens/types.txt                   the types and destination packages gen.sh handles
 test/gate/phase0_test.go                 the phase 0 gate, integration-tagged
@@ -1151,7 +1151,7 @@ const (
 	OpFlagNone      OpFlags = 0
 	OpFlagBalanceReads OpFlags = 1 << 0
 	OpFlagLocalizeReads OpFlags = 1 << 1
-	OpFlagIgnoreCache OpFlags = 1 << 6
+	OpFlagIgnoreCache OpFlags = 1 << 3
 	OpFlagReturnVec OpFlags = 1 << 10  // LIBRADOS_OPERATION_RETURNVEC
 )
 
@@ -1397,7 +1397,7 @@ go mod tidy
 
 - [ ] **Step 3: Integration specs**
 
-`goceph_integration_test.go`, `//go:build integration`, `Label("integration")`, reading `RGW_GO_TEST_CEPH_CONF` for the compose cluster's config (Task 13) and running the whole suite once per mode:
+`goceph_integration_test.go`, `//go:build integration`, `Label("integration")`, reading `RGW_GO_TEST_CEPH_CONF` for the disposable cluster's config (Task 13) and running the whole suite once per mode:
 
 ```go
 var _ = Describe("goceph against a cluster", Label("integration"), func() {
@@ -1418,7 +1418,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 })
 ```
 
-- [ ] **Step 4: Implement, run the unit specs, then the integration specs against the Squid compose cluster**
+- [ ] **Step 4: Implement, run the unit specs, then the integration specs against the Squid disposable cluster**
 
 ```sh
 make cluster-up-squid
@@ -1433,7 +1433,7 @@ RGW_GO_TEST_CEPH_CONF=hack/cluster/out/squid/ceph.conf go test -tags integration
 ### Task 13: Disposable clusters and the population script
 
 **Files:**
-- Create: `hack/cluster/compose.squid.yml`, `hack/cluster/compose.tentacle.yml`, `hack/cluster/up.sh`, `hack/cluster/down.sh`, `hack/cluster/populate.sh`, `hack/cluster/README.md`
+- Create: `hack/cluster/up.sh`, `hack/cluster/down.sh`, `hack/cluster/populate.sh`, `hack/cluster/entrypoint.sh`, `hack/cluster/README.md`
 - Modify: `Makefile` (targets `cluster-up-squid`, `cluster-up-tentacle`, `cluster-down`, `populate`)
 
 **Interfaces:**
@@ -1450,15 +1450,15 @@ RGW_GO_TEST_CEPH_CONF=hack/cluster/out/squid/ceph.conf go test -tags integration
 }
 ```
 
-The compose files follow `/home/jhoblitt/github/rados-rs/docker/docker-compose.ceph.yml`: mon, mgr and one memstore OSD from `quay.io/ceph/ceph:v19.2.6` for Squid, plus a fourth service running `radosgw` with `--rgw-frontends="beast port=7480"` against the same config volume, and a `rgw-go-test` pool created by `up.sh` for the goceph integration suite. Tentacle uses the latest `v20.2.*` tag; `up.sh` resolves it once with `skopeo list-tags docker://quay.io/ceph/ceph` (or `podman search --list-tags`) and records it in `hack/cluster/out/tentacle/image`. `up.sh` copies `ceph.conf` and the admin keyring out of the mon volume so host processes can connect, waits for `ceph -s` to report `HEALTH_OK` or `HEALTH_WARN` with the OSD up, and waits for the radosgw to answer on port 7480.
+`up.sh` starts four podman containers on host networking, named `rgw-go-mon`, `rgw-go-mgr`, `rgw-go-osd` and `rgw-go-rgw` (the mon on 127.0.0.1:3300, daemons on ports 7100-7199, so the cluster coexists with other local Ceph clusters): mon, mgr and one memstore OSD from `quay.io/ceph/ceph:v19.2.6` for Squid, plus a fourth service running `radosgw` with `--rgw-frontends="beast endpoint=127.0.0.1:7480"` against the same config volume, and a `rgw-go-test` pool created by `up.sh` for the goceph integration suite. Tentacle uses the latest `v20.2.*` tag; `up.sh` resolves it once with `skopeo list-tags docker://quay.io/ceph/ceph` (or `podman search --list-tags`) and records it in `hack/cluster/out/tentacle/image`. `up.sh` copies `ceph.conf` and the admin keyring out of the mon volume so host processes can connect, waits for `ceph -s` to report `HEALTH_OK` or `HEALTH_WARN` with the OSD up, and waits for the radosgw to answer on port 7480. On any failure `up.sh` removes the containers, volumes and output it created.
 
 `populate.sh` uses the radosgw's own tools so every object is written by the oracle: `radosgw-admin user create` for `alice` and for `bob` with `--tenant t1`; `aws s3api create-bucket` and `put-object` with the aws CLI on the host against `http://127.0.0.1:7480`, including a multipart upload through `aws s3 cp` of a 20 MiB file (the CLI switches to multipart at 8 MiB); then `radosgw-admin bucket stats` to learn each bucket's id and marker for the manifest.
 
-- [ ] **Step 1: Write the compose files and `up.sh`, bring Squid up, assert `ceph -s` and a radosgw response**
+- [ ] **Step 1: Write `up.sh` and `entrypoint.sh`, bring Squid up, assert `ceph -s` and a radosgw response**
 
 ```sh
 make cluster-up-squid
-podman exec ceph-mon ceph -s | head -5
+podman exec rgw-go-mon ceph -s | head -5
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7480/   # 403 with an S3 error body is success here
 ```
 
@@ -1467,8 +1467,8 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7480/   # 403 with an 
 ```sh
 make populate RELEASE=squid
 jq '.buckets[0].id' hack/cluster/out/squid/manifest.json
-podman exec ceph-mon rados -p default.rgw.meta -N users.uid ls
-podman exec ceph-mon rados -p default.rgw.buckets.index ls | head
+podman exec rgw-go-mon rados -p default.rgw.meta -N users.uid ls
+podman exec rgw-go-mon rados -p default.rgw.buckets.index ls | head
 ```
 
 Expected: `alice`, `t1$bob`, `alice.buckets`, `t1$bob.buckets` in `users.uid`; eleven `.dir.<id>.<n>` shards per bucket.
@@ -1624,7 +1624,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 	It("decodes every index shard header and entry", func() { /* for each bucket and shard: GetDirHeader, BucketList; every entry re-encodes byte-identically to what a second BucketList returns for it (the OSD re-encodes, so compare decoded forms against the manifest instead of bytes) */ })
 	It("round-trips head object xattrs for every populated object", func() { /* GetXattrs on <marker>_<oid>: manifest, acl, etag (32 hex or multipart form), idtag ends in NUL, tail_tag equals idtag when present, pg_ver decodes as u64, source_zone as u32 */ })
 	It("finds every tail object the manifest names", func() { /* for large.bin and multipart.bin: Manifest.Stripes() names exist in the data pool and their sizes sum to the object size */ })
-	It("agrees with radosgw-admin", func() { /* podman exec ceph-mon radosgw-admin metadata get user:alice; compare the "data" object to json.Marshal(UserInfo) after canonicalization; same for bucket:plain and bucket.instance:plain:<id> */ })
+	It("agrees with radosgw-admin", func() { /* podman exec rgw-go-mon radosgw-admin metadata get user:alice; compare the "data" object to json.Marshal(UserInfo) after canonicalization; same for bucket:plain and bucket.instance:plain:<id> */ })
 })
 ```
 
