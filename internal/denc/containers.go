@@ -46,9 +46,12 @@ func EncodeMap[K cmp.Ordered, V any](e *Encoder, m map[K]V, encK func(*Encoder, 
 // value for a repeated key winning. That matches C++ only for a std::map
 // whose key and value both have denc traits (integers, strings, bufferlists
 // and the like), which decode through emplace_hint; ceph-dencoder v19.2.6
-// and v20.2.4 keep the first value of a repeated RGWUserCaps entry. A map
-// whose key or value lacks denc traits takes DecodeMapLast. An empty or
-// failed decode returns nil.
+// and v20.2.4 keep the first value of a repeated RGWUserCaps entry. It also
+// matches any std::unordered_map whose key and value are move-constructible,
+// denc traits or not, which takes the constrained emplace overload;
+// ceph-dencoder v19.2.6 and v20.2.4 keep the first time of a repeated
+// cls_rgw_gc_urgent_data tag. Any other map whose key or value lacks denc
+// traits takes DecodeMapLast. An empty or failed decode returns nil.
 func DecodeMap[K comparable, V any](d *Decoder, decK func(*Decoder) K, decV func(*Decoder) V) map[K]V {
 	n := d.count()
 	if n == 0 {

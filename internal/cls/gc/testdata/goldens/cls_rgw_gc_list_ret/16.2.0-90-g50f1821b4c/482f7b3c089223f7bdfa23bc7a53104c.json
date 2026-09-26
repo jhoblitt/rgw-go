@@ -1,0 +1,47 @@
+{
+    "entries": [
+        {
+            "tag": "chain-8",
+            "chain": {
+                "objs": [
+                    {
+                        "pool": "pool-8.1",
+                        "oid": "oid-8.1",
+                        "key": "loc-8.1",
+                        "instance": ""
+                    },
+                    {
+                        "pool": "pool-8.2",
+                        "oid": "oid-8.2",
+                        "key": "loc-8.2",
+                        "instance": ""
+                    }
+                ]
+            },
+            "time": "2021-04-12T11:20:17.052062+0000"
+        },
+        {
+            "tag": "chain-9",
+            "chain": {
+                "objs": [
+                    {
+                        "pool": "pool-9.1",
+                        "oid": "oid-9.1",
+                        "key": "loc-9.1",
+                        "instance": ""
+                    },
+                    {
+                        "pool": "pool-9.2",
+                        "oid": "oid-9.2",
+                        "key": "loc-9.2",
+                        "instance": ""
+                    }
+                ]
+            },
+            "time": "2021-04-12T11:20:17.054940+0000"
+        }
+    ],
+    "next_marker": "",
+    "truncated": 0
+}
+
