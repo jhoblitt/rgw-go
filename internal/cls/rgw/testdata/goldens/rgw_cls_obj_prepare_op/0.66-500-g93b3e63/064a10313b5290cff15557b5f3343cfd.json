@@ -1,0 +1,10 @@
+{
+    "op": 0,
+    "name": "name",
+    "tag": "tag",
+    "locator": "locator",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": []
+}
+

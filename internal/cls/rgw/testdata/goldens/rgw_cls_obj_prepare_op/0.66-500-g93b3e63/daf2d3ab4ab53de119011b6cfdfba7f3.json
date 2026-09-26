@@ -1,0 +1,10 @@
+{
+    "op": 1,
+    "name": "obj-5",
+    "tag": "tag-mod",
+    "locator": "loc-5",
+    "log_op": true,
+    "bilog_flags": 0,
+    "zones_trace": []
+}
+

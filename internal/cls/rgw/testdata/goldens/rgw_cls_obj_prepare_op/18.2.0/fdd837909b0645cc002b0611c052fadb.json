@@ -1,0 +1,14 @@
+{
+    "op": 0,
+    "name": "baz",
+    "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.9882352318639998133",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b:yournamehere-r5ahkpb1ndqks8o1-44:47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.62"
+        }
+    ]
+}
+

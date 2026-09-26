@@ -1,0 +1,14 @@
+{
+    "op": 0,
+    "name": "0/1306",
+    "tag": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4448.745",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "d4c97fd0-2a82-4b97-8510-490394fc65e0:yournamehere-x1o5eks772zdsffv-66:d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.85"
+        }
+    ]
+}
+

@@ -1,0 +1,24 @@
+{
+    "ver": 4410,
+    "master_ver": 0,
+    "stats": [
+        1,
+        {
+            "total_size": 30184231,
+            "total_size_rounded": 30224384,
+            "num_entries": 17,
+            "actual_size": 30184231
+        },
+        3,
+        {
+            "total_size": 0,
+            "total_size_rounded": 0,
+            "num_entries": 5,
+            "actual_size": 0
+        }
+    ],
+    "new_instance": {
+        "reshard_status": "not-resharding"
+    }
+}
+

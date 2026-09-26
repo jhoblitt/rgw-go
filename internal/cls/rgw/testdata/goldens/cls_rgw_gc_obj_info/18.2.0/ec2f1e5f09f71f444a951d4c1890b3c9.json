@@ -1,0 +1,21 @@
+{
+    "tag": "2~a13t0r093nE6sNecWo-aiod5TwC44q5",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.345__multipart_mymultipart.2~a13t0r093nE6sNecWo-aiod5TwC44q5.6",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.345__shadow_mymultipart.2~a13t0r093nE6sNecWo-aiod5TwC44q5.6_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2023-08-06T13:25:58.721909+0000"
+}
+

@@ -1,0 +1,9 @@
+{
+    "start_epoch": 0,
+    "end_epoch": 18446744073709551615,
+    "owner": "",
+    "bucket": "bucket-usage-1",
+    "iter": "",
+    "max_entries": 2000
+}
+

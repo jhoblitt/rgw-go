@@ -1,0 +1,36 @@
+{
+    "expiration_secs": 7200,
+    "obj_info": {
+        "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.1690\u0000",
+        "chain": {
+            "objs": [
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__multipart_mymultipart.2~1iuXvJN7h3JkKoX_hueO62RUA8keu61.1",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__shadow_mymultipart.2~1iuXvJN7h3JkKoX_hueO62RUA8keu61.1_1",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__multipart_mymultipart.2~1iuXvJN7h3JkKoX_hueO62RUA8keu61.2",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__shadow_mymultipart.2~1iuXvJN7h3JkKoX_hueO62RUA8keu61.2_1",
+                    "key": "",
+                    "instance": ""
+                }
+            ]
+        },
+        "time": "1970-01-01T00:00:00.000000+0000"
+    }
+}
+

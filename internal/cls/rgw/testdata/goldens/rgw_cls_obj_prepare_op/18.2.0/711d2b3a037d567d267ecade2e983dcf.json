@@ -1,0 +1,14 @@
+{
+    "op": 0,
+    "name": "file1",
+    "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.17212471594208178775",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 1,
+    "zones_trace": [
+        {
+            "entry": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b:yournamehere-r5ahkpb1ndqks8o1-500:47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.513"
+        }
+    ]
+}
+

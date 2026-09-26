@@ -1,0 +1,28 @@
+{
+    "name": "testobj",
+    "instance": "geQhm4gOYCYFEi14uQduy-jzVWrvo0S",
+    "ver": {
+        "pool": 292,
+        "epoch": 137
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 1,
+        "size": 9,
+        "mtime": "2019-04-24T09:48:32.650924Z",
+        "etag": "8e689ba88b92e4020c6508e8a73e4ec1",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "application/octet-stream",
+        "accounted_size": 9,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2700",
+    "flags": 1,
+    "pending_map": [],
+    "versioned_epoch": 4
+}
+

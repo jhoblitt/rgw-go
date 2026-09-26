@@ -77,8 +77,8 @@ func DecodeZoneGroup(d *denc.Decoder) ZoneGroup {
 	g.IsMaster = d.Bool()
 	g.Endpoints = decodeStrings(d)
 	g.MasterZone = d.String()
-	g.Zones = denc.DecodeMap(d, (*denc.Decoder).String, DecodeZone)
-	g.PlacementTargets = denc.DecodeMap(d, (*denc.Decoder).String, DecodeZoneGroupPlacementTarget)
+	g.Zones = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZone)
+	g.PlacementTargets = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZoneGroupPlacementTarget)
 	g.DefaultPlacement = DecodePlacementRule(d)
 	if v >= 2 {
 		g.Hostnames = decodeStrings(d)
@@ -243,7 +243,7 @@ func DecodeZoneGroupPlacementTarget(d *denc.Decoder) ZoneGroupPlacementTarget {
 		t.StorageClasses = []string{StorageClassStandard}
 	}
 	if h.Version >= 3 {
-		t.TierTargets = denc.DecodeMap(d, (*denc.Decoder).String, DecodeZoneGroupPlacementTier)
+		t.TierTargets = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZoneGroupPlacementTier)
 	}
 	d.EndStruct(h)
 	return t
@@ -472,7 +472,7 @@ func DecodeZoneGroupPlacementTierS3(d *denc.Decoder) ZoneGroupPlacementTierS3 {
 	s.HostStyle = d.U32()
 	s.TargetStorageClass = d.String()
 	s.TargetPath = d.String()
-	s.ACLMappings = denc.DecodeMap(d, (*denc.Decoder).String, DecodeTierACLMapping)
+	s.ACLMappings = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeTierACLMapping)
 	s.MultipartSyncThreshold = d.U64()
 	s.MultipartMinPartSize = d.U64()
 	if h.Version >= 2 {

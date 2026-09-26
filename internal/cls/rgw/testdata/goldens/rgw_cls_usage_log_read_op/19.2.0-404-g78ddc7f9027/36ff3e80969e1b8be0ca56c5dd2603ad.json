@@ -1,0 +1,9 @@
+{
+    "start_epoch": 1,
+    "end_epoch": 2,
+    "owner": "owner",
+    "bucket": "bucket",
+    "iter": "iter",
+    "max_entries": 100
+}
+

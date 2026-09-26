@@ -407,14 +407,14 @@ func DecodeUserInfo(d *denc.Decoder) UserInfo {
 		u.UserID.ID = accessKey
 	}
 	if v >= 6 {
-		u.AccessKeys = denc.DecodeMap(d, (*denc.Decoder).String, DecodeAccessKey)
-		u.SubUsers = denc.DecodeMap(d, (*denc.Decoder).String, DecodeSubUser)
+		u.AccessKeys = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeAccessKey)
+		u.SubUsers = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeSubUser)
 	}
 	if v >= 7 {
 		u.Suspended = d.U8()
 	}
 	if v >= 8 {
-		u.SwiftKeys = denc.DecodeMap(d, (*denc.Decoder).String, DecodeAccessKey)
+		u.SwiftKeys = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeAccessKey)
 	}
 	if v >= 10 {
 		u.MaxBuckets = d.I32()

@@ -1,0 +1,28 @@
+{
+    "name": "key-676",
+    "instance": "",
+    "ver": {
+        "pool": 368,
+        "epoch": 233
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 1,
+        "size": 7,
+        "mtime": "2023-08-06T11:25:01.138381Z",
+        "etag": "4283f549f3d66da68b297d48d0839bba",
+        "storage_class": "STANDARD",
+        "owner": "testid",
+        "owner_display_name": "M. Tester",
+        "content_type": "",
+        "accounted_size": 7,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.14702787398524377615",
+    "flags": 0,
+    "pending_map": [],
+    "versioned_epoch": 0
+}
+

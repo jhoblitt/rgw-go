@@ -1,0 +1,32 @@
+{
+    "op": 1,
+    "name": "0/1728",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 454,
+        "epoch": 0
+    },
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "2024-09-29T09:19:29.707156Z",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "_C40IkTwwJyzTXroFXv4Dw05gX_ZyOPO",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "13eea068-6d47-4013-9fac-b87ade569a1c:yournamehere-epcrwc1ehc9nm7qu-102:13eea068-6d47-4013-9fac-b87ade569a1c.4535.114"
+        }
+    ]
+}
+

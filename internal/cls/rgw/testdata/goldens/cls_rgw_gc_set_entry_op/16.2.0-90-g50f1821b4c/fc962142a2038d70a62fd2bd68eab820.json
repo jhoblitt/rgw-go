@@ -1,0 +1,24 @@
+{
+    "expiration_secs": 7200,
+    "obj_info": {
+        "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.3013\u0000",
+        "chain": {
+            "objs": [
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.325__multipart_mymultipart.2~L6k2Qe6N2lPtiH2W8SWL5qqQPjib0rx.1",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.325__shadow_mymultipart.2~L6k2Qe6N2lPtiH2W8SWL5qqQPjib0rx.1_1",
+                    "key": "",
+                    "instance": ""
+                }
+            ]
+        },
+        "time": "1970-01-01T00:00:00.000000+0000"
+    }
+}
+

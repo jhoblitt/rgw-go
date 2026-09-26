@@ -1,0 +1,28 @@
+{
+    "name": "myobj",
+    "instance": "FL8dZu3eakO37vpAc5yuQh.syAZ02BK",
+    "ver": {
+        "pool": 292,
+        "epoch": 1176
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 1,
+        "size": 6,
+        "mtime": "2019-04-24T10:11:40.269675Z",
+        "etag": "4acd7e517e0b4d7e024a813fb0b6bef6",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "application/octet-stream",
+        "accounted_size": 6,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.21833",
+    "flags": 1,
+    "pending_map": [],
+    "versioned_epoch": 4
+}
+

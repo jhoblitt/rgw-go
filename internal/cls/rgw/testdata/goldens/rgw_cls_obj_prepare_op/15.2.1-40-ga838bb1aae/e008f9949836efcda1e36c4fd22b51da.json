@@ -1,0 +1,10 @@
+{
+    "op": 0,
+    "name": "a-1",
+    "tag": "tag-1",
+    "locator": "loc-1",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": []
+}
+

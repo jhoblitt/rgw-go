@@ -1,0 +1,21 @@
+{
+    "tag": "chain-4",
+    "chain": {
+        "objs": [
+            {
+                "pool": "pool-4.1",
+                "oid": "oid-4.1",
+                "key": "key-4.1",
+                "instance": ""
+            },
+            {
+                "pool": "pool-4.2",
+                "oid": "oid-4.2",
+                "key": "key-4.2",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2013-07-11T20:33:52.717180+0000"
+}
+

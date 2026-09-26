@@ -1,0 +1,49 @@
+{
+    "header": {
+        "ver": 2,
+        "master_ver": 0,
+        "stats": [
+            1,
+            {
+                "total_size": 3,
+                "total_size_rounded": 4096,
+                "num_entries": 1,
+                "actual_size": 3
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": [
+        "foo",
+        {
+            "name": "foo",
+            "instance": "",
+            "ver": {
+                "pool": 308,
+                "epoch": 1
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 3,
+                "mtime": "2020-04-15T21:00:34.018659Z",
+                "etag": "acbd18db4cc2f85cedef654fccc4a4d8",
+                "storage_class": "STANDARD",
+                "owner": "testid",
+                "owner_display_name": "M. Tester",
+                "content_type": "",
+                "accounted_size": 3,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4448.228",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        }
+    ]
+}
+

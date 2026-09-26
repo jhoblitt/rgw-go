@@ -1,0 +1,26 @@
+{
+    "owner": "owner",
+    "payer": "payer",
+    "bucket": "bucket",
+    "epoch": 1234,
+    "total_usage": {
+        "bytes_sent": 1024,
+        "bytes_received": 2048,
+        "ops": 0,
+        "successful_ops": 0
+    },
+    "categories": [
+        {
+            "category": "get_obj",
+            "bytes_sent": 1024,
+            "bytes_received": 2048,
+            "ops": 0,
+            "successful_ops": 0
+        }
+    ],
+    "s3select": {
+        "bytes_processed": 0,
+        "bytes_returned": 0
+    }
+}
+

@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "mymultipart",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 292,
+        "epoch": 93
+    },
+    "meta": {
+        "category": 1,
+        "size": 31457280,
+        "mtime": "2019-04-24T09:47:46.455364Z",
+        "etag": "a730c96e98f97ff6ff05117e337a58e2-6",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "text/bla",
+        "accounted_size": 31457280,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.1518",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "54f2466a-525e-4322-bc71-fc998e987f2f"
+        }
+    ]
+}
+

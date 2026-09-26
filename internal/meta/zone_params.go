@@ -139,7 +139,7 @@ func DecodeZoneParams(d *denc.Decoder) ZoneParams {
 		z.SystemKey = DecodeAccessKey(d)
 	}
 	if v >= 4 {
-		z.PlacementPools = denc.DecodeMap(d, (*denc.Decoder).String, DecodeZonePlacementInfo)
+		z.PlacementPools = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZonePlacementInfo)
 	}
 	if v >= 5 {
 		DecodePool(d) // unused metadata_heap
@@ -383,7 +383,7 @@ func (c ZoneStorageClasses) Encode(e *denc.Encoder, r denc.Release) {
 // inserts an empty STANDARD class when the map lacks one.
 func DecodeZoneStorageClasses(d *denc.Decoder) ZoneStorageClasses {
 	h := d.BeginStruct(1)
-	c := ZoneStorageClasses(denc.DecodeMap(d, (*denc.Decoder).String, DecodeZoneStorageClass))
+	c := ZoneStorageClasses(denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZoneStorageClass))
 	d.EndStruct(h)
 	if d.Err() != nil {
 		return nil

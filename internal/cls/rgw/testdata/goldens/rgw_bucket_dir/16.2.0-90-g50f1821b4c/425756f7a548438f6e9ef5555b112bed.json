@@ -1,0 +1,1365 @@
+{
+    "header": {
+        "ver": 10106,
+        "master_ver": 0,
+        "stats": [
+            0,
+            {
+                "total_size": 10347520,
+                "total_size_rounded": 41390080,
+                "num_entries": 10105,
+                "actual_size": 10347520
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": [
+        "a-0",
+        {
+            "name": "a-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "a-1",
+        {
+            "name": "a-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "a-2",
+        {
+            "name": "a-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "a-3",
+        {
+            "name": "a-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "a-4",
+        {
+            "name": "a-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "b/",
+        {
+            "name": "b/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "c-0",
+        {
+            "name": "c-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "c-1",
+        {
+            "name": "c-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "c-2",
+        {
+            "name": "c-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "c-3",
+        {
+            "name": "c-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "c-4",
+        {
+            "name": "c-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "d/",
+        {
+            "name": "d/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "e-0",
+        {
+            "name": "e-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "e-1",
+        {
+            "name": "e-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "e-2",
+        {
+            "name": "e-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "e-3",
+        {
+            "name": "e-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "e-4",
+        {
+            "name": "e-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "f/",
+        {
+            "name": "f/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "g-0",
+        {
+            "name": "g-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "g-1",
+        {
+            "name": "g-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "g-2",
+        {
+            "name": "g-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "g-3",
+        {
+            "name": "g-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "g-4",
+        {
+            "name": "g-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "h/",
+        {
+            "name": "h/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "i-0",
+        {
+            "name": "i-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "i-1",
+        {
+            "name": "i-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "i-2",
+        {
+            "name": "i-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "i-3",
+        {
+            "name": "i-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "i-4",
+        {
+            "name": "i-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "j/",
+        {
+            "name": "j/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "k-0",
+        {
+            "name": "k-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "k-1",
+        {
+            "name": "k-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "k-2",
+        {
+            "name": "k-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "k-3",
+        {
+            "name": "k-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "k-4",
+        {
+            "name": "k-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "l/",
+        {
+            "name": "l/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "m-0",
+        {
+            "name": "m-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "m-1",
+        {
+            "name": "m-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "m-2",
+        {
+            "name": "m-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "m-3",
+        {
+            "name": "m-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "m-4",
+        {
+            "name": "m-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "n/",
+        {
+            "name": "n/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "o-0",
+        {
+            "name": "o-0",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-0",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-0",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "o-1",
+        {
+            "name": "o-1",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-1",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-1",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "o-2",
+        {
+            "name": "o-2",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-2",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-2",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "o-3",
+        {
+            "name": "o-3",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-3",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-3",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "o-4",
+        {
+            "name": "o-4",
+            "instance": "",
+            "ver": {
+                "pool": 69,
+                "epoch": 1
+            },
+            "locator": "loc-4",
+            "exists": true,
+            "meta": {
+                "category": 0,
+                "size": 1024,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 1024,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "tag-4",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "p/",
+        {
+            "name": "p/",
+            "instance": "",
+            "ver": {
+                "pool": -1,
+                "epoch": 0
+            },
+            "locator": "",
+            "exists": false,
+            "meta": {
+                "category": 0,
+                "size": 0,
+                "mtime": "0.000000",
+                "etag": "",
+                "storage_class": "STANDARD",
+                "owner": "",
+                "owner_display_name": "",
+                "content_type": "",
+                "accounted_size": 0,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "",
+            "flags": 32768,
+            "pending_map": [],
+            "versioned_epoch": 0
+        }
+    ]
+}
+

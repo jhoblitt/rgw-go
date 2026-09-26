@@ -1,0 +1,15 @@
+{
+    "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.4629\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.427__shadow_.Zt2srYGMcZ7r0GinNkXPWC-mrYeI5e2_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2021-04-12T13:59:05.396666+0000"
+}
+

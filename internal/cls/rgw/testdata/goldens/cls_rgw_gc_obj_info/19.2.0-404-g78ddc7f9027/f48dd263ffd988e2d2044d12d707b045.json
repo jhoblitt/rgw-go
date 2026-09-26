@@ -1,0 +1,45 @@
+{
+    "tag": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.764724670840087586\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__multipart_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__shadow_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.1_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__multipart_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.2",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__shadow_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.2_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__multipart_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.3",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.373__shadow_mymultipart.2~tr_nV_6pIvncmFxQZe-46CuxYrp92Nw.3_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2024-09-29T11:58:29.783813+0000"
+}
+

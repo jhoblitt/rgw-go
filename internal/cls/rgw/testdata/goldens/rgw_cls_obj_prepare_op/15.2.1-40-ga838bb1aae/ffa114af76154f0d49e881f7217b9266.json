@@ -1,0 +1,14 @@
+{
+    "op": 1,
+    "name": "testobj",
+    "tag": "_UjeIMA4Ug28l2BHbKr7kQajtFTdrWxB",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "d4c97fd0-2a82-4b97-8510-490394fc65e0:yournamehere-dwczux8guuu4x5mu-21:d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.17"
+        }
+    ]
+}
+

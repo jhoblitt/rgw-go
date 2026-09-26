@@ -1,0 +1,17 @@
+{
+    "objs": [
+        {
+            "pool": "pool-3.1",
+            "oid": "oid-3.1",
+            "key": "loc-3.1",
+            "instance": ""
+        },
+        {
+            "pool": "pool-3.2",
+            "oid": "oid-3.2",
+            "key": "loc-3.2",
+            "instance": ""
+        }
+    ]
+}
+

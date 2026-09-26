@@ -1,0 +1,49 @@
+{
+    "header": {
+        "ver": 2,
+        "master_ver": 0,
+        "stats": [
+            1,
+            {
+                "total_size": 4,
+                "total_size_rounded": 4096,
+                "num_entries": 1,
+                "actual_size": 4
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": [
+        "asdf",
+        {
+            "name": "asdf",
+            "instance": "",
+            "ver": {
+                "pool": 292,
+                "epoch": 364
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 4,
+                "mtime": "2019-04-24T09:53:06.840593Z",
+                "etag": "912ec803b2ce49e4a541068d495ab570",
+                "storage_class": "STANDARD",
+                "owner": "s3test1",
+                "owner_display_name": "tester1",
+                "content_type": "application/octet-stream",
+                "accounted_size": 4,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.4304",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        }
+    ]
+}
+

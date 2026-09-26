@@ -1,0 +1,37 @@
+{
+    "name": "obj-56",
+    "instance": "",
+    "ver": {
+        "pool": 73,
+        "epoch": 57
+    },
+    "locator": "loc-56",
+    "exists": true,
+    "meta": {
+        "category": 0,
+        "size": 1024,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 1024,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "tag-56",
+    "flags": 0,
+    "pending_map": [
+        {
+            "key": "tag-prepare-56",
+            "val": {
+                "state": 0,
+                "timestamp": "2015-08-12T01:26:27.057589Z",
+                "op": 0
+            }
+        }
+    ],
+    "versioned_epoch": 0
+}
+

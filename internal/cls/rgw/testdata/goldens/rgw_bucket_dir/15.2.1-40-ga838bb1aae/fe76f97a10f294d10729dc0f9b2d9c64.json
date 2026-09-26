@@ -1,0 +1,20 @@
+{
+    "header": {
+        "ver": 7,
+        "master_ver": 0,
+        "stats": [
+            0,
+            {
+                "total_size": 6144,
+                "total_size_rounded": 24576,
+                "num_entries": 6,
+                "actual_size": 6144
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": []
+}
+

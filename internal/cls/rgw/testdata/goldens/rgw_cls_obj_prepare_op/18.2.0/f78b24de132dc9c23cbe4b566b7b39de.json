@@ -1,0 +1,14 @@
+{
+    "op": 0,
+    "name": "asdf",
+    "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.1422148278939205346",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b:yournamehere-ire1gf7r5t205efd-25:47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.21"
+        }
+    ]
+}
+

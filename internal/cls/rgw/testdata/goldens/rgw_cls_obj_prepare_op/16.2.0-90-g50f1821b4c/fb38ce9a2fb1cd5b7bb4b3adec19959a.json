@@ -1,0 +1,14 @@
+{
+    "op": 0,
+    "name": "bar",
+    "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.229",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-lei6t89dwkij5eit-35:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.54"
+        }
+    ]
+}
+

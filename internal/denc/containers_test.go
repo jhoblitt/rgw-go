@@ -66,6 +66,23 @@ var _ = Describe("containers", func() {
 			Expect(d.Err()).NotTo(HaveOccurred())
 			Expect(d.Remaining()).To(BeZero(), "the duplicate's value is still consumed")
 		})
+		It("keeps the last value for a duplicated key under DecodeMapLast", func() {
+			d := denc.NewDecoder([]byte{
+				3, 0, 0, 0,
+				1, 0, 0, 0, 'a', 1, 0, 0, 0,
+				1, 0, 0, 0, 'b', 5, 0, 0, 0,
+				1, 0, 0, 0, 'a', 2, 0, 0, 0,
+			})
+			Expect(denc.DecodeMapLast(d, decString, decU32)).To(Equal(map[string]uint32{"a": 2, "b": 5}))
+			Expect(d.Err()).NotTo(HaveOccurred())
+			Expect(d.Remaining()).To(BeZero())
+		})
+		It("decodes an empty or short map as nil under DecodeMapLast", func() {
+			Expect(denc.DecodeMapLast(denc.NewDecoder([]byte{0, 0, 0, 0}), decString, decU32)).To(BeNil())
+			d := denc.NewDecoder([]byte{2, 0, 0, 0, 1, 0, 0, 0, 'a', 1, 0, 0, 0})
+			Expect(denc.DecodeMapLast(d, decString, decU32)).To(BeNil())
+			Expect(d.Err()).To(MatchError(denc.ErrShortBuffer))
+		})
 		It("decodes an empty map as nil", func() {
 			d := denc.NewDecoder([]byte{0, 0, 0, 0})
 			Expect(denc.DecodeMap(d, decString, decU32)).To(BeNil())

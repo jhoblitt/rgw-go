@@ -1,0 +1,21 @@
+{
+    "tag": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.8229394902246590467\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.375__multipart_mymultipart.2~YjrMsVbhfe6eg2hyJQvgzRtXJVfKa35.1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.375__shadow_mymultipart.2~YjrMsVbhfe6eg2hyJQvgzRtXJVfKa35.1_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "1970-01-01T00:00:00.000000+0000"
+}
+

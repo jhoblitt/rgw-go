@@ -1,0 +1,23 @@
+{
+    "dir": {
+        "header": {
+            "ver": 0,
+            "master_ver": 0,
+            "stats": [
+                0,
+                {
+                    "total_size": 50176,
+                    "total_size_rounded": 200704,
+                    "num_entries": 49,
+                    "actual_size": 50176
+                }
+            ],
+            "new_instance": {
+                "reshard_status": "not-resharding"
+            }
+        },
+        "map": []
+    },
+    "is_truncated": 1
+}
+

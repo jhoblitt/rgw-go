@@ -42,8 +42,12 @@ func EncodeMap[K cmp.Ordered, V any](e *Encoder, m map[K]V, encK func(*Encoder, 
 	}
 }
 
-// DecodeMap reads a u32 count then that many keys and values. The first value
-// for a duplicated key wins, as std::map's emplace keeps it. An empty or
+// DecodeMap reads a u32 count then that many keys and values, the first
+// value for a repeated key winning. That matches C++ only for a std::map
+// whose key and value both have denc traits (integers, strings, bufferlists
+// and the like), which decode through emplace_hint; ceph-dencoder v19.2.6
+// and v20.2.4 keep the first value of a repeated RGWUserCaps entry. A map
+// whose key or value lacks denc traits takes DecodeMapLast. An empty or
 // failed decode returns nil.
 func DecodeMap[K comparable, V any](d *Decoder, decK func(*Decoder) K, decV func(*Decoder) V) map[K]V {
 	n := d.count()
@@ -60,6 +64,33 @@ func DecodeMap[K comparable, V any](d *Decoder, decK func(*Decoder) K, decV func
 		if _, dup := m[k]; !dup {
 			m[k] = v
 		}
+	}
+	return m
+}
+
+// DecodeMapLast reads a u32 count then that many keys and values, the last
+// value for a repeated key winning. It matches C++'s legacy decode of a
+// std::map or boost::container::flat_map whose key or value lacks denc
+// traits (any struct with its own encode and decode), which assigns each
+// value through operator[]; ceph-dencoder v19.2.6 and v20.2.4 keep the last
+// value of a repeated RGWUserInfo access key, rgw_bucket_dir_header category,
+// rgw_bucket_dir entry and rgw_usage_log_entry category. C++ decodes the
+// repeat into the earlier value in place, so a field an older struct version
+// leaves out keeps the earlier value; here the later value replaces it whole.
+// An empty or failed decode returns nil.
+func DecodeMapLast[K comparable, V any](d *Decoder, decK func(*Decoder) K, decV func(*Decoder) V) map[K]V {
+	n := d.count()
+	if n == 0 {
+		return nil
+	}
+	m := make(map[K]V, d.capHint(n))
+	for range n {
+		k := decK(d)
+		v := decV(d)
+		if d.err != nil {
+			return nil
+		}
+		m[k] = v
 	}
 	return m
 }

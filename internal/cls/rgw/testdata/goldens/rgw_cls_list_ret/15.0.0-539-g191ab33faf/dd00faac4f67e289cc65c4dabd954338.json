@@ -1,0 +1,304 @@
+{
+    "dir": {
+        "header": {
+            "ver": 16,
+            "master_ver": 0,
+            "stats": [
+                1,
+                {
+                    "total_size": 45,
+                    "total_size_rounded": 20480,
+                    "num_entries": 5,
+                    "actual_size": 45
+                }
+            ],
+            "new_instance": {
+                "reshard_status": "not-resharding"
+            }
+        },
+        "map": [
+            "testobj\u0000v8234\u0000iT9PlbvEWLu9aKXfMS13xLYYI00pbyBN",
+            {
+                "name": "testobj",
+                "instance": "T9PlbvEWLu9aKXfMS13xLYYI00pbyBN",
+                "ver": {
+                    "pool": -1,
+                    "epoch": 0
+                },
+                "locator": "",
+                "exists": false,
+                "meta": {
+                    "category": 0,
+                    "size": 0,
+                    "mtime": "2019-04-24T09:48:35.464956Z",
+                    "etag": "",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "",
+                    "accounted_size": 0,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "delete-marker",
+                "flags": 7,
+                "pending_map": [],
+                "versioned_epoch": 21
+            },
+            "testobj\u0000v8236\u0000iVLLi8C2IfvzUiwlcC6xVdHNpOJ9gUEi",
+            {
+                "name": "testobj",
+                "instance": "VLLi8C2IfvzUiwlcC6xVdHNpOJ9gUEi",
+                "ver": {
+                    "pool": -1,
+                    "epoch": 0
+                },
+                "locator": "",
+                "exists": false,
+                "meta": {
+                    "category": 0,
+                    "size": 0,
+                    "mtime": "2019-04-24T09:48:35.262203Z",
+                    "etag": "",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "",
+                    "accounted_size": 0,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "delete-marker",
+                "flags": 5,
+                "pending_map": [],
+                "versioned_epoch": 19
+            },
+            "testobj\u0000v8238\u0000i8-W7ZhlqqwgO-yppbVXrFHQwOdCPZhS",
+            {
+                "name": "testobj",
+                "instance": "8-W7ZhlqqwgO-yppbVXrFHQwOdCPZhS",
+                "ver": {
+                    "pool": -1,
+                    "epoch": 0
+                },
+                "locator": "",
+                "exists": false,
+                "meta": {
+                    "category": 0,
+                    "size": 0,
+                    "mtime": "2019-04-24T09:48:35.061955Z",
+                    "etag": "",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "",
+                    "accounted_size": 0,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "delete-marker",
+                "flags": 5,
+                "pending_map": [],
+                "versioned_epoch": 17
+            },
+            "testobj\u0000v900\u0000iFWQ3zAeuhmvjyE7mOfJgUXKUrKmBzry",
+            {
+                "name": "testobj",
+                "instance": "FWQ3zAeuhmvjyE7mOfJgUXKUrKmBzry",
+                "ver": {
+                    "pool": -1,
+                    "epoch": 0
+                },
+                "locator": "",
+                "exists": false,
+                "meta": {
+                    "category": 0,
+                    "size": 0,
+                    "mtime": "2019-04-24T09:48:34.784179Z",
+                    "etag": "",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "",
+                    "accounted_size": 0,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "delete-marker",
+                "flags": 5,
+                "pending_map": [],
+                "versioned_epoch": 15
+            },
+            "testobj\u0000v902\u0000ir1Ljtl8fvQ0rjvbBzwYj-pQ24zCvijN",
+            {
+                "name": "testobj",
+                "instance": "r1Ljtl8fvQ0rjvbBzwYj-pQ24zCvijN",
+                "ver": {
+                    "pool": -1,
+                    "epoch": 0
+                },
+                "locator": "",
+                "exists": false,
+                "meta": {
+                    "category": 0,
+                    "size": 0,
+                    "mtime": "2019-04-24T09:48:34.538064Z",
+                    "etag": "",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "",
+                    "accounted_size": 0,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "delete-marker",
+                "flags": 5,
+                "pending_map": [],
+                "versioned_epoch": 13
+            },
+            "testobj\u0000v904\u0000ijzUuM5.ALxKiVO5ubrXsMPMWLTQf2ua",
+            {
+                "name": "testobj",
+                "instance": "jzUuM5.ALxKiVO5ubrXsMPMWLTQf2ua",
+                "ver": {
+                    "pool": 292,
+                    "epoch": 137
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 9,
+                    "mtime": "2019-04-24T09:48:34.222268Z",
+                    "etag": "b3472c1a1026117b7d4b60a90848ad8e",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "application/octet-stream",
+                    "accounted_size": 9,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2748",
+                "flags": 1,
+                "pending_map": [],
+                "versioned_epoch": 11
+            },
+            "testobj\u0000v906\u0000iAZbVwM5vdqrKVBxox49.b8AJr4HxsxO",
+            {
+                "name": "testobj",
+                "instance": "AZbVwM5vdqrKVBxox49.b8AJr4HxsxO",
+                "ver": {
+                    "pool": 292,
+                    "epoch": 142
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 9,
+                    "mtime": "2019-04-24T09:48:34.048058Z",
+                    "etag": "09f7b5a40a6475947bd9ffd6d009135e",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "application/octet-stream",
+                    "accounted_size": 9,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2746",
+                "flags": 1,
+                "pending_map": [],
+                "versioned_epoch": 9
+            },
+            "testobj\u0000v908\u0000ihrP-adjS5Id291hw5aCYNo70fv4T89f",
+            {
+                "name": "testobj",
+                "instance": "hrP-adjS5Id291hw5aCYNo70fv4T89f",
+                "ver": {
+                    "pool": 292,
+                    "epoch": 136
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 9,
+                    "mtime": "2019-04-24T09:48:33.925102Z",
+                    "etag": "3a82070e40c6934b2a1cb1c381d9f62e",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "application/octet-stream",
+                    "accounted_size": 9,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2744",
+                "flags": 1,
+                "pending_map": [],
+                "versioned_epoch": 7
+            },
+            "testobj\u0000v909\u0000i4m31XBS73UWrYI0Tm-.KCPmAMXvY2u1",
+            {
+                "name": "testobj",
+                "instance": "4m31XBS73UWrYI0Tm-.KCPmAMXvY2u1",
+                "ver": {
+                    "pool": 292,
+                    "epoch": 148
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 9,
+                    "mtime": "2019-04-24T09:48:33.847809Z",
+                    "etag": "27ddd45b69e721be1dec90860cb39c5e",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "application/octet-stream",
+                    "accounted_size": 9,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2743",
+                "flags": 1,
+                "pending_map": [],
+                "versioned_epoch": 6
+            },
+            "testobj\u0000v910\u0000iA-Q8dWTr1TvzHyR53m0TCE5Kjry.Hhg",
+            {
+                "name": "testobj",
+                "instance": "A-Q8dWTr1TvzHyR53m0TCE5Kjry.Hhg",
+                "ver": {
+                    "pool": 292,
+                    "epoch": 140
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 9,
+                    "mtime": "2019-04-24T09:48:33.756908Z",
+                    "etag": "6deb7d5ca68840f07d8e56764c8dc673",
+                    "storage_class": "STANDARD",
+                    "owner": "s3test1",
+                    "owner_display_name": "tester1",
+                    "content_type": "application/octet-stream",
+                    "accounted_size": 9,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.2742",
+                "flags": 1,
+                "pending_map": [],
+                "versioned_epoch": 5
+            }
+        ]
+    },
+    "is_truncated": 0
+}
+
