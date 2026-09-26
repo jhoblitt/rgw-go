@@ -67,6 +67,7 @@ type outcome struct {
 }
 
 func newOutcome(name string, err error) outcome {
+	err = dropPositive(err)
 	o := outcome{name: name, err: toSeamError(name, err)}
 	if oe, ok := errors.AsType[rados.OperationError](err); ok {
 		o.opErr = toSeamError(name, oe.OpError)
@@ -75,6 +76,40 @@ func newOutcome(name string, err error) outcome {
 		o.opErr = o.err
 	}
 	return o
+}
+
+// dropPositive removes the positive return codes from err, the error a
+// go-ceph Operate or AioCompletion.Err returned, and returns nil when nothing
+// else is left. librados treats any return >= 0 as success and the OSD has
+// committed such a write, but go-ceph's WriteOp reports every nonzero return,
+// the op's and a write step's prval alike, as an error carrying that code.
+func dropPositive(err error) error {
+	if oe, ok := errors.AsType[rados.OperationError](err); ok {
+		if positive(oe.OpError) {
+			oe.OpError = nil
+		}
+		steps := make(map[int]error, len(oe.StepErrors))
+		for i, e := range oe.StepErrors {
+			if e != nil && !positive(e) {
+				steps[i] = e
+			}
+		}
+		oe.StepErrors = steps
+		if oe.OpError == nil && len(steps) == 0 {
+			return nil
+		}
+		return oe
+	}
+	if positive(err) {
+		return nil
+	}
+	return err
+}
+
+// positive reports whether err carries a positive librados return code.
+func positive(err error) bool {
+	ec, ok := errors.AsType[errorCoder](err)
+	return ok && ec.ErrorCode() > 0
 }
 
 // step returns the error of the go-ceph step at index i: its own return

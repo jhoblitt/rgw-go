@@ -34,6 +34,19 @@ var ToSeamError = toSeamError
 // go-ceph step at index i.
 func StepError(name string, err error, i int) error { return newOutcome(name, err).step(i) }
 
+// CompleteWrite translates op against b, completes it as if go-ceph's
+// Operate or AioCompletion.Err had returned err, and returns the error Write
+// would.
+func CompleteWrite(b writeBuilder, op *radosclient.WriteOp, err error) error {
+	fs, terr := translateWrite(b, op)
+	if terr != nil {
+		return terr
+	}
+	o := newOutcome("write obj", err)
+	finish(fs, o)
+	return o.err
+}
+
 // WatchStopped returns a channel closed once w's dispatch goroutine exits.
 func WatchStopped(w radosclient.Watch) <-chan struct{} {
 	gw, ok := w.(*watch)
