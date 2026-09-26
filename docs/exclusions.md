@@ -232,9 +232,11 @@ release, and on Squid that guard fails with the busy-resharding error
 whenever the shard header's reshard status is anything other than
 not-resharding. rgw-go prepends the same guard to the same operations,
 and on the busy-resharding error re-reads the bucket instance's index
-layout and retries. On Tentacle the object class additionally enforces
-the state itself while writes are being logged, and rgw-go decodes the
-added log-record status value and the header's log-entry count. Squid's
+layout and retries. From v20.2.0 the object class additionally enforces
+the guard on its own index writes and can answer busy-resharding even
+when the client sends no guard op; rgw-go still sends the guard and
+decodes the added log-record status value and the header's log-entry
+count. Squid's
 class lacks the newer index methods that main's radosgw probes for
 (`bucket_init_index2`, `bucket_refresh_instance`, `bi_put_entries`,
 `reshard_log_trim`), so rgw-go uses the original index-init method and
@@ -411,6 +413,17 @@ review and verified against the tree.
   rgw/admin package, signs with the unsigned-payload hash and never sends
   the header, so it works against radosgw only because of that fallback.
   rgw-rs's spike chose AWS's behavior; rgw-go must not.
+- **radosgw does not key class request shapes on the cluster release;
+  rgw-go does, and that is stricter.** Request-struct bumps keep their
+  compat version at 1, so a newer radosgw sends the newest shape
+  unconditionally and an older OSD ignores the tail, and radosgw probes
+  for new methods and falls back on not-supported. During a rolling OSD
+  upgrade a Tentacle radosgw therefore already sends new shapes while the
+  OSD map's required release still says squid, whereas rgw-go, keyed on
+  that map, keeps sending the older shape until the operator raises the
+  release. Nothing stored differs, because the OSD writes the records;
+  the cost is only that a Tentacle-only request feature waits for the
+  release to be raised, which is the trade the encoding rule accepts.
 
 ## Pending
 
@@ -441,10 +454,16 @@ Squid they write identical bytes. Both detect the release from the OSD
 map's required-OSD-release field, so they agree even during a rolling OSD
 upgrade, when that field lags the newest daemon until the operator raises
 it. For class requests rgw-rs sends Squid-version shapes today and adds
-release-selected Tentacle shapes in a later package, so on a Tentacle
-cluster the two differ only for the few request structs Tentacle changed
-until then; the stored records the OSD writes are identical for both
-gateways regardless. The benchmark plan records
+release-selected newer shapes in a later package. The newer shapes are
+fewer than first thought, verified against the release tags on
+2026-09-26: only the bucket update-stats request's version 2 is Tentacle,
+first in v20.2.0; the OLH log read's version 2 and the version 8 index
+entry metadata carried inside the complete and link-OLH requests are
+Umbrella, first in the v21.1.0 release candidate; and the OLH epoch reply
+on link and unlink exists only on unreleased main and feeds only the
+multisite log. So on a Tentacle cluster the two gateways differ in one
+request struct until rgw-rs adds it, and the stored records the OSD
+writes are identical for both regardless. The benchmark plan records
 transport as a variable and runs all three gateways with the same parity
 settings: notifications off, MFA off, SSE off, D3N off, dynamic
 resharding off, the same cache setting, the same shard count and stripe
