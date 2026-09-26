@@ -43,15 +43,15 @@ jobs:
       # The cluster scripts are developed against rootful podman reached through
       # its API socket, since the containers are privileged and on the host
       # network. In remote mode `podman cp` writes hack/cluster/out/ as the
-      # calling user, so no later step needs sudo; the runner user is in the
-      # docker group.
+      # calling user, so no later step needs sudo. A SocketGroup=docker drop-in
+      # still left the socket unreachable on the runner, so the socket is handed
+      # to the runner user outright; the VM is discarded after the job.
       - name: Serve rootful podman on a socket the runner user can reach
         run: |
-          sudo mkdir -p /etc/systemd/system/podman.socket.d
-          printf '[Socket]\nSocketMode=0660\nSocketGroup=docker\n' |
-            sudo tee /etc/systemd/system/podman.socket.d/rgw-go.conf >/dev/null
-          sudo systemctl daemon-reload
-          sudo systemctl restart podman.socket
+          sudo systemctl start podman.socket
+          sudo chmod 0755 /run/podman
+          sudo chown "$(id -u):$(id -g)" /run/podman/podman.sock
+          ls -ld /run/podman /run/podman/podman.sock
           echo "CONTAINER_HOST=unix:///run/podman/podman.sock" >> "$GITHUB_ENV"
 
       - name: Check that podman is rootful
