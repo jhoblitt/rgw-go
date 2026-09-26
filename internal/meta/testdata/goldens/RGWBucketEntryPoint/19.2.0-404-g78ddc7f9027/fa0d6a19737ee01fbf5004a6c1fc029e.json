@@ -1,0 +1,18 @@
+{
+    "bucket": {
+        "name": "yournamehere-w1pkpjgzhoi6lzoi-469",
+        "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.481",
+        "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.481",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "owner": "testid",
+    "creation_time": "2024-09-29T10:00:12.843971Z",
+    "linked": true,
+    "has_bucket_info": false
+}
+

@@ -1,0 +1,18 @@
+{
+    "bucket": {
+        "name": "",
+        "marker": "",
+        "bucket_id": "",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "owner": "",
+    "creation_time": "0.000000",
+    "linked": false,
+    "has_bucket_info": false
+}
+

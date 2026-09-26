@@ -11,3 +11,6 @@ RGWSubUser internal/meta
 RGWUserCaps internal/meta
 RGWUID internal/meta
 RGWAccountInfo internal/meta
+RGWBucketEntryPoint internal/meta
+RGWBucketInfo internal/meta
+RGWBucketEnt internal/meta

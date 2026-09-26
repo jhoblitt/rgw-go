@@ -1,0 +1,37 @@
+{
+    "bucket": {
+        "name": "s3testbucket-jnpyado5wka24i92-234",
+        "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1557",
+        "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1557",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "creation_time": "2019-04-24T10:09:54.133701Z",
+    "owner": "s3test1",
+    "flags": 0,
+    "zonegroup": "8514f2e8-c580-4b95-97cf-eb638f042aac",
+    "placement_rule": "default-placement",
+    "has_instance_obj": true,
+    "quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "num_shards": 0,
+    "bi_shard_hash_type": 0,
+    "requester_pays": false,
+    "has_website": false,
+    "swift_versioning": false,
+    "swift_ver_location": "",
+    "index_type": 0,
+    "mdsearch_config": [],
+    "reshard_status": 0,
+    "new_bucket_instance_id": ""
+}
+
