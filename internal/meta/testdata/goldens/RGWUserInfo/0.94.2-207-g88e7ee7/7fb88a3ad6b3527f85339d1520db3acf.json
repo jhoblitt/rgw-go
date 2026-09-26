@@ -1,0 +1,58 @@
+{
+    "user_id": "user_id",
+    "display_name": "display_name",
+    "email": "user@email",
+    "suspended": 0,
+    "max_buckets": 1000,
+    "subusers": [
+        {
+            "id": "user_id:id2",
+            "permissions": "read"
+        }
+    ],
+    "keys": [
+        {
+            "user": "user_id",
+            "access_key": "id1",
+            "secret_key": "key1",
+            "active": true,
+            "create_date": "0.000000"
+        }
+    ],
+    "swift_keys": [
+        {
+            "user": "user_id:subuser",
+            "secret_key": "",
+            "active": true,
+            "create_date": "0.000000"
+        }
+    ],
+    "caps": [],
+    "op_mask": "read, write, delete",
+    "default_placement": "",
+    "default_storage_class": "",
+    "placement_tags": [],
+    "bucket_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1024,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "user_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1024,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "temp_url_keys": [],
+    "type": "none",
+    "mfa_ids": [],
+    "account_id": "",
+    "path": "/",
+    "create_date": "0.000000",
+    "tags": [],
+    "group_ids": []
+}
+

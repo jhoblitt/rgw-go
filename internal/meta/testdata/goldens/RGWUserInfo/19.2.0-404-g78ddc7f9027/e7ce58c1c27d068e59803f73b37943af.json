@@ -1,0 +1,40 @@
+{
+    "user_id": "34f9737d-23ad-4414-894a-9714fa60486b",
+    "display_name": "s3-tests-U1",
+    "email": "",
+    "suspended": 0,
+    "max_buckets": 1000,
+    "subusers": [],
+    "keys": [],
+    "swift_keys": [],
+    "caps": [],
+    "op_mask": "read, write, delete",
+    "default_placement": "",
+    "default_storage_class": "",
+    "placement_tags": [],
+    "bucket_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "user_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "temp_url_keys": [],
+    "type": "none",
+    "mfa_ids": [],
+    "account_id": "RGW11111111111111111",
+    "path": "/s3-tests/",
+    "create_date": "2024-09-29T09:18:21.805610Z",
+    "tags": [],
+    "group_ids": [
+        "a3bb3f47-e303-44b6-8e04-5014b2f3c731"
+    ]
+}
+
