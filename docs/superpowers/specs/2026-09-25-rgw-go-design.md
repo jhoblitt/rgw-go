@@ -28,6 +28,7 @@ suites test Rook rather than the gateway.
 Beyond the criterion, rgw-go is benchmarked against C++ radosgw and rgw-rs
 on the same cluster, and the project evaluates whether go-ceph's cgo
 boundary is a performance bottleneck a pure-Go RADOS client would remove.
+The evidence accumulates in `docs/cgo-limitations.md`.
 
 ## 2. Objectives, in priority order
 

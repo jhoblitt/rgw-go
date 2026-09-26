@@ -20,6 +20,8 @@ before writing Go here.
 - go-ceph will come from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to
   a commit, added when the RADOS seam lands; Dependabot does not follow a replace, so it is
   bumped by hand.
+- `docs/cgo-limitations.md` is the registry of go-ceph, librados and cgo limitations for
+  the pure-Go question; add or update an entry whenever a task, review or benchmark finds one.
 - Never use the ambient kubectl or Ceph cluster. Cluster tests use `make cluster-up-squid`
   and `make cluster-up-tentacle` (hack/cluster/).
 - Implementation tasks go to Opus 5.5 code-workers in worktrees; judgment stays on the
