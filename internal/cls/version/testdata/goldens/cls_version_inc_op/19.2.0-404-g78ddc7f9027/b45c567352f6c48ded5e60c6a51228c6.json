@@ -1,0 +1,16 @@
+{
+    "objv": {
+        "ver": 123,
+        "tag": "foo"
+    },
+    "conds": [
+        {
+            "ver": {
+                "ver": 123,
+                "tag": "foo"
+            },
+            "cond": 3
+        }
+    ]
+}
+
