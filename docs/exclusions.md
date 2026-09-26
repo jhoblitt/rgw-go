@@ -393,7 +393,10 @@ review and verified against the tree.
   by name. On the S3 data path that is the exclusive lock named
   `RGWCompleteMultipart` on the multipart meta object, held for
   `rgw_mp_lock_max_time` and renewed on main, which is what stops two
-  gateways completing the same upload at once. The workers take
+  gateways completing the same upload at once. The meta object lives in
+  the placement's data-extra pool (normally `<zone>.rgw.buckets.non-ec`;
+  the data pool only when none is configured), so a lock taken on that
+  name in the data pool excludes nothing. The workers take
   `gc_process`, `lc_process` and `reshard_process`, plus one lock per
   persistent notification queue named after the queue with a `_lock`
   suffix, each with radosgw's duration. `bucket_instance_lock` is named
@@ -406,6 +409,13 @@ review and verified against the tree.
   expiry, as radosgw's is. And a lock on a missing object creates it, so
   wherever the object's absence matters radosgw prepends an existence
   assertion, and rgw-go does the same.
+  The class's failure modes matter for renewal: a renew with
+  `LOCK_FLAG_MUST_RENEW` by a client that does not hold the lock fails
+  with `ENOENT`, not `EBUSY` (`MAY_RENEW` gets `EBUSY`), which radosgw's
+  reshard renewal reads as expiry; and an expired ephemeral lock's object is
+  removed only by a lock call that succeeds, because unlock, break,
+  get_info and assert_locked calls that fail drop their transaction and
+  leave it in place.
 - **Signature quirks are radosgw's, not AWS's.** When a request carries
   no `x-amz-content-sha256` header, radosgw treats the payload as
   unsigned rather than rejecting the request as AWS does. This is a hard
