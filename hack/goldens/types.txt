@@ -26,3 +26,9 @@ RGWPeriod internal/meta
 RGWPeriodLatestEpochInfo internal/meta
 RGWNameToId internal/meta
 JSONFormattable internal/meta
+RGWAccessControlPolicy internal/acl
+RGWAccessControlList internal/acl
+ACLOwner internal/acl
+ACLGrant internal/acl
+ACLPermission internal/acl
+ACLGranteeType internal/acl

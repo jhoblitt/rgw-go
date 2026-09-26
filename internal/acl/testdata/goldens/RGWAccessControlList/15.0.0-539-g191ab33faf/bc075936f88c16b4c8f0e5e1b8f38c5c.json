@@ -1,0 +1,42 @@
+{
+    "acl_user_map": [
+        {
+            "user": "anonymous",
+            "acl": 15
+        }
+    ],
+    "acl_group_map": [
+        {
+            "group": 1,
+            "acl": 1
+        }
+    ],
+    "grant_map": [
+        {
+            "id": "",
+            "grant": {
+                "type": {
+                    "type": 2
+                },
+                "group": 1,
+                "permission": {
+                    "flags": 1
+                }
+            }
+        },
+        {
+            "id": "anonymous",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "anonymous",
+                "name": "",
+                "permission": {
+                    "flags": 15
+                }
+            }
+        }
+    ]
+}
+

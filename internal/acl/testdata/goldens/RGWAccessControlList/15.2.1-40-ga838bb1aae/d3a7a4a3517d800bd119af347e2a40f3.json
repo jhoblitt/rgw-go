@@ -1,0 +1,25 @@
+{
+    "acl_user_map": [
+        {
+            "user": "testid",
+            "acl": 15
+        }
+    ],
+    "acl_group_map": [],
+    "grant_map": [
+        {
+            "id": "testid",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "testid",
+                "name": "M. Tester",
+                "permission": {
+                    "flags": 15
+                }
+            }
+        }
+    ]
+}
+

@@ -1,0 +1,11 @@
+{
+    "type": {
+        "type": 0
+    },
+    "id": "testid",
+    "name": "M. Tester",
+    "permission": {
+        "flags": 15
+    }
+}
+

@@ -1,0 +1,55 @@
+{
+    "acl_user_map": [
+        {
+            "user": "",
+            "acl": 0
+        }
+    ],
+    "acl_group_map": [
+        {
+            "group": 2,
+            "acl": 2
+        }
+    ],
+    "grant_map": [
+        {
+            "id": "",
+            "grant": {
+                "type": {
+                    "type": 2
+                },
+                "group": 2,
+                "permission": {
+                    "flags": 2
+                }
+            }
+        },
+        {
+            "id": "",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "",
+                "name": "",
+                "permission": {
+                    "flags": 0
+                }
+            }
+        },
+        {
+            "id": "",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "",
+                "name": "",
+                "permission": {
+                    "flags": 0
+                }
+            }
+        }
+    ]
+}
+

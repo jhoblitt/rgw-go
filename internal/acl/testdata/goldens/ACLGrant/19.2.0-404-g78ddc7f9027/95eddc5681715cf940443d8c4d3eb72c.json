@@ -1,0 +1,11 @@
+{
+    "type": {
+        "type": 0
+    },
+    "id": "RGW11111111111111111",
+    "name": "Account1",
+    "permission": {
+        "flags": 15
+    }
+}
+

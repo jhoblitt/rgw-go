@@ -1,0 +1,11 @@
+{
+    "type": {
+        "type": 0
+    },
+    "id": "s3test1",
+    "name": "tester1",
+    "permission": {
+        "flags": 1
+    }
+}
+
