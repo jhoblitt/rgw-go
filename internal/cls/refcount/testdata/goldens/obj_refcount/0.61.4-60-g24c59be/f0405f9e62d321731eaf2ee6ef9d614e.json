@@ -1,0 +1,10 @@
+{
+    "refs": [
+        {
+            "oid": "tag4",
+            "active": true
+        }
+    ],
+    "retired_refs": []
+}
+

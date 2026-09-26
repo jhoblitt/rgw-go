@@ -45,3 +45,9 @@ cls_version_check_op internal/cls/version
 cls_version_set_op internal/cls/version
 cls_version_inc_op internal/cls/version
 cls_version_read_ret internal/cls/version
+obj_refcount internal/cls/refcount
+cls_refcount_get_op internal/cls/refcount
+cls_refcount_put_op internal/cls/refcount
+cls_refcount_set_op internal/cls/refcount
+cls_refcount_read_op internal/cls/refcount
+cls_refcount_read_ret internal/cls/refcount

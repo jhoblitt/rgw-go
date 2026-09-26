@@ -1,0 +1,10 @@
+{
+    "refs": [
+        {
+            "oid": "newtag",
+            "active": true
+        }
+    ],
+    "retired_refs": []
+}
+

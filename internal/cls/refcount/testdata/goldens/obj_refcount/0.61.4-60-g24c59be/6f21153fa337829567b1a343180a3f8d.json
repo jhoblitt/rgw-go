@@ -1,0 +1,22 @@
+{
+    "refs": [
+        {
+            "oid": "tag1",
+            "active": true
+        },
+        {
+            "oid": "tag2",
+            "active": true
+        },
+        {
+            "oid": "tag3",
+            "active": true
+        },
+        {
+            "oid": "tag4",
+            "active": true
+        }
+    ],
+    "retired_refs": []
+}
+

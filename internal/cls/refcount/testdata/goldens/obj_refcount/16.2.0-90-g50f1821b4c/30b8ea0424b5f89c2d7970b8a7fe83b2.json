@@ -1,0 +1,30 @@
+{
+    "refs": [
+        {
+            "oid": "",
+            "active": true
+        },
+        {
+            "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.2598",
+            "active": true
+        },
+        {
+            "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.2600",
+            "active": true
+        },
+        {
+            "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.2605",
+            "active": true
+        },
+        {
+            "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.2608",
+            "active": true
+        },
+        {
+            "oid": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.2610",
+            "active": true
+        }
+    ],
+    "retired_refs": []
+}
+

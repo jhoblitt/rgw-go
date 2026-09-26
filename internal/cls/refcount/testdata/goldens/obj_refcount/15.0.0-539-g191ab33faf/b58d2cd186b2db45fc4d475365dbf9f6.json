@@ -1,0 +1,12 @@
+{
+    "refs": [
+        {
+            "oid": "foo",
+            "active": true
+        }
+    ],
+    "retired_refs": [
+        "bar"
+    ]
+}
+
