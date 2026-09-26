@@ -1,0 +1,28 @@
+{
+    "name": "_multipart_9JM5M7Z48I7C.2~S99LJ2YG10EL.meta",
+    "instance": "",
+    "ver": {
+        "pool": -1,
+        "epoch": 0
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 3,
+        "size": 0,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "",
+    "flags": 0,
+    "pending_map": [],
+    "versioned_epoch": 0
+}
+

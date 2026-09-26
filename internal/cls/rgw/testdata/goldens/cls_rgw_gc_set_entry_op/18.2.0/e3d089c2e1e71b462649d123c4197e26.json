@@ -1,0 +1,30 @@
+{
+    "expiration_secs": 7200,
+    "obj_info": {
+        "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.1933727672997095851\u0000",
+        "chain": {
+            "objs": [
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__multipart_mymultipart.2~dPLbAwZMdKDi-r-S7mE1jGE4xsc-SnZ.1",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__shadow_mymultipart.2~dPLbAwZMdKDi-r-S7mE1jGE4xsc-SnZ.1_1",
+                    "key": "",
+                    "instance": ""
+                },
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__multipart_mymultipart.2~dPLbAwZMdKDi-r-S7mE1jGE4xsc-SnZ.2",
+                    "key": "",
+                    "instance": ""
+                }
+            ]
+        },
+        "time": "1970-01-01T00:00:00.000000+0000"
+    }
+}
+

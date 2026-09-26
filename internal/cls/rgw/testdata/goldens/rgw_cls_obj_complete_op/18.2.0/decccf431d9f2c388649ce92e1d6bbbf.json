@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "_multipart_mymultipart.2~-1FSKHSodJI-W-AbiZQOJExUNucXGyK.meta",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 369,
+        "epoch": 5
+    },
+    "meta": {
+        "category": 3,
+        "size": 27,
+        "mtime": "2023-08-06T11:24:14.911962Z",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "owner_display_name": "youruseridhere",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "_YScHVZ7BByAaCYBqAkZyJmQNNi9fmz4",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b:yournamehere-dql3zuknclmmdhr8-35:47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.53"
+        }
+    ]
+}
+

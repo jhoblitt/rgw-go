@@ -1,0 +1,19 @@
+{
+    "existing_header": {
+        "ver": 0,
+        "master_ver": 0,
+        "stats": [],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "calculated_header": {
+        "ver": 0,
+        "master_ver": 0,
+        "stats": [],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    }
+}
+

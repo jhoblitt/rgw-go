@@ -1,0 +1,14 @@
+{
+    "op": 1,
+    "name": "foo",
+    "tag": "_alhk2d7Xy7hgAvyKCooZCd85VkjfC9O",
+    "locator": "",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-9olp9xplyil8svro-26:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.22"
+        }
+    ]
+}
+

@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "testobj",
+    "instance": "B6cejuxO3niZAMn2ry80UoAf3T0xPXo",
+    "locator": "",
+    "ver": {
+        "pool": 336,
+        "epoch": 1
+    },
+    "meta": {
+        "category": 1,
+        "size": 4,
+        "mtime": "2021-04-12T11:54:37.423831Z",
+        "etag": "a620be1dd85655b390313d66272bf4a1",
+        "storage_class": "STANDARD",
+        "owner": "testid",
+        "owner_display_name": "M. Tester",
+        "content_type": "application/octet-stream",
+        "accounted_size": 4,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.36",
+    "log_op": false,
+    "bilog_flags": 1,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-9olp9xplyil8svro-17:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.13"
+        }
+    ]
+}
+

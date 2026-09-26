@@ -1,0 +1,18 @@
+{
+    "expiration_secs": 7200,
+    "obj_info": {
+        "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.10439\u0000",
+        "chain": {
+            "objs": [
+                {
+                    "pool": "default.rgw.buckets.data",
+                    "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.866__shadow_.6UuOtlPBHuwdja_7xKGcGOapFDDWqzT_1",
+                    "key": "",
+                    "instance": ""
+                }
+            ]
+        },
+        "time": "1970-01-01T00:00:00.000000+0000"
+    }
+}
+

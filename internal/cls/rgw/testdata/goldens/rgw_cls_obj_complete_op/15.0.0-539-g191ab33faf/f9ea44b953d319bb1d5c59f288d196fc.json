@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "foo",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 292,
+        "epoch": 39
+    },
+    "meta": {
+        "category": 1,
+        "size": 3,
+        "mtime": "2019-04-24T09:47:12.922287Z",
+        "etag": "37b51d194a7513e45b56f6524f2d51f2",
+        "storage_class": "STANDARD",
+        "owner": "s3test2",
+        "owner_display_name": "tester2",
+        "content_type": "application/octet-stream",
+        "accounted_size": 3,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "_LeXYtFp9thLumELjO88mD_hEuuopjxr",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "54f2466a-525e-4322-bc71-fc998e987f2f"
+        }
+    ]
+}
+

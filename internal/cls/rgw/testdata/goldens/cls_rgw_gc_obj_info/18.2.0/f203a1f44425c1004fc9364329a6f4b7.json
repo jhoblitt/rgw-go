@@ -1,0 +1,21 @@
+{
+    "tag": "chain-5",
+    "chain": {
+        "objs": [
+            {
+                "pool": "pool-5.1",
+                "oid": "oid-5.1",
+                "key": "loc-5.1",
+                "instance": ""
+            },
+            {
+                "pool": "pool-5.2",
+                "oid": "oid-5.2",
+                "key": "loc-5.2",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2023-08-06T10:55:12.556581+0000"
+}
+

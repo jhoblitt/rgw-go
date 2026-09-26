@@ -1,0 +1,81 @@
+{
+    "tag": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4448.4476\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.1_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.2",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.2_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.3",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.3_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.4",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.4_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.5",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.5_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__multipart_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.6",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.405__shadow_multipart_enc.2~JwB5GUvci0k6wQL4i4YzUh-eLe2u4U_.6_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2020-04-15T23:30:16.717886+0000"
+}
+

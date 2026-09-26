@@ -1,0 +1,77 @@
+{
+    "name": "obj-0",
+    "instance": "",
+    "ver": {
+        "pool": 37,
+        "epoch": 10
+    },
+    "locator": "loc-0",
+    "exists": true,
+    "meta": {
+        "category": 0,
+        "size": 10240,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 10240,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "tag-9",
+    "flags": 0,
+    "pending_map": [
+        {
+            "key": "tag-0",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.020011Z",
+                "op": 0
+            }
+        },
+        {
+            "key": "tag-1",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.034032Z",
+                "op": 0
+            }
+        },
+        {
+            "key": "tag-2",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.051921Z",
+                "op": 0
+            }
+        },
+        {
+            "key": "tag-3",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.074277Z",
+                "op": 0
+            }
+        },
+        {
+            "key": "tag-4",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.096078Z",
+                "op": 0
+            }
+        },
+        {
+            "key": "tag-5",
+            "val": {
+                "state": 0,
+                "timestamp": "2013-07-11T20:33:44.111304Z",
+                "op": 0
+            }
+        }
+    ],
+    "versioned_epoch": 0
+}
+

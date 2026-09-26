@@ -1,0 +1,18 @@
+{
+    "owner": "",
+    "payer": "",
+    "bucket": "",
+    "epoch": 0,
+    "total_usage": {
+        "bytes_sent": 0,
+        "bytes_received": 0,
+        "ops": 0,
+        "successful_ops": 0
+    },
+    "categories": [],
+    "s3select": {
+        "bytes_processed": 0,
+        "bytes_returned": 0
+    }
+}
+

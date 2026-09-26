@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "_multipart_mymultipart.2~Nz4sAXyzvLX1Xp_NUgdYRqe2nXr2aAA.meta",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 455,
+        "epoch": 0
+    },
+    "meta": {
+        "category": 3,
+        "size": 65,
+        "mtime": "2024-09-29T09:18:00.379566Z",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "owner_display_name": "youruseridhere",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "_AT4ykLF1fjzMe2kQ3LIPYKz8NbuCrPk",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "13eea068-6d47-4013-9fac-b87ade569a1c:yournamehere-3n2wx51ntxscx5hh-35:13eea068-6d47-4013-9fac-b87ade569a1c.4535.53"
+        }
+    ]
+}
+

@@ -1,0 +1,27 @@
+{
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.1668\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__multipart_mymultipart.2~FwqkPvsH0fGBHkKpRAbM1n6_taq-VwN.1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__shadow_mymultipart.2~FwqkPvsH0fGBHkKpRAbM1n6_taq-VwN.1_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.292__multipart_mymultipart.2~FwqkPvsH0fGBHkKpRAbM1n6_taq-VwN.2",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2019-04-24T11:47:54.210467+0000"
+}
+

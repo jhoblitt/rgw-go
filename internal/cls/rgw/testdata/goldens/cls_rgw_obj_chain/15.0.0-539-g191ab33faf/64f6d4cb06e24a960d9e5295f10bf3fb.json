@@ -1,0 +1,77 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.1_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.2",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.2_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.3",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.3_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.4",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.4_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.5",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.5_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__multipart_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.6",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1161__shadow_srcmultipart.2~4ENuuGRPvLnmBaq84iVKvnwmQMxwjIJ.6_1",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+

@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "0/1063",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 336,
+        "epoch": 10
+    },
+    "meta": {
+        "category": 1,
+        "size": 6,
+        "mtime": "2021-04-12T11:55:10.605369Z",
+        "etag": "e77244b75a5156e032b042c83024f5af",
+        "storage_class": "STANDARD",
+        "owner": "testid",
+        "owner_display_name": "M. Tester",
+        "content_type": "",
+        "accounted_size": 6,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.502",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-lei6t89dwkij5eit-66:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.85"
+        }
+    ]
+}
+

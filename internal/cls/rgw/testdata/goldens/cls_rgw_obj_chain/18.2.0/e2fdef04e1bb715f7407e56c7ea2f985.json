@@ -1,0 +1,35 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__multipart_mymultipart.2~8z-tqIM77smpcZCBFPUQO5B0cSCp0QX.1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__shadow_mymultipart.2~8z-tqIM77smpcZCBFPUQO5B0cSCp0QX.1_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__multipart_mymultipart.2~8z-tqIM77smpcZCBFPUQO5B0cSCp0QX.2",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__shadow_mymultipart.2~8z-tqIM77smpcZCBFPUQO5B0cSCp0QX.2_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.346__multipart_mymultipart.2~8z-tqIM77smpcZCBFPUQO5B0cSCp0QX.3",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+

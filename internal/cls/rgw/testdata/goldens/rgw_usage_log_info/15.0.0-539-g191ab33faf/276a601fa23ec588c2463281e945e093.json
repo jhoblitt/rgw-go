@@ -1,0 +1,1705 @@
+{
+    "entries": [
+        {
+            "owner": "user-0",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-1",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-2",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-3",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-4",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-5",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-6",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-7",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-8",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-9",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-10",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-11",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-12",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-13",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-14",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-15",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-16",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-17",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-18",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-19",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-20",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-21",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-22",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-23",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-24",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-25",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-26",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-27",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-28",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-29",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-30",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-31",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-32",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-33",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-34",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-35",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-36",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-37",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-38",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-39",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-40",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-41",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-42",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-43",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-44",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-45",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-46",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-47",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-48",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-49",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-50",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-51",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-52",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-53",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-54",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-55",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-56",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-57",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-58",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-59",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-60",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-61",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-62",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-63",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-64",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-65",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-66",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-67",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-68",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-69",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-70",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-71",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-72",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-73",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-74",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-75",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-76",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-77",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-78",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-79",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-80",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-81",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-82",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-83",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-84",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-85",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-86",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-87",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-88",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-89",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-90",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-91",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-92",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-93",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-94",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-95",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-96",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-97",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-98",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        },
+        {
+            "owner": "user-99",
+            "payer": "",
+            "bucket": "bucket-usage-1",
+            "epoch": 0,
+            "total_usage": {
+                "bytes_sent": 0,
+                "bytes_received": 0,
+                "ops": 0,
+                "successful_ops": 0
+            },
+            "categories": [],
+            "s3select": {
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        }
+    ]
+}
+

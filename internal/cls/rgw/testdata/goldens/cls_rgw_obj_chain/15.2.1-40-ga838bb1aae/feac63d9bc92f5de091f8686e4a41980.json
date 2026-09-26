@@ -1,0 +1,17 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.327__shadow_.0p-OELl8f6EGMwjwvIJIQ3ngXBkmaUW_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.327__shadow_.0p-OELl8f6EGMwjwvIJIQ3ngXBkmaUW_2",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+

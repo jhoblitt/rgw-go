@@ -1,0 +1,28 @@
+{
+    "name": "obj-93",
+    "instance": "",
+    "ver": {
+        "pool": 37,
+        "epoch": 94
+    },
+    "locator": "loc-93",
+    "exists": true,
+    "meta": {
+        "category": 0,
+        "size": 1024,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 1024,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "tag-93",
+    "flags": 0,
+    "pending_map": [],
+    "versioned_epoch": 0
+}
+

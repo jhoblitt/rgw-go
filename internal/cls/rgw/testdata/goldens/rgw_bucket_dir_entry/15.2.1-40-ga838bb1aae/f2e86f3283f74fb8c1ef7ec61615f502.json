@@ -1,0 +1,37 @@
+{
+    "name": "__obj1_",
+    "instance": "",
+    "ver": {
+        "pool": -1,
+        "epoch": 0
+    },
+    "locator": "_obj1_",
+    "exists": false,
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "",
+    "flags": 0,
+    "pending_map": [
+        {
+            "key": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4448.311",
+            "val": {
+                "state": 0,
+                "timestamp": "2020-04-15T21:01:12.938927Z",
+                "op": 0
+            }
+        }
+    ],
+    "versioned_epoch": 0
+}
+

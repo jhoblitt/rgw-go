@@ -1,0 +1,52 @@
+{
+    "dir": {
+        "header": {
+            "ver": 2,
+            "master_ver": 0,
+            "stats": [
+                1,
+                {
+                    "total_size": 3,
+                    "total_size_rounded": 4096,
+                    "num_entries": 1,
+                    "actual_size": 3
+                }
+            ],
+            "new_instance": {
+                "reshard_status": "not-resharding"
+            }
+        },
+        "map": [
+            "bar",
+            {
+                "name": "bar",
+                "instance": "",
+                "ver": {
+                    "pool": 368,
+                    "epoch": 184
+                },
+                "locator": "",
+                "exists": true,
+                "meta": {
+                    "category": 1,
+                    "size": 3,
+                    "mtime": "2023-08-06T11:24:26.721845Z",
+                    "etag": "37b51d194a7513e45b56f6524f2d51f2",
+                    "storage_class": "STANDARD",
+                    "owner": "testid",
+                    "owner_display_name": "M. Tester",
+                    "content_type": "",
+                    "accounted_size": 3,
+                    "user_data": "",
+                    "appendable": false
+                },
+                "tag": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4437.164109272335254655",
+                "flags": 0,
+                "pending_map": [],
+                "versioned_epoch": 0
+            }
+        ]
+    },
+    "is_truncated": 0
+}
+

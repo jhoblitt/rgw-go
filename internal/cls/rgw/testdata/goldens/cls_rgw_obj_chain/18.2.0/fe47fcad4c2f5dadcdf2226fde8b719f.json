@@ -1,0 +1,47 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__multipart_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__shadow_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.1_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__multipart_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.2",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__shadow_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.2_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__multipart_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.3",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__shadow_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.3_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.391__multipart_testobj.2~FY8mokcuYhc-pJDO_d9ihFXmphMatIF.4",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+

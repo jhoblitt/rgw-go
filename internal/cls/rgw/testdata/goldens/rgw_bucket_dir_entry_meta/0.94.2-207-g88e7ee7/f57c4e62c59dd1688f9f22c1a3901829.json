@@ -1,0 +1,14 @@
+{
+    "category": 1,
+    "size": 100,
+    "mtime": "0.000000",
+    "etag": "etag",
+    "storage_class": "STANDARD",
+    "owner": "owner",
+    "owner_display_name": "display name",
+    "content_type": "content/type",
+    "accounted_size": 0,
+    "user_data": "",
+    "appendable": false
+}
+

@@ -1,0 +1,28 @@
+{
+    "name": "_multipart_mymultipart.2~5uNEpVjXqs5f7CsUjRr0agwTdmZKgHb.6",
+    "instance": "",
+    "ver": {
+        "pool": 336,
+        "epoch": 60
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 1,
+        "size": 5242880,
+        "mtime": "2021-04-12T11:56:28.841370Z",
+        "etag": "24454fe1f80d9702a105ea4b7e62c720",
+        "storage_class": "STANDARD",
+        "owner": "testid",
+        "owner_display_name": "M. Tester",
+        "content_type": "",
+        "accounted_size": 5242880,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "_E4WbxV9VV-8BxxP9PaDyEyRcH_kxso3",
+    "flags": 0,
+    "pending_map": [],
+    "versioned_epoch": 0
+}
+

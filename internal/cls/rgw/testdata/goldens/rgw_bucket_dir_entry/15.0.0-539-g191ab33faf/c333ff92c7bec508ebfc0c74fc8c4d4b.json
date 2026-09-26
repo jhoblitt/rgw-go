@@ -1,0 +1,37 @@
+{
+    "name": "testobj",
+    "instance": "JMgtErO9POk7g4DnsC0sL.ZH0Ce.F7X",
+    "ver": {
+        "pool": 292,
+        "epoch": 721
+    },
+    "locator": "",
+    "exists": true,
+    "meta": {
+        "category": 1,
+        "size": 9,
+        "mtime": "2019-04-24T09:55:50.967404Z",
+        "etag": "928cae62314b95527918ee4a2447da01",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "application/octet-stream",
+        "accounted_size": 9,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.8512",
+    "flags": 1,
+    "pending_map": [
+        {
+            "key": "_dxcdSwdmlewcTW-BbwR57oZ4kKXP0u6",
+            "val": {
+                "state": 0,
+                "timestamp": "2019-04-24T09:55:52.532350Z",
+                "op": 1
+            }
+        }
+    ],
+    "versioned_epoch": 15
+}
+

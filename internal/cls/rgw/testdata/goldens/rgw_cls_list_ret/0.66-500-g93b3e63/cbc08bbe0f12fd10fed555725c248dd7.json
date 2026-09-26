@@ -1,0 +1,15 @@
+{
+    "dir": {
+        "header": {
+            "ver": 2,
+            "master_ver": 0,
+            "stats": [],
+            "new_instance": {
+                "reshard_status": "not-resharding"
+            }
+        },
+        "map": []
+    },
+    "is_truncated": 1
+}
+

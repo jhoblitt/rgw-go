@@ -1,0 +1,133 @@
+{
+    "header": {
+        "ver": 5,
+        "master_ver": 0,
+        "stats": [
+            1,
+            {
+                "total_size": 13,
+                "total_size_rounded": 16384,
+                "num_entries": 4,
+                "actual_size": 13
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": [
+        "bar",
+        {
+            "name": "bar",
+            "instance": "",
+            "ver": {
+                "pool": 292,
+                "epoch": 20
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 3,
+                "mtime": "2019-04-24T09:46:51.799002Z",
+                "etag": "37b51d194a7513e45b56f6524f2d51f2",
+                "storage_class": "STANDARD",
+                "owner": "s3test1",
+                "owner_display_name": "tester1",
+                "content_type": "application/octet-stream",
+                "accounted_size": 3,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.302",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "baz",
+        {
+            "name": "baz",
+            "instance": "",
+            "ver": {
+                "pool": 292,
+                "epoch": 21
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 3,
+                "mtime": "2019-04-24T09:46:51.827213Z",
+                "etag": "73feffa4b7f6bb68e44cf984c85f6e88",
+                "storage_class": "STANDARD",
+                "owner": "s3test1",
+                "owner_display_name": "tester1",
+                "content_type": "application/octet-stream",
+                "accounted_size": 3,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.303",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "foo",
+        {
+            "name": "foo",
+            "instance": "",
+            "ver": {
+                "pool": 292,
+                "epoch": 18
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 3,
+                "mtime": "2019-04-24T09:46:51.853905Z",
+                "etag": "acbd18db4cc2f85cedef654fccc4a4d8",
+                "storage_class": "STANDARD",
+                "owner": "s3test1",
+                "owner_display_name": "tester1",
+                "content_type": "application/octet-stream",
+                "accounted_size": 3,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.304",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        },
+        "quxx",
+        {
+            "name": "quxx",
+            "instance": "",
+            "ver": {
+                "pool": 292,
+                "epoch": 15
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 4,
+                "mtime": "2019-04-24T09:46:51.892694Z",
+                "etag": "cd54956c41ac561c012007f0d4e6aa8c",
+                "storage_class": "STANDARD",
+                "owner": "s3test1",
+                "owner_display_name": "tester1",
+                "content_type": "application/octet-stream",
+                "accounted_size": 4,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.305",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        }
+    ]
+}
+

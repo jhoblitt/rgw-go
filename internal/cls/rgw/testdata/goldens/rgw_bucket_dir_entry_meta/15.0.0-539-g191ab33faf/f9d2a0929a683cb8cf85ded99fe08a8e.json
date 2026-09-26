@@ -1,0 +1,14 @@
+{
+    "category": 1,
+    "size": 12,
+    "mtime": "2019-04-24T09:47:20.358286Z",
+    "etag": "8a0c9ec4967487b18edb6a69d92ec625",
+    "storage_class": "STANDARD",
+    "owner": "s3test2",
+    "owner_display_name": "tester2",
+    "content_type": "application/octet-stream",
+    "accounted_size": 12,
+    "user_data": "",
+    "appendable": false
+}
+

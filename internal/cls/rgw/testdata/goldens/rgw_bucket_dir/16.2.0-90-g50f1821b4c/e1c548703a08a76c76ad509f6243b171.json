@@ -1,0 +1,49 @@
+{
+    "header": {
+        "ver": 2,
+        "master_ver": 0,
+        "stats": [
+            1,
+            {
+                "total_size": 5,
+                "total_size_rounded": 4096,
+                "num_entries": 1,
+                "actual_size": 5
+            }
+        ],
+        "new_instance": {
+            "reshard_status": "not-resharding"
+        }
+    },
+    "map": [
+        "b/a/r",
+        {
+            "name": "b/a/r",
+            "instance": "",
+            "ver": {
+                "pool": 336,
+                "epoch": 33
+            },
+            "locator": "",
+            "exists": true,
+            "meta": {
+                "category": 1,
+                "size": 5,
+                "mtime": "2021-04-12T11:55:27.871475Z",
+                "etag": "ffde34f0909b05f8ae734574883a0f9c",
+                "storage_class": "STANDARD",
+                "owner": "testid",
+                "owner_display_name": "M. Tester",
+                "content_type": "",
+                "accounted_size": 5,
+                "user_data": "",
+                "appendable": false
+            },
+            "tag": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4400.1542",
+            "flags": 0,
+            "pending_map": [],
+            "versioned_epoch": 0
+        }
+    ]
+}
+

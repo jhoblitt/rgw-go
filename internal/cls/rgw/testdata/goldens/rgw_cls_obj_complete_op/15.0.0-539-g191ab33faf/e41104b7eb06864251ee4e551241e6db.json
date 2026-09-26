@@ -1,0 +1,32 @@
+{
+    "op": 0,
+    "name": "bar",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 292,
+        "epoch": 17
+    },
+    "meta": {
+        "category": 1,
+        "size": 3,
+        "mtime": "2019-04-24T09:46:52.159003Z",
+        "etag": "37b51d194a7513e45b56f6524f2d51f2",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "application/octet-stream",
+        "accounted_size": 3,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.308",
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "54f2466a-525e-4322-bc71-fc998e987f2f"
+        }
+    ]
+}
+

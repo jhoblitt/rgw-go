@@ -1,0 +1,24 @@
+{
+    "expiration_secs": 0,
+    "obj_info": {
+        "tag": "chain-6",
+        "chain": {
+            "objs": [
+                {
+                    "pool": "pool-6.1",
+                    "oid": "oid-6.1",
+                    "key": "key-6.1",
+                    "instance": ""
+                },
+                {
+                    "pool": "pool-6.2",
+                    "oid": "oid-6.2",
+                    "key": "key-6.2",
+                    "instance": ""
+                }
+            ]
+        },
+        "time": "1970-01-01T00:00:00.000000+0000"
+    }
+}
+

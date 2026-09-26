@@ -1,0 +1,28 @@
+{
+    "op": 0,
+    "name": "obj-1",
+    "instance": "",
+    "locator": "",
+    "ver": {
+        "pool": 73,
+        "epoch": 1
+    },
+    "meta": {
+        "category": 0,
+        "size": 1024,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 1024,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "tag-1",
+    "log_op": true,
+    "bilog_flags": 0,
+    "zones_trace": []
+}
+

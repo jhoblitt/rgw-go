@@ -1,0 +1,37 @@
+{
+    "name": "p/f-976",
+    "instance": "",
+    "ver": {
+        "pool": -1,
+        "epoch": 0
+    },
+    "locator": "loc-976",
+    "exists": false,
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "",
+    "flags": 0,
+    "pending_map": [
+        {
+            "key": "tag-976",
+            "val": {
+                "state": 0,
+                "timestamp": "2023-08-06T10:55:09.575502Z",
+                "op": 0
+            }
+        }
+    ],
+    "versioned_epoch": 0
+}
+

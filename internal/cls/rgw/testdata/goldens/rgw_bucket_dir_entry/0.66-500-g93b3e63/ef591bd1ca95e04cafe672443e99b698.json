@@ -1,0 +1,28 @@
+{
+    "name": "obj-96",
+    "instance": "",
+    "ver": {
+        "pool": -1,
+        "epoch": 0
+    },
+    "locator": "loc-96",
+    "exists": false,
+    "meta": {
+        "category": 0,
+        "size": 1024,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 1024,
+        "user_data": "",
+        "appendable": false
+    },
+    "tag": "",
+    "flags": 0,
+    "pending_map": [],
+    "versioned_epoch": 0
+}
+

@@ -1,0 +1,77 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.1_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.2",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.2_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.3",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.3_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.4",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.4_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.5",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.5_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__multipart_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.6",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.411__shadow_multipart_enc.2~eQ75ygPwq-bDTffxeL0snYYY0Sa-6iQ.6_1",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+

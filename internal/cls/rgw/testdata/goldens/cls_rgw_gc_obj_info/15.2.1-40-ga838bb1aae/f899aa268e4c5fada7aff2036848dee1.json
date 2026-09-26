@@ -1,0 +1,33 @@
+{
+    "tag": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4448.3099\u0000",
+    "chain": {
+        "objs": [
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.331__multipart_mymultipart.2~FOYTAxgUpU4DrBCulbZYBGvElhCfOg6.1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.331__shadow_mymultipart.2~FOYTAxgUpU4DrBCulbZYBGvElhCfOg6.1_1",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.331__multipart_mymultipart.2~FOYTAxgUpU4DrBCulbZYBGvElhCfOg6.2",
+                "key": "",
+                "instance": ""
+            },
+            {
+                "pool": "default.rgw.buckets.data",
+                "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.331__shadow_mymultipart.2~FOYTAxgUpU4DrBCulbZYBGvElhCfOg6.2_1",
+                "key": "",
+                "instance": ""
+            }
+        ]
+    },
+    "time": "2020-04-15T23:28:50.448470+0000"
+}
+

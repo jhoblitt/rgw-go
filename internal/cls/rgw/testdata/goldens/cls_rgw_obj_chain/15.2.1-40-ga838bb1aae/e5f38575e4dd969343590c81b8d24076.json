@@ -1,0 +1,35 @@
+{
+    "objs": [
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.328__multipart_mymultipart.2~LELpNhKu5VW4jdEWYa0G2oAVkepRJlC.1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.328__shadow_mymultipart.2~LELpNhKu5VW4jdEWYa0G2oAVkepRJlC.1_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.328__multipart_mymultipart.2~LELpNhKu5VW4jdEWYa0G2oAVkepRJlC.2",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.328__shadow_mymultipart.2~LELpNhKu5VW4jdEWYa0G2oAVkepRJlC.2_1",
+            "key": "",
+            "instance": ""
+        },
+        {
+            "pool": "default.rgw.buckets.data",
+            "oid": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.328__multipart_mymultipart.2~LELpNhKu5VW4jdEWYa0G2oAVkepRJlC.3",
+            "key": "",
+            "instance": ""
+        }
+    ]
+}
+
