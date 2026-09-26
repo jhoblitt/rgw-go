@@ -1,0 +1,115 @@
+# The integration suite and the phase 0 gate against disposable Squid and
+# Tentacle clusters (hack/cluster/). Nightly and on demand; it does not gate
+# pull requests.
+name: integration
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  cluster:
+    name: ${{ matrix.release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [squid, tentacle]
+    env:
+      RELEASE: ${{ matrix.release }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The image's AWS CLI v2 serves populate.sh; noble has no awscli package.
+      # skopeo lets up.sh resolve the newest Tentacle tag without podman search.
+      - name: Install librados headers, podman, skopeo and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends librados-dev podman skopeo jq
+          aws --version
+
+      # The cluster scripts are developed against rootful podman reached through
+      # its API socket, since the containers are privileged and on the host
+      # network. In remote mode `podman cp` writes hack/cluster/out/ as the
+      # calling user, so no later step needs sudo; the runner user is in the
+      # docker group.
+      - name: Serve rootful podman on a socket the runner user can reach
+        run: |
+          sudo mkdir -p /etc/systemd/system/podman.socket.d
+          printf '[Socket]\nSocketMode=0660\nSocketGroup=docker\n' |
+            sudo tee /etc/systemd/system/podman.socket.d/rgw-go.conf >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl restart podman.socket
+          echo "CONTAINER_HOST=unix:///run/podman/podman.sock" >> "$GITHUB_ENV"
+
+      - name: Check that podman is rootful
+        run: test "$(podman info --format '{{.Host.Security.Rootless}}')" = false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Start the cluster
+        run: make "cluster-up-${RELEASE}"
+
+      - name: Populate the cluster
+        run: make populate "RELEASE=${RELEASE}"
+
+      # make gate runs test/gate on its own, so it is left out here. The
+      # Makefile is the one home of the build tags. The label filter assumes
+      # every test package is a Ginkgo suite; a plain testing package would
+      # reject the flag.
+      - name: Integration suite
+        env:
+          RGW_GO_TEST_CEPH_CONF: ${{ github.workspace }}/hack/cluster/out/${{ matrix.release }}/ceph.conf
+        run: |
+          tags="integration,$(make -s print-go-tags)"
+          all=$(go list "-tags=${tags}" ./...)
+          mapfile -t pkgs < <(grep -Ev '/test/gate(/|$)' <<<"${all}")
+          go test "-tags=${tags}" -race -count=1 "${pkgs[@]}" -ginkgo.label-filter=integration
+
+      - name: Phase 0 gate
+        run: make gate "RELEASE=${RELEASE}"
+
+      # Collected before teardown, which removes the containers and out/. A
+      # timeout cancels the job rather than failing it. When up.sh itself fails
+      # its rollback has already removed both, after printing each role's log.
+      - name: Collect cluster diagnostics
+        if: failure() || cancelled()
+        run: |
+          dir="${RUNNER_TEMP}/diagnostics"
+          mkdir -p "${dir}"
+          if [ -d "hack/cluster/out/${RELEASE}" ]; then
+            cp -r "hack/cluster/out/${RELEASE}" "${dir}/out"
+            rm -f "${dir}/out/ceph.client.admin.keyring"
+          fi
+          for role in mon mgr osd rgw; do
+            podman logs "rgw-go-${role}" >"${dir}/rgw-go-${role}.log" 2>&1 || true
+          done
+
+      - name: Upload cluster diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cluster-${{ matrix.release }}
+          path: ${{ runner.temp }}/diagnostics
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Tear down the cluster
+        if: always()
+        run: make cluster-down
