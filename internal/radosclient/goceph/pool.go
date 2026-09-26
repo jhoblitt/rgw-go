@@ -99,9 +99,11 @@ func (s *poolState) open() (*rados.IOContext, error) {
 	return ioctx, nil
 }
 
-// closedError is what an operation on a closed Pool or Cluster returns.
-func closedError(op string) error {
-	return &radosclient.Error{Errno: int32(syscall.ENOTCONN), Op: op + ": pool is closed"}
+// closedError is what an operation on a closed Pool or Cluster returns. noun
+// names what is closed: "pool" for a pool-level refusal, "cluster" for a
+// cluster-level one.
+func closedError(op, noun string) error {
+	return &radosclient.Error{Errno: int32(syscall.ENOTCONN), Op: op + ": " + noun + " is closed"}
 }
 
 // acquire takes an I/O context for one operation, with locator set, and
@@ -111,7 +113,7 @@ func (s *poolState) acquire(op, locator string) (*handle, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nil, closedError(op)
+		return nil, closedError(op, "pool")
 	}
 	s.ops++
 	var h *handle
@@ -402,7 +404,8 @@ type watch struct {
 
 // Watch registers fn for notifications on oid. fn runs on one goroutine per
 // watch, and each notification is acknowledged with an empty payload after
-// fn returns. fn must not close the Watch.
+// fn returns. fn must not close the Watch, its Pool, or the Cluster: each
+// close waits for the dispatch goroutine that is running fn, which deadlocks.
 func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifierID uint64, payload []byte)) (radosclient.Watch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -431,7 +434,7 @@ func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifier
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nil, errors.Join(closedError(name), w.Close())
+		return nil, errors.Join(closedError(name, "pool"), w.Close())
 	}
 	s.watches[w] = struct{}{}
 	s.mu.Unlock()
@@ -474,10 +477,12 @@ func (w *watch) dispatch(fn func(notifyID, notifierID uint64, payload []byte)) {
 // returns. rados_unwatch2 cancels the watch in librados even when the OSD
 // rejects the unwatch, so after it returns no new notification is queued.
 // A callback that found the watcher before its removal blocks until its
-// event is received, so the queued ones are flushed while dispatch still
-// drains them; only then does dispatch stop and the context go back. When
-// Delete fails it leaves the watcher's channels open, which is why dispatch
-// stops on its own channel rather than on theirs.
+// event is received only when Delete fails: it then leaves the watcher's
+// channels open, which is why dispatch stops on its own channel rather than
+// on theirs. Once Delete succeeds, go-ceph closes the watcher's done
+// channel, so a blocked or late callback may take the done case instead and
+// drop its event; queued notifications may be dropped after a successful
+// Delete.
 func (w *watch) Close() error {
 	w.close.Do(func() {
 		w.err = toSeamError(opName("unwatch", w.oid), w.w.Delete())

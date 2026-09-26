@@ -142,7 +142,7 @@ func (c *cluster) begin(op string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return closedError(op)
+		return closedError(op, "cluster")
 	}
 	c.ops++
 	return nil
@@ -199,7 +199,7 @@ func (c *cluster) track(s *poolState) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return closedError("open pool " + s.name)
+		return closedError("open pool "+s.name, "cluster")
 	}
 	c.pools[s] = struct{}{}
 	return nil
