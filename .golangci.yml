@@ -1,0 +1,170 @@
+# Managed by go-conventions (references/lint.md owns the policy: why these
+# linters, the exclusions, and how to disagree with one); converge rewrites it.
+version: "2"
+
+run:
+  timeout: 5m
+  # Integration specs sit behind a build tag; the analyzers must see them.
+  build-tags:
+    - integration
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+    goimports:
+      local-prefixes:
+        - "github.com/jhoblitt/rgw-go"
+
+linters:
+  default: none
+  enable:
+    # Correctness.
+    - govet          # every go vet analyzer (fieldalignment excepted below)
+    - staticcheck    # SA/S/ST/QF; v2 folded gosimple and stylecheck in here
+    - errcheck       # unchecked errors, including type assertions and _ =
+    - errorlint      # %w wrapping; errors.Is/As over == and type switches
+    - nilerr         # returns nil after finding err != nil
+    - nilnesserr     # returns a different nil-able error than the one checked
+    - bodyclose      # http.Response.Body never closed
+    - noctx          # HTTP requests and other calls made without a context
+    - fatcontext     # contexts nested in loops or closures grow without bound
+    - copyloopvar    # pre-1.22 loop-variable copies, redundant since 1.22
+    - recvcheck      # pointer and value receivers mixed on one type
+    - ineffassign    # assignments never read
+    - unused         # dead identifiers
+    - unparam        # parameters always passed the same value or never used
+    # Modern Go.
+    - modernize      # gopls modernizers: any, min/max, slices/maps, range-over-int
+    - exptostd       # golang.org/x/exp helpers that moved into the standard library
+    - intrange       # three-clause loops that could be `for i := range n`
+    - perfsprint     # fmt.Sprintf where strconv or concatenation is the idiom
+    - usetesting     # t.TempDir, t.Setenv, t.Context over the manual forms
+    # Dependency hygiene.
+    - depguard       # banned imports; the deny list below is house policy
+    - gomoddirectives # replace/exclude/retract directives need a stated reason
+    # Style.
+    - gocritic       # opinionated diagnostics; tags selected below
+    - revive         # curated successor to golint; rules listed below
+    - misspell       # US-English spelling in comments and strings
+    - unconvert      # redundant type conversions
+    - gosec          # security patterns; G104 left to errcheck
+    # Frameworks the canon mandates.
+    - ginkgolinter   # Ginkgo/Gomega assertion shape, focus and pollution guards
+    - sloglint       # log/slog style: attrs only, static lowercase messages, snake keys
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # advisory struct packing; too noisy to gate on
+    staticcheck:
+      checks:
+        - all
+      # Ginkgo and Gomega are dot-imported by design (ST1001).
+      dot-import-whitelist:
+        - github.com/onsi/ginkgo/v2
+        - github.com/onsi/gomega
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      # Writes to the command's output streams are the program's product; a
+      # failed write to stdout or stderr has no actionable recovery.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - ifElseChain   # covered by revive's early-return shape
+        - hugeParam     # fires on any struct over 80 bytes passed by value
+    revive:
+      severity: warning
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          deny:
+            - pkg: "io/ioutil"
+              desc: "deprecated; use io and os"
+            - pkg: "math/rand$"
+              desc: "use math/rand/v2"
+            - pkg: "github.com/pkg/errors"
+              desc: "use errors and fmt.Errorf with %w"
+            - pkg: "golang.org/x/exp/slices"
+              desc: "use slices from the standard library"
+            - pkg: "golang.org/x/exp/maps"
+              desc: "use maps from the standard library"
+            - pkg: "github.com/stretchr/testify"
+              desc: "tests use Ginkgo and Gomega"
+            - pkg: "github.com/sirupsen/logrus"
+              desc: "logging is log/slog"
+            - pkg: "go.uber.org/zap"
+              desc: "logging is log/slog"
+            - pkg: "github.com/rs/zerolog"
+              desc: "logging is log/slog"
+    gosec:
+      excludes:
+        - G104   # unhandled errors; errcheck reports these more precisely
+      config:
+        global:
+          audit: true
+    misspell:
+      locale: US
+    modernize:
+      # Add an analyzer here only when it disagrees with `go fix`; the
+      # toolchain's fixer wins, and the disagreement is recorded in lint.md.
+      disable: []
+    ginkgolinter:
+      forbid-focus-container: true
+      forbid-spec-pollution: true
+      force-expect-to: true
+      validate-async-intervals: true
+    sloglint:
+      context: scope
+      static-msg: true
+      msg-style: lowercased
+      attr-only: true
+      key-naming-case: snake
+
+  exclusions:
+    generated: lax
+    rules:
+      # Specs and fixtures: style linters fire on table-driven bodies.
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+          - revive
+          - gocritic
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
