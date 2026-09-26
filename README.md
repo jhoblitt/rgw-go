@@ -1,6 +1,6 @@
 # rgw-go
 
-[![workflow-lint](https://github.com/jhoblitt/rgw-go/actions/workflows/workflow-lint.yml/badge.svg)](https://github.com/jhoblitt/rgw-go/actions/workflows/workflow-lint.yml)
+[![ci](https://github.com/jhoblitt/rgw-go/actions/workflows/ci.yml/badge.svg)](https://github.com/jhoblitt/rgw-go/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/jhoblitt/rgw-go/badge)](https://scorecard.dev/viewer/?uri=github.com/jhoblitt/rgw-go)
 
 rgw-go is an experimental reimplementation of Ceph's RADOS Gateway in Go,
