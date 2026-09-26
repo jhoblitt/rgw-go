@@ -1,0 +1,12 @@
+{
+    "name": "s3testbucket-qzci40vd700d90h6-337",
+    "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.781",
+    "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.781",
+    "tenant": "",
+    "explicit_placement": {
+        "data_pool": "",
+        "data_extra_pool": "",
+        "index_pool": ""
+    }
+}
+

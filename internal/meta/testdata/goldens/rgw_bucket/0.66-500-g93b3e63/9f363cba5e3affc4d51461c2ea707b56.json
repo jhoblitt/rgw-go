@@ -1,0 +1,12 @@
+{
+    "name": "name",
+    "marker": "marker",
+    "bucket_id": "123",
+    "tenant": "",
+    "explicit_placement": {
+        "data_pool": "pool",
+        "data_extra_pool": "",
+        "index_pool": ".index_pool"
+    }
+}
+

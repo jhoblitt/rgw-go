@@ -1,0 +1,3 @@
+rgw_user internal/meta
+rgw_bucket internal/meta
+RGWUserInfo internal/meta

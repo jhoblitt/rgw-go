@@ -1,0 +1,46 @@
+{
+    "user_id": "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234",
+    "display_name": "john.doe",
+    "email": "john.doe@example.com",
+    "suspended": 0,
+    "max_buckets": 1000,
+    "subusers": [],
+    "keys": [
+        {
+            "user": "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234",
+            "access_key": "NOPQRSTUVWXYZABCDEFG",
+            "secret_key": "nopqrstuvwxyzabcdefghijklmnabcdefghijklm",
+            "active": true,
+            "create_date": "0.000000"
+        }
+    ],
+    "swift_keys": [],
+    "caps": [],
+    "op_mask": "read, write, delete",
+    "default_placement": "",
+    "default_storage_class": "",
+    "placement_tags": [],
+    "bucket_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "user_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "temp_url_keys": [],
+    "type": "rgw",
+    "mfa_ids": [],
+    "account_id": "",
+    "path": "/",
+    "create_date": "0.000000",
+    "tags": [],
+    "group_ids": []
+}
+

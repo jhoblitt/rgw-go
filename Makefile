@@ -76,5 +76,9 @@ tidy-check: ## Fail when go mod tidy would change go.mod or go.sum
 test: ## Run every suite with the race detector
 	@for m in $(MODULES); do (cd "$$m" && go test -race -count=1 ./...) || exit 1; done
 
+.PHONY: goldens
+goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podman)
+	hack/goldens/gen.sh
+
 .PHONY: check
 check: generate-check fmt-check vet lint fix-check tidy-check test ## The local gate
