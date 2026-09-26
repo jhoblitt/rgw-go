@@ -1,3 +1,8 @@
 rgw_user internal/meta
 rgw_bucket internal/meta
 RGWUserInfo internal/meta
+rgw_pool internal/meta
+rgw_placement_rule internal/meta
+rgw_obj internal/meta
+rgw_raw_obj internal/meta
+RGWQuotaInfo internal/meta

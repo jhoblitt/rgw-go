@@ -1,0 +1,19 @@
+{
+    "bucket": {
+        "name": "s3testbucket-e40vv0d87lytp4lr-15",
+        "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.15",
+        "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.15",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "key": {
+        "name": "foo",
+        "instance": "",
+        "ns": ""
+    }
+}
+

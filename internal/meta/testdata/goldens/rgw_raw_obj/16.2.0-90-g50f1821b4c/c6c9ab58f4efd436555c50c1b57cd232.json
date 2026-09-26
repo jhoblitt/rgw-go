@@ -1,0 +1,6 @@
+{
+    "pool": "default.rgw.meta:users.uid",
+    "oid": "test",
+    "loc": ""
+}
+

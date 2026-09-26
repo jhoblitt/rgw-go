@@ -1,0 +1,19 @@
+{
+    "bucket": {
+        "name": "yournamehere-dwczux8guuu4x5mu-18",
+        "marker": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.14",
+        "bucket_id": "d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.14",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "key": {
+        "name": "foo",
+        "instance": "",
+        "ns": ""
+    }
+}
+

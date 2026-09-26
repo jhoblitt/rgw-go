@@ -1,0 +1,19 @@
+{
+    "bucket": {
+        "name": "bucket",
+        "marker": "marker",
+        "bucket_id": "10",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "pool",
+            "data_extra_pool": "",
+            "index_pool": ".index_pool"
+        }
+    },
+    "key": {
+        "name": "object",
+        "instance": "",
+        "ns": ""
+    }
+}
+

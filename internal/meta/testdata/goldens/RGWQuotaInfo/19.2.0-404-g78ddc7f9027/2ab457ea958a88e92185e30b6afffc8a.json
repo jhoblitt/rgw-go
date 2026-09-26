@@ -1,0 +1,8 @@
+{
+    "enabled": true,
+    "check_on_raw": true,
+    "max_size": 1024,
+    "max_size_kb": 1,
+    "max_objects": 1
+}
+

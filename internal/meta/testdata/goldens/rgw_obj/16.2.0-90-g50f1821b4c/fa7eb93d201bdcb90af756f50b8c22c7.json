@@ -1,0 +1,19 @@
+{
+    "bucket": {
+        "name": "yournamehere-lei6t89dwkij5eit-66",
+        "marker": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.85",
+        "bucket_id": "1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.85",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "key": {
+        "name": "0/1843",
+        "instance": "",
+        "ns": ""
+    }
+}
+
