@@ -467,38 +467,38 @@ func DecodeUserInfo(d *denc.Decoder) UserInfo {
 
 // jsonEntry is the {"key", "val"} object encode_json writes per entry of a
 // std::map or std::multimap.
-type jsonEntry[K any] struct {
-	Key K      `json:"key"`
-	Val string `json:"val"`
+type jsonEntry[K, V any] struct {
+	Key K `json:"key"`
+	Val V `json:"val"`
 }
 
 // userInfoDump is the field layout of RGWUserInfo::dump.
 type userInfoDump struct {
-	UserID              string              `json:"user_id"`
-	DisplayName         string              `json:"display_name"`
-	Email               string              `json:"email"`
-	Suspended           int                 `json:"suspended"`
-	MaxBuckets          int32               `json:"max_buckets"`
-	SubUsers            []map[string]string `json:"subusers"`
-	Keys                []map[string]any    `json:"keys"`
-	SwiftKeys           []map[string]any    `json:"swift_keys"`
-	Caps                Caps                `json:"caps"`
-	OpMask              string              `json:"op_mask"`
-	System              bool                `json:"system,omitempty"`
-	Admin               bool                `json:"admin,omitempty"`
-	DefaultPlacement    string              `json:"default_placement"`
-	DefaultStorageClass string              `json:"default_storage_class"`
-	PlacementTags       []string            `json:"placement_tags"`
-	BucketQuota         Quota               `json:"bucket_quota"`
-	UserQuota           Quota               `json:"user_quota"`
-	TempURLKeys         []jsonEntry[int32]  `json:"temp_url_keys"`
-	Type                string              `json:"type"`
-	MFAIDs              []string            `json:"mfa_ids"`
-	AccountID           string              `json:"account_id"`
-	Path                string              `json:"path"`
-	CreateDate          Time                `json:"create_date"`
-	Tags                []jsonEntry[string] `json:"tags"`
-	GroupIDs            []string            `json:"group_ids"`
+	UserID              string                      `json:"user_id"`
+	DisplayName         string                      `json:"display_name"`
+	Email               string                      `json:"email"`
+	Suspended           int                         `json:"suspended"`
+	MaxBuckets          int32                       `json:"max_buckets"`
+	SubUsers            []map[string]string         `json:"subusers"`
+	Keys                []map[string]any            `json:"keys"`
+	SwiftKeys           []map[string]any            `json:"swift_keys"`
+	Caps                Caps                        `json:"caps"`
+	OpMask              string                      `json:"op_mask"`
+	System              bool                        `json:"system,omitempty"`
+	Admin               bool                        `json:"admin,omitempty"`
+	DefaultPlacement    string                      `json:"default_placement"`
+	DefaultStorageClass string                      `json:"default_storage_class"`
+	PlacementTags       []string                    `json:"placement_tags"`
+	BucketQuota         Quota                       `json:"bucket_quota"`
+	UserQuota           Quota                       `json:"user_quota"`
+	TempURLKeys         []jsonEntry[int32, string]  `json:"temp_url_keys"`
+	Type                string                      `json:"type"`
+	MFAIDs              []string                    `json:"mfa_ids"`
+	AccountID           string                      `json:"account_id"`
+	Path                string                      `json:"path"`
+	CreateDate          Time                        `json:"create_date"`
+	Tags                []jsonEntry[string, string] `json:"tags"`
+	GroupIDs            []string                    `json:"group_ids"`
 }
 
 // MarshalJSON is RGWUserInfo::dump as Squid and Tentacle write it.
@@ -518,13 +518,13 @@ func (u UserInfo) MarshalJSON() ([]byte, error) {
 		s := u.SubUsers[name]
 		subusers = append(subusers, s.dump(user+":"+s.Name))
 	}
-	tempURLKeys := make([]jsonEntry[int32], 0, len(u.TempURLKeys))
+	tempURLKeys := make([]jsonEntry[int32, string], 0, len(u.TempURLKeys))
 	for _, k := range slices.Sorted(maps.Keys(u.TempURLKeys)) {
-		tempURLKeys = append(tempURLKeys, jsonEntry[int32]{k, u.TempURLKeys[k]})
+		tempURLKeys = append(tempURLKeys, jsonEntry[int32, string]{k, u.TempURLKeys[k]})
 	}
-	tags := make([]jsonEntry[string], 0, len(u.Tags))
+	tags := make([]jsonEntry[string, string], 0, len(u.Tags))
 	for _, t := range sortedTags(u.Tags) {
-		tags = append(tags, jsonEntry[string]{t.Key, t.Value})
+		tags = append(tags, jsonEntry[string, string]{t.Key, t.Value})
 	}
 	return json.Marshal(userInfoDump{
 		UserID:              user,

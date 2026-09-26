@@ -65,15 +65,25 @@ func (u UserID) Encode(e *denc.Encoder, _ denc.Release) {
 	e.EndStruct(f)
 }
 
+// userIDVersion is the struct version rgw_user::decode accepts, DECODE_START(2).
+const userIDVersion = 2
+
 // DecodeUserID mirrors rgw_user::decode, DECODE_START(2).
 func DecodeUserID(d *denc.Decoder) UserID {
-	h := d.BeginStruct(2)
+	h := d.BeginStruct(userIDVersion)
+	u := decodeUserIDBody(d, h)
+	d.EndStruct(h)
+	return u
+}
+
+// decodeUserIDBody reads the fields of an rgw_user whose header h has been
+// read, leaving the struct open.
+func decodeUserIDBody(d *denc.Decoder, h denc.Header) UserID {
 	var u UserID
 	u.Tenant = d.String()
 	u.ID = d.String()
 	if h.Version >= 2 {
 		u.NS = d.String()
 	}
-	d.EndStruct(h)
 	return u
 }

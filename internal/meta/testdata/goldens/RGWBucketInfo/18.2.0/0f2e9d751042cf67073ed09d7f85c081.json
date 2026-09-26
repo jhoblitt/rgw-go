@@ -1,0 +1,37 @@
+{
+    "bucket": {
+        "name": "bucket",
+        "marker": "marker",
+        "bucket_id": "10",
+        "tenant": "tenant",
+        "explicit_placement": {
+            "data_pool": "pool",
+            "data_extra_pool": "",
+            "index_pool": ".index_pool"
+        }
+    },
+    "creation_time": "0.000000",
+    "owner": "owner",
+    "flags": 1,
+    "zonegroup": "",
+    "placement_rule": "",
+    "has_instance_obj": false,
+    "quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "num_shards": 11,
+    "bi_shard_hash_type": 0,
+    "requester_pays": false,
+    "has_website": false,
+    "swift_versioning": false,
+    "swift_ver_location": "",
+    "index_type": 0,
+    "mdsearch_config": [],
+    "reshard_status": 0,
+    "new_bucket_instance_id": ""
+}
+

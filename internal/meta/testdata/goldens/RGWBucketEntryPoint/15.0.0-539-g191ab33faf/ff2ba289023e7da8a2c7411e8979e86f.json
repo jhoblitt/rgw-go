@@ -1,0 +1,18 @@
+{
+    "bucket": {
+        "name": "s3testbucket-jnpyado5wka24i92-167",
+        "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1482",
+        "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1482",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "owner": "s3test1",
+    "creation_time": "2019-04-24T10:09:43.790019Z",
+    "linked": true,
+    "has_bucket_info": false
+}
+

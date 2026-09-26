@@ -1,0 +1,18 @@
+{
+    "bucket": {
+        "name": "yournamehere-tgutyisyn8amx8hi-64",
+        "marker": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.76",
+        "bucket_id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.76",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "owner": "RGW11111111111111111",
+    "creation_time": "2024-09-29T09:56:45.147660Z",
+    "linked": true,
+    "has_bucket_info": false
+}
+

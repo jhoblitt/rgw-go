@@ -106,4 +106,16 @@ var _ = Describe("corpus goldens", func() {
 		goldentest.RoundTrip(dir, "RGWAccountInfo", squid, meta.DecodeAccountInfo,
 			func(e *denc.Encoder, v meta.AccountInfo, r denc.Release) { v.Encode(e, r) })
 	})
+	It("RGWBucketEntryPoint", func() {
+		goldentest.RoundTrip(dir, "RGWBucketEntryPoint", squid, meta.DecodeBucketEntryPoint,
+			func(e *denc.Encoder, v meta.BucketEntryPoint, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWBucketInfo", func() {
+		goldentest.RoundTrip(dir, "RGWBucketInfo", squid, meta.DecodeBucketInfo,
+			func(e *denc.Encoder, v meta.BucketInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWBucketEnt", func() {
+		goldentest.RoundTrip(dir, "RGWBucketEnt", squid, meta.DecodeBucketEnt,
+			func(e *denc.Encoder, v meta.BucketEnt, r denc.Release) { v.Encode(e, r) })
+	})
 })
