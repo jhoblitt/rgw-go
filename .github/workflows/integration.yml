@@ -32,12 +32,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # Ceph 19.2.6 and 20.2.4 create AES256KRB5 cephx keys, which noble's
+      # librados 19.2.3 cannot parse, so librados comes from download.ceph.com.
+      # Squid 19.2.6 has no noble build; a Tentacle client serves both clusters.
       # The image's AWS CLI v2 serves populate.sh; noble has no awscli package.
       # skopeo lets up.sh resolve the newest Tentacle tag without podman search.
       - name: Install librados headers, podman, skopeo and jq
+        env:
+          CEPH_KEY_FPR: 08B73419AC32B4E966C1A330E84AC2C0460F3994
         run: |
+          curl -fsSL https://download.ceph.com/keys/release.asc | gpg --dearmor >ceph.gpg
+          gpg --show-keys --with-colons ceph.gpg | grep -qx "fpr:::::::::${CEPH_KEY_FPR}:"
+          sudo install -m 0644 ceph.gpg /usr/share/keyrings/ceph.gpg && rm ceph.gpg
+          echo "deb [signed-by=/usr/share/keyrings/ceph.gpg] https://download.ceph.com/debian-20.2.4 noble main" |
+            sudo tee /etc/apt/sources.list.d/ceph.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends librados-dev podman skopeo jq
+          dpkg-query -W librados2
           aws --version
 
       # The cluster scripts are developed against rootful podman reached through
