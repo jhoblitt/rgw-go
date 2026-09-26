@@ -1,0 +1,75 @@
+# Managed by go-conventions (references/release.md owns the release contract).
+version: 2
+
+builds:
+  - id: rgw-go
+    main: ./cmd/rgw-go
+    binary: rgw-go
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # No -X: the version comes from debug.ReadBuildInfo, stamped by go build
+    # from the git tag. goreleaser's default ldflags would add harmless -X
+    # values for symbols that do not exist; they are replaced, not extended.
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+# ko rebuilds the binary from this checkout with the same build options, so
+# the image's binary carries the same VCS stamp as the archives.
+kos:
+  - id: rgw-go
+    build: rgw-go
+    repositories:
+      - ghcr.io/jhoblitt/rgw-go
+    bare: true
+    base_image: gcr.io/distroless/static:nonroot
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      - "{{ .Version }}"
+      - latest
+    sbom: spdx
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+docker_signs:
+  - cmd: cosign
+    args:
+      - sign
+      - "${artifact}"
+      - "--yes"
+    artifacts: manifests
+
+changelog:
+  use: github

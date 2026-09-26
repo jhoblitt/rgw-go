@@ -1,0 +1,71 @@
+# Managed by go-conventions (references/release.md owns the release contract;
+# the workflow hygiene this complies with is github-conventions' references/workflows.md).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# Serialized on a constant group and never cancelled mid-run: two tags pushed
+# together would otherwise race to publish the same artifacts.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Forks must not publish under the upstream name.
+    if: github.repository == 'jhoblitt/rgw-go'
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # The binary carries no -X ldflags: go build stamps the module version
+      # from the tag. Prove the checkout produces that stamp before releasing.
+      - name: Assert the tag is the version the binary reports
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          go build -o "$RUNNER_TEMP/rgw-go" ./cmd/rgw-go
+          stamped=$(go version -m "$RUNNER_TEMP/rgw-go" | awk '$1 == "mod" { print $3 }')
+          [ "$stamped" = "$TAG" ] || { echo "binary stamped '$stamped', want '$TAG'"; exit 1; }
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

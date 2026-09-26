@@ -6,6 +6,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
     groups:
       github-actions:
+        patterns: ["*"]
+  # The Go entry, from go-conventions (references/ci.md, Dependabot), which
+  # owns how it lands in .github/dependabot.yml.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-dependencies:
         patterns: ["*"]
