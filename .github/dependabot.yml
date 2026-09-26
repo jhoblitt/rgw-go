@@ -1,0 +1,11 @@
+# Managed by github-conventions (references/workflows.md); language plugins
+# append their own package-ecosystem entries below this one.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -1,0 +1,60 @@
+# Managed by github-conventions (references/workflows.md); converge rewrites it.
+name: workflow-lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # GitHub-hosted runners ship Go and shellcheck; actionlint lints run:
+      # blocks through shellcheck when it finds one on PATH.
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  pin-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Equivalent to `pinact run --check --no-api`: every `uses:` under
+      # .github/ must end in a 40-hex commit SHA. Local `./` and `docker://`
+      # refs are exempt; templates shipped under plugins/ are not scanned
+      # because they carry mutable tags on purpose (pinact pins them on copy).
+      - name: Verify every action is pinned to a full commit SHA
+        run: |
+          fail=0
+          while IFS= read -r ref; do
+            case "$ref" in
+              ./*|.|docker://*) continue ;;
+            esac
+            sha=${ref##*@}
+            if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "::error::not SHA-pinned: $ref"
+              fail=1
+            fi
+          done < <(grep -rhoE '^\s*(-\s*)?uses:\s*\S+' .github/ | sed -E 's/.*uses:\s*//')
+          [ "$fail" -eq 0 ] && echo "All action refs are SHA-pinned."
+          exit "$fail"
