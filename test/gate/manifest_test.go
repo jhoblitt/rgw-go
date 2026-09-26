@@ -1,0 +1,78 @@
+package gate_test
+
+import (
+	"os"
+	"path/filepath"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jhoblitt/rgw-go/test/gate"
+)
+
+// populated is a manifest in the shape hack/cluster/populate.sh writes.
+const populated = `{
+  "release": "squid",
+  "zone": "default",
+  "pools": {"root": ".rgw.root", "meta": "default.rgw.meta", "control": "default.rgw.control",
+    "log": "default.rgw.log", "index": "default.rgw.buckets.index",
+    "data": "default.rgw.buckets.data", "nonec": "default.rgw.buckets.non-ec"},
+  "users": [
+    {"uid": "alice", "tenant": "", "access_key": "AK1", "secret_key": "SK1"},
+    {"uid": "bob", "tenant": "t1", "access_key": "AK2", "secret_key": "SK2"}
+  ],
+  "buckets": [
+    {"name": "plain", "owner": "alice", "id": "z.1", "marker": "z.1", "num_shards": 11},
+    {"name": "tenanted", "owner": "t1$bob", "id": "z.2", "marker": "z.2", "num_shards": 11}
+  ],
+  "objects": [
+    {"bucket": "plain", "key": "small.bin", "size": 1024},
+    {"bucket": "plain", "key": "multipart.bin", "size": 20971520, "multipart": true},
+    {"bucket": "plain", "key": "meta.bin", "size": 64, "content_type": "text/plain",
+      "metadata": {"x-amz-meta-color": "blue"}}
+  ]
+}`
+
+var _ = Describe("Manifest", func() {
+	write := func(content string) string {
+		path := filepath.Join(GinkgoT().TempDir(), "manifest.json")
+		Expect(os.WriteFile(path, []byte(content), 0o600)).To(Succeed())
+		return path
+	}
+
+	It("decodes the populated manifest", func() {
+		m, err := gate.LoadManifest(write(populated))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(m.Release).To(Equal("squid"))
+		Expect(m.Pools.Data).To(Equal("default.rgw.buckets.data"))
+		Expect(m.Pools.NonEC).To(Equal("default.rgw.buckets.non-ec"))
+		Expect(m.Users[0].ID()).To(Equal("alice"))
+		Expect(m.Users[1].ID()).To(Equal("t1$bob"))
+
+		plain, ok := m.Bucket("plain")
+		Expect(ok).To(BeTrue())
+		Expect(plain.Tenant()).To(BeEmpty())
+		Expect(plain.EntryPointKey()).To(Equal("plain"))
+		Expect(plain.NumShards).To(Equal(uint32(11)))
+		tenanted, ok := m.Bucket("tenanted")
+		Expect(ok).To(BeTrue())
+		Expect(tenanted.Tenant()).To(Equal("t1"))
+		Expect(tenanted.EntryPointKey()).To(Equal("t1/tenanted"))
+		_, ok = m.Bucket("missing")
+		Expect(ok).To(BeFalse())
+
+		objs := m.ObjectsIn("plain")
+		Expect(objs).To(HaveLen(3))
+		Expect(objs[1].Multipart).To(BeTrue())
+		Expect(objs[2].ContentType).To(Equal("text/plain"))
+		Expect(objs[2].Metadata).To(HaveKeyWithValue("x-amz-meta-color", "blue"))
+		Expect(m.ObjectsIn("tenanted")).To(BeEmpty())
+	})
+
+	It("reports a missing or malformed manifest", func() {
+		_, err := gate.LoadManifest(filepath.Join(GinkgoT().TempDir(), "absent.json"))
+		Expect(err).To(MatchError(os.ErrNotExist))
+		_, err = gate.LoadManifest(write("{"))
+		Expect(err).To(MatchError(ContainSubstring("decoding")))
+	})
+})
