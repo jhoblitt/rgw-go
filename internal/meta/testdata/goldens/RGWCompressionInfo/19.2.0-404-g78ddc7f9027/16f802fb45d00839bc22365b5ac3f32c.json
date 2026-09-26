@@ -1,0 +1,12 @@
+{
+    "compression_type": "type",
+    "orig_size": 1024,
+    "blocks": [
+        {
+            "old_ofs": 0,
+            "new_ofs": 0,
+            "len": 1024
+        }
+    ]
+}
+

@@ -1,0 +1,25 @@
+{
+    "status": 0,
+    "flags": 23,
+    "data": "EwQpAQAACgqMAAAAIQAAAHMzdGVzdGJ1Y2tldC1lNDB2djBkODdseXRwNGxyLTQwNi0AAAA1NGYyNDY2YS01MjVlLTQzMjItYmM3MS1mYzk5OGU5ODdmMmYuNDM0OC40MDctAAAANTRmMjQ2NmEtNTI1ZS00MzIyLWJjNzEtZmM5OThlOTg3ZjJmLjQzNDguNDA3AAAAAAAHAAAAczN0ZXN0MQAAAAAkAAAAODUxNGYyZTgtYzU4MC00Yjk1LTk3Y2YtZWI2MzhmMDQyYWFjBTLAXAAAAAASAAAAZGVmYXVsdC1wbGFjZW1lbnQvAQMBGgAAAP////////////////////8A//////////8AAAAAAAAAAAAAAAAAAAAAAAUywFwXKkEEAAAAAAAAAAAA",
+    "xattrs": [
+        {
+            "name": "user.rgw.acl",
+            "value": {
+                "length": "AgKNAAAAAwIWAAAABwAAAHMzdGVzdDEHAAAAdGVzdGVyMQQDawAAAAEBAAAABwAAAHMzdGVzdDEPAAAAAQAAAAcAAABzM3Rlc3QxBQM6AAAAAgIEAAAAAAAAAAcAAABzM3Rlc3QxAAAAAAAAAAACAgQAAAAPAAAABwAAAHRlc3RlcjEAAAAAAAAAAAAAAAAAAAAA"
+            }
+        },
+        {
+            "name": "user.rgw.iam-policy",
+            "value": {
+                "length": "eyJWZXJzaW9uIjogIjIwMTItMTAtMTciLCAiU3RhdGVtZW50IjogW3siQWN0aW9uIjogInMzOlB1dEJ1Y2tldEFjbCIsICJSZXNvdXJjZSI6ICJhcm46YXdzOnMzOjo6czN0ZXN0YnVja2V0LWU0MHZ2MGQ4N2x5dHA0bHItNDA2IiwgIkVmZmVjdCI6ICJBbGxvdyIsICJDb25kaXRpb24iOiB7IlN0cmluZ0VxdWFscyI6IHsiczM6eC1hbXotYWNsIjogImJ1Y2tldC1vd25lci1mdWxsLWNvbnRyb2wifX0sICJQcmluY2lwYWwiOiB7IkFXUyI6ICIqIn19XX0="
+            }
+        }
+    ],
+    "rm_xattrs": [],
+    "meta": {
+        "size": 303,
+        "mtime": "2019-04-24T09:53:09.266224Z"
+    }
+}
+

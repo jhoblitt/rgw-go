@@ -1,0 +1,98 @@
+{
+    "objs": [],
+    "obj_size": 0,
+    "explicit_objs": true,
+    "head_size": 0,
+    "max_head_size": 0,
+    "prefix": "",
+    "rules": [],
+    "tail_instance": "",
+    "tail_placement": {
+        "bucket": {
+            "name": "",
+            "marker": "",
+            "bucket_id": "",
+            "tenant": "",
+            "explicit_placement": {
+                "data_pool": "",
+                "data_extra_pool": "",
+                "index_pool": ""
+            }
+        },
+        "placement_rule": ""
+    },
+    "tier_type": "",
+    "begin_iter": {
+        "part_ofs": 0,
+        "stripe_ofs": 0,
+        "ofs": 0,
+        "stripe_size": 0,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "",
+            "obj": {
+                "bucket": {
+                    "name": "",
+                    "marker": "",
+                    "bucket_id": "",
+                    "tenant": "",
+                    "explicit_placement": {
+                        "data_pool": "",
+                        "data_extra_pool": "",
+                        "index_pool": ""
+                    }
+                },
+                "key": {
+                    "name": "",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    },
+    "end_iter": {
+        "part_ofs": 0,
+        "stripe_ofs": 0,
+        "ofs": 0,
+        "stripe_size": 0,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "",
+            "obj": {
+                "bucket": {
+                    "name": "",
+                    "marker": "",
+                    "bucket_id": "",
+                    "tenant": "",
+                    "explicit_placement": {
+                        "data_pool": "",
+                        "data_extra_pool": "",
+                        "index_pool": ""
+                    }
+                },
+                "key": {
+                    "name": "",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    }
+}
+

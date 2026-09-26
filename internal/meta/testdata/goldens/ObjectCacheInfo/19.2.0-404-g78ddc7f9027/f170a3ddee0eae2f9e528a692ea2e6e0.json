@@ -1,0 +1,19 @@
+{
+    "status": 0,
+    "flags": 23,
+    "data": "JAAAADg2M2Y4OTk0LWY5NTktNDQxYS05NmY4LTI5MGZjZGYzOGNlOBcJDAEAAAAAAAAAAAAAAAAAAAAAAAANAAAAczMtdGVzdHMtbmFtZQAAAAAAAAAAAAAAACQAAAA4NjNmODk5NC1mOTU5LTQ0MWEtOTZmOC0yOTBmY2RmMzhjZTgAAAAAAAAAAAAAAAAA6AMAAAEBBAAAAAAAAAAHAAAAAAAAAAAAAAAAAwEaAAAA/////////////////////wD//////////wAAAAAAAwEaAAAA/////////////////////wD//////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAUkdXMTExMTExMTExMTExMTExMTEKAAAAL3MzLXRlc3RzL1cb+WbqDXcnAAAAAAAAAAA=",
+    "xattrs": [
+        {
+            "name": "user.rgw.user-policy",
+            "value": {
+                "length": "AQAAAAQAAABMaXN0lAAAAHsiVmVyc2lvbiI6ICIyMDEyLTEwLTE3IiwgIlN0YXRlbWVudCI6IFt7IkVmZmVjdCI6ICJEZW55IiwgIkFjdGlvbiI6ICJzMzpMaXN0QnVja2V0IiwgIlJlc291cmNlIjogImFybjphd3M6czM6Ojp5b3VybmFtZWhlcmUtM24yd3g1MW50eHNjeDVoaC00MiJ9XX0="
+            }
+        }
+    ],
+    "rm_xattrs": [],
+    "meta": {
+        "size": 314,
+        "mtime": "2024-09-29T09:18:15.793708Z"
+    }
+}
+

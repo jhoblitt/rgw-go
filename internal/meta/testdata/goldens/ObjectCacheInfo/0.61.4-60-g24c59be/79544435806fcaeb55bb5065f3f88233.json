@@ -1,0 +1,38 @@
+{
+    "status": 0,
+    "flags": 8,
+    "data": "EAAAAHRoaXMgaXMgYSBzdHJpbmc=",
+    "xattrs": [
+        {
+            "name": "x1",
+            "value": {
+                "length": "EAAAAHRoaXMgaXMgYSBzdHJpbmc="
+            }
+        },
+        {
+            "name": "x2",
+            "value": {
+                "length": "GAAAAHRoaXMgaXMgYSBhbm90aGVyIHN0cmluZw=="
+            }
+        }
+    ],
+    "rm_xattrs": [
+        {
+            "name": "r2",
+            "value": {
+                "length": "GAAAAHRoaXMgaXMgYSBhbm90aGVyIHN0cmluZw=="
+            }
+        },
+        {
+            "name": "r3",
+            "value": {
+                "length": "EAAAAHRoaXMgaXMgYSBzdHJpbmc="
+            }
+        }
+    ],
+    "meta": {
+        "size": 524288,
+        "mtime": "0.000000"
+    }
+}
+

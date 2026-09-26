@@ -1,0 +1,29 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.uid",
+        "oid": "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "QAAAADU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQWCaMBAAAAAAAAAAAAABQAAABOT1BRUlNUVVZXWFlaQUJDREVGRygAAABub3BxcnN0dXZ3eHl6YWJjZGVmZ2hpamtsbW5hYmNkZWZnaGlqa2xtCAAAAGpvaG4uZG9lFAAAAGpvaG4uZG9lQGV4YW1wbGUuY29tAAAAAAAAAABAAAAANTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNAEAAAAUAAAATk9QUVJTVFVWV1hZWkFCQ0RFRkcCAkgAAAAUAAAATk9QUVJTVFVWV1hZWkFCQ0RFRkcoAAAAbm9wcXJzdHV2d3h5emFiY2RlZmdoaWprbG1uYWJjZGVmZ2hpamtsbQAAAAAAAAAAAAAAAADoAwAAAQEEAAAAAAAAAAcAAAAAAAAAAAAAAAADARoAAAD/////////////////////AP//////////AAAAAAADARoAAAD/////////////////////AP//////////AAAAAAAAAQAAAAAAAAAAAAAAAAAAAA==",
+        "xattrs": [
+            {
+                "name": "user.rgw.user-policy",
+                "value": {
+                    "length": "AgAAABEAAABBbGxvd0FjY2Vzc1BvbGljeaYAAAB7IlZlcnNpb24iOiAiMjAxMi0xMC0xNyIsICJTdGF0ZW1lbnQiOiB7IlNpZCI6ICI5OEFCNTRDRyIsICJFZmZlY3QiOiAiQWxsb3ciLCAiQWN0aW9uIjogInMzOkxpc3RCdWNrZXQiLCAiUmVzb3VyY2UiOiAiYXJuOmF3czpzMzo6OnlvdXJuYW1laGVyZS1kcWwzenVrbmNsbW1kaHI4LTQwIn19EAAAAERlbnlBY2Nlc3NQb2xpY3mmAAAAeyJWZXJzaW9uIjogIjIwMTItMTAtMTciLCAiU3RhdGVtZW50IjogeyJTaWQiOiAiOThBQjU0Q0daIiwgIkVmZmVjdCI6ICJEZW55IiwgIkFjdGlvbiI6ICJzMzpMaXN0QnVja2V0IiwgIlJlc291cmNlIjogImFybjphd3M6czM6Ojp5b3VybmFtZWhlcmUtZHFsM3p1a25jbG1tZGhyOC00MCJ9fQ=="
+                }
+            }
+        ],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 493,
+            "mtime": "2023-08-06T11:24:16.142894Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

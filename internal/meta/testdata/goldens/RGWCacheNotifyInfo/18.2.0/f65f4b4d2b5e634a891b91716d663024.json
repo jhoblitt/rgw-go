@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": "yournamehere-r5ahkpb1ndqks8o1-291",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "CgjFAAAACgqMAAAAIQAAAHlvdXJuYW1laGVyZS1yNWFoa3BiMW5kcWtzOG8xLTI5MS0AAAA0N2VjMGMxOC1kNjliLTQzYTktYTA3Ny00YWMzZTZmNjVjOGIuNDQzOS4zMDAtAAAANDdlYzBjMTgtZDY5Yi00M2E5LWEwNzctNGFjM2U2ZjY1YzhiLjQ0MzkuMzAwAAAAAAAGAAAAdGVzdGlkATKDz2QAAAAAAgESAAAAAAAAAAYAAAB0ZXN0aWQAAAAAMoPPZDNCHyg=",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 203,
+            "mtime": "2023-08-06T11:25:38.678468Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

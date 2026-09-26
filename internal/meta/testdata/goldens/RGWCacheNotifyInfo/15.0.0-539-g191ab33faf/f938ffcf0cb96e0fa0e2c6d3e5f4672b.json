@@ -1,0 +1,22 @@
+{
+    "op": 1,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": ".bucket.meta.s3testbucket-qzci40vd700d90h6-foo-.bar:54f2466a-525e-4322-bc71-fc998e987f2f.4348.630",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 0,
+        "data": "",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 0,
+            "mtime": "0.000000"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

@@ -264,6 +264,38 @@ var _ = Describe("corpus goldens", func() {
 		goldentest.RoundTrip(dir, "RGWNameToId", squid, meta.DecodeNameToID,
 			func(e *denc.Encoder, v meta.NameToID, r denc.Release) { v.Encode(e, r) })
 	})
+	It("RGWObjManifest", func() {
+		goldentest.RoundTrip(dir, "RGWObjManifest", squid, meta.DecodeManifest,
+			func(e *denc.Encoder, v meta.Manifest, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWObjManifestPart", func() {
+		goldentest.RoundTrip(dir, "RGWObjManifestPart", squid, meta.DecodeManifestPart,
+			func(e *denc.Encoder, v meta.ManifestPart, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWObjManifestRule", func() {
+		goldentest.RoundTrip(dir, "RGWObjManifestRule", squid, meta.DecodeManifestRule,
+			func(e *denc.Encoder, v meta.ManifestRule, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWObjTier", func() {
+		squidRoundTrip("RGWObjTier", meta.DecodeObjTier,
+			func(e *denc.Encoder, v meta.ObjTier, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWCompressionInfo", func() {
+		goldentest.RoundTrip(dir, "RGWCompressionInfo", squid, meta.DecodeCompressionInfo,
+			func(e *denc.Encoder, v meta.CompressionInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWCacheNotifyInfo", func() {
+		goldentest.RoundTrip(dir, "RGWCacheNotifyInfo", squid, meta.DecodeCacheNotifyInfo,
+			func(e *denc.Encoder, v meta.CacheNotifyInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("ObjectCacheInfo", func() {
+		goldentest.RoundTrip(dir, "ObjectCacheInfo", squid, meta.DecodeObjectCacheInfo,
+			func(e *denc.Encoder, v meta.ObjectCacheInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("ObjectMetaInfo", func() {
+		goldentest.RoundTrip(dir, "ObjectMetaInfo", squid, meta.DecodeObjectMetaInfo,
+			func(e *denc.Encoder, v meta.ObjectMetaInfo, r denc.Release) { v.Encode(e, r) })
+	})
 	// One corpus object holds an unquoted non-numeric value, which
 	// JSONFormattable::dump prints bare, so its dencoder JSON does not parse:
 	// bytes are compared here and JSON in the next spec.

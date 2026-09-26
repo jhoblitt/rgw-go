@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": "yournamehere-9olp9xplyil8svro-26",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "CgjCAAAACgqJAAAAIAAAAHlvdXJuYW1laGVyZS05b2xwOXhwbHlpbDhzdnJvLTI2LAAAADEwNTFiMWRlLTNlOTQtNGM2Yy1iN2Q2LTE0NWNmNmMzNTkzMy40NDA1LjIyLAAAADEwNTFiMWRlLTNlOTQtNGM2Yy1iN2Q2LTE0NWNmNmMzNTkzMy40NDA1LjIyAAAAAAAGAAAAdGVzdGlkAQA1dGAAAAAAAgESAAAAAAAAAAYAAAB0ZXN0aWQAAAAAADV0YG3qdwU=",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 200,
+            "mtime": "2021-04-12T11:54:40.105741Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+
