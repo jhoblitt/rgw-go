@@ -53,6 +53,15 @@ ensure_user() {
 		admin user create "${args[@]}" --display-name "${uid}"
 }
 
+# A cloud-s3 tier storage class gives the zonegroup a placement tier to encode.
+# No lifecycle rule transitions to it, so radosgw never contacts the endpoint.
+admin zonegroup placement add --rgw-zonegroup default --placement-id default-placement \
+	--storage-class CLOUDTIER --tier-type cloud-s3 \
+	--tier-config endpoint=http://127.0.0.1:1,access_key=x,secret=y,target_path=rgw-go-cloud >/dev/null
+tiers=$(admin zonegroup get --rgw-zonegroup default |
+	jq '[.placement_targets[] | select(.name == "default-placement") | .tier_targets // [] | length] | add')
+[[ "${tiers}" -ge 1 ]] || die "the default zonegroup has no tier target after placement add"
+
 alice=$(ensure_user alice "")
 bob=$(ensure_user bob t1)
 
