@@ -1,0 +1,13 @@
+{
+    "caps": [
+        {
+            "type": "roles",
+            "perm": "*"
+        },
+        {
+            "type": "user-policy",
+            "perm": "*"
+        }
+    ]
+}
+
