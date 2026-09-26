@@ -1,0 +1,9 @@
+{
+    "caps": [
+        {
+            "type": "user-policy",
+            "perm": "*"
+        }
+    ]
+}
+

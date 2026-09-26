@@ -6,3 +6,8 @@ rgw_placement_rule internal/meta
 rgw_obj internal/meta
 rgw_raw_obj internal/meta
 RGWQuotaInfo internal/meta
+RGWAccessKey internal/meta
+RGWSubUser internal/meta
+RGWUserCaps internal/meta
+RGWUID internal/meta
+RGWAccountInfo internal/meta

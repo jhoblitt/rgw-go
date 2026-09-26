@@ -1,0 +1,26 @@
+{
+    "id": "account1",
+    "tenant": "tenant1",
+    "name": "name1",
+    "email": "email@example.com",
+    "quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "bucket_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "max_users": 10,
+    "max_roles": 10,
+    "max_groups": 10,
+    "max_buckets": 10,
+    "max_access_keys": 10
+}
+

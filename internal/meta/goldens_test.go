@@ -34,6 +34,16 @@ func (p placementDump) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]string{"name": p.Name, "storage_class": p.CanonicalStorageClass()})
 }
 
+// capsDump is RGWUserCaps::dump: the cap list under "caps".
+type capsDump struct {
+	Caps meta.Caps `json:"caps"`
+}
+
+// uidDump is RGWUID::dump: the id under "user_id".
+type uidDump struct {
+	UserID meta.UID `json:"user_id"`
+}
+
 // squid checks re-encodings against goldens from the v19 dencoder image.
 var squid = goldentest.Options{Release: denc.Squid}
 
@@ -69,5 +79,31 @@ var _ = Describe("corpus goldens", func() {
 	It("RGWQuotaInfo", func() {
 		goldentest.RoundTrip(dir, "RGWQuotaInfo", squid, meta.DecodeQuota,
 			func(e *denc.Encoder, v meta.Quota, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWAccessKey", func() {
+		goldentest.RoundTrip(dir, "RGWAccessKey", squid, meta.DecodeAccessKey,
+			func(e *denc.Encoder, v meta.AccessKey, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWSubUser", func() {
+		goldentest.RoundTrip(dir, "RGWSubUser", squid, meta.DecodeSubUser,
+			func(e *denc.Encoder, v meta.SubUser, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWUserCaps", func() {
+		goldentest.RoundTrip(dir, "RGWUserCaps", squid,
+			func(d *denc.Decoder) capsDump { return capsDump{meta.DecodeCaps(d)} },
+			func(e *denc.Encoder, v capsDump, r denc.Release) { v.Caps.Encode(e, r) })
+	})
+	It("RGWUserInfo", func() {
+		goldentest.RoundTrip(dir, "RGWUserInfo", squid, meta.DecodeUserInfo,
+			func(e *denc.Encoder, v meta.UserInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWUID", func() {
+		goldentest.RoundTrip(dir, "RGWUID", squid,
+			func(d *denc.Decoder) uidDump { return uidDump{meta.DecodeUID(d)} },
+			func(e *denc.Encoder, v uidDump, r denc.Release) { v.UserID.Encode(e, r) })
+	})
+	It("RGWAccountInfo", func() {
+		goldentest.RoundTrip(dir, "RGWAccountInfo", squid, meta.DecodeAccountInfo,
+			func(e *denc.Encoder, v meta.AccountInfo, r denc.Release) { v.Encode(e, r) })
 	})
 })
