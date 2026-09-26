@@ -1,0 +1,6 @@
+{
+    "STANDARD": {
+        "data_pool": "default.rgw.buckets.data"
+    }
+}
+

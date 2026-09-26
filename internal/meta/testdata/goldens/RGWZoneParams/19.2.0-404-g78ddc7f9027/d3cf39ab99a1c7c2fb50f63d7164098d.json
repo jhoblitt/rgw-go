@@ -1,0 +1,44 @@
+{
+    "id": "13eea068-6d47-4013-9fac-b87ade569a1c",
+    "name": "default",
+    "domain_root": "default.rgw.meta:root",
+    "control_pool": "default.rgw.control",
+    "gc_pool": "default.rgw.log:gc",
+    "lc_pool": "default.rgw.log:lc",
+    "log_pool": "default.rgw.log",
+    "intent_log_pool": "default.rgw.log:intent",
+    "usage_log_pool": "default.rgw.log:usage",
+    "roles_pool": "default.rgw.meta:roles",
+    "reshard_pool": "default.rgw.log:reshard",
+    "user_keys_pool": "default.rgw.meta:users.keys",
+    "user_email_pool": "default.rgw.meta:users.email",
+    "user_swift_pool": "default.rgw.meta:users.swift",
+    "user_uid_pool": "default.rgw.meta:users.uid",
+    "otp_pool": "default.rgw.otp",
+    "notif_pool": "default.rgw.log:notif",
+    "topics_pool": "default.rgw.meta:topics",
+    "account_pool": "default.rgw.meta:accounts",
+    "group_pool": "default.rgw.meta:groups",
+    "system_key": {
+        "access_key": "",
+        "secret_key": ""
+    },
+    "placement_pools": [
+        {
+            "key": "default-placement",
+            "val": {
+                "index_pool": "default.rgw.buckets.index",
+                "storage_classes": {
+                    "STANDARD": {
+                        "data_pool": "default.rgw.buckets.data"
+                    }
+                },
+                "data_extra_pool": "default.rgw.buckets.non-ec",
+                "index_type": 0,
+                "inline_data": true
+            }
+        }
+    ],
+    "realm_id": ""
+}
+

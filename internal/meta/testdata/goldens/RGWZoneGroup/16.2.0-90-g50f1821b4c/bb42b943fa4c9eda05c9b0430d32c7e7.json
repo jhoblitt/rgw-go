@@ -1,0 +1,19 @@
+{
+    "id": "",
+    "name": "",
+    "api_name": "",
+    "is_master": false,
+    "endpoints": [],
+    "hostnames": [],
+    "hostnames_s3website": [],
+    "master_zone": "",
+    "zones": [],
+    "placement_targets": [],
+    "default_placement": "",
+    "realm_id": "",
+    "sync_policy": {
+        "groups": []
+    },
+    "enabled_features": []
+}
+

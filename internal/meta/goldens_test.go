@@ -1,9 +1,11 @@
 package meta_test
 
 import (
+	"bytes"
 	"encoding/json"
 
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/denc/goldentest"
@@ -42,6 +44,106 @@ type capsDump struct {
 // uidDump is RGWUID::dump: the id under "user_id".
 type uidDump struct {
 	UserID meta.UID `json:"user_id"`
+}
+
+// JSON policy (see the package doc): where a type's dump differs between
+// releases the Go JSON follows v20.2.4's, and a field only main has appears
+// only when set, which the corpus never does. The goldens come from the v19
+// dencoder, so squidView drops the keys v20.2.4 added before comparing;
+// every other key, main-only ones included, must match.
+var postSquidKeys = map[string]bool{
+	// RGWZoneParams.
+	"restore_pool":        true,
+	"dedup_pool":          true,
+	"bucket_logging_pool": true,
+	// RGWZoneGroupPlacementTier.
+	"allow_read_through":        true,
+	"read_through_restore_days": true,
+	"restore_storage_class":     true,
+	"s3-glacier":                true,
+}
+
+// squidView renders v's JSON without postSquidKeys, at any depth.
+type squidView[T any] struct{ v T }
+
+func (s squidView[T]) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(s.v)
+	if err != nil {
+		return nil, err
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var x any
+	if err := d.Decode(&x); err != nil {
+		return nil, err
+	}
+	return json.Marshal(dropKeys(x))
+}
+
+func dropKeys(x any) any {
+	switch v := x.(type) {
+	case map[string]any:
+		for k, e := range v {
+			if postSquidKeys[k] {
+				delete(v, k)
+				continue
+			}
+			v[k] = dropKeys(e)
+		}
+	case []any:
+		for i, e := range v {
+			v[i] = dropKeys(e)
+		}
+	}
+	return x
+}
+
+// squidRoundTrip is goldentest.RoundTrip at Squid through squidView.
+func squidRoundTrip[T any](typ string, decode func(*denc.Decoder) T, encode func(*denc.Encoder, T, denc.Release)) {
+	GinkgoHelper()
+	goldentest.RoundTrip("testdata", typ, squid,
+		func(d *denc.Decoder) squidView[T] { return squidView[T]{decode(d)} },
+		func(e *denc.Encoder, v squidView[T], r denc.Release) { encode(e, v.v, r) })
+}
+
+// formattableDump is JSONFormattable::dump, which ceph-dencoder prints: each
+// node is wrapped as {"value": ...}, {"array": [...]} or {"object": {...}},
+// and inside an array the wrapper's name is dropped, as JSONFormatter drops
+// names there. The embedded form, encode_json, has no wrappers.
+type formattableDump struct{ meta.JSONFormattable }
+
+func (f formattableDump) MarshalJSON() ([]byte, error) {
+	v, _ := dumpFormattable(f.JSONFormattable)
+	return json.Marshal(v)
+}
+
+// dumpFormattable returns the section JSONFormattable::dump writes and its
+// name; an empty name means the node writes nothing.
+func dumpFormattable(j meta.JSONFormattable) (map[string]any, string) {
+	switch j.Type {
+	case meta.FormattableValue:
+		var v any = j.Value
+		if !j.Quoted {
+			v = json.RawMessage(j.Value)
+		}
+		return map[string]any{"value": v}, "value"
+	case meta.FormattableArray:
+		arr := []any{}
+		for _, e := range j.Array {
+			if inner, name := dumpFormattable(e); name != "" {
+				arr = append(arr, inner[name])
+			}
+		}
+		return map[string]any{"array": arr}, "array"
+	case meta.FormattableObject:
+		obj := map[string]any{}
+		for k, e := range j.Object {
+			obj[k], _ = dumpFormattable(e)
+		}
+		return map[string]any{"object": obj}, "object"
+	default:
+		return map[string]any{}, ""
+	}
 }
 
 // squid checks re-encodings against goldens from the v19 dencoder image.
@@ -117,5 +219,76 @@ var _ = Describe("corpus goldens", func() {
 	It("RGWBucketEnt", func() {
 		goldentest.RoundTrip(dir, "RGWBucketEnt", squid, meta.DecodeBucketEnt,
 			func(e *denc.Encoder, v meta.BucketEnt, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZoneParams", func() {
+		squidRoundTrip("RGWZoneParams", meta.DecodeZoneParams,
+			func(e *denc.Encoder, v meta.ZoneParams, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZoneGroup", func() {
+		squidRoundTrip("RGWZoneGroup", meta.DecodeZoneGroup,
+			func(e *denc.Encoder, v meta.ZoneGroup, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZone", func() {
+		goldentest.RoundTrip(dir, "RGWZone", squid, meta.DecodeZone,
+			func(e *denc.Encoder, v meta.Zone, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZonePlacementInfo", func() {
+		goldentest.RoundTrip(dir, "RGWZonePlacementInfo", squid, meta.DecodeZonePlacementInfo,
+			func(e *denc.Encoder, v meta.ZonePlacementInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZoneGroupPlacementTarget", func() {
+		squidRoundTrip("RGWZoneGroupPlacementTarget", meta.DecodeZoneGroupPlacementTarget,
+			func(e *denc.Encoder, v meta.ZoneGroupPlacementTarget, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZoneStorageClasses", func() {
+		goldentest.RoundTrip(dir, "RGWZoneStorageClasses", squid, meta.DecodeZoneStorageClasses,
+			func(e *denc.Encoder, v meta.ZoneStorageClasses, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWZoneStorageClass", func() {
+		goldentest.RoundTrip(dir, "RGWZoneStorageClass", squid, meta.DecodeZoneStorageClass,
+			func(e *denc.Encoder, v meta.ZoneStorageClass, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWRealm", func() {
+		goldentest.RoundTrip(dir, "RGWRealm", squid, meta.DecodeRealm,
+			func(e *denc.Encoder, v meta.Realm, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWPeriod", func() {
+		squidRoundTrip("RGWPeriod", meta.DecodePeriod,
+			func(e *denc.Encoder, v meta.Period, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWPeriodLatestEpochInfo", func() {
+		goldentest.RoundTrip(dir, "RGWPeriodLatestEpochInfo", squid, meta.DecodePeriodLatestEpochInfo,
+			func(e *denc.Encoder, v meta.PeriodLatestEpochInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWNameToId", func() {
+		goldentest.RoundTrip(dir, "RGWNameToId", squid, meta.DecodeNameToID,
+			func(e *denc.Encoder, v meta.NameToID, r denc.Release) { v.Encode(e, r) })
+	})
+	// One corpus object holds an unquoted non-numeric value, which
+	// JSONFormattable::dump prints bare, so its dencoder JSON does not parse:
+	// bytes are compared here and JSON in the next spec.
+	It("JSONFormattable", func() {
+		goldentest.RoundTrip(dir, "JSONFormattable", goldentest.Options{Release: denc.Squid, SkipJSON: true},
+			meta.DecodeJSONFormattable,
+			func(e *denc.Encoder, v meta.JSONFormattable, r denc.Release) { v.Encode(e, r) })
+	})
+	It("JSONFormattable JSON", func() {
+		cs, err := goldentest.Load(dir, "JSONFormattable")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cs).NotTo(BeEmpty())
+		invalid := 0
+		for _, c := range cs {
+			v := decodeWhole(c.Bin, meta.DecodeJSONFormattable)
+			if !json.Valid(c.JSON) {
+				invalid++
+				Expect(v.Quoted).To(BeFalse(), c.Name)
+				Expect(string(c.JSON)).To(ContainSubstring(`"value": `+v.Value), c.Name)
+				continue
+			}
+			got, err := json.Marshal(formattableDump{v})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(MatchJSON(c.JSON), c.Name)
+		}
+		Expect(invalid).To(Equal(1))
 	})
 })

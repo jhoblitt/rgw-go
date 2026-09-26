@@ -1,0 +1,53 @@
+{
+    "id": "",
+    "epoch": 0,
+    "predecessor_uuid": "",
+    "sync_status": [],
+    "period_map": {
+        "id": "",
+        "zonegroups": [],
+        "short_zone_ids": []
+    },
+    "master_zonegroup": "",
+    "master_zone": "",
+    "period_config": {
+        "bucket_quota": {
+            "enabled": false,
+            "check_on_raw": false,
+            "max_size": -1,
+            "max_size_kb": 0,
+            "max_objects": -1
+        },
+        "user_quota": {
+            "enabled": false,
+            "check_on_raw": false,
+            "max_size": -1,
+            "max_size_kb": 0,
+            "max_objects": -1
+        },
+        "user_ratelimit": {
+            "max_read_ops": 0,
+            "max_write_ops": 0,
+            "max_read_bytes": 0,
+            "max_write_bytes": 0,
+            "enabled": false
+        },
+        "bucket_ratelimit": {
+            "max_read_ops": 0,
+            "max_write_ops": 0,
+            "max_read_bytes": 0,
+            "max_write_bytes": 0,
+            "enabled": false
+        },
+        "anonymous_ratelimit": {
+            "max_read_ops": 0,
+            "max_write_ops": 0,
+            "max_read_bytes": 0,
+            "max_write_bytes": 0,
+            "enabled": false
+        }
+    },
+    "realm_id": "",
+    "realm_epoch": 1
+}
+

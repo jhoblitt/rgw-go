@@ -1,0 +1,48 @@
+{
+    "id": "9ee30fd1-d205-4be1-b163-da3a358a0e85",
+    "name": "default",
+    "api_name": "default",
+    "is_master": true,
+    "endpoints": [],
+    "hostnames": [],
+    "hostnames_s3website": [],
+    "master_zone": "b9d33d85-8234-4f36-92ce-fe80e2223e0d",
+    "zones": [
+        {
+            "id": "b9d33d85-8234-4f36-92ce-fe80e2223e0d",
+            "name": "default",
+            "endpoints": [],
+            "log_meta": false,
+            "log_data": false,
+            "bucket_index_max_shards": 11,
+            "read_only": false,
+            "tier_type": "",
+            "sync_from_all": true,
+            "sync_from": [],
+            "redirect_zone": "",
+            "supported_features": [
+                "notification_v2",
+                "resharding"
+            ]
+        }
+    ],
+    "placement_targets": [
+        {
+            "name": "default-placement",
+            "tags": [],
+            "storage_classes": [
+                "STANDARD"
+            ]
+        }
+    ],
+    "default_placement": "default-placement",
+    "realm_id": "",
+    "sync_policy": {
+        "groups": []
+    },
+    "enabled_features": [
+        "notification_v2",
+        "resharding"
+    ]
+}
+

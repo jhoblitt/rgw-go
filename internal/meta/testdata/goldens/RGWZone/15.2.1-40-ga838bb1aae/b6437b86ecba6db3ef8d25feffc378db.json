@@ -1,0 +1,15 @@
+{
+    "id": "d4c97fd0-2a82-4b97-8510-490394fc65e0",
+    "name": "default",
+    "endpoints": [],
+    "log_meta": false,
+    "log_data": false,
+    "bucket_index_max_shards": 11,
+    "read_only": false,
+    "tier_type": "",
+    "sync_from_all": true,
+    "sync_from": [],
+    "redirect_zone": "",
+    "supported_features": []
+}
+
