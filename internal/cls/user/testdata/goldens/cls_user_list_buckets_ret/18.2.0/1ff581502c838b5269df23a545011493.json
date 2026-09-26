@@ -1,0 +1,43 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "buck.0",
+                "marker": "mark.0",
+                "bucket_id": "bucket.id.0"
+            },
+            "size": 1,
+            "size_rounded": 2,
+            "creation_time": "3.000000",
+            "count": 4,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "buck.1",
+                "marker": "mark.1",
+                "bucket_id": "bucket.id.1"
+            },
+            "size": 2,
+            "size_rounded": 3,
+            "creation_time": "4.000000",
+            "count": 5,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "buck.2",
+                "marker": "mark.2",
+                "bucket_id": "bucket.id.2"
+            },
+            "size": 3,
+            "size_rounded": 4,
+            "creation_time": "5.000000",
+            "count": 6,
+            "user_stats_sync": true
+        }
+    ],
+    "marker": "123",
+    "truncated": true
+}
+

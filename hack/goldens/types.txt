@@ -51,3 +51,14 @@ cls_refcount_put_op internal/cls/refcount
 cls_refcount_set_op internal/cls/refcount
 cls_refcount_read_op internal/cls/refcount
 cls_refcount_read_ret internal/cls/refcount
+cls_user_header internal/cls/user
+cls_user_stats internal/cls/user
+cls_user_bucket internal/cls/user
+cls_user_bucket_entry internal/cls/user
+cls_user_set_buckets_op internal/cls/user
+cls_user_remove_bucket_op internal/cls/user
+cls_user_list_buckets_op internal/cls/user
+cls_user_list_buckets_ret internal/cls/user
+cls_user_get_header_op internal/cls/user
+cls_user_get_header_ret internal/cls/user
+cls_user_complete_stats_sync_op internal/cls/user

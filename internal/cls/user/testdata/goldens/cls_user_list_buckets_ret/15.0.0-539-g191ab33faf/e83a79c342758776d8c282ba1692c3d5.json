@@ -1,0 +1,127 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-1",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.1"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:30.271679Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-10",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.10",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.10"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:35.034659Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-2",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.2",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.2"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:32.374362Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-3",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.3",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.3"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.303365Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-4",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.4",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.4"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.394004Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-5",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.5",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.5"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.477282Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-6",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.6",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.6"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.628807Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-7",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.7",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.7"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.741689Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-8",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.8",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.8"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.868627Z",
+            "count": 0,
+            "user_stats_sync": true
+        },
+        {
+            "bucket": {
+                "name": "s3testbucket-e40vv0d87lytp4lr-9",
+                "marker": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.9",
+                "bucket_id": "54f2466a-525e-4322-bc71-fc998e987f2f.4348.9"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "2019-04-24T09:46:34.940931Z",
+            "count": 0,
+            "user_stats_sync": true
+        }
+    ],
+    "marker": "",
+    "truncated": false
+}
+

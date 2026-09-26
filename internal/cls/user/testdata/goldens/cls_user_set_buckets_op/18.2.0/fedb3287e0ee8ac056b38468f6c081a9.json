@@ -1,0 +1,19 @@
+{
+    "entries": [
+        {
+            "bucket": {
+                "name": "yournamehere-r5ahkpb1ndqks8o1-312",
+                "marker": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.325",
+                "bucket_id": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.325"
+            },
+            "size": 0,
+            "size_rounded": 0,
+            "creation_time": "0.000000",
+            "count": 0,
+            "user_stats_sync": false
+        }
+    ],
+    "add": false,
+    "time": "2023-08-06T11:25:45.458981Z"
+}
+

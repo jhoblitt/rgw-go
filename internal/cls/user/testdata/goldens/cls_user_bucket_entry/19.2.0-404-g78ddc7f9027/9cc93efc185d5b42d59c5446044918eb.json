@@ -1,0 +1,13 @@
+{
+    "bucket": {
+        "name": "buck.0",
+        "marker": "mark.0",
+        "bucket_id": "bucket.id.0"
+    },
+    "size": 1,
+    "size_rounded": 2,
+    "creation_time": "3.000000",
+    "count": 4,
+    "user_stats_sync": true
+}
+
