@@ -227,10 +227,15 @@ substitutable by `radosgw-admin bucket reshard` and
 
 Still required, and this is not optional: the reshard protocol on the
 data path. The OSD does not enforce it by itself on Squid. radosgw
-prepends a guard call to its bucket-index write operations on every
-release, and on Squid that guard fails with the busy-resharding error
-whenever the shard header's reshard status is anything other than
-not-resharding. rgw-go prepends the same guard to the same operations,
+prepends a guard call to bucket_prepare_op and bucket_complete_op,
+including the index completion manager's retry of a failed completion,
+and to the OLH ops link_olh, unlink_instance, trim_olh_log and clear_olh,
+on every release. A Tentacle radosgw also guards the dir_suggest_changes
+it sends while listing; a Squid radosgw sends that op unguarded. No
+release guards bucket_set_tag_timeout, index init, or index check and
+rebuild. On Squid the guard fails with the busy-resharding error whenever
+the shard header's reshard status is anything other than not-resharding.
+rgw-go prepends the guard exactly where radosgw of the same release does,
 and on the busy-resharding error re-reads the bucket instance's index
 layout and retries. From v20.2.0 the object class additionally enforces
 the guard on its own index writes and can answer busy-resharding even
@@ -319,11 +324,14 @@ Two Squid hazards rgw-go cannot fix, only avoid triggering: a Squid
 radosgw's listing of the queue registry never advances its paging marker,
 so a registry holding more than 1024 queue objects hangs that radosgw,
 which a newer release's sharding can reach from roughly a hundred topics
-on a shared registry; and Squid OSDs before 19.2.4 add a ten-byte
-overhead to reserved capacity on every reserve but not on commit, so a
+on a shared registry; and Squid OSDs before 19.2.4, like Tentacle OSDs
+before 20.2.3, add a ten-byte overhead per entry to reserved capacity on
+every reserve but take it back on no commit, abort or expiry, so a
 128 MB queue reaches permanent SlowDown after roughly 12.8 million
 events. The first is radosgw-side and the second OSD-side; a Rook cluster
-using persistent topics should run 19.2.4 or later.
+using persistent topics should run 19.2.4 or 20.2.3 or later. Even there
+the reserved size is not exact; see "Queue initialization and
+reservation accounting" below.
 
 Costs accepted: Rook CephBucketTopic resources with Kafka or AMQP
 endpoints reconcile, but rgw-go delivers nothing to them. On a zone
@@ -364,6 +372,24 @@ review and verified against the tree.
   shard and does not assume a cluster has transitioned. There is no
   read-path obligation: radosgw's GC defer on read has been disabled since
   before Squid.
+- **Queue initialization and reservation accounting.** The queue, GC
+  queue and 2pc queue classes share one init, which reads the queue head
+  and treats a missing or empty object, or a head that fails to decode, as
+  uninitialized; so an init on a missing object creates it, an init on an
+  initialized queue answers EEXIST, and an init on an object that is not a
+  queue overwrites its start. radosgw's GC puts a non-exclusive create, a
+  version check, the GC queue init and a version set in one op. Only the
+  notification queue's creation uses an exclusive create, which adds
+  EEXIST for an existing object that is not a queue. rgw-go issues the
+  same ops. The 2pc queue's reserved size, kept in the head, is not
+  guaranteed exact on any release. Before 19.2.4 and 20.2.3 a reserve adds
+  the size plus ten bytes per entry, while commit, abort and expiry take
+  back only the size. From those releases they take back both, and a
+  reserve recomputes the reserved size from the outstanding reservations,
+  but only for a head decoded at version 2 or lower. Those releases
+  re-encode the head at version 3 on every write, so a drifted head first rewritten by a
+  commit, abort or expiry keeps its drift for good. rgw-go never assumes
+  the reserved size equals the sum of the outstanding reservations.
 - **Class methods that both modify and return data.** Such methods, for
   example the user-stats reset in the user class and on Tentacle the OLH
   link and instance-unlink methods, return their data only when the
