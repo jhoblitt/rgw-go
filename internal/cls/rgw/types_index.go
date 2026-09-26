@@ -463,7 +463,7 @@ func encodeStats(e *denc.Encoder, m map[uint8]CategoryStats, r denc.Release) {
 // decodeStats reads the stats map. Its value has no denc traits, so C++
 // decodes it through operator[] and a repeated category keeps the last value.
 func decodeStats(d *denc.Decoder) map[uint8]CategoryStats {
-	return decodeMapLast(d, (*denc.Decoder).U8, DecodeCategoryStats)
+	return denc.DecodeMapLast(d, (*denc.Decoder).U8, DecodeCategoryStats)
 }
 
 // Dir is rgw_bucket_dir: a shard header and entries keyed by index key.
@@ -487,35 +487,9 @@ func DecodeDir(d *denc.Decoder) Dir {
 	h := d.BeginStructLegacy(2, 2, 2, 0)
 	var dir Dir
 	dir.Header = DecodeDirHeader(d)
-	dir.Entries = decodeMapLast(d, (*denc.Decoder).String, DecodeDirEntry)
+	dir.Entries = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeDirEntry)
 	d.EndStruct(h)
 	return dir
-}
-
-// decodeMapLast reads a u32 count then that many keys and values, the last
-// value for a repeated key winning. It stands for C++'s legacy decode of a
-// std::map or boost::container::flat_map whose key or value has no denc
-// traits, which assigns through operator[]; ceph-dencoder v19.2.6 and
-// v20.2.4 both show the last value for a repeated header category, dir entry
-// and usage category. A map whose key and value both have denc traits keeps
-// the first value instead, as denc.DecodeMap does. (C++ decodes a repeat into
-// the earlier value in place, so a field an old struct version leaves out
-// would keep the earlier value; no corpus or radosgw encoding repeats a key.)
-// An empty or failed decode returns nil.
-func decodeMapLast[K comparable, V any](d *denc.Decoder, decK func(*denc.Decoder) K, decV func(*denc.Decoder) V) map[K]V {
-	type kv struct {
-		k K
-		v V
-	}
-	kvs := denc.DecodeSlice(d, func(d *denc.Decoder) kv { return kv{decK(d), decV(d)} })
-	if kvs == nil {
-		return nil
-	}
-	m := make(map[K]V, len(kvs))
-	for _, p := range kvs {
-		m[p.k] = p.v
-	}
-	return m
 }
 
 // zoneLess is rgw_zone_set_entry::operator< on the string forms: by zone,

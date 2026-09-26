@@ -110,7 +110,7 @@ func (o UsageReadRet) Encode(e *denc.Encoder, r denc.Release) {
 func DecodeUsageReadRet(d *denc.Decoder) UsageReadRet {
 	h := d.BeginStruct(1)
 	var o UsageReadRet
-	o.Usage = decodeMapLast(d, DecodeUserBucket, DecodeUsageLogEntry)
+	o.Usage = denc.DecodeMapLast(d, DecodeUserBucket, DecodeUsageLogEntry)
 	o.Truncated = d.Bool()
 	o.NextIter = d.String()
 	d.EndStruct(h)

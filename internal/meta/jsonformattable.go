@@ -55,7 +55,7 @@ func DecodeJSONFormattable(d *denc.Decoder) JSONFormattable {
 	j.Type = JSONFormattableType(d.U8())
 	j.Value = d.String()
 	j.Array = denc.DecodeSlice(d, DecodeJSONFormattable)
-	j.Object = denc.DecodeMap(d, (*denc.Decoder).String, DecodeJSONFormattable)
+	j.Object = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeJSONFormattable)
 	if h.Version >= 2 {
 		j.Quoted = d.Bool()
 	} else {

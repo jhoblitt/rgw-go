@@ -111,7 +111,7 @@ func DecodePeriodMap(d *denc.Decoder) PeriodMap {
 	h := d.BeginStruct(2)
 	var m PeriodMap
 	m.ID = d.String()
-	m.ZoneGroups = denc.DecodeMap(d, (*denc.Decoder).String, DecodeZoneGroup)
+	m.ZoneGroups = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeZoneGroup)
 	m.MasterZoneGroup = d.String()
 	if h.Version >= 2 {
 		m.ShortZoneIDs = denc.DecodeMap(d, (*denc.Decoder).String, (*denc.Decoder).U32)

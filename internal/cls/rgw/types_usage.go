@@ -129,7 +129,7 @@ func DecodeUsageLogEntry(d *denc.Decoder) UsageLogEntry {
 	if h.Version < 2 {
 		u.UsageMap = map[string]UsageData{"": u.TotalUsage}
 	} else {
-		u.UsageMap = decodeMapLast(d, (*denc.Decoder).String, DecodeUsageData)
+		u.UsageMap = denc.DecodeMapLast(d, (*denc.Decoder).String, DecodeUsageData)
 	}
 	if h.Version >= 3 {
 		u.Payer = canonicalUser(d.String())
