@@ -121,6 +121,12 @@ meta=$(as_user "${alice}" s3api head-object --bucket plain --key meta.bin)
 jq -e '.ContentType == "text/plain" and .Metadata.color == "blue"' <<<"${meta}" >/dev/null ||
 	die "meta.bin lost its content type or metadata: ${meta}"
 
+# radosgw syncs a user's <user>.buckets stats only every
+# rgw_user_quota_bucket_sync_interval; sync them now so the header is
+# deterministic when populating finishes.
+admin user stats --uid alice --sync-stats >/dev/null
+admin user stats --uid bob --tenant t1 --sync-stats >/dev/null
+
 pools=$(jq -n '{
 	root: ".rgw.root", meta: "default.rgw.meta", control: "default.rgw.control",
 	log: "default.rgw.log", index: "default.rgw.buckets.index",
