@@ -1,0 +1,11 @@
+{
+    "type": {
+        "type": 0
+    },
+    "id": "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234",
+    "name": "john.doe",
+    "permission": {
+        "flags": 15
+    }
+}
+

@@ -1,0 +1,25 @@
+{
+    "acl_user_map": [
+        {
+            "user": "s3test1",
+            "acl": 1
+        }
+    ],
+    "acl_group_map": [],
+    "grant_map": [
+        {
+            "id": "s3test1",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "s3test1",
+                "name": "tester1",
+                "permission": {
+                    "flags": 1
+                }
+            }
+        }
+    ]
+}
+

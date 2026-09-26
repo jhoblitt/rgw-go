@@ -1,0 +1,25 @@
+{
+    "acl_user_map": [
+        {
+            "user": "38ddde6a-e242-4f2b-ba71-cda521fe453c",
+            "acl": 1
+        }
+    ],
+    "acl_group_map": [],
+    "grant_map": [
+        {
+            "id": "38ddde6a-e242-4f2b-ba71-cda521fe453c",
+            "grant": {
+                "type": {
+                    "type": 0
+                },
+                "id": "38ddde6a-e242-4f2b-ba71-cda521fe453c",
+                "name": "s3-tests-AltUser",
+                "permission": {
+                    "flags": 1
+                }
+            }
+        }
+    ]
+}
+
