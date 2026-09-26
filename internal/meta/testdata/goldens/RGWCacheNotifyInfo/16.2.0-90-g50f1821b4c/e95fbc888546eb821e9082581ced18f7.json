@@ -1,0 +1,22 @@
+{
+    "op": 1,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": "yournamehere-lei6t89dwkij5eit-414",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 0,
+        "data": "",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 0,
+            "mtime": "0.000000"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

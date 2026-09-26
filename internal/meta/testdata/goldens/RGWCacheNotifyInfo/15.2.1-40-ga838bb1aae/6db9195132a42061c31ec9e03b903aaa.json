@@ -1,0 +1,35 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": ".bucket.meta.yournamehere-dwczux8guuu4x5mu-27:d4c97fd0-2a82-4b97-8510-490394fc65e0.4460.23",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "FQQlAQAACgqJAAAAIAAAAHlvdXJuYW1laGVyZS1kd2N6dXg4Z3V1dTR4NW11LTI3LAAAAGQ0Yzk3ZmQwLTJhODItNGI5Ny04NTEwLTQ5MDM5NGZjNjVlMC40NDYwLjIzLAAAAGQ0Yzk3ZmQwLTJhODItNGI5Ny04NTEwLTQ5MDM5NGZjNjVlMC40NDYwLjIzAAAAAAAGAAAAdGVzdGlkAAAAACQAAABhM2I1NzRhZi01Y2Y3LTQ5MzUtYWMyYS1jMjI4ZDk0NTM0NDSjdZdeAAAAABEAAABkZWZhdWx0LXBsYWNlbWVudAADARoAAAD/////////////////////AP//////////AAsAAAAAAAAAAAAAAAAAAACjdZdeh7SyCQAAAAAAAAAAAAA=",
+        "xattrs": [
+            {
+                "name": "user.rgw.acl",
+                "value": {
+                    "length": "AgKNAAAAAwIXAAAABgAAAHRlc3RpZAkAAABNLiBUZXN0ZXIEA2oAAAABAQAAAAYAAAB0ZXN0aWQPAAAAAQAAAAYAAAB0ZXN0aWQFAzsAAAACAgQAAAAAAAAABgAAAHRlc3RpZAAAAAAAAAAAAgIEAAAADwAAAAkAAABNLiBUZXN0ZXIAAAAAAAAAAAAAAAAAAAAA"
+                }
+            },
+            {
+                "name": "user.rgw.iam-policy",
+                "value": {
+                    "length": "eyJWZXJzaW9uIjogIjIwMTItMTAtMTciLCAiU3RhdGVtZW50IjogW3siQWN0aW9uIjogInMzOlB1dE9iamVjdCIsICJQcmluY2lwYWwiOiB7IkFXUyI6ICIqIn0sICJFZmZlY3QiOiAiRGVueSIsICJSZXNvdXJjZSI6ICJhcm46YXdzOnMzOjo6eW91cm5hbWVoZXJlLWR3Y3p1eDhndXV1NHg1bXUtMjcvKiIsICJDb25kaXRpb24iOiB7IlN0cmluZ05vdEVxdWFscyI6IHsiczM6eC1hbXotc2VydmVyLXNpZGUtZW5jcnlwdGlvbiI6ICJBRVMyNTYifX19LCB7IkFjdGlvbiI6ICJzMzpQdXRPYmplY3QiLCAiUHJpbmNpcGFsIjogeyJBV1MiOiAiKiJ9LCAiRWZmZWN0IjogIkRlbnkiLCAiUmVzb3VyY2UiOiAiYXJuOmF3czpzMzo6OnlvdXJuYW1laGVyZS1kd2N6dXg4Z3V1dTR4NW11LTI3LyoiLCAiQ29uZGl0aW9uIjogeyJOdWxsIjogeyJzMzp4LWFtei1zZXJ2ZXItc2lkZS1lbmNyeXB0aW9uIjogInRydWUifX19XX0="
+                }
+            }
+        ],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 299,
+            "mtime": "2020-04-15T20:59:15.661606Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

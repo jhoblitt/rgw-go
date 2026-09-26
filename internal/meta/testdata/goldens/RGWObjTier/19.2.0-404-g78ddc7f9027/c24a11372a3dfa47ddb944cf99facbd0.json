@@ -1,0 +1,10 @@
+{
+    "name": "none",
+    "tier_placement": {
+        "tier_type": "",
+        "storage_class": "",
+        "retain_head_object": false
+    },
+    "is_multipart_upload": false
+}
+

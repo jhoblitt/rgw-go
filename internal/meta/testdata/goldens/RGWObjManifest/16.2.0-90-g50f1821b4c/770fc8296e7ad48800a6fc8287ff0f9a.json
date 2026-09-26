@@ -1,0 +1,329 @@
+{
+    "objs": [
+        524288,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        1048576,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        1572864,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        2097152,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        2621440,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        3145728,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        3670016,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        4194304,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        4718592,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        },
+        5242880,
+        {
+            "loc": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "loc_ofs": 0,
+            "size": 524288
+        }
+    ],
+    "obj_size": 5242880,
+    "explicit_objs": true,
+    "head_size": 0,
+    "max_head_size": 0,
+    "prefix": "",
+    "rules": [],
+    "tail_instance": "",
+    "tail_placement": {
+        "bucket": {
+            "name": "",
+            "marker": "",
+            "bucket_id": "",
+            "tenant": "",
+            "explicit_placement": {
+                "data_pool": "",
+                "data_extra_pool": "",
+                "index_pool": ""
+            }
+        },
+        "placement_rule": ""
+    },
+    "tier_type": "",
+    "begin_iter": {
+        "part_ofs": 0,
+        "stripe_ofs": 524288,
+        "ofs": 524288,
+        "stripe_size": 524288,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "",
+            "obj": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    },
+    "end_iter": {
+        "part_ofs": 0,
+        "stripe_ofs": 0,
+        "ofs": 5242880,
+        "stripe_size": 0,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "",
+            "obj": {
+                "bucket": {
+                    "name": "bucket",
+                    "marker": "marker_",
+                    "bucket_id": "12",
+                    "tenant": "tenant",
+                    "explicit_placement": {
+                        "data_pool": ".pool",
+                        "data_extra_pool": "",
+                        "index_pool": ".index_pool"
+                    }
+                },
+                "key": {
+                    "name": "object",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    }
+}
+

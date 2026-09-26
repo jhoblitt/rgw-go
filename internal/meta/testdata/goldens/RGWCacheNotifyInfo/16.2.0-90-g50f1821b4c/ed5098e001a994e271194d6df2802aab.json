@@ -1,0 +1,29 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": ".bucket.meta.yournamehere-lei6t89dwkij5eit-58:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.77",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "FwR6AQAACgqJAAAAIAAAAHlvdXJuYW1laGVyZS1sZWk2dDg5ZHdraWo1ZWl0LTU4LAAAADEwNTFiMWRlLTNlOTQtNGM2Yy1iN2Q2LTE0NWNmNmMzNTkzMy40NDA1Ljc3LAAAADEwNTFiMWRlLTNlOTQtNGM2Yy1iN2Q2LTE0NWNmNmMzNTkzMy40NDA1Ljc3AAAAAAAGAAAAdGVzdGlkAAAAACQAAAA5YjI3ZWYxMC0wODRiLTRjYmUtOGNkYS1lZTc5Mjc5M2ZkZDMcNXRgAAAAABEAAABkZWZhdWx0LXBsYWNlbWVudAADARoAAAD/////////////////////AP//////////AAAAAAAAAAAcNXRgskDzKQAAAAAAAAAAAAACAVQAAAAAAQEaAAAAAAAAAAAAAAABAQwAAAAAAQEFAAAACwAAAAAAAQAAAAEBKAAAAAAAAAAAAAAAAQEaAAAAAAEBEwAAAAAAAAAAAAAAAQEFAAAACwAAAAAAAAAA",
+        "xattrs": [
+            {
+                "name": "user.rgw.acl",
+                "value": {
+                    "length": "AgKNAAAAAwIXAAAABgAAAHRlc3RpZAkAAABNLiBUZXN0ZXIEA2oAAAABAQAAAAYAAAB0ZXN0aWQPAAAAAQAAAAYAAAB0ZXN0aWQFAzsAAAACAgQAAAAAAAAABgAAAHRlc3RpZAAAAAAAAAAAAgIEAAAADwAAAAkAAABNLiBUZXN0ZXIAAAAAAAAAAAAAAAAAAAAA"
+                }
+            }
+        ],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 384,
+            "mtime": "2021-04-12T11:55:08.711102Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

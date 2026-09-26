@@ -32,3 +32,11 @@ ACLOwner internal/acl
 ACLGrant internal/acl
 ACLPermission internal/acl
 ACLGranteeType internal/acl
+RGWObjManifest internal/meta
+RGWObjManifestPart internal/meta
+RGWObjManifestRule internal/meta
+RGWObjTier internal/meta
+RGWCompressionInfo internal/meta
+RGWCacheNotifyInfo internal/meta
+ObjectCacheInfo internal/meta
+ObjectMetaInfo internal/meta

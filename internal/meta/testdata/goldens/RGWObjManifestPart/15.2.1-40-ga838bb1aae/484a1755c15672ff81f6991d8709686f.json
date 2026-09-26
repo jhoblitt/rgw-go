@@ -1,0 +1,23 @@
+{
+    "loc": {
+        "bucket": {
+            "name": "bucket",
+            "marker": "marker_",
+            "bucket_id": "12",
+            "tenant": "tenant",
+            "explicit_placement": {
+                "data_pool": ".pool",
+                "data_extra_pool": "",
+                "index_pool": ".index_pool"
+            }
+        },
+        "key": {
+            "name": "object",
+            "instance": "",
+            "ns": ""
+        }
+    },
+    "loc_ofs": 524288,
+    "size": 131072
+}
+

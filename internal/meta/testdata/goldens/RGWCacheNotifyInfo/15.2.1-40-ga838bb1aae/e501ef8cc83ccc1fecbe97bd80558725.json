@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.swift",
+        "oid": "test:tester",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 7,
+        "data": "BAAAAHRlc3Q=",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 8,
+            "mtime": "2020-04-15T18:30:32.372587Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

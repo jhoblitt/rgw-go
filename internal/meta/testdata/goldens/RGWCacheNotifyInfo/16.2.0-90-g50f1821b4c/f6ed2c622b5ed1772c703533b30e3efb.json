@@ -1,0 +1,22 @@
+{
+    "op": 1,
+    "obj": {
+        "pool": "default.rgw.log",
+        "oid": "pubsub..bucket.yournamehere-lei6t89dwkij5eit-339/1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.353",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 0,
+        "data": "",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 0,
+            "mtime": "0.000000"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

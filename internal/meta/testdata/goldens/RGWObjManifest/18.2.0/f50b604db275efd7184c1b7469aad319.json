@@ -1,0 +1,109 @@
+{
+    "objs": [],
+    "obj_size": 7,
+    "explicit_objs": false,
+    "head_size": 7,
+    "max_head_size": 4194304,
+    "prefix": ".3tbONLSdv7AGb9I7Ig-nZUP6jaawQp-_",
+    "rules": [
+        {
+            "key": 0,
+            "val": {
+                "start_part_num": 0,
+                "start_ofs": 4194304,
+                "part_size": 0,
+                "stripe_max_size": 4194304,
+                "override_prefix": ""
+            }
+        }
+    ],
+    "tail_instance": "",
+    "tail_placement": {
+        "bucket": {
+            "name": "yournamehere-r5ahkpb1ndqks8o1-138",
+            "marker": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+            "bucket_id": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+            "tenant": "",
+            "explicit_placement": {
+                "data_pool": "",
+                "data_extra_pool": "",
+                "index_pool": ""
+            }
+        },
+        "placement_rule": "default-placement"
+    },
+    "tier_type": "",
+    "begin_iter": {
+        "part_ofs": 0,
+        "stripe_ofs": 0,
+        "ofs": 0,
+        "stripe_size": 7,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "default-placement",
+            "obj": {
+                "bucket": {
+                    "name": "yournamehere-r5ahkpb1ndqks8o1-138",
+                    "marker": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+                    "bucket_id": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+                    "tenant": "",
+                    "explicit_placement": {
+                        "data_pool": "",
+                        "data_extra_pool": "",
+                        "index_pool": ""
+                    }
+                },
+                "key": {
+                    "name": "key-614",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    },
+    "end_iter": {
+        "part_ofs": 4194304,
+        "stripe_ofs": 0,
+        "ofs": 7,
+        "stripe_size": 7,
+        "cur_part_id": 0,
+        "cur_stripe": 0,
+        "cur_override_prefix": "",
+        "location": {
+            "placement_rule": "default-placement",
+            "obj": {
+                "bucket": {
+                    "name": "yournamehere-r5ahkpb1ndqks8o1-138",
+                    "marker": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+                    "bucket_id": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.153",
+                    "tenant": "",
+                    "explicit_placement": {
+                        "data_pool": "",
+                        "data_extra_pool": "",
+                        "index_pool": ""
+                    }
+                },
+                "key": {
+                    "name": "key-614",
+                    "instance": "",
+                    "ns": ""
+                }
+            },
+            "raw_obj": {
+                "pool": "",
+                "oid": "",
+                "loc": ""
+            },
+            "is_raw": false
+        }
+    }
+}
+

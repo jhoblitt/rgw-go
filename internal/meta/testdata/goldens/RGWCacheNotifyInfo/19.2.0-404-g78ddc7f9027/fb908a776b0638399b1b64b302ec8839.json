@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.email",
+        "oid": "account2@ceph.com",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "FAAAAFJHVzIyMjIyMjIyMjIyMjIyMjIy",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 24,
+            "mtime": "2024-09-29T09:52:48.004134Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

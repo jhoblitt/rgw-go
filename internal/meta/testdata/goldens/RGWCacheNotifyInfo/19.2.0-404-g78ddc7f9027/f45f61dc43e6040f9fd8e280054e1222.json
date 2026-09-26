@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.uid",
+        "oid": "testid",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "BgAAAHRlc3RpZBcJpwEAAAAAAAAAAAAAFAAAADA1NTViMzU2NTRhZDE2NTZkODA0OAAAAGg3R2h4dUJMVHJsaFZVeXhTUFVLVVY4ci8yRUk0bmdxSnhEN2lCZEJZTGh3bHVOMzBKYVQzUT09CQAAAE0uIFRlc3Rlcg8AAAB0ZXN0ZXJAY2VwaC5jb20AAAAAAAAAAAYAAAB0ZXN0aWQBAAAAFAAAADA1NTViMzU2NTRhZDE2NTZkODA0BAJhAAAAFAAAADA1NTViMzU2NTRhZDE2NTZkODA0OAAAAGg3R2h4dUJMVHJsaFZVeXhTUFVLVVY4ci8yRUk0bmdxSnhEN2lCZEJZTGh3bHVOMzBKYVQzUT09AAAAAAGN9/hmBL0hKwAAAAAAAAAAAOgDAAABAQQAAAAAAAAABwAAAAAAAAAAAAAAAAMBGgAAAP////////////////////8A//////////8AAAAAAAMBGgAAAP////////////////////8A//////////8AAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAvjff4ZmyFISsAAAAAAAAAAA==",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 439,
+            "mtime": "2024-09-29T06:45:33.723926Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

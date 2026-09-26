@@ -1,0 +1,35 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:root",
+        "oid": ".bucket.meta.s3testbucket-o48gfo0base1ysw2-435:54f2466a-525e-4322-bc71-fc998e987f2f.4348.1321",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "EwQrAQAACgqOAAAAIQAAAHMzdGVzdGJ1Y2tldC1vNDhnZm8wYmFzZTF5c3cyLTQzNS4AAAA1NGYyNDY2YS01MjVlLTQzMjItYmM3MS1mYzk5OGU5ODdmMmYuNDM0OC4xMzIxLgAAADU0ZjI0NjZhLTUyNWUtNDMyMi1iYzcxLWZjOTk4ZTk4N2YyZi40MzQ4LjEzMjEAAAAAAAcAAABzM3Rlc3QxAAAAACQAAAA4NTE0ZjJlOC1jNTgwLTRiOTUtOTdjZi1lYjYzOGYwNDJhYWOBNcBcAAAAABIAAABkZWZhdWx0LXBsYWNlbWVudC8BAwEaAAAA/////////////////////wD//////////wAAAAAAAAAAAAAAAAAAAAAAgTXAXHcgSxAAAAAAAAAAAAA=",
+        "xattrs": [
+            {
+                "name": "user.rgw.acl",
+                "value": {
+                    "length": "AgKNAAAAAwIWAAAABwAAAHMzdGVzdDEHAAAAdGVzdGVyMQQDawAAAAEBAAAABwAAAHMzdGVzdDEPAAAAAQAAAAcAAABzM3Rlc3QxBQM6AAAAAgIEAAAAAAAAAAcAAABzM3Rlc3QxAAAAAAAAAAACAgQAAAAPAAAABwAAAHRlc3RlcjEAAAAAAAAAAAAAAAAAAAAA"
+                }
+            },
+            {
+                "name": "user.rgw.iam-policy",
+                "value": {
+                    "length": "eyJWZXJzaW9uIjogIjIwMTItMTAtMTciLCAiU3RhdGVtZW50IjogW3siQWN0aW9uIjogInMzOlB1dE9iamVjdCIsICJSZXNvdXJjZSI6ICJhcm46YXdzOnMzOjo6czN0ZXN0YnVja2V0LW80OGdmbzBiYXNlMXlzdzItNDM1LyoiLCAiRWZmZWN0IjogIkFsbG93IiwgIkNvbmRpdGlvbiI6IHsiU3RyaW5nRXF1YWxzIjogeyJzMzp4LWFtei1tZXRhZGF0YS1kaXJlY3RpdmUiOiAiQ09QWSJ9fSwgIlByaW5jaXBhbCI6IHsiQVdTIjogIioifX1dfQ=="
+                }
+            }
+        ],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 305,
+            "mtime": "2019-04-24T10:08:01.309089Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

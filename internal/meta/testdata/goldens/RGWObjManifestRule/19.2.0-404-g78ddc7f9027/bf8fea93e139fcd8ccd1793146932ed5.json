@@ -1,0 +1,8 @@
+{
+    "start_part_num": 0,
+    "start_ofs": 0,
+    "part_size": 524288,
+    "stripe_max_size": 536870912,
+    "override_prefix": "override_prefix"
+}
+

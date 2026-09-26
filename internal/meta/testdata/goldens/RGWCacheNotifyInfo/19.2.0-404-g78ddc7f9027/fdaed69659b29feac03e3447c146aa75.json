@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.uid",
+        "oid": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 23,
+        "data": "QAAAADAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYXCeUBAAAAAAAAAAAAABQAAABBQkNERUZHSElKS0xNTk9QUVJTVCgAAABhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5emFiY2RlZmdoaWprbG1uDgAAAHlvdXJ1c2VyaWRoZXJlDgAAAHMzQGV4YW1wbGUuY29tAAAAAAAAAABAAAAAMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZgEAAAAUAAAAQUJDREVGR0hJSktMTU5PUFFSU1QEAlEAAAAUAAAAQUJDREVGR0hJSktMTU5PUFFSU1QoAAAAYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXphYmNkZWZnaGlqa2xtbgAAAAABbiP5Zhnv7xQAAAAAAAAAAADoAwAAAQEkAAAAAgAAAAUAAAByb2xlcwMAAAALAAAAdXNlci1wb2xpY3kDAAAABwAAAAAAAAAAAAAAAAMBGgAAAP////////////////////8A//////////8AAAAAAAMBGgAAAP////////////////////8A//////////8AAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAvbiP5Zty17xQAAAAAAAAAAA==",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 559,
+            "mtime": "2024-09-29T09:52:46.351627Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+

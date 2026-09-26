@@ -1,0 +1,22 @@
+{
+    "op": 0,
+    "obj": {
+        "pool": "default.rgw.meta:users.keys",
+        "oid": "ABCDEFGHIJKLMNOPQRST",
+        "loc": ""
+    },
+    "obj_info": {
+        "status": 0,
+        "flags": 7,
+        "data": "QAAAADAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        "xattrs": [],
+        "rm_xattrs": [],
+        "meta": {
+            "size": 68,
+            "mtime": "2024-09-29T09:52:46.355233Z"
+        }
+    },
+    "ofs": 0,
+    "ns": ""
+}
+
