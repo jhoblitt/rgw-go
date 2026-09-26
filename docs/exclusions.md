@@ -434,13 +434,17 @@ index-entry methods back resharding and the instance and OLH index
 readers used by index repair, not the S3 versioning path, which uses the
 dedicated OLH methods; they are out on both sides unless an index-repair
 path in scope turns out to need them. Feature level: both decode class
-replies up to what main writes. rgw-rs encodes class requests at the
-Squid version everywhere, and rgw-go at the cluster release's version, so
-on a Squid cluster the two send identical bytes and on a Tentacle cluster
-they differ only for the few request structs Tentacle changed; the stored
-records the OSD writes are identical for both gateways regardless. For
-driver-level types, rgw-rs's adoption of the per-cluster-release encoding
-rule and no-floor decoding is pending Josh's decision on that side. The benchmark plan records
+replies up to what main writes. For driver-level types both gateways
+follow the same rule, decode every version and encode at the cluster
+release's version, adopted for rgw-rs on 2026-09-25, so on Tentacle as on
+Squid they write identical bytes. Both detect the release from the OSD
+map's required-OSD-release field, so they agree even during a rolling OSD
+upgrade, when that field lags the newest daemon until the operator raises
+it. For class requests rgw-rs sends Squid-version shapes today and adds
+release-selected Tentacle shapes in a later package, so on a Tentacle
+cluster the two differ only for the few request structs Tentacle changed
+until then; the stored records the OSD writes are identical for both
+gateways regardless. The benchmark plan records
 transport as a variable and runs all three gateways with the same parity
 settings: notifications off, MFA off, SSE off, D3N off, dynamic
 resharding off, the same cache setting, the same shard count and stripe
