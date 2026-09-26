@@ -1,0 +1,10 @@
+{
+    "index_pool": "rgw.buckets.index",
+    "storage_classes": {
+        "STANDARD": {}
+    },
+    "data_extra_pool": "rgw.buckets.non-ec",
+    "index_type": 0,
+    "inline_data": false
+}
+

@@ -14,3 +14,15 @@ RGWAccountInfo internal/meta
 RGWBucketEntryPoint internal/meta
 RGWBucketInfo internal/meta
 RGWBucketEnt internal/meta
+RGWZoneParams internal/meta
+RGWZoneGroup internal/meta
+RGWZone internal/meta
+RGWZonePlacementInfo internal/meta
+RGWZoneGroupPlacementTarget internal/meta
+RGWZoneStorageClasses internal/meta
+RGWZoneStorageClass internal/meta
+RGWRealm internal/meta
+RGWPeriod internal/meta
+RGWPeriodLatestEpochInfo internal/meta
+RGWNameToId internal/meta
+JSONFormattable internal/meta

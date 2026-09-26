@@ -12,6 +12,7 @@ import (
 
 // AccessKey is RGWAccessKey, an S3 or Swift credential. Its JSON form is
 // RGWAccessKey::dump; RGWUserInfo renders keys differently, naming the owner.
+// The zero value is inactive; NewAccessKey gives the C++ default, active.
 type AccessKey struct {
 	ID        string `json:"access_key"`
 	Secret    string `json:"secret_key"`
@@ -19,6 +20,10 @@ type AccessKey struct {
 	Active    bool   `json:"active"`
 	CreatedAt Time   `json:"create_date"`
 }
+
+// NewAccessKey returns the value RGWAccessKey's member initializers give:
+// an active key with no id or secret.
+func NewAccessKey() AccessKey { return AccessKey{Active: true} }
 
 // Encode mirrors RGWAccessKey::encode, ENCODE_START(4, 2).
 func (k AccessKey) Encode(e *denc.Encoder, _ denc.Release) {

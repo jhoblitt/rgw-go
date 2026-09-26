@@ -1,0 +1,29 @@
+{
+    "id": "",
+    "name": "",
+    "domain_root": "",
+    "control_pool": "",
+    "gc_pool": "",
+    "lc_pool": "",
+    "log_pool": "",
+    "intent_log_pool": "",
+    "usage_log_pool": "",
+    "roles_pool": "",
+    "reshard_pool": "",
+    "user_keys_pool": "",
+    "user_email_pool": "",
+    "user_swift_pool": "",
+    "user_uid_pool": "",
+    "otp_pool": "",
+    "notif_pool": "",
+    "topics_pool": ".rgw.meta:topics",
+    "account_pool": ".rgw.meta:accounts",
+    "group_pool": ".rgw.meta:groups",
+    "system_key": {
+        "access_key": "",
+        "secret_key": ""
+    },
+    "placement_pools": [],
+    "realm_id": ""
+}
+

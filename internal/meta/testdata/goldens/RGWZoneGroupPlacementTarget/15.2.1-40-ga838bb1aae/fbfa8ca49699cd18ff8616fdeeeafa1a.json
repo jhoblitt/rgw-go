@@ -1,0 +1,8 @@
+{
+    "name": "default-placement",
+    "tags": [],
+    "storage_classes": [
+        "STANDARD"
+    ]
+}
+

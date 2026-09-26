@@ -1,0 +1,33 @@
+{
+    "name": "target",
+    "tags": [
+        "tag1",
+        "tag2"
+    ],
+    "storage_classes": [
+        "STANDARD_IA"
+    ],
+    "tier_targets": [
+        {
+            "key": "cloud-s3",
+            "val": {
+                "tier_type": "cloud-s3",
+                "storage_class": "STANDARD",
+                "retain_head_object": false,
+                "s3": {
+                    "endpoint": "",
+                    "access_key": "",
+                    "secret": "",
+                    "region": "",
+                    "host_style": "path",
+                    "target_storage_class": "",
+                    "target_path": "",
+                    "acl_mappings": [],
+                    "multipart_sync_threshold": 33554432,
+                    "multipart_min_part_size": 33554432
+                }
+            }
+        }
+    ]
+}
+

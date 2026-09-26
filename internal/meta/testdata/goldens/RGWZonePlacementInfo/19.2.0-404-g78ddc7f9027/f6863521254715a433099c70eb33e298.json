@@ -1,0 +1,10 @@
+{
+    "index_pool": "",
+    "storage_classes": {
+        "STANDARD": {}
+    },
+    "data_extra_pool": "",
+    "index_type": 0,
+    "inline_data": true
+}
+

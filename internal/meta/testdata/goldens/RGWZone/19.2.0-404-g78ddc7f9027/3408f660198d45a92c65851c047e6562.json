@@ -1,0 +1,18 @@
+{
+    "id": "13eea068-6d47-4013-9fac-b87ade569a1c",
+    "name": "default",
+    "endpoints": [],
+    "log_meta": false,
+    "log_data": false,
+    "bucket_index_max_shards": 11,
+    "read_only": false,
+    "tier_type": "",
+    "sync_from_all": true,
+    "sync_from": [],
+    "redirect_zone": "",
+    "supported_features": [
+        "notification_v2",
+        "resharding"
+    ]
+}
+

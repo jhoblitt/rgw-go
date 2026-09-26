@@ -1,0 +1,15 @@
+{
+    "id": "",
+    "name": "",
+    "endpoints": [],
+    "log_meta": false,
+    "log_data": false,
+    "bucket_index_max_shards": 0,
+    "read_only": false,
+    "tier_type": "",
+    "sync_from_all": true,
+    "sync_from": [],
+    "redirect_zone": "",
+    "supported_features": []
+}
+
