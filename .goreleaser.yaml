@@ -5,10 +5,15 @@ builds:
   - id: rgw-go
     main: ./cmd/rgw-go
     binary: rgw-go
+    # TODO: when cmd/rgw-go imports internal/radosclient/goceph, the build
+    # needs cgo and librados, so CGO_ENABLED=0 and the darwin and windows
+    # targets below must change.
     env:
       - CGO_ENABLED=0
     flags:
       - -trimpath
+      # Keep in step with GO_TAGS in the Makefile.
+      - -tags=ceph_preview
     # No -X: the version comes from debug.ReadBuildInfo, stamped by go build
     # from the git tag. goreleaser's default ldflags would add harmless -X
     # values for symbols that do not exist; they are replaced, not extended.

@@ -4,9 +4,11 @@ version: "2"
 
 run:
   timeout: 5m
-  # Integration specs sit behind a build tag; the analyzers must see them.
+  # Integration specs sit behind a build tag, and the go-ceph APIs rgw-go uses
+  # behind ceph_preview; the analyzers must see both.
   build-tags:
     - integration
+    - ceph_preview
 
 formatters:
   enable:
@@ -130,6 +132,11 @@ linters:
               desc: "logging is log/slog"
             - pkg: "github.com/rs/zerolog"
               desc: "logging is log/slog"
+    gomoddirectives:
+      # go-ceph comes from the jhoblitt/go-ceph fork until its async
+      # completions and op steps land upstream.
+      replace-allow-list:
+        - github.com/ceph/go-ceph
     gosec:
       excludes:
         - G104   # unhandled errors; errcheck reports these more precisely

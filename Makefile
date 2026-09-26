@@ -4,6 +4,9 @@
 GOLANGCI_LINT_VERSION ?= v2.13.2
 # Module directories, relative to this file; a single-module repo uses ".".
 MODULES ?= .
+# go-ceph's async completions and op steps rgw-go uses sit behind ceph_preview.
+# A comma-separated list, as go build -tags takes it.
+GO_TAGS ?= ceph_preview
 GOBIN ?= $(shell go env GOPATH)/bin
 
 .DEFAULT_GOAL := help
@@ -17,6 +20,10 @@ help: ## Print this help message
 print-golangci-version: ## Print the pinned golangci-lint version (CI reads this)
 	@echo $(GOLANGCI_LINT_VERSION)
 
+.PHONY: print-go-tags
+print-go-tags: ## Print the build tags every go command takes (CI reads this)
+	@echo $(GO_TAGS)
+
 .PHONY: tools
 tools: ## Install the pinned golangci-lint into GOBIN
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
@@ -24,11 +31,11 @@ tools: ## Install the pinned golangci-lint into GOBIN
 
 .PHONY: build
 build: ## Compile every package
-	@for m in $(MODULES); do (cd "$$m" && go build ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go build "-tags=$(GO_TAGS)" ./...) || exit 1; done
 
 .PHONY: generate
 generate: ## Run go generate (counterfeiter fakes and the like)
-	@for m in $(MODULES); do (cd "$$m" && go generate ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go generate "-tags=$(GO_TAGS)" ./...) || exit 1; done
 
 .PHONY: generate-check
 generate-check: generate ## Fail when go generate changes a tracked file
@@ -47,7 +54,7 @@ fmt-check: ## Fail when formatting would change a file
 
 .PHONY: vet
 vet: ## go vet
-	@for m in $(MODULES); do (cd "$$m" && go vet ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go vet "-tags=$(GO_TAGS)" ./...) || exit 1; done
 
 .PHONY: lint
 lint: ## golangci-lint run
@@ -55,12 +62,12 @@ lint: ## golangci-lint run
 
 .PHONY: fix
 fix: ## Apply the go fix modernizers
-	@for m in $(MODULES); do (cd "$$m" && go fix ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go fix "-tags=$(GO_TAGS)" ./...) || exit 1; done
 
 .PHONY: fix-check
 fix-check: ## Fail when go fix would change a file
 	@for m in $(MODULES); do \
-	  out=$$(cd "$$m" && go fix -diff ./...) || exit 1; \
+	  out=$$(cd "$$m" && go fix "-tags=$(GO_TAGS)" -diff ./...) || exit 1; \
 	  if [ -n "$$out" ]; then printf '%s\n' "$$out"; echo "go fix needed in $$m"; exit 1; fi; \
 	done
 
@@ -74,7 +81,7 @@ tidy-check: ## Fail when go mod tidy would change go.mod or go.sum
 
 .PHONY: test
 test: ## Run every suite with the race detector
-	@for m in $(MODULES); do (cd "$$m" && go test -race -count=1 ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go test "-tags=$(GO_TAGS)" -race -count=1 ./...) || exit 1; done
 
 .PHONY: goldens
 goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podman)
