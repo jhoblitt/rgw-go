@@ -423,6 +423,20 @@ review and verified against the tree.
   rgw/admin package, signs with the unsigned-payload hash and never sends
   the header, so it works against radosgw only because of that fallback.
   rgw-rs's spike chose AWS's behavior; rgw-go must not.
+- **Some bucket sub-records are carried opaque in phase 0.**
+  RGWBucketInfo's website configuration, object-lock configuration and
+  sync policy are kept as the encoded bytes radosgw wrote and written back
+  unchanged; the compat check of each is still applied. This keeps them
+  byte-exact by construction, with one known exception until they are
+  modelled: radosgw re-encodes an old v1 website configuration as v2 when
+  it rewrites the bucket, while rgw-go writes the v1 bytes back. The phase
+  that serves website, object lock or bucket sync policy models them.
+- **Zonegroup and period JSON with sync policy groups is not rendered.** The
+  zonegroup's and period's sync policy is also kept opaque, and rgw-go
+  refuses to render their JSON when a sync policy holds groups. Rook creates
+  no sync policies on a single-site store, and multisite is excluded, so a
+  Rook-managed cluster is not affected; an operator who ran
+  `radosgw-admin sync group create` would be.
 - **radosgw does not key class request shapes on the cluster release;
   rgw-go does, and that is stricter.** Request-struct bumps keep their
   compat version at 1, so a newer radosgw sends the newest shape

@@ -54,7 +54,9 @@ finds a new limit, and update the status when one is fixed or measured.
   `LIBRADOS_OPERATION_RETURNVEC`.
 - **Status:** worked around by the design's read-op route. It depends on the
   OSD accepting a modifying method in a read op, which Task 12's fix round is
-  proving with an integration spec.
+  proving with an integration spec. Confirmed in Task 12: cls hello
+  write_return_data run in a ReturnVec ReadOp returns its output and its
+  xattr persists.
 
 ### The locator is per I/O context, not per operation
 
@@ -98,6 +100,33 @@ finds a new limit, and update the status when one is fixed or measured.
   config must change once `cmd/rgw-go` imports the client. CI installs
   librados-dev. Local sandboxed builds need `CCACHE_DISABLE=1`.
 
+## RADOS semantics that shape the client
+
+These come from the OSD, not from cgo, so a pure-Go client has them too.
+
+### A read in the same operation sees the object as it was before the operation
+
+- **Evidence:** a ReadOp can run a modifying class method with RETURNVEC and
+  the change persists, but a later read step in the same op returns the
+  pre-op value (replicated pools read attrs from the object store;
+  PrimaryLogPG getattr_maybe_cache). Class clients therefore rely on a
+  method's own output, never on reading back its effect.
+- **Status:** found in Task 12, confirmed on Squid and Tentacle.
+
+### Two modifying class methods in one operation both see the pre-op state
+
+- **Evidence:** the later one's write wins, e.g. two rgw_gc queue enqueues in
+  one op keep only the second entry.
+- **Status:** found in Task 14 (gc), confirmed on Squid.
+
+### A class method run in a read operation leaves the object's mtime unchanged
+
+- **Evidence:** radosgw runs reset_user_stats2 in an ObjectWriteOperation;
+  rgw-go runs it in a ReturnVec ReadOp so it can return data, and a read op
+  carries no mtime (PrimaryLogPG.cc). Harmless today because nothing reads
+  `<user>.buckets`' mtime.
+- **Status:** found in Task 14 (user) review.
+
 ## Binding
 
 | Limitation | Found | Status |
@@ -106,10 +135,12 @@ finds a new limit, and update the status when one is fixed or measured.
 | The same unguarded `&b[0]` in `IOContext.WriteFull`, `Append`, `GetXattr`, `SetXattr`, the ioctx buffer loops, the striper and `Checksum` | Fork follow-up | Open; rgw-go uses only the op builders |
 | `ReadOp.Operate` reported a positive return as an error, breaking CmpXattr guards and discarding later steps' results | Task 11 review | Fixed in fork commit 15b021a |
 | `rados_read_op_stat2` needs Reef or later and was not version-gated | Task 11 review | Fixed |
-| No async write with an mtime (`rados_aio_write_op_operate2` unbound), so mtime writes fall back to a blocking call | Task 12 review | Fork follow-up in progress |
-| The object-list iterator drops the locator (`rados_nobjects_list_next2` unbound) | Task 12 review | Fork follow-up in progress |
+| No async write with an mtime (`rados_aio_write_op_operate2` unbound), so mtime writes fall back to a blocking call | Task 12 review | Fixed in fork commit 0478f8c (now dd2812c after trailer rewrite): `WriteOp.OperateAsyncWithMtime`, Reef or later |
+| The object-list iterator drops the locator (`rados_nobjects_list_next2` unbound) | Task 12 review | Fixed in the fork: `Iter.Locator()` (dd2812c) |
 | `rados_aio_cancel` is unbound | Registry audit | Open |
 | With several failing steps, the op-level errno is picked from a Go map, so it varies between runs | Task 12 review | Worked around in rgw-go by preferring per-step rvals |
-| A failed unwatch removes the watcher but never closes its channels, leaking the dispatch goroutine | Task 12 review | Worked around in rgw-go; fork fix open |
+| A failed unwatch removes the watcher but never closes its channels, leaking the dispatch goroutine | Task 12 review | Worked around in rgw-go (watch teardown stops dispatch on its own channel); fork fix open |
 | `OmapCmp` bound to `omap_cmp`, which truncates keys at a NUL byte | Task 11 | Fixed: binds `omap_cmp2` |
 | Exec-step output parameters lived in Go memory written after the call returned | Task 11 ruling | Fixed: C-allocated |
+| After a successful unwatch, a watch callback that looked the watcher up before `Delete` can reach its `select` after `done` and `events` are closed and pick the send on the closed channel, which panics on a librados thread (go-ceph watcher.go:355-358); fix: close(done), rados_watch_flush, then close the channels | Task 12 review | Open (fork, next batch) |
+| (rgw-go seam, not go-ceph) `radosclient.ExecResult` reports a positive class return as success but does not surface the value | Task 12 | Open; add an accessor if a class client needs the value |
