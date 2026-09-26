@@ -7,10 +7,12 @@ one memstore OSD and a radosgw serving S3 on `127.0.0.1:7480`, all from
 ```sh
 make cluster-up-squid          # quay.io/ceph/ceph:v19.2.6
 make populate RELEASE=squid
+make gate RELEASE=squid        # the phase 0 gate, test/gate/
 make cluster-down
 
 make cluster-up-tentacle       # newest v20.2.* tag, resolved at startup
 make populate RELEASE=tentacle
+make gate RELEASE=tentacle     # the phase 0 gate, test/gate/
 make cluster-down
 ```
 

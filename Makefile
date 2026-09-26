@@ -110,3 +110,10 @@ cluster-down: ## Remove the disposable clusters, their volumes and output
 populate: ## Write the fixed data set through the radosgw (RELEASE=squid|tentacle)
 	@test -n "$(RELEASE)" || { echo "populate needs RELEASE=squid or RELEASE=tentacle"; exit 1; }
 	hack/cluster/populate.sh $(RELEASE)
+
+.PHONY: gate
+gate: ## Run the phase 0 gate against the populated cluster (RELEASE=squid|tentacle)
+	@test -n "$(RELEASE)" || { echo "gate needs RELEASE=squid or RELEASE=tentacle"; exit 1; }
+	RGW_GO_TEST_CEPH_CONF=$(CURDIR)/hack/cluster/out/$(RELEASE)/ceph.conf \
+	RGW_GO_TEST_MANIFEST=$(CURDIR)/hack/cluster/out/$(RELEASE)/manifest.json \
+	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v
