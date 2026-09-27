@@ -15,6 +15,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cls/gc"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
@@ -56,16 +57,13 @@ func logPool(conf string) string {
 	return m.Pools.Log
 }
 
-// decodeObjVersion decodes obj_version (1,1) from the cls_version xattr.
-func decodeObjVersion(b []byte) uint64 {
+// decodeObjVersion decodes the cls_version xattr.
+func decodeObjVersion(b []byte) version.ObjVersion {
 	GinkgoHelper()
 	d := denc.NewDecoder(b)
-	h := d.BeginStruct(1)
-	ver := d.U64()
-	_ = d.String() // tag
-	d.EndStruct(h)
+	v := version.DecodeObjVersion(d)
 	Expect(d.Err()).NotTo(HaveOccurred())
-	return ver
+	return v
 }
 
 var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
@@ -112,7 +110,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 			res := gc.QueueList(op, "", 1000, false, denc.Squid)
 			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 			Expect(xs.Err).NotTo(HaveOccurred(), oid)
-			Expect(decodeObjVersion(xs.Xattrs["ceph.objclass.version"])).To(BeEquivalentTo(1), "%s is not queue-era", oid)
+			Expect(decodeObjVersion(xs.Xattrs[version.XattrName]).Ver).To(BeEquivalentTo(1), "%s is not queue-era", oid)
 			ret, err := res.Result()
 			Expect(err).NotTo(HaveOccurred(), oid)
 			Expect(ret.Truncated).To(BeFalse(), oid)
