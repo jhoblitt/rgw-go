@@ -31,11 +31,23 @@ func (o *ReadOp) CmpXattr(name string, op CmpOp, value []byte) {
 	o.steps = append(o.steps, &CmpXattrStep{Name: name, Op: op, Value: value})
 }
 
-// Read reads length bytes at offset. A length of 0 succeeds only when nothing
-// lies past offset; see ReadStep.
+// Read reads up to length bytes at offset into a buffer the implementation
+// allocates. A length of 0 succeeds only when nothing lies past offset; see
+// ReadStep.
 func (o *ReadOp) Read(offset, length uint64) *ReadResult {
 	r := &ReadResult{}
 	o.steps = append(o.steps, &ReadStep{Offset: offset, Length: length, Result: r})
+	return r
+}
+
+// ReadInto reads up to len(buf) bytes at offset into buf, which the result's
+// Data then shares, so a caller can size and recycle its read buffers. buf
+// belongs to the op until Pool.Read returns without a context error. After a
+// context error the abandoned operation may still write into buf, so the
+// caller drops it rather than reusing it.
+func (o *ReadOp) ReadInto(offset uint64, buf []byte) *ReadResult {
+	r := &ReadResult{}
+	o.steps = append(o.steps, &ReadStep{Offset: offset, Length: uint64(len(buf)), Buf: buf, Result: r})
 	return r
 }
 

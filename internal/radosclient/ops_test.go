@@ -48,6 +48,17 @@ var _ = Describe("ReadOp", func() {
 		}), "read op steps")
 	})
 
+	It("reads into a caller's buffer, sized by it", func() {
+		op := radosclient.NewReadOp()
+		buf := make([]byte, 512)
+		read := op.ReadInto(8, buf)
+
+		Expect(op.Steps()).To(Equal([]radosclient.Step{
+			&radosclient.ReadStep{Offset: 8, Length: 512, Buf: buf, Result: read},
+		}), "read op steps")
+		Expect(op.Steps()[0]).To(HaveField("Buf", HaveCap(512)), "the caller's buffer")
+	})
+
 	It("does not let a caller's append to Steps reach the op", func() {
 		op := radosclient.NewReadOp()
 		op.AssertExists()

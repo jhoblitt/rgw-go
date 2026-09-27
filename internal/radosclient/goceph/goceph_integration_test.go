@@ -226,6 +226,22 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(string(data.Data)).To(Equal("hello"))
 			})
 
+			It("reads into a caller's buffer", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.WriteFull([]byte("hello, buffer"))
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				buf := make([]byte, 64)
+				r := radosclient.NewReadOp()
+				data := r.ReadInto(7, buf)
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
+				Expect(data.Err).NotTo(HaveOccurred())
+				Expect(data.N).To(Equal(6))
+				Expect(string(data.Data)).To(Equal("buffer"))
+				Expect(string(buf[:data.N])).To(Equal("buffer"), "the data landed in the caller's buffer")
+			})
+
 			It("reports a missing object as ErrNotFound on every result", func(ctx SpecContext) {
 				r := radosclient.NewReadOp()
 				st := r.Stat()

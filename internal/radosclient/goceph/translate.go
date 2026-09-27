@@ -194,7 +194,10 @@ func translateRead(b readBuilder, op *radosclient.ReadOp) ([]finisher, error) {
 }
 
 func readStep(b readBuilder, s *radosclient.ReadStep) finisher {
-	buf := make([]byte, s.Length)
+	buf := s.Buf
+	if buf == nil {
+		buf = make([]byte, s.Length)
+	}
 	st := b.Read(s.Offset, buf)
 	r := s.Result
 	return func(o outcome) {

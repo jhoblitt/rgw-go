@@ -12,9 +12,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
 )
 
-// recorder records the go-ceph builder calls the translator makes, in order.
+// recorder records the go-ceph builder calls the translator makes, in order,
+// and the buffers it hands to Read.
 type recorder struct {
 	calls []string
+	bufs  [][]byte
 }
 
 func (r *recorder) add(call string) { r.calls = append(r.calls, call) }
@@ -27,6 +29,7 @@ func (r *recorder) CmpXattr(name string, op rados.CmpXattrOp, value []byte) {
 
 func (r *recorder) Read(offset uint64, buf []byte) *rados.ReadOpReadStep {
 	r.add("Read " + strconv.FormatUint(offset, 10) + " " + strconv.Itoa(len(buf)))
+	r.bufs = append(r.bufs, buf)
 	return new(rados.ReadOpReadStep)
 }
 
@@ -124,6 +127,20 @@ var _ = Describe("translating seam ops", func() {
 		rec := &recorder{}
 		Expect(goceph.TranslateRead(rec, op)).To(Succeed())
 		Expect(rec.calls).To(Equal([]string{"Stat", "GetXattrs", "Read 4 16"}))
+	})
+
+	It("reads into the caller's buffer, and allocates one otherwise", func() {
+		op := radosclient.NewReadOp()
+		buf := make([]byte, 64)
+		op.ReadInto(0, buf)
+		op.Read(64, 32)
+
+		rec := &recorder{}
+		Expect(goceph.TranslateRead(rec, op)).To(Succeed())
+		Expect(rec.calls).To(Equal([]string{"Read 0 64", "Read 64 32"}))
+		Expect(rec.bufs).To(HaveLen(2))
+		Expect(&rec.bufs[0][0]).To(BeIdenticalTo(&buf[0]), "the caller's buffer")
+		Expect(rec.bufs[1]).To(HaveLen(32), "the allocated buffer")
 	})
 
 	It("translates every read step", func() {
