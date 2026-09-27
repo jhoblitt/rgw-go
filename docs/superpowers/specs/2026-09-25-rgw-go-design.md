@@ -263,6 +263,17 @@ guard, OLH epochs, compression codecs, user statistics, lock names and
 radosgw's signature quirks, are in `docs/exclusions.md` and are
 requirements of this design.
 
+Coexistence extends to radosgw's defects. When upstream Ceph behaves
+wrongly, or surprisingly, in a way a correct client meets, rgw-go matches
+it on the releases that carry it, works around it, or states why it is
+unaffected. The choice is recorded per defect in `docs/ceph-upstream-bugs.md`,
+together with the affected releases, evidence at a named release tag, and
+the defect's upstream status. The registry is maintained for the life of
+the project: an entry is added whenever work meets a defect and updated when
+upstream fixes it. It distinguishes defects from intended behaviour that
+surprises a reimplementation, and leaves go-ceph's defects to
+`docs/cgo-limitations.md`.
+
 ## 9. Phases and gates
 
 Every phase gate includes writing with one gateway and reading with the
