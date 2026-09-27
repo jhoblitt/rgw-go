@@ -320,8 +320,9 @@ taking it, so a foreign gateway that took the lock would block that
 deliverer, and the expiry call is a single atomic class operation that is
 safe to run unlocked.
 
-Two Squid hazards rgw-go cannot fix, only avoid triggering: a Squid
-radosgw's listing of the queue registry never advances its paging marker,
+Two hazards of older releases rgw-go cannot fix, only avoid triggering: a
+radosgw of any Squid release, or of Tentacle before 20.2.3, lists the queue
+registry without ever advancing its paging marker,
 so a registry holding more than 1024 queue objects hangs that radosgw,
 which a newer release's sharding can reach from roughly a hundred topics
 on a shared registry; and Squid OSDs before 19.2.4, like Tentacle OSDs
@@ -388,7 +389,7 @@ review and verified against the tree.
   reserve recomputes the reserved size from the outstanding reservations,
   but only for a head decoded at version 2 or lower. Those releases
   re-encode the head at version 3 on every write, so a drifted head first rewritten by a
-  commit, abort or expiry keeps its drift for good. rgw-go never assumes
+  commit, abort, expiry or entry removal keeps its drift for good. rgw-go never assumes
   the reserved size equals the sum of the outstanding reservations.
 - **Class methods that both modify and return data.** Such methods, for
   example the user-stats reset in the user class and on Tentacle the OLH
