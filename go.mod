@@ -38,4 +38,4 @@ require (
 
 tool github.com/maxbrunsfeld/counterfeiter/v6
 
-replace github.com/ceph/go-ceph => github.com/jhoblitt/go-ceph v0.0.0-20260926205723-dd2812cd6f0a
+replace github.com/ceph/go-ceph => github.com/jhoblitt/go-ceph v0.0.0-20260927015447-741cf8bc19db
