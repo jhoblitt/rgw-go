@@ -8,7 +8,8 @@
 // it without cgo.
 //
 // Read and Write return ctx.Err() when the context ends before the operation
-// completes, but librados cannot cancel an operation in flight, so the
+// completes, but librados can only abandon an operation in flight on the
+// client side, and a write already sent may still apply, so the
 // implementation owns the step buffers until the completion fires. After a
 // context error the op's results are undefined and callers must not read
 // them: the implementation may still fill them when the completion fires.

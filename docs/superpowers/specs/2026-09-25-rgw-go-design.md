@@ -203,9 +203,10 @@ meta object. Listing performs radosgw's pending-entry reconciliation.
   happens parked in Go, honors `rgw_max_concurrent_requests`, default
   1024, as a hard cap, and bounds body memory with a byte budget.
 - **Cancellation.** A client disconnect cancels the request context and
-  every wait selects on it. An in-flight librados operation cannot be
-  cancelled, so the completion owns the pinned buffers and never touches
-  the response.
+  every wait selects on it. librados can only abandon an in-flight
+  operation on the client side (`rados_aio_cancel`, not yet bound in the
+  fork), and a write already sent to the OSD may still apply, so the
+  completion owns the pinned buffers and never touches the response.
 - **Metadata cache.** Decoded users, bucket entry points, bucket instances
   with attributes, and zone configuration, 25000 entries with radosgw's
   900 second expiry, watching the eight control-pool notify objects and
