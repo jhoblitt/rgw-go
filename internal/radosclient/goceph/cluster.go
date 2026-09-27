@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/ceph/go-ceph/rados"
@@ -64,7 +65,11 @@ type cluster struct {
 var _ radosclient.Cluster = (*cluster)(nil)
 
 // Connect creates the librados connection, reads the config file and CEPH_ARGS, parses Args,
-// connects, and returns the seam's Cluster.
+// connects, and returns the seam's Cluster. It refuses a librados older than
+// Squid with ErrLibradosTooOld. When the connect fails and librados is too
+// old for the AES256KRB5 cephx keys Squid 19.2.6 and Tentacle 20.2.4 create
+// by default, it adds that cause, also as ErrLibradosTooOld, to what would
+// otherwise be a bare EIO.
 //
 // librados cannot abandon a connection attempt; when ctx ends first, Connect
 // returns ctx.Err() and a goroutine shuts the connection down once the
@@ -77,6 +82,14 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 		return nil, fmt.Errorf("goceph: completion mode %q: %w", cfg.Mode, radosclient.ErrBadOp)
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	version := libradosVersion()
+	if _, ok := parseVersion(version); !ok {
+		slog.WarnContext(ctx, "cannot read the librados version, so a failed connect will not be checked against the AES256KRB5 key floor",
+			slog.String("version", version))
+	}
+	if err := checkLibradosLine(version); err != nil {
 		return nil, err
 	}
 
@@ -100,7 +113,7 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 		if err != nil {
 			releaseAioMode(cfg.Mode)
 			conn.Shutdown()
-			return nil, toSeamError("connect", err)
+			return nil, explainConnect(version, toSeamError("connect", err))
 		}
 	case <-ctx.Done():
 		go func() {

@@ -61,3 +61,21 @@ var ReleaseFor = releaseFor
 
 // WithDefaults exposes Config's defaulting.
 func WithDefaults(c Config) Config { return c.withDefaults() }
+
+// CheckLibradosLine exposes the refusal of a librados line older than Squid.
+var CheckLibradosLine = checkLibradosLine
+
+// ExplainConnect exposes how a failed connect is annotated with the
+// librados version's AES256KRB5 floor.
+var ExplainConnect = explainConnect
+
+// LibradosVersion reports the version of the librados the process runs.
+func LibradosVersion() string { return libradosVersion() }
+
+// SetLibradosVersion makes Connect see v as the librados version until the
+// returned restore runs.
+func SetLibradosVersion(v string) (restore func()) {
+	old := libradosVersion
+	libradosVersion = func() string { return v }
+	return func() { libradosVersion = old }
+}
