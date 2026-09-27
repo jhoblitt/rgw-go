@@ -98,6 +98,15 @@ func removeObject(p radosclient.Pool, oid string) {
 // isClosed reports whether err is the seam error a closed Pool or Cluster returns.
 func isClosed(err error) bool { return errors.Is(err, radosclient.ErrClosed) }
 
+// raise lifts v to n when n is larger.
+func raise(v *atomic.Int32, n int32) {
+	for p := v.Load(); n > p; p = v.Load() {
+		if v.CompareAndSwap(p, n) {
+			return
+		}
+	}
+}
+
 // cancelAfterCheck passes the first Err check, so the operation starts, and
 // is canceled from then on.
 type cancelAfterCheck struct {
@@ -459,9 +468,13 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
 				Expect(err).NotTo(HaveOccurred())
 
+				// inflight counts the reads between their call and return;
+				// peakInflight is its high-water mark over one burst.
+				var inflight, peakInflight atomic.Int32
 				burst := func() int {
 					var wg sync.WaitGroup
 					var failures atomic.Int32
+					peakInflight.Store(0)
 					stop := make(chan struct{})
 					peak := make(chan int, 1)
 					go func() {
@@ -480,7 +493,10 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 						wg.Go(func() {
 							r := radosclient.NewReadOp()
 							data := r.Read(0, 4096)
-							if _, err := pool.Read(ctx, oid, r, radosclient.OpFlagNone); err != nil || data.N != 4096 {
+							raise(&peakInflight, inflight.Add(1))
+							_, err := pool.Read(ctx, oid, r, radosclient.OpFlagNone)
+							inflight.Add(-1)
+							if err != nil || data.N != 4096 {
 								failures.Add(1)
 							}
 						})
@@ -497,8 +513,17 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				baseline := osThreads()
 				during := burst()
 				after := osThreads()
-				AddReportEntry("threads", fmt.Sprintf("baseline %d, during %d, after %d", baseline, during, after))
+				AddReportEntry("threads", fmt.Sprintf("%s: baseline %d, during %d, after %d, peak reads in flight %d",
+					mode, baseline, during, after, peakInflight.Load()))
+				// Sync mode is the measured baseline and asserts nothing: its
+				// thread rise swings between 0, once the runtime keeps the
+				// threads an earlier sync burst parked, and dozens, and its
+				// peak in flight is capped by how fast the runtime adds threads.
 				if mode != goceph.ModeSync {
+					// The positive control: most of the burst was in flight at
+					// once, so a flat thread count is not an artifact of reads
+					// finishing one by one.
+					Expect(peakInflight.Load()).To(BeNumerically(">", 128), "peak reads in flight")
 					Expect(during).To(BeNumerically("<=", baseline+16))
 					Expect(after).To(BeNumerically("<=", baseline+16))
 				}
