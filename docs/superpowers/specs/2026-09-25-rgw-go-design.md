@@ -369,12 +369,30 @@ CLAUDE.md block. go-ceph is consumed through a `replace` to the fork at a
 pinned commit until the bindings are upstream, bumped by hand.
 
 CI adds an install of librados-dev, Squid or newer, to the template's test,
-lint and checks jobs. Two added workflows, neither gating pull requests: an
-integration workflow, nightly and on demand, that brings up the
-`hack/cluster` clusters on the runner as privileged podman containers on
-the host network (rootful in CI) and runs the integration specs, the oracle
-matrix and the s3-tests comparison; and a Rook workflow, nightly and on
-demand, that builds the derived image and runs the object suite on kind.
+lint and checks jobs; those jobs build and run unit specs and never connect
+to a cluster, so the headers alone matter there. Two added workflows,
+neither gating pull requests: an integration workflow, nightly and on
+demand, that brings up the `hack/cluster` clusters on the runner as
+privileged podman containers on the host network (rootful in CI) and runs
+the integration specs, the oracle matrix and the s3-tests comparison; and a
+Rook workflow, nightly and on demand, that builds the derived image and
+runs the object suite on kind.
+
+rgw-go supports running only against librados 19.2.6 or later on Squid, or
+20.2.4 or later on Tentacle. This is a support policy: technically the floor
+binds only when the key rgw-go presents is AES256KRB5, since those are the
+first releases able to parse that cephx key type, and an older librados
+fails to connect with one. The policy follows from where such keys come
+from. Ceph's mkfs default at those releases allows only AES256KRB5, so a
+freshly created cluster's keys have that type. Rook allows both AES
+and AES256KRB5, but makes AES256KRB5 the preferred type, which new daemon
+keys, the RGW's included, take unless the cluster's `cephx.daemon.keyType`
+overrides it. It is a client floor, not a new cluster floor: a cluster
+upgraded from an older release keeps its AES keys working. Under Rook the
+derived image is every daemon's image, so rgw-go's librados is always the
+cluster's own release, and a supported derived image implies a cluster at
+the same floor. The integration workflow installs librados at the floor;
+the headers used for building are unaffected.
 
 Release keeps goreleaser for tags, archives, checksums, SBOM and keyless
 signing, but the build is cgo in a container stage on the same base as the
@@ -405,8 +423,18 @@ data from a modifying class method through the return-vector flag.
   detector and with cgo checks enabled.
 - The return-vector exec binding gates persistent notifications.
 - The base OS of each Ceph release image, which fixes the builder stage.
-- The librados-dev version the CI distribution ships; the Ceph repository
-  is the fallback.
+- The librados version the CI distribution ships. Realized: Ubuntu noble's
+  librados is below the supported floor in section 12, so the integration
+  workflow takes librados from download.ceph.com, while the jobs that never
+  connect keep noble's headers.
+- The librados floor in section 12 couples rgw-go to the cephx key types
+  Ceph issues. Only a pure-Go RADOS client that implements the AES256KRB5
+  cipher (RFC 8009 AES256-CTS-HMAC-SHA384-192) removes the coupling. Under
+  Rook the coupling costs nothing extra: the derived image is every
+  daemon's image, because Rook has no per-daemon override for the RGW, so
+  rgw-go's librados always matches the cluster's release and meets the
+  floor whenever the cluster can issue such keys. It binds a gateway run
+  outside that image, such as a host process against a fresh cluster.
 - The fixed 4 KiB reservation radosgw makes per persistent event, with a
   re-reservation at commit for larger events, reported by rgw-rs and to be
   read from the code when phase 3 begins.
