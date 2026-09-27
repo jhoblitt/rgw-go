@@ -13,8 +13,8 @@ const XattrName = "ceph.objclass.version"
 // RGWObjVersionTracker::generate_new_write_ver makes that version and sends it
 // with set.
 type ObjVersion struct {
-	Ver uint64
-	Tag string
+	Ver uint64 `json:"ver"`
+	Tag string `json:"tag"`
 }
 
 // Encode mirrors obj_version::encode, ENCODE_START(1, 1).

@@ -23,6 +23,15 @@ var (
 	ErrNotSupported   = errors.New("rados: operation not supported") // EOPNOTSUPP
 )
 
+// Local failures, which an implementation reports without asking the cluster.
+// No *Error matches them, so they cannot pass for an OSD's answer: ErrInvalid
+// and ErrNotSupported stand for EINVAL and EOPNOTSUPP from the cluster.
+var (
+	ErrBadOp         = errors.New("rados: bad operation")           // a step, flag or mode the implementation cannot translate
+	ErrClosed        = errors.New("rados: closed")                  // the Pool or Cluster was closed
+	ErrReleaseTooOld = errors.New("rados: release below the floor") // the cluster requires a release older than Squid
+)
+
 // errBusyResharding is cls_rgw's ERR_BUSY_RESHARDING, which has no syscall constant.
 const errBusyResharding = 2300
 

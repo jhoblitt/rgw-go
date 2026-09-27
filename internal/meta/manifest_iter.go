@@ -2,6 +2,7 @@ package meta
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -15,6 +16,17 @@ const (
 	NSShadow    = "shadow"
 	NSMultipart = "multipart"
 )
+
+// MaxStripes bounds the stripes Stripes returns. A 5 TiB object, S3's limit,
+// in radosgw's default 4 MiB stripes spans 1,310,720 of them, and each of up
+// to 10,000 parts may end in one short stripe more; the bound leaves room
+// above that. Stripes builds every stripe eagerly, so this still allows a
+// few hundred MB; the ranged iterator phase 1's GET needs replaces it.
+const MaxStripes = 1 << 21
+
+// ErrTooManyStripes is Stripes's refusal of a manifest laying out more than
+// MaxStripes stripes, which a corrupt or hostile manifest can claim.
+var ErrTooManyStripes = errors.New("meta: manifest lays out too many stripes")
 
 // Stripe describes one RADOS object of an object's data as the manifest lays
 // it out: Size bytes of the object from Ofs on, stored in Obj from LocOfs on.
@@ -60,14 +72,24 @@ func (s Stripe) Locator() string {
 // alone: operator++ cannot leave the head without a rule, but radosgw never
 // asks it to, as RGWRados::iterate_obj stops at the end of the object and
 // delete checks has_tail first. It fails with denc.ErrMalformed where the C++
-// iterator would read past the end of a map or never reach ObjSize.
-func (m Manifest) Stripes() ([]Stripe, error) {
+// iterator would read past the end of a map or never reach ObjSize, and with
+// ErrTooManyStripes past MaxStripes stripes.
+func (m Manifest) Stripes() ([]Stripe, error) { return m.stripes(MaxStripes) }
+
+// stripes is Stripes with limit standing for MaxStripes.
+func (m Manifest) stripes(limit int) ([]Stripe, error) {
+	if n := m.minStripes(); n > uint64(limit) { //nolint:gosec // limit is positive
+		return nil, fmt.Errorf("%w: at least %d, more than %d", ErrTooManyStripes, n, limit)
+	}
 	it, err := newManifestIter(&m, 0)
 	if err != nil {
 		return nil, err
 	}
 	var out []Stripe
 	for it.ofs != m.ObjSize {
+		if len(out) == limit {
+			return nil, fmt.Errorf("%w: more than %d before offset %d of %d", ErrTooManyStripes, limit, it.ofs, m.ObjSize)
+		}
 		s := Stripe{
 			Ofs:       it.stripeStart(),
 			Obj:       it.location.obj,
@@ -95,6 +117,30 @@ func (m Manifest) Stripes() ([]Stripe, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// minStripes is a lower bound on the stripes the manifest lays out, cheap
+// enough to refuse a manifest before walking it: its pieces when explicit,
+// and otherwise the tail past the head cut into the largest stripes any rule
+// allows. A manifest whose rules allow no stripe at all bounds nothing here;
+// the walk fails on it.
+func (m Manifest) minStripes() uint64 {
+	if m.ExplicitObjs {
+		return uint64(len(m.Objs))
+	}
+	var largest uint64
+	for _, r := range m.Rules {
+		largest = max(largest, r.StripeMaxSize)
+	}
+	tail := m.ObjSize - min(m.HeadSize, m.ObjSize)
+	if largest == 0 || tail == 0 {
+		return 0
+	}
+	n := tail / largest
+	if tail%largest != 0 {
+		n++
+	}
+	return n
 }
 
 // objSelect is rgw_obj_select as the iterator fills it: never raw.

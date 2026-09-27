@@ -48,6 +48,8 @@ carries the label `rgw-go.release=<release>`, which is what `down.sh` removes. I
 - `ceph.conf` and `ceph.client.admin.keyring`, for host processes. The copied
   `ceph.conf` names the copied keyring for `client.admin`, so
   `CEPH_CONF=hack/cluster/out/squid/ceph.conf` is all a host client needs.
+  Host-side clients need librados >= 19.2.6 (Squid) or >= 20.2.4 (Tentacle), because
+  those clusters create AES256KRB5 cephx keys by default.
 - `image`, the image the cluster runs.
 - `manifest.json`, written by `populate.sh`: the pools, the users `alice` and
   `t1$bob` with their S3 keys, the buckets `plain` and `t1/tenanted` with the id,

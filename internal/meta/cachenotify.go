@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 )
 
@@ -66,14 +67,14 @@ func DecodeCacheNotifyInfo(d *denc.Decoder) CacheNotifyInfo {
 // ObjectCacheInfo is ObjectCacheInfo, one cached system object. The C++ also
 // holds time_added, a monotonic clock reading that is never encoded.
 type ObjectCacheInfo struct {
-	Status   int32             `json:"status"`
-	Flags    uint32            `json:"flags"`
-	Epoch    uint64            `json:"-"`
-	Data     []byte            `json:"-"`
-	Xattrs   map[string][]byte `json:"-"`
-	RMXattrs map[string][]byte `json:"-"`
-	Meta     ObjectMetaInfo    `json:"meta"`
-	Version  ObjVersion        `json:"-"`
+	Status   int32              `json:"status"`
+	Flags    uint32             `json:"flags"`
+	Epoch    uint64             `json:"-"`
+	Data     []byte             `json:"-"`
+	Xattrs   map[string][]byte  `json:"-"`
+	RMXattrs map[string][]byte  `json:"-"`
+	Meta     ObjectMetaInfo     `json:"meta"`
+	Version  version.ObjVersion `json:"-"`
 }
 
 // MarshalJSON renders ObjectCacheInfo::dump in its order, meta last. It
@@ -150,7 +151,7 @@ func DecodeObjectCacheInfo(d *denc.Decoder) ObjectCacheInfo {
 		c.Epoch = d.U64()
 	}
 	if h.Version >= 5 {
-		c.Version = DecodeObjVersion(d)
+		c.Version = version.DecodeObjVersion(d)
 	}
 	d.EndStruct(h)
 	return c
@@ -179,30 +180,4 @@ func DecodeObjectMetaInfo(d *denc.Decoder) ObjectMetaInfo {
 	m.Mtime = DecodeTime(d)
 	d.EndStruct(h)
 	return m
-}
-
-// ObjVersion is obj_version from src/cls/version/cls_version_types.h, the
-// version cls_version keeps on a metadata object. It is duplicated here so
-// that meta does not import the object-class packages.
-type ObjVersion struct {
-	Ver uint64 `json:"ver"`
-	Tag string `json:"tag"`
-}
-
-// Encode mirrors obj_version::encode, ENCODE_START(1, 1).
-func (v ObjVersion) Encode(e *denc.Encoder, _ denc.Release) {
-	f := e.BeginStruct(1, 1)
-	e.U64(v.Ver)
-	e.String(v.Tag)
-	e.EndStruct(f)
-}
-
-// DecodeObjVersion mirrors obj_version::decode, DECODE_START(1).
-func DecodeObjVersion(d *denc.Decoder) ObjVersion {
-	h := d.BeginStruct(1)
-	var v ObjVersion
-	v.Ver = d.U64()
-	v.Tag = d.String()
-	d.EndStruct(h)
-	return v
 }

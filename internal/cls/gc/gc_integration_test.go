@@ -3,10 +3,7 @@
 package gc_test
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -15,57 +12,32 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cls/gc"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// testPool is the scratch pool hack/cluster/up.sh creates.
-const testPool = "rgw-go-test"
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // logPool reads the zone's log pool from the manifest populate.sh wrote next to conf.
 func logPool(conf string) string {
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(conf), "manifest.json"))
-	Expect(err).NotTo(HaveOccurred(), "run make populate first")
 	var m struct {
 		Pools struct {
 			Log string `json:"log"`
 		} `json:"pools"`
 	}
-	Expect(json.Unmarshal(b, &m)).To(Succeed())
+	cephtest.ReadManifest(conf, &m)
 	Expect(m.Pools.Log).NotTo(BeEmpty())
 	return m.Pools.Log
 }
 
-// decodeObjVersion decodes obj_version (1,1) from the cls_version xattr.
-func decodeObjVersion(b []byte) uint64 {
+// decodeObjVersion decodes the cls_version xattr.
+func decodeObjVersion(b []byte) version.ObjVersion {
 	GinkgoHelper()
 	d := denc.NewDecoder(b)
-	h := d.BeginStruct(1)
-	ver := d.U64()
-	_ = d.String() // tag
-	d.EndStruct(h)
+	v := version.DecodeObjVersion(d)
 	Expect(d.Err()).NotTo(HaveOccurred())
-	return ver
+	return v
 }
 
 var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
@@ -75,10 +47,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 	)
 
 	BeforeEach(func(ctx SpecContext) {
-		conf = cephConf()
-		if conf == "" {
-			Skip("RGW_GO_TEST_CEPH_CONF is not set")
-		}
+		conf = cephtest.Conf()
 		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
@@ -110,9 +79,9 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 			op := radosclient.NewReadOp()
 			xs := op.GetXattrs()
 			res := gc.QueueList(op, "", 1000, false, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 			Expect(xs.Err).NotTo(HaveOccurred(), oid)
-			Expect(decodeObjVersion(xs.Xattrs["ceph.objclass.version"])).To(BeEquivalentTo(1), "%s is not queue-era", oid)
+			Expect(decodeObjVersion(xs.Xattrs[version.XattrName]).Ver).To(BeEquivalentTo(1), "%s is not queue-era", oid)
 			ret, err := res.Result()
 			Expect(err).NotTo(HaveOccurred(), oid)
 			Expect(ret.Truncated).To(BeFalse(), oid)
@@ -134,7 +103,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			var err error
-			pool, err = cluster.Pool(ctx, testPool, "gc-it")
+			pool, err = cluster.Pool(ctx, cephtest.TestPool, "gc-it")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 			oid = fmt.Sprintf("gc-%d-%d", CurrentSpecReport().LeafNodeLocation.LineNumber, time.Now().UnixNano())
@@ -152,7 +121,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 			GinkgoHelper()
 			op := radosclient.NewReadOp()
 			res := gc.QueueList(op, "", 0, expiredOnly, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			ret, err := res.Result()
 			Expect(err).NotTo(HaveOccurred())
 			return ret
@@ -174,7 +143,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 		It("answers ENOENT to a list and EINVAL to an enqueue before the queue exists", func(ctx SpecContext) {
 			op := radosclient.NewReadOp()
 			res := gc.QueueList(op, "", 0, false, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 			_, err := res.Result()
 			Expect(err).To(HaveOccurred())
 
@@ -184,7 +153,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 			st := radosclient.NewReadOp()
 			st.Stat()
-			Expect(pool.Read(ctx, oid, st, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+			Expect(pool.Read(ctx, oid, st, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 		})
 
 		It("creates a missing object on init and refuses a second init with EEXIST", func(ctx SpecContext) {
@@ -192,7 +161,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 			op := radosclient.NewReadOp()
 			st := op.Stat()
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			Expect(st.Size).To(BeNumerically(">", 0))
 			Expect(list(ctx, false)).To(Equal(gc.ListRet{}))
 

@@ -48,6 +48,7 @@ type writeBuilder interface {
 	OmapCmp(key string, op rados.CmpXattrOp, value []byte)
 	SetAllocationHint(expectedObjectSize, expectedWriteSize uint64, flags rados.AllocHintFlags)
 	Exec(clsName, method string, in []byte)
+	SetFlags(flags rados.OpFlags)
 }
 
 var (
@@ -186,14 +187,17 @@ func translateRead(b readBuilder, op *radosclient.ReadOp) ([]finisher, error) {
 			fs = append(fs, readExecStep(b, s, idx))
 			idx++
 		default:
-			return nil, fmt.Errorf("goceph: %T in a read op: %w", s, radosclient.ErrInvalid)
+			return nil, fmt.Errorf("goceph: %T in a read op: %w", s, radosclient.ErrBadOp)
 		}
 	}
 	return fs, nil
 }
 
 func readStep(b readBuilder, s *radosclient.ReadStep) finisher {
-	buf := make([]byte, s.Length)
+	buf := s.Buf
+	if buf == nil {
+		buf = make([]byte, s.Length)
+	}
 	st := b.Read(s.Offset, buf)
 	r := s.Result
 	return func(o outcome) {
@@ -335,7 +339,7 @@ func readExecStep(b readBuilder, s *radosclient.ExecStep, idx int) finisher {
 func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error) {
 	var fs []finisher
 	idx := 0
-	for _, s := range op.Steps() {
+	for i, s := range op.Steps() {
 		switch s := s.(type) {
 		case *radosclient.AssertExistsStep:
 			b.AssertExists()
@@ -347,6 +351,16 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 				return nil, err
 			}
 			b.CmpXattr(s.Name, cmp, s.Value)
+		case *radosclient.StepFlagsStep:
+			// librados asserts that an action precedes the flags, which
+			// would abort the process.
+			if i == 0 {
+				return nil, fmt.Errorf("goceph: step flags %#x before any step: %w", uint32(s.Flags), radosclient.ErrBadOp)
+			}
+			if s.Flags&^stepFlagsMask != 0 {
+				return nil, fmt.Errorf("goceph: step flags %#x: %w", uint32(s.Flags), radosclient.ErrBadOp)
+			}
+			b.SetFlags(rados.OpFlags(s.Flags))
 		case *radosclient.CreateStep:
 			if s.Exclusive {
 				b.Create(rados.CreateExclusive)
@@ -394,11 +408,17 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 			fs = append(fs, func(o outcome) { r.Set(nil, -errnoOf(o.step(at))) })
 			idx++
 		default:
-			return nil, fmt.Errorf("goceph: %T in a write op: %w", s, radosclient.ErrInvalid)
+			return nil, fmt.Errorf("goceph: %T in a write op: %w", s, radosclient.ErrBadOp)
 		}
 	}
 	return fs, nil
 }
+
+// stepFlagsMask is every step flag the seam defines.
+const stepFlagsMask = radosclient.StepFlagExcl | radosclient.StepFlagFailOK |
+	radosclient.StepFlagFAdviseRandom | radosclient.StepFlagFAdviseSequential |
+	radosclient.StepFlagFAdviseWillNeed | radosclient.StepFlagFAdviseDontNeed |
+	radosclient.StepFlagFAdviseNoCache
 
 func translateCmp(op radosclient.CmpOp) (rados.CmpXattrOp, error) {
 	switch op {
@@ -415,7 +435,7 @@ func translateCmp(op radosclient.CmpOp) (rados.CmpXattrOp, error) {
 	case radosclient.CmpLTE:
 		return rados.CmpXattrOpLte, nil
 	default:
-		return 0, fmt.Errorf("goceph: comparison operator %d: %w", op, radosclient.ErrInvalid)
+		return 0, fmt.Errorf("goceph: comparison operator %d: %w", op, radosclient.ErrBadOp)
 	}
 }
 
@@ -438,7 +458,7 @@ func translateFlags(f radosclient.OpFlags) (rados.OperationFlags, error) {
 		}
 	}
 	if f != 0 {
-		return 0, fmt.Errorf("goceph: op flags %#x: %w", uint32(f), radosclient.ErrInvalid)
+		return 0, fmt.Errorf("goceph: op flags %#x: %w", uint32(f), radosclient.ErrBadOp)
 	}
 	return out, nil
 }

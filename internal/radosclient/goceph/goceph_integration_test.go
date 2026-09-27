@@ -5,6 +5,7 @@ package goceph_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,30 +23,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// testPool is the pool hack/cluster/up.sh creates for this suite.
-const testPool = "rgw-go-test"
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root so the documented hack/cluster/out/<release>/ceph.conf works
-// from the package directory go test runs in.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // expectedRelease is the release the cluster under test runs: the directory
 // up.sh wrote its ceph.conf to, unless RGW_GO_TEST_CEPH_RELEASE names it.
@@ -117,9 +96,15 @@ func removeObject(p radosclient.Pool, oid string) {
 }
 
 // isClosed reports whether err is the seam error a closed Pool or Cluster returns.
-func isClosed(err error) bool {
-	var seamErr *radosclient.Error
-	return errors.As(err, &seamErr) && seamErr.Errno == int32(syscall.ENOTCONN)
+func isClosed(err error) bool { return errors.Is(err, radosclient.ErrClosed) }
+
+// raise lifts v to n when n is larger.
+func raise(v *atomic.Int32, n int32) {
+	for p := v.Load(); n > p; p = v.Load() {
+		if v.CompareAndSwap(p, n) {
+			return
+		}
+	}
 }
 
 // cancelAfterCheck passes the first Err check, so the operation starts, and
@@ -156,15 +141,12 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			)
 
 			BeforeEach(func(ctx SpecContext) {
-				conf = cephConf()
-				if conf == "" {
-					Skip("RGW_GO_TEST_CEPH_CONF is not set")
-				}
+				conf = cephtest.Conf()
 				var err error
 				cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
-				pool, err = cluster.Pool(ctx, testPool, "")
+				pool, err = cluster.Pool(ctx, cephtest.TestPool, "")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 				oid = fmt.Sprintf("%s-%d-%d", mode, CurrentSpecReport().LeafNodeLocation.LineNumber, time.Now().UnixNano())
@@ -178,7 +160,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				st := r.Stat()
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(st.Err).NotTo(HaveOccurred())
 				Expect(st.Size).To(BeZero())
 				Expect(st.ModTime).NotTo(BeZero())
@@ -198,7 +180,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				xs := r.GetXattrs()
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(xs.Err).NotTo(HaveOccurred())
 				Expect(xs.Xattrs).To(HaveKeyWithValue("user.rgw.etag", BeEmpty()))
 			})
@@ -216,7 +198,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				st := r.Stat()
 				xs := r.GetXattrs()
 				data := r.Read(0, 16)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(st.Err).NotTo(HaveOccurred())
 				Expect(st.Size).To(BeEquivalentTo(5))
 				Expect(xs.Xattrs).To(HaveKeyWithValue("user.rgw.etag", []byte("e1")))
@@ -225,11 +207,27 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(string(data.Data)).To(Equal("hello"))
 			})
 
+			It("reads into a caller's buffer", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.WriteFull([]byte("hello, buffer"))
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				buf := make([]byte, 64)
+				r := radosclient.NewReadOp()
+				data := r.ReadInto(7, buf)
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
+				Expect(data.Err).NotTo(HaveOccurred())
+				Expect(data.N).To(Equal(6))
+				Expect(string(data.Data)).To(Equal("buffer"))
+				Expect(string(buf[:data.N])).To(Equal("buffer"), "the data landed in the caller's buffer")
+			})
+
 			It("reports a missing object as ErrNotFound on every result", func(ctx SpecContext) {
 				r := radosclient.NewReadOp()
 				st := r.Stat()
 				data := r.Read(0, 4)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 				Expect(st.Err).To(MatchError(radosclient.ErrNotFound))
 				Expect(data.Err).To(MatchError(radosclient.ErrNotFound))
 			})
@@ -249,8 +247,35 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				data := r.Read(0, 64)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(string(data.Data)).To(Equal("original"))
+			})
+
+			It("overwrites an object with a remove that may fail, then a create, in one op", func(ctx SpecContext) {
+				overwrite := func(value string) error {
+					w := radosclient.NewWriteOp()
+					w.Remove()
+					w.SetStepFlags(radosclient.StepFlagFailOK)
+					w.Create(false)
+					w.SetXattr("user.rgw."+value, []byte(value))
+					_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+					return err
+				}
+				Expect(overwrite("first")).To(Succeed(), "onto a missing object")
+				Expect(overwrite("second")).To(Succeed(), "onto an existing object")
+
+				r := radosclient.NewReadOp()
+				xs := r.GetXattrs()
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
+				Expect(xs.Xattrs).To(Equal(map[string][]byte{"user.rgw.second": []byte("second")}),
+					"the remove cleared the first write's xattr")
+
+				// Without the flag, the remove of a missing object fails the op.
+				w := radosclient.NewWriteOp()
+				w.Remove()
+				w.Create(false)
+				_, err := pool.Write(ctx, oid+"-missing", w, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrNotFound))
 			})
 
 			It("returns the version after a write", func(ctx SpecContext) {
@@ -268,7 +293,45 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				r.AssertVersion(v2)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
+			})
+
+			It("returns the object's version from a read, and 0 with an error", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.WriteFull([]byte("v1"))
+				written, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				r := radosclient.NewReadOp()
+				r.Stat()
+				read, err := pool.Read(ctx, oid, r, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(read).To(Equal(written), "a stat's version against the write's")
+
+				missing := radosclient.NewReadOp()
+				missing.Stat()
+				read, err = pool.Read(ctx, oid+"-missing", missing, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrNotFound))
+				Expect(read).To(BeZero())
+			})
+
+			It("reports the pool's id as the OSD map has it", func(ctx SpecContext) {
+				out, _, err := cluster.MonCommand(ctx, []byte(`{"prefix":"osd dump","format":"json"}`))
+				Expect(err).NotTo(HaveOccurred())
+				var dump struct {
+					Pools []struct {
+						ID   int64  `json:"pool"`
+						Name string `json:"pool_name"`
+					} `json:"pools"`
+				}
+				Expect(json.Unmarshal(out, &dump)).To(Succeed())
+				Expect(dump.Pools).To(ContainElement(HaveField("Name", cephtest.TestPool)))
+				for _, p := range dump.Pools {
+					if p.Name == cephtest.TestPool {
+						Expect(pool.ID()).To(Equal(p.ID), "pool %s", cephtest.TestPool)
+						Expect(pool.WithLocator("loc").ID()).To(Equal(p.ID), "pool %s with a locator", cephtest.TestPool)
+					}
+				}
 			})
 
 			It("stamps the modification time a write op sets, asynchronously in the async modes", func(ctx SpecContext) {
@@ -281,7 +344,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				st := r.Stat()
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(st.ModTime.Equal(mtime)).To(BeTrue(), "mtime %v", st.ModTime)
 			})
 
@@ -295,7 +358,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				r := radosclient.NewReadOp()
 				set := r.Exec("version", "set", encodeVersionSet(8, "tag-8"))
 				read := r.Exec("version", "read", nil)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagReturnVec)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagReturnVec)).Error().To(Succeed())
 				_, err = set.Bytes()
 				Expect(err).NotTo(HaveOccurred())
 				out, err := read.Bytes()
@@ -310,7 +373,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				// The read op's set persisted.
 				again := radosclient.NewReadOp()
 				reread := again.Exec("version", "read", nil)
-				Expect(pool.Read(ctx, oid, again, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, again, radosclient.OpFlagNone)).Error().To(Succeed())
 				out, err = reread.Bytes()
 				Expect(err).NotTo(HaveOccurred())
 				ver, tag = decodeVersionRead(out)
@@ -328,14 +391,14 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				// "you might see this" and a positive rval of 42.
 				r := radosclient.NewReadOp()
 				res := r.Exec("hello", "write_return_data", nil)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagReturnVec)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagReturnVec)).Error().To(Succeed())
 				out, err := res.Bytes()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(out)).To(Equal("you might see this"))
 
 				after := radosclient.NewReadOp()
 				xs := after.GetXattrs()
-				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(xs.Err).NotTo(HaveOccurred())
 				Expect(xs.Xattrs).To(HaveKeyWithValue("foo", []byte("bar")))
 			})
@@ -358,13 +421,13 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				after := radosclient.NewReadOp()
 				xs := after.GetXattrs()
-				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, after, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(xs.Err).NotTo(HaveOccurred())
 				Expect(xs.Xattrs).To(HaveKeyWithValue("foo", []byte("bar")))
 			})
 
 			It("passes a write guarded by guard_bucket_resharding with a positive ret_err on a shard not resharding", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "guard-ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "guard-ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 
@@ -387,14 +450,14 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				after := radosclient.NewReadOp()
 				xs := after.GetXattrs()
-				Expect(ns.Read(ctx, oid, after, radosclient.OpFlagNone)).To(Succeed())
+				Expect(ns.Read(ctx, oid, after, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(xs.Xattrs).To(HaveKeyWithValue("user.rgw.guarded", []byte("yes")))
 			})
 
 			It("reports a class method's errno through its result", func(ctx SpecContext) {
 				r := radosclient.NewReadOp()
 				res := r.Exec("version", "no_such_method", nil)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(HaveOccurred())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(HaveOccurred())
 				_, err := res.Bytes()
 				Expect(err).To(HaveOccurred())
 			})
@@ -405,9 +468,13 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
 				Expect(err).NotTo(HaveOccurred())
 
+				// inflight counts the reads between their call and return;
+				// peakInflight is its high-water mark over one burst.
+				var inflight, peakInflight atomic.Int32
 				burst := func() int {
 					var wg sync.WaitGroup
 					var failures atomic.Int32
+					peakInflight.Store(0)
 					stop := make(chan struct{})
 					peak := make(chan int, 1)
 					go func() {
@@ -426,7 +493,10 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 						wg.Go(func() {
 							r := radosclient.NewReadOp()
 							data := r.Read(0, 4096)
-							if pool.Read(ctx, oid, r, radosclient.OpFlagNone) != nil || data.N != 4096 {
+							raise(&peakInflight, inflight.Add(1))
+							_, err := pool.Read(ctx, oid, r, radosclient.OpFlagNone)
+							inflight.Add(-1)
+							if err != nil || data.N != 4096 {
 								failures.Add(1)
 							}
 						})
@@ -443,8 +513,17 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				baseline := osThreads()
 				during := burst()
 				after := osThreads()
-				AddReportEntry("threads", fmt.Sprintf("baseline %d, during %d, after %d", baseline, during, after))
+				AddReportEntry("threads", fmt.Sprintf("%s: baseline %d, during %d, after %d, peak reads in flight %d",
+					mode, baseline, during, after, peakInflight.Load()))
+				// Sync mode is the measured baseline and asserts nothing: its
+				// thread rise swings between 0, once the runtime keeps the
+				// threads an earlier sync burst parked, and dozens, and its
+				// peak in flight is capped by how fast the runtime adds threads.
 				if mode != goceph.ModeSync {
+					// The positive control: most of the burst was in flight at
+					// once, so a flat thread count is not an artifact of reads
+					// finishing one by one.
+					Expect(peakInflight.Load()).To(BeNumerically(">", 128), "peak reads in flight")
 					Expect(during).To(BeNumerically("<=", baseline+16))
 					Expect(after).To(BeNumerically("<=", baseline+16))
 				}
@@ -463,7 +542,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				for range 64 {
 					r := radosclient.NewReadOp()
 					r.Read(0, 4096)
-					err := pool.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone)
+					_, err := pool.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone)
 					if err != nil {
 						Expect(err).To(MatchError(context.Canceled))
 						canceled++
@@ -494,12 +573,12 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				data := r.Read(0, 16)
-				Expect(loc.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(loc.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(string(data.Data)).To(Equal("located"))
 
 				plain := radosclient.NewReadOp()
 				plain.Stat()
-				Expect(pool.Read(ctx, oid, plain, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+				Expect(pool.Read(ctx, oid, plain, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 			})
 
 			It("takes and releases an exclusive lock", func(ctx SpecContext) {
@@ -539,7 +618,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(err).NotTo(HaveOccurred())
 				r := radosclient.NewReadOp()
 				data := r.Read(0, 0)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(data.Err).NotTo(HaveOccurred())
 				Expect(data.N).To(BeZero())
 
@@ -549,7 +628,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(err).NotTo(HaveOccurred())
 				r = radosclient.NewReadOp()
 				data = r.Read(0, 0)
-				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(data.Err).To(MatchError(radosclient.ErrRange))
 				Expect(data.N).To(BeZero())
 			})
@@ -572,7 +651,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 						for j, other := range locs {
 							r := radosclient.NewReadOp()
 							data := r.Read(0, 64)
-							err := other.Read(ctx, name, r, radosclient.OpFlagNone)
+							_, err := other.Read(ctx, name, r, radosclient.OpFlagNone)
 							if j == i%len(locs) {
 								if err != nil || string(data.Data) != name {
 									failures.Add(1)
@@ -598,7 +677,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 					for range 16 {
 						r := radosclient.NewReadOp()
 						r.Read(0, 4096)
-						if readErr := pool.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone); readErr != nil {
+						if _, readErr := pool.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone); readErr != nil {
 							Expect(readErr).To(MatchError(context.Canceled))
 						}
 					}
@@ -616,9 +695,8 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 							}
 							r := radosclient.NewReadOp()
 							r.Read(0, 4096)
-							if readErr := pool.Read(ctx, oid, r, radosclient.OpFlagNone); readErr != nil {
-								var seamErr *radosclient.Error
-								if errors.As(readErr, &seamErr) && seamErr.Errno == int32(syscall.ENOTCONN) {
+							if _, readErr := pool.Read(ctx, oid, r, radosclient.OpFlagNone); readErr != nil {
+								if isClosed(readErr) {
 									closedErrs.Add(1)
 								}
 								return
@@ -634,11 +712,9 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				r.Stat()
-				err = pool.Read(ctx, oid, r, radosclient.OpFlagNone)
-				var seamErr *radosclient.Error
-				Expect(errors.As(err, &seamErr)).To(BeTrue())
-				Expect(seamErr.Errno).To(BeEquivalentTo(syscall.ENOTCONN))
-				_, err = cluster.Pool(ctx, testPool, "")
+				_, err = pool.Read(ctx, oid, r, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrClosed))
+				_, err = cluster.Pool(ctx, cephtest.TestPool, "")
 				Expect(err).To(HaveOccurred())
 				Expect(pool.Close()).To(Succeed())
 			})
@@ -647,7 +723,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				for range 8 {
 					c2, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
 					Expect(err).NotTo(HaveOccurred())
-					p2, err := c2.Pool(ctx, testPool, "")
+					p2, err := c2.Pool(ctx, cephtest.TestPool, "")
 					Expect(err).NotTo(HaveOccurred())
 					w := radosclient.NewWriteOp()
 					w.WriteFull(make([]byte, 4096))
@@ -658,7 +734,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 						for range 8 {
 							r := radosclient.NewReadOp()
 							r.Read(0, 4096)
-							if readErr := p2.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone); readErr != nil {
+							if _, readErr := p2.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone); readErr != nil {
 								Expect(readErr).To(MatchError(context.Canceled))
 							}
 						}
@@ -671,7 +747,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 							for {
 								r := radosclient.NewReadOp()
 								r.Read(0, 4096)
-								if readErr := p2.Read(ctx, oid, r, radosclient.OpFlagNone); readErr != nil {
+								if _, readErr := p2.Read(ctx, oid, r, radosclient.OpFlagNone); readErr != nil {
 									if !isClosed(readErr) {
 										unexpected.Add(1)
 									}
@@ -682,7 +758,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 					}
 					wg.Go(func() {
 						for {
-							p3, openErr := c2.Pool(ctx, testPool, "")
+							p3, openErr := c2.Pool(ctx, cephtest.TestPool, "")
 							if openErr != nil {
 								if !isClosed(openErr) {
 									unexpected.Add(1)
@@ -719,7 +795,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
 				_, err = c2.RequiredOSDRelease(ctx)
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
-				_, err = c2.Pool(ctx, testPool, "")
+				_, err = c2.Pool(ctx, cephtest.TestPool, "")
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
 			})
 
@@ -734,7 +810,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				data := r.Read(0, 16)
-				Expect(pool.WithLocator("").Read(ctx, oid, r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(pool.WithLocator("").Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(string(data.Data)).To(Equal("still here"))
 			})
 
@@ -762,6 +838,30 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Eventually(poolClosed).WithTimeout(30 * time.Second).Should(Receive(Succeed()))
 			})
 
+			It("reports a watch the OSD disconnects when its object is removed", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.Create(false)
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				watch, err := pool.Watch(ctx, oid, func(_, _ uint64, _ []byte) {})
+				Expect(err).NotTo(HaveOccurred())
+				Consistently(watch.Err()).WithTimeout(time.Second).ShouldNot(Receive(), "a healthy watch")
+
+				rm := radosclient.NewWriteOp()
+				rm.Remove()
+				_, err = pool.Write(ctx, oid, rm, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				var broken error
+				Eventually(watch.Err()).WithTimeout(30 * time.Second).Should(Receive(&broken))
+				var seamErr *radosclient.Error
+				Expect(errors.As(broken, &seamErr)).To(BeTrue(), "%v", broken)
+				Expect(seamErr.Errno).To(BeEquivalentTo(syscall.ENOTCONN), "%v", broken)
+
+				Expect(watch.Close()).To(MatchError(radosclient.ErrNotFound))
+				Expect(watch.Err()).To(BeClosed())
+			})
+
 			It("closes an outstanding watch when the pool closes", func(ctx SpecContext) {
 				w := radosclient.NewWriteOp()
 				w.Create(false)
@@ -778,7 +878,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			})
 
 			It("lists an object with its locator, which then reads it back", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "loc-ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "loc-ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 
@@ -800,12 +900,12 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				r := radosclient.NewReadOp()
 				data := r.Read(0, 16)
-				Expect(ns.WithLocator(listed["obj"]).Read(ctx, "obj", r, radosclient.OpFlagNone)).To(Succeed())
+				Expect(ns.WithLocator(listed["obj"]).Read(ctx, "obj", r, radosclient.OpFlagNone)).Error().To(Succeed())
 				Expect(string(data.Data)).To(Equal("located"))
 			})
 
 			It("lists the objects in the namespace", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 				for _, name := range []string{"a", "b"} {

@@ -1,34 +1,10 @@
 package rgw
 
 import (
-	"fmt"
-
+	"github.com/jhoblitt/rgw-go/internal/cls/internal/clsutil"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
-
-// encode runs one Encode method into a fresh buffer.
-func encode(enc func(*denc.Encoder, denc.Release), r denc.Release) []byte {
-	e := denc.NewEncoder()
-	enc(e, r)
-	return e.Bytes()
-}
-
-// decodeReply decodes a class method's output. As the C++ clients do, it
-// ignores bytes past the decoded value.
-func decodeReply[T any](res *radosclient.ExecResult, what string, dec func(*denc.Decoder) T) (T, error) {
-	var zero T
-	b, err := res.Bytes()
-	if err != nil {
-		return zero, err
-	}
-	d := denc.NewDecoder(b)
-	v := dec(d)
-	if err := d.Err(); err != nil {
-		return zero, fmt.Errorf("decoding %s: %w", what, err)
-	}
-	return v, nil
-}
 
 // GuardOp is cls_rgw_guard_bucket_resharding_op, the input of
 // guard_bucket_resharding.
@@ -55,10 +31,14 @@ func DecodeGuardOp(d *denc.Decoder) GuardOp {
 // -ErrBusyResharding, as radosgw always sends it. While the shard is
 // resharding the class returns ret_err verbatim, failing the whole op with
 // radosclient.ErrBusyResharding; a positive value would read as success and
-// let the guarded method run. radosgw adds it before bucket_prepare_op,
-// bucket_complete_op and the OLH methods, and before no other index method.
+// let the guarded method run. On every release radosgw adds it before
+// bucket_prepare_op, bucket_complete_op and the OLH methods link_olh,
+// unlink_instance, trim_olh_log and clear_olh. From Tentacle on it also adds
+// it before dir_suggest_changes, in both listing paths (v20.2.4
+// rgw_rados.cc 10823, 11061); Squid sends that unguarded. It guards no other
+// index method.
 func GuardBucketResharding(op radosclient.Execer, r denc.Release) {
-	op.Exec(Class, methodGuardBucketResharding, encode(GuardOp{RetErr: -ErrBusyResharding}.Encode, r))
+	op.Exec(Class, methodGuardBucketResharding, clsutil.Encode(GuardOp{RetErr: -ErrBusyResharding}, r))
 }
 
 // SetReshardingOp is cls_rgw_set_bucket_resharding_op, the input of
@@ -85,7 +65,7 @@ func DecodeSetReshardingOp(d *denc.Decoder) SetReshardingOp {
 // SetBucketResharding adds set_bucket_resharding, which sets the shard
 // header's reshard status to entry's, as cls_rgw_set_bucket_resharding does.
 func SetBucketResharding(op radosclient.Execer, entry InstanceEntry, r denc.Release) {
-	op.Exec(Class, methodSetBucketResharding, encode(SetReshardingOp{Entry: entry}.Encode, r))
+	op.Exec(Class, methodSetBucketResharding, clsutil.Encode(SetReshardingOp{Entry: entry}, r))
 }
 
 // BucketInitIndex adds bucket_init_index, which writes an empty header to a
@@ -117,7 +97,7 @@ func DecodeTagTimeoutOp(d *denc.Decoder) TagTimeoutOp {
 // BucketSetTagTimeout adds bucket_set_tag_timeout, which sets the seconds
 // after which a shard's pending entries count as stale.
 func BucketSetTagTimeout(op radosclient.Execer, timeout uint64, r denc.Release) {
-	op.Exec(Class, methodBucketSetTagTimeout, encode(TagTimeoutOp{TagTimeout: timeout}.Encode, r))
+	op.Exec(Class, methodBucketSetTagTimeout, clsutil.Encode(TagTimeoutOp{TagTimeout: timeout}, r))
 }
 
 // PrepareOp is rgw_cls_obj_prepare_op, the input of bucket_prepare_op.
@@ -178,7 +158,7 @@ func DecodePrepareOp(d *denc.Decoder) PrepareOp {
 // BucketPrepareOp adds bucket_prepare_op, which records a pending change
 // under p.Tag before the head object is written.
 func BucketPrepareOp(op radosclient.Execer, p PrepareOp, r denc.Release) {
-	op.Exec(Class, methodBucketPrepareOp, encode(p.Encode, r))
+	op.Exec(Class, methodBucketPrepareOp, clsutil.Encode(p, r))
 }
 
 // CompleteOp is rgw_cls_obj_complete_op, the input of bucket_complete_op.
@@ -260,7 +240,7 @@ func DecodeCompleteOp(d *denc.Decoder) CompleteOp {
 // BucketCompleteOp adds bucket_complete_op, which applies or cancels the
 // change prepared under c.Tag.
 func BucketCompleteOp(op radosclient.Execer, c CompleteOp, r denc.Release) {
-	op.Exec(Class, methodBucketCompleteOp, encode(c.Encode, r))
+	op.Exec(Class, methodBucketCompleteOp, clsutil.Encode(c, r))
 }
 
 // ListOp is rgw_cls_list_op, the input of bucket_list.
@@ -347,13 +327,13 @@ type ListResult struct {
 
 // Result decodes the listing once the op has run.
 func (res *ListResult) Result() (ListRet, error) {
-	return decodeReply(res.res, "rgw_cls_list_ret", DecodeListRet)
+	return clsutil.DecodeReply(res.res, Class, methodBucketList, DecodeListRet)
 }
 
 // BucketList adds bucket_list, which lists up to l.NumEntries entries after
 // l.StartObj along with the shard header.
 func BucketList(op *radosclient.ReadOp, l ListOp, r denc.Release) *ListResult {
-	return &ListResult{res: op.Exec(Class, methodBucketList, encode(l.Encode, r))}
+	return &ListResult{res: op.Exec(Class, methodBucketList, clsutil.Encode(l, r))}
 }
 
 // GetDirHeader adds a bucket_list asking for no entries, which is how
@@ -373,7 +353,8 @@ type Suggestion struct {
 // SuggestChanges adds dir_suggest_changes, which reconciles index entries
 // radosgw found stale while listing. The input has no framing: each change
 // is its op byte, or'ed with SuggestLog to be logged, then the entry, as
-// cls_rgw_encode_suggestion appends them.
+// cls_rgw_encode_suggestion appends them. From Tentacle on radosgw puts
+// GuardBucketResharding before it; Squid does not.
 func SuggestChanges(op radosclient.Execer, changes []Suggestion, r denc.Release) {
 	e := denc.NewEncoder()
 	for i := range changes {
@@ -419,7 +400,7 @@ type CheckIndexResult struct {
 
 // Result decodes the two headers once the op has run.
 func (res *CheckIndexResult) Result() (CheckIndexRet, error) {
-	return decodeReply(res.res, "rgw_cls_check_index_ret", DecodeCheckIndexRet)
+	return clsutil.DecodeReply(res.res, Class, methodBucketCheckIndex, DecodeCheckIndexRet)
 }
 
 // BucketCheckIndex adds bucket_check_index, whose input is empty.

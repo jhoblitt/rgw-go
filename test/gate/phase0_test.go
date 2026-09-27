@@ -11,7 +11,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
@@ -49,25 +49,6 @@ var (
 	plainETag     = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	multipartETag = regexp.MustCompile(`^[0-9a-f]{32}-[0-9]+$`)
 )
-
-// moduleRelative resolves a relative path from the module root, so a
-// hack/cluster/out/<release>/ path works from the package directory go test
-// runs in.
-func moduleRelative(p string) string {
-	if p == "" || filepath.IsAbs(p) {
-		return p
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, p)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // roundTrip decodes raw whole with decode, re-encodes the value for release r
 // and requires the bytes radosgw wrote.
@@ -188,7 +169,7 @@ func statObject(ctx context.Context, p radosclient.Pool, oid string) (uint64, bo
 	GinkgoHelper()
 	op := radosclient.NewReadOp()
 	st := op.Stat()
-	err := p.Read(ctx, oid, op, radosclient.OpFlagNone)
+	_, err := p.Read(ctx, oid, op, radosclient.OpFlagNone)
 	if err != nil {
 		Expect(err).To(MatchError(radosclient.ErrNotFound), "stat %s/%s", p.Name(), oid)
 		return 0, false
@@ -209,7 +190,7 @@ func readObject(ctx context.Context, p radosclient.Pool, oid string) object {
 	if size > 0 {
 		data = op.Read(0, size)
 	}
-	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), "reading %s/%s", p.Name(), oid)
+	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), "reading %s/%s", p.Name(), oid)
 	Expect(xs.Err).NotTo(HaveOccurred())
 	o := object{xattrs: xs.Xattrs}
 	if data != nil {
@@ -237,7 +218,7 @@ func omapValues(ctx context.Context, p radosclient.Pool, oid string) map[string]
 	GinkgoHelper()
 	op := radosclient.NewReadOp()
 	vals := op.OmapGetVals("", "", omapPage)
-	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), "omap of %s", oid)
+	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), "omap of %s", oid)
 	Expect(vals.Err).NotTo(HaveOccurred())
 	Expect(vals.More).To(BeFalse(), "%s has more than %d omap values", oid, omapPage)
 	return vals.Values
@@ -526,9 +507,8 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 	BeforeEach(func(ctx SpecContext) {
 		// Built with the integration tag, the gate runs or fails: it never
 		// skips for want of a cluster.
-		conf := moduleRelative(os.Getenv("RGW_GO_TEST_CEPH_CONF"))
-		Expect(conf).NotTo(BeEmpty(), "RGW_GO_TEST_CEPH_CONF is not set; run make gate RELEASE=squid|tentacle")
-		manifestPath := moduleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
+		conf := cephtest.Conf()
+		manifestPath := cephtest.ModuleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
 		Expect(manifestPath).NotTo(BeEmpty(), "RGW_GO_TEST_MANIFEST is not set; run make gate RELEASE=squid|tentacle")
 		var err error
 		m, err = gate.LoadManifest(manifestPath)
@@ -721,7 +701,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			hdr := op.Exec("user", "get_header", encodeRequest(user.GetHeaderOp{}.Encode, release))
 			lst := op.Exec("user", "list_buckets",
 				encodeRequest(user.ListBucketsOp{MaxEntries: omapPage}.Encode, release))
-			Expect(uids.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+			Expect(uids.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 
 			// The class encodes its replies with the OSD's own encoders, so
 			// the reply bytes are what the release's encoder writes.
@@ -841,7 +821,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				hdr := op.Exec(rgw.Class, "bucket_list", encodeRequest(rgw.ListOp{}.Encode, release))
 				lst := op.Exec(rgw.Class, "bucket_list",
 					encodeRequest(rgw.ListOp{NumEntries: omapPage}.Encode, release))
-				Expect(index.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+				Expect(index.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 
 				// The class re-encodes the header and entries into its reply
 				// with the OSD's encoders, so the reply is byte-exact for the
@@ -927,7 +907,6 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 
 	It("round-trips head object xattrs for every populated object", func(ctx SpecContext) {
 		t := newTally("head objects " + m.Pools.Data)
-		var checked int
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
 			Expect(ok).To(BeTrue())
@@ -987,9 +966,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				}
 			}
 			t["head object"]++
-			checked++
 		}
-		Expect(checked).To(Equal(len(m.Objects)), "heads checked")
 	})
 
 	It("classifies every data pool object and checks the non-heads", func(ctx SpecContext) {
@@ -1000,7 +977,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		// cluster may hold are part heads of an earlier upload of the same
 		// key, which a populate rerun leaves until gc removes them.
 		currentParts := map[string]bool{}
-		var staleMultipart []string
+		var uploads []multipartUpload
 		wantParts := 0
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
@@ -1013,7 +990,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				for _, p := range parts {
 					currentParts[p] = false
 				}
-				staleMultipart = append(staleMultipart, b.Marker+"__"+meta.NSMultipart+"_"+obj.Key+".")
+				uploads = append(uploads, newMultipartUpload(b.Marker, obj.Key, n, parts))
 			}
 		}
 		Expect(heads).To(HaveLen(len(m.Objects)), "distinct head names")
@@ -1056,9 +1033,9 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 					t[name+" part head of the current upload"]++
 					note("%s/%s xattrs: %v", name, l.oid, names)
 				default:
-					stale := slices.ContainsFunc(staleMultipart, func(prefix string) bool { return strings.HasPrefix(l.oid, prefix) })
+					stale := slices.ContainsFunc(uploads, func(u multipartUpload) bool { return u.staleNames(l.oid) })
 					Expect(stale && name == m.Pools.Data).To(BeTrue(),
-						"%s/%s has xattrs %v but is neither a head nor a part head", name, l.oid, names)
+						"%s/%s has xattrs %v but is neither a head nor a part head of this or an earlier upload", name, l.oid, names)
 					t[name+" part head of an earlier upload, awaiting gc"]++
 					note("%s/%s is a part head of an earlier upload: %v", name, l.oid, names)
 				}
@@ -1074,14 +1051,12 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 
 	It("finds every tail object the manifest names", func(ctx SpecContext) {
 		t := newTally("tail objects " + m.Pools.Data)
-		var walked int
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
 			Expect(ok).To(BeTrue())
 			_, man, data, oid := head(ctx, b, obj.Key)
 			stripes, err := man.Stripes()
 			Expect(err).NotTo(HaveOccurred(), obj.Key)
-			walked++
 			if obj.Size == 0 {
 				Expect(stripes).To(BeEmpty())
 				continue
@@ -1150,7 +1125,6 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			Expect(sum).To(Equal(obj.Size), "%s stripe sizes", obj.Key)
 			note("%s: %d stripes, %d outside the head", obj.Key, len(stripes), tails)
 		}
-		Expect(walked).To(Equal(len(m.Objects)), "manifests walked")
 	})
 
 	It("agrees with radosgw-admin", func(ctx SpecContext) {
@@ -1225,7 +1199,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			Expect(json.Unmarshal(admin(ctx, args...), &stats)).To(Succeed())
 			op := radosclient.NewReadOp()
 			hres := user.GetHeader(op, release)
-			Expect(uids.Read(ctx, u.ID()+".buckets", op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(uids.Read(ctx, u.ID()+".buckets", op, radosclient.OpFlagNone)).Error().To(Succeed())
 			h, err := hres.Header()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stats.Stats.Size).To(Equal(h.Stats.TotalBytes), "%s size", u.ID())

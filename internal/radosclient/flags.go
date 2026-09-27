@@ -18,6 +18,21 @@ const (
 	OpFlagReturnVec     OpFlags = 1 << 10 // LIBRADOS_OPERATION_RETURNVEC
 )
 
+// StepFlags modify one step of a write op.
+type StepFlags uint32
+
+// Step flags; the values are the LIBRADOS_OP_FLAG_* bits librados's
+// get_op_flags passes to the OSD, which drops FADVISE_FUA.
+const (
+	StepFlagExcl              StepFlags = 0x1
+	StepFlagFailOK            StepFlags = 0x2 // the op succeeds even when this step fails
+	StepFlagFAdviseRandom     StepFlags = 0x4
+	StepFlagFAdviseSequential StepFlags = 0x8
+	StepFlagFAdviseWillNeed   StepFlags = 0x10
+	StepFlagFAdviseDontNeed   StepFlags = 0x20
+	StepFlagFAdviseNoCache    StepFlags = 0x40
+)
+
 // CmpOp is the comparison a CmpXattr or OmapCmp step applies.
 type CmpOp uint8
 

@@ -3,10 +3,7 @@
 package refcount_test
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,26 +14,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root, as the goceph suite does.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // manifest is the part of populate.sh's manifest.json these specs read.
 type manifest struct {
@@ -51,13 +30,9 @@ var _ = Describe("refcount against a cluster", Label("integration"), func() {
 	)
 
 	BeforeEach(func(ctx SpecContext) {
-		conf := cephConf()
-		if conf == "" {
-			Skip("RGW_GO_TEST_CEPH_CONF is not set")
-		}
-		b, err := os.ReadFile(filepath.Join(filepath.Dir(conf), "manifest.json"))
-		Expect(err).NotTo(HaveOccurred(), "the cluster must be populated")
-		Expect(json.Unmarshal(b, &m)).To(Succeed())
+		conf := cephtest.Conf()
+		cephtest.ReadManifest(conf, &m)
+		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
@@ -93,7 +68,7 @@ var _ = Describe("refcount against a cluster", Label("integration"), func() {
 			explicit := refcount.Read(op, false, denc.Squid)
 			implicit := refcount.Read(op, true, denc.Squid)
 			xattrs := op.GetXattrs()
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 			refs, err := explicit.Refs()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(refs).To(BeEmpty(), oid)
@@ -105,7 +80,7 @@ var _ = Describe("refcount against a cluster", Label("integration"), func() {
 	})
 
 	It("gets, puts and sets NUL-terminated tags until the last put removes the object", func(ctx SpecContext) {
-		pool, err := cluster.Pool(ctx, "rgw-go-test", "")
+		pool, err := cluster.Pool(ctx, cephtest.TestPool, "")
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 		oid := fmt.Sprintf("cls-refcount-%d", time.Now().UnixNano())
@@ -121,7 +96,7 @@ var _ = Describe("refcount against a cluster", Label("integration"), func() {
 			op := radosclient.NewReadOp()
 			res := refcount.Read(op, false, denc.Squid)
 			xattrs := op.GetXattrs()
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			refs, rerr := res.Refs()
 			Expect(rerr).NotTo(HaveOccurred())
 			d := denc.NewDecoder(xattrs.Xattrs[refcount.XattrName])
@@ -169,6 +144,6 @@ var _ = Describe("refcount against a cluster", Label("integration"), func() {
 		write(func(w *radosclient.WriteOp) { refcount.Put(w, "b\x00", false, denc.Squid) })
 		op := radosclient.NewReadOp()
 		op.Stat()
-		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 	})
 })

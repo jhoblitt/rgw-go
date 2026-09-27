@@ -9,6 +9,7 @@
 // returns a result whose Result method decodes the reply once the op has
 // run. Requests and stored types encode at the release given, and decoders
 // accept every version from Squid through main. radosgw sends
-// bucket_prepare_op and bucket_complete_op behind guard_bucket_resharding,
-// so callers add GuardBucketResharding to the op before them.
+// bucket_prepare_op, bucket_complete_op and the OLH methods behind
+// guard_bucket_resharding on every release, and dir_suggest_changes too from
+// Tentacle on, so callers add GuardBucketResharding to the op before them.
 package rgw

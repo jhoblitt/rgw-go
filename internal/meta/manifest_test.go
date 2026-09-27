@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
@@ -409,6 +410,57 @@ var _ = Describe("Manifest.Stripes", func() {
 		}),
 	)
 
+	Describe("the stripe bound", func() {
+		var striped meta.Manifest
+
+		BeforeEach(func() {
+			// eight 1-byte stripes after a 2-byte head
+			striped = meta.Manifest{
+				ObjSize: 10, HeadSize: 2, MaxHeadSize: 2, Obj: headObj, Prefix: "p",
+				Rules: map[uint64]meta.ManifestRule{0: {StripeMaxSize: 1}},
+			}
+		})
+
+		It("lays out a manifest at the bound", func() {
+			ss, err := striped.StripesUpTo(9)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ss).To(HaveLen(9))
+		})
+
+		It("refuses a manifest one stripe past the bound while walking it", func() {
+			// The tail alone needs 8 stripes, so the bound passes the
+			// up-front check and trips on the head's extra stripe.
+			_, err := striped.StripesUpTo(8)
+			Expect(err).To(MatchError(meta.ErrTooManyStripes))
+		})
+
+		It("refuses a manifest whose tail cannot fit the bound before walking it", func() {
+			_, err := striped.StripesUpTo(7)
+			Expect(err).To(MatchError(ContainSubstring("at least 8")))
+		})
+
+		It("refuses at once a 1 TiB manifest of 1-byte stripes", func() {
+			hostile := striped
+			hostile.ObjSize = 1 << 40
+			_, err := hostile.Stripes()
+			Expect(err).To(MatchError(meta.ErrTooManyStripes))
+		})
+
+		It("refuses an explicit manifest with more pieces than the bound", func() {
+			m := meta.Manifest{ExplicitObjs: true, ObjSize: 3, Objs: map[uint64]meta.ManifestPart{
+				0: {Loc: headObj, Size: 1}, 1: {Loc: headObj, Size: 1}, 2: {Loc: headObj, Size: 1},
+			}}
+			_, err := m.StripesUpTo(2)
+			Expect(err).To(MatchError(meta.ErrTooManyStripes))
+		})
+
+		It("fits a 5 TiB object of 4 MiB stripes in 10,000 parts", func() {
+			const parts, partSize = 10000, 5 << 40 / 10000
+			stripesPerPart := (partSize + (4<<20 - 1)) / (4 << 20)
+			Expect(parts * stripesPerPart).To(BeNumerically("<=", meta.MaxStripes))
+		})
+	})
+
 	It("lays out every corpus manifest as the C++ iterator does", func() {
 		cs, err := loadGoldens("RGWObjManifest")
 		Expect(err).NotTo(HaveOccurred())
@@ -579,7 +631,7 @@ func orderCacheInfo() meta.ObjectCacheInfo {
 		Xattrs:   map[string][]byte{"x": []byte("1")},
 		RMXattrs: map[string][]byte{"r": []byte("2")},
 		Meta:     meta.ObjectMetaInfo{Size: 5},
-		Version:  meta.ObjVersion{Ver: 3, Tag: "tag"},
+		Version:  version.ObjVersion{Ver: 3, Tag: "tag"},
 	}
 }
 
@@ -628,13 +680,13 @@ var _ = Describe("CacheNotifyInfo", func() {
 			encCacheInfoBody(e, false)
 		})
 		want := orderCacheInfo()
-		want.RMXattrs, want.Epoch, want.Version = nil, 0, meta.ObjVersion{}
+		want.RMXattrs, want.Epoch, want.Version = nil, 0, version.ObjVersion{}
 		Expect(decodeWhole(b, meta.DecodeObjectCacheInfo)).To(Equal(want))
 	})
 	It("reads ObjectCacheInfo version 3, with removed attrs but no epoch", func() {
 		b := encoded(func(e *denc.Encoder) { beginEnd(e, 3, 3, func() { encCacheInfoBody(e, true) }) })
 		want := orderCacheInfo()
-		want.Epoch, want.Version = 0, meta.ObjVersion{}
+		want.Epoch, want.Version = 0, version.ObjVersion{}
 		Expect(decodeWhole(b, meta.DecodeObjectCacheInfo)).To(Equal(want))
 	})
 	It("reads ObjectMetaInfo and RGWCacheNotifyInfo version 1, with neither compat byte nor length", func() {

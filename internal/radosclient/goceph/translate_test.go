@@ -12,9 +12,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
 )
 
-// recorder records the go-ceph builder calls the translator makes, in order.
+// recorder records the go-ceph builder calls the translator makes, in order,
+// and the buffers it hands to Read.
 type recorder struct {
 	calls []string
+	bufs  [][]byte
 }
 
 func (r *recorder) add(call string) { r.calls = append(r.calls, call) }
@@ -27,6 +29,7 @@ func (r *recorder) CmpXattr(name string, op rados.CmpXattrOp, value []byte) {
 
 func (r *recorder) Read(offset uint64, buf []byte) *rados.ReadOpReadStep {
 	r.add("Read " + strconv.FormatUint(offset, 10) + " " + strconv.Itoa(len(buf)))
+	r.bufs = append(r.bufs, buf)
 	return new(rados.ReadOpReadStep)
 }
 
@@ -71,6 +74,10 @@ func (w *writeRecorder) Create(exclusive rados.CreateOption) {
 	w.add("Create " + strconv.FormatBool(exclusive == rados.CreateExclusive))
 }
 func (w *writeRecorder) Remove() { w.add("Remove") }
+func (w *writeRecorder) SetFlags(flags rados.OpFlags) {
+	w.add("SetFlags " + strconv.FormatUint(uint64(flags), 10))
+}
+
 func (w *writeRecorder) WriteFull(b []byte) {
 	w.add("WriteFull " + strconv.Itoa(len(b)))
 }
@@ -122,6 +129,20 @@ var _ = Describe("translating seam ops", func() {
 		Expect(rec.calls).To(Equal([]string{"Stat", "GetXattrs", "Read 4 16"}))
 	})
 
+	It("reads into the caller's buffer, and allocates one otherwise", func() {
+		op := radosclient.NewReadOp()
+		buf := make([]byte, 64)
+		op.ReadInto(0, buf)
+		op.Read(64, 32)
+
+		rec := &recorder{}
+		Expect(goceph.TranslateRead(rec, op)).To(Succeed())
+		Expect(rec.calls).To(Equal([]string{"Read 0 64", "Read 64 32"}))
+		Expect(rec.bufs).To(HaveLen(2))
+		Expect(&rec.bufs[0][0]).To(BeIdenticalTo(&buf[0]), "the caller's buffer")
+		Expect(rec.bufs[1]).To(HaveLen(32), "the allocated buffer")
+	})
+
 	It("translates every read step", func() {
 		op := radosclient.NewReadOp()
 		op.AssertExists()
@@ -166,6 +187,8 @@ var _ = Describe("translating seam ops", func() {
 		op.SetAllocHint(4096, 1024, 2)
 		op.Exec("version", "set", []byte("in"))
 		op.Remove()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
+		op.Create(false)
 
 		rec := &writeRecorder{}
 		Expect(goceph.TranslateWrite(rec, op)).To(Succeed())
@@ -189,13 +212,31 @@ var _ = Describe("translating seam ops", func() {
 			"SetAllocationHint 4096 1024 2",
 			"Exec version.set in",
 			"Remove",
+			"SetFlags 2",
+			"Create false",
 		}))
+	})
+
+	It("rejects step flags that no step precedes, which librados would abort on", func() {
+		op := radosclient.NewWriteOp()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
+		op.Remove()
+		rec := &writeRecorder{}
+		Expect(goceph.TranslateWrite(rec, op)).To(MatchError(radosclient.ErrBadOp))
+		Expect(rec.calls).To(BeEmpty())
+	})
+
+	It("rejects a step flag librados does not pass on", func() {
+		op := radosclient.NewWriteOp()
+		op.Remove()
+		op.SetStepFlags(0x80) // FADVISE_FUA, which librados drops
+		Expect(goceph.TranslateWrite(&writeRecorder{}, op)).To(MatchError(radosclient.ErrBadOp))
 	})
 
 	It("rejects an unknown comparison operator", func() {
 		op := radosclient.NewReadOp()
 		op.CmpXattr("n", radosclient.CmpOp(9), nil)
-		Expect(goceph.TranslateRead(&recorder{}, op)).To(MatchError(radosclient.ErrInvalid))
+		Expect(goceph.TranslateRead(&recorder{}, op)).To(MatchError(radosclient.ErrBadOp))
 	})
 
 	It("maps the seam's op flags onto go-ceph's", func() {

@@ -1,6 +1,7 @@
 package radosclient_test
 
 import (
+	"errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -48,6 +49,17 @@ var _ = Describe("ReadOp", func() {
 		}), "read op steps")
 	})
 
+	It("reads into a caller's buffer, sized by it", func() {
+		op := radosclient.NewReadOp()
+		buf := make([]byte, 512)
+		read := op.ReadInto(8, buf)
+
+		Expect(op.Steps()).To(Equal([]radosclient.Step{
+			&radosclient.ReadStep{Offset: 8, Length: 512, Buf: buf, Result: read},
+		}), "read op steps")
+		Expect(op.Steps()[0]).To(HaveField("Buf", HaveCap(512)), "the caller's buffer")
+	})
+
 	It("does not let a caller's append to Steps reach the op", func() {
 		op := radosclient.NewReadOp()
 		op.AssertExists()
@@ -70,6 +82,7 @@ var _ = Describe("WriteOp", func() {
 		op.CmpXattr("x", radosclient.CmpNE, []byte("v"))
 		op.Create(true)
 		op.Remove()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
 		op.WriteFull([]byte("full"))
 		op.Write([]byte("part"), 8)
 		op.Append([]byte("tail"))
@@ -93,6 +106,7 @@ var _ = Describe("WriteOp", func() {
 			&radosclient.CmpXattrStep{Name: "x", Op: radosclient.CmpNE, Value: []byte("v")},
 			&radosclient.CreateStep{Exclusive: true},
 			&radosclient.RemoveStep{},
+			&radosclient.StepFlagsStep{Flags: radosclient.StepFlagFailOK},
 			&radosclient.WriteFullStep{Data: []byte("full")},
 			&radosclient.WriteStep{Data: []byte("part"), Offset: 8},
 			&radosclient.AppendStep{Data: []byte("tail")},
@@ -183,6 +197,15 @@ var _ = Describe("Error", func() {
 		Expect(err.Error()).To(Equal("rados: stat: no such file or directory"), "error text for -2")
 	})
 
+	It("never matches a local sentinel, whatever the errno", func() {
+		for errno := range int32(4096) {
+			err := &radosclient.Error{Errno: errno}
+			for _, local := range []error{radosclient.ErrBadOp, radosclient.ErrClosed, radosclient.ErrReleaseTooOld} {
+				Expect(errors.Is(err, local)).To(BeFalse(), "errno %d against %v", errno, local)
+			}
+		}
+	})
+
 	It("does not map an unlisted errno to any sentinel", func() {
 		err := &radosclient.Error{Errno: 16}
 		Expect(err.Is(radosclient.ErrNotFound)).To(BeFalse(), "EBUSY is not ErrNotFound")
@@ -198,6 +221,16 @@ var _ = Describe("Error", func() {
 })
 
 var _ = Describe("OpFlags", func() {
+	It("carries librados's LIBRADOS_OP_FLAG_* values", func() {
+		Expect(radosclient.StepFlagExcl).To(BeEquivalentTo(0x1))
+		Expect(radosclient.StepFlagFailOK).To(BeEquivalentTo(0x2))
+		Expect(radosclient.StepFlagFAdviseRandom).To(BeEquivalentTo(0x4))
+		Expect(radosclient.StepFlagFAdviseSequential).To(BeEquivalentTo(0x8))
+		Expect(radosclient.StepFlagFAdviseWillNeed).To(BeEquivalentTo(0x10))
+		Expect(radosclient.StepFlagFAdviseDontNeed).To(BeEquivalentTo(0x20))
+		Expect(radosclient.StepFlagFAdviseNoCache).To(BeEquivalentTo(0x40))
+	})
+
 	It("carries librados's LIBRADOS_OPERATION_* values", func() {
 		Expect(radosclient.OpFlagBalanceReads).To(Equal(radosclient.OpFlags(1)), "BALANCE_READS")
 		Expect(radosclient.OpFlagLocalizeReads).To(Equal(radosclient.OpFlags(2)), "LOCALIZE_READS")

@@ -12,12 +12,15 @@ type ExecStep struct {
 	Result        *ExecResult
 }
 
-// ReadStep reads Length bytes at Offset. A Length of 0 asks RADOS for
-// everything from Offset to the end of the object, into an empty buffer: it
-// succeeds with no data when nothing lies past Offset and fails the step with
-// ERANGE otherwise, so read a known size.
+// ReadStep reads up to Length bytes at Offset, into Buf when it is not nil
+// and into a buffer the implementation allocates otherwise; ReadInto sets
+// Length to len(Buf). A Length of 0 asks RADOS for everything from Offset to
+// the end of the object, into an empty buffer: it succeeds with no data when
+// nothing lies past Offset and fails the step with ERANGE otherwise, so read
+// a known size.
 type ReadStep struct {
 	Offset, Length uint64
+	Buf            []byte
 	Result         *ReadResult
 }
 
@@ -73,6 +76,11 @@ type CreateStep struct {
 
 // RemoveStep deletes the object.
 type RemoveStep struct{}
+
+// StepFlagsStep sets the flags of the step before it.
+type StepFlagsStep struct {
+	Flags StepFlags
+}
 
 // WriteFullStep replaces the object's data with Data.
 type WriteFullStep struct {
@@ -149,6 +157,7 @@ func (*OmapGetValsByKeysStep) isStep() {}
 func (*OmapGetKeysStep) isStep()       {}
 func (*CreateStep) isStep()            {}
 func (*RemoveStep) isStep()            {}
+func (*StepFlagsStep) isStep()         {}
 func (*WriteFullStep) isStep()         {}
 func (*WriteStep) isStep()             {}
 func (*AppendStep) isStep()            {}
