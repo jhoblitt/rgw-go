@@ -27,8 +27,8 @@ github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 h1:EwtI+Al+DeppwYX2oX
 github.com/google/pprof v0.0.0-20260402051712-545e8a4df936/go.mod h1:MxpfABSjhmINe3F1It9d+8exIHFvUqtLIRCdOGNXqiI=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/jhoblitt/go-ceph v0.0.0-20260927015447-741cf8bc19db h1:sZnIDHN81/TV7NxvzS4R/HfPjtafGgNcPD7r8dUoUG0=
-github.com/jhoblitt/go-ceph v0.0.0-20260927015447-741cf8bc19db/go.mod h1:ELOumVcu1pE6LbWzaCvlndpGCmEh0W2EYQOzpEC7JBM=
+github.com/jhoblitt/go-ceph v0.0.0-20260927090122-cbf97f85fcf5 h1:5NQGXaNXUv6VAmoZtEWrs8AQCrI8G5775UDMkaYEP+8=
+github.com/jhoblitt/go-ceph v0.0.0-20260927090122-cbf97f85fcf5/go.mod h1:ELOumVcu1pE6LbWzaCvlndpGCmEh0W2EYQOzpEC7JBM=
 github.com/joshdk/go-junit v1.0.0 h1:S86cUKIdwBHWwA6xCmFlf3RTLfVXYQfvanM5Uh+K6GE=
 github.com/joshdk/go-junit v1.0.0/go.mod h1:TiiV0PqkaNfFXjEiyjWM3XXrhVyCa1K4Zfga6W52ung=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=

@@ -17,9 +17,11 @@ before writing Go here.
   `librados-devel` is absent; use `CGO_CFLAGS=-I/home/jhoblitt/github/ceph/src/include`
   and `CGO_LDFLAGS=-L$HOME/.local/lib/rgw-go` where that directory holds
   `librados.so -> /usr/lib64/librados.so.2`. CI installs `librados-dev`.
-- go-ceph comes from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to
-  commit 741cf8bc19db on branch rgw-go/rados-async-and-steps; Dependabot does not follow a
-  replace, so it is bumped by hand. The fork's APIs sit behind the `ceph_preview` build tag,
+- go-ceph comes from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to a
+  commit on the fork's `rgw-go` integration branch (currently cbf97f85fcf5); Dependabot does
+  not follow a replace, so it is bumped by hand. Every pinned ref must be on `rgw-go`, and
+  every change reaches `rgw-go` by PR into the fork, merged on green fork CI. Any PR opened
+  on upstream ceph/go-ceph is merged into `rgw-go` first, unmodified, so its SHAs match. The fork's APIs sit behind the `ceph_preview` build tag,
   which every build, test and lint passes (Makefile `GO_TAGS`, .golangci.yml, CI).
 - `docs/cgo-limitations.md` is the registry of go-ceph, librados and cgo limitations for
   the pure-Go question; add or update an entry whenever a task, review or benchmark finds one.
