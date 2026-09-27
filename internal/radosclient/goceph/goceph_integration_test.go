@@ -23,30 +23,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// testPool is the pool hack/cluster/up.sh creates for this suite.
-const testPool = "rgw-go-test"
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root so the documented hack/cluster/out/<release>/ceph.conf works
-// from the package directory go test runs in.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // expectedRelease is the release the cluster under test runs: the directory
 // up.sh wrote its ceph.conf to, unless RGW_GO_TEST_CEPH_RELEASE names it.
@@ -154,15 +132,12 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			)
 
 			BeforeEach(func(ctx SpecContext) {
-				conf = cephConf()
-				if conf == "" {
-					Skip("RGW_GO_TEST_CEPH_CONF is not set")
-				}
+				conf = cephtest.Conf()
 				var err error
 				cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
-				pool, err = cluster.Pool(ctx, testPool, "")
+				pool, err = cluster.Pool(ctx, cephtest.TestPool, "")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 				oid = fmt.Sprintf("%s-%d-%d", mode, CurrentSpecReport().LeafNodeLocation.LineNumber, time.Now().UnixNano())
@@ -341,11 +316,11 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 					} `json:"pools"`
 				}
 				Expect(json.Unmarshal(out, &dump)).To(Succeed())
-				Expect(dump.Pools).To(ContainElement(HaveField("Name", testPool)))
+				Expect(dump.Pools).To(ContainElement(HaveField("Name", cephtest.TestPool)))
 				for _, p := range dump.Pools {
-					if p.Name == testPool {
-						Expect(pool.ID()).To(Equal(p.ID), "pool %s", testPool)
-						Expect(pool.WithLocator("loc").ID()).To(Equal(p.ID), "pool %s with a locator", testPool)
+					if p.Name == cephtest.TestPool {
+						Expect(pool.ID()).To(Equal(p.ID), "pool %s", cephtest.TestPool)
+						Expect(pool.WithLocator("loc").ID()).To(Equal(p.ID), "pool %s with a locator", cephtest.TestPool)
 					}
 				}
 			})
@@ -443,7 +418,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			})
 
 			It("passes a write guarded by guard_bucket_resharding with a positive ret_err on a shard not resharding", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "guard-ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "guard-ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 
@@ -714,7 +689,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				r.Stat()
 				_, err = pool.Read(ctx, oid, r, radosclient.OpFlagNone)
 				Expect(err).To(MatchError(radosclient.ErrClosed))
-				_, err = cluster.Pool(ctx, testPool, "")
+				_, err = cluster.Pool(ctx, cephtest.TestPool, "")
 				Expect(err).To(HaveOccurred())
 				Expect(pool.Close()).To(Succeed())
 			})
@@ -723,7 +698,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				for range 8 {
 					c2, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
 					Expect(err).NotTo(HaveOccurred())
-					p2, err := c2.Pool(ctx, testPool, "")
+					p2, err := c2.Pool(ctx, cephtest.TestPool, "")
 					Expect(err).NotTo(HaveOccurred())
 					w := radosclient.NewWriteOp()
 					w.WriteFull(make([]byte, 4096))
@@ -758,7 +733,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 					}
 					wg.Go(func() {
 						for {
-							p3, openErr := c2.Pool(ctx, testPool, "")
+							p3, openErr := c2.Pool(ctx, cephtest.TestPool, "")
 							if openErr != nil {
 								if !isClosed(openErr) {
 									unexpected.Add(1)
@@ -795,7 +770,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
 				_, err = c2.RequiredOSDRelease(ctx)
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
-				_, err = c2.Pool(ctx, testPool, "")
+				_, err = c2.Pool(ctx, cephtest.TestPool, "")
 				Expect(isClosed(err)).To(BeTrue(), "%v", err)
 			})
 
@@ -878,7 +853,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			})
 
 			It("lists an object with its locator, which then reads it back", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "loc-ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "loc-ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 
@@ -905,7 +880,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 			})
 
 			It("lists the objects in the namespace", func(ctx SpecContext) {
-				ns, err := cluster.Pool(ctx, testPool, "ns-"+oid)
+				ns, err := cluster.Pool(ctx, cephtest.TestPool, "ns-"+oid)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { Expect(ns.Close()).To(Succeed()) })
 				for _, name := range []string{"a", "b"} {

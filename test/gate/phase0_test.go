@@ -11,7 +11,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
@@ -49,25 +49,6 @@ var (
 	plainETag     = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	multipartETag = regexp.MustCompile(`^[0-9a-f]{32}-[0-9]+$`)
 )
-
-// moduleRelative resolves a relative path from the module root, so a
-// hack/cluster/out/<release>/ path works from the package directory go test
-// runs in.
-func moduleRelative(p string) string {
-	if p == "" || filepath.IsAbs(p) {
-		return p
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, p)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // roundTrip decodes raw whole with decode, re-encodes the value for release r
 // and requires the bytes radosgw wrote.
@@ -526,9 +507,8 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 	BeforeEach(func(ctx SpecContext) {
 		// Built with the integration tag, the gate runs or fails: it never
 		// skips for want of a cluster.
-		conf := moduleRelative(os.Getenv("RGW_GO_TEST_CEPH_CONF"))
-		Expect(conf).NotTo(BeEmpty(), "RGW_GO_TEST_CEPH_CONF is not set; run make gate RELEASE=squid|tentacle")
-		manifestPath := moduleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
+		conf := cephtest.Conf()
+		manifestPath := cephtest.ModuleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
 		Expect(manifestPath).NotTo(BeEmpty(), "RGW_GO_TEST_MANIFEST is not set; run make gate RELEASE=squid|tentacle")
 		var err error
 		m, err = gate.LoadManifest(manifestPath)

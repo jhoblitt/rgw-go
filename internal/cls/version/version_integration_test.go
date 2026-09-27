@@ -3,10 +3,7 @@
 package version_test
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,26 +13,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root, as the goceph suite does.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // manifest is the part of populate.sh's manifest.json these specs read.
 type manifest struct {
@@ -50,13 +29,9 @@ var _ = Describe("version against a cluster", Label("integration"), func() {
 	)
 
 	BeforeEach(func(ctx SpecContext) {
-		conf := cephConf()
-		if conf == "" {
-			Skip("RGW_GO_TEST_CEPH_CONF is not set")
-		}
-		b, err := os.ReadFile(filepath.Join(filepath.Dir(conf), "manifest.json"))
-		Expect(err).NotTo(HaveOccurred(), "the cluster must be populated")
-		Expect(json.Unmarshal(b, &m)).To(Succeed())
+		conf := cephtest.Conf()
+		cephtest.ReadManifest(conf, &m)
+		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
@@ -91,7 +66,7 @@ var _ = Describe("version against a cluster", Label("integration"), func() {
 	})
 
 	It("creates, increments, checks and sets a version", func(ctx SpecContext) {
-		pool, err := cluster.Pool(ctx, "rgw-go-test", "")
+		pool, err := cluster.Pool(ctx, cephtest.TestPool, "")
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 		oid := fmt.Sprintf("cls-version-%d", time.Now().UnixNano())

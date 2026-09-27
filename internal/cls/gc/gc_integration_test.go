@@ -3,10 +3,7 @@
 package gc_test
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -19,40 +16,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
-
-// testPool is the scratch pool hack/cluster/up.sh creates.
-const testPool = "rgw-go-test"
-
-// cephConf resolves RGW_GO_TEST_CEPH_CONF, taking a relative path from the
-// module root.
-func cephConf() string {
-	conf := os.Getenv("RGW_GO_TEST_CEPH_CONF")
-	if conf == "" || filepath.IsAbs(conf) {
-		return conf
-	}
-	dir, err := os.Getwd()
-	Expect(err).NotTo(HaveOccurred())
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, conf)
-		}
-		parent := filepath.Dir(dir)
-		Expect(parent).NotTo(Equal(dir), "no go.mod above the working directory")
-		dir = parent
-	}
-}
 
 // logPool reads the zone's log pool from the manifest populate.sh wrote next to conf.
 func logPool(conf string) string {
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(conf), "manifest.json"))
-	Expect(err).NotTo(HaveOccurred(), "run make populate first")
 	var m struct {
 		Pools struct {
 			Log string `json:"log"`
 		} `json:"pools"`
 	}
-	Expect(json.Unmarshal(b, &m)).To(Succeed())
+	cephtest.ReadManifest(conf, &m)
 	Expect(m.Pools.Log).NotTo(BeEmpty())
 	return m.Pools.Log
 }
@@ -73,10 +47,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 	)
 
 	BeforeEach(func(ctx SpecContext) {
-		conf = cephConf()
-		if conf == "" {
-			Skip("RGW_GO_TEST_CEPH_CONF is not set")
-		}
+		conf = cephtest.Conf()
 		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
@@ -132,7 +103,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			var err error
-			pool, err = cluster.Pool(ctx, testPool, "gc-it")
+			pool, err = cluster.Pool(ctx, cephtest.TestPool, "gc-it")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
 			oid = fmt.Sprintf("gc-%d-%d", CurrentSpecReport().LeafNodeLocation.LineNumber, time.Now().UnixNano())
