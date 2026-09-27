@@ -907,7 +907,6 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 
 	It("round-trips head object xattrs for every populated object", func(ctx SpecContext) {
 		t := newTally("head objects " + m.Pools.Data)
-		var checked int
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
 			Expect(ok).To(BeTrue())
@@ -967,9 +966,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				}
 			}
 			t["head object"]++
-			checked++
 		}
-		Expect(checked).To(Equal(len(m.Objects)), "heads checked")
 	})
 
 	It("classifies every data pool object and checks the non-heads", func(ctx SpecContext) {
@@ -980,7 +977,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		// cluster may hold are part heads of an earlier upload of the same
 		// key, which a populate rerun leaves until gc removes them.
 		currentParts := map[string]bool{}
-		var staleMultipart []string
+		var uploads []multipartUpload
 		wantParts := 0
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
@@ -993,7 +990,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				for _, p := range parts {
 					currentParts[p] = false
 				}
-				staleMultipart = append(staleMultipart, b.Marker+"__"+meta.NSMultipart+"_"+obj.Key+".")
+				uploads = append(uploads, newMultipartUpload(b.Marker, obj.Key, n, parts))
 			}
 		}
 		Expect(heads).To(HaveLen(len(m.Objects)), "distinct head names")
@@ -1036,9 +1033,9 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 					t[name+" part head of the current upload"]++
 					note("%s/%s xattrs: %v", name, l.oid, names)
 				default:
-					stale := slices.ContainsFunc(staleMultipart, func(prefix string) bool { return strings.HasPrefix(l.oid, prefix) })
+					stale := slices.ContainsFunc(uploads, func(u multipartUpload) bool { return u.staleNames(l.oid) })
 					Expect(stale && name == m.Pools.Data).To(BeTrue(),
-						"%s/%s has xattrs %v but is neither a head nor a part head", name, l.oid, names)
+						"%s/%s has xattrs %v but is neither a head nor a part head of this or an earlier upload", name, l.oid, names)
 					t[name+" part head of an earlier upload, awaiting gc"]++
 					note("%s/%s is a part head of an earlier upload: %v", name, l.oid, names)
 				}
@@ -1054,14 +1051,12 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 
 	It("finds every tail object the manifest names", func(ctx SpecContext) {
 		t := newTally("tail objects " + m.Pools.Data)
-		var walked int
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
 			Expect(ok).To(BeTrue())
 			_, man, data, oid := head(ctx, b, obj.Key)
 			stripes, err := man.Stripes()
 			Expect(err).NotTo(HaveOccurred(), obj.Key)
-			walked++
 			if obj.Size == 0 {
 				Expect(stripes).To(BeEmpty())
 				continue
@@ -1130,7 +1125,6 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			Expect(sum).To(Equal(obj.Size), "%s stripe sizes", obj.Key)
 			note("%s: %d stripes, %d outside the head", obj.Key, len(stripes), tails)
 		}
-		Expect(walked).To(Equal(len(m.Objects)), "manifests walked")
 	})
 
 	It("agrees with radosgw-admin", func(ctx SpecContext) {
