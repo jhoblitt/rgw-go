@@ -29,10 +29,10 @@ func setEnv(key, value string) {
 
 var _ = Describe("ModuleRelative", func() {
 	It("resolves a relative path from the module root", func() {
-		got := cephtest.ModuleRelative("hack/cluster/out/squid/ceph.conf")
+		got := cephtest.ModuleRelative("hack/rooket/out/squid/ceph.conf")
 		root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(got)))))
 		Expect(filepath.Join(root, "go.mod")).To(BeAnExistingFile())
-		Expect(got).To(HaveSuffix("/hack/cluster/out/squid/ceph.conf"))
+		Expect(got).To(HaveSuffix("/hack/rooket/out/squid/ceph.conf"))
 	})
 
 	It("leaves an absolute path and the empty path alone", func() {

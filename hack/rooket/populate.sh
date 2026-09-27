@@ -1,31 +1,39 @@
 #!/usr/bin/env bash
 # Writes the fixed data set into the running cluster through the radosgw itself,
 # so every object on disk is laid out by the oracle, then records what it wrote
-# in hack/cluster/out/<release>/manifest.json. Rerunning it rewrites the same
+# in hack/rooket/out/<release>/manifest.json. Rerunning it rewrites the same
 # data and the same manifest.
+#
+# Nothing Rook names is hard-coded: the realm, zonegroup and zone are the ones
+# the radosgw serves, and the pools and placement come from the zone and
+# zonegroup themselves.
 #
 # Usage: populate.sh squid|tentacle
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly here
-readonly endpoint=http://127.0.0.1:7480
+readonly script=populate.sh
+# shellcheck source=hack/rooket/lib.sh
+source "${here}/lib.sh"
+use_release "${1:-}"
+[[ -f "${out}/ceph.conf" ]] || die "no ${out}/ceph.conf; run make cluster-up RELEASE=${release} first"
+ceph_version=$(pinned_version)
 
-die() {
-	echo "populate.sh: $*" >&2
-	exit 1
-}
+rgw=$(rgw_daemon)
+realm=$(jq -r '.metadata.realm_name // empty' <<<"${rgw}")
+zonegroup=$(jq -r '.metadata.zonegroup_name // empty' <<<"${rgw}")
+zone=$(jq -r '.metadata.zone_name // empty' <<<"${rgw}")
+[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
+	die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
 
-release=${1:-}
-[[ "${release}" == squid || "${release}" == tentacle ]] || die "usage: populate.sh squid|tentacle"
-running=$(podman inspect rgw-go-rgw --format '{{index .Config.Labels "rgw-go.release"}}' 2>/dev/null) ||
-	die "no cluster is running; run make cluster-up-${release} first"
-[[ "${running}" == "${release}" ]] || die "the running cluster is ${running}, not ${release}"
-out=${here}/out/${release}
-
+# Without the site options radosgw-admin works in a zone named default, which
+# it creates on first use and the radosgw never serves.
 admin() {
-	podman exec rgw-go-rgw radosgw-admin "$@"
+	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
 }
+
+endpoint=$(rgw_endpoint "${rgw}")
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/rgw-go-populate.XXXXXX")
 trap 'rm -rf "${work}"' EXIT
@@ -53,24 +61,40 @@ ensure_user() {
 		admin user create "${args[@]}" --display-name "${uid}"
 }
 
+zonegroup_json=$(admin zonegroup get)
+placement=$(jq -r '.default_placement' <<<"${zonegroup_json}")
+[[ -n "${placement}" && "${placement}" != null ]] || die "zonegroup ${zonegroup} has no default placement"
+
 # A cloud-s3 tier storage class gives the zonegroup a placement tier to encode.
 # No lifecycle rule transitions to it, so radosgw never contacts the endpoint.
-admin zonegroup placement add --rgw-zonegroup default --placement-id default-placement \
-	--storage-class CLOUDTIER --tier-type cloud-s3 \
-	--tier-config endpoint=http://127.0.0.1:1,access_key=x,secret=y,target_path=rgw-go-cloud >/dev/null
-tiers=$(admin zonegroup get --rgw-zonegroup default |
-	jq '[.placement_targets[] | select(.name == "default-placement") | .tier_targets // [] | length] | add')
-[[ "${tiers}" -ge 1 ]] || die "the default zonegroup has no tier target after placement add"
+# The zonegroup belongs to a realm, so the change is committed to a new period
+# now rather than by Rook at some later reconcile, and the radosgw reloads its
+# configuration from that period while the writes below start.
+has_tier() {
+	jq -e --arg p "${placement}" \
+		'[.placement_targets[] | select(.name == $p) | .tier_targets // [] | length] | add >= 1' >/dev/null
+}
+if ! has_tier <<<"${zonegroup_json}"; then
+	admin zonegroup placement add --placement-id "${placement}" \
+		--storage-class CLOUDTIER --tier-type cloud-s3 \
+		--tier-config endpoint=http://127.0.0.1:1,access_key=x,secret=y,target_path=rgw-go-cloud >/dev/null
+	has_tier < <(admin zonegroup get) || die "zonegroup ${zonegroup} has no tier target after placement add"
+	admin period update --commit >/dev/null
+fi
+jq --arg zg "${zonegroup}" '.period_map.zonegroups[] | select(.name == $zg)' < <(admin period get) | has_tier ||
+	die "the current period's zonegroup ${zonegroup} has no tier target"
 
 alice=$(ensure_user alice "")
 bob=$(ensure_user bob t1)
 
-# as_user runs the aws CLI with the keys from a user's JSON.
+# as_user runs the aws CLI with the keys from a user's JSON. Its retries ride
+# out a radosgw still reloading the period committed above.
 as_user() {
 	local user=$1
 	shift
 	AWS_ACCESS_KEY_ID=$(jq -r '.keys[0].access_key' <<<"${user}") \
 		AWS_SECRET_ACCESS_KEY=$(jq -r '.keys[0].secret_key' <<<"${user}") \
+		AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=10 \
 		aws --endpoint-url "${endpoint}" "$@"
 }
 
@@ -136,20 +160,26 @@ jq -e '.ContentType == "text/plain" and .Metadata.color == "blue"' <<<"${meta}" 
 admin user stats --uid alice --sync-stats >/dev/null
 admin user stats --uid bob --tenant t1 --sync-stats >/dev/null
 
-pools=$(jq -n '{
-	root: ".rgw.root", meta: "default.rgw.meta", control: "default.rgw.control",
-	log: "default.rgw.log", index: "default.rgw.buckets.index",
-	data: "default.rgw.buckets.data", nonec: "default.rgw.buckets.non-ec"
+# The metadata pool holds the zone's namespaced pools; the index, data and
+# extra pools are the default placement's STANDARD class, which the buckets
+# use. The root pool is the one radosgw-admin reads the zone from.
+root=$(ceph_cmd config get client.admin rgw_zone_root_pool)
+pools=$(admin zone get | jq --arg root "${root}" --arg p "${placement}" '
+	(.placement_pools[] | select(.key == $p) | .val) as $pp | {
+	root: $root, meta: (.domain_root | split(":")[0]), control: .control_pool,
+	log: .log_pool, index: $pp.index_pool, data: $pp.storage_classes.STANDARD.data_pool,
+	nonec: $pp.data_extra_pool
 }')
-existing=$(podman exec rgw-go-mon ceph osd pool ls -f json)
+existing=$(ceph_cmd osd pool ls -f json)
 jq -e --argjson have "${existing}" '[.[]] - $have | length == 0' <<<"${pools}" >/dev/null ||
-	die "missing radosgw pools; have ${existing}"
+	die "missing radosgw pools ${pools}; have ${existing}"
 
 bucket_entry() {
 	local name=$1 bucket=$2 owner=$3 stats
 	stats=$(admin bucket stats --bucket "${bucket}")
-	jq -e --arg owner "${owner}" '.owner == $owner' <<<"${stats}" >/dev/null ||
-		die "${bucket} is owned by $(jq -r .owner <<<"${stats}"), want ${owner}"
+	jq -e --arg owner "${owner}" --arg p "${placement}" '.owner == $owner and .placement_rule == $p' \
+		<<<"${stats}" >/dev/null ||
+		die "${bucket} is owned by $(jq -r .owner <<<"${stats}") with placement $(jq -r .placement_rule <<<"${stats}"), want ${owner} and ${placement}"
 	jq --arg name "${name}" '{name: $name, owner, id, marker, num_shards}' <<<"${stats}"
 }
 
@@ -165,11 +195,18 @@ users=$(jq -s '.' <<<"$(user_entry "${alice}" "")$(user_entry "${bob}" t1)")
 
 jq -n \
 	--arg release "${release}" \
+	--arg ceph_version "${ceph_version}" \
+	--arg rooket_name "${ROOKET_NAME}" \
+	--arg realm "${realm}" \
+	--arg zonegroup "${zonegroup}" \
+	--arg zone "${zone}" \
 	--argjson pools "${pools}" \
 	--argjson users "${users}" \
 	--argjson buckets "${buckets}" \
 	--argjson objects "${objects}" \
-	'{release: $release, zone: "default", pools: $pools, users: $users, buckets: $buckets, objects: $objects}' \
+	'{release: $release, ceph_version: $ceph_version, rooket_name: $rooket_name,
+		realm: $realm, zonegroup: $zonegroup, zone: $zone,
+		pools: $pools, users: $users, buckets: $buckets, objects: $objects}' \
 	>"${work}/manifest.json"
 mv "${work}/manifest.json" "${out}/manifest.json"
 echo "wrote ${out}/manifest.json"

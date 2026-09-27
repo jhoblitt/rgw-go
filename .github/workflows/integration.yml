@@ -1,6 +1,6 @@
-# The integration suite and the phase 0 gate against disposable Squid and
-# Tentacle clusters (hack/cluster/). Nightly and on demand; it does not gate
-# pull requests.
+# The integration suite and the phase 0 gate against disposable one-worker
+# Squid and Tentacle Rook clusters on kind, which rooket stands up
+# (hack/rooket/). Nightly and on demand; it does not gate pull requests.
 name: integration
 
 on:
@@ -19,14 +19,46 @@ jobs:
   cluster:
     name: ${{ matrix.release }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         release: [squid, tentacle]
     env:
       RELEASE: ${{ matrix.release }}
+      # The runner's rootful docker, so kind nodes get the host's iSCSI block
+      # devices without the rootful-podman setup a runner otherwise needs.
+      ROOKET_ENGINE: docker
+      # rooket is untagged: a commit on its main, bumped by hand.
+      ROOKET_VERSION: 9e9ab38e18dc53d8ea092222a37b6d8c5b0032b9
+      # Each tool's sha256 is pinned beside its version, so a download is
+      # checked against a value the host serving it did not supply. Bump both
+      # together, taking the hash from a second source: the GitHub release for
+      # kind and helm, and for kubectl the client tarball whose sha512 the
+      # Kubernetes changelog lists.
+      KIND_VERSION: v0.32.0
+      KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+      # The minor of the kind node image that rooket pins.
+      KUBECTL_VERSION: v1.33.1
+      KUBECTL_SHA256: 5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3
+      HELM_VERSION: v3.20.1
+      HELM_SHA256: 0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3
     steps:
+      # Deleting the preinstalled toolchains takes minutes, so it runs only
+      # when the runner is short of what one worker's images and OSD need.
+      - name: Free up runner disk
+        run: |
+          df -h /
+          avail_gb="$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')"
+          if [ "$avail_gb" -ge 40 ]; then
+            echo "${avail_gb}G free; skipping cleanup"
+            exit 0
+          fi
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/lib/jvm \
+            /usr/share/swift /usr/local/share/powershell || true
+          df -h /
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,8 +68,7 @@ jobs:
       # librados 19.2.3 cannot parse, so librados comes from download.ceph.com.
       # Squid 19.2.6 has no noble build; a Tentacle client serves both clusters.
       # The image's AWS CLI v2 serves populate.sh; noble has no awscli package.
-      # skopeo lets up.sh resolve the newest Tentacle tag without podman search.
-      - name: Install librados headers, podman, skopeo and jq
+      - name: Install librados headers and jq
         env:
           CEPH_KEY_FPR: 08B73419AC32B4E966C1A330E84AC2C0460F3994
         run: |
@@ -47,26 +78,41 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/ceph.gpg] https://download.ceph.com/debian-20.2.4 noble main" |
             sudo tee /etc/apt/sources.list.d/ceph.list >/dev/null
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev podman skopeo jq
+          sudo apt-get install -y --no-install-recommends librados-dev jq
           dpkg-query -W librados2
           aws --version
 
-      # The cluster scripts are developed against rootful podman reached through
-      # its API socket, since the containers are privileged and on the host
-      # network. In remote mode `podman cp` writes hack/cluster/out/ as the
-      # calling user, so no later step needs sudo. A SocketGroup=docker drop-in
-      # still left the socket unreachable on the runner, so the socket is handed
-      # to the runner user outright; the VM is discarded after the job.
-      - name: Serve rootful podman on a socket the runner user can reach
+      - name: Install kind, kubectl and helm
         run: |
-          sudo systemctl start podman.socket
-          sudo chmod 0755 /run/podman
-          sudo chown "$(id -u):$(id -g)" /run/podman/podman.sock
-          ls -ld /run/podman /run/podman/podman.sock
-          echo "CONTAINER_HOST=unix:///run/podman/podman.sock" >> "$GITHUB_ENV"
+          set -eux
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          curl -fsSLO "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  kind-linux-amd64" | sha256sum -c -
+          sudo install -m 0755 kind-linux-amd64 /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  kubectl" | sha256sum -c -
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          helm_tgz="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "https://get.helm.sh/${helm_tgz}"
+          echo "${HELM_SHA256}  ${helm_tgz}" | sha256sum -c -
+          tar -xzf "$helm_tgz" linux-amd64/helm
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+          cd / && rm -rf "$tmp"
+          kind version && kubectl version --client && helm version && docker version
 
-      - name: Check that podman is rootful
-        run: test "$(podman info --format '{{.Host.Security.Rootless}}')" = false
+      # The OSD's disk is an iSCSI target; rooket sets it up through the
+      # runner's passwordless sudo. The runner is both ends: LIO serves a
+      # fileio backstore over iSCSI (configfs, target_core_mod,
+      # target_core_file, iscsi_target_mod) and the initiator logs in over
+      # iscsi_tcp. None is optional, so a missing one fails here by name
+      # rather than later inside rooket.
+      - name: Install iSCSI and LVM tooling
+        run: |
+          set -eux
+          sudo apt-get install -y open-iscsi targetcli-fb lvm2
+          sudo modprobe -a configfs target_core_mod target_core_file iscsi_target_mod iscsi_tcp
+          sudo systemctl enable --now iscsid
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -74,43 +120,32 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      - name: Install rooket
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOBIN="${RUNNER_TEMP}/bin" go install "github.com/jhoblitt/rooket@${ROOKET_VERSION}"
+          echo "${RUNNER_TEMP}/bin" >>"$GITHUB_PATH"
+
       - name: Start the cluster
-        run: make "cluster-up-${RELEASE}"
+        run: make cluster-up "RELEASE=${RELEASE}"
 
       - name: Populate the cluster
         run: make populate "RELEASE=${RELEASE}"
 
-      # make gate runs test/gate on its own, so it is left out here. The
-      # Makefile is the one home of the build tags. The label filter assumes
-      # every test package is a Ginkgo suite; a plain testing package would
-      # reject the flag.
       - name: Integration suite
-        env:
-          RGW_GO_TEST_CEPH_CONF: ${{ github.workspace }}/hack/cluster/out/${{ matrix.release }}/ceph.conf
-        run: |
-          tags="integration,$(make -s print-go-tags)"
-          all=$(go list "-tags=${tags}" ./...)
-          mapfile -t pkgs < <(grep -Ev '/test/gate(/|$)' <<<"${all}")
-          go test "-tags=${tags}" -race -count=1 "${pkgs[@]}" -ginkgo.label-filter=integration
+        run: make integration "RELEASE=${RELEASE}"
 
       - name: Phase 0 gate
         run: make gate "RELEASE=${RELEASE}"
 
-      # Collected before teardown, which removes the containers and out/. A
-      # timeout cancels the job rather than failing it. When up.sh itself fails
-      # its rollback has already removed both, after printing each role's log.
+      # Collected before teardown, which removes the cluster and out/. A
+      # timeout cancels the job rather than failing it. diag.sh leaves out the
+      # admin keyring and the populated users' S3 secrets.
       - name: Collect cluster diagnostics
         if: failure() || cancelled()
-        run: |
-          dir="${RUNNER_TEMP}/diagnostics"
-          mkdir -p "${dir}"
-          if [ -d "hack/cluster/out/${RELEASE}" ]; then
-            cp -r "hack/cluster/out/${RELEASE}" "${dir}/out"
-            rm -f "${dir}/out/ceph.client.admin.keyring"
-          fi
-          for role in mon mgr osd rgw; do
-            podman logs "rgw-go-${role}" >"${dir}/rgw-go-${role}.log" 2>&1 || true
-          done
+        timeout-minutes: 10
+        run: hack/rooket/diag.sh "${RELEASE}" "${RUNNER_TEMP}/diagnostics"
 
       - name: Upload cluster diagnostics
         if: failure() || cancelled()
@@ -123,4 +158,6 @@ jobs:
 
       - name: Tear down the cluster
         if: always()
-        run: make cluster-down
+        run: |
+          command -v rooket >/dev/null || { echo "rooket was never installed; nothing to tear down"; exit 0; }
+          make cluster-down "RELEASE=${RELEASE}"

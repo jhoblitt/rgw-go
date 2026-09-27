@@ -1,7 +1,7 @@
 // Package gate holds the phase 0 acceptance gate: specs that read every
 // metadata object a radosgw wrote into a populated disposable cluster and
 // prove rgw-go decodes and re-encodes it byte for byte. This file decodes the
-// manifest hack/cluster/populate.sh records of what it wrote.
+// manifest hack/rooket/populate.sh records of what it wrote.
 package gate
 
 import (
@@ -12,14 +12,30 @@ import (
 	"strings"
 )
 
-// Manifest is hack/cluster/out/<release>/manifest.json.
+// Manifest is hack/rooket/out/<release>/manifest.json.
 type Manifest struct {
-	Release string   `json:"release"`
-	Zone    string   `json:"zone"`
-	Pools   Pools    `json:"pools"`
-	Users   []User   `json:"users"`
-	Buckets []Bucket `json:"buckets"`
-	Objects []Object `json:"objects"`
+	Release string `json:"release"`
+	// CephVersion is the Ceph version the release's cluster pins, e.g.
+	// "19.2.6", as the daemons report it.
+	CephVersion string `json:"ceph_version"`
+	// RooketName is the rooket cluster holding the population, whose Rook
+	// toolbox runs radosgw-admin and ceph-dencoder for the gate.
+	RooketName string `json:"rooket_name"`
+	// Realm, ZoneGroup and Zone name the site the radosgw serves.
+	Realm     string   `json:"realm"`
+	ZoneGroup string   `json:"zonegroup"`
+	Zone      string   `json:"zone"`
+	Pools     Pools    `json:"pools"`
+	Users     []User   `json:"users"`
+	Buckets   []Bucket `json:"buckets"`
+	Objects   []Object `json:"objects"`
+}
+
+// AdminFlags are the radosgw-admin options that select the populated site.
+// Without them radosgw-admin works in a zone named default, which it creates
+// on first use and the radosgw never serves.
+func (m Manifest) AdminFlags() []string {
+	return []string{"--rgw-realm=" + m.Realm, "--rgw-zonegroup=" + m.ZoneGroup, "--rgw-zone=" + m.Zone}
 }
 
 // Pools names the zone's RADOS pools.

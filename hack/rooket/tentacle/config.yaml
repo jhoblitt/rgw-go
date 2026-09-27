@@ -1,0 +1,4 @@
+# rooket configuration home for the rgw-go-tentacle cluster; see hack/rooket/README.md.
+# host-network must be here from the first up: Rook cannot move a running
+# cluster onto host networking.
+profiles: [host-network]

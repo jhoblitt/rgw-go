@@ -18,7 +18,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
 
-// manifest is the part of hack/cluster/populate.sh's manifest.json these
+// manifest is the part of hack/rooket/populate.sh's manifest.json these
 // specs read.
 type manifest struct {
 	Pools struct {

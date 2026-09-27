@@ -25,10 +25,13 @@ var _ = DescribeTable("root pool object names",
 	Entry("default zonegroup without a realm keeps the trailing dot", meta.DefaultZoneGroupOID(""), "default.zonegroup."),
 	Entry("realm", meta.RealmOID("r1"), "realms.r1"),
 	Entry("realm name", meta.RealmNameOID("gold"), "realms_names.gold"),
+	Entry("realm control", meta.RealmControlOID("r1"), "realms.r1.control"),
 	Entry("default realm", meta.DefaultRealmOID(), "default.realm"),
 	Entry("period", meta.PeriodOID("p1", 7), "periods.p1.7"),
 	Entry("staging period omits the epoch", meta.PeriodOID("r1:staging", 7), "periods.r1:staging"),
 	Entry("period latest epoch", meta.PeriodLatestEpochOID("p1"), "periods.p1.latest_epoch"),
+	Entry("period config", meta.PeriodConfigOID("r1"), "period_config.r1"),
+	Entry("period config without a realm", meta.PeriodConfigOID(""), "period_config.default"),
 	Entry("root pool", meta.RootPool, ".rgw.root"),
 )
 

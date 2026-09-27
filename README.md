@@ -28,10 +28,11 @@ to a commit SHA: run `pinact run` after editing a workflow and `actionlint`
 before committing it. Where a `Makefile` is present, `make check` is the local gate,
 `make tools` installs the pinned linter, and that pin lives in the `Makefile`.
 
-The integration suite and the phase 0 gate run against disposable Squid and Tentacle
-clusters in the `integration` workflow, nightly and on demand with
+The integration suite and the phase 0 gate run against disposable one-worker Rook
+clusters, one each for Squid and Tentacle, which [rooket](https://github.com/jhoblitt/rooket)
+stands up on kind. The `integration` workflow runs them nightly and on demand with
 `gh workflow run integration.yml`. It does not gate pull requests; locally, the same
-steps are in [hack/cluster/README.md](hack/cluster/README.md).
+steps are in [hack/rooket/README.md](hack/rooket/README.md).
 
 ## License
 
