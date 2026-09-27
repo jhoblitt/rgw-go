@@ -34,7 +34,11 @@ finds a new limit, and update the status when one is fixed or measured.
   small load.
 - **Mitigation:** the callback and pipe modes held the thread count flat.
 - **Measure:** threads and throughput versus concurrency, sync against the two
-  async modes.
+  async modes. Count from a fresh process: the Go runtime never destroys an OS
+  thread, so after a warm-up burst a later sync burst often shows no rise at
+  all. In the final-review measurements, 512 concurrent reads rose sync mode
+  by 0 to 70 threads, with 62 to 512 reads in flight, while callback and pipe
+  rose by 0 with 350 to 512 in flight.
 
 ### Completions cross from C back to Go
 
@@ -114,6 +118,12 @@ finds a new limit, and update the status when one is fixed or measured.
   AES256-CTS-HMAC-SHA384-192, wherever cephx uses a key: entity keys,
   tickets, authorizers and session keys. It then carries that work, and
   every future cipher change, instead of taking it from Ceph.
+- **Detection:** `rados_version` reports the librados API version (3.0.0
+  on every release), not the Ceph release. `goceph.Connect` reads the release
+  from libceph-common's `ceph_version_to_str` by its mangled C++ symbol. It
+  refuses a pre-Squid library up front and otherwise uses the release only to
+  explain a failed connect. If the symbol disappears, both are skipped with a
+  warning; the connect itself is unaffected.
 - **Status:** accepted; the integration workflow installs librados 20.2.4
   from download.ceph.com.
 
@@ -167,5 +177,5 @@ These come from the OSD, not from cgo, so a pure-Go client has them too.
 | A failed unwatch removes the watcher but never closes its channels, leaking the dispatch goroutine | Task 12 review | Worked around in rgw-go (watch teardown stops dispatch on its own channel); fork fix open |
 | `OmapCmp` bound to `omap_cmp`, which truncates keys at a NUL byte | Task 11 | Fixed: binds `omap_cmp2` |
 | Exec-step output parameters lived in Go memory written after the call returned | Task 11 ruling | Fixed: C-allocated |
-| After a successful unwatch, a watch callback that looked the watcher up before `Delete` can reach its `select` after `done` and `events` are closed and pick the send on the closed channel, which panics on a librados thread (go-ceph watcher.go:355-358); fix: close(done), rados_watch_flush, then close the channels | Task 12 review | Open (fork, next batch) |
+| After a successful unwatch, a watch callback that looked the watcher up before `Delete` can reach its `select` after `done` and `events` are closed and pick the send on the closed channel, which panics on a librados thread (go-ceph watcher.go:355-358); fix: close(done), rados_watch_flush, then close the channels. `watchErrorCb` has the same window on the errors channel | Task 12 review; final review | Open (fork, next batch) |
 | (rgw-go seam, not go-ceph) `radosclient.ExecResult` reports a positive class return as success but does not surface the value | Task 12 | Open; add an accessor if a class client needs the value |
