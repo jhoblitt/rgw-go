@@ -280,8 +280,8 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   entries it must reject a zero `step_size`, and it must not divide by a
   stored `step_size` without guarding it.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-012); liboath premise and
-  trigger verified 2026-09-27. Unreported upstream as of the 2026-09-27
-  tracker search; a public tracker issue is to be filed.
+  trigger verified 2026-09-27. Filed upstream as
+  https://tracker.ceph.com/issues/80948.
 
 ## cls_otp computes the replay index from an unsigned window distance
 
@@ -303,8 +303,8 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   replay index it must take the direction from the position out-parameter,
   not from the return value.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-013); liboath premise
-  verified 2026-09-27. Unreported upstream as of the 2026-09-27 tracker
-  search; a public tracker issue is to be filed.
+  verified 2026-09-27. Filed upstream as
+  https://tracker.ceph.com/issues/80949.
 
 ## librbd leaks the update-watch context when registration fails
 
