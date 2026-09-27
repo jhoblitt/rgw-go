@@ -25,15 +25,20 @@ type Pool interface {
 	Name() string
 	// Namespace returns the namespace, "" for the default namespace.
 	Namespace() string
+	// ID returns the pool's id, which radosgw records in bucket index entries.
+	ID() int64
 	// WithLocator returns a Pool whose operations set the given object locator key.
 	WithLocator(loc string) Pool
-	// Read runs a read op. Results are available on the op's steps afterwards.
-	// After a context error the results are undefined and must not be read:
-	// the implementation may still fill them when the completion fires.
-	Read(ctx context.Context, oid string, op *ReadOp, flags OpFlags) error
-	// Write runs a write op and returns the object version librados reports for it.
-	// After a context error the results are undefined and must not be read:
-	// the implementation may still fill them when the completion fires.
+	// Read runs a read op and returns the object version the OSD reports for
+	// it, the epoch radosgw stores from a stat; it is 0 when err is not nil.
+	// Results are available on the op's steps afterwards. After a context
+	// error the results are undefined and must not be read: the
+	// implementation may still fill them when the completion fires.
+	Read(ctx context.Context, oid string, op *ReadOp, flags OpFlags) (version uint64, err error)
+	// Write runs a write op and returns the object version the OSD reports
+	// for it; it is 0 when err is not nil. After a context error the results
+	// are undefined and must not be read: the implementation may still fill
+	// them when the completion fires.
 	Write(ctx context.Context, oid string, op *WriteOp, flags OpFlags) (version uint64, err error)
 	// ListObjects calls fn for every object in the namespace until fn returns an error.
 	ListObjects(ctx context.Context, fn func(oid, locator string) error) error

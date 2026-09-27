@@ -110,7 +110,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 			op := radosclient.NewReadOp()
 			xs := op.GetXattrs()
 			res := gc.QueueList(op, "", 1000, false, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 			Expect(xs.Err).NotTo(HaveOccurred(), oid)
 			Expect(decodeObjVersion(xs.Xattrs["ceph.objclass.version"])).To(BeEquivalentTo(1), "%s is not queue-era", oid)
 			ret, err := res.Result()
@@ -152,7 +152,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 			GinkgoHelper()
 			op := radosclient.NewReadOp()
 			res := gc.QueueList(op, "", 0, expiredOnly, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			ret, err := res.Result()
 			Expect(err).NotTo(HaveOccurred())
 			return ret
@@ -174,7 +174,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 		It("answers ENOENT to a list and EINVAL to an enqueue before the queue exists", func(ctx SpecContext) {
 			op := radosclient.NewReadOp()
 			res := gc.QueueList(op, "", 0, false, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 			_, err := res.Result()
 			Expect(err).To(HaveOccurred())
 
@@ -184,7 +184,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 			st := radosclient.NewReadOp()
 			st.Stat()
-			Expect(pool.Read(ctx, oid, st, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrNotFound))
+			Expect(pool.Read(ctx, oid, st, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound))
 		})
 
 		It("creates a missing object on init and refuses a second init with EEXIST", func(ctx SpecContext) {
@@ -192,7 +192,7 @@ var _ = Describe("rgw_gc against a cluster", Label("integration"), func() {
 
 			op := radosclient.NewReadOp()
 			st := op.Stat()
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			Expect(st.Size).To(BeNumerically(">", 0))
 			Expect(list(ctx, false)).To(Equal(gc.ListRet{}))
 

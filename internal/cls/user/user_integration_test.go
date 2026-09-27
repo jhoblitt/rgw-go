@@ -76,7 +76,7 @@ var _ = Describe("user against a cluster", Label("integration"), func() {
 		GinkgoHelper()
 		op := radosclient.NewReadOp()
 		res := user.ListBuckets(op, "", "", 1000, denc.Squid)
-		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 		entries, marker, truncated, err := res.Entries()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(marker).To(BeEmpty())
@@ -87,7 +87,7 @@ var _ = Describe("user against a cluster", Label("integration"), func() {
 		GinkgoHelper()
 		op := radosclient.NewReadOp()
 		res := user.GetHeader(op, denc.Squid)
-		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 		h, err := res.Header()
 		Expect(err).NotTo(HaveOccurred())
 		return h
@@ -97,7 +97,7 @@ var _ = Describe("user against a cluster", Label("integration"), func() {
 		op := radosclient.NewReadOp()
 		res := user.ListBuckets(op, "", "", 1000, denc.Squid)
 		omap := op.OmapGetVals("", "", 1000)
-		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 		entries, _, truncated, err := res.Entries()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(truncated).To(BeFalse())
@@ -134,7 +134,7 @@ var _ = Describe("user against a cluster", Label("integration"), func() {
 		for _, bounds := range [][2]string{{"plain", ""}, {"", "plain"}} {
 			op := radosclient.NewReadOp()
 			res := user.ListBuckets(op, bounds[0], bounds[1], 1000, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			entries, _, _, err := res.Entries()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(entries).To(BeEmpty(), "marker %q, end marker %q", bounds[0], bounds[1])
@@ -186,7 +186,7 @@ var _ = Describe("user against a cluster", Label("integration"), func() {
 		for {
 			op := radosclient.NewReadOp()
 			res := user.ResetStats2(op, reset, ret.Marker, ret.AccStats, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagReturnVec)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagReturnVec)).Error().To(Succeed())
 			var err error
 			ret, err = res.Result()
 			Expect(err).NotTo(HaveOccurred())

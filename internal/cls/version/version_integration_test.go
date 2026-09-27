@@ -77,7 +77,7 @@ var _ = Describe("version against a cluster", Label("integration"), func() {
 		op := radosclient.NewReadOp()
 		res := version.Read(op, denc.Squid)
 		xattrs := op.GetXattrs()
-		Expect(pool.Read(ctx, ".bucket.meta.plain:"+id, op, radosclient.OpFlagNone)).To(Succeed())
+		Expect(pool.Read(ctx, ".bucket.meta.plain:"+id, op, radosclient.OpFlagNone)).Error().To(Succeed())
 		v, err := res.Version()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v.Ver).To(BeEquivalentTo(1))
@@ -105,7 +105,7 @@ var _ = Describe("version against a cluster", Label("integration"), func() {
 			GinkgoHelper()
 			op := radosclient.NewReadOp()
 			res := version.Read(op, denc.Squid)
-			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			v, err := res.Version()
 			Expect(err).NotTo(HaveOccurred())
 			return v
@@ -135,10 +135,10 @@ var _ = Describe("version against a cluster", Label("integration"), func() {
 
 		check := radosclient.NewReadOp()
 		version.Check(check, v1, version.CondGT, denc.Squid)
-		Expect(pool.Read(ctx, oid, check, radosclient.OpFlagNone)).To(Succeed())
+		Expect(pool.Read(ctx, oid, check, radosclient.OpFlagNone)).Error().To(Succeed())
 		check = radosclient.NewReadOp()
 		version.Check(check, v2, version.CondTagNE, denc.Squid)
-		Expect(pool.Read(ctx, oid, check, radosclient.OpFlagNone)).To(MatchError(radosclient.ErrCanceled))
+		Expect(pool.Read(ctx, oid, check, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrCanceled))
 
 		set := version.ObjVersion{Ver: 42, Tag: "tag"}
 		Expect(write(func(w *radosclient.WriteOp) { version.Set(w, set, denc.Squid) })).To(Succeed())

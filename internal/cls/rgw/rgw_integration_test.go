@@ -108,7 +108,7 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 	It("reads shard 0's header of the plain bucket", func(ctx SpecContext) {
 		op := radosclient.NewReadOp()
 		res := rgw.GetDirHeader(op, denc.Squid)
-		Expect(index.Read(ctx, fmt.Sprintf(oidFmt, 0), op, radosclient.OpFlagNone)).To(Succeed())
+		Expect(index.Read(ctx, fmt.Sprintf(oidFmt, 0), op, radosclient.OpFlagNone)).Error().To(Succeed())
 		ret, err := res.Result()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ret.Dir.Entries).To(BeEmpty())
@@ -123,7 +123,7 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 			for {
 				op := radosclient.NewReadOp()
 				res := rgw.BucketList(op, rgw.ListOp{StartObj: start, NumEntries: 2}, denc.Squid)
-				Expect(index.Read(ctx, fmt.Sprintf(oidFmt, shard), op, radosclient.OpFlagNone)).To(Succeed())
+				Expect(index.Read(ctx, fmt.Sprintf(oidFmt, shard), op, radosclient.OpFlagNone)).Error().To(Succeed())
 				ret, err := res.Result()
 				Expect(err).NotTo(HaveOccurred())
 				for k, en := range ret.Dir.Entries {
@@ -195,7 +195,7 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 		entries := func() map[string][]byte {
 			op := radosclient.NewReadOp()
 			vals := op.OmapGetVals("", "", 100)
-			Expect(scratch.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(scratch.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
 			Expect(vals.Err).NotTo(HaveOccurred())
 			return vals.Values
 		}

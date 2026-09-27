@@ -188,7 +188,7 @@ func statObject(ctx context.Context, p radosclient.Pool, oid string) (uint64, bo
 	GinkgoHelper()
 	op := radosclient.NewReadOp()
 	st := op.Stat()
-	err := p.Read(ctx, oid, op, radosclient.OpFlagNone)
+	_, err := p.Read(ctx, oid, op, radosclient.OpFlagNone)
 	if err != nil {
 		Expect(err).To(MatchError(radosclient.ErrNotFound), "stat %s/%s", p.Name(), oid)
 		return 0, false
@@ -209,7 +209,7 @@ func readObject(ctx context.Context, p radosclient.Pool, oid string) object {
 	if size > 0 {
 		data = op.Read(0, size)
 	}
-	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), "reading %s/%s", p.Name(), oid)
+	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), "reading %s/%s", p.Name(), oid)
 	Expect(xs.Err).NotTo(HaveOccurred())
 	o := object{xattrs: xs.Xattrs}
 	if data != nil {
@@ -237,7 +237,7 @@ func omapValues(ctx context.Context, p radosclient.Pool, oid string) map[string]
 	GinkgoHelper()
 	op := radosclient.NewReadOp()
 	vals := op.OmapGetVals("", "", omapPage)
-	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), "omap of %s", oid)
+	Expect(p.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), "omap of %s", oid)
 	Expect(vals.Err).NotTo(HaveOccurred())
 	Expect(vals.More).To(BeFalse(), "%s has more than %d omap values", oid, omapPage)
 	return vals.Values
@@ -721,7 +721,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			hdr := op.Exec("user", "get_header", encodeRequest(user.GetHeaderOp{}.Encode, release))
 			lst := op.Exec("user", "list_buckets",
 				encodeRequest(user.ListBucketsOp{MaxEntries: omapPage}.Encode, release))
-			Expect(uids.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+			Expect(uids.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 
 			// The class encodes its replies with the OSD's own encoders, so
 			// the reply bytes are what the release's encoder writes.
@@ -841,7 +841,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				hdr := op.Exec(rgw.Class, "bucket_list", encodeRequest(rgw.ListOp{}.Encode, release))
 				lst := op.Exec(rgw.Class, "bucket_list",
 					encodeRequest(rgw.ListOp{NumEntries: omapPage}.Encode, release))
-				Expect(index.Read(ctx, oid, op, radosclient.OpFlagNone)).To(Succeed(), oid)
+				Expect(index.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed(), oid)
 
 				// The class re-encodes the header and entries into its reply
 				// with the OSD's encoders, so the reply is byte-exact for the
@@ -1225,7 +1225,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			Expect(json.Unmarshal(admin(ctx, args...), &stats)).To(Succeed())
 			op := radosclient.NewReadOp()
 			hres := user.GetHeader(op, release)
-			Expect(uids.Read(ctx, u.ID()+".buckets", op, radosclient.OpFlagNone)).To(Succeed())
+			Expect(uids.Read(ctx, u.ID()+".buckets", op, radosclient.OpFlagNone)).Error().To(Succeed())
 			h, err := hres.Header()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stats.Stats.Size).To(Equal(h.Stats.TotalBytes), "%s size", u.ID())

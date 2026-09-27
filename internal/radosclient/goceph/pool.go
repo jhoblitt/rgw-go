@@ -35,6 +35,7 @@ type poolState struct {
 	cluster   *cluster
 	name      string
 	namespace string
+	id        int64
 
 	// closeDone is closed once the first close has destroyed the I/O
 	// contexts; closeErr is its result, readable after closeDone.
@@ -78,6 +79,7 @@ func openPool(c *cluster, name, namespace string) (*pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.id = ioctx.GetPoolID()
 	h := &handle{ioctx: ioctx}
 	s.all[h] = struct{}{}
 	s.idle = append(s.idle, h)
@@ -227,6 +229,9 @@ func (p *pool) Name() string { return p.state.name }
 // Namespace returns the namespace.
 func (p *pool) Namespace() string { return p.state.namespace }
 
+// ID returns the pool's id, which librados resolved when the Pool opened.
+func (p *pool) ID() int64 { return p.state.id }
+
 // WithLocator returns a Pool whose operations set loc as the object locator,
 // "" for none. It shares this Pool's I/O contexts, and closing it does
 // nothing.
@@ -245,50 +250,47 @@ func (p *pool) Close() error {
 	return p.state.close()
 }
 
-// Read runs a read op.
-func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) error {
+// Read runs a read op and returns the object version the OSD reports.
+func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	rflags, err := translateFlags(flags)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	rop := rados.CreateReadOp()
 	defer rop.Release()
 	fs, err := translateRead(rop, op)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	name := opName("read", oid)
 	h, err := p.state.acquire(name, p.locator)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if p.state.cluster.mode == ModeSync {
 		opErr := rop.Operate(h.ioctx, oid, rflags)
+		version, verr := h.ioctx.GetLastVersion()
 		p.state.release(h)
-		o := newOutcome(name, opErr)
-		finish(fs, o)
-		return o.err
+		return syncResult(name, fs, opErr, version, verr)
 	}
 
 	c, err := rop.OperateAsync(h.ioctx, oid, rflags)
 	p.state.giveBack(h)
 	if err != nil {
 		p.state.finish(h)
-		return toSeamError(name, err)
+		return 0, toSeamError(name, err)
 	}
 	done := func() { p.state.finish(h) }
 	if err := p.state.cluster.reaper.await(ctx, c, done); err != nil {
-		return err
+		return 0, err
 	}
 	defer done()
 	defer c.Release()
-	o := newOutcome(name, c.Err())
-	finish(fs, o)
-	return o.err
+	return asyncResult(name, fs, c)
 }
 
 // Write runs a write op and returns the object version librados reports.
@@ -334,13 +336,10 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	}
 	defer done()
 	defer c.Release()
-	o := newOutcome(name, c.Err())
-	finish(fs, o)
-	return c.Version(), o.err
+	return asyncResult(name, fs, c)
 }
 
-// writeSync runs wop with the blocking Operate. The handle is still this
-// operation's alone, so the version rados_get_last_version reports is its.
+// writeSync runs wop with the blocking Operate.
 func (p *pool) writeSync(h *handle, wop *rados.WriteOp, oid, name string, fs []finisher,
 	flags rados.OperationFlags, mtime time.Time, hasMtime bool,
 ) (uint64, error) {
@@ -352,12 +351,33 @@ func (p *pool) writeSync(h *handle, wop *rados.WriteOp, oid, name string, fs []f
 	}
 	version, verr := h.ioctx.GetLastVersion()
 	p.state.release(h)
-	o := newOutcome(name, err)
+	return syncResult(name, fs, err, version, verr)
+}
+
+// syncResult fills the results of an operation the blocking Operate ran and
+// returns its version, which rados_get_last_version read from the handle
+// while it was still this operation's alone.
+func syncResult(name string, fs []finisher, opErr error, version uint64, verr error) (uint64, error) {
+	o := newOutcome(name, opErr)
 	finish(fs, o)
-	if verr != nil && o.err == nil {
+	switch {
+	case o.err != nil:
+		return 0, o.err
+	case verr != nil:
 		return 0, toSeamError(name, verr)
 	}
-	return version, o.err
+	return version, nil
+}
+
+// asyncResult fills the results of a completed asynchronous operation and
+// returns its version, before c is released.
+func asyncResult(name string, fs []finisher, c *rados.AioCompletion) (uint64, error) {
+	o := newOutcome(name, c.Err())
+	finish(fs, o)
+	if o.err != nil {
+		return 0, o.err
+	}
+	return c.Version(), nil
 }
 
 // timespec converts a modification time for librados.
