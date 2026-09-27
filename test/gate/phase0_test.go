@@ -4,6 +4,7 @@ package gate_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -31,13 +32,75 @@ import (
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
-// rgwContainer is the disposable cluster's radosgw container, which holds the
-// keyring radosgw-admin needs; monContainer is its mon, whose image carries
-// ceph-dencoder.
+// toolboxDeployment is the Rook toolbox, which runs the cluster's Ceph image
+// with the admin keyring, so it has both radosgw-admin and ceph-dencoder.
+// operatorDeployment is the Rook operator, whose image carries the Ceph
+// release its own radosgw-admin runs.
 const (
-	rgwContainer = "rgw-go-rgw"
-	monContainer = "rgw-go-mon"
+	toolboxDeployment  = "deploy/rook-ceph-tools"
+	operatorDeployment = "deploy/rook-ceph-operator"
 )
+
+// rooketEnv names the variable holding the rooket binary the gate runs,
+// "rooket" on PATH when it is unset.
+const rooketEnv = "RGW_GO_TEST_ROOKET"
+
+// cephBuild matches a Ceph binary's version string, as --version and the
+// versions mon command print it, and captures what identifies the build: the
+// version, the commit and the release name. The rest, "(stable)" or
+// "(stable - RelWithDebInfo)", differs between binaries of one build.
+var cephBuild = regexp.MustCompile(`^ceph version (\S+) \(([0-9a-f]+)\) (\S+) \(`)
+
+// build is a Ceph build's identity, cephBuild's captures.
+type build struct{ version, commit, release string }
+
+// parseBuild returns the build a version string names.
+func parseBuild(what, s string) build {
+	GinkgoHelper()
+	match := cephBuild.FindStringSubmatch(strings.TrimSpace(s))
+	Expect(match).To(HaveLen(4), "%s's version string %q", what, s)
+	return build{version: match[1], commit: match[2], release: match[3]}
+}
+
+// rookExec runs args in a Rook deployment of the manifest's rooket cluster
+// and returns their stdout, feeding them stdin unless it is nil. The cluster
+// is always named: rooket would otherwise pick one from the working
+// directory.
+func rookExec(ctx context.Context, m gate.Manifest, deployment string, stdin []byte, args ...string) []byte {
+	GinkgoHelper()
+	kubectl := []string{"kubectl", "-n", "rook-ceph", "exec"}
+	if stdin != nil {
+		kubectl = append(kubectl, "-i")
+	}
+	kubectl = append(append(kubectl, deployment, "--"), args...)
+	cmd := exec.CommandContext(ctx, cmp.Or(os.Getenv(rooketEnv), "rooket"), kubectl...)
+	cmd.Env = append(os.Environ(), "ROOKET_NAME="+m.RooketName)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	Expect(err).NotTo(HaveOccurred(), "%s in %s of %s: %s", strings.Join(args, " "), deployment, m.RooketName, stderr.String())
+	return out
+}
+
+func toolbox(ctx context.Context, m gate.Manifest, stdin []byte, args ...string) []byte {
+	GinkgoHelper()
+	return rookExec(ctx, m, toolboxDeployment, stdin, args...)
+}
+
+// operatorRelease is the release, and its name, of the Ceph in the Rook
+// operator's image, with whose radosgw-admin Rook writes the realm,
+// zonegroup, zone and periods. Rook's image can carry a newer release than
+// the cluster runs.
+func operatorRelease(ctx context.Context, m gate.Manifest) (denc.Release, string) {
+	GinkgoHelper()
+	b := parseBuild("the operator's radosgw-admin", string(rookExec(ctx, m, operatorDeployment, nil, "radosgw-admin", "--version")))
+	r, ok := denc.ParseRelease(b.release)
+	Expect(ok).To(BeTrue(), "the operator's Ceph is %s, a release rgw-go does not encode", b.release)
+	return r, b.release
+}
 
 // omapPage is how many omap values or listed entries one read asks for; the
 // populated shards and user bucket lists hold far fewer.
@@ -86,7 +149,7 @@ var cxxNormalizes = map[string]string{
 // cxxType is one of cxxNormalizes and the re-encoding differs from raw, it
 // requires instead the bytes the cluster's own ceph-dencoder writes after
 // decoding raw, the most radosgw could write back.
-func roundTripAs[T any](ctx context.Context, what, cxxType string, raw []byte, r denc.Release,
+func roundTripAs[T any](ctx context.Context, m gate.Manifest, what, cxxType string, raw []byte, r denc.Release,
 	decode func(*denc.Decoder) T, encode func(T, *denc.Encoder, denc.Release),
 ) T {
 	GinkgoHelper()
@@ -94,25 +157,43 @@ func roundTripAs[T any](ctx context.Context, what, cxxType string, raw []byte, r
 	reason, normalizes := cxxNormalizes[cxxType]
 	if normalizes && !bytes.Equal(got, raw) {
 		note("%s: radosgw's own decode re-encodes it differently (%s); comparing with ceph-dencoder", what, reason)
-		expectSameBytes(got, cxxReencode(ctx, cxxType, raw), "re-encoding "+what+" against ceph-dencoder")
+		expectSameBytes(got, cxxReencode(ctx, m, cxxType, raw), "re-encoding "+what+" against ceph-dencoder")
 		return v
 	}
 	expectSameBytes(got, raw, "re-encoding "+what)
 	return v
 }
 
-// cxxReencode runs raw through decode and encode in the cluster's
-// ceph-dencoder, which is the running release's.
-func cxxReencode(ctx context.Context, cxxType string, raw []byte) []byte {
+// roundTripRoot is roundTripAs for a root pool object, which Rook's operator
+// may have written with the radosgw-admin of an older or newer release than
+// the cluster's (operatorRelease). An object that is not the cluster
+// release's encoding must then be the operator release's, byte for byte, and
+// its re-encoding for the cluster's release must be what the cluster's own
+// ceph-dencoder writes after decoding it, as the cluster's radosgw would.
+func roundTripRoot[T any](ctx context.Context, m gate.Manifest, t tally, kind, what, cxxType string, raw []byte,
+	r, operator denc.Release, decode func(*denc.Decoder) T, encode func(T, *denc.Encoder, denc.Release),
+) T {
+	GinkgoHelper()
+	v, got := reencode(what, raw, r, decode, encode)
+	if operator == r || bytes.Equal(got, raw) {
+		return roundTripAs(ctx, m, what, cxxType, raw, r, decode, encode)
+	}
+	if _, byOperator := reencode(what, raw, operator, decode, encode); !bytes.Equal(byOperator, raw) {
+		return roundTripAs(ctx, m, what, cxxType, raw, r, decode, encode)
+	}
+	Expect(cxxType).NotTo(BeEmpty(), "%s is the operator release's encoding, which ceph-dencoder cannot re-encode", what)
+	note("%s is the operator release's encoding; comparing its re-encoding for the cluster's release with ceph-dencoder", what)
+	expectSameBytes(got, cxxReencode(ctx, m, cxxType, raw), "re-encoding "+what+" for the cluster's release against ceph-dencoder")
+	t[kind+" written by the operator's release"]++
+	return v
+}
+
+// cxxReencode runs raw through decode and encode in the toolbox's
+// ceph-dencoder, which expectSameBuild proves is the running release's.
+func cxxReencode(ctx context.Context, m gate.Manifest, cxxType string, raw []byte) []byte {
 	GinkgoHelper()
 	script := `out=$(mktemp) && ceph-dencoder type "$1" import - decode encode export "$out" && cat "$out"; rc=$?; rm -f "$out"; exit $rc`
-	cmd := exec.CommandContext(ctx, "podman", "exec", "-i", monContainer, "sh", "-c", script, "sh", cxxType)
-	cmd.Stdin = bytes.NewReader(raw)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	Expect(err).NotTo(HaveOccurred(), "ceph-dencoder %s: %s", cxxType, stderr.String())
-	return out
+	return toolbox(ctx, m, raw, "sh", "-c", script, "sh", cxxType)
 }
 
 // expectSameBytes fails with the first differing offset and the bytes around
@@ -261,14 +342,80 @@ func objVersion(t tally, kind, what string, xattrs map[string][]byte, r denc.Rel
 	return v, true
 }
 
-// containerRelease is a disposable cluster container's rgw-go.release label.
-func containerRelease(ctx context.Context, name string) string {
+// monJSON runs a mon command through librados and decodes its JSON output.
+func monJSON(ctx context.Context, cluster radosclient.Cluster, prefix string, v any) {
 	GinkgoHelper()
-	out, err := exec.CommandContext(ctx, "podman", "inspect", name,
-		"--format", `{{index .Config.Labels "rgw-go.release"}}`).Output()
-	Expect(err).NotTo(HaveOccurred(), "inspecting %s", name)
-	return strings.TrimSpace(string(out))
+	out, status, err := cluster.MonCommand(ctx, []byte(`{"prefix": "`+prefix+`", "format": "json"}`))
+	Expect(err).NotTo(HaveOccurred(), "mon command %s: %s", prefix, status)
+	Expect(json.Unmarshal(out, v)).To(Succeed(), "mon command %s", prefix)
 }
+
+// expectSameBuild requires that the toolbox is on the cluster librados
+// reached, and that every daemon, the radosgw among them, and the toolbox's
+// tools are one build of the manifest's pinned version, so radosgw-admin and
+// ceph-dencoder speak for the radosgw that wrote the population.
+func expectSameBuild(ctx context.Context, m gate.Manifest, cluster radosclient.Cluster) {
+	GinkgoHelper()
+	var fsid, toolboxFSID struct {
+		FSID string `json:"fsid"`
+	}
+	monJSON(ctx, cluster, "fsid", &fsid)
+	Expect(json.Unmarshal(toolbox(ctx, m, nil, "ceph", "fsid", "-f", "json"), &toolboxFSID)).To(Succeed())
+	Expect(toolboxFSID.FSID).To(Equal(fsid.FSID), "the fsid the %s toolbox reaches", m.RooketName)
+
+	// The versions mon command maps each daemon type, and "overall", to the
+	// version strings its daemons report.
+	var versions map[string]map[string]int
+	monJSON(ctx, cluster, "versions", &versions)
+	Expect(versions).To(HaveKeyWithValue("rgw", Not(BeEmpty())), "the radosgw among the daemons' versions")
+	var daemons []build
+	for kind, strs := range versions {
+		for s := range strs {
+			if b := parseBuild("a "+kind+" daemon", s); !slices.Contains(daemons, b) {
+				daemons = append(daemons, b)
+			}
+		}
+	}
+	Expect(daemons).To(HaveLen(1), "the daemons' builds")
+	Expect(daemons[0].release).To(Equal(m.Release), "the daemons' release")
+	Expect(daemons[0].version).To(Equal(m.CephVersion), "the daemons' version")
+	Expect(parseBuild("the toolbox's radosgw-admin", string(toolbox(ctx, m, nil, "radosgw-admin", "--version")))).
+		To(Equal(daemons[0]), "the toolbox's radosgw-admin build")
+	Expect(strings.TrimSpace(string(toolbox(ctx, m, nil, "ceph-dencoder", "version")))).
+		To(Equal(daemons[0].version), "the toolbox's ceph-dencoder version")
+}
+
+// loadManifest reads the manifest RGW_GO_TEST_MANIFEST names and requires it
+// to describe a populated cluster of the harness's own.
+func loadManifest() gate.Manifest {
+	GinkgoHelper()
+	manifestPath := cephtest.ModuleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
+	Expect(manifestPath).NotTo(BeEmpty(), "RGW_GO_TEST_MANIFEST is not set; run make gate RELEASE=squid|tentacle")
+	m, err := gate.LoadManifest(manifestPath)
+	Expect(err).NotTo(HaveOccurred(), "the cluster must be populated")
+	expectPopulated(m)
+	// hack/rooket names each release's cluster; any other name is not one
+	// the harness brought up for this release.
+	Expect(m.RooketName).To(Equal("rgw-go-"+m.Release), "the manifest's rooket cluster")
+	for what, name := range map[string]string{
+		"Ceph version": m.CephVersion, "realm": m.Realm, "zonegroup": m.ZoneGroup, "zone": m.Zone,
+	} {
+		Expect(name).NotTo(BeEmpty(), "the manifest names no %s", what)
+	}
+	return m
+}
+
+// The builds are a property of the cluster, not of any spec, so they are
+// checked once for the suite. Built with the integration tag, the gate runs
+// or fails: it never skips for want of a cluster.
+var _ = BeforeSuite(func(ctx SpecContext) {
+	conf := cephtest.Conf()
+	m := loadManifest()
+	cluster, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
+	expectSameBuild(ctx, m, cluster)
+})
 
 // rgwMaxChunkSize is the default rgw_max_chunk_size, the most data a head
 // object holds.
@@ -294,15 +441,11 @@ func expectPopulated(m gate.Manifest) {
 	Expect(tenanted).To(BeTrue(), "no tenanted bucket")
 }
 
-// admin runs radosgw-admin in the radosgw container and returns its stdout.
-func admin(ctx context.Context, args ...string) []byte {
+// admin runs radosgw-admin on the populated site in the toolbox and returns
+// its stdout.
+func admin(ctx context.Context, m gate.Manifest, args ...string) []byte {
 	GinkgoHelper()
-	cmd := exec.CommandContext(ctx, "podman", append([]string{"exec", rgwContainer, "radosgw-admin"}, args...)...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	Expect(err).NotTo(HaveOccurred(), "radosgw-admin %s: %s", strings.Join(args, " "), stderr.String())
-	return out
+	return toolbox(ctx, m, nil, slices.Concat([]string{"radosgw-admin"}, args, m.AdminFlags())...)
 }
 
 // expectSameJSON requires that rgw-go's JSON for v equals radosgw-admin's,
@@ -505,19 +648,10 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 	}
 
 	BeforeEach(func(ctx SpecContext) {
-		// Built with the integration tag, the gate runs or fails: it never
-		// skips for want of a cluster.
 		conf := cephtest.Conf()
-		manifestPath := cephtest.ModuleRelative(os.Getenv("RGW_GO_TEST_MANIFEST"))
-		Expect(manifestPath).NotTo(BeEmpty(), "RGW_GO_TEST_MANIFEST is not set; run make gate RELEASE=squid|tentacle")
-		var err error
-		m, err = gate.LoadManifest(manifestPath)
-		Expect(err).NotTo(HaveOccurred(), "the cluster must be populated")
-		expectPopulated(m)
-		for _, c := range []string{rgwContainer, monContainer} {
-			Expect(containerRelease(ctx, c)).To(Equal(m.Release), "%s runs another release than the manifest's", c)
-		}
+		m = loadManifest()
 
+		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: goceph.ModeCallback})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
@@ -540,59 +674,93 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		zone = meta.DecodeZoneParams(d)
 		Expect(d.Err()).NotTo(HaveOccurred())
 		Expect(zone.Name).To(Equal(m.Zone))
+		d = denc.NewDecoder(readObject(ctx, root, meta.RealmNameOID(m.Realm)).data)
+		realmID := meta.DecodeNameToID(d).ObjID
+		Expect(d.Err()).NotTo(HaveOccurred(), meta.RealmNameOID(m.Realm))
+		Expect(realmID).To(Equal(zone.RealmID), "the realm of zone %s", zone.Name)
 	})
 
 	It("round-trips every root pool object", func(ctx SpecContext) {
 		t := newTally("root pool " + m.Pools.Root)
 		root := open(ctx, meta.Pool{Name: m.Pools.Root})
 		var zoneIDs, zoneGroupIDs, defaultZones, defaultZoneGroups, zoneNames, zoneGroupNames []string
-		// The disposable clusters run without a realm, so they hold no realm
-		// or period objects; those cases decode them should a realm appear.
+		// Rook makes each object store its own realm, so the pool also holds
+		// the realm, its control object, its period config, and every
+		// epoch of its periods, the staging period's included.
+		var realmIDs, realmNames, defaultRealms, realmControls, periodConfigs, periodIDs []string
+		realms := map[string]meta.Realm{}
+		operator, operatorName := operatorRelease(ctx, m)
+		note("Rook's operator writes the realm, zonegroup, zone and periods with %s's radosgw-admin", operatorName)
 		for _, oid := range listObjects(ctx, root) {
 			o := readObject(ctx, root, oid)
 			var kind string
 			switch {
 			case strings.HasPrefix(oid, "zone_info."):
 				kind = "zone_info"
-				z := roundTrip(oid, o.data, release, meta.DecodeZoneParams, meta.ZoneParams.Encode)
+				z := roundTripRoot(ctx, m, t, kind, oid, "RGWZoneParams", o.data, release, operator,
+					meta.DecodeZoneParams, meta.ZoneParams.Encode)
 				Expect(meta.ZoneInfoOID(z.ID)).To(Equal(oid))
 				zoneIDs = append(zoneIDs, z.ID)
 			case strings.HasPrefix(oid, "zone_names."):
 				kind = "zone_names"
-				zoneNames = append(zoneNames, roundTrip(oid, o.data, release, meta.DecodeNameToID, meta.NameToID.Encode).ObjID)
+				zoneNames = append(zoneNames, roundTripRoot(ctx, m, t, kind, oid, "RGWNameToId", o.data, release, operator,
+					meta.DecodeNameToID, meta.NameToID.Encode).ObjID)
 			case strings.HasPrefix(oid, "zonegroup_info."):
 				kind = "zonegroup_info"
-				g := roundTripAs(ctx, oid, "RGWZoneGroup", o.data, release, meta.DecodeZoneGroup, meta.ZoneGroup.Encode)
+				g := roundTripRoot(ctx, m, t, kind, oid, "RGWZoneGroup", o.data, release, operator,
+					meta.DecodeZoneGroup, meta.ZoneGroup.Encode)
 				Expect(meta.ZoneGroupInfoOID(g.ID)).To(Equal(oid))
 				zoneGroupIDs = append(zoneGroupIDs, g.ID)
 			case strings.HasPrefix(oid, "zonegroups_names."):
 				kind = "zonegroups_names"
-				zoneGroupNames = append(zoneGroupNames, roundTrip(oid, o.data, release, meta.DecodeNameToID, meta.NameToID.Encode).ObjID)
+				zoneGroupNames = append(zoneGroupNames, roundTripRoot(ctx, m, t, kind, oid, "RGWNameToId", o.data, release, operator,
+					meta.DecodeNameToID, meta.NameToID.Encode).ObjID)
 			case strings.HasPrefix(oid, "default.zonegroup."):
 				kind = "default.zonegroup"
-				defaultZoneGroups = append(defaultZoneGroups, roundTrip(oid, o.data, release,
+				Expect(oid).To(Equal(meta.DefaultZoneGroupOID(zone.RealmID)))
+				defaultZoneGroups = append(defaultZoneGroups, roundTripRoot(ctx, m, t, kind, oid, "", o.data, release, operator,
 					meta.DecodeDefaultSystemMetaObjInfo, meta.DefaultSystemMetaObjInfo.Encode).DefaultID)
 			case strings.HasPrefix(oid, "default.zone."):
 				kind = "default.zone"
-				defaultZones = append(defaultZones, roundTrip(oid, o.data, release,
+				Expect(oid).To(Equal(meta.DefaultZoneOID(zone.RealmID)))
+				defaultZones = append(defaultZones, roundTripRoot(ctx, m, t, kind, oid, "", o.data, release, operator,
 					meta.DecodeDefaultSystemMetaObjInfo, meta.DefaultSystemMetaObjInfo.Encode).DefaultID)
 			case oid == meta.DefaultRealmOID():
 				kind = "default.realm"
-				roundTrip(oid, o.data, release, meta.DecodeDefaultSystemMetaObjInfo, meta.DefaultSystemMetaObjInfo.Encode)
+				defaultRealms = append(defaultRealms, roundTripRoot(ctx, m, t, kind, oid, "", o.data, release, operator,
+					meta.DecodeDefaultSystemMetaObjInfo, meta.DefaultSystemMetaObjInfo.Encode).DefaultID)
 			case strings.HasPrefix(oid, "realms_names."):
 				kind = "realms_names"
-				roundTrip(oid, o.data, release, meta.DecodeNameToID, meta.NameToID.Encode)
+				realmNames = append(realmNames, roundTripRoot(ctx, m, t, kind, oid, "RGWNameToId", o.data, release, operator,
+					meta.DecodeNameToID, meta.NameToID.Encode).ObjID)
+			case strings.HasPrefix(oid, "realms.") && strings.HasSuffix(oid, ".control"):
+				// Written empty, for radosgw to watch.
+				kind = "realms control"
+				Expect(o.data).To(BeEmpty(), "%s holds data", oid)
+				realmControls = append(realmControls, oid)
 			case strings.HasPrefix(oid, "realms."):
 				kind = "realms"
-				realm := roundTrip(oid, o.data, release, meta.DecodeRealm, meta.Realm.Encode)
+				realm := roundTripRoot(ctx, m, t, kind, oid, "RGWRealm", o.data, release, operator,
+					meta.DecodeRealm, meta.Realm.Encode)
 				Expect(meta.RealmOID(realm.ID)).To(Equal(oid))
+				realmIDs = append(realmIDs, realm.ID)
+				realms[realm.ID] = realm
+			case strings.HasPrefix(oid, "period_config."):
+				kind = "period_config"
+				roundTripRoot(ctx, m, t, kind, oid, "", o.data, release, operator,
+					meta.DecodePeriodConfig, meta.PeriodConfig.Encode)
+				periodConfigs = append(periodConfigs, oid)
 			case strings.HasPrefix(oid, "periods.") && strings.HasSuffix(oid, ".latest_epoch"):
 				kind = "periods latest_epoch"
-				roundTrip(oid, o.data, release, meta.DecodePeriodLatestEpochInfo, meta.PeriodLatestEpochInfo.Encode)
+				roundTripRoot(ctx, m, t, kind, oid, "RGWPeriodLatestEpochInfo", o.data, release, operator,
+					meta.DecodePeriodLatestEpochInfo, meta.PeriodLatestEpochInfo.Encode)
 			case strings.HasPrefix(oid, "periods."):
 				kind = "periods"
-				p := roundTrip(oid, o.data, release, meta.DecodePeriod, meta.Period.Encode)
+				p := roundTripRoot(ctx, m, t, kind, oid, "RGWPeriod", o.data, release, operator,
+					meta.DecodePeriod, meta.Period.Encode)
 				Expect(meta.PeriodOID(p.ID, p.Epoch)).To(Equal(oid))
+				Expect(p.RealmID).To(Equal(zone.RealmID), "%s realm", oid)
+				periodIDs = append(periodIDs, p.ID)
 			default:
 				Fail("no decoder for root pool object " + oid)
 			}
@@ -608,11 +776,32 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		Expect(zoneGroupNames).To(ConsistOf(zoneGroupIDs))
 		Expect(defaultZoneGroups).To(ConsistOf(zoneGroupIDs))
 
-		// populate.sh adds a cloud-s3 storage class, so the round trip above
-		// covered a placement tier, which Squid and Tentacle encode at
-		// different versions.
+		// Rook marks the realm default only when the object store asks it to.
+		Expect(realmIDs).To(ConsistOf(zone.RealmID))
+		Expect(realmNames).To(ConsistOf(zone.RealmID))
+		Expect(defaultRealms).To(Or(BeEmpty(), ConsistOf(zone.RealmID)))
+		Expect(realmControls).To(ConsistOf(meta.RealmControlOID(zone.RealmID)))
+		Expect(periodConfigs).To(ConsistOf(meta.PeriodConfigOID(zone.RealmID)))
+		realm := realms[zone.RealmID]
+		Expect(realm.Name).To(Equal(m.Realm))
+		Expect(periodIDs).To(ContainElement(realm.CurrentPeriod), "realm %s's current period", realm.Name)
+
+		// populate.sh adds a cloud-s3 storage class and commits it, so the
+		// round trips above covered a placement tier, which Squid and
+		// Tentacle encode at different versions, both in the zonegroup and
+		// in the current period's map.
 		zg := zoneGroupOf(ctx)
+		Expect(zg.Name).To(Equal(m.ZoneGroup))
 		Expect(zoneGroupIDs).To(ConsistOf(zg.ID))
+		d := denc.NewDecoder(readObject(ctx, root, meta.PeriodLatestEpochOID(realm.CurrentPeriod)).data)
+		latest := meta.DecodePeriodLatestEpochInfo(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		d = denc.NewDecoder(readObject(ctx, root, meta.PeriodOID(realm.CurrentPeriod, latest.Epoch)).data)
+		current := meta.DecodePeriod(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		Expect(current.PeriodMap.ZoneGroups).To(HaveKey(zg.ID), "period %s zonegroups", current.ID)
+		Expect(current.PeriodMap.ZoneGroups[zg.ID].PlacementTargets).To(Equal(zg.PlacementTargets),
+			"the placement targets period %s.%d holds", current.ID, current.Epoch)
 		var tiers []string
 		for _, name := range slices.Sorted(maps.Keys(zg.PlacementTargets)) {
 			for class, tier := range zg.PlacementTargets[name].TierTargets {
@@ -1141,7 +1330,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		}
 		get := func(key string) (metadataGet, map[string]any) {
 			var out metadataGet
-			Expect(json.Unmarshal(admin(ctx, "metadata", "get", key), &out)).To(Succeed())
+			Expect(json.Unmarshal(admin(ctx, m, "metadata", "get", key), &out)).To(Succeed())
 			data, ok := canonical(out.Data).(map[string]any)
 			Expect(ok).To(BeTrue())
 			return out, data
@@ -1196,7 +1385,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				LastStatsSync   meta.Time `json:"last_stats_sync"`
 				LastStatsUpdate meta.Time `json:"last_stats_update"`
 			}
-			Expect(json.Unmarshal(admin(ctx, args...), &stats)).To(Succeed())
+			Expect(json.Unmarshal(admin(ctx, m, args...), &stats)).To(Succeed())
 			op := radosclient.NewReadOp()
 			hres := user.GetHeader(op, release)
 			Expect(uids.Read(ctx, u.ID()+".buckets", op, radosclient.OpFlagNone)).Error().To(Succeed())
@@ -1243,7 +1432,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				Idx   string          `json:"idx"`
 				Entry json.RawMessage `json:"entry"`
 			}
-			Expect(json.Unmarshal(admin(ctx, "bi", "list", "--bucket", b.EntryPointKey()), &listed)).To(Succeed())
+			Expect(json.Unmarshal(admin(ctx, m, "bi", "list", "--bucket", b.EntryPointKey()), &listed)).To(Succeed())
 			entries := map[string]rgw.DirEntry{}
 			for shard := range b.NumShards {
 				for k, raw := range omapValues(ctx, index, bi.IndexShardOID(bi.Layout.Current, shard)) {
@@ -1267,15 +1456,16 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		if release == denc.Squid {
 			zoneAbsent, zoneGroupAbsent = squidZoneDumpLacks, squidZoneGroupDumpLacks
 		}
-		expectSameJSON("zone get", zone, canonical(admin(ctx, "zone", "get")), zoneAbsent...)
+		expectSameJSON("zone get", zone, canonical(admin(ctx, m, "zone", "get")), zoneAbsent...)
 		t["zone get"]++
 		zg := zoneGroupOf(ctx)
+		Expect(zg.Name).To(Equal(m.ZoneGroup))
 		root = open(ctx, meta.Pool{Name: m.Pools.Root})
 		d := denc.NewDecoder(readObject(ctx, root, meta.ZoneGroupNameOID(zg.Name)).data)
-		Expect(meta.DecodeNameToID(d).ObjID).To(Equal(zg.ID), "zonegroups_names.%s", zg.Name)
-		Expect(d.Err()).NotTo(HaveOccurred())
-		expectSameJSON("zonegroup get", zg, canonical(admin(ctx, "zonegroup", "get", "--rgw-zonegroup", zg.Name)),
-			zoneGroupAbsent...)
+		zgID := meta.DecodeNameToID(d).ObjID
+		Expect(d.Err()).NotTo(HaveOccurred(), meta.ZoneGroupNameOID(zg.Name))
+		Expect(zgID).To(Equal(zg.ID), "zonegroups_names.%s", zg.Name)
+		expectSameJSON("zonegroup get", zg, canonical(admin(ctx, m, "zonegroup", "get")), zoneGroupAbsent...)
 		t["zonegroup get"]++
 	})
 })

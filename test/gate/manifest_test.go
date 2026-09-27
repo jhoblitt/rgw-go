@@ -10,13 +10,18 @@ import (
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
-// populated is a manifest in the shape hack/cluster/populate.sh writes.
+// populated is a manifest in the shape hack/rooket/populate.sh writes.
 const populated = `{
   "release": "squid",
-  "zone": "default",
-  "pools": {"root": ".rgw.root", "meta": "default.rgw.meta", "control": "default.rgw.control",
-    "log": "default.rgw.log", "index": "default.rgw.buckets.index",
-    "data": "default.rgw.buckets.data", "nonec": "default.rgw.buckets.non-ec"},
+  "ceph_version": "19.2.6",
+  "rooket_name": "rgw-go-squid",
+  "realm": "ceph-objectstore",
+  "zonegroup": "ceph-objectstore",
+  "zone": "ceph-objectstore",
+  "pools": {"root": ".rgw.root", "meta": "ceph-objectstore.rgw.meta",
+    "control": "ceph-objectstore.rgw.control", "log": "ceph-objectstore.rgw.log",
+    "index": "ceph-objectstore.rgw.buckets.index", "data": "ceph-objectstore.rgw.buckets.data",
+    "nonec": "ceph-objectstore.rgw.buckets.non-ec"},
   "users": [
     {"uid": "alice", "tenant": "", "access_key": "AK1", "secret_key": "SK1"},
     {"uid": "bob", "tenant": "t1", "access_key": "AK2", "secret_key": "SK2"}
@@ -44,8 +49,11 @@ var _ = Describe("Manifest", func() {
 		m, err := gate.LoadManifest(write(populated))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(m.Release).To(Equal("squid"))
-		Expect(m.Pools.Data).To(Equal("default.rgw.buckets.data"))
-		Expect(m.Pools.NonEC).To(Equal("default.rgw.buckets.non-ec"))
+		Expect(m.CephVersion).To(Equal("19.2.6"))
+		Expect(m.RooketName).To(Equal("rgw-go-squid"))
+		Expect(m.Pools.Data).To(Equal("ceph-objectstore.rgw.buckets.data"))
+		Expect(m.Pools.NonEC).To(Equal("ceph-objectstore.rgw.buckets.non-ec"))
+		Expect([]string{m.Realm, m.ZoneGroup, m.Zone}).To(HaveEach("ceph-objectstore"))
 		Expect(m.Users[0].ID()).To(Equal("alice"))
 		Expect(m.Users[1].ID()).To(Equal("t1$bob"))
 
@@ -67,6 +75,11 @@ var _ = Describe("Manifest", func() {
 		Expect(objs[2].ContentType).To(Equal("text/plain"))
 		Expect(objs[2].Metadata).To(HaveKeyWithValue("x-amz-meta-color", "blue"))
 		Expect(m.ObjectsIn("tenanted")).To(BeEmpty())
+	})
+
+	It("names the populated site in radosgw-admin's options", func() {
+		m := gate.Manifest{Realm: "r1", ZoneGroup: "zg1", Zone: "z1"}
+		Expect(m.AdminFlags()).To(Equal([]string{"--rgw-realm=r1", "--rgw-zonegroup=zg1", "--rgw-zone=z1"}))
 	})
 
 	It("reports a missing or malformed manifest", func() {
