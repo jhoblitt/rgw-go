@@ -98,7 +98,9 @@ because Rook creates all of them for every object store, and serve a
 single zone that Rook declared through its realm, zonegroup and zone
 resources exactly as one it declared in the store spec, since the
 integration suite's shared store has that shape; honor
-`rgw_run_sync_thread = false`, which Rook sets; serve the read-only realm
+`rgw_run_sync_thread`, which Rook sets to true by default and to false
+only when the store sets `disableMultisiteSyncTraffic` (rook config.go:256-258),
+though a single zone has nothing to sync either way; serve the read-only realm
 and period getters and `/admin/config?type=zone`, because the Ceph
 dashboard calls them; write none of the sync logs. That last point is
 safe because radosgw itself does not write them in a Rook cluster: the
@@ -129,7 +131,9 @@ Rook's probes are HTTP requests to the S3 endpoint root whenever S3 is
 enabled and do not depend on it.
 
 Still required: accept `rgw_enable_apis` values containing swift and
-swift_auth, which Rook includes by default, and ignore them with one log
+swift_auth -- radosgw's own default enables them, and Rook writes the
+option only when the store sets `protocols.enableAPIs` or disables S3
+(rook spec.go:1162-1183) -- and ignore them with one log
 line at startup. Subusers and their Swift keys remain in the user model
 and the admin API because they are part of the user metadata, not
 because any Swift request is served. One piece of Swift state outlives
