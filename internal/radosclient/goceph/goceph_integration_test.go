@@ -26,8 +26,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
 
-// expectedRelease is the release the cluster under test runs: the directory
-// up.sh wrote its ceph.conf to, unless RGW_GO_TEST_CEPH_RELEASE names it.
+// expectedRelease is the release the cluster under test runs: the
+// hack/rooket/out/<release>/ directory its ceph.conf is in, unless
+// RGW_GO_TEST_CEPH_RELEASE names it.
 func expectedRelease(conf string) string {
 	if r := os.Getenv("RGW_GO_TEST_CEPH_RELEASE"); r != "" {
 		return r

@@ -2,3 +2,4 @@
 /dist/
 coverage.out
 /hack/cluster/out/
+/hack/rooket/out/

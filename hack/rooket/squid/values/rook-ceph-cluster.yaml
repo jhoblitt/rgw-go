@@ -1,0 +1,14 @@
+# Values for the rook-ceph-cluster chart, over rooket's one-worker base, which
+# already fits the chart's ceph-objectstore pools to a single OSD.
+cephImage:
+  repository: quay.io/ceph/ceph
+  tag: v19.2.6
+cephClusterSpec:
+  # With the dashboard on, Rook creates a dashboard-admin user in the object
+  # store's zone, which the population and the gate would have to account for.
+  dashboard:
+    enabled: false
+# Only the object store is needed; the chart's block pool and filesystem would
+# add pools, an MDS and CPU requests to the one worker.
+cephBlockPools: []
+cephFileSystems: []

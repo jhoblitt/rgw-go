@@ -90,30 +90,46 @@ goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podma
 .PHONY: check
 check: generate-check fmt-check vet lint fix-check tidy-check test ## The local gate
 
-# Disposable single-node Ceph clusters with a radosgw on 127.0.0.1:7480
-# (hack/cluster/README.md). One release runs at a time.
+# Disposable one-worker Rook clusters on kind, one per release, driven by
+# rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
+# its own cluster, rgw-go-RELEASE, with its output in hack/rooket/out/RELEASE/.
 RELEASE ?=
+# The rooket binary the harness scripts and the gate run. go test runs the gate
+# in its package directory, so a path is made absolute; a bare name is left for
+# PATH to resolve.
+ROOKET ?= rooket
+ROOKET_BIN = $(if $(findstring /,$(ROOKET)),$(abspath $(ROOKET)),$(ROOKET))
+CLUSTER_OUT = $(CURDIR)/hack/rooket/out/$(RELEASE)
 
-.PHONY: cluster-up-squid
-cluster-up-squid: ## Start the disposable Squid cluster and its radosgw
-	hack/cluster/up.sh squid
+.PHONY: need-release
+need-release:
+	@case "$(RELEASE)" in squid | tentacle) ;; *) echo "set RELEASE=squid or RELEASE=tentacle"; exit 1 ;; esac
 
-.PHONY: cluster-up-tentacle
-cluster-up-tentacle: ## Start the disposable Tentacle cluster and its radosgw
-	hack/cluster/up.sh tentacle
-
-.PHONY: cluster-down
-cluster-down: ## Remove the disposable clusters, their volumes and output
-	hack/cluster/down.sh
+.PHONY: cluster-up
+cluster-up: need-release ## Start the RELEASE cluster and write its client config
+	ROOKET=$(ROOKET_BIN) hack/rooket/up.sh $(RELEASE)
 
 .PHONY: populate
-populate: ## Write the fixed data set through the radosgw (RELEASE=squid|tentacle)
-	@test -n "$(RELEASE)" || { echo "populate needs RELEASE=squid or RELEASE=tentacle"; exit 1; }
-	hack/cluster/populate.sh $(RELEASE)
+populate: need-release ## Write the fixed data set through the RELEASE cluster's radosgw
+	ROOKET=$(ROOKET_BIN) hack/rooket/populate.sh $(RELEASE)
+
+# Every package but the gate, which make gate runs on its own. The label
+# filter assumes every test package is a Ginkgo suite; a plain testing
+# package would reject the flag.
+.PHONY: integration
+integration: need-release ## Run the integration specs against the RELEASE cluster
+	@tags="$(GO_TAGS),integration"; \
+	pkgs=$$(go list "-tags=$$tags" ./... | grep -Ev '/test/gate(/|$$)') || exit 1; \
+	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration
 
 .PHONY: gate
-gate: ## Run the phase 0 gate against the populated cluster (RELEASE=squid|tentacle)
-	@test -n "$(RELEASE)" || { echo "gate needs RELEASE=squid or RELEASE=tentacle"; exit 1; }
-	RGW_GO_TEST_CEPH_CONF=$(CURDIR)/hack/cluster/out/$(RELEASE)/ceph.conf \
-	RGW_GO_TEST_MANIFEST=$(CURDIR)/hack/cluster/out/$(RELEASE)/manifest.json \
+gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
+	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	RGW_GO_TEST_MANIFEST=$(CLUSTER_OUT)/manifest.json \
+	RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v
+
+.PHONY: cluster-down
+cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output
+	ROOKET=$(ROOKET_BIN) hack/rooket/down.sh $(RELEASE)

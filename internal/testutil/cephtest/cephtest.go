@@ -1,4 +1,4 @@
-// Package cephtest locates the disposable cluster hack/cluster/up.sh starts
+// Package cephtest locates the disposable cluster hack/rooket/up.sh starts
 // for the integration specs, which import it under the integration build tag.
 package cephtest
 
@@ -11,14 +11,14 @@ import (
 	. "github.com/onsi/gomega"    //nolint:revive // Gomega's DSL is meant to be dot-imported
 )
 
-// TestPool is the scratch pool hack/cluster/up.sh creates for the specs.
+// TestPool is the scratch pool hack/rooket/up.sh creates for the specs.
 const TestPool = "rgw-go-test"
 
 // ConfEnv names the variable that points the specs at a cluster's ceph.conf.
 const ConfEnv = "RGW_GO_TEST_CEPH_CONF"
 
 // ModuleRelative resolves a relative path from the module root, so the
-// documented hack/cluster/out/<release>/ paths work from the package
+// documented hack/rooket/out/<release>/ paths work from the package
 // directory go test runs in. "" and an absolute path come back unchanged.
 func ModuleRelative(p string) string {
 	GinkgoHelper()
@@ -43,7 +43,7 @@ func ModuleRelative(p string) string {
 func Conf() string {
 	GinkgoHelper()
 	conf := ModuleRelative(os.Getenv(ConfEnv))
-	Expect(conf).NotTo(BeEmpty(), "%s is not set; point it at hack/cluster/out/<release>/ceph.conf", ConfEnv)
+	Expect(conf).NotTo(BeEmpty(), "%s is not set; point it at hack/rooket/out/<release>/ceph.conf", ConfEnv)
 	return conf
 }
 
