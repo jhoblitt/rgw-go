@@ -254,6 +254,58 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   `docs/exclusions.md` records the failure mode.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-011); verified 2026-09-27.
 
+## cls_otp divides by a stored step_size that is never validated
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** `otp_instance`'s verify path computes
+  `index = result + (secs - time_ofs) / step_size` (v19.2.6
+  `cls_otp.cc:143`, main `:139`), where `step_size` is a `uint32_t` a caller
+  can store as 0. `otp_set` writes the decoded value with no check
+  (`cls_otp.cc:301-347`). liboath does not stop the division: given a zero
+  time step, `oath_totp_validate4_callback` substitutes 30
+  (`liboath/totp.c:542-543`) and validates a correct code, so a non-negative
+  result reaches the division and the OSD faults on the integer divide by
+  zero.
+- **Trigger:** privileged only. Storing `step_size == 0` needs direct RADOS
+  write caps on the OTP pool (`<zone>.rgw.otp`, `svc_otp.cc:22-24`), or the
+  RGW admin cap `metadata=write` via `metadata put otp:<uid>`, whose
+  `otp_info_t::decode_json` reads `step_size` with no `> 0` guard
+  (`cls_otp_types.cc:69`). `radosgw-admin mfa create` defaults it to 30
+  (`rgw_admin.cc:10824-10825`), and no S3 end-user path stores an OTP entry.
+  So the effect is a denial of service (an OSD SIGFPE that recurs on each
+  check until the entry is cleared) reachable only by a cluster-service or
+  admin actor, not a cross-privilege escalation.
+- **Releases:** every release checked, v19.2.2 through main.
+- **rgw-go:** no cls_otp client yet (phase 2, MFA). When it writes OTP
+  entries it must reject a zero `step_size`, and it must not divide by a
+  stored `step_size` without guarding it.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-012); liboath premise and
+  trigger verified 2026-09-27. Unreported upstream as of the 2026-09-27
+  tracker search; a public tracker issue is to be filed.
+
+## cls_otp computes the replay index from an unsigned window distance
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** verify calls `oath_totp_validate2(..., window, nullptr, otp)`
+  (v19.2.6 `cls_otp.cc:133-136`), discarding the signed position
+  out-parameter, and sets the replay index to the return value plus the
+  current step (`:143`), guarding with `if (index <= last_success)` (`:145`)
+  and storing `last_success = index` (`:150`). liboath's return value is the
+  absolute window distance in both directions; the sign is carried only by
+  the discarded `otp_pos` (`liboath/totp.c:547-596`, and the documented
+  contract "Returns absolute value of position in OTP window"). A code
+  matched `iter` steps in the past therefore records an index `2*iter` steps
+  ahead of the true step, so replay handling misfires: legitimate codes for
+  the intervening steps are refused, and an earlier code can be accepted
+  after a later one within the window. It does not bypass MFA.
+- **Releases:** every release checked, v19.2.2 through main.
+- **rgw-go:** no cls_otp client yet (phase 2, MFA). If it reproduces the
+  replay index it must take the direction from the position out-parameter,
+  not from the return value.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-013); liboath premise
+  verified 2026-09-27. Unreported upstream as of the 2026-09-27 tracker
+  search; a public tracker issue is to be filed.
+
 ## librbd leaks the update-watch context when registration fails
 
 - **Kind:** defect, currently unreachable.
