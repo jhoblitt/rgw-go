@@ -74,7 +74,7 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 	switch cfg.Mode {
 	case ModeSync, ModeCallback, ModePipe:
 	default:
-		return nil, fmt.Errorf("goceph: completion mode %q: %w", cfg.Mode, radosclient.ErrInvalid)
+		return nil, fmt.Errorf("goceph: completion mode %q: %w", cfg.Mode, radosclient.ErrBadOp)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

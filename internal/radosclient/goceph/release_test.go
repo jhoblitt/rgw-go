@@ -24,6 +24,6 @@ var _ = Describe("mapping require_osd_release", func() {
 
 	It("rejects a release below the squid floor", func(ctx SpecContext) {
 		_, err := goceph.ReleaseFor(ctx, "reef")
-		Expect(err).To(MatchError(radosclient.ErrNotSupported))
+		Expect(err).To(MatchError(radosclient.ErrReleaseTooOld))
 	})
 })

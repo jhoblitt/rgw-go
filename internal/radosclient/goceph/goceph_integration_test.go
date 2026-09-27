@@ -118,10 +118,7 @@ func removeObject(p radosclient.Pool, oid string) {
 }
 
 // isClosed reports whether err is the seam error a closed Pool or Cluster returns.
-func isClosed(err error) bool {
-	var seamErr *radosclient.Error
-	return errors.As(err, &seamErr) && seamErr.Errno == int32(syscall.ENOTCONN)
-}
+func isClosed(err error) bool { return errors.Is(err, radosclient.ErrClosed) }
 
 // cancelAfterCheck passes the first Err check, so the operation starts, and
 // is canceled from then on.
@@ -699,8 +696,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 							r := radosclient.NewReadOp()
 							r.Read(0, 4096)
 							if _, readErr := pool.Read(ctx, oid, r, radosclient.OpFlagNone); readErr != nil {
-								var seamErr *radosclient.Error
-								if errors.As(readErr, &seamErr) && seamErr.Errno == int32(syscall.ENOTCONN) {
+								if isClosed(readErr) {
 									closedErrs.Add(1)
 								}
 								return
@@ -717,9 +713,7 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				r := radosclient.NewReadOp()
 				r.Stat()
 				_, err = pool.Read(ctx, oid, r, radosclient.OpFlagNone)
-				var seamErr *radosclient.Error
-				Expect(errors.As(err, &seamErr)).To(BeTrue())
-				Expect(seamErr.Errno).To(BeEquivalentTo(syscall.ENOTCONN))
+				Expect(err).To(MatchError(radosclient.ErrClosed))
 				_, err = cluster.Pool(ctx, testPool, "")
 				Expect(err).To(HaveOccurred())
 				Expect(pool.Close()).To(Succeed())

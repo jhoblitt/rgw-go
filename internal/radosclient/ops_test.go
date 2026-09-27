@@ -1,6 +1,7 @@
 package radosclient_test
 
 import (
+	"errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -194,6 +195,15 @@ var _ = Describe("Error", func() {
 		err := &radosclient.Error{Errno: -2, Op: "stat"}
 		Expect(err.Is(radosclient.ErrNotFound)).To(BeTrue(), "-ENOENT is ErrNotFound")
 		Expect(err.Error()).To(Equal("rados: stat: no such file or directory"), "error text for -2")
+	})
+
+	It("never matches a local sentinel, whatever the errno", func() {
+		for errno := range int32(4096) {
+			err := &radosclient.Error{Errno: errno}
+			for _, local := range []error{radosclient.ErrBadOp, radosclient.ErrClosed, radosclient.ErrReleaseTooOld} {
+				Expect(errors.Is(err, local)).To(BeFalse(), "errno %d against %v", errno, local)
+			}
+		}
 	})
 
 	It("does not map an unlisted errno to any sentinel", func() {

@@ -222,7 +222,7 @@ var _ = Describe("translating seam ops", func() {
 		op.SetStepFlags(radosclient.StepFlagFailOK)
 		op.Remove()
 		rec := &writeRecorder{}
-		Expect(goceph.TranslateWrite(rec, op)).To(MatchError(radosclient.ErrInvalid))
+		Expect(goceph.TranslateWrite(rec, op)).To(MatchError(radosclient.ErrBadOp))
 		Expect(rec.calls).To(BeEmpty())
 	})
 
@@ -230,13 +230,13 @@ var _ = Describe("translating seam ops", func() {
 		op := radosclient.NewWriteOp()
 		op.Remove()
 		op.SetStepFlags(0x80) // FADVISE_FUA, which librados drops
-		Expect(goceph.TranslateWrite(&writeRecorder{}, op)).To(MatchError(radosclient.ErrInvalid))
+		Expect(goceph.TranslateWrite(&writeRecorder{}, op)).To(MatchError(radosclient.ErrBadOp))
 	})
 
 	It("rejects an unknown comparison operator", func() {
 		op := radosclient.NewReadOp()
 		op.CmpXattr("n", radosclient.CmpOp(9), nil)
-		Expect(goceph.TranslateRead(&recorder{}, op)).To(MatchError(radosclient.ErrInvalid))
+		Expect(goceph.TranslateRead(&recorder{}, op)).To(MatchError(radosclient.ErrBadOp))
 	})
 
 	It("maps the seam's op flags onto go-ceph's", func() {

@@ -58,7 +58,7 @@ func Release(ctx context.Context, c radosclient.Cluster) (denc.Release, error) {
 func releaseFor(ctx context.Context, name string) (denc.Release, error) {
 	lower := strings.ToLower(name)
 	if slices.Contains(olderReleases, lower) {
-		return 0, fmt.Errorf("goceph: require_osd_release %q is below the squid floor: %w", name, radosclient.ErrNotSupported)
+		return 0, fmt.Errorf("goceph: require_osd_release %q is below the squid floor: %w", name, radosclient.ErrReleaseTooOld)
 	}
 	r, ok := denc.ParseRelease(lower)
 	if !ok {

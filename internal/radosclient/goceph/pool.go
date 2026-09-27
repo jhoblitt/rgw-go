@@ -3,6 +3,7 @@ package goceph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"syscall"
@@ -105,7 +106,7 @@ func (s *poolState) open() (*rados.IOContext, error) {
 // names what is closed: "pool" for a pool-level refusal, "cluster" for a
 // cluster-level one.
 func closedError(op, noun string) error {
-	return &radosclient.Error{Errno: int32(syscall.ENOTCONN), Op: op + ": " + noun + " is closed"}
+	return fmt.Errorf("goceph: %s on a closed %s: %w", op, noun, radosclient.ErrClosed)
 }
 
 // acquire takes an I/O context for one operation, with locator set, and

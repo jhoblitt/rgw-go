@@ -187,7 +187,7 @@ func translateRead(b readBuilder, op *radosclient.ReadOp) ([]finisher, error) {
 			fs = append(fs, readExecStep(b, s, idx))
 			idx++
 		default:
-			return nil, fmt.Errorf("goceph: %T in a read op: %w", s, radosclient.ErrInvalid)
+			return nil, fmt.Errorf("goceph: %T in a read op: %w", s, radosclient.ErrBadOp)
 		}
 	}
 	return fs, nil
@@ -355,10 +355,10 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 			// librados asserts that an action precedes the flags, which
 			// would abort the process.
 			if i == 0 {
-				return nil, fmt.Errorf("goceph: step flags %#x before any step: %w", uint32(s.Flags), radosclient.ErrInvalid)
+				return nil, fmt.Errorf("goceph: step flags %#x before any step: %w", uint32(s.Flags), radosclient.ErrBadOp)
 			}
 			if s.Flags&^stepFlagsMask != 0 {
-				return nil, fmt.Errorf("goceph: step flags %#x: %w", uint32(s.Flags), radosclient.ErrInvalid)
+				return nil, fmt.Errorf("goceph: step flags %#x: %w", uint32(s.Flags), radosclient.ErrBadOp)
 			}
 			b.SetFlags(rados.OpFlags(s.Flags))
 		case *radosclient.CreateStep:
@@ -408,7 +408,7 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 			fs = append(fs, func(o outcome) { r.Set(nil, -errnoOf(o.step(at))) })
 			idx++
 		default:
-			return nil, fmt.Errorf("goceph: %T in a write op: %w", s, radosclient.ErrInvalid)
+			return nil, fmt.Errorf("goceph: %T in a write op: %w", s, radosclient.ErrBadOp)
 		}
 	}
 	return fs, nil
@@ -435,7 +435,7 @@ func translateCmp(op radosclient.CmpOp) (rados.CmpXattrOp, error) {
 	case radosclient.CmpLTE:
 		return rados.CmpXattrOpLte, nil
 	default:
-		return 0, fmt.Errorf("goceph: comparison operator %d: %w", op, radosclient.ErrInvalid)
+		return 0, fmt.Errorf("goceph: comparison operator %d: %w", op, radosclient.ErrBadOp)
 	}
 }
 
@@ -458,7 +458,7 @@ func translateFlags(f radosclient.OpFlags) (rados.OperationFlags, error) {
 		}
 	}
 	if f != 0 {
-		return 0, fmt.Errorf("goceph: op flags %#x: %w", uint32(f), radosclient.ErrInvalid)
+		return 0, fmt.Errorf("goceph: op flags %#x: %w", uint32(f), radosclient.ErrBadOp)
 	}
 	return out, nil
 }
