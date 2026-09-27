@@ -29,8 +29,9 @@ before writing Go here.
   meets (radosgw, the RGW classes, librados, librbd, the OSD, the monitors); add or update an
   entry, with evidence at a named release tag, whenever work meets one, and share it with
   rgw-rs.
-- Never use the ambient kubectl or Ceph cluster. Cluster tests use `make cluster-up-squid`
-  and `make cluster-up-tentacle` (hack/cluster/).
+- Never use the ambient kubectl or Ceph cluster. Cluster tests use disposable rooket clusters,
+  `make cluster-up RELEASE=squid|tentacle` (hack/rooket/), reached only through `rooket k`
+  with `ROOKET_NAME=rgw-go-<release>`.
 - Implementation tasks go to Opus 5.5 code-workers in worktrees; judgment stays on the
   session model.
 - `docs/exclusions.md` is canonical for rgw-rs too: announce every material change to the
