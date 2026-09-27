@@ -62,6 +62,13 @@ type Pool interface {
 
 // Watch is a registered watch on one object.
 type Watch interface {
+	// Err delivers the error librados reports when the watch breaks: ENOTCONN
+	// when the OSD disconnects it, as it does when the object is removed, or
+	// when the client's session lapses. A broken watch receives no more
+	// notifications, so the caller closes it and registers a new one. The
+	// channel holds one error and drops later ones until it is read; it is
+	// closed once the watch is closed.
+	Err() <-chan error
 	// Close unregisters the watch.
 	Close() error
 }

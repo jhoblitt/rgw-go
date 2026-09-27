@@ -410,12 +410,13 @@ func (p *pool) ListObjects(ctx context.Context, fn func(oid, locator string) err
 }
 
 // watch is a registered go-ceph watcher, the I/O context it holds for its
-// lifetime, and the goroutine dispatching its events.
+// lifetime, and the goroutine dispatching its events and errors.
 type watch struct {
 	state   *poolState
 	h       *handle
 	w       *rados.Watcher
 	oid     string
+	errs    chan error
 	stop    chan struct{}
 	stopped chan struct{}
 	close   sync.Once
@@ -426,6 +427,8 @@ type watch struct {
 // watch, and each notification is acknowledged with an empty payload after
 // fn returns. fn must not close the Watch, its Pool, or the Cluster: each
 // close waits for the dispatch goroutine that is running fn, which deadlocks.
+// The same goroutine forwards the watch's errors to Err, so an error waits
+// behind a running fn.
 func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifierID uint64, payload []byte)) (radosclient.Watch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -445,6 +448,7 @@ func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifier
 		h:       h,
 		w:       rw,
 		oid:     oid,
+		errs:    make(chan error, 1),
 		stop:    make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
@@ -461,10 +465,11 @@ func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifier
 	return w, nil
 }
 
-// dispatch delivers notifications until Close stops it or the watcher's
-// channels close.
+// dispatch delivers notifications and errors until Close stops it or the
+// watcher's channels close. It is the only sender on w.errs, so it closes it.
 func (w *watch) dispatch(fn func(notifyID, notifierID uint64, payload []byte)) {
 	defer close(w.stopped)
+	defer close(w.errs)
 	events, errs := w.w.Events(), w.w.Errors()
 	for events != nil || errs != nil {
 		select {
@@ -484,10 +489,20 @@ func (w *watch) dispatch(fn func(notifyID, notifierID uint64, payload []byte)) {
 				errs = nil
 				continue
 			}
-			slog.Warn("watch error", slog.String("oid", w.oid), slog.Any("error", err))
+			seamErr := toSeamError(opName("watch", w.oid), err)
+			select {
+			case w.errs <- seamErr:
+			default:
+				// The error already pending says the watch is broken; this
+				// one only shows a watch that keeps failing.
+				slog.Debug("dropping a watch error while one is pending", slog.String("oid", w.oid), slog.Any("error", seamErr))
+			}
 		}
 	}
 }
+
+// Err delivers the error librados reports when the watch breaks.
+func (w *watch) Err() <-chan error { return w.errs }
 
 // Close unregisters the watch, stops its dispatch goroutine and returns its
 // I/O context to the pool.

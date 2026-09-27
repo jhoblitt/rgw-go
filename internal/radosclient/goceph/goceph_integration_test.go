@@ -801,6 +801,30 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Eventually(poolClosed).WithTimeout(30 * time.Second).Should(Receive(Succeed()))
 			})
 
+			It("reports a watch the OSD disconnects when its object is removed", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.Create(false)
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				watch, err := pool.Watch(ctx, oid, func(_, _ uint64, _ []byte) {})
+				Expect(err).NotTo(HaveOccurred())
+				Consistently(watch.Err()).WithTimeout(time.Second).ShouldNot(Receive(), "a healthy watch")
+
+				rm := radosclient.NewWriteOp()
+				rm.Remove()
+				_, err = pool.Write(ctx, oid, rm, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				var broken error
+				Eventually(watch.Err()).WithTimeout(30 * time.Second).Should(Receive(&broken))
+				var seamErr *radosclient.Error
+				Expect(errors.As(broken, &seamErr)).To(BeTrue(), "%v", broken)
+				Expect(seamErr.Errno).To(BeEquivalentTo(syscall.ENOTCONN), "%v", broken)
+
+				Expect(watch.Close()).To(MatchError(radosclient.ErrNotFound))
+				Expect(watch.Err()).To(BeClosed())
+			})
+
 			It("closes an outstanding watch when the pool closes", func(ctx SpecContext) {
 				w := radosclient.NewWriteOp()
 				w.Create(false)
