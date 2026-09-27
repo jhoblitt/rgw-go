@@ -92,6 +92,31 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Note:** a pure-Go client has the same wire-level limit on sent writes, but
   owns its buffers and needs no pinning or reaper.
 
+### The librados at run time sets which cephx keys authenticate
+
+- **Evidence:** Ceph 19.2.6 and 20.2.4 are the first releases whose cephx
+  can parse AES256KRB5 keys, and an older librados fails `rados_connect`
+  with such a key (`input/output error`), which is what the first
+  integration workflow runs hit with noble's librados 19.2.3. Such keys are
+  the default: Ceph's mkfs at those releases allows only AES256KRB5, and
+  Rook, which allows both AES and AES256KRB5, makes AES256KRB5 the
+  preferred type that new daemon keys, the RGW's included, take unless
+  `cephx.daemon.keyType` overrides it. rgw-go therefore supports only
+  librados 19.2.6 or later on Squid, or 20.2.4 or later on Tentacle. That is
+  a support policy; technically the floor binds only when the key presented
+  is AES256KRB5. It is a client floor, not a cluster floor: upgraded
+  clusters keep their AES keys working. Under Rook the derived image is
+  every daemon's image, so rgw-go's librados is the cluster's own release
+  and meets the floor whenever the cluster can issue such keys. The headers
+  used for building are unaffected.
+- **Note:** a pure-Go client removes the coupling to the installed library
+  only by implementing the AES256KRB5 cipher itself, RFC 8009
+  AES256-CTS-HMAC-SHA384-192, wherever cephx uses a key: entity keys,
+  tickets, authorizers and session keys. It then carries that work, and
+  every future cipher change, instead of taking it from Ceph.
+- **Status:** accepted; the integration workflow installs librados 20.2.4
+  from download.ceph.com.
+
 ### Build and deployment cost
 
 - **Evidence:** every build needs librados headers and the shared library.
