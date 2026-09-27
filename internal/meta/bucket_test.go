@@ -127,11 +127,12 @@ var _ = Describe("BucketInfo index shards", func() {
 		Expect(shardedInfo.IndexShardOID(gen(2, 11), 3)).To(Equal(".dir.zone.4156.1.2.3"))
 	})
 
-	// Recorded from the populated Squid cluster (make cluster-up-squid; make
-	// populate RELEASE=squid) against bucket "plain", 11 shards, by listing
-	// every shard:
-	//   podman exec rgw-go-mon rados -p default.rgw.buckets.index \
-	//     listomapkeys .dir.<bucket id>.<shard>   # for shard in 0..10
+	// Recorded from the populated Squid cluster of the retired podman harness
+	// against bucket "plain", 11 shards, by listing every shard's omap keys,
+	// and re-checked on the populated Tentacle rooket cluster by listing every
+	// shard in its Rook toolbox:
+	//   rooket k -n rook-ceph exec deploy/rook-ceph-tools -- rados \
+	//     -p <index pool> listomapkeys .dir.<bucket id>.<shard>   # for shard in 0..10
 	// small.bin was in shard 3; _underscore.bin, listed under its index key
 	// __underscore.bin, was in shard 6, which shows the name, not the index
 	// key, is what gets hashed.
