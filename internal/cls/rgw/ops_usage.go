@@ -166,8 +166,10 @@ func DecodeUsageTrimOp(d *denc.Decoder) UsageTrimOp {
 }
 
 // UsageLogTrim adds user_usage_log_trim, which removes a bounded batch of
-// matching entries; it fails with ENODATA once none remain, and radosgw
-// repeats it until then.
+// matching entries. radosgw repeats it until it fails with ENODATA, but on
+// Squid and Tentacle that never happens while a payer-keyed record is in
+// range, or while a bucket-filtered trim has 1000 other buckets' records
+// ahead of it (docs/ceph-upstream-bugs.md), so a caller must bound its loop.
 func UsageLogTrim(op radosclient.Execer, t UsageTrimOp, r denc.Release) {
 	op.Exec(Class, methodUserUsageLogTrim, clsutil.Encode(t, r))
 }
