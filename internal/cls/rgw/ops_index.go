@@ -55,8 +55,12 @@ func DecodeGuardOp(d *denc.Decoder) GuardOp {
 // -ErrBusyResharding, as radosgw always sends it. While the shard is
 // resharding the class returns ret_err verbatim, failing the whole op with
 // radosclient.ErrBusyResharding; a positive value would read as success and
-// let the guarded method run. radosgw adds it before bucket_prepare_op,
-// bucket_complete_op and the OLH methods, and before no other index method.
+// let the guarded method run. On every release radosgw adds it before
+// bucket_prepare_op, bucket_complete_op and the OLH methods link_olh,
+// unlink_instance, trim_olh_log and clear_olh. From Tentacle on it also adds
+// it before dir_suggest_changes, in both listing paths (v20.2.4
+// rgw_rados.cc 10823, 11061); Squid sends that unguarded. It guards no other
+// index method.
 func GuardBucketResharding(op radosclient.Execer, r denc.Release) {
 	op.Exec(Class, methodGuardBucketResharding, encode(GuardOp{RetErr: -ErrBusyResharding}.Encode, r))
 }
@@ -373,7 +377,8 @@ type Suggestion struct {
 // SuggestChanges adds dir_suggest_changes, which reconciles index entries
 // radosgw found stale while listing. The input has no framing: each change
 // is its op byte, or'ed with SuggestLog to be logged, then the entry, as
-// cls_rgw_encode_suggestion appends them.
+// cls_rgw_encode_suggestion appends them. From Tentacle on radosgw puts
+// GuardBucketResharding before it; Squid does not.
 func SuggestChanges(op radosclient.Execer, changes []Suggestion, r denc.Release) {
 	e := denc.NewEncoder()
 	for i := range changes {
