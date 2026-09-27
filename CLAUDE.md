@@ -25,6 +25,9 @@ before writing Go here.
   which every build, test and lint passes (Makefile `GO_TAGS`, .golangci.yml, CI).
 - `docs/cgo-limitations.md` is the registry of go-ceph, librados and cgo limitations for
   the pure-Go question; add or update an entry whenever a task, review or benchmark finds one.
+- `docs/ceph-upstream-bugs.md` is the registry of defects in upstream ceph/ceph that rgw-go
+  meets (radosgw, the RGW classes, librados, librbd, the OSD); add or update an entry, with
+  evidence at a named release tag, whenever work meets one, and share it with rgw-rs.
 - Never use the ambient kubectl or Ceph cluster. Cluster tests use `make cluster-up-squid`
   and `make cluster-up-tentacle` (hack/cluster/).
 - Implementation tasks go to Opus 5.5 code-workers in worktrees; judgment stays on the
