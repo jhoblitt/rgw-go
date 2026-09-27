@@ -52,11 +52,10 @@ finds a new limit, and update the status when one is fixed or measured.
   from a write. Modifying class methods that return data (2pc_queue reserve,
   user reset_user_stats2) must run inside a read operation with
   `LIBRADOS_OPERATION_RETURNVEC`.
-- **Status:** worked around by the design's read-op route. It depends on the
-  OSD accepting a modifying method in a read op, which Task 12's fix round is
-  proving with an integration spec. Confirmed in Task 12: cls hello
-  write_return_data run in a ReturnVec ReadOp returns its output and its
-  xattr persists.
+- **Status:** worked around by the design's read-op route, which depends on
+  the OSD accepting a modifying method in a read op. The goceph integration
+  spec confirms it: cls hello write_return_data run in a ReturnVec ReadOp
+  returns its output and its xattr persists.
 
 ### The locator is per I/O context, not per operation
 
@@ -64,8 +63,8 @@ finds a new limit, and update the status when one is fixed or measured.
   context. RGW sets a locator on every object whose name starts with `_`, so
   the client juggles I/O contexts per operation. Task 12's first version cached
   one context per locator, which grew without bound under user control.
-- **Status:** Task 12 fix round moves to pooled contexts with a per-operation
-  locator set.
+- **Status:** pooled contexts with the locator set per operation
+  (goceph/pool.go).
 - **Measure:** cost of the extra locator set and context borrow per operation.
 
 ### The object version is per I/O context
