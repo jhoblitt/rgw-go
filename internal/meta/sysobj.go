@@ -12,11 +12,13 @@ import (
 
 // RootPool is the default rgw_zone_root_pool, rgw_zonegroup_root_pool,
 // rgw_realm_root_pool and rgw_period_root_pool. Every object named below
-// lives in it, and each holds the binary encoding of its type.
+// lives in it, and each holds the binary encoding of its type, except a
+// realm's control object, which is empty.
 const RootPool = ".rgw.root"
 
-// The object names are the prefixes of src/rgw/driver/rados/config/{zone,
-// zonegroup,realm,period}.cc with the default rgw_default_*_info_oid and
+// The object names are built from the prefixes, suffixes and fixed names of
+// src/rgw/driver/rados/config/{zone,zonegroup,realm,period,period_config}.cc
+// with the default rgw_default_*_info_oid and
 // rgw_period_latest_epoch_info_oid options.
 const (
 	zoneInfoPrefix      = "zone_info."
@@ -27,10 +29,13 @@ const (
 	defaultZoneGroupOID = "default.zonegroup"
 	realmInfoPrefix     = "realms."
 	realmNamesPrefix    = "realms_names."
+	realmControlSuffix  = ".control"
 	defaultRealmOID     = "default.realm"
 	periodInfoPrefix    = "periods."
 	periodLatestEpoch   = ".latest_epoch"
 	periodStagingSuffix = ":staging"
+	periodConfigPrefix  = "period_config."
+	periodConfigNoRealm = "default"
 )
 
 // ZoneInfoOID names the object holding a zone's ZoneParams.
@@ -60,8 +65,21 @@ func RealmOID(id string) string { return realmInfoPrefix + id }
 // RealmNameOID names the object mapping a realm name to its id.
 func RealmNameOID(name string) string { return realmNamesPrefix + name }
 
+// RealmControlOID names a realm's empty control object, which radosgw
+// watches for notice of a newly committed period.
+func RealmControlOID(id string) string { return realmInfoPrefix + id + realmControlSuffix }
+
 // DefaultRealmOID names the object holding the default realm id.
 func DefaultRealmOID() string { return defaultRealmOID }
+
+// PeriodConfigOID names the object holding a realm's PeriodConfig, as
+// period_config_oid does: without a realm the name ends in "default".
+func PeriodConfigOID(realmID string) string {
+	if realmID == "" {
+		realmID = periodConfigNoRealm
+	}
+	return periodConfigPrefix + realmID
+}
 
 // PeriodOID names the object holding one epoch of a Period, as period_oid
 // does: a staging period's name has no epoch.
