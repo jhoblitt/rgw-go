@@ -3,6 +3,7 @@ package rgw
 import (
 	"slices"
 
+	"github.com/jhoblitt/rgw-go/internal/cls/internal/clsutil"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
@@ -37,7 +38,7 @@ func DecodeUsageAddOp(d *denc.Decoder) UsageAddOp {
 // UsageLogAdd adds user_usage_log_add, which merges info's entries into the
 // usage log object, as cls_rgw_usage_log_add sends it: with no user.
 func UsageLogAdd(op radosclient.Execer, info UsageLogInfo, r denc.Release) {
-	op.Exec(Class, methodUserUsageLogAdd, encode(UsageAddOp{Info: info}.Encode, r))
+	op.Exec(Class, methodUserUsageLogAdd, clsutil.Encode(UsageAddOp{Info: info}, r))
 }
 
 // UsageReadOp is rgw_cls_usage_log_read_op, the input of user_usage_log_read.
@@ -124,12 +125,12 @@ type UsageReadResult struct {
 
 // Result decodes the usage read once the op has run.
 func (res *UsageReadResult) Result() (UsageReadRet, error) {
-	return decodeReply(res.res, "rgw_cls_usage_log_read_ret", DecodeUsageReadRet)
+	return clsutil.DecodeReply(res.res, Class, methodUserUsageLogRead, DecodeUsageReadRet)
 }
 
 // UsageLogRead adds user_usage_log_read.
 func UsageLogRead(op *radosclient.ReadOp, q UsageReadOp, r denc.Release) *UsageReadResult {
-	return &UsageReadResult{res: op.Exec(Class, methodUserUsageLogRead, encode(q.Encode, r))}
+	return &UsageReadResult{res: op.Exec(Class, methodUserUsageLogRead, clsutil.Encode(q, r))}
 }
 
 // UsageTrimOp is rgw_cls_usage_log_trim_op, the input of user_usage_log_trim.
@@ -168,7 +169,7 @@ func DecodeUsageTrimOp(d *denc.Decoder) UsageTrimOp {
 // matching entries; it fails with ENODATA once none remain, and radosgw
 // repeats it until then.
 func UsageLogTrim(op radosclient.Execer, t UsageTrimOp, r denc.Release) {
-	op.Exec(Class, methodUserUsageLogTrim, encode(t.Encode, r))
+	op.Exec(Class, methodUserUsageLogTrim, clsutil.Encode(t, r))
 }
 
 // UsageLogClear adds usage_log_clear, which removes every usage entry in the

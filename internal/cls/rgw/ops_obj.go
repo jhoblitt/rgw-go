@@ -3,6 +3,7 @@ package rgw
 import (
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cls/internal/clsutil"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
@@ -31,7 +32,7 @@ func DecodeObjRemoveOp(d *denc.Decoder) ObjRemoveOp {
 // under any of keepAttrPrefixes, the object is recreated empty with only
 // those xattrs.
 func ObjRemove(op radosclient.Execer, keepAttrPrefixes []string, r denc.Release) {
-	op.Exec(Class, methodObjRemove, encode(ObjRemoveOp{KeepAttrPrefixes: keepAttrPrefixes}.Encode, r))
+	op.Exec(Class, methodObjRemove, clsutil.Encode(ObjRemoveOp{KeepAttrPrefixes: keepAttrPrefixes}, r))
 }
 
 // StorePGVerOp is rgw_cls_obj_store_pg_ver_op, the input of obj_store_pg_ver.
@@ -57,7 +58,7 @@ func DecodeStorePGVerOp(d *denc.Decoder) StorePGVerOp {
 // ObjStorePGVer adds obj_store_pg_ver, which stores the object's PG version
 // in the named xattr.
 func ObjStorePGVer(op radosclient.Execer, attr string, r denc.Release) {
-	op.Exec(Class, methodObjStorePGVer, encode(StorePGVerOp{Attr: attr}.Encode, r))
+	op.Exec(Class, methodObjStorePGVer, clsutil.Encode(StorePGVerOp{Attr: attr}, r))
 }
 
 // CheckAttrsPrefixOp is rgw_cls_obj_check_attrs_prefix, the input of
@@ -89,7 +90,7 @@ func DecodeCheckAttrsPrefixOp(d *denc.Decoder) CheckAttrsPrefixOp {
 // ECANCELED when an xattr under prefix exists and failIfExist is set, or when
 // none does and it is not.
 func ObjCheckAttrsPrefix(op radosclient.Execer, prefix string, failIfExist bool, r denc.Release) {
-	op.Exec(Class, methodObjCheckAttrsPrefix, encode(CheckAttrsPrefixOp{CheckPrefix: prefix, FailIfExist: failIfExist}.Encode, r))
+	op.Exec(Class, methodObjCheckAttrsPrefix, clsutil.Encode(CheckAttrsPrefixOp{CheckPrefix: prefix, FailIfExist: failIfExist}, r))
 }
 
 // CheckMtimeOp is rgw_cls_obj_check_mtime, the input of obj_check_mtime.
@@ -126,5 +127,5 @@ func DecodeCheckMtimeOp(d *denc.Decoder) CheckMtimeOp {
 // unless the object's mtime compares to mtime under typ; without
 // highPrecision the comparison is in whole seconds.
 func ObjCheckMtime(op radosclient.Execer, mtime time.Time, typ MtimeCheck, highPrecision bool, r denc.Release) {
-	op.Exec(Class, methodObjCheckMtime, encode(CheckMtimeOp{Mtime: mtime, Type: typ, HighPrecisionTime: highPrecision}.Encode, r))
+	op.Exec(Class, methodObjCheckMtime, clsutil.Encode(CheckMtimeOp{Mtime: mtime, Type: typ, HighPrecisionTime: highPrecision}, r))
 }
