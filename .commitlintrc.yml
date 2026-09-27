@@ -1,5 +1,6 @@
 extends:
   - "@commitlint/config-conventional"
+  - "./.github/commitlint/dependabot.mjs"
 
 rules:
   # Dependabot bodies carry compare URLs longer than 100 chars, and the

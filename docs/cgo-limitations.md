@@ -52,11 +52,10 @@ finds a new limit, and update the status when one is fixed or measured.
   from a write. Modifying class methods that return data (2pc_queue reserve,
   user reset_user_stats2) must run inside a read operation with
   `LIBRADOS_OPERATION_RETURNVEC`.
-- **Status:** worked around by the design's read-op route. It depends on the
-  OSD accepting a modifying method in a read op, which Task 12's fix round is
-  proving with an integration spec. Confirmed in Task 12: cls hello
-  write_return_data run in a ReturnVec ReadOp returns its output and its
-  xattr persists.
+- **Status:** worked around by the design's read-op route, which depends on
+  the OSD accepting a modifying method in a read op. The goceph integration
+  spec confirms it: cls hello write_return_data run in a ReturnVec ReadOp
+  returns its output and its xattr persists.
 
 ### The locator is per I/O context, not per operation
 
@@ -64,8 +63,8 @@ finds a new limit, and update the status when one is fixed or measured.
   context. RGW sets a locator on every object whose name starts with `_`, so
   the client juggles I/O contexts per operation. Task 12's first version cached
   one context per locator, which grew without bound under user control.
-- **Status:** Task 12 fix round moves to pooled contexts with a per-operation
-  locator set.
+- **Status:** pooled contexts with the locator set per operation
+  (goceph/pool.go).
 - **Measure:** cost of the extra locator set and context borrow per operation.
 
 ### The object version is per I/O context
@@ -92,6 +91,31 @@ finds a new limit, and update the status when one is fixed or measured.
   segfaulted in Task 12 before in-flight counting was added.
 - **Note:** a pure-Go client has the same wire-level limit on sent writes, but
   owns its buffers and needs no pinning or reaper.
+
+### The librados at run time sets which cephx keys authenticate
+
+- **Evidence:** Ceph 19.2.6 and 20.2.4 are the first releases whose cephx
+  can parse AES256KRB5 keys, and an older librados fails `rados_connect`
+  with such a key (`input/output error`), which is what the first
+  integration workflow runs hit with noble's librados 19.2.3. Such keys are
+  the default: Ceph's mkfs at those releases allows only AES256KRB5, and
+  Rook, which allows both AES and AES256KRB5, makes AES256KRB5 the
+  preferred type that new daemon keys, the RGW's included, take unless
+  `cephx.daemon.keyType` overrides it. rgw-go therefore supports only
+  librados 19.2.6 or later on Squid, or 20.2.4 or later on Tentacle. That is
+  a support policy; technically the floor binds only when the key presented
+  is AES256KRB5. It is a client floor, not a cluster floor: upgraded
+  clusters keep their AES keys working. Under Rook the derived image is
+  every daemon's image, so rgw-go's librados is the cluster's own release
+  and meets the floor whenever the cluster can issue such keys. The headers
+  used for building are unaffected.
+- **Note:** a pure-Go client removes the coupling to the installed library
+  only by implementing the AES256KRB5 cipher itself, RFC 8009
+  AES256-CTS-HMAC-SHA384-192, wherever cephx uses a key: entity keys,
+  tickets, authorizers and session keys. It then carries that work, and
+  every future cipher change, instead of taking it from Ceph.
+- **Status:** accepted; the integration workflow installs librados 20.2.4
+  from download.ceph.com.
 
 ### Build and deployment cost
 
