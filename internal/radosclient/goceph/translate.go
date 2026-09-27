@@ -48,6 +48,7 @@ type writeBuilder interface {
 	OmapCmp(key string, op rados.CmpXattrOp, value []byte)
 	SetAllocationHint(expectedObjectSize, expectedWriteSize uint64, flags rados.AllocHintFlags)
 	Exec(clsName, method string, in []byte)
+	SetFlags(flags rados.OpFlags)
 }
 
 var (
@@ -335,7 +336,7 @@ func readExecStep(b readBuilder, s *radosclient.ExecStep, idx int) finisher {
 func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error) {
 	var fs []finisher
 	idx := 0
-	for _, s := range op.Steps() {
+	for i, s := range op.Steps() {
 		switch s := s.(type) {
 		case *radosclient.AssertExistsStep:
 			b.AssertExists()
@@ -347,6 +348,16 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 				return nil, err
 			}
 			b.CmpXattr(s.Name, cmp, s.Value)
+		case *radosclient.StepFlagsStep:
+			// librados asserts that an action precedes the flags, which
+			// would abort the process.
+			if i == 0 {
+				return nil, fmt.Errorf("goceph: step flags %#x before any step: %w", uint32(s.Flags), radosclient.ErrInvalid)
+			}
+			if s.Flags&^stepFlagsMask != 0 {
+				return nil, fmt.Errorf("goceph: step flags %#x: %w", uint32(s.Flags), radosclient.ErrInvalid)
+			}
+			b.SetFlags(rados.OpFlags(s.Flags))
 		case *radosclient.CreateStep:
 			if s.Exclusive {
 				b.Create(rados.CreateExclusive)
@@ -399,6 +410,12 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 	}
 	return fs, nil
 }
+
+// stepFlagsMask is every step flag the seam defines.
+const stepFlagsMask = radosclient.StepFlagExcl | radosclient.StepFlagFailOK |
+	radosclient.StepFlagFAdviseRandom | radosclient.StepFlagFAdviseSequential |
+	radosclient.StepFlagFAdviseWillNeed | radosclient.StepFlagFAdviseDontNeed |
+	radosclient.StepFlagFAdviseNoCache
 
 func translateCmp(op radosclient.CmpOp) (rados.CmpXattrOp, error) {
 	switch op {

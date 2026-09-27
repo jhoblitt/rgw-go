@@ -128,6 +128,14 @@ func (o *WriteOp) Create(exclusive bool) {
 // Remove deletes the object.
 func (o *WriteOp) Remove() { o.steps = append(o.steps, &RemoveStep{}) }
 
+// SetStepFlags sets the flags of the step added last, as
+// rados_write_op_set_flags does. radosgw overwrites a system object with
+// Remove, SetStepFlags(StepFlagFailOK), then Create(false), so the remove
+// may find nothing. The op fails to run when no step precedes it.
+func (o *WriteOp) SetStepFlags(f StepFlags) {
+	o.steps = append(o.steps, &StepFlagsStep{Flags: f})
+}
+
 // WriteFull replaces the object's data with data.
 func (o *WriteOp) WriteFull(data []byte) { o.steps = append(o.steps, &WriteFullStep{Data: data}) }
 

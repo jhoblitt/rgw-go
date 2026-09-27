@@ -254,6 +254,33 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(string(data.Data)).To(Equal("original"))
 			})
 
+			It("overwrites an object with a remove that may fail, then a create, in one op", func(ctx SpecContext) {
+				overwrite := func(value string) error {
+					w := radosclient.NewWriteOp()
+					w.Remove()
+					w.SetStepFlags(radosclient.StepFlagFailOK)
+					w.Create(false)
+					w.SetXattr("user.rgw."+value, []byte(value))
+					_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+					return err
+				}
+				Expect(overwrite("first")).To(Succeed(), "onto a missing object")
+				Expect(overwrite("second")).To(Succeed(), "onto an existing object")
+
+				r := radosclient.NewReadOp()
+				xs := r.GetXattrs()
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
+				Expect(xs.Xattrs).To(Equal(map[string][]byte{"user.rgw.second": []byte("second")}),
+					"the remove cleared the first write's xattr")
+
+				// Without the flag, the remove of a missing object fails the op.
+				w := radosclient.NewWriteOp()
+				w.Remove()
+				w.Create(false)
+				_, err := pool.Write(ctx, oid+"-missing", w, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrNotFound))
+			})
+
 			It("returns the version after a write", func(ctx SpecContext) {
 				w := radosclient.NewWriteOp()
 				w.WriteFull([]byte("v1"))

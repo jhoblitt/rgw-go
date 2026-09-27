@@ -71,6 +71,10 @@ func (w *writeRecorder) Create(exclusive rados.CreateOption) {
 	w.add("Create " + strconv.FormatBool(exclusive == rados.CreateExclusive))
 }
 func (w *writeRecorder) Remove() { w.add("Remove") }
+func (w *writeRecorder) SetFlags(flags rados.OpFlags) {
+	w.add("SetFlags " + strconv.FormatUint(uint64(flags), 10))
+}
+
 func (w *writeRecorder) WriteFull(b []byte) {
 	w.add("WriteFull " + strconv.Itoa(len(b)))
 }
@@ -166,6 +170,8 @@ var _ = Describe("translating seam ops", func() {
 		op.SetAllocHint(4096, 1024, 2)
 		op.Exec("version", "set", []byte("in"))
 		op.Remove()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
+		op.Create(false)
 
 		rec := &writeRecorder{}
 		Expect(goceph.TranslateWrite(rec, op)).To(Succeed())
@@ -189,7 +195,25 @@ var _ = Describe("translating seam ops", func() {
 			"SetAllocationHint 4096 1024 2",
 			"Exec version.set in",
 			"Remove",
+			"SetFlags 2",
+			"Create false",
 		}))
+	})
+
+	It("rejects step flags that no step precedes, which librados would abort on", func() {
+		op := radosclient.NewWriteOp()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
+		op.Remove()
+		rec := &writeRecorder{}
+		Expect(goceph.TranslateWrite(rec, op)).To(MatchError(radosclient.ErrInvalid))
+		Expect(rec.calls).To(BeEmpty())
+	})
+
+	It("rejects a step flag librados does not pass on", func() {
+		op := radosclient.NewWriteOp()
+		op.Remove()
+		op.SetStepFlags(0x80) // FADVISE_FUA, which librados drops
+		Expect(goceph.TranslateWrite(&writeRecorder{}, op)).To(MatchError(radosclient.ErrInvalid))
 	})
 
 	It("rejects an unknown comparison operator", func() {

@@ -70,6 +70,7 @@ var _ = Describe("WriteOp", func() {
 		op.CmpXattr("x", radosclient.CmpNE, []byte("v"))
 		op.Create(true)
 		op.Remove()
+		op.SetStepFlags(radosclient.StepFlagFailOK)
 		op.WriteFull([]byte("full"))
 		op.Write([]byte("part"), 8)
 		op.Append([]byte("tail"))
@@ -93,6 +94,7 @@ var _ = Describe("WriteOp", func() {
 			&radosclient.CmpXattrStep{Name: "x", Op: radosclient.CmpNE, Value: []byte("v")},
 			&radosclient.CreateStep{Exclusive: true},
 			&radosclient.RemoveStep{},
+			&radosclient.StepFlagsStep{Flags: radosclient.StepFlagFailOK},
 			&radosclient.WriteFullStep{Data: []byte("full")},
 			&radosclient.WriteStep{Data: []byte("part"), Offset: 8},
 			&radosclient.AppendStep{Data: []byte("tail")},
@@ -198,6 +200,16 @@ var _ = Describe("Error", func() {
 })
 
 var _ = Describe("OpFlags", func() {
+	It("carries librados's LIBRADOS_OP_FLAG_* values", func() {
+		Expect(radosclient.StepFlagExcl).To(BeEquivalentTo(0x1))
+		Expect(radosclient.StepFlagFailOK).To(BeEquivalentTo(0x2))
+		Expect(radosclient.StepFlagFAdviseRandom).To(BeEquivalentTo(0x4))
+		Expect(radosclient.StepFlagFAdviseSequential).To(BeEquivalentTo(0x8))
+		Expect(radosclient.StepFlagFAdviseWillNeed).To(BeEquivalentTo(0x10))
+		Expect(radosclient.StepFlagFAdviseDontNeed).To(BeEquivalentTo(0x20))
+		Expect(radosclient.StepFlagFAdviseNoCache).To(BeEquivalentTo(0x40))
+	})
+
 	It("carries librados's LIBRADOS_OPERATION_* values", func() {
 		Expect(radosclient.OpFlagBalanceReads).To(Equal(radosclient.OpFlags(1)), "BALANCE_READS")
 		Expect(radosclient.OpFlagLocalizeReads).To(Equal(radosclient.OpFlags(2)), "LOCALIZE_READS")

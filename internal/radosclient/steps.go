@@ -74,6 +74,11 @@ type CreateStep struct {
 // RemoveStep deletes the object.
 type RemoveStep struct{}
 
+// StepFlagsStep sets the flags of the step before it.
+type StepFlagsStep struct {
+	Flags StepFlags
+}
+
 // WriteFullStep replaces the object's data with Data.
 type WriteFullStep struct {
 	Data []byte
@@ -149,6 +154,7 @@ func (*OmapGetValsByKeysStep) isStep() {}
 func (*OmapGetKeysStep) isStep()       {}
 func (*CreateStep) isStep()            {}
 func (*RemoveStep) isStep()            {}
+func (*StepFlagsStep) isStep()         {}
 func (*WriteFullStep) isStep()         {}
 func (*WriteStep) isStep()             {}
 func (*AppendStep) isStep()            {}
