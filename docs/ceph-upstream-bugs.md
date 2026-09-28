@@ -132,6 +132,41 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   loop.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-006); verified 2026-09-27.
 
+## radosgw faults on a zero rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** `rgw_gc_max_objs`, `rgw_lc_max_objs` and `rgw_usage_max_shards`
+  are plain `int`s with no `min:` and default 32 (v19.2.6 `rgw.yaml.in:1692`,
+  `:427`, `:1515`), unlike the sibling `rgw_usage_max_user_shards`, which
+  carries `min: 1` (`:1528-1540`). A configured 0 is accepted and then used as
+  a divisor on the first request that shards:
+  - GC: `RGWGC::tag_index` returns `rgw_shards_mod(hash, max_objs)`
+    (`rgw_gc.cc:65`). At v19.2.2 `rgw_shards_mod` computes
+    `hval % PRIME % max_shards` (`rgw_tools.h:45-52`), dividing by zero. From
+    v19.2.3 (456a5e661d1) and v20.1.0 (a2b76b0e09e) it returns -1 for
+    `max_shards <= 0`, so `tag_index` returns -1 and `send_chain` reads
+    `obj_names[-1]` (`rgw_gc.cc:128-132`), out of bounds. GC enqueue runs on an
+    overwrite or delete of a tailed object.
+  - LC: `get_lc_index` computes `... % HASH_PRIME % max_objs` directly (v19.2.6
+    `rgw_lc.cc:1974`), a divide-by-zero at every release that the
+    `rgw_shards_mod` guard never covers; it runs from `guard_lc_modify`
+    (`:2593`) on a bucket-lifecycle put (`:2636`) or delete (`:2668`).
+  - Usage: `usage_log_hash` computes `val % max_shards` directly (v19.2.6
+    `rgw_rados.cc:1624-1625`), a divide-by-zero at every release, from
+    `log_usage` when usage logging is enabled and from usage read and trim.
+  The same holds at v20.2.4 (`rgw_lc.cc:2031`, `rgw_rados.cc:1728-1729`, and
+  GC's `obj_names[-1]` via `rgw_shards_mod` returning -1, `rgw_tools.h:63-71`).
+- **Releases:** every release. GC faults as a SIGFPE at v19.2.2 and as an
+  out-of-bounds read from v19.2.3 and v20.1.0 on; LC and usage fault as a
+  SIGFPE throughout, since the `rgw_shards_mod` guard does not cover their
+  direct modulo.
+- **rgw-go:** config validation rgw-go must add. Phase 1 rejects or floors a
+  zero `rgw_gc_max_objs` (GC worker, unit W), `rgw_lc_max_objs` and
+  `rgw_usage_max_shards` (metadata and lifecycle path, unit M) at startup
+  rather than faulting on first use, and never divides by a shard count without
+  guarding it.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27.
+
 ## The 2pc queue's reserved size drifts upward
 
 - **Kind:** defect, fixed.
@@ -204,6 +239,51 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   the hazard. Phase 3's own reading of the registry must advance its marker.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-004); verified 2026-09-27.
   `docs/exclusions.md` already recorded it.
+
+## radosgw caches any control-pool UPDATE_OBJ notify payload unchecked
+
+- **Kind:** quirk. The cache-coherence protocol trusts intra-cluster notifies
+  by design; the surprise is that read access to the control pool is enough to
+  plant a cache entry.
+- **Evidence:** at v19.2.6 `RGWSI_SysObj_Cache::watch_cb`
+  (`svc_sys_obj_cache.cc:465`) decodes the notify's `RGWCacheNotifyInfo` and,
+  on `UPDATE_OBJ`, stores its `obj_info` straight into the cache (`:490-491`),
+  checking neither a signature nor the `notifier_id` it is passed (`:468`).
+  `RGWWatcher::handle_notify` runs the callback and acks unconditionally
+  (`svc_notify.cc:77` and `:80`). A RADOS notify is a read op (`rados.h:258`,
+  `NOTIFY = __CEPH_OSD_OP(RD, DATA, 6)`), so read caps on the zone's control
+  pool are enough to send one; a planted entry lives
+  `rgw_cache_expiry_interval` (default 900 s, `rgw.yaml.in:3324`). The same at
+  v20.2.4 (`svc_sys_obj_cache.cc:490-491`).
+- **Releases:** every release checked, v19.2.2 through main.
+- **rgw-go:** phase 1's cache-notify handling (unit M) must treat a control
+  notify as an invalidate-and-reread and never apply the notify payload as
+  truth, and must keep its cephx caps on the control pool narrow.
+  `docs/exclusions.md` records cache invalidation as a coexistence obligation.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-017); verified 2026-09-27.
+
+## radosgw aborts the process after 100 failed control-watch re-registrations
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** at v19.2.6 `RGWWatcher::reinit` calls `abort()` once
+  `retries > 100` (`svc_notify.cc:89-93`). `retries` is a per-watcher counter
+  initialised to 0 (`:36`) and incremented on every failed unregister or
+  register (`:103`, `:111`); nothing resets it, so it counts failures over the
+  whole process lifetime, and each failure reschedules `reinit` at once with no
+  backoff (`handle_error` → `C_ReinitWatch`, `:82-86`). The counter and abort
+  arrived with ff248d7ed94, "rgw: Try to handle unwatch errors sensibly", first
+  released in v19.2.3, and its main-line twin 34366f0f0d8, first released in
+  v20.1.0; v19.2.2's `reinit` has no counter and reschedules for ever
+  (`:88-101`). The same at v20.2.4 (`svc_notify.cc:87-91`). The default
+  `rados_osd_op_timeout` is 0 (`global.yaml.in:6379`), so a watch op blocks
+  rather than fails during a transient OSD outage and does not by itself reach
+  the counter.
+- **Releases:** v19.2.3 and later, v20.1.0 and later, through v19.2.6, v20.2.4
+  and main; v19.2.2 and earlier do not abort.
+- **rgw-go:** phase 1's driver control-watch re-registration (unit G) must back
+  off between attempts and retry without ever aborting the process, and must
+  not count re-registration failures unboundedly over the process lifetime.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
