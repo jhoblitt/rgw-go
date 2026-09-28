@@ -79,12 +79,16 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   can work around it. Whether rgw-go's own cancel also triggers the
   explicit-cancel case depends on the version it sends, which is phase 1's
   write path (unit W) to settle.
-- **Upstream:** [#81002](https://tracker.ceph.com/issues/81002). The fix,
-  [ceph/ceph#72162](https://github.com/ceph/ceph/pull/72162), skips the copy
-  for a cancel and is in review.
+- **Upstream:** [#80894](https://tracker.ceph.com/issues/80894), filed
+  2026-09-26 with the same analysis, both triggers and the regression from
+  8b27472bbd8; its backports are tentacle and umbrella. Our
+  [#81002](https://tracker.ceph.com/issues/81002) was closed as its
+  duplicate. The fix under review is
+  [ceph/ceph#72097](https://github.com/ceph/ceph/pull/72097);
+  [ceph/ceph#72162](https://github.com/ceph/ceph/pull/72162), a second fix,
+  was closed as a duplicate of it.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-008); verified 2026-09-27;
-  reproduced 2026-09-28 on disposable Squid and Tentacle clusters; the
-  regression's origin found reviewing ceph/ceph#72162, 2026-09-28.
+  reproduced 2026-09-28 on disposable Squid and Tentacle clusters.
 
 ## cls_rgw encodes a packed value of exactly 65536 as 0
 
