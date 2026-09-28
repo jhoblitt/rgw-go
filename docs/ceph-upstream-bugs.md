@@ -132,7 +132,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 
 ## cls_rgw usage trim never removes a payer-keyed record
 
-- **Kind:** defect, fixed in v21.0.0 and not backported.
+- **Kind:** defect, fixed in v21.0.0 and deliberately not backported.
 - **Evidence:** at v19.2.6 `user_usage_log_add` keys a record by its payer
   when it has one (`cls_rgw.cc:3583`), but the trim callback removes the keys
   built from the owner (`:3761`). A payer-keyed record in the trim range is
@@ -148,9 +148,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **rgw-go:** `internal/cls/rgw` marshals `user_usage_log_trim` but runs no
   trim loop yet. Phase 1's usage trim must bound its loop, since on Squid and
   Tentacle OSDs ENODATA may never come.
-- **Upstream:** [#80999](https://tracker.ceph.com/issues/80999) requests squid
-  and tentacle backports of
-  [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329).
+- **Upstream:** [#72593](https://tracker.ceph.com/issues/72593), fixed by
+  [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329). Upstream decided
+  not to backport the fix, because it changes how the usage log works; our
+  backport request, [#80999](https://tracker.ceph.com/issues/80999), was
+  closed as a duplicate of #72593.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-005); verified 2026-09-27.
 
 ## cls_rgw usage trim with a bucket filter stalls behind 1000 other records
@@ -208,7 +210,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   `rgw_usage_max_shards` (metadata and lifecycle path, unit M) at startup
   rather than faulting on first use, and never divides by a shard count without
   guarding it.
-- **Upstream:** [#80991](https://tracker.ceph.com/issues/80991).
+- **Upstream:** [#80991](https://tracker.ceph.com/issues/80991); its fix,
+  [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), adds min: 1 to
+  the three options and is in review.
   [#75958](https://tracker.ceph.com/issues/75958), a crash when
   rgw_gc_max_objs changes at runtime, is related but has a different trigger.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27.
@@ -252,7 +256,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **rgw-go:** has no 2pc queue client yet. Phase 3 runs the stale-reservation
   expiry on every persistent queue, which is one of the writes that keeps a
   drift, and must not assume `reserved_size` is exact (`docs/exclusions.md`).
-- **Upstream:** [#80994](https://tracker.ceph.com/issues/80994).
+- **Upstream:** [#80994](https://tracker.ceph.com/issues/80994). A
+  maintainer's comment there calls it a duplicate of the drift fix for
+  [#74713](https://tracker.ceph.com/issues/74713), but that fix is what added
+  the reserve-only recompute, and every branch still recomputes only in
+  reserve.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-002); verified 2026-09-27.
 
 ## The 2pc queue hands out reservation id 0, which radosgw treats as none
@@ -269,7 +277,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Releases:** every release checked, v19.2.6 through main.
 - **rgw-go:** has no notification publisher yet. Phase 3's must not use id 0
   as "no reservation"; the class commits id 0 like any other.
-- **Upstream:** [#80996](https://tracker.ceph.com/issues/80996).
+- **Upstream:** [#80996](https://tracker.ceph.com/issues/80996); its fix,
+  [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163), skips NO_ID when
+  the id wraps and is in review.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-003); verified 2026-09-27.
 
 ## radosgw's notification queue listing never pages past 1024 queues
@@ -338,6 +348,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   off between attempts and retry without ever aborting the process, and must
   not count re-registration failures unboundedly over the process lifetime.
 - **Upstream:** [#80992](https://tracker.ceph.com/issues/80992).
+  [ceph/ceph#68207](https://github.com/ceph/ceph/pull/68207) (2026-04) reset
+  the counter on success, among other reinit fixes, but the stale bot closed
+  it unreviewed; it was filed for
+  [#73564](https://tracker.ceph.com/issues/73564), a different symptom (a
+  watch2 segfault).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27.
 
 ## radosgw adds STANDARD to an empty placement target on decode
