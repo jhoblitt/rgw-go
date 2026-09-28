@@ -54,9 +54,16 @@ cost for the cgo boundary.
   project studies; and radosgw becomes the correctness oracle. The
   unmodified radosgw-admin administers rgw-go's metadata, so no CLI is
   reimplemented.
-- **Ceph floor Squid, feature level Tentacle where gateway-side.** The
-  floor governs which OSD-side class methods may be assumed. Feature level
-  has a precise form through the encoding rule in section 8.
+- **Ceph floor Squid 19.2.6 or Tentacle 20.2.4, feature level Tentacle
+  where gateway-side.** Every daemon of a supported cluster, its OSDs and
+  any radosgw sharing the zone included, runs 19.2.6 or later on Squid or
+  20.2.4 or later on Tentacle. The floor governs which OSD-side class
+  behavior may be assumed, and point releases below it get no special
+  handling. It constrains running daemons, not data: metadata, index
+  entries and queue state written by any earlier release are still decoded,
+  and damage an older release left behind, such as queue accounting drift,
+  is still tolerated. Feature level has a precise form through the encoding
+  rule in section 8.
 - **Own gateway core, borrowed edges.** An RGW-shaped op pipeline on
   net/http, one flat store interface, one RADOS driver, and a narrow RADOS
   client seam over go-ceph. Rejected: a wholesale port of RGW's class
@@ -402,20 +409,21 @@ Rook workflow, nightly and on demand, that builds the derived image and
 runs the object suite on kind.
 
 rgw-go supports running only against librados 19.2.6 or later on Squid, or
-20.2.4 or later on Tentacle. This is a support policy: technically the floor
-binds only when the key rgw-go presents is AES256KRB5, since those are the
-first releases able to parse that cephx key type, and an older librados
-fails to connect with one. The policy follows from where such keys come
-from. Ceph's mkfs default at those releases allows only AES256KRB5, so a
-freshly created cluster's keys have that type. Rook allows both AES
-and AES256KRB5, but makes AES256KRB5 the preferred type, which new daemon
-keys, the RGW's included, take unless the cluster's `cephx.daemon.keyType`
-overrides it. It is a client floor, not a new cluster floor: a cluster
-upgraded from an older release keeps its AES keys working. Under Rook the
-derived image is every daemon's image, so rgw-go's librados is always the
-cluster's own release, and a supported derived image implies a cluster at
-the same floor. The integration workflow installs librados at the floor;
-the headers used for building are unaffected.
+20.2.4 or later on Tentacle. This is a support policy: technically the
+floor binds only when the key rgw-go presents is AES256KRB5, since those
+are the first releases able to parse that cephx key type, and an older
+librados fails to connect with one. The policy follows from where such keys
+come from. Ceph's mkfs default at those releases allows only AES256KRB5, so
+a freshly created cluster's keys have that type. Rook allows both AES and
+AES256KRB5, but makes AES256KRB5 the preferred type, which new daemon keys,
+the RGW's included, take unless the cluster's `cephx.daemon.keyType`
+overrides it. The key types alone would not require a cluster floor, since
+a cluster upgraded from an older release keeps its AES keys working; the
+cluster floor in section 3 is the same releases, for OSD-side behavior.
+Under Rook the derived image is every daemon's image, so rgw-go's librados
+is always the cluster's own release, and a supported derived image implies
+a cluster at the same floor. The integration workflow installs librados at
+the floor; the headers used for building are unaffected.
 
 Release keeps goreleaser for tags, archives, checksums, SBOM and keyless
 signing, but the build is cgo in a container stage on the same base as the
@@ -461,5 +469,7 @@ data from a modifying class method through the return-vector flag.
 - The fixed 4 KiB reservation radosgw makes per persistent event, with a
   re-reservation at commit for larger events, reported by rgw-rs and to be
   read from the code when phase 3 begins.
-- The two Squid hazards around persistent queues recorded in
-  `docs/exclusions.md`, which rgw-go can avoid triggering but not fix.
+- The persistent-queue hazards recorded in `docs/exclusions.md`, which
+  rgw-go can avoid triggering but not fix: a Squid radosgw's queue registry
+  listing never pages, and reservation drift accrued under a release below
+  the floor survives the upgrade.
