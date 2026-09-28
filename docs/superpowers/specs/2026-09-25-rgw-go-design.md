@@ -142,9 +142,12 @@ early arguments ceph handles before config, `-c`, `--cluster`, `-i`, `-n`,
 `--no-config-file` and `-v`, creates the connection under that name, reads
 the config file and `CEPH_ARGS`, and hands everything else to librados,
 which already handles `-f`, `-d`, `--keyring`, `--mon-host`,
-`--no-mon-config`, `--setuser` and every `rgw_*` option. Privileges drop
-before connecting, as radosgw does. librados applies the mon config store
-during connect, so options Rook set centrally are readable afterwards.
+`--no-mon-config`, `--setuser` and every `rgw_*` option. Privileges are
+dropped after the frontend binds, not before connecting: like radosgw,
+`cephconf` defers the drop, connects to RADOS as the launching user, and
+the frontend drops to `--setuser`/`--setgroup` only after binding, so it
+can bind privileged ports. librados applies the mon config store during
+connect, so options Rook set centrally are readable afterwards.
 
 Ceph config is the single source for everything radosgw configures.
 rgw-go's own flags cover only what has no ceph option: `--log-level`,
