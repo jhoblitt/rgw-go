@@ -46,7 +46,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 
 ## cls_rgw complete_op writes a stale epoch back when it cancels
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, a regression; unfixed through main.
 - **Evidence:** at v19.2.6 `bucket_complete_op` turns a completion whose
   epoch is not newer than the entry's into a cancel (`cls_rgw.cc:1082-1086`),
   but first copies the op's version onto the entry (`:1094`), and the cancel
@@ -68,14 +68,23 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     is the RADOS version it returns (`rgw_rados.cc:3300`, `:3320`),
     completions are sent asynchronously (`:9518`), and a failed write sends
     the cancel (`:3371-3374`).
-- **Releases:** every release checked, v19.2.2 through main.
+  - It is a regression. Before 8b27472bbd8, "cls/rgw: index cancelation
+    still cleans up remove_objs" (ceph/ceph#43854), the cancel branch wrote
+    the entry back and returned before the copy (v16.2.7 `cls_rgw.cc:1017`
+    and `:1019`, ahead of `entry.ver = op.ver` at `:1026`); that commit moved
+    the copy above the cancel branch.
+- **Releases:** v17.2.0 and later, and pacific from v16.2.12, which carries
+  the backport 8c67a931c9e; checked at v19.2.6, v20.2.4 and main.
 - **rgw-go:** meets it as radosgw does, because the class decides; no client
   can work around it. Whether rgw-go's own cancel also triggers the
   explicit-cancel case depends on the version it sends, which is phase 1's
   write path (unit W) to settle.
-- **Upstream:** [#81002](https://tracker.ceph.com/issues/81002).
+- **Upstream:** [#81002](https://tracker.ceph.com/issues/81002). The fix,
+  [ceph/ceph#72162](https://github.com/ceph/ceph/pull/72162), skips the copy
+  for a cancel and is in review.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-008); verified 2026-09-27;
-  reproduced 2026-09-28 on disposable Squid and Tentacle clusters.
+  reproduced 2026-09-28 on disposable Squid and Tentacle clusters; the
+  regression's origin found reviewing ceph/ceph#72162, 2026-09-28.
 
 ## cls_rgw encodes a packed value of exactly 65536 as 0
 
