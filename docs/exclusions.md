@@ -16,14 +16,16 @@ here is announced to the rgw-rs session when it is made.
 
 rgw-go is a Go reimplementation of Ceph RGW. Its goal is to be a drop-in
 replacement for C++ RGW in a Rook cluster running Squid or Tentacle:
-bit-compatible with RGW's RADOS layout, able to coexist with radosgw on
-the same zone during a rolling replacement or rollback, administered by
-the unmodified radosgw-admin, and benchmarked against C++ RGW and rgw-rs.
+bit-compatible with RGW's RADOS layout, able to coexist with radosgw on the
+same zone during a rolling replacement or rollback, administered by the
+unmodified radosgw-admin, and benchmarked against C++ RGW and rgw-rs.
 Priorities, in order: performance, then scalability, then a compact and
-maintainable code base. The Ceph version floor is Squid; the feature level
-is Tentacle radosgw wherever a feature is gateway-side. That principle has
-a precise form, decided 2026-09-25 and refined the same day with the
-rgw-rs session, which splits by layer:
+maintainable code base. The Ceph version floor is Squid 19.2.6 or Tentacle
+20.2.4 for every daemon, OSDs and any radosgw on the zone included; data
+written by any earlier release is still decoded (design spec, section 3).
+The feature level is Tentacle radosgw wherever a feature is gateway-side.
+That principle has a precise form, decided 2026-09-25 and refined the same
+day with the rgw-rs session, which splits by layer:
 
 - Driver-level persistent types, the ones the gateway itself reads and
   writes as object data, xattrs or omap values, such as bucket info, user
@@ -324,18 +326,17 @@ taking it, so a foreign gateway that took the lock would block that
 deliverer, and the expiry call is a single atomic class operation that is
 safe to run unlocked.
 
-Two hazards of older releases rgw-go cannot fix, only avoid triggering: a
-radosgw of any Squid release, or of Tentacle before 20.2.3, lists the queue
-registry without ever advancing its paging marker,
-so a registry holding more than 1024 queue objects hangs that radosgw,
-which a newer release's sharding can reach from roughly a hundred topics
-on a shared registry; and Squid OSDs before 19.2.4, like Tentacle OSDs
-before 20.2.3, add a ten-byte overhead per entry to reserved capacity on
-every reserve but take it back on no commit, abort or expiry, so a
-128 MB queue reaches permanent SlowDown after roughly 12.8 million
-events. The first is radosgw-side and the second OSD-side; a Rook cluster
-using persistent topics should run 19.2.4 or 20.2.3 or later. Even there
-the reserved size is not exact; see "Queue initialization and
+Two hazards rgw-go cannot fix, only avoid triggering. A Squid radosgw,
+19.2.6 included (Tentacle fixed it in 20.2.3), lists the queue registry
+without ever advancing its paging marker, so a registry holding more than
+1024 queue objects hangs that radosgw, which a newer release's sharding can
+reach from roughly a hundred topics on a shared registry. And OSDs below
+the floor, Squid before 19.2.4 and Tentacle before 20.2.3, added a ten-byte
+overhead per entry to reserved capacity on every reserve but took it back
+on no commit, abort or expiry, so a 128 MB queue reached permanent SlowDown
+after roughly 12.8 million events. OSDs at the floor no longer add the
+overhead, but drift accrued before an upgrade can survive it, and the
+reserved size is not exact even at the floor; see "Queue initialization and
 reservation accounting" below.
 
 Costs accepted: Rook CephBucketTopic resources with Kafka or AMQP
@@ -377,24 +378,25 @@ review and verified against the tree.
   shard and does not assume a cluster has transitioned. There is no
   read-path obligation: radosgw's GC defer on read has been disabled since
   before Squid.
-- **Queue initialization and reservation accounting.** The queue, GC
-  queue and 2pc queue classes share one init, which reads the queue head
-  and treats a missing or empty object, or a head that fails to decode, as
+- **Queue initialization and reservation accounting.** The queue, GC queue
+  and 2pc queue classes share one init, which reads the queue head and
+  treats a missing or empty object, or a head that fails to decode, as
   uninitialized; so an init on a missing object creates it, an init on an
   initialized queue answers EEXIST, and an init on an object that is not a
   queue overwrites its start. radosgw's GC puts a non-exclusive create, a
   version check, the GC queue init and a version set in one op. Only the
-  notification queue's creation uses an exclusive create, which adds
-  EEXIST for an existing object that is not a queue. rgw-go issues the
-  same ops. The 2pc queue's reserved size, kept in the head, is not
-  guaranteed exact on any release. Before 19.2.4 and 20.2.3 a reserve adds
+  notification queue's creation uses an exclusive create, which adds EEXIST
+  for an existing object that is not a queue. rgw-go issues the same ops.
+  The 2pc queue's reserved size, kept in the head, is not guaranteed exact
+  on any release. Before 19.2.4 and 20.2.3, below the floor, a reserve adds
   the size plus ten bytes per entry, while commit, abort and expiry take
   back only the size. From those releases they take back both, and a
   reserve recomputes the reserved size from the outstanding reservations,
   but only for a head decoded at version 2 or lower. Those releases
-  re-encode the head at version 3 on every write, so a drifted head first rewritten by a
-  commit, abort, expiry or entry removal keeps its drift for good. rgw-go never assumes
-  the reserved size equals the sum of the outstanding reservations.
+  re-encode the head at version 3 on every write, so a drifted head first
+  rewritten by a commit, abort, expiry or entry removal keeps its drift for
+  good. rgw-go never assumes the reserved size equals the sum of the
+  outstanding reservations.
 - **Class methods that both modify and return data.** Such methods, for
   example the user-stats reset in the user class and on Tentacle the OLH
   link and instance-unlink methods, return their data only when the

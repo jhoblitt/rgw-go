@@ -119,11 +119,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   PR #41897 to allow multiple delete markers to be created"
   (ceph/ceph#54957), removes it from v20.1.0 on; its backport 9cca4fd435a
   (ceph/ceph#62740) is in v19.2.3 and later.
-- **Releases:** within rgw-go's range, v19.2.0 through v19.2.2. The check
-  runs in the OSD, so the OSD's release decides.
-- **rgw-go:** has no OLH client yet. Versioning, in phase 2, must expect this
-  ENOENT from OSDs at v19.2.0 to v19.2.2 and handle it as radosgw of that
-  release does.
+- **Releases:** on Squid, v19.2.0 through v19.2.2, all below rgw-go's floor.
+  The check runs in the OSD, so the OSD's release decides.
+- **rgw-go:** unaffected. Every release it supports, v19.2.6 and later on
+  Squid, carries the fix, so phase 2's versioning needs no handling for it.
 - **Upstream:** fixed by
   [ceph/ceph#54957](https://github.com/ceph/ceph/pull/54957), and on squid by
   [ceph/ceph#62740](https://github.com/ceph/ceph/pull/62740); no tracker
