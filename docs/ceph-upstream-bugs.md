@@ -54,15 +54,28 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   back to the stale value, so a later completion whose epoch lies between the
   two passes the check and overwrites newer metadata: completions at epochs
   10, 5 and 7, in that order, leave 7's metadata indexed. The code is the same
-  at v20.2.4 (`:1217-1229`) and on main. The overwrite is derived from the
-  source and has not been reproduced.
+  at v20.2.4 (`:1217-1229`) and on main (`:1228-1240`, 2026-09-28).
+  - The same copy breaks radosgw's explicit cancel. `cls_obj_complete_cancel`
+    sends pool -1 and epoch 0 (`rgw_rados.cc:9559-9561`), which resets the
+    entry's version to -1:0; the next completion then fails the pool
+    comparison and is applied whatever its epoch, so completion 10, a cancel,
+    then completion 5 leaves 5's metadata indexed.
+  - Reproduced on v19.2.6 and v20.2.4, with identical results, by direct
+    class calls on a fresh index object: after completions 10 and 5 the entry
+    holds 10's metadata under epoch 5, a completion at 7 then replaces it with
+    7's, and the bucket header stats follow the index.
+  - radosgw reaches it through racing PUTs of one key: the head write's epoch
+    is the RADOS version it returns (`rgw_rados.cc:3300`, `:3320`),
+    completions are sent asynchronously (`:9518`), and a failed write sends
+    the cancel (`:3371-3374`).
 - **Releases:** every release checked, v19.2.2 through main.
 - **rgw-go:** meets it as radosgw does, because the class decides; no client
-  can work around it. The data path that sends completions arrives in
-  phase 1.
-- **Upstream:** not filed; the defect is derived from the source and not yet
-  reproduced.
-- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-008); verified 2026-09-27.
+  can work around it. Whether rgw-go's own cancel also triggers the
+  explicit-cancel case depends on the version it sends, which is phase 1's
+  write path (unit W) to settle.
+- **Upstream:** [#81002](https://tracker.ceph.com/issues/81002).
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-008); verified 2026-09-27;
+  reproduced 2026-09-28 on disposable Squid and Tentacle clusters.
 
 ## cls_rgw encodes a packed value of exactly 65536 as 0
 
