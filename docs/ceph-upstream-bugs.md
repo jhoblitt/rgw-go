@@ -16,11 +16,13 @@ Each entry names its kind:
 - **Quirk** means the behaviour is intended upstream but surprises a
   reimplementation, for example a round trip that is not byte-identical.
 
-Each entry records its evidence at a named release tag, and how it was found.
+Each entry records its evidence at a named release tag, how it was found,
+and, under **Upstream**, its tracker issues and pull requests.
 Every claim is verified against the source or a cluster, not taken from a
 report. Add an entry whenever a task, review or benchmark hits an upstream
-defect or quirk. Update it when upstream fixes it or rgw-go's handling
-changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
+defect or quirk. Update it when an upstream issue is filed, when upstream
+fixes it, or when rgw-go's handling changes. go-ceph's defects live in
+`docs/cgo-limitations.md`, not here.
 
 ## Squid does not guard listing-time index suggestions against resharding
 
@@ -38,6 +40,8 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** follows the cluster's release. Its Tentacle-level listing guards
   its suggestions; its Squid-level listing matches radosgw and does not.
   `docs/exclusions.md` states the guard per release.
+- **Upstream:** [#81000](https://tracker.ceph.com/issues/81000) requests the
+  squid backport of 461be1cd3d5.
 - **Found:** final phase 0 review, 2026-09-26.
 
 ## cls_rgw complete_op writes a stale epoch back when it cancels
@@ -56,6 +60,8 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** meets it as radosgw does, because the class decides; no client
   can work around it. The data path that sends completions arrives in
   phase 1.
+- **Upstream:** not filed; the defect is derived from the source and not yet
+  reproduced.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-008); verified 2026-09-27.
 
 ## cls_rgw encodes a packed value of exactly 65536 as 0
@@ -73,6 +79,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** reproduces it for byte identity. `encodePacked` in
   `internal/cls/rgw/types_key.go` truncates 0x10000 to 0, and
   `fixtures_test.go` pins the bytes.
+- **Upstream:** [#80995](https://tracker.ceph.com/issues/80995).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-009); verified 2026-09-27.
 
 ## Squid before 19.2.3 refuses a delete marker on top of a delete marker
@@ -91,6 +98,10 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** has no OLH client yet. Versioning, in phase 2, must expect this
   ENOENT from OSDs at v19.2.0 to v19.2.2 and handle it as radosgw of that
   release does.
+- **Upstream:** fixed by
+  [ceph/ceph#54957](https://github.com/ceph/ceph/pull/54957), and on squid by
+  [ceph/ceph#62740](https://github.com/ceph/ceph/pull/62740); no tracker
+  issue.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-007); verified 2026-09-27.
 
 ## cls_rgw usage trim never removes a payer-keyed record
@@ -111,6 +122,9 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** `internal/cls/rgw` marshals `user_usage_log_trim` but runs no
   trim loop yet. Phase 1's usage trim must bound its loop, since on Squid and
   Tentacle OSDs ENODATA may never come.
+- **Upstream:** [#80999](https://tracker.ceph.com/issues/80999) requests squid
+  and tentacle backports of
+  [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-005); verified 2026-09-27.
 
 ## cls_rgw usage trim with a bucket filter stalls behind 1000 other records
@@ -130,6 +144,9 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **Releases:** every release checked, v19.2.2 through main.
 - **rgw-go:** as for the previous entry, phase 1's usage trim must bound its
   loop.
+- **Upstream:** [#58136](https://tracker.ceph.com/issues/58136). Its fix,
+  [ceph/ceph#49168](https://github.com/ceph/ceph/pull/49168), has been under
+  review since 2022.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-006); verified 2026-09-27.
 
 ## radosgw faults on a zero rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards
@@ -165,6 +182,9 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   `rgw_usage_max_shards` (metadata and lifecycle path, unit M) at startup
   rather than faulting on first use, and never divides by a shard count without
   guarding it.
+- **Upstream:** [#80991](https://tracker.ceph.com/issues/80991).
+  [#75958](https://tracker.ceph.com/issues/75958), a crash when
+  rgw_gc_max_objs changes at runtime, is related but has a different trigger.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27.
 
 ## The 2pc queue's reserved size drifts upward
@@ -184,6 +204,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   before an upgrade can outlive it.
 - **rgw-go:** never assumes `reserved_size` is exact. `docs/exclusions.md`
   records the accounting per release.
+- **Upstream:** fixed by the commits above; no tracker issue.
 - **Found:** reported by rgw-rs; verified against the tags in the phase 0
   final review. The per-branch fix commits were reported by rgw-rs (rados-rs
   CEPH-BUG-001) and verified 2026-09-27.
@@ -205,6 +226,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** has no 2pc queue client yet. Phase 3 runs the stale-reservation
   expiry on every persistent queue, which is one of the writes that keeps a
   drift, and must not assume `reserved_size` is exact (`docs/exclusions.md`).
+- **Upstream:** [#80994](https://tracker.ceph.com/issues/80994).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-002); verified 2026-09-27.
 
 ## The 2pc queue hands out reservation id 0, which radosgw treats as none
@@ -221,6 +243,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **Releases:** every release checked, v19.2.6 through main.
 - **rgw-go:** has no notification publisher yet. Phase 3's must not use id 0
   as "no reservation"; the class commits id 0 like any other.
+- **Upstream:** [#80996](https://tracker.ceph.com/issues/80996).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-003); verified 2026-09-27.
 
 ## radosgw's notification queue listing never pages past 1024 queues
@@ -237,6 +260,10 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **Releases:** every Squid release through v19.2.6; v20.2.0 through v20.2.2.
 - **rgw-go:** cannot fix a coexisting radosgw; `docs/exclusions.md` records
   the hazard. Phase 3's own reading of the registry must advance its marker.
+- **Upstream:** [#73812](https://tracker.ceph.com/issues/73812). Its squid
+  backport, [#73893](https://tracker.ceph.com/issues/73893), is under review;
+  the tentacle backport, [#73894](https://tracker.ceph.com/issues/73894), is
+  resolved.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-004); verified 2026-09-27.
   `docs/exclusions.md` already recorded it.
 
@@ -260,6 +287,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   notify as an invalidate-and-reread and never apply the notify payload as
   truth, and must keep its cephx caps on the control pool narrow.
   `docs/exclusions.md` records cache invalidation as a coexistence obligation.
+- **Upstream:** not filed; the behaviour is radosgw's design.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-017); verified 2026-09-27.
 
 ## radosgw aborts the process after 100 failed control-watch re-registrations
@@ -283,6 +311,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** phase 1's driver control-watch re-registration (unit G) must back
   off between attempts and retry without ever aborting the process, and must
   not count re-registration failures unboundedly over the process lifetime.
+- **Upstream:** [#80992](https://tracker.ceph.com/issues/80992).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27.
 
 ## radosgw adds STANDARD to an empty placement target on decode
@@ -299,6 +328,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   gate keeps a ceph-dencoder oracle for a zonegroup that hits this case; since
   populate added a cloud-tier storage class, the phase 0 clusters no longer
   do.
+- **Upstream:** not filed; a quirk.
 - **Found:** phase 0 gate, Task 15.
 
 ## cls_version's header documents EAGAIN, but the class returns ECANCELED
@@ -313,6 +343,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** follows the class. `internal/cls/version` documents
   `ErrCanceled` for `IncConds` and `Check`, and its integration spec asserts
   it.
+- **Upstream:** not filed; the header comment is wrong, not the class.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-014); verified 2026-09-27.
 
 ## cls_lock get_info and assert_locked fail with EIO on an expired ephemeral lock
@@ -332,6 +363,10 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   ephemeral lock, the bucket reshard lock (`rgw_reshard.cc:734`), is never
   read with either method; rgw-go must do the same if it takes that lock.
   `docs/exclusions.md` records the failure mode.
+- **Upstream:** [#80993](https://tracker.ceph.com/issues/80993). Upstream QA
+  logged the failure in 2022 as
+  [#56575](https://tracker.ceph.com/issues/56575), which was resolved by a
+  test-only change (d3457c64b1b).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-011); verified 2026-09-27.
 
 ## cls_otp divides by a stored step_size that is never validated
@@ -359,9 +394,9 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** no cls_otp client yet (phase 2, MFA). When it writes OTP
   entries it must reject a zero `step_size`, and it must not divide by a
   stored `step_size` without guarding it.
+- **Upstream:** [#80948](https://tracker.ceph.com/issues/80948).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-012); liboath premise and
-  trigger verified 2026-09-27. Filed upstream as
-  https://tracker.ceph.com/issues/80948.
+  trigger verified 2026-09-27.
 
 ## cls_otp computes the replay index from an unsigned window distance
 
@@ -382,9 +417,9 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **rgw-go:** no cls_otp client yet (phase 2, MFA). If it reproduces the
   replay index it must take the direction from the position out-parameter,
   not from the return value.
+- **Upstream:** [#80949](https://tracker.ceph.com/issues/80949).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-013); liboath premise
-  verified 2026-09-27. Filed upstream as
-  https://tracker.ceph.com/issues/80949.
+  verified 2026-09-27.
 
 ## librbd leaks the update-watch context when registration fails
 
@@ -397,6 +432,8 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **Releases:** every release checked, v19.2.3 through v20.3.0.
 - **rgw-go:** unaffected; it does not use rbd. go-ceph's side of the same
   path is ceph/go-ceph#1342.
+- **Upstream:** not filed; the leak is unreachable today. go-ceph's side is
+  [ceph/go-ceph#1342](https://github.com/ceph/go-ceph/pull/1342).
 - **Found:** go-ceph upstreaming audit, 2026-09-27.
 
 ## The monitor's default for insecure key creation lags auth_allowed_ciphers
@@ -416,6 +453,7 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
   key-type switch.
 - **rgw-go:** unaffected; it sends no auth commands. Its only monitor command
   is `osd dump`.
+- **Upstream:** [#80997](https://tracker.ceph.com/issues/80997).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-015); verified 2026-09-27.
 
 ## The monitor reports a refused cephx key type as EINVAL
@@ -432,4 +470,5 @@ changes. go-ceph's defects live in `docs/cgo-limitations.md`, not here.
 - **Releases:** v19.2.6, v20.2.4, v21.1.1 and main; earlier releases lack the
   key-type switch.
 - **rgw-go:** unaffected; it sends no auth commands.
+- **Upstream:** [#80998](https://tracker.ceph.com/issues/80998).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-016); verified 2026-09-27.

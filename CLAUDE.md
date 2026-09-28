@@ -28,7 +28,8 @@ before writing Go here.
 - `docs/ceph-upstream-bugs.md` is the registry of defects in upstream ceph/ceph that rgw-go
   meets (radosgw, the RGW classes, librados, librbd, the OSD, the monitors); add or update an
   entry, with evidence at a named release tag, whenever work meets one, and share it with
-  rgw-rs.
+  rgw-rs. Every entry's **Upstream** line links its tracker.ceph.com issues and upstream PRs;
+  update it in the same change that files, finds or closes one.
 - Never use the ambient kubectl or Ceph cluster. Cluster tests use disposable rooket clusters,
   `make cluster-up RELEASE=squid|tentacle` (hack/rooket/), reached only through `rooket k`
   with `ROOKET_NAME=rgw-go-<release>`.
