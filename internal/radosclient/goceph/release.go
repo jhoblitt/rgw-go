@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"slices"
-	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -30,20 +27,6 @@ func (c *cluster) RequiredOSDRelease(ctx context.Context) (string, error) {
 	return dump.RequireOSDRelease, nil
 }
 
-// releaseNames are the names of the releases denc encodes for.
-var releaseNames = map[denc.Release]string{
-	denc.Squid:    "squid",
-	denc.Tentacle: "tentacle",
-}
-
-// olderReleases name the releases below the Squid floor, which a cluster
-// rgw-go serves must not require.
-var olderReleases = []string{
-	"argonaut", "bobtail", "cuttlefish", "dumpling", "emperor", "firefly", "giant",
-	"hammer", "infernalis", "jewel", "kraken", "luminous", "mimic", "nautilus",
-	"octopus", "pacific", "quincy", "reef",
-}
-
 // Release reads the cluster's require_osd_release and maps it to the release
 // denc encodes for. A name newer than every release denc knows maps to the
 // newest one with a warning; a name below the Squid floor is an error.
@@ -56,17 +39,9 @@ func Release(ctx context.Context, c radosclient.Cluster) (denc.Release, error) {
 }
 
 func releaseFor(ctx context.Context, name string) (denc.Release, error) {
-	lower := strings.ToLower(name)
-	if slices.Contains(olderReleases, lower) {
-		return 0, fmt.Errorf("goceph: require_osd_release %q is below the squid floor: %w", name, radosclient.ErrReleaseTooOld)
-	}
-	r, ok := denc.ParseRelease(lower)
+	r, ok := denc.ClusterRelease(ctx, name)
 	if !ok {
-		r = denc.Tentacle
-	}
-	if releaseNames[r] != lower {
-		slog.WarnContext(ctx, "require_osd_release is newer than every known release; encoding for the newest",
-			slog.String("require_osd_release", name), slog.String("encoding_for", releaseNames[r]))
+		return 0, fmt.Errorf("goceph: require_osd_release %q is below the squid floor: %w", name, radosclient.ErrReleaseTooOld)
 	}
 	return r, nil
 }
