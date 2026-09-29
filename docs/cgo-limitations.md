@@ -34,11 +34,28 @@ finds a new limit, and update the status when one is fixed or measured.
   small load.
 - **Mitigation:** the callback and pipe modes held the thread count flat.
 - **Measure:** threads and throughput versus concurrency, sync against the two
-  async modes. Count from a fresh process: the Go runtime never destroys an OS
-  thread, so after a warm-up burst a later sync burst often shows no rise at
-  all. In the final-review measurements, 512 concurrent reads rose sync mode
-  by 0 to 70 threads, with 62 to 512 reads in flight, while callback and pipe
-  rose by 0 with 350 to 512 in flight.
+  async modes. Count from a fresh process: an OS thread the Go runtime no
+  longer needs is parked on its idle list for reuse rather than exited
+  (`stopm` and `mput`,
+  [proc.go:3005-3026](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L3005-L3026)
+  and [:7246-7257](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L7246-L7257)
+  at go1.27.1), so after a warm-up burst a later sync burst often shows no
+  rise at all. A thread exits only when a goroutine exits while locked to it
+  with `runtime.LockOSThread`: `gdestroy` then unwinds the thread to
+  `mstart0`, whose `mexit` ends it rather than return a thread the goroutine
+  may have left in an unusual state to the pool
+  ([proc.go:4569-4583](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L4569-L4583),
+  [:1901-1910](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L1901-L1910)).
+  `mexit` has no other caller, and its doc names that unwind as the way a
+  thread exits
+  ([:1989-1993](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L1989-L1993)).
+  The thread ends after its goroutine has returned, so a count taken at that
+  moment can still include it. Nothing on the seam's paths locks a thread:
+  neither the go-ceph fork nor rgw-go's `internal/` calls `LockOSThread`, so
+  there the count only rises, and the seam benchmark counts a cell's idle
+  threads before its first call. In the final-review measurements, 512
+  concurrent reads rose sync mode by 0 to 70 threads, with 62 to 512 reads in
+  flight, while callback and pipe rose by 0 with 350 to 512 in flight.
 
 ### The objecter throttle blocks the submitting thread
 
@@ -56,6 +73,29 @@ finds a new limit, and update the status when one is fixed or measured.
   (`IoCtxImpl::aio_operate_read` and `aio_operate` call `op_submit`), so
   once the budget is spent a callback- or pipe-mode submission pins an OS
   thread in its cgo call just as a synchronous one does.
+
+  The byte budget charges a read the length it asks for, whatever the
+  object holds, and a class call nothing: `Objecter::calc_op_budget` adds a
+  read's extent length and a write-mode step's input
+  ([Objecter.cc:3338-3354](https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3338-L3354)
+  at v19.2.6, [:3502-3518](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518)
+  at v20.2.4), and `ceph_osd_op_mode_read` excludes `CEPH_OSD_OP_CALL`
+  ([rados.h:401-405](https://github.com/ceph/ceph/blob/v19.2.6/src/include/rados.h#L401-L405),
+  [:402-406](https://github.com/ceph/ceph/blob/v20.2.4/src/include/rados.h#L402-L406)).
+  radosgw's head read asks for `rgw_max_chunk_size`
+  ([rgw_rados.cc:8853](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8853)
+  at v19.2.6, [:9797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9797)
+  at v20.2.4), 4 MiB by default
+  ([rgw.yaml.in:84-95](https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L84-L95),
+  [:84-98](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L84-L98)).
+  Reading the head of a 4 KiB object therefore costs 4 MiB of the 100 MiB
+  byte budget, and at most 25 head reads fit in flight per process. That is
+  radosgw's ceiling as much as rgw-go's: radosgw raises
+  `objecter_inflight_ops` to 24576 and leaves the byte budget at its default
+  ([rgw_main.cc:83](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L83),
+  [v20.2.4](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_main.cc#L83)).
+  rgw-go's limiter, sized a sixteenth below the byte budget, allows at most
+  23.
 - **Status:** mitigated. goceph parks every Read and Write on the Cluster's
   in-flight limiter in Go, sized 16 operations and one sixteenth of the bytes
   below librados's own limits, which it reads through `rados_conf_get` after
@@ -71,7 +111,10 @@ finds a new limit, and update the status when one is fixed or measured.
   abandoned operation keeps its share until its completion fires, since
   `rados_aio_cancel` is unbound.
 - **Measure:** throttle waits and thread count under the seam
-  microbenchmark (T-a).
+  microbenchmark, `BenchmarkSeam` in `test/bench/seam`; the head read's cost
+  in its `shape=headread4k` cells, whose `budget_bytes` is the 4 MiB the head
+  read asks for, so the default `-inflight-bytes` of 96 MiB skips those above
+  24 in flight.
 
 ### Completions cross from C back to Go
 
