@@ -173,12 +173,22 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   entry also stores `ver.epoch` raw (`:402`), but its decoder overwrites that
   with the packed copy (`:418` and `:426`). The bound dates from b1578ba705a
   (v0.67) and is unchanged on main (`cls_rgw_types.h:285`).
+  - Reproduced on v19.2.6 and v20.2.4: an index entry written with
+    `radosgw-admin bi put` and `ver.epoch` 65535 or 65537 reads back intact
+    through `bi list`, and one written with 65536 reads back as epoch 0.
+    Each release's ceph-dencoder decodes the two-byte encoding of 65536 as
+    epoch 0 and a four-byte encoding as 65536. It is the only affected value:
+    the two-byte branch takes 0x100 through 0x10000, and only 0x10000 does
+    not fit in 16 bits.
 - **Releases:** every release.
 - **rgw-go:** reproduces it for byte identity. `encodePacked` in
   `internal/cls/rgw/types_key.go` truncates 0x10000 to 0, and
   `fixtures_test.go` pins the bytes.
-- **Upstream:** [#80995](https://tracker.ceph.com/issues/80995).
-- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-009); verified 2026-09-27.
+- **Upstream:** [#80995](https://tracker.ceph.com/issues/80995); its
+  confirmation note carries the live output from both releases and a C++
+  reproducer, `repro_packed_val.cc`.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-009); verified 2026-09-27;
+  reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
 
 ## Squid before 19.2.3 refuses a delete marker on top of a delete marker
 
@@ -286,7 +296,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   the three options and is in review.
   [#75958](https://tracker.ceph.com/issues/75958), a crash when
   rgw_gc_max_objs changes at runtime, is related but has a different trigger.
-- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27;
+  not reproduced on a running cluster.
 
 ## radosgw truncates a long aws-chunked trailer section instead of rejecting it
 
@@ -638,7 +649,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   it unreviewed; it was filed for
   [#73564](https://tracker.ceph.com/issues/73564), a different symptom (a
   watch2 segfault).
-- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27;
+  not reproduced on a running cluster.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
@@ -722,7 +734,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   stored `step_size` without guarding it.
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-012); liboath premise and
-  trigger verified 2026-09-27.
+  trigger verified 2026-09-27; not reproduced on a running cluster.
 
 ## cls_otp computes the replay index from an unsigned window distance
 
@@ -745,7 +757,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   not from the return value.
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-013); liboath premise
-  verified 2026-09-27.
+  verified 2026-09-27; not reproduced on a running cluster.
 
 ## librbd leaks the update-watch context when registration fails
 
