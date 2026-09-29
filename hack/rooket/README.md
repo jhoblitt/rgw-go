@@ -112,3 +112,35 @@ rooket k -n rook-ceph exec deploy/rook-ceph-tools -- rados -p ceph-objectstore.r
 
 `users.uid` holds `alice`, `alice.buckets`, `t1$bob` and `t1$bob.buckets`; the
 index pool holds eleven `.dir.<bucket id>.<n>` shards per bucket.
+
+## The derived image
+
+`make image RELEASE=<release>` builds the image Rook runs rgw-go in and prints
+its reference, `ghcr.io/jhoblitt/rgw-go:local-<tag>` for the release's pinned
+`cephImage.tag`. That name is never pushed, so a kind node with the image
+loaded never tries to pull it. The image is the release's Ceph image with
+`/usr/bin/rgw-go` added, `/usr/bin/radosgw` a symlink to it and Ceph's own
+radosgw kept as `/usr/bin/radosgw.ceph`; every other Ceph binary is the
+base's, because under Rook this image is every daemon's and the toolbox's.
+
+```sh
+img=$(make -s image RELEASE=squid)
+RGW_GO_IMAGE_TEST=1 make -s image RELEASE=tentacle   # and check what it built
+```
+
+rgw-go is built with cgo in a builder made from the same Ceph image
+(`hack/image/Containerfile.builder`), so it links against the librados and
+glibc it runs with. `hack/image/cgo-build.sh` runs any `go` command in that
+builder for the Ceph tag in `RGW_GO_CEPH_TAG`, taking `GOOS`, `GOARCH`,
+`GOAMD64`, `CGO_ENABLED` and `GOFLAGS` from its environment as a goreleaser
+build's `tool` must. The first build of a release's builder pulls from
+quay.io and docker.io and installs `librados-devel` from download.ceph.com;
+the builder is then reused until `Containerfile.builder` changes.
+`RGW_GO_ENGINE` picks the container engine, podman when installed, else
+docker; rootless Docker is not supported.
+
+`RGW_GO_IMAGE_TEST=1` checks that rgw-go carries the checkout's version stamp,
+that `/usr/bin/radosgw` resolves to it, that every library it links is in the
+image, that `radosgw.ceph`, `ceph`, `radosgw-admin` and `rados` print the base
+image's versions, and that the image names its base. `hack/image/out/`,
+ignored by git, holds each release's binary and each builder's Go build cache.

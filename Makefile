@@ -103,7 +103,7 @@ CLUSTER_OUT = $(CURDIR)/hack/rooket/out/$(RELEASE)
 
 .PHONY: need-release
 need-release:
-	@case "$(RELEASE)" in squid | tentacle) ;; *) echo "set RELEASE=squid or RELEASE=tentacle"; exit 1 ;; esac
+	@case "$(RELEASE)" in squid | tentacle) ;; *) echo "set RELEASE=squid or RELEASE=tentacle" >&2; exit 1 ;; esac
 
 .PHONY: cluster-up
 cluster-up: need-release ## Start the RELEASE cluster and write its client config
@@ -133,3 +133,8 @@ gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
 .PHONY: cluster-down
 cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output
 	ROOKET=$(ROOKET_BIN) hack/rooket/down.sh $(RELEASE)
+
+# The recipe is silent so that stdout carries the image reference alone.
+.PHONY: image
+image: need-release ## Build the derived Ceph image for RELEASE with rgw-go as radosgw (prints the reference)
+	@hack/image/build.sh $(RELEASE)

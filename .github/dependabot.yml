@@ -22,3 +22,16 @@ updates:
     groups:
       go-dependencies:
         patterns: ["*"]
+  # The Go toolchain image the builder stage copies from (hack/image/Containerfile.builder).
+  - package-ecosystem: docker
+    directory: /hack/image
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    # CI builds with go.mod's go directive, so the builder's Go moves to a new
+    # minor only with that directive, by hand; patch and digest bumps still
+    # come. Dependabot names the image library/golang.
+    ignore:
+      - dependency-name: "*golang"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
