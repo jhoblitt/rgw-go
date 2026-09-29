@@ -72,6 +72,18 @@ var _ = Describe("ParseBeast", func() {
 			s.Ports = []int{80}
 			s.MaxHeaderSize = 32768
 		})),
+		Entry("a header size one byte under the parse buffer", "beast port=80 max_header_size=65535", spec(func(s *frontend.Spec) {
+			s.Ports = []int{80}
+			s.MaxHeaderSize = 65535
+		})),
+		Entry("a header size that fills the parse buffer", "beast port=80 max_header_size=65536", spec(func(s *frontend.Spec) {
+			s.Ports = []int{80}
+			s.MaxHeaderSize = 65536
+		})),
+		Entry("a header size one byte over the parse buffer is capped", "beast port=80 max_header_size=65537", spec(func(s *frontend.Spec) {
+			s.Ports = []int{80}
+			s.MaxHeaderSize = 65536
+		})),
 		Entry("a header size above the parse buffer is capped", "beast port=80 max_header_size=1048576", spec(func(s *frontend.Spec) {
 			s.Ports = []int{80}
 			s.MaxHeaderSize = frontend.MaxHeaderSizeCap
