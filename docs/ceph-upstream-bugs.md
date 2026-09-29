@@ -564,20 +564,34 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Kind:** defect, unfixed through main.
 - **Evidence:** at v19.2.6 a reservation id is a u32 whose value 0 is `NO_ID`
   (`cls_2pc_queue_types.h:9-10`), and reserve pre-increments `last_id`
-  without skipping 0 (`cls_2pc_queue.cc:186`), so the reservation after 2^32
-  on one queue gets id 0. radosgw's publisher skips both the commit and the
-  abort of a reservation whose id is `NO_ID` (`rgw_notify.cc:1173-1174` and
-  `:1283-1284`): the event is lost, and its space stays reserved until the
-  expiry removes it. The same holds at v20.2.4 and on main. Derived from the
-  source; not reproduced.
+  without skipping 0 (`cls_2pc_queue.cc:186`), so the 2^32nd reservation on
+  one queue, the one after id 2^32-1, gets id 0. radosgw's publisher skips
+  both the commit and the abort of a reservation whose id is `NO_ID`
+  (`rgw_notify.cc:1173-1174` and `:1283-1284`): the event is lost, and its
+  space stays reserved until radosgw's stale-reservation cleanup, which every
+  30 seconds frees reservations older than 120 seconds (`:814-815`). A
+  wrapped id that collides with a live reservation answers -EAGAIN
+  (`cls_2pc_queue.cc:192-196`), and nothing in radosgw retries it. The same
+  holds at v20.2.4 (`cls_2pc_queue_types.h:11-12`, `cls_2pc_queue.cc:188`,
+  `rgw_notify.cc:1187-1188` and `:1298-1299`) and on main
+  (`cls_2pc_queue_types.h:17-18`, `cls_2pc_queue.cc:188`,
+  `rgw_notify.cc:1221-1222` and `:1334-1335`).
+  - Reproduced on v19.2.6 and v20.2.4 with the queue head's `last_id` written
+    directly to 0xFFFFFFFF, since 2^32 real reservations are impractical: the
+    next notification PUT answers 200 but its event is never queued (topic
+    stats show one reservation and no new entry), the head holds reservation
+    id 0 for its 4 KiB, the PUT after it gets id 1 and is queued, and the
+    cleanup frees the space two to two and a half minutes later. A direct
+    `cls_2pc_queue_reserve` call returns 0 with id 0.
 - **Releases:** every release checked, v19.2.6 through main.
 - **rgw-go:** has no notification publisher yet. Phase 3's must not use id 0
   as "no reservation"; the class commits id 0 like any other.
-- **Upstream:** [#80996](https://tracker.ceph.com/issues/80996); its fix,
-  [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163), skips NO_ID when
-  the id wraps and is in review.
-- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-003); verified 2026-09-27.
-
+- **Upstream:** [#80996](https://tracker.ceph.com/issues/80996), whose
+  confirmation note carries the live runs and a C++ reproducer, `repro.cc`;
+  its fix, [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163), skips
+  NO_ID when the id wraps, adds no test, and is in review.
+- **Found:** reported by rgw-rs (rados-rs CEPH-BUG-003); verified 2026-09-27;
+  reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
 ## radosgw's notification queue listing never pages past 1024 queues
 
 - **Kind:** defect, fixed in v20.2.3 and v21.0.0, not on squid.
