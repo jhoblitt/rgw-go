@@ -613,6 +613,122 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-004); verified 2026-09-27.
   `docs/exclusions.md` already recorded it.
 
+## Squid's realm reload hangs when a pubsub HTTP push has lost its wakeup
+
+- **Kind:** defect, fixed in Tentacle, not on squid. Unreproduced: the hang
+  was seen once and its cause is inferred from the code.
+- **Evidence:**
+  - At v19.2.6 `rgw_http_req_data::wait` checks `done` without the lock
+    (`rgw_http_client.cc:74-76`). For a yield context it then stores the
+    completion under the lock without checking again (`:64-71`, `:77-82`).
+    `finish()` posts a stored completion and otherwise signals a condition
+    variable that no coroutine waits on (`:110-116`). If `finish()` runs
+    between the check and the store, the coroutine is never resumed.
+  - A persistent topic's HTTP push holds a shared lock on
+    `s_http_manager_mutex` across that wait (`rgw_pubsub_push.cc:94`,
+    `:117-119`). A realm reload's teardown calls `rgw::notify::shutdown` near
+    its end, followed only by `v1_topic_migration.stop()`
+    (`rgw_rados.cc:1102-1105`). `rgw::notify::shutdown` takes the lock
+    exclusively in `shutdown_http_manager` (`rgw_pubsub_push.cc:423-429`,
+    called from `rgw_notify.cc:839`) before it stops the notification manager
+    (`:840`). A stranded push therefore blocks the reload for ever after
+    "Frontends paused" and before "driver closed" (`rgw_realm_reloader.cc:95`,
+    `:101`, `:104`).
+  - A failing persistent push is retried with no pause by default: the three
+    `rgw_topic_persistency_*` options default to 0 (`rgw.yaml.in:3971-4003`),
+    and a queue that holds entries is read again without the idle sleep
+    (`rgw_notify.cc:376-383`, `:458`). An endpoint that refuses connections
+    therefore drives the racy wait in a tight loop.
+  - Seen once, on 2026-09-29, on a disposable Squid cluster. For about five
+    minutes a radosgw ran the reproduction of
+    [#80996](https://tracker.ceph.com/issues/80996), a persistent topic
+    pushing to `http://127.0.0.1:1`. Two hours later it received a period
+    commit, logged "Frontends paused" and never logged "driver closed"; it
+    was still paused when its pod was deleted about eight minutes later.
+    Every thread that `RGWRados::finalize` stops before
+    `rgw::notify::shutdown` had exited, as had the AMQP and Kafka managers.
+    The pubsub http_manager and notif-worker-0 threads were still alive, and
+    the notification manager was still cycling. No stacks were captured.
+  - At v20.2.4 `wait()` checks `done` under the lock, and `async_wait` stores
+    the completion before releasing it (`rgw_http_client.cc:65-79`). This is
+    Ceph commit 92dd2b9c380, "rgw/http: check 'done' under mutex", in v20.0.0
+    and later. The lock path is otherwise the same (`rgw_pubsub_push.cc:97`,
+    `:124`, `:432-438`).
+- **Releases:** v19.1.1 (a release candidate) and v19.2.0 through v19.2.6,
+  and the squid branch as of a742f50616e (2026-09-03). The unlocked check
+  dates from 57887f6a364, "rgw: http client drops mutex before suspending
+  coroutine", first in v15.1.0. The lock that turns it into a reload hang
+  arrived with 220bd93999b, the squid fix for #65337, first in v19.1.1. Reef
+  has the race but no pubsub lock (v18.2.7 `rgw_pubsub_push.cc:85-108`).
+  Tentacle is not affected.
+- **rgw-go:** cannot fix a coexisting radosgw. `hack/rooket/populate.sh`
+  waits for the reload its period commit starts and, when it does not
+  finish, stops with the command that restarts the radosgw. rgw-go has no
+  notification publisher before phase 3. Phase 3's must bound every push
+  with a deadline, must not hold a lock across a push that its shutdown takes
+  exclusively, and must cancel outstanding pushes on shutdown.
+- **Upstream:** no issue reports this stall. Not filed: filing waits on a
+  reproduction on a running system and a C++ reproducer. The fix,
+  [ceph/ceph#57632](https://github.com/ceph/ceph/pull/57632) (merged
+  2024-06-27), cites no tracker issue and has no squid backport, open or
+  merged. [#66100](https://tracker.ceph.com/issues/66100) has the same
+  symptom but stalls earlier, joining the data-sync thread. Its squid
+  backport, [#74738](https://tracker.ceph.com/issues/74738)
+  ([ceph/ceph#67439](https://github.com/ceph/ceph/pull/67439)), is not in
+  v19.2.6. The fix for [#65337](https://tracker.ceph.com/issues/65337)
+  created the lock path. Searched 2026-09-29: the tracker's full text for
+  `shutdown_http_manager`, `RGWHTTPManager::stop`, `notify::shutdown`,
+  `s_http_manager_mutex`, `rgw_http_req_data`, "Frontends paused" and
+  realm-reload hang, deadlock and stuck; and ceph/ceph pull requests, by
+  keyword and, for every open `rgw` pull request and every one closed since
+  2025-10-01, by the files they change.
+- **Found:** a period commit during phase 1 cluster work, 2026-09-29;
+  analysed 2026-09-29; not reproduced.
+
+## radosgw's realm reload waits out the notification manager's timers
+
+- **Kind:** defect, fixed in v21.0.0, not on squid or tentacle.
+  Unreproduced: derived from the source; the reload times measured fit it.
+- **Evidence:**
+  - At v19.2.6 `Manager::stop()` sets `shutdown`, releases the work guard and
+    joins the worker (`rgw_notify.cc:755-759`), but cancels no timer.
+    `process_queues` waits between queue-list reads on a timer of 30 s plus
+    100-500 ms of jitter (`:645-661`, `Q_LIST_UPDATE_MSEC` at `:809`), and
+    each owned queue's `cleanup_queue` on one of 30 s (`:296-299`, `:815`).
+    The worker's `io_context.run()` (`:775`) returns only after they fire, so
+    `rgw::notify::shutdown`, which a realm reload's teardown calls near its end
+    (see the previous entry), waits up to about 30.5 s with the frontends
+    paused.
+  - The same at v20.2.4 (`rgw_notify.cc:767-771`, `:657-673`, `:821`,
+    `:305-308`, `:827`, `:787`).
+  - Ceph commit 433717a2480, "rgw/notifications: allow for graceful shutdown
+    of notification manager", makes `stop()` wait 2 s for the worker and then
+    stop its `io_context` (main `rgw_notify.cc:793-810`, 2026-09-29). It is
+    in v21.0.0 and later.
+  - Reloads measured on disposable clusters on 2026-09-29, each from the
+    radosgw's "Frontends paused" log line to its "driver closed" line, took
+    10.0, 12.9 and 28.1 s on v19.2.6 and 2.7, 3.7 and 26.5 s on v20.2.4, all
+    within that bound.
+- **Releases:** Squid and Tentacle, checked at v19.2.6 and v20.2.4 and at the
+  squid and tentacle branch heads (a742f50616e, 2026-09-03; 9208ed9a291,
+  2026-09-23). v21.0.0 and later are not affected.
+- **rgw-go:** cannot shorten a coexisting radosgw's reload.
+  `hack/rooket/populate.sh` allows 180 s for it. Phase 3's notification
+  manager must cancel its timers when it stops.
+- **Upstream:** [#71963](https://tracker.ceph.com/issues/71963), fixed on main
+  by [ceph/ceph#63986](https://github.com/ceph/ceph/pull/63986); the issue's
+  pull-request field names
+  [ceph/ceph#63909](https://github.com/ceph/ceph/pull/63909), an unrelated
+  bucket-logging change. The squid backport,
+  [#72004](https://tracker.ceph.com/issues/72004), is New. The tentacle
+  backport, [#72003](https://tracker.ceph.com/issues/72003), is marked
+  Resolved, but the pull request it names,
+  [ceph/ceph#66769](https://github.com/ceph/ceph/pull/66769), carries only
+  bucket-logging changes, and the tentacle branch head still has the old
+  `stop()`.
+- **Found:** analysis of the previous entry's hang, 2026-09-29; derived from
+  the source, not reproduced.
+
 ## radosgw caches any control-pool UPDATE_OBJ notify payload unchecked
 
 - **Kind:** quirk. The cache-coherence protocol trusts intra-cluster notifies
