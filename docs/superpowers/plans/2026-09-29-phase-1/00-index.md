@@ -337,7 +337,7 @@ manifests, the multipart namespace entries in the bucket index, the
 `RGWCompleteMultipart` exclusive lock composed with `assert_exists` in one
 op, manifest assembly, and abort and complete cleanup through GC. The lock is
 a new class package, `internal/cls/lock`, because radosgw composes its
-requests into write ops ([`rgw_sal_rados.cc:4969-4976`](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4969-L4976)). §9: "the seven
+requests into write ops (`rgw_sal_rados.cc:4969-4976`). §9: "the seven
 multipart ops". Gates: the oracle matrix on multipart (radosgw's
 `multipart.bin` read through rgw-go is R's; here rgw-go's uploads read by
 radosgw, and an upload started by one gateway completed by the other);
@@ -451,8 +451,8 @@ evidence is at ceph main 7ed73efc1be.
 | Gap | Evidence | Owner and resolution |
 |---|---|---|
 | No `Cluster.FSID()` | `/admin/info` returns `cluster_id` from `driver->get_cluster_id`, the RADOS fsid ([`rgw_rest_info.cc:29-37`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_info.cc#L29-L37)) | N Task 2: `FSID(ctx) (string, error)` over go-ceph's upstream `Conn.GetFSID` |
-| No `OpFlagFullTry` | radosgw sets `pool_full_try` on object deletion and GC ([`rgw_rados.cc:5575`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5575), [`:6755`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6755), [`:7248`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7248); [`rgw_gc.cc:611`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L611)); `LIBRADOS_OPERATION_FULL_TRY = 64` ([`librados.h:130`](https://github.com/ceph/ceph/blob/v19.2.6/src/include/rados/librados.h#L130)) | W Task 1: the constant and its goceph translation to go-ceph's upstream `OperationFullTry` |
-| Lock steps cannot compose with `AssertExists` | CompleteMultipart's `try_lock` is `op.assert_exists(); lock_exclusive(&op); operate` in one write op ([`rgw_sal_rados.cc:4969-4976`](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4969-L4976)); the seam's `LockExclusive` is the standalone ioctx form | P Task 1: the `internal/cls/lock` class package marshalling `lock`, `unlock` and `break_lock` over `Execer`, no seam change; `gc_process` keeps the ioctx form ([`rgw_gc.cc:494-508`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L494-L508)) |
+| No `OpFlagFullTry` | radosgw sets `pool_full_try` on object deletion and GC ([`rgw_rados.cc:5575`](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/driver/rados/rgw_rados.cc#L5575), `:6755`, `:7248`; `rgw_gc.cc:611`); `LIBRADOS_OPERATION_FULL_TRY = 64` ([`librados.h:130`](https://github.com/ceph/ceph/blob/v19.2.6/src/include/rados/librados.h#L130)) | W Task 1: the constant and its goceph translation to go-ceph's upstream `OperationFullTry` |
+| Lock steps cannot compose with `AssertExists` | CompleteMultipart's `try_lock` is `op.assert_exists(); lock_exclusive(&op); operate` in one write op ([`rgw_sal_rados.cc:4969-4976`](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/driver/rados/rgw_sal_rados.cc#L4969-L4976)); the seam's `LockExclusive` is the standalone ioctx form | P Task 1: the `internal/cls/lock` class package marshalling `lock`, `unlock` and `break_lock` over `Execer`, no seam change; `gc_process` keeps the ioctx form ([`rgw_gc.cc:494-508`](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/driver/rados/rgw_gc.cc#L494-L508)) |
 | No in-flight limiter anywhere | §7 requires one under the objecter throttle (1024 ops, 100 MiB); `goceph/pool.go` counts in-flight operations per handle only for close | G Task 2: in goceph behind `Config.MaxInflightOps` and `MaxInflightBytes`, parked in Go (decision D8); `rgw_max_concurrent_requests` is the frontend's separate cap |
 | `ListObjects` has no cursor | admin `metadata list` and `bucket list` page with `ObjectCursor` strings (`rgw_tools.cc:360-375`); go-ceph binds only the pg-hash `Iter.Token`/`Seek` ([`rados/object_iter.go:29-35`](https://github.com/jhoblitt/go-ceph/blob/cbf97f85fcf5000ca4beca4a7fbf2ee746fa965d/rados/object_iter.go#L29-L35)), not the object-list cursor | N Task 2: `ListObjectsFrom(ctx, token string, max int, fn) (next string, more bool, err error)` on a pg-hash token, with rgw-go's own opaque markers (decision D5); the token resumes by placement hash, since `Iter.Token()` is the next-batch cursor (N-D3) |
 | `rados_aio_cancel` unbound | `docs/cgo-limitations.md`, open | none in phase 1; the byte budget counts an abandoned operation's pinned buffers until its completion fires |
@@ -481,7 +481,7 @@ adopts it (T Task 10).
 
 **D2. How the derived image reaches Rook's e2e installer.** The installer
 chooses the Ceph image only from its per-suite image constants
-([`tests/framework/installer/ceph_installer.go:96-115`](https://github.com/rook/rook/blob/v1.20.7/tests/framework/installer/ceph_installer.go#L96-L115) in rook); there is no
+(`tests/framework/installer/ceph_installer.go:96-115` in rook); there is no
 arbitrary-image input. Decision: the Rook workflow rewrites the Squid or
 Tentacle image constant in its checkout before `go test`; the Rook-side
 override the spec defers (§3) stays deferred. T adopts it and names the
