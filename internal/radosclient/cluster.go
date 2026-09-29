@@ -15,8 +15,26 @@ type Cluster interface {
 	ConfigGet(name string) (string, error)
 	// RequiredOSDRelease returns the OSD map's require_osd_release name, e.g. "squid".
 	RequiredOSDRelease(ctx context.Context) (string, error)
+	// InstanceID is the client's global id, rados_get_instance_id, which
+	// radosgw puts in transaction ids and the host id.
+	InstanceID() uint64
 	// Close shuts the connection down.
 	Close() error
+}
+
+// Stats is a snapshot of the transport's operation counters.
+type Stats struct {
+	ReadOps, WriteOps     uint64 // operations submitted, cumulative
+	ReadBytes, WriteBytes uint64 // payload bytes submitted, cumulative
+	InflightOps           int64  // operations submitted and not yet completed
+	InflightBytes         int64
+	ThrottleWaits         uint64 // submissions that parked on the in-flight limiter
+}
+
+// StatsReporter is satisfied by a Cluster that counts its operations; the
+// metrics package type-asserts it.
+type StatsReporter interface {
+	Stats() Stats
 }
 
 // Pool is an I/O context: one pool and one namespace, with an optional object locator.

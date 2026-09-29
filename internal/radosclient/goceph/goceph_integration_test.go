@@ -19,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -98,6 +99,15 @@ func removeObject(p radosclient.Pool, oid string) {
 
 // isClosed reports whether err is the seam error a closed Pool or Cluster returns.
 func isClosed(err error) bool { return errors.Is(err, radosclient.ErrClosed) }
+
+// statsReporter returns c's operation counters.
+func statsReporter(c radosclient.Cluster) radosclient.StatsReporter {
+	r, ok := c.(radosclient.StatsReporter)
+	if !ok {
+		Fail(fmt.Sprintf("%T does not report stats", c))
+	}
+	return r
+}
 
 // raise lifts v to n when n is larger.
 func raise(v *atomic.Int32, n int32) {
@@ -551,6 +561,102 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				}
 				Expect(canceled).To(BeNumerically(">", 0))
 				// Close waits for the reaped completions; the cleanup would hang otherwise.
+			})
+
+			It("never lets more than the op limit into librados", func(ctx SpecContext) {
+				cl, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode, MaxInflightOps: 8, MaxInflightBytes: 1 << 20})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(cl.Close()).To(Succeed()) })
+				limited, err := cl.Pool(ctx, cephtest.TestPool, "")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(limited.Close()).To(Succeed()) })
+				stats := statsReporter(cl)
+
+				// Four 64 KiB objects, then 256 concurrent reads of them.
+				names := make([]string, 4)
+				for i := range names {
+					names[i] = oid + "-" + strconv.Itoa(i)
+					w := radosclient.NewWriteOp()
+					w.WriteFull(make([]byte, 64<<10))
+					_, err := limited.Write(ctx, names[i], w, radosclient.OpFlagNone)
+					Expect(err).NotTo(HaveOccurred())
+					DeferCleanup(removeObject, pool, names[i])
+				}
+				var peak atomic.Int32
+				var g errgroup.Group
+				for i := range 256 {
+					g.Go(func() error {
+						op := radosclient.NewReadOp()
+						op.Read(0, 64<<10)
+						_, err := limited.Read(ctx, names[i%len(names)], op, radosclient.OpFlagNone)
+						raise(&peak, int32(stats.Stats().InflightOps))
+						return err
+					})
+				}
+				Expect(g.Wait()).To(Succeed())
+				AddReportEntry("limiter", fmt.Sprintf("%s: peak in-flight ops %d, throttle waits %d",
+					mode, peak.Load(), stats.Stats().ThrottleWaits))
+				Expect(peak.Load()).To(BeNumerically("<=", 8), "in-flight ops observed")
+				Expect(peak.Load()).To(BeNumerically(">", 1), "the reads overlapped")
+				Expect(stats.Stats().ThrottleWaits).To(BeNumerically(">", 0), "some reads parked")
+			})
+
+			It("counts the operations and payload bytes it submits, and gives back every budget", func(ctx SpecContext) {
+				cl, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(cl.Close()).To(Succeed()) })
+				counted, err := cl.Pool(ctx, cephtest.TestPool, "")
+				Expect(err).NotTo(HaveOccurred())
+				stats := statsReporter(cl)
+
+				w := radosclient.NewWriteOp()
+				w.WriteFull(make([]byte, 1000))
+				_, err = counted.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(removeObject, pool, oid)
+				r := radosclient.NewReadOp()
+				r.Stat()
+				r.Read(0, 300)
+				_, err = counted.Read(ctx, oid, r, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				missing := radosclient.NewReadOp()
+				missing.Read(0, 20)
+				_, err = counted.Read(ctx, oid+"-missing", missing, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrNotFound), "a failed op was still submitted")
+				Expect(stats.Stats()).To(Equal(radosclient.Stats{ReadOps: 2, WriteOps: 1, ReadBytes: 320, WriteBytes: 1000}))
+
+				if mode != goceph.ModeSync {
+					// An abandoned read keeps its budget until librados is
+					// done with its buffer, then the reaper gives it back.
+					for range 16 {
+						r := radosclient.NewReadOp()
+						r.Read(0, 1000)
+						if _, readErr := counted.Read(newCancelAfterCheck(ctx), oid, r, radosclient.OpFlagNone); readErr != nil {
+							Expect(readErr).To(MatchError(context.Canceled))
+						}
+					}
+					Eventually(stats.Stats).WithTimeout(30 * time.Second).WithPolling(10 * time.Millisecond).
+						Should(And(HaveField("InflightOps", BeZero()), HaveField("InflightBytes", BeZero())))
+				}
+
+				Expect(counted.Close()).To(Succeed())
+				before := stats.Stats()
+				closed := radosclient.NewReadOp()
+				closed.Read(0, 1000)
+				_, err = counted.Read(ctx, oid, closed, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrClosed))
+				Expect(stats.Stats()).To(Equal(before), "a refused op is not counted and gives its budget back")
+			})
+
+			It("reports a non-zero instance id of its own, and keeps it after Close", func(ctx SpecContext) {
+				Expect(cluster.InstanceID()).NotTo(BeZero())
+				c2, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: mode})
+				Expect(err).NotTo(HaveOccurred())
+				id := c2.InstanceID()
+				Expect(id).NotTo(BeZero())
+				Expect(id).NotTo(Equal(cluster.InstanceID()), "each connection is its own client")
+				Expect(c2.Close()).To(Succeed())
+				Expect(c2.InstanceID()).To(Equal(id))
 			})
 
 			It("reports the required OSD release", func(ctx SpecContext) {

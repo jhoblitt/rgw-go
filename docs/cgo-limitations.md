@@ -40,6 +40,39 @@ finds a new limit, and update the status when one is fixed or measured.
   by 0 to 70 threads, with 62 to 512 reads in flight, while callback and pipe
   rose by 0 with 350 to 512 in flight.
 
+### The objecter throttle blocks the submitting thread
+
+- **Evidence:** librados budgets every operation against
+  `objecter_inflight_ops` (default 1024) and `objecter_inflight_op_bytes`
+  (default 100 MiB), both in `src/common/options/global.yaml.in`
+  ([v19.2.6](https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/global.yaml.in#L2378-L2389)).
+  `Objecter::_op_submit_with_budget` takes the budget inside the submit call
+  ([Objecter.cc:2295](https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L2295-L2315)),
+  and since `RadosClient::connect` turns on the balanced budget
+  ([RadosClient.cc:263](https://github.com/ceph/ceph/blob/v19.2.6/src/librados/RadosClient.cc#L263)),
+  `_throttle_op` waits in `Throttle::get` until other operations complete
+  ([Objecter.cc:3356-3381](https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3356-L3381)).
+  The asynchronous calls submit on the caller's thread too
+  (`IoCtxImpl::aio_operate_read` and `aio_operate` call `op_submit`), so
+  once the budget is spent a callback- or pipe-mode submission pins an OS
+  thread in its cgo call just as a synchronous one does.
+- **Status:** mitigated. goceph parks every Read and Write on the Cluster's
+  in-flight limiter in Go, sized 16 operations and one sixteenth of the bytes
+  below librados's own limits, which it reads through `rados_conf_get` after
+  connect. The operation margin is for the calls that take the objecter's
+  budget without passing the limiter: each lock call holds one operation
+  while it runs, and an object listing one for the whole listing. Watch and
+  notify register linger operations, which take none
+  (`Objecter::take_linger_budget`), and mon traffic goes through the
+  MonClient. The byte margin absorbs what librados budgets
+  (`Objecter::calc_op_budget`) but the limiter's weight leaves out: xattr and
+  omap payloads and xattr comparisons. The weight is read lengths, write and
+  append data and exec inputs; librados budgets no class call at all. An
+  abandoned operation keeps its share until its completion fires, since
+  `rados_aio_cancel` is unbound.
+- **Measure:** throttle waits and thread count under the seam
+  microbenchmark (T-a).
+
 ### Completions cross from C back to Go
 
 - **Evidence:** an async completion must reach Go through a C-to-Go callback
