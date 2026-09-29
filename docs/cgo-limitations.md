@@ -165,7 +165,26 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Evidence:** every build needs librados headers and the shared library.
   `CGO_ENABLED=0` and cross-compilation are impossible, so the goreleaser
   config must change once `cmd/rgw-go` imports the client. CI installs
-  librados-dev. Local sandboxed builds need `CCACHE_DISABLE=1`.
+  librados-dev. Local sandboxed builds need `CCACHE_DISABLE=1`. Building the
+  derived image adds two more costs:
+  - A builder image per Ceph release (`hack/image/Containerfile.builder`),
+    because the binary must link against the librados and glibc of the Ceph
+    image it runs in: that image plus the `librados-devel` build matching the
+    image's librados2, `git-core` and the Go toolchain. Building one needs a
+    container engine and download.ceph.com, and adds about 305 MB over the
+    Ceph image: 304.8 MB over `quay.io/ceph/ceph:v19.2.6` and 305.1 MB over
+    `v20.2.4`, of which the Go toolchain is 257 MB and the package install
+    48.1 MB (measured with podman 5.8.4).
+  - A Go build cache per librados. Go's build cache "does not detect changes
+    to C libraries imported with cgo" (`go help cache`, go1.27.1), and both
+    floor images carry the same gcc, 11.5.0-15.el9, so a cache shared by
+    builds against Squid's and Tentacle's librados could hand one release
+    go-ceph objects compiled against the other's headers.
+    `hack/image/cgo-build.sh` keeps one cache per builder.
+- **Note:** a pure-Go client removes both: one `CGO_ENABLED=0` binary, built
+  on any host with an ordinary build cache, would serve every release. The
+  derived image stays one per release, because under Rook it is the Ceph
+  image every daemon runs.
 
 ## RADOS semantics that shape the client
 
