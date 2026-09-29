@@ -44,6 +44,31 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   squid backport of 461be1cd3d5.
 - **Found:** final phase 0 review, 2026-09-26.
 
+## check_disk_state removes a multipart part's index entry from the wrong shard
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** when a listing reconciles a head that exists, v19.2.6's
+  `check_disk_state` walks the head's manifest and, for each location in the
+  multipart namespace, calls `delete_obj_index` on an `rgw_obj` rebuilt by
+  `raw_obj_to_obj` (`rgw_rados.cc:10413-10429`). That helper sets only the
+  bucket and the key (`svc_tier_rados.h:131-143`), so the object's
+  `index_hash_source` is empty and its shard is chosen by the part's own
+  name (`get_hash_object`, `rgw_obj_types.h:540-541`). The part writer
+  indexed the part under the upload's key instead
+  (`head_obj.index_hash_source = target_obj.key.name`,
+  `rgw_putobj_processor.cc:467`). On a bucket with more than one index
+  shard the delete usually reaches a shard that holds no such entry, where
+  `bucket_complete_op` logs "not on disk, no action" and changes nothing
+  (`cls_rgw.cc:1135-1140`), leaving the part's entry behind. The same code is
+  at v20.2.4 and on main (`rgw_putobj_processor.cc:501`). Derived from the
+  source; not reproduced.
+- **Releases:** every release checked, v19.2.6 through main.
+- **rgw-go:** unit W's listing reconciliation reproduces radosgw's bytes,
+  wrong shard included, so the index a shared zone sees is the one radosgw
+  would leave.
+- **Upstream:** not filed; no tracker issue or pull request found.
+- **Found:** phase 1 plan review, 2026-09-28; verified 2026-09-29.
+
 ## cls_rgw complete_op writes a stale epoch back when it cancels
 
 - **Kind:** defect, a regression; unfixed through main.
@@ -343,7 +368,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   the counter.
 - **Releases:** v19.2.3 and later, v20.1.0 and later, through v19.2.6, v20.2.4
   and main; v19.2.2 and earlier do not abort.
-- **rgw-go:** phase 1's driver control-watch re-registration (unit G) must back
+- **rgw-go:** phase 1's driver control-watch re-registration (unit M) must back
   off between attempts and retry without ever aborting the process, and must
   not count re-registration failures unboundedly over the process lifetime.
 - **Upstream:** [#80992](https://tracker.ceph.com/issues/80992).
