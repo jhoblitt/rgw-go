@@ -22,6 +22,7 @@ const populated = `{
     "control": "ceph-objectstore.rgw.control", "log": "ceph-objectstore.rgw.log",
     "index": "ceph-objectstore.rgw.buckets.index", "data": "ceph-objectstore.rgw.buckets.data",
     "nonec": "ceph-objectstore.rgw.buckets.non-ec"},
+  "storage_classes": {"COMP_ZLIB": "zlib", "COMP_LZ4": "lz4"},
   "users": [
     {"uid": "alice", "tenant": "", "access_key": "AK1", "secret_key": "SK1"},
     {"uid": "bob", "tenant": "t1", "access_key": "AK2", "secret_key": "SK2"}
@@ -34,7 +35,9 @@ const populated = `{
     {"bucket": "plain", "key": "small.bin", "size": 1024},
     {"bucket": "plain", "key": "multipart.bin", "size": 20971520, "multipart": true},
     {"bucket": "plain", "key": "meta.bin", "size": 64, "content_type": "text/plain",
-      "metadata": {"x-amz-meta-color": "blue"}}
+      "metadata": {"x-amz-meta-color": "blue"}},
+    {"bucket": "plain", "key": "comp-zlib.bin", "size": 1048576, "storage_class": "COMP_ZLIB",
+      "compression": "zlib"}
   ]
 }`
 
@@ -54,6 +57,7 @@ var _ = Describe("Manifest", func() {
 		Expect(m.Pools.Data).To(Equal("ceph-objectstore.rgw.buckets.data"))
 		Expect(m.Pools.NonEC).To(Equal("ceph-objectstore.rgw.buckets.non-ec"))
 		Expect([]string{m.Realm, m.ZoneGroup, m.Zone}).To(HaveEach("ceph-objectstore"))
+		Expect(m.StorageClasses).To(Equal(map[string]string{"COMP_ZLIB": "zlib", "COMP_LZ4": "lz4"}))
 		Expect(m.Users[0].ID()).To(Equal("alice"))
 		Expect(m.Users[1].ID()).To(Equal("t1$bob"))
 
@@ -70,10 +74,15 @@ var _ = Describe("Manifest", func() {
 		Expect(ok).To(BeFalse())
 
 		objs := m.ObjectsIn("plain")
-		Expect(objs).To(HaveLen(3))
+		Expect(objs).To(HaveLen(4))
 		Expect(objs[1].Multipart).To(BeTrue())
 		Expect(objs[2].ContentType).To(Equal("text/plain"))
 		Expect(objs[2].Metadata).To(HaveKeyWithValue("x-amz-meta-color", "blue"))
+		Expect(objs[2].StorageClass).To(BeEmpty())
+		Expect(objs[2].Compression).To(BeEmpty())
+		Expect(objs[3]).To(Equal(gate.Object{
+			Bucket: "plain", Key: "comp-zlib.bin", Size: 1 << 20, StorageClass: "COMP_ZLIB", Compression: "zlib",
+		}))
 		Expect(m.ObjectsIn("tenanted")).To(BeEmpty())
 	})
 

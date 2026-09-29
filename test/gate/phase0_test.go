@@ -164,6 +164,10 @@ func roundTripAs[T any](ctx context.Context, m gate.Manifest, what, cxxType stri
 	return v
 }
 
+// operatorWritten ends the tally kind of a root pool object that is in the
+// operator release's encoding rather than the cluster release's.
+const operatorWritten = " written by the operator's release"
+
 // roundTripRoot is roundTripAs for a root pool object, which Rook's operator
 // may have written with the radosgw-admin of an older or newer release than
 // the cluster's (operatorRelease). An object that is not the cluster
@@ -184,7 +188,7 @@ func roundTripRoot[T any](ctx context.Context, m gate.Manifest, t tally, kind, w
 	Expect(cxxType).NotTo(BeEmpty(), "%s is the operator release's encoding, which ceph-dencoder cannot re-encode", what)
 	note("%s is the operator release's encoding; comparing its re-encoding for the cluster's release with ceph-dencoder", what)
 	expectSameBytes(got, cxxReencode(ctx, m, cxxType, raw), "re-encoding "+what+" for the cluster's release against ceph-dencoder")
-	t[kind+" written by the operator's release"]++
+	t[kind+operatorWritten]++
 	return v
 }
 
@@ -433,6 +437,7 @@ func expectPopulated(m gate.Manifest) {
 	Expect(m.Objects).To(ContainElement(HaveField("Size", BeNumerically(">", rgwMaxChunkSize))),
 		"no object larger than a head")
 	Expect(m.Objects).To(ContainElement(HaveField("Size", BeZero())), "no empty object")
+	Expect(m.Objects).To(ContainElement(HaveField("Compression", Not(BeEmpty()))), "no compressed object")
 	tenanted := false
 	for _, b := range m.Buckets {
 		Expect(b.NumShards).To(BeNumerically(">", 0), "bucket %s has no index shards", b.Name)
@@ -539,6 +544,25 @@ func cString(what string, raw []byte) string {
 	s := string(raw[:len(raw)-1])
 	Expect(s).NotTo(ContainSubstring("\x00"), "%s holds an inner NUL", what)
 	return s
+}
+
+// storedSize returns how many bytes radosgw stored for obj, whose head
+// carries xattrs, and whether it compressed them, round-tripping a compressed
+// object's user.rgw.compression. radosgw records the stored size in the
+// manifest, its stripes and the index entry's size, and the size before
+// compression in the index entry's accounted size.
+func storedSize(what string, obj gate.Object, xattrs map[string][]byte, r denc.Release) (uint64, bool) {
+	GinkgoHelper()
+	raw, ok := xattrs[meta.AttrCompression]
+	if !ok {
+		Expect(obj.Compression).To(BeEmpty(), "%s has no %s", what, meta.AttrCompression)
+		return obj.Size, false
+	}
+	info := roundTrip(what+" "+meta.AttrCompression, raw, r, meta.DecodeCompressionInfo, meta.CompressionInfo.Encode)
+	Expect(info.Type).To(Equal(obj.Compression), "%s compression type", what)
+	stored, err := compressedSize(info, obj.Size)
+	Expect(err).NotTo(HaveOccurred(), "%s %s", what, meta.AttrCompression)
+	return stored, true
 }
 
 // headOID is the head object's name and locator for key in a bucket, as
@@ -769,6 +793,23 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			expectXattrNames(oid, o.xattrs, meta.AttrObjVersion)
 		}
 
+		// Rook's operator writes the realm, zonegroup, zone and periods with
+		// its own radosgw-admin, and populate.sh changes them with it too, so
+		// when its release is not the cluster's, some of them are in its
+		// encoding. None would mean something rewrote them with the cluster's
+		// radosgw-admin, and the cross-release path above ran on nothing.
+		if operator != release {
+			written := 0
+			for k, n := range t {
+				if strings.HasSuffix(k, operatorWritten) {
+					written += n
+				}
+			}
+			Expect(written).To(BeNumerically(">", 0),
+				"no root pool object is in the encoding of %s, the operator's release, though Rook writes the realm, "+
+					"zonegroup, zone and periods with its radosgw-admin: something rewrote them with %s's", operatorName, m.Release)
+		}
+
 		Expect(zoneIDs).To(ConsistOf(zone.ID))
 		Expect(zoneNames).To(ConsistOf(zone.ID))
 		Expect(defaultZones).To(ConsistOf(zone.ID))
@@ -812,6 +853,24 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		Expect(tiers).NotTo(BeEmpty(), "zonegroup %s has no tier_targets; populate.sh adds one", zg.Name)
 		note("zonegroup %s tier targets: %v", zg.Name, tiers)
 		t["zonegroup tier target"] += len(tiers)
+
+		// populate.sh also adds a storage class per codec to the default
+		// placement, each compressing on the STANDARD class's data pool, so
+		// the round trips above covered a zone storage class's compression
+		// type too.
+		Expect(m.StorageClasses).NotTo(BeEmpty(), "the manifest names no compressing storage class")
+		placement := zg.DefaultPlacement.Name
+		Expect(zone.PlacementPools).To(HaveKey(placement), "zone %s placements", zone.Name)
+		classes := zone.PlacementPools[placement].StorageClasses
+		Expect(classes).To(HaveKey(meta.StorageClassStandard), "zone %s placement %s", zone.Name, placement)
+		for class, codec := range m.StorageClasses {
+			Expect(classes).To(HaveKeyWithValue(class, meta.ZoneStorageClass{
+				DataPool: classes[meta.StorageClassStandard].DataPool, CompressionType: &codec,
+			}), "zone %s placement %s storage class %s", zone.Name, placement, class)
+			Expect(zg.PlacementTargets[placement].StorageClasses).To(ContainElement(class),
+				"zonegroup %s placement target %s", zg.Name, placement)
+		}
+		t["zone compressing storage class"] += len(m.StorageClasses)
 	})
 
 	It("round-trips every user object and its xattrs", func(ctx SpecContext) {
@@ -920,6 +979,8 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				Expect(ok).To(BeTrue(), "%s lists unknown bucket %s", oid, k)
 				Expect(be.Bucket.BucketID).To(Equal(b.ID))
 				Expect(be.Bucket.Marker).To(Equal(b.Marker))
+				// The bucket's stats count each object's accounted size,
+				// which radosgw keeps from before compression.
 				var count, size uint64
 				for _, obj := range m.ObjectsIn(k) {
 					count++
@@ -1069,8 +1130,16 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				Expect(en.Key.Name).To(Equal(k), "the entry under %s names the index key", k)
 				Expect(en.Key.Instance).To(BeEmpty())
 				Expect(en.Exists).To(BeTrue(), "%s exists", o.Key)
-				Expect(en.Meta.Size).To(Equal(o.Size), "%s size", o.Key)
+				oid, loc := headOID(b.Marker, o.Key)
+				p := data
+				if loc != "" {
+					p = data.WithLocator(loc)
+				}
+				xs := readObject(ctx, p, oid).xattrs
+				stored, _ := storedSize(o.Key, o, xs, release)
+				Expect(en.Meta.Size).To(Equal(stored), "%s size", o.Key)
 				Expect(en.Meta.AccountedSize).To(Equal(o.Size), "%s accounted size", o.Key)
+				Expect(en.Meta.StorageClass).To(Equal(o.StorageClass), "%s storage class", o.Key)
 				Expect(en.Meta.Owner).To(Equal(b.Owner))
 				Expect(en.PendingMap).To(BeEmpty(), "%s has pending ops", o.Key)
 				if o.ContentType != "" {
@@ -1081,13 +1150,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				} else {
 					Expect(en.Meta.ETag).To(MatchRegexp(plainETag.String()), "%s etag", o.Key)
 				}
-				oid, loc := headOID(b.Marker, o.Key)
-				p := data
-				if loc != "" {
-					p = data.WithLocator(loc)
-				}
 				Expect(en.Locator).To(Equal(strings.TrimPrefix(loc, b.Marker+"_")), "%s locator", o.Key)
-				xs := readObject(ctx, p, oid).xattrs
 				Expect(etagString(xs[meta.AttrETag])).To(Equal(en.Meta.ETag), "%s head etag against its index entry", o.Key)
 			}
 		}
@@ -1103,12 +1166,26 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			x := o.xattrs
 			note("%s head xattrs: %v", obj.Key, slices.Sorted(maps.Keys(x)))
 
+			stored, compressed := storedSize(oid, obj, x, release)
+			if compressed {
+				t[meta.AttrCompression]++
+				note("%s: %s stored %d bytes of %d", obj.Key, obj.Compression, stored, obj.Size)
+			}
 			man := roundTrip(oid+" "+meta.AttrManifest, x[meta.AttrManifest], release, meta.DecodeManifest, meta.Manifest.Encode)
 			t[meta.AttrManifest]++
-			Expect(man.ObjSize).To(Equal(obj.Size), "%s manifest size", obj.Key)
+			Expect(man.ObjSize).To(Equal(stored), "%s manifest size", obj.Key)
 			Expect(man.Obj.Key.Name).To(Equal(obj.Key))
 			Expect(man.Obj.Bucket.Marker).To(Equal(b.Marker))
-			Expect(uint64(len(o.data))).To(Equal(min(man.HeadSize, obj.Size)), "%s head data", obj.Key)
+			Expect(uint64(len(o.data))).To(Equal(min(man.HeadSize, stored)), "%s head data", obj.Key)
+
+			// radosgw records the storage class a write names in
+			// user.rgw.storage_class, and nothing for a write that names none.
+			if obj.StorageClass != "" {
+				Expect(x).To(HaveKeyWithValue(meta.AttrStorageClass, []byte(obj.StorageClass)), "%s storage class", obj.Key)
+				t[meta.AttrStorageClass]++
+			} else {
+				Expect(x).NotTo(HaveKey(meta.AttrStorageClass), "%s names no storage class", obj.Key)
+			}
 
 			raw, ok := x[meta.AttrACL]
 			Expect(ok).To(BeTrue(), "%s has no ACL", obj.Key)
@@ -1243,10 +1320,11 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		for _, obj := range m.Objects {
 			b, ok := m.Bucket(obj.Bucket)
 			Expect(ok).To(BeTrue())
-			_, man, data, oid := head(ctx, b, obj.Key)
+			o, man, data, oid := head(ctx, b, obj.Key)
+			stored, _ := storedSize(oid, obj, o.xattrs, release)
 			stripes, err := man.Stripes()
 			Expect(err).NotTo(HaveOccurred(), obj.Key)
-			if obj.Size == 0 {
+			if stored == 0 {
 				Expect(stripes).To(BeEmpty())
 				continue
 			}
@@ -1266,7 +1344,8 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				sum += s.Size
 				Expect(s.Obj.Bucket.Marker).To(Equal(b.Marker))
 				// The populated buckets use the default placement, whose
-				// STANDARD class keeps heads and tails in the data pool.
+				// STANDARD class keeps heads and tails in the data pool, as
+				// do the compressing classes populate.sh adds.
 				p := open(ctx, meta.Pool{Name: m.Pools.Data})
 				if loc := s.Locator(); loc != "" {
 					p = p.WithLocator(loc)
@@ -1311,7 +1390,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 				}
 			}
 			Expect(checkedParts).To(Equal(wantParts), "%s part heads checked against its etag's part count", obj.Key)
-			Expect(sum).To(Equal(obj.Size), "%s stripe sizes", obj.Key)
+			Expect(sum).To(Equal(stored), "%s stripe sizes", obj.Key)
 			note("%s: %d stripes, %d outside the head", obj.Key, len(stripes), tails)
 		}
 	})

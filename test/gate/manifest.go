@@ -22,13 +22,16 @@ type Manifest struct {
 	// toolbox runs radosgw-admin and ceph-dencoder for the gate.
 	RooketName string `json:"rooket_name"`
 	// Realm, ZoneGroup and Zone name the site the radosgw serves.
-	Realm     string   `json:"realm"`
-	ZoneGroup string   `json:"zonegroup"`
-	Zone      string   `json:"zone"`
-	Pools     Pools    `json:"pools"`
-	Users     []User   `json:"users"`
-	Buckets   []Bucket `json:"buckets"`
-	Objects   []Object `json:"objects"`
+	Realm     string `json:"realm"`
+	ZoneGroup string `json:"zonegroup"`
+	Zone      string `json:"zone"`
+	Pools     Pools  `json:"pools"`
+	// StorageClasses maps each storage class populate.sh adds to the
+	// default placement to the codec radosgw compresses its objects with.
+	StorageClasses map[string]string `json:"storage_classes"`
+	Users          []User            `json:"users"`
+	Buckets        []Bucket          `json:"buckets"`
+	Objects        []Object          `json:"objects"`
 }
 
 // AdminFlags are the radosgw-admin options that select the populated site.
@@ -92,7 +95,8 @@ func (b Bucket) EntryPointKey() string {
 	return b.Name
 }
 
-// Object is one object populate.sh uploaded.
+// Object is one object populate.sh uploaded. Size is its size as a client
+// writes and reads it, before any compression.
 type Object struct {
 	Bucket      string            `json:"bucket"`
 	Key         string            `json:"key"`
@@ -100,6 +104,12 @@ type Object struct {
 	Multipart   bool              `json:"multipart"`
 	ContentType string            `json:"content_type"`
 	Metadata    map[string]string `json:"metadata"`
+	// StorageClass is the storage class the object was written to, empty
+	// for the placement's STANDARD class.
+	StorageClass string `json:"storage_class,omitempty"`
+	// Compression is the codec radosgw compressed the object with, empty
+	// when it stored the object as written.
+	Compression string `json:"compression,omitempty"`
 }
 
 // LoadManifest reads and decodes the manifest at path.

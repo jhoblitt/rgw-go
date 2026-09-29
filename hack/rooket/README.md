@@ -69,10 +69,12 @@ networking, so every later `up` must keep it.
   all a host client needs.
 - `image`, the Ceph image every daemon and the toolbox run.
 - `manifest.json`, written by `populate.sh`: the pinned Ceph version, the
-  rooket cluster, the realm, zonegroup and zone, the pools, the users `alice`
+  rooket cluster, the realm, zonegroup and zone, the pools, the compressing
+  storage classes with their codecs (`storage_classes`), the users `alice`
   and `t1$bob` with their S3 keys, the buckets `plain` and `t1/tenanted` with
   the id, marker and index shard count `radosgw-admin bucket stats` reports,
-  and the objects in `plain`.
+  and the objects in `plain`, a compressed one with its `storage_class` and
+  `compression`.
 
 ## Population
 
@@ -86,21 +88,41 @@ and zone; without them it creates, and works in, a `default` zone the radosgw
 never serves.
 
 The zonegroup gets a cloud-s3 storage class, so that a placement tier is
-encoded; the realm's period is committed with it, as Rook would otherwise
-commit it at a later reconcile. `multipart.bin` is 20 MiB and goes up with
-`aws s3 cp`, which switches to multipart at 8 MiB. `_underscore.bin`
-exercises radosgw's escaping of a leading underscore in RADOS object names.
-Object contents are pseudo-random bytes seeded by the key, so a rerun writes
-the same data. The script is safe to rerun against a populated cluster.
+encoded. The default placement gets a storage class per codec radosgw
+compresses with, `COMP_ZLIB`, `COMP_SNAPPY`, `COMP_ZSTD` and `COMP_LZ4`, each
+on the STANDARD class's data pool: radosgw compresses by the storage class an
+object is written to, and `radosgw-admin` adds a class to the zone only once
+the zonegroup's placement target lists it. The realm's period is committed
+once with all of them, as Rook would otherwise commit it at a later
+reconcile; these changes and the commit are made with the Rook operator's
+`radosgw-admin`, as below. The script then waits for the radosgw to reload
+its zonegroup and zone from the period, which took 3 to 28 s in the reloads
+seen. One 19.2.6 radosgw was still paused minutes into that reload; the
+script stops after three minutes, and deleting the radosgw's pod recovers
+it. `docs/ceph-upstream-bugs.md` records the probable causes of the delay and
+of the hang.
+
+`multipart.bin` is 20 MiB and goes up with `aws s3 cp`, which switches to
+multipart at 8 MiB. `_underscore.bin` exercises radosgw's escaping of a
+leading underscore in RADOS object names. `comp-<codec>.bin` is 1 MiB of its
+key repeated, written to its codec's storage class; radosgw stores an object
+as written when it cannot load the class's compressor, so the script stops
+unless `radosgw-admin object stat` shows the object compressed with the
+codec. The other objects hold pseudo-random bytes seeded by the key; either
+way a rerun writes the same data. The script is safe to rerun against a
+populated cluster.
 
 Rook's operator writes the realm, zonegroup, zone and periods with the
-`radosgw-admin` of its own image, Ceph 20.2.4 in Rook v1.20.7. On the Squid
-cluster the zone is therefore Tentacle's encoding until something rewrites
-it. The gate accepts a root pool object that is not the cluster release's
-encoding only when it is the operator release's encoding byte for byte, and
-when rgw-go's re-encoding of it for the cluster's release equals what the
-cluster's own `ceph-dencoder` writes after decoding it, which is what the
-cluster's radosgw would write back.
+`radosgw-admin` of its own image, Ceph 20.2.4 in Rook v1.20.7. `populate.sh`
+changes them with that same `radosgw-admin`, run in the operator's pod with
+the config and keyring the operator uses, so on the Squid cluster they stay in
+Tentacle's encoding, as Rook leaves them. The gate accepts a root pool object
+that is not the cluster release's encoding only when it is the operator
+release's encoding byte for byte, and when rgw-go's re-encoding of it for the
+cluster's release equals what the cluster's own `ceph-dencoder` writes after
+decoding it, which is what the cluster's radosgw would write back. When the
+two releases differ, the gate fails unless some root pool object is in the
+operator release's encoding.
 
 Checks after populating:
 

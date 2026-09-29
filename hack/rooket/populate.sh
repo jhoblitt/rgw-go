@@ -33,6 +33,18 @@ admin() {
 	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
 }
 
+# operator_admin runs radosgw-admin as Rook's operator does, in the operator's
+# pod with the config and keyring it keeps for the cluster (Rook's
+# FinalizeCephCommandArgs). Rook writes the realm, zonegroup, zone and periods
+# with that radosgw-admin, whose release can differ from the cluster's, so
+# changing them with it leaves them in the encoding Rook would.
+operator_admin() {
+	k -n rook-ceph exec deploy/rook-ceph-operator -- radosgw-admin "$@" \
+		--rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}" \
+		--cluster=rook-ceph --conf=/var/lib/rook/rook-ceph/rook-ceph.config \
+		--name=client.admin --keyring=/var/lib/rook/rook-ceph/client.admin.keyring
+}
+
 endpoint=$(rgw_endpoint "${rgw}")
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/rgw-go-populate.XXXXXX")
@@ -67,28 +79,101 @@ placement=$(jq -r '.default_placement' <<<"${zonegroup_json}")
 
 # A cloud-s3 tier storage class gives the zonegroup a placement tier to encode.
 # No lifecycle rule transitions to it, so radosgw never contacts the endpoint.
-# The zonegroup belongs to a realm, so the change is committed to a new period
-# now rather than by Rook at some later reconcile, and the radosgw reloads its
-# configuration from that period while the writes below start.
 has_tier() {
 	jq -e --arg p "${placement}" \
 		'[.placement_targets[] | select(.name == $p) | .tier_targets // [] | length] | add >= 1' >/dev/null
 }
+commit=false
 if ! has_tier <<<"${zonegroup_json}"; then
-	admin zonegroup placement add --placement-id "${placement}" \
+	operator_admin zonegroup placement add --placement-id "${placement}" \
 		--storage-class CLOUDTIER --tier-type cloud-s3 \
 		--tier-config endpoint=http://127.0.0.1:1,access_key=x,secret=y,target_path=rgw-go-cloud >/dev/null
 	has_tier < <(admin zonegroup get) || die "zonegroup ${zonegroup} has no tier target after placement add"
-	admin period update --commit >/dev/null
+	commit=true
 fi
-jq --arg zg "${zonegroup}" '.period_map.zonegroups[] | select(.name == $zg)' < <(admin period get) | has_tier ||
-	die "the current period's zonegroup ${zonegroup} has no tier target"
+
+# radosgw compresses an object with the compressor the zone's placement names
+# for the storage class it is written to, so each codec gets a class of its own
+# on the STANDARD class's data pool. radosgw-admin adds a class to the zone's
+# placement only once the zonegroup's placement target lists it.
+readonly codecs=(zlib snappy zstd lz4)
+storage_classes=$(for codec in "${codecs[@]}"; do
+	jq -n --arg class "COMP_${codec^^}" --arg codec "${codec}" '{($class): $codec}'
+done | jq -cs 'add')
+class_names=$(jq -c 'keys' <<<"${storage_classes}")
+
+# has_classes reads a zonegroup and succeeds when its placement target lists
+# every storage class in the JSON array $1.
+has_classes() {
+	jq -e --arg p "${placement}" --argjson want "$1" \
+		'($want - [.placement_targets[] | select(.name == $p) | .storage_classes[]]) == []' >/dev/null
+}
+zone_classes() {
+	jq --arg p "${placement}" '.placement_pools[] | select(.key == $p) | .val.storage_classes'
+}
+zone_json=$(admin zone get)
+standard_pool=$(zone_classes <<<"${zone_json}" | jq -r '.STANDARD.data_pool // empty')
+[[ -n "${standard_pool}" ]] || die "zone ${zone} has no STANDARD data pool in placement ${placement}"
+while IFS=$'\t' read -r class codec; do
+	if ! has_classes "[\"${class}\"]" <<<"${zonegroup_json}"; then
+		operator_admin zonegroup placement add --placement-id "${placement}" --storage-class "${class}" >/dev/null
+		commit=true
+	fi
+	if ! zone_classes <<<"${zone_json}" | jq -e --arg class "${class}" 'has($class)' >/dev/null; then
+		operator_admin zone placement add --placement-id "${placement}" --storage-class "${class}" \
+			--data-pool "${standard_pool}" --compression "${codec}" >/dev/null
+		commit=true
+	fi
+done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${storage_classes}")
+
+period_zonegroup() {
+	admin period get | jq --arg zg "${zonegroup}" '.period_map.zonegroups[] | select(.name == $zg)'
+}
+
+# wait_reload waits for the radosgw to reload the committed period: it pauses
+# its frontends, replaces its driver, and registers the new one with the
+# manager under a new gid just before its frontends resume. A request sent in
+# that gap waits on the paused listener rather than failing. The reloads seen
+# took 3 to 28 s, but one 19.2.6 radosgw was still paused minutes into its
+# reload, and only a restart of its pod ended it. docs/ceph-upstream-bugs.md
+# records the probable causes of the delay and of the hang.
+wait_reload() {
+	local gid deadline=$((SECONDS + 180))
+	gid=$(jq '.gid' <<<"${rgw}")
+	until ceph_cmd service dump -f json | jq -e --argjson gid "${gid}" \
+		'[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value.gid] | any(. != $gid)' \
+		>/dev/null; do
+		((SECONDS < deadline)) ||
+			die "the radosgw did not finish reloading the committed period in 180s; restart it with" \
+				"'ROOKET_NAME=${ROOKET_NAME} ${rooket} kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw'" \
+				"and rerun once the service map lists it alone"
+		sleep 5
+	done
+}
+
+# The zonegroup belongs to a realm, so the changes are committed to a new
+# period now rather than by Rook at some later reconcile, and the radosgw
+# reloads its zonegroup and zone from that period. One commit carries them
+# all: a realm notification that reaches the radosgw while it is already
+# reloading is dropped. A run that stopped short of committing left them out
+# of the period, so a period that lacks them is committed too.
+current=$(period_zonegroup)
+if [[ "${commit}" == true ]] || ! has_tier <<<"${current}" || ! has_classes "${class_names}" <<<"${current}"; then
+	operator_admin period update --commit >/dev/null
+	wait_reload
+	current=$(period_zonegroup)
+fi
+has_tier <<<"${current}" || die "the current period's zonegroup ${zonegroup} has no tier target"
+has_classes "${class_names}" <<<"${current}" ||
+	die "the current period's zonegroup ${zonegroup} does not list the storage classes ${class_names}"
+zone_classes < <(admin zone get) | jq -e --argjson want "${storage_classes}" --arg pool "${standard_pool}" \
+	'. as $have | all($want | to_entries[]; $have[.key] == {data_pool: $pool, compression_type: .value})' >/dev/null ||
+	die "zone ${zone} does not compress the storage classes ${storage_classes} on ${standard_pool}"
 
 alice=$(ensure_user alice "")
 bob=$(ensure_user bob t1)
 
-# as_user runs the aws CLI with the keys from a user's JSON. Its retries ride
-# out a radosgw still reloading the period committed above.
+# as_user runs the aws CLI with the keys from a user's JSON.
 as_user() {
 	local user=$1
 	shift
@@ -114,11 +199,26 @@ payload() {
 sys.stdout.buffer.write(random.Random(sys.argv[1]).randbytes(int(sys.argv[2])))' "$1" "$2" >"${work}/$1"
 }
 
+# payload_compressible writes size bytes of the key repeated, which every codec
+# compresses, so a rerun uploads identical content.
+payload_compressible() {
+	python3 -c 'import sys
+key, size = sys.argv[1].encode(), int(sys.argv[2])
+sys.stdout.buffer.write((key * (size // len(key) + 1))[:size])' "$1" "$2" >"${work}/$1"
+}
+
+# upload puts the file a payload function wrote for key into plain.
+upload() {
+	local key=$1
+	shift
+	as_user "${alice}" s3api put-object --bucket plain --key "${key}" --body "${work}/${key}" "$@" >/dev/null
+}
+
 put() {
 	local key=$1 size=$2
 	shift 2
 	payload "${key}" "${size}"
-	as_user "${alice}" s3api put-object --bucket plain --key "${key}" --body "${work}/${key}" "$@" >/dev/null
+	upload "${key}" "$@"
 }
 
 put small.bin 1024
@@ -134,7 +234,21 @@ as_user "${alice}" s3 cp --only-show-errors "${work}/multipart.bin" s3://plain/m
 etag=$(as_user "${alice}" s3api head-object --bucket plain --key multipart.bin | jq -r '.ETag')
 [[ "${etag}" == *-* ]] || die "multipart.bin was not uploaded in parts (ETag ${etag})"
 
-objects=$(jq -n '[
+# Each codec's object goes to its storage class. radosgw stores an object as
+# written when it cannot load the class's compressor, which would leave the
+# read oracle nothing to decompress, so object stat must show the codec in the
+# compression info radosgw keeps in the head's user.rgw.compression attr.
+readonly comp_size=1048576
+while IFS=$'\t' read -r class codec; do
+	key=comp-${codec}.bin
+	payload_compressible "${key}" "${comp_size}"
+	upload "${key}" --storage-class "${class}"
+	stat_json=$(admin object stat --bucket plain --object "${key}")
+	jq -e --arg codec "${codec}" '.compression.compression_type == $codec' <<<"${stat_json}" >/dev/null ||
+		die "radosgw did not store ${key} ${codec}-compressed: its compression is $(jq -c '.compression' <<<"${stat_json}")"
+done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"${storage_classes}")
+
+objects=$(jq -n --argjson classes "${storage_classes}" --argjson comp_size "${comp_size}" '[
 	{bucket: "plain", key: "small.bin", size: 1024},
 	{bucket: "plain", key: "head-full.bin", size: 4194304},
 	{bucket: "plain", key: "large.bin", size: 10485760},
@@ -143,7 +257,8 @@ objects=$(jq -n '[
 	{bucket: "plain", key: "empty.bin", size: 0},
 	{bucket: "plain", key: "meta.bin", size: 64, content_type: "text/plain",
 		metadata: {"x-amz-meta-color": "blue"}}
-]')
+] + [$classes | to_entries[] |
+	{bucket: "plain", key: "comp-\(.value).bin", size: $comp_size, storage_class: .key, compression: .value}]')
 
 # Read every object back through the radosgw before recording it.
 while IFS=$'\t' read -r key size; do
@@ -201,12 +316,14 @@ jq -n \
 	--arg zonegroup "${zonegroup}" \
 	--arg zone "${zone}" \
 	--argjson pools "${pools}" \
+	--argjson storage_classes "${storage_classes}" \
 	--argjson users "${users}" \
 	--argjson buckets "${buckets}" \
 	--argjson objects "${objects}" \
 	'{release: $release, ceph_version: $ceph_version, rooket_name: $rooket_name,
 		realm: $realm, zonegroup: $zonegroup, zone: $zone,
-		pools: $pools, users: $users, buckets: $buckets, objects: $objects}' \
+		pools: $pools, storage_classes: $storage_classes, users: $users, buckets: $buckets,
+		objects: $objects}' \
 	>"${work}/manifest.json"
 mv "${work}/manifest.json" "${out}/manifest.json"
 echo "wrote ${out}/manifest.json"
