@@ -25,7 +25,18 @@ finds a new limit, and update the status when one is fixed or measured.
   its own messenger, finisher and timer threads.
 - **Status:** accepted for now.
 - **Measure:** thread count at idle and under load, per mode, against the
-  design target of GOMAXPROCS plus a small constant.
+  design target of GOMAXPROCS plus a small constant. Count process-wide: the
+  `Threads` field of `/proc/<pid>/status`, which rgw-go exports as
+  `rgw_go_process_threads`, not `go_threads`. `go_threads` counts the Go
+  runtime's thread records, so it misses every librados thread that never
+  calls into Go, the messenger's workers among them
+  (`PosixNetworkStack::spawn_worker` starts them as `std::thread`s,
+  [PosixStack.h:51](https://github.com/ceph/ceph/blob/v19.2.6/src/msg/async/PosixStack.h#L51)),
+  and it counts the spare record cgo keeps for callbacks from C threads,
+  which has no thread of its own
+  ([`runtime.mstartm0`](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L1964-L1973)).
+  Under Go 1.27.1 a cgo binary with no C threads reports one more
+  `go_threads` than the kernel does.
 
 ### A parked OS thread per synchronous operation
 
