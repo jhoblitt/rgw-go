@@ -179,20 +179,22 @@ policy and quota, execute, complete, respond.
 | Path | Round trips on the latency path | Parallelism |
 |---|---|---|
 | PUT within the 4 MiB head | index prepare with the reshard guard, then the guarded head write with data, manifest and attributes; the index complete is issued and not awaited | none |
-| PUT beyond the head | 4 MiB tail stripes written while the body streams, then prepare, then head | tails in flight up to the put window, 16 MiB rising to 64 MiB |
+| PUT beyond the head | 4 MiB tail stripes written while the body streams, then prepare, then head | tails in flight up to the put window, 16 MiB |
 | GET within the head | one read op composing stat, xattrs and the first 4 MiB | none |
 | GET beyond the head, or a range | the first op, then tail reads | up to 16 MiB in flight in 4 MiB requests, streamed in order |
 
 These are radosgw's round trips and radosgw's default windows. The
 fire-and-forget index complete follows radosgw's completion manager, with
 retries by a worker and reconciliation of a leftover pending entry at the
-next listing. A failed head write cancels the prepare. An `ECANCELED` on
-the guarded head write retries the sequence as radosgw's atomic write does.
-Copy shares tails through the refcount class under the new tag with the
-NUL-terminated form radosgw writes, rewriting only the head, and streams
-data only where placement, storage class, encryption or head geometry
-force it. CompleteMultipart takes radosgw's named lock on the multipart
-meta object. Listing performs radosgw's pending-entry reconciliation.
+next listing. A failed head write cancels the prepare. A lost race on the
+guarded head write, an `ECANCELED`, `ENOENT` or `EEXIST`, cancels the index
+entry and answers success when the request carried no precondition, as
+radosgw's does. Copy shares tails through the refcount class under the new
+tag with the NUL-terminated form radosgw writes, rewriting only the head,
+and streams data only where placement, storage class, encryption or head
+geometry force it. CompleteMultipart takes radosgw's named lock on the
+multipart meta object. Listing performs radosgw's pending-entry
+reconciliation.
 
 ## 7. Concurrency
 
