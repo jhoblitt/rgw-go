@@ -69,9 +69,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **rgw-go:** unit W's listing reconciliation reproduces radosgw's bytes,
   wrong shard included, so the index a shared zone sees is the one radosgw
   would leave.
-- **Upstream:** not filed; no tracker issue or pull request reports or fixes
-  it (full-text tracker and all-time pull-request search, 2026-09-29). The
-  symptom is on record, undiagnosed, in journals of
+- **Upstream:** [#81121](https://tracker.ceph.com/issues/81121), filed after a
+  full-text tracker and all-time pull-request search (2026-09-29) found no
+  report or fix. The symptom is on record, undiagnosed, in journals of
   [#16767](https://tracker.ceph.com/issues/16767) and
   [#44660](https://tracker.ceph.com/issues/44660): `radosgw-admin bucket check
   --check-objects --fix` removed leftover part entries only on unsharded
