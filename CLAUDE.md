@@ -30,6 +30,8 @@ before writing Go here.
   entry, with evidence at a named release tag, whenever work meets one, and share it with
   rgw-rs. Every entry's **Upstream** line links its tracker.ceph.com issues and upstream PRs;
   update it in the same change that files, finds or closes one.
+- Every behaviour that differs from radosgw is recorded in `docs/exclusions.md` in the same
+  change that introduces it.
 - Never use the ambient kubectl or Ceph cluster. Cluster tests use disposable rooket clusters,
   `make cluster-up RELEASE=squid|tentacle` (hack/rooket/), reached only through `rooket k`
   with `ROOKET_NAME=rgw-go-<release>`.
