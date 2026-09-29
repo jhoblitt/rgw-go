@@ -62,11 +62,29 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   (`cls_rgw.cc:1135-1140`), leaving the part's entry behind. The same code is
   at v20.2.4 and on main (`rgw_putobj_processor.cc:501`). Derived from the
   source; not reproduced.
-- **Releases:** every release checked, v19.2.6 through main.
+- **Releases:** every release since bucket index sharding added the hash
+  source (8a04c0a61bc, first in v0.92); the sweep itself dates from
+  e5dc46f6aa9 (2012) and has only been refactored since. Checked at v19.2.6,
+  v20.2.4 and main.
 - **rgw-go:** unit W's listing reconciliation reproduces radosgw's bytes,
   wrong shard included, so the index a shared zone sees is the one radosgw
   would leave.
-- **Upstream:** not filed; no tracker issue or pull request found.
+- **Upstream:** not filed; no tracker issue or pull request reports or fixes
+  it (full-text tracker and all-time pull-request search, 2026-09-29). The
+  symptom is on record, undiagnosed, in journals of
+  [#16767](https://tracker.ceph.com/issues/16767) and
+  [#44660](https://tracker.ceph.com/issues/44660): `radosgw-admin bucket check
+  --check-objects --fix` removed leftover part entries only on unsharded
+  buckets, and users resharded to 0 shards to clear them. Both issues were
+  closed by [ceph/ceph#49709](https://github.com/ceph/ceph/pull/49709), which
+  fixed a different cause. The same wrong-shard mistake with multipart entries
+  was fixed at other call sites: resharding
+  ([#43583](https://tracker.ceph.com/issues/43583),
+  [ceph/ceph#32617](https://github.com/ceph/ceph/pull/32617)), `bi put`
+  ([#53248](https://tracker.ceph.com/issues/53248),
+  [ceph/ceph#43908](https://github.com/ceph/ceph/pull/43908)) and `bucket
+  check --fix` ([#53874](https://tracker.ceph.com/issues/53874),
+  [ceph/ceph#46030](https://github.com/ceph/ceph/pull/46030)).
 - **Found:** phase 1 plan review, 2026-09-28; verified 2026-09-29.
 
 ## cls_rgw complete_op writes a stale epoch back when it cancels
