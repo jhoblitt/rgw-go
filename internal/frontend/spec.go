@@ -156,7 +156,10 @@ func (s *Spec) setOnce(kv keyValue) {
 			s.unknown(kv)
 			return
 		}
-		s.MaxHeaderSize = int(min(limit, MaxHeaderSizeCap))
+		s.MaxHeaderSize = MaxHeaderSizeCap
+		if limit < MaxHeaderSizeCap {
+			s.MaxHeaderSize = int(limit)
+		}
 	case "max_connection_backlog":
 		// strict_strtol: a whole base-10 value within int.
 		n, err := strconv.ParseInt(kv.val, 10, 32)
