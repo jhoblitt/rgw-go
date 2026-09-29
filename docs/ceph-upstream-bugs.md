@@ -379,6 +379,129 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
   on disposable Squid and Tentacle clusters.
 
+## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** at v19.2.6 `RGWOp_Bucket_Remove::execute` passes `bypass-gc`
+  to `RGWBucketAdminOp::remove_bucket` without calling `set_max_aio`
+  (`rgw_rest_bucket.cc:225-248`), so `max_aio` keeps its default of 0
+  (`rgw_bucket.h:248`) and reaches `RadosBucket::remove_bypass_gc` unclamped
+  (`rgw_bucket.cc:1303-1304`); the index checks, which read the same value,
+  clamp it with `std::max(1, ...)` (`:594`, `:804`). The purge starts its
+  budget at that 0 (`rgw_sal_rados.cc:505`) and tests `max_aio--` before each
+  location of an object's manifest (`:542`).
+  - On the first object whose manifest it walks, the test reads 0, so none of
+    that object's tail stripes is released, yet its head and index entry are
+    removed (`:565-566`; `delete_obj_aio`, `rgw_rados.cc:10687-10732`) and
+    nothing is sent to GC. The stripes are left with neither an index entry
+    nor a GC entry, where only an orphan scan finds them.
+  - The budget then stays negative, so the drains at `:543-550` and `:573-580`
+    never run: every later tail and head delete is issued without waiting
+    until the final drain (`:585`), and nothing bounds how many are in flight.
+  - `radosgw-admin bucket rm --bypass-gc` sets the budget from
+    `--max-concurrent-ios`, 32 by default (`rgw_admin.cc:3519`, `:6619`), and
+    is not affected unless given 0.
+  - The same holds at v20.2.4 (`rgw_rest_bucket.cc:225-248`,
+    `rgw_bucket.h:240`, `rgw_sal_rados.cc:526` and `:563-571`) and on main
+    (`rgw_sal_rados.cc:553` and `:590-598`, 2026-09-29). On main, a9b9a52ee02
+    (#80213, in no release yet) also forwards `bypass-gc` to the metadata
+    master, whose admin op then purges that zone's copy the same way, so a
+    removal started on a secondary zone meets the defect even from
+    radosgw-admin.
+- **Releases:** v19.2.3 through v19.2.6, and v20.1.0 and later, through
+  v20.2.4 and main. The admin op gained `bypass-gc` with 9ae2d8c4e95
+  (ceph/ceph#60227, first in v20.1.0) and its squid backport e2a2aba0883
+  (ceph/ceph#62994, first in v19.2.3); before them it ignored the parameter
+  (v19.2.2 `rgw_rest_bucket.cc:246`). The loop dates from b7a69fca248
+  (v11.0.0); before the admin op reached it, only radosgw-admin did, with its
+  non-zero budget.
+- **rgw-go:** phase 1's admin API (unit N) honours `bypass-gc` with its own
+  bounded deletion: it releases every object's tail stripes with at most
+  `rgw_gc_max_concurrent_io` deletes in flight, counts a missing stripe as
+  deleted and sends the tail deletes with `pool_full_try`, as the GC worker
+  does (`rgw_gc.cc:371`, `:413-415`, `:677`). N's purge task records the
+  difference in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports or fixes it
+  (full-text tracker and all-time pull-request search, 2026-09-29). The admin
+  op reached the loop through
+  [ceph/ceph#60227](https://github.com/ceph/ceph/pull/60227) and its squid
+  backport [ceph/ceph#62994](https://github.com/ceph/ceph/pull/62994); the
+  forwarding on main came with
+  [ceph/ceph#71016](https://github.com/ceph/ceph/pull/71016), the fix for
+  [#80213](https://tracker.ceph.com/issues/80213). Not filed: the defect has
+  not been reproduced on a running cluster, and filing needs a live
+  reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source,
+  not reproduced.
+
+## radosgw's bypass-gc bucket removal fails once a tail stripe is gone
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - At v19.2.6 `remove_bypass_gc` releases each tail stripe with
+    `cls_refcount_put` (`delete_tail_obj_aio`, `rgw_rados.cc:10659-10685`). A
+    stripe that no longer exists fails the put with ENOENT, since
+    `read_refcount` passes on every getxattr error but ENODATA
+    (`cls_refcount.cc:26-34`, `:100-103`) and the OSD's getxattr answers
+    ENOENT for a missing object (`BlueStore.cc:13247-13251`). `drain_aio`
+    waits for every pending delete and returns the failure
+    (`rgw_sal_rados.cc:98-112`), and the removal returns it at that drain
+    (`:543-548`, `:573-578` or `:585-589`), before it removes the bucket. The
+    GC worker counts the same ENOENT as done (`rgw_gc.cc:413-415`). The same
+    at v20.2.4 (`rgw_rados.cc:11596-11622`, `rgw_sal_rados.cc:107-121`,
+    `rgw_gc.cc:428-430`) and on main.
+  - radosgw-admin drains after every 32 stripes by default, so the failure can
+    stop it partway through an object, whose head and index entry stay while
+    some of its stripes are gone; a retry walks that object again and can fail
+    the same way, as #40587 describes for a rerun after an interrupted
+    removal. radosgw-admin discards the removal's result
+    (`rgw_admin.cc:8768-8779`) and exits 0 after logging the drain error.
+  - Through the admin API, whose zero budget leaves only the final drain
+    (previous entry), all the removal's deletes have been issued when the
+    failure surfaces. The op answers 404 NoSuchBucket
+    (`rgw_rest_bucket.cc:245-247`, `rgw_common.cc:98`) for a bucket that still
+    exists, after removing every head whose manifest it walked, and a retry
+    removes it: the purge skips a listed entry whose head is gone
+    (`rgw_sal_rados.cc:522-525`), and `remove` skips a missing object
+    (`:385-392`).
+  - Stripes go missing when an earlier bypass-gc removal stopped partway, and,
+    before 1fba459071d (#73348; v19.2.4, v20.2.1 and v21.0.0), when such a
+    removal deleted stripes that a server-side copy in another bucket still
+    shared. That commit replaced `cls_rgw_remove_obj`, which answers ENOENT
+    for a missing object too (v19.2.2 `cls_rgw.cc:2432-2433`,
+    `PrimaryLogPG.cc:8206-8207`).
+  - It is a regression. The fix for #40587, bcdd7e63416 (ceph/ceph#28789),
+    made the three drains ignore ENOENT on main on 2019-08-01
+    (`rgw_bucket.cc:839`, `:868` and `:878` at a3039beaba8^1), but merging
+    ceph/ceph#29118 on 2019-08-13 (a3039beaba8) took that branch's drains,
+    which predate the fix (`rgw_bucket.cc:506`, `:535` and `:545`), so no
+    release from v15.1.0 on has it. Its backports reached luminous in
+    v12.2.13, mimic in v13.2.7 and nautilus in v14.2.5.
+- **Releases:** every release from v15.1.0 on, checked at v15.1.0, v15.2.0,
+  v15.2.17, v16.2.15, v17.2.9, v18.2.8, v19.2.6, v20.2.4 and main; before the
+  fix, every release from v11.0.0 through luminous v12.2.12, mimic v13.2.6 and
+  nautilus v14.2.4.
+- **rgw-go:** phase 1's purge (unit N) counts a missing tail stripe as
+  deleted, as the GC worker does, so a removal that meets one completes. N's
+  purge task records the difference in `docs/exclusions.md`.
+- **Upstream:** [#24789](https://tracker.ceph.com/issues/24789), open since
+  2018 with no pull request. [#40587](https://tracker.ceph.com/issues/40587)
+  reported it again in 2019 and is marked resolved by
+  [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), whose change the
+  merge of [ceph/ceph#29118](https://github.com/ceph/ceph/pull/29118) lost;
+  its backports, [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198)
+  (luminous), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984)
+  (mimic) and [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956)
+  (nautilus), kept it. No open pull request restores it (full-text tracker and
+  all-time pull-request search, 2026-09-29).
+  [#73348](https://tracker.ceph.com/issues/73348), fixed by
+  [ceph/ceph#65772](https://github.com/ceph/ceph/pull/65772), changed how the
+  loop releases stripes but not the drains. The loss is not reported: it has
+  not been reproduced on a running cluster, and a report needs a live
+  reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source,
+  not reproduced.
+
 ## The 2pc queue's reserved size drifts upward
 
 - **Kind:** defect, fixed.
