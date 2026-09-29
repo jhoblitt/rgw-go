@@ -132,9 +132,14 @@ instead of ko on distroless, because the binary needs librados; zero
 `http.ResponseController`, because objects are large; and no path router.
 
 Third-party dependencies, complete: go-ceph, cobra, viper,
-klauspost/compress, the Prometheus client, x/sync, Ginkgo and Gomega,
-counterfeiter, and aws-sdk-go-v2 plus go-ceph's rgw/admin as test clients.
-Everything else is standard library.
+klauspost/compress, pierrec/lz4/v4, the Prometheus client,
+cespare/xxhash/v2, x/sync, Ginkgo and Gomega, counterfeiter, and
+aws-sdk-go-v2 plus go-ceph's rgw/admin as test clients. pierrec/lz4/v4
+decodes LZ4 in Ceph's per-chunk framing in phase 1 and encodes it in
+phase 2, because klauspost/compress has no LZ4 codec; cespare/xxhash/v2
+computes the XXH64 that radosgw uses to pick a GC shard, and the
+Prometheus client already requires it. Everything else is standard
+library.
 
 ## 5. Configuration and invocation
 
