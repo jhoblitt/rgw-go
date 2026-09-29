@@ -1,7 +1,12 @@
 package goceph_test
 
 import (
+	"bytes"
 	"errors"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/ceph/go-ceph/rados"
@@ -365,6 +370,77 @@ var _ = Describe("a positive librados return", func() {
 	)
 })
 
+// readSteps and writeSteps build an op and return its steps.
+func readSteps(build func(op *radosclient.ReadOp)) []radosclient.Step {
+	op := radosclient.NewReadOp()
+	build(op)
+	return op.Steps()
+}
+
+func writeSteps(build func(op *radosclient.WriteOp)) []radosclient.Step {
+	op := radosclient.NewWriteOp()
+	build(op)
+	return op.Steps()
+}
+
+var _ = Describe("an op's payload weight", func() {
+	DescribeTable("is what the limiter takes in bytes, beside one operation",
+		func(ctx SpecContext, steps []radosclient.Step, want int64) {
+			Expect(goceph.Weight(steps)).To(Equal(want))
+			l := goceph.NewLimiter(1, 1<<30)
+			Expect(l.Acquire(ctx, goceph.Weight(steps))).To(Succeed())
+			Expect(l.Stats()).To(Equal(radosclient.Stats{InflightOps: 1, InflightBytes: want}))
+		},
+		Entry("a read's length, and nothing for a stat",
+			readSteps(func(op *radosclient.ReadOp) {
+				op.Read(0, 4<<20)
+				op.Stat()
+			}), int64(4<<20)),
+		Entry("the length of a caller's read buffer",
+			readSteps(func(op *radosclient.ReadOp) { op.ReadInto(8, make([]byte, 100)) }), int64(100)),
+		Entry("a read op's exec input",
+			readSteps(func(op *radosclient.ReadOp) { op.Exec("version", "read", []byte("1234567")) }), int64(7)),
+		Entry("write-full and append data and a write op's exec input",
+			writeSteps(func(op *radosclient.WriteOp) {
+				op.WriteFull([]byte("abc"))
+				op.Append([]byte("de"))
+				op.Exec("version", "set", []byte("12345"))
+			}), int64(10)),
+		Entry("the data of a write at an offset",
+			writeSteps(func(op *radosclient.WriteOp) { op.Write([]byte("abcd"), 1<<20) }), int64(4)),
+		Entry("nothing, for an op with no payload, which still counts one operation",
+			writeSteps(func(op *radosclient.WriteOp) {
+				op.Remove()
+				op.SetStepFlags(radosclient.StepFlagFailOK)
+				op.Create(false)
+			}), int64(0)),
+	)
+})
+
+// unsetenv removes key from the environment until the spec ends.
+func unsetenv(key string) {
+	if v, ok := os.LookupEnv(key); ok {
+		Expect(os.Unsetenv(key)).To(Succeed())
+		DeferCleanup(os.Setenv, key, v)
+	}
+}
+
+// captureLogs sends slog's default logger to a buffer until the spec ends.
+// slog.SetDefault also points the log package's output at the new handler,
+// and restoring the old default logger leaves it there, so the cleanup puts
+// log's writer and flags back too.
+func captureLogs() *bytes.Buffer {
+	var buf bytes.Buffer
+	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	DeferCleanup(func() {
+		slog.SetDefault(oldLogger)
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+	return &buf
+}
+
 var _ = Describe("Config", func() {
 	It("defaults to the ceph cluster, client.admin and callback completions", func() {
 		cfg := goceph.WithDefaults(goceph.Config{})
@@ -376,5 +452,59 @@ var _ = Describe("Config", func() {
 	It("keeps what the caller set", func() {
 		cfg := goceph.WithDefaults(goceph.Config{Cluster: "c", Name: "client.rgw.a", Mode: goceph.ModePipe})
 		Expect(cfg).To(Equal(goceph.Config{Cluster: "c", Name: "client.rgw.a", Mode: goceph.ModePipe}))
+	})
+
+	DescribeTable("refuses a negative in-flight limit before touching librados",
+		func(ctx SpecContext, cfg goceph.Config) {
+			cfg.ConfigFile = "/nonexistent/ceph.conf"
+			cluster, err := goceph.Connect(ctx, cfg)
+			Expect(err).To(MatchError(radosclient.ErrBadOp))
+			Expect(cluster).To(BeNil())
+		},
+		Entry("operations", goceph.Config{MaxInflightOps: -1}),
+		Entry("bytes", goceph.Config{MaxInflightBytes: -1}),
+	)
+
+	Describe("reading the config file", func() {
+		// cluster names the files librados searches for by default,
+		// $home/.ceph/<cluster>.conf among them, so no file on the host
+		// matches.
+		const cluster = "rgwgoconftest"
+
+		var home string
+
+		BeforeEach(func() {
+			unsetenv("CEPH_CONF")
+			home = GinkgoT().TempDir()
+			GinkgoT().Setenv("HOME", home)
+			Expect(os.Mkdir(filepath.Join(home, ".ceph"), 0o700)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(home, ".ceph", cluster+".conf"),
+				[]byte("[global]\nobjecter_inflight_ops = 77\n"), 0o600)).To(Succeed())
+		})
+
+		It("reads the first file of the default search", func(ctx SpecContext) {
+			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster}, "objecter_inflight_ops")).To(Equal("77"))
+		})
+
+		It("skips the default search under NoConfigFile", func(ctx SpecContext) {
+			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, NoConfigFile: true}, "objecter_inflight_ops")).
+				To(Equal("1024"), "librados's default")
+		})
+
+		It("still reads a named file under NoConfigFile, as ceph reads -c under --no-config-file", func(ctx SpecContext) {
+			cfg := goceph.Config{Cluster: "ceph", ConfigFile: filepath.Join(home, ".ceph", cluster+".conf"), NoConfigFile: true}
+			Expect(goceph.ConfiguredOption(ctx, cfg, "objecter_inflight_ops")).To(Equal("77"))
+		})
+
+		It("continues with librados's defaults and a warning when the default search finds no file", func(ctx SpecContext) {
+			logs := captureLogs()
+			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster + "-missing"}, "objecter_inflight_ops")).To(Equal("1024"))
+			Expect(logs.String()).To(ContainSubstring(`"msg":"no ceph.conf found, continuing with defaults"`))
+		})
+
+		It("fails when a named file is missing", func(ctx SpecContext) {
+			_, err := goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, ConfigFile: filepath.Join(home, "missing.conf")}, "fsid")
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+		})
 	})
 })

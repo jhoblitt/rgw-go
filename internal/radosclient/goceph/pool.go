@@ -251,6 +251,22 @@ func (p *pool) Close() error {
 	return p.state.close()
 }
 
+// admit parks on the Cluster's in-flight limiter for one operation of n
+// payload bytes, then takes an I/O context for it. The caller releases n to
+// the limiter once librados is done with the operation.
+func (p *pool) admit(ctx context.Context, op string, n int64) (*handle, error) {
+	limit := p.state.cluster.limit
+	if err := limit.acquire(ctx, n); err != nil {
+		return nil, err
+	}
+	h, err := p.state.acquire(op, p.locator)
+	if err != nil {
+		limit.release(n)
+		return nil, err
+	}
+	return h, nil
+}
+
 // Read runs a read op and returns the object version the OSD reports.
 func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
 	if err := ctx.Err(); err != nil {
@@ -267,26 +283,35 @@ func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 		return 0, err
 	}
 	name := opName("read", oid)
-	h, err := p.state.acquire(name, p.locator)
+	n := weight(op.Steps())
+	h, err := p.admit(ctx, name, n)
 	if err != nil {
 		return 0, err
 	}
+	cl := p.state.cluster
+	cl.reads.add(n)
 
-	if p.state.cluster.mode == ModeSync {
+	if cl.mode == ModeSync {
 		opErr := rop.Operate(h.ioctx, oid, rflags)
 		version, verr := h.ioctx.GetLastVersion()
 		p.state.release(h)
+		cl.limit.release(n)
 		return syncResult(name, fs, opErr, version, verr)
 	}
 
 	c, err := rop.OperateAsync(h.ioctx, oid, rflags)
 	p.state.giveBack(h)
-	if err != nil {
+	// An abandoned operation keeps its budget until the reaper runs done:
+	// its completion owns the operation's buffers until librados finishes.
+	done := func() {
 		p.state.finish(h)
+		cl.limit.release(n)
+	}
+	if err != nil {
+		done()
 		return 0, toSeamError(name, err)
 	}
-	done := func() { p.state.finish(h) }
-	if err := p.state.cluster.reaper.await(ctx, c, done); err != nil {
+	if err := cl.reaper.await(ctx, c, done); err != nil {
 		return 0, err
 	}
 	defer done()
@@ -310,13 +335,17 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 		return 0, err
 	}
 	name := opName("write", oid)
-	h, err := p.state.acquire(name, p.locator)
+	n := weight(op.Steps())
+	h, err := p.admit(ctx, name, n)
 	if err != nil {
 		return 0, err
 	}
+	cl := p.state.cluster
+	cl.writes.add(n)
 
 	mtime, hasMtime := op.Mtime()
-	if p.state.cluster.mode == ModeSync {
+	if cl.mode == ModeSync {
+		defer cl.limit.release(n)
 		return p.writeSync(h, wop, oid, name, fs, wflags, mtime, hasMtime)
 	}
 
@@ -327,12 +356,15 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 		c, err = wop.OperateAsync(h.ioctx, oid, wflags)
 	}
 	p.state.giveBack(h)
-	if err != nil {
+	done := func() {
 		p.state.finish(h)
+		cl.limit.release(n)
+	}
+	if err != nil {
+		done()
 		return 0, toSeamError(name, err)
 	}
-	done := func() { p.state.finish(h) }
-	if err := p.state.cluster.reaper.await(ctx, c, done); err != nil {
+	if err := cl.reaper.await(ctx, c, done); err != nil {
 		return 0, err
 	}
 	defer done()

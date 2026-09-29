@@ -9,7 +9,8 @@
 // Mode selects how a Read or Write waits for librados:
 //
 //   - ModeSync calls the blocking Operate, which parks one OS thread per
-//     operation in flight. The context is checked before the call only.
+//     operation in flight. The context can end the wait for the in-flight
+//     limiter, not the call.
 //   - ModeCallback and ModePipe call OperateAsync and wait on the
 //     completion's Done channel or the context, so a waiting operation costs a
 //     goroutine rather than a thread. In callback mode librados completes the
@@ -20,6 +21,15 @@
 // goroutine keeps the completion, and with it every buffer the operation
 // pinned, until librados reports it done, then releases it. The seam's
 // results are left untouched in that case.
+//
+// Before submitting, every Read and Write parks on its Cluster's in-flight
+// limiter, which admits a bounded number of operations and payload bytes.
+// The bounds sit under librados's objecter throttle, objecter_inflight_ops
+// and objecter_inflight_op_bytes, which blocks the submitting thread inside
+// librados once it is reached; the limiter makes a burst wait on goroutines
+// instead. An operation holds its share until librados is done with it,
+// abandoned ones included. Stats reports what was submitted and what the
+// limiter holds.
 //
 // A Pool keeps a bounded set of I/O contexts; each operation takes one for
 // itself until its submission returns, setting the Pool's object locator on

@@ -1,6 +1,9 @@
 package goceph
 
 import (
+	"context"
+	"syscall"
+
 	"github.com/ceph/go-ceph/rados"
 
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -78,4 +81,50 @@ func SetLibradosVersion(v string) (restore func()) {
 	old := libradosVersion
 	libradosVersion = func() string { return v }
 	return func() { libradosVersion = old }
+}
+
+// Limiter exposes the in-flight limiter.
+type Limiter struct{ l *limiter }
+
+// NewLimiter returns a limiter admitting maxOps operations and maxBytes
+// payload bytes at once.
+func NewLimiter(maxOps int, maxBytes int64) Limiter { return Limiter{newLimiter(maxOps, maxBytes)} }
+
+// Acquire takes one operation and n bytes, parking on ctx.
+func (l Limiter) Acquire(ctx context.Context, n int64) error { return l.l.acquire(ctx, n) }
+
+// Release returns what Acquire took for n bytes.
+func (l Limiter) Release(n int64) { l.l.release(n) }
+
+// Stats reports what the limiter holds and how often a submission parked.
+func (l Limiter) Stats() radosclient.Stats { return l.l.stats() }
+
+// DeriveLimits sizes a limiter from the objecter options in opts, as Connect
+// does from librados's; an option opts lacks is one librados cannot read.
+func DeriveLimits(opts map[string]string) (ops int, bytes int64) {
+	return deriveLimits(context.Background(), func(name string) (string, error) {
+		v, ok := opts[name]
+		if !ok {
+			return "", &radosclient.Error{Errno: int32(syscall.ENOENT), Op: "config get " + name}
+		}
+		return v, nil
+	})
+}
+
+// Weight exposes an op's payload weight.
+var Weight = weight
+
+// ConfiguredOption configures a fresh, unconnected librados handle from cfg
+// as Connect does and reads option back from it.
+func ConfiguredOption(ctx context.Context, cfg Config, option string) (string, error) {
+	cfg = cfg.withDefaults()
+	conn, err := rados.NewConnWithClusterAndUser(cfg.Cluster, cfg.Name)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Shutdown()
+	if err := configure(ctx, conn, cfg); err != nil {
+		return "", err
+	}
+	return conn.GetConfigOption(option)
 }
