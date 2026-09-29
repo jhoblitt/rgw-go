@@ -60,8 +60,29 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   shard the delete usually reaches a shard that holds no such entry, where
   `bucket_complete_op` logs "not on disk, no action" and changes nothing
   (`cls_rgw.cc:1135-1140`), leaving the part's entry behind. The same code is
-  at v20.2.4 and on main (`rgw_putobj_processor.cc:501`). Derived from the
-  source; not reproduced.
+  at v20.2.4 and on main (`rgw_putobj_processor.cc:501`).
+  - Reproduced on v19.2.6 and v20.2.4 with a three-part upload on an
+    11-shard bucket: each part's delete went to the shard its own name
+    hashes to and logged "not on disk, no action", and the entries stayed
+    on the upload's shard. On a bucket resharded to one shard every entry
+    was removed. Each part misses on its own: its delete reaches the
+    upload's shard only by chance, about one time in 11 (6 of 48 across the
+    runs), and then removes the entry.
+  - A listing runs the sweep for an entry with a pending op or one that a
+    force-check filter selects (`rgw_rados.cc:9820-9834`). Three triggers
+    reached it and left entries behind: `radosgw-admin bucket list` on a
+    head with a pending op; S3 ListObjectsV2, where radosgw itself runs it;
+    and `radosgw-admin bucket check --check-objects --fix`, but only while
+    the upload's `.meta` entry is still indexed.
+  - Without `--fix`, `bucket check --check-objects` never reaches the sweep:
+    `check_object_index` returns -EINVAL before it lists anything
+    (`rgw_bucket.cc:431-434`), and radosgw-admin discards the error
+    (`rgw_admin.cc:8742`).
+  - With `--fix` and no `.meta` entry, `check_bad_index_multipart` runs
+    first (`rgw_bucket.cc:1260`) and removes every part entry of the upload
+    through `remove_objs_from_index`, which hashes each part by its upload's
+    key (`rgw_rados.cc:10278`). The sweep's deletes then find nothing, which
+    hides the defect.
 - **Releases:** every release since bucket index sharding added the hash
   source (8a04c0a61bc, first in v0.92); the sweep itself dates from
   e5dc46f6aa9 (2012) and has only been refactored since. Checked at v19.2.6,
@@ -71,21 +92,29 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   would leave.
 - **Upstream:** [#81121](https://tracker.ceph.com/issues/81121), filed after a
   full-text tracker and all-time pull-request search (2026-09-29) found no
-  report or fix. The symptom is on record, undiagnosed, in journals of
-  [#16767](https://tracker.ceph.com/issues/16767) and
-  [#44660](https://tracker.ceph.com/issues/44660): `radosgw-admin bucket check
-  --check-objects --fix` removed leftover part entries only on unsharded
-  buckets, and users resharded to 0 shards to clear them. Both issues were
-  closed by [ceph/ceph#49709](https://github.com/ceph/ceph/pull/49709), which
-  fixed a different cause. The same wrong-shard mistake with multipart entries
-  was fixed at other call sites: resharding
+  report or fix. The same wrong-shard mistake with multipart entries was
+  fixed at other call sites: resharding
   ([#43583](https://tracker.ceph.com/issues/43583),
   [ceph/ceph#32617](https://github.com/ceph/ceph/pull/32617)), `bi put`
   ([#53248](https://tracker.ceph.com/issues/53248),
   [ceph/ceph#43908](https://github.com/ceph/ceph/pull/43908)) and `bucket
   check --fix` ([#53874](https://tracker.ceph.com/issues/53874),
-  [ceph/ceph#46030](https://github.com/ceph/ceph/pull/46030)).
-- **Found:** phase 1 plan review, 2026-09-28; verified 2026-09-29.
+  [ceph/ceph#46030](https://github.com/ceph/ceph/pull/46030)). The last is
+  the bug that journals of [#16767](https://tracker.ceph.com/issues/16767)
+  and [#44660](https://tracker.ceph.com/issues/44660) describe, where `bucket
+  check --check-objects --fix` removed leftover part entries only on
+  unsharded buckets. `bucket check --fix` removes the part entries of an
+  upload with no `.meta` entry through `remove_objs_from_index`, which until
+  the fix, 0521c2ae830, sent every removal to `.dir.<bucket_id>`, the index
+  object only an unsharded bucket has (`rgw_rados.cc:9111` and `:9132`,
+  `svc_bi_rados.cc:97-119` at 0521c2ae830^). The fix is in v18.0.0 and
+  later, and on quincy from v17.2.8. #53874's pull request field names
+  [ceph/ceph#44580](https://github.com/ceph/ceph/pull/44580), an earlier
+  version of the fix that was closed unmerged. #16767 and #44660 were closed by
+  [ceph/ceph#49709](https://github.com/ceph/ceph/pull/49709), which fixed
+  another cause.
+- **Found:** phase 1 plan review, 2026-09-28; verified 2026-09-29;
+  reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
 
 ## cls_rgw complete_op writes a stale epoch back when it cancels
 
@@ -118,10 +147,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     the copy above the cancel branch.
 - **Releases:** v17.2.0 and later, and pacific from v16.2.12, which carries
   the backport 8c67a931c9e; checked at v19.2.6, v20.2.4 and main.
-- **rgw-go:** meets it as radosgw does, because the class decides; no client
-  can work around it. Whether rgw-go's own cancel also triggers the
-  explicit-cancel case depends on the version it sends, which is phase 1's
-  write path (unit W) to settle.
+- **rgw-go:** meets it as radosgw does until a release carries the class
+  fix: the class decides, so no client can work around it. By the owner's
+  decision, phase 1's cancel (unit W) sends radosgw's -1:0 version, so
+  rgw-go meets the explicit-cancel case too.
 - **Upstream:** [#80894](https://tracker.ceph.com/issues/80894), filed
   2026-09-26 with the same analysis, both triggers and the regression from
   8b27472bbd8; its backports are tentacle and umbrella. Our
@@ -258,6 +287,97 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   [#75958](https://tracker.ceph.com/issues/75958), a crash when
   rgw_gc_max_objs changes at runtime, is related but has a different trigger.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27.
+
+## radosgw truncates a long aws-chunked trailer section instead of rejecting it
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** at v20.2.4 `AWSv4ComplMulti::complete` reads the trailer
+  section into a 256-byte buffer but caps each read at 256 - pos - 1 bytes
+  (`rgw_auth_s3.cc:1573-1576`; v19.2.6 `:1596-1599`). beast answers a
+  0-byte read with 0 (`rgw_asio_frontend.cc:152-175`), so the position
+  stops at 255, and the size check `tbuf_pos == trailer_buf_size` never
+  fires (`rgw_auth_s3.cc:1585-1590`; v19.2.6 `:1608-1613`). Its error,
+  ERR_LIMIT_EXCEEDED, is 409 LimitExceeded (`rgw_common.cc:87`). A longer
+  section is silently cut at 255 bytes.
+  - A signed trailer (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`) whose
+    `x-amz-trailer-signature` line is cut fails with 403
+    SignatureDoesNotMatch (`rgw_auth_s3.cc:1663-1667`, v19.2.6
+    `:1686-1690`; `rgw_common.cc:92`). Measured on v19.2.6 and v20.2.4:
+    signed sections up to 257 bytes pass, since only the closing CRLF is
+    lost, and longer ones fail with 403. A signed SHA512 trailer is 290
+    bytes, so every signed SHA512 upload fails, on Squid too, which ignores
+    checksums but still fails the request; v20.2.4 supports SHA512
+    (`rgw_cksum.h:49`). A signed SHA256 trailer is 246 bytes and passes.
+  - On v20.2.4 an unsigned section (`STREAMING-UNSIGNED-PAYLOAD-TRAILER`)
+    whose checksum line falls past the cut is accepted, and the client's
+    value is never compared: with no expected checksum, PutObj stores the
+    one radosgw computed (`rgw_op.cc:4757-4790`).
+  - Latent: the copy and the reads into the buffer write past the end of an
+    empty `static_vector` (`rgw_auth_s3.cc:1569-1576`), which works only
+    because its inline capacity is 256.
+  - The same code is on main (`rgw_auth_s3.cc:1616` and `:1625`,
+    2026-09-29).
+- **Releases:** v19.1.0 and later, so every Squid and Tentacle release, and
+  reef from v18.2.5; absent at v18.2.4. Checked at v18.2.5, v18.2.8,
+  v19.1.0, v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1 (unit A) bounds the trailer section at 1 KiB and
+  answers 409 LimitExceeded above it, since the largest legitimate section,
+  a signed SHA512 trailer, is 290 bytes. That is a difference from radosgw,
+  which unit A records in `docs/exclusions.md`.
+- **Upstream:** [#81122](https://tracker.ceph.com/issues/81122). The trailer
+  code came with [ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856),
+  the fix for [#63153](https://tracker.ceph.com/issues/63153), and reached
+  reef through [ceph/ceph#58435](https://github.com/ceph/ceph/pull/58435).
+  [ceph/ceph#64934](https://github.com/ceph/ceph/pull/64934) rewrote the
+  trailer parse but kept this read loop, and was closed unmerged.
+- **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
+  on disposable Squid and Tentacle clusters.
+
+## radosgw accepts a negative or overflowing aws-chunked chunk size
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** at v19.2.6 `AWSv4ComplMulti::ChunkMeta::create_next` reads
+  each chunk size with `std::strtoull(metabuf, &data_field_end, 16)` and
+  rejects only a parse that consumed nothing (`rgw_auth_s3.cc:1127-1132`);
+  errno is never checked. strtoull negates a leading `-` in unsigned
+  arithmetic and saturates on overflow, so "-1" and any size of more than
+  16 significant hex digits become 2^64-1. The chunk's end,
+  `offset + data_length`, then wraps (`:1095-1108`), and the rest of the
+  current read is taken as this chunk's data, the next chunk's framing
+  included. The same code is at v20.2.4 (`:1104-1109`, `:1072-1085`).
+  - Measured on v19.2.6 and v20.2.4, with identical results. An unsigned
+    upload (`STREAMING-UNSIGNED-PAYLOAD-TRAILER`) of two 48-byte chunks
+    whose first size is "-1" or `1ffffffffffffffff` is answered 200 and
+    stored corrupted: chunk one, then the six framing bytes between the chunks,
+    then the first 42 bytes of chunk two. A single-chunk upload is not
+    corrupted, since the object is capped at `x-amz-decoded-content-length`
+    (`:1534-1542`).
+  - The same upload, signed (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`), fails
+    with 400 XAmzContentSHA256Mismatch: the misframed bytes are hashed as
+    one chunk, so the chunk-signature check that `complete()` makes for the
+    last data chunk fails (`:1557-1563`), and
+    `RGWOp::do_aws4_auth_completion` reports a failed `complete()` as that
+    error (`rgw_op.cc:1370-1371`; v20.2.4 `:1607-1608`). A signed
+    single-chunk upload with a malformed size is accepted with the exact
+    bytes.
+  - On main `create_next` no longer rejects even a parse that consumed
+    nothing (`rgw_auth_s3.cc:1146-1151`, 2026-09-29).
+- **Releases:** every release since v12.1.0; checked at v19.2.6, v20.2.4 and
+  main.
+- **rgw-go:** phase 1 (unit A) accepts a chunk size only as strict hex, 1 to
+  16 digits. That is a difference from radosgw, which unit A records in
+  `docs/exclusions.md`.
+- **Upstream:** [#81123](https://tracker.ceph.com/issues/81123). The parse
+  came with def8f6412a5, in
+  [ceph/ceph#14885](https://github.com/ceph/ceph/pull/14885), and
+  [ceph/ceph#63326](https://github.com/ceph/ceph/pull/63326) dropped its one
+  check on main. [#21003](https://tracker.ceph.com/issues/21003) and
+  [#45790](https://tracker.ceph.com/issues/45790) concern the same lenient
+  chunk-metadata parse with other inputs; the latter's
+  [ceph/ceph#35350](https://github.com/ceph/ceph/pull/35350) was closed
+  unmerged.
+- **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
+  on disposable Squid and Tentacle clusters.
 
 ## The 2pc queue's reserved size drifts upward
 
