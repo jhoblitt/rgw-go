@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+//counterfeiter:generate . Cluster
+
 // Cluster is one connected RADOS client.
 type Cluster interface {
 	// Pool opens an I/O context on pool within namespace ("" for the default namespace).

@@ -14,3 +14,5 @@
 // context error the op's results are undefined and callers must not read
 // them: the implementation may still fill them when the completion fires.
 package radosclient
+
+//go:generate go tool counterfeiter -generate
