@@ -46,9 +46,13 @@ type Request struct {
 	Body io.Reader
 	// ContentLength is the declared length, -1 when unknown.
 	ContentLength int64
-	RemoteAddr    string
-	Referer       string
-	TLS           bool
+	// RemoteAddr is the client's address as net/http gives it, host and port.
+	// radosgw's REMOTE_ADDR is the address alone (rgw_asio_client.cc:92 at
+	// v19.2.6 and v20.2.4), so consumers take the address through one shared
+	// helper that strips the port, never from this string directly.
+	RemoteAddr string
+	Referer    string
+	TLS        bool
 
 	// Tenant is the bucket's tenant: explicit from "tenant:bucket" in the URL,
 	// otherwise the identity's tenant once auth has run. "" is the default tenant.
