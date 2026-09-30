@@ -114,17 +114,8 @@ func DeriveLimits(opts map[string]string) (ops int, bytes int64) {
 // Weight exposes an op's payload weight.
 var Weight = weight
 
-// ConfiguredOption configures a fresh, unconnected librados handle from cfg
-// as Connect does and reads option back from it.
+// ConfiguredOption reads one option through ConfiguredOptions.
 func ConfiguredOption(ctx context.Context, cfg Config, option string) (string, error) {
-	cfg = cfg.withDefaults()
-	conn, err := rados.NewConnWithClusterAndUser(cfg.Cluster, cfg.Name)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Shutdown()
-	if err := configure(ctx, conn, cfg); err != nil {
-		return "", err
-	}
-	return conn.GetConfigOption(option)
+	vals, err := ConfiguredOptions(ctx, cfg, option)
+	return vals[option], err
 }
