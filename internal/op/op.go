@@ -38,8 +38,9 @@ type Op interface {
 	// which the authorizer marks with BeforeVerify, reaches Run with its mark.
 	VerifyPermission(ctx context.Context, r *Request) error
 	Execute(ctx context.Context, r *Request) error
-	// Complete records usage and stats; it never fails the request. It runs
-	// once Execute has run, whatever Execute returned.
+	// Complete runs once Execute has run, whatever Execute returned, and
+	// never fails the request. It logs no usage: the protocol handler does,
+	// through LogUsage, once the response is written.
 	Complete(ctx context.Context, r *Request)
 }
 

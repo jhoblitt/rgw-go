@@ -1,0 +1,706 @@
+package s3_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/xml"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/memstore"
+	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/op/opfakes"
+	"github.com/jhoblitt/rgw-go/internal/s3"
+	"github.com/jhoblitt/rgw-go/internal/xmltext"
+)
+
+func testEnv(store *memstore.Store) *op.Env {
+	return &op.Env{
+		Zone: store, Users: store, Buckets: store, Objects: store, Multipart: store, Stats: store,
+		Usage: store, Metadata: store, Authz: op.OwnerOnly{}, Metrics: op.NopMetrics{},
+		Now: func() time.Time { return time.Unix(0x68d7a1b2, 0) }, HostID: "4155-z-zg",
+	}
+}
+
+func testConfig(cfg s3.Config) s3.Config {
+	if cfg.TransIDSuffix == "" {
+		cfg.TransIDSuffix = "-4155-z"
+	}
+	if cfg.ServerHeader == "" {
+		cfg.ServerHeader = "Ceph Object Gateway (squid)"
+	}
+	return cfg
+}
+
+func newHandler(store *memstore.Store, auth s3.Authenticator, cfg s3.Config) *s3.Handler {
+	return s3.NewHandler(testEnv(store), auth, testConfig(cfg))
+}
+
+// authAs authenticates every request as rec's user.
+func authAs(rec *op.UserRecord) s3.Authenticator {
+	return s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+		return &op.AuthResult{Identity: op.Identity{User: &rec.Info, Owner: meta.UserOwner(rec.Info.UserID), OpMask: rec.Info.OpMask}}, nil
+	})
+}
+
+// serveReq sends method and target through h under the spec's context; hdr
+// alternates header names and values.
+func serveReq(h http.Handler, method, target string, body io.Reader, hdr ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(GinkgoT().Context(), method, target, body)
+	for i := 0; i+1 < len(hdr); i += 2 {
+		req.Header.Set(hdr[i], hdr[i+1])
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// ok is a route that answers 200 and records the request it served.
+func ok(seen **op.Request) s3.HandlerFunc {
+	return func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+		*seen = r
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}
+}
+
+var _ = Describe("Handler", func() {
+	var (
+		store *memstore.Store
+		h     *s3.Handler
+	)
+	BeforeEach(func() {
+		store = memstore.New(memstore.Config{})
+		h = newHandler(store, s3.AnonymousOnly{}, s3.Config{})
+	})
+	get := func(target string, hdr ...string) *httptest.ResponseRecorder {
+		return serveReq(h, http.MethodGet, target, nil, hdr...)
+	}
+	It("answers an anonymous GET / with 200 and an empty ListAllMyBucketsResult, the probe path", func() {
+		rec := get("/")
+		Expect(rec.Code).To(Equal(200))
+		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
+		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?>` +
+			`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+			`<Owner><ID>anonymous</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>`))
+	})
+	It("stamps x-amz-request-id and Server on every response", func() {
+		rec := get("/")
+		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000001-0068d7a1b2-4155-z"))
+		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
+		Expect(get("/").Header().Get("x-amz-request-id")).To(HavePrefix("tx000000000000000000002-"), "sequence advances")
+		rec = serveReq(h, "PATCH", "/", nil)
+		Expect(rec.Code).To(Equal(405))
+		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000003-0068d7a1b2-4155-z"), "refused before dispatch")
+		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
+	})
+	It("renders radosgw's error document for a route without a handler", func() {
+		rec := get("/plain?location")
+		Expect(rec.Code).To(Equal(501))
+		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
+		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message></Message>` +
+			`<BucketName>plain</BucketName><RequestId>tx000000000000000000001-0068d7a1b2-4155-z</RequestId><HostId>4155-z-zg</HostId></Error>`))
+		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
+		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "end_header's error branch sets the length through dump_content_length, rgw_rest.cc:620-624")
+	})
+	It("answers 405 MethodNotAllowed where radosgw has no op", func() {
+		rec := serveReq(h, http.MethodPost, "/", nil)
+		Expect(rec.Code).To(Equal(405))
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>MethodNotAllowed</Code>"))
+		Expect(rec.Body.String()).NotTo(ContainSubstring("<BucketName>"), "no bucket in a service-scope error")
+	})
+	It("answers 400 for a NUL in the path before dispatch", func() {
+		rec := get("/plain/a%00b")
+		Expect(rec.Code).To(Equal(400))
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidRequest</Code>"))
+		Expect(rec.Body.String()).NotTo(ContainSubstring("<BucketName>"))
+	})
+	DescribeTable("never serves a signed request as anonymous",
+		func(target string, hdr ...string) {
+			rec := get(target, hdr...)
+			Expect(rec.Code).To(Equal(501), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+			Expect(rec.Body.String()).NotTo(ContainSubstring("<BucketName>"), "authentication runs before postauth_init names the bucket")
+		},
+		Entry("Authorization header", "/plain", "Authorization", "AWS4-HMAC-SHA256 Credential=x"),
+		Entry("SigV4 query signature", "/?X-Amz-Signature=abc"),
+		Entry("SigV4 query signature, lowercased", "/?x-amz-signature=abc"),
+		Entry("SigV4 query credential", "/?X-Amz-Credential=abc"),
+		Entry("SigV2 query key", "/?AWSAccessKeyId=abc"),
+		Entry("SigV2 query signature", "/?Signature=abc"),
+	)
+	It("answers 503 SlowDown past rgw_max_concurrent_requests and stays healthy for the probe", func(ctx SpecContext) {
+		release := make(chan struct{})
+		var once sync.Once
+		unblock := func() { once.Do(func() { close(release) }) }
+		DeferCleanup(unblock)
+		m := &opfakes.FakeMetrics{}
+		env := testEnv(store)
+		env.Metrics = m
+		slow := s3.NewHandler(env, s3.AnonymousOnly{}, testConfig(s3.Config{MaxConcurrent: 1}))
+		slow.Register("list_buckets", func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+			<-release
+			w.WriteHeader(200)
+			return nil
+		})
+		first := make(chan int, 1)
+		go func() { // stops once release closes, at the latest when the spec ends
+			rec := httptest.NewRecorder()
+			slow.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil))
+			first <- rec.Code
+		}()
+		Eventually(slow.InFlight).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(1))
+		rec := serveReq(slow, http.MethodGet, "/", nil)
+		Expect(rec.Code).To(Equal(503))
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>SlowDown</Code>"))
+		Expect(rec.Header().Get("x-amz-request-id")).NotTo(BeEmpty())
+		Expect(serveReq(slow, http.MethodGet, "/plain/a%00b", nil).Code).To(Equal(400), "a request refused before dispatch is not counted")
+		name, status, _, _, _ := m.ObserveArgsForCall(0)
+		Expect([]any{name, status}).To(Equal([]any{"list_buckets", 503}), "the cap refuses a dispatched op, which rgw_log_op names")
+		name, status, _, _, _ = m.ObserveArgsForCall(1)
+		Expect([]any{name, status}).To(Equal([]any{"unknown", 400}))
+		unblock()
+		Expect(<-first).To(Equal(200))
+		Expect(slow.InFlight()).To(BeZero())
+	})
+	It("suspends a suspended user", func() {
+		alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, Suspended: 1, OpMask: op.OpTypeAll})
+		h = newHandler(store, authAs(alice), s3.Config{})
+		rec := get("/")
+		Expect(rec.Code).To(Equal(403))
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>UserSuspended</Code>"))
+		rec = get("/plain")
+		Expect(rec.Code).To(Equal(403))
+		Expect(rec.Body.String()).To(ContainSubstring("<BucketName>plain</BucketName>"), "postauth_init has named the bucket")
+	})
+	It("gives a bucket named in the URL the identity's tenant unless the URL named one", func() {
+		var seen *op.Request
+		as := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+			return &op.AuthResult{Identity: op.Identity{User: &meta.UserInfo{}, Tenant: "t1", OpMask: op.OpTypeAll}}, nil
+		})
+		h = newHandler(store, as, s3.Config{})
+		h.Register("stat_bucket", ok(&seen))
+		serveReq(h, http.MethodHead, "/plain", nil)
+		Expect(seen.Tenant).To(Equal("t1"), "identity tenant")
+		Expect(seen.Bucket).To(Equal("plain"))
+		serveReq(h, http.MethodHead, "/t2:plain", nil)
+		Expect(seen.Tenant).To(Equal("t2"), "explicit tenant")
+		Expect(seen.Bucket).To(Equal("plain"))
+	})
+	DescribeTable("names the bucket in an error document only once postauth_init has run",
+		func(method, target, body string, hdr ...string) {
+			rec := serveReq(h, method, target, nil, hdr...)
+			Expect(rec.Body.String()).To(ContainSubstring(body))
+			if strings.Contains(body, "<BucketName>") {
+				return
+			}
+			Expect(rec.Body.String()).NotTo(ContainSubstring("<BucketName>"))
+		},
+		Entry("a route without an op, refused in get_op", http.MethodPut, "/plain?logging", "<Code>MethodNotAllowed</Code>"),
+		Entry("an object subresource on a bucket, refused in get_handler", http.MethodGet, "/plain?partNumber=1", "<Code>MethodNotAllowed</Code>"),
+		Entry("a bucket token with nothing after its colon, never the unsplit token", http.MethodGet, "/t1:", "<Code>InvalidBucketName</Code>"),
+		Entry("a bad tenant, after the bucket is named", http.MethodGet, "/bad-t:plain", "<BucketName>plain</BucketName>"),
+		Entry("an overlong object name, after the bucket is named", http.MethodGet, "/plain/"+strings.Repeat("k", 1025), "<BucketName>plain</BucketName>"),
+	)
+	// RGWHandler_REST_S3::init parses x-amz-copy-source inside get_handler,
+	// after get_handler's own refusal of an object subresource on a bucket and
+	// before get_op's refusals and authentication (rgw_process.cc:310-327 at
+	// v19.2.6, rgw_rest_s3.cc:5026-5041).
+	DescribeTable("refuses a copy source radosgw cannot parse where RGWHandler_REST_S3::init does",
+		func(method, target string, code int, errCode string, hdr ...string) {
+			rec := serveReq(h, method, target, nil, hdr...)
+			Expect(rec.Code).To(Equal(code), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>" + errCode + "</Code>"))
+		},
+		Entry("on any method and scope", http.MethodGet, "/plain/k", 400, "InvalidArgument", "x-amz-copy-source", "/src"),
+		Entry("with an empty key", http.MethodPut, "/plain/k", 400, "InvalidArgument", "x-amz-copy-source", "src/"),
+		Entry("before get_op's refusal of an unknown method", "PATCH", "/plain/k", 400, "InvalidArgument", "x-amz-copy-source", "/src"),
+		Entry("before get_op's refusal of a route without an op", http.MethodPut, "/plain?logging", 400, "InvalidArgument", "x-amz-copy-source", "/src"),
+		Entry("before authentication", http.MethodGet, "/plain/k", 400, "InvalidArgument",
+			"x-amz-copy-source", "/src", "Authorization", "AWS4-HMAC-SHA256 Credential=x"),
+		Entry("after get_handler's refusal of an object subresource on a bucket", http.MethodPut, "/plain?partNumber=1", 405, "MethodNotAllowed",
+			"x-amz-copy-source", "/src"),
+		Entry("not with x-amz-copy-source-range, which init leaves unparsed", http.MethodPut, "/plain/k", 501, "NotImplemented",
+			"x-amz-copy-source", "/src", "x-amz-copy-source-range", "bytes=0-1"),
+	)
+	It("records the status and byte counts on the request for metrics", func() {
+		m := &opfakes.FakeMetrics{}
+		env := &op.Env{Zone: store, Users: store, Authz: op.OwnerOnly{}, Metrics: m}
+		h = s3.NewHandler(env, s3.AnonymousOnly{}, s3.Config{})
+		rec := get("/")
+		Expect(m.ObserveCallCount()).To(Equal(1))
+		name, status, _, in, out := m.ObserveArgsForCall(0)
+		Expect(name).To(Equal("list_buckets"))
+		Expect(status).To(Equal(200))
+		Expect(in).To(BeZero())
+		Expect(out).To(BeEquivalentTo(rec.Body.Len()))
+		Expect(m.InFlightCallCount()).To(Equal(2), "one increment, one decrement")
+		Expect(m.InFlightArgsForCall(0) + m.InFlightArgsForCall(1)).To(BeZero())
+	})
+	It("observes a request refused before dispatch under radosgw's unknown op name", func() {
+		m := &opfakes.FakeMetrics{}
+		env := testEnv(store)
+		env.Metrics = m
+		h = s3.NewHandler(env, s3.AnonymousOnly{}, testConfig(s3.Config{}))
+		serveReq(h, http.MethodPost, "/", nil)
+		Expect(m.ObserveCallCount()).To(Equal(1))
+		name, status, _, _, _ := m.ObserveArgsForCall(0)
+		Expect(name).To(Equal("unknown"), "rgw_log_op names a request no op serves unknown, rgw_log.cc:556")
+		Expect(status).To(Equal(405))
+	})
+	// process_request dispatches, sets s->op_type and only then authenticates
+	// (rgw_process.cc:325-345 at v19.2.6), so the authenticator sees the
+	// dispatched op's payload forms at the cluster's release.
+	DescribeTable("hands the authenticator the dispatched route's payload forms",
+		func(rel denc.Release, method, target string, want op.PayloadForms) {
+			var got op.PayloadForms
+			as := s3.AuthenticatorFunc(func(_ context.Context, _ *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
+				got = payloads
+				return &op.AuthResult{Identity: op.Anonymous(), PayloadSHA256: "UNSIGNED-PAYLOAD"}, nil
+			})
+			rs := memstore.New(memstore.Config{Release: rel})
+			serveReq(newHandler(rs, as, s3.Config{}), method, target, nil)
+			Expect(got).To(Equal(want))
+		},
+		Entry("PUT object", denc.Squid, "PUT", "/plain/k", op.PayloadSigned|op.PayloadChunked),
+		Entry("GET ?location", denc.Squid, "GET", "/plain?location", op.PayloadForms(0)),
+		Entry("GET ?logging on Squid", denc.Squid, "GET", "/plain?logging", op.PayloadForms(0)),
+		Entry("GET ?logging on Tentacle", denc.Tentacle, "GET", "/plain?logging", op.PayloadSigned),
+	)
+	Describe("the request body", func() {
+		It("is the authenticator's body when it returns one, counted on put_obj as the op reads it", func() {
+			as := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+				return &op.AuthResult{Identity: op.Anonymous(), Body: strings.NewReader("decoded")}, nil
+			})
+			h = newHandler(store, as, s3.Config{})
+			var seen *op.Request
+			var got []byte
+			h.Register("put_obj", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+				seen = r
+				var err error
+				got, err = io.ReadAll(r.Body)
+				w.WriteHeader(200)
+				return err
+			})
+			serveReq(h, http.MethodPut, "/plain/k", strings.NewReader("5\r\nhello\r\n0\r\n\r\n"))
+			Expect(string(got)).To(Equal("decoded"))
+			Expect(seen.BytesIn).To(BeEquivalentTo(len("decoded")), "radosgw's accounting sits above the chunk decoder")
+		})
+		It("counts what a plain put_obj reads", func() {
+			var seen *op.Request
+			h.Register("put_obj", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+				seen = r
+				_, err := io.Copy(io.Discard, r.Body)
+				w.WriteHeader(200)
+				return err
+			})
+			serveReq(h, http.MethodPut, "/plain/k", strings.NewReader("hello"))
+			Expect(seen.BytesIn).To(BeEquivalentTo(5))
+		})
+		It("counts nothing on any other route, though the op reads a body", func() {
+			var seen *op.Request
+			var got []byte
+			h.Register("create_bucket", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+				seen = r
+				var err error
+				got, err = io.ReadAll(r.Body)
+				w.WriteHeader(200)
+				return err
+			})
+			serveReq(h, http.MethodPut, "/plain", strings.NewReader("<CreateBucketConfiguration/>"))
+			Expect(string(got)).To(Equal("<CreateBucketConfiguration/>"))
+			Expect(seen.BytesIn).To(BeZero(), "radosgw counts only PutObject's data reads, rgw_rest.cc:1082-1093 at v19.2.6")
+		})
+		It("is left unread when the op does not read it", func() {
+			body := &countingBody{r: strings.NewReader("hello")}
+			var seen *op.Request
+			h.Register("put_obj", ok(&seen))
+			serveReq(h, http.MethodPut, "/plain/k", body)
+			Expect(body.n).To(BeZero())
+			Expect(seen.BytesIn).To(BeZero())
+		})
+	})
+	Describe("route binding", func() {
+		var calls []string
+		route := func(name string) s3.HandlerFunc {
+			return func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+				calls = append(calls, name)
+				w.WriteHeader(http.StatusOK)
+				return nil
+			}
+		}
+		BeforeEach(func() { calls = nil })
+		It("binds each unit's entries to that unit's scope, so bucket and object get_acls reach different handlers", func() {
+			h = s3.NewHandlerWithForTest(testEnv(store), s3.AnonymousOnly{}, testConfig(s3.Config{}), s3.UnitHandlersForTest{
+				Bucket: map[string]s3.HandlerFunc{"get_acls": route("bucket")},
+				Object: map[string]s3.HandlerFunc{"get_acls": route("object")},
+			})
+			Expect(get("/plain?acl").Code).To(Equal(200))
+			Expect(get("/plain/k?acl").Code).To(Equal(200))
+			Expect(calls).To(Equal([]string{"bucket", "object"}))
+		})
+		It("binds a multipart entry to the one scope that routes it", func() {
+			h = s3.NewHandlerWithForTest(testEnv(store), s3.AnonymousOnly{}, testConfig(s3.Config{}), s3.UnitHandlersForTest{
+				Multipart: map[string]s3.HandlerFunc{"list_bucket_multiparts": route("uploads"), "list_multipart": route("parts")},
+			})
+			Expect(get("/plain?uploads").Code).To(Equal(200))
+			Expect(get("/plain/k?uploadId=u").Code).To(Equal(200))
+			Expect(calls).To(Equal([]string{"uploads", "parts"}))
+		})
+		It("refuses an entry whose scope never routes its name", func() {
+			Expect(func() {
+				s3.NewHandlerWithForTest(testEnv(store), s3.AnonymousOnly{}, s3.Config{}, s3.UnitHandlersForTest{
+					Object: map[string]s3.HandlerFunc{"list_buckets": route("x")},
+				})
+			}).To(PanicWith(ContainSubstring(`"list_buckets"`)))
+		})
+		It("refuses a multipart entry routed in more than one scope", func() {
+			Expect(func() {
+				s3.NewHandlerWithForTest(testEnv(store), s3.AnonymousOnly{}, s3.Config{}, s3.UnitHandlersForTest{
+					Multipart: map[string]s3.HandlerFunc{"get_acls": route("x")},
+				})
+			}).To(PanicWith(ContainSubstring(`"get_acls"`)))
+		})
+		It("refuses a scope and name bound twice", func() {
+			Expect(func() {
+				s3.NewHandlerWithForTest(testEnv(store), s3.AnonymousOnly{}, s3.Config{}, s3.UnitHandlersForTest{
+					Object:    map[string]s3.HandlerFunc{"list_multipart": route("x")},
+					Multipart: map[string]s3.HandlerFunc{"list_multipart": route("y")},
+				})
+			}).To(PanicWith(ContainSubstring(`"list_multipart"`)))
+		})
+		It("registers a name under every scope that routes it, replacing what is there", func() {
+			h.Register("get_acls", route("both"))
+			get("/plain?acl")
+			get("/plain/k?acl")
+			Expect(calls).To(Equal([]string{"both", "both"}))
+			Expect(func() { h.Register("no_such_op", route("x")) }).To(PanicWith(ContainSubstring(`"no_such_op"`)))
+		})
+		It("registers Dispatch's fallback routes outside the table", func() {
+			h.Register("list_bucket_v2", route("v2"))
+			h.Register("copy_obj", route("copy"))
+			get("/plain?list-type=2")
+			serveReq(h, http.MethodPut, "/plain/k", nil, "x-amz-copy-source", "/src/key")
+			Expect(calls).To(Equal([]string{"v2", "copy"}))
+		})
+	})
+	Describe("a panicking route", func() {
+		var m *opfakes.FakeMetrics
+		BeforeEach(func() {
+			m = &opfakes.FakeMetrics{}
+			env := testEnv(store)
+			env.Metrics = m
+			h = s3.NewHandler(env, s3.AnonymousOnly{}, testConfig(s3.Config{}))
+		})
+		It("is answered 500 when nothing was written, observed as 500 and usage-logged", func() {
+			h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error {
+				panic("boom")
+			})
+			rec := get("/")
+			Expect(rec.Code).To(Equal(500))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InternalError</Code>"))
+			name, status, _, _, _ := m.ObserveArgsForCall(0)
+			Expect([]any{name, status}).To(Equal([]any{"list_buckets", 500}))
+			Expect(store.Usage()).To(Equal([]op.UsageEntry{{
+				Owner: op.Anonymous().Owner, Time: time.Unix(0x68d7a1b2, 0), Category: "list_buckets",
+				BytesSent: uint64(rec.Body.Len()), Ops: 1,
+			}}))
+		})
+		It("is answered 500 when it comes before the bucket is named, with no bucket in the document", func() {
+			env := testEnv(store)
+			env.Metrics = m
+			boom := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+				panic("boom")
+			})
+			rec := serveReq(s3.NewHandler(env, boom, testConfig(s3.Config{})), http.MethodGet, "/plain", nil)
+			Expect(rec.Code).To(Equal(500))
+			Expect(rec.Body.String()).NotTo(ContainSubstring("<BucketName>"))
+			name, status, _, _, _ := m.ObserveArgsForCall(0)
+			Expect([]any{name, status}).To(Equal([]any{"list_bucket", 500}), "the route was dispatched")
+		})
+		It("is answered 500 when the parse panics, observed under the name for no op", func(ctx SpecContext) {
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/plain", nil)
+			req.URL = nil // net/http never serves such a request; its parse dereferences the URL
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			Expect(rec.Code).To(Equal(500))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InternalError</Code>"))
+			Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000001-0068d7a1b2-4155-z"))
+			name, status, _, _, _ := m.ObserveArgsForCall(0)
+			Expect([]any{name, status}).To(Equal([]any{"unknown", 500}))
+			Expect(store.Usage()).To(BeEmpty(), "LogUsage drops a request with no identity, as radosgw's flush does")
+		})
+		It("aborts the connection when the response is under way", func(ctx SpecContext) {
+			h.Register("list_buckets", func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+				w.WriteHeader(200)
+				if _, err := w.Write([]byte("partial")); err != nil {
+					return err
+				}
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					return err
+				}
+				panic("boom")
+			})
+			srv := httptest.NewServer(h)
+			DeferCleanup(srv.Close)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/", nil)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(resp.Body.Close)
+			Expect(resp.StatusCode).To(Equal(200))
+			b, err := io.ReadAll(resp.Body)
+			Expect(err).To(MatchError(io.ErrUnexpectedEOF), "a truncated chunked body, never a complete-looking one")
+			Expect(string(b)).To(Equal("partial"))
+			Eventually(m.ObserveCallCount).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(Equal(1))
+			_, status, _, _, _ := m.ObserveArgsForCall(0)
+			Expect(status).To(Equal(200))
+		})
+	})
+	It("counts a route that writes nothing as the 200 net/http sends", func() {
+		m := &opfakes.FakeMetrics{}
+		env := testEnv(store)
+		env.Metrics = m
+		h = s3.NewHandler(env, s3.AnonymousOnly{}, testConfig(s3.Config{}))
+		h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error { return nil })
+		Expect(get("/").Code).To(Equal(200))
+		_, status, _, _, _ := m.ObserveArgsForCall(0)
+		Expect(status).To(Equal(200), "radosgw's status defaults to 200, and LogUsage counts 0 as a failure")
+		Expect(store.Usage()).To(ConsistOf(HaveField("SuccessfulOps", BeEquivalentTo(1))))
+	})
+	It("writes no error document over a response a failing route has started", func() {
+		h.Register("list_buckets", func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+			w.WriteHeader(200)
+			if _, err := w.Write([]byte("ok")); err != nil {
+				return err
+			}
+			return op.ErrInternalError
+		})
+		rec := get("/")
+		Expect(rec.Code).To(Equal(200))
+		Expect(rec.Body.String()).To(Equal("ok"))
+	})
+	Describe("usage logging", func() {
+		It("logs a successful ListBuckets once, with its final status and bytes", func() {
+			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+			h = newHandler(store, authAs(alice), s3.Config{})
+			rec := get("/")
+			Expect(rec.Code).To(Equal(200))
+			Expect(store.Usage()).To(Equal([]op.UsageEntry{{
+				Owner: meta.UserOwner(alice.Info.UserID), Bucket: "", Time: time.Unix(0x68d7a1b2, 0), Category: "list_buckets",
+				BytesSent: uint64(rec.Body.Len()), Ops: 1, SuccessfulOps: 1,
+			}}))
+		})
+		It("logs a refused request as LogUsage decides", func() {
+			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, Suspended: 1, OpMask: op.OpTypeAll})
+			h = newHandler(store, authAs(alice), s3.Config{})
+			rec := get("/")
+			Expect(rec.Code).To(Equal(403))
+			Expect(store.Usage()).To(Equal([]op.UsageEntry{{
+				Owner: meta.UserOwner(alice.Info.UserID), Time: time.Unix(0x68d7a1b2, 0), Category: "list_buckets",
+				BytesSent: uint64(rec.Body.Len()), Ops: 1,
+			}}), "rgw_log_op runs in process_request's tail for a refused request too")
+			store = memstore.New(memstore.Config{})
+			h = newHandler(store, s3.AnonymousOnly{}, s3.Config{})
+			Expect(serveReq(h, http.MethodPost, "/", nil).Code).To(Equal(405))
+			Expect(store.Usage()).To(BeEmpty(), "no identity, so radosgw's flush drops the entry")
+		})
+		It("files a route under its radosgw op name", func() {
+			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+			h = newHandler(store, authAs(alice), s3.Config{})
+			Expect(get("/?usage").Code).To(Equal(501))
+			Expect(store.Usage()).To(ConsistOf(HaveField("Category", "get_self_usage")))
+		})
+	})
+})
+
+// countingBody counts what is read from it.
+type countingBody struct {
+	r io.Reader
+	n int
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n += n
+	return n, err
+}
+
+var _ = Describe("response writer", func() {
+	var store *memstore.Store
+	BeforeEach(func() { store = memstore.New(memstore.Config{}) })
+	serve := func(fn s3.HandlerFunc) *httptest.ResponseRecorder {
+		h := newHandler(store, s3.AnonymousOnly{}, s3.Config{})
+		h.Register("list_buckets", fn)
+		return serveReq(h, http.MethodGet, "/", nil)
+	}
+	It("adds no Accept-Ranges to a Content-Length the route set itself", func() {
+		rec := serve(func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+			w.Header().Set("Content-Length", "2")
+			w.WriteHeader(200)
+			_, err := w.Write([]byte("ok"))
+			return err
+		})
+		Expect(rec.Header().Get("Content-Length")).To(Equal("2"))
+		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "only dump_content_length adds it, rgw_rest.cc:388-397")
+	})
+	It("sets a length the op names together with Accept-Ranges, as dump_content_length does", func() {
+		h := http.Header{}
+		s3.SetContentLength(h, 1024)
+		Expect(h).To(Equal(http.Header{"Content-Length": {"1024"}, "Accept-Ranges": {"bytes"}}))
+	})
+	It("renders a WriteXML success with its length, no Accept-Ranges and the formatter's escaping", func() {
+		type result struct {
+			XMLName xml.Name     `xml:"Result"`
+			Name    xmltext.Text `xml:"Name"`
+		}
+		rec := serve(func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+			s3.WriteXML(w, r, 200, result{Name: `a&b "c" 'd' <e>`})
+			return nil
+		})
+		body := `<?xml version="1.0" encoding="UTF-8"?><Result><Name>a&amp;b &quot;c&quot; &apos;d&apos; &lt;e&gt;</Name></Result>`
+		Expect(rec.Body.String()).To(Equal(body))
+		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
+		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(len(body))))
+		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "end_header named no length, so the frontend's buffering filter adds this one without it")
+	})
+	It("escapes an error message as dump_string does and sends the length with Accept-Ranges", func() {
+		rec := serve(func(context.Context, http.ResponseWriter, *op.Request) error {
+			return op.ErrInvalidArgument.WithMessage(`bad "x" & 'y'`)
+		})
+		Expect(rec.Code).To(Equal(400))
+		Expect(rec.Body.String()).To(ContainSubstring(`<Message>bad &quot;x&quot; &amp; &apos;y&apos;</Message>`))
+		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
+		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"))
+	})
+	It("gives a streaming op a sink that merges its headers before the status", func() {
+		rec := serve(func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+			w.Header().Set("x-amz-request-id", "tx1")
+			sink := s3.SinkOfForTest(w)
+			h := http.Header{"Content-Range": {"bytes 0-1/4"}}
+			s3.SetContentLength(h, 2)
+			sink.WriteHeader(206, h)
+			if _, err := sink.Write([]byte("ab")); err != nil {
+				return err
+			}
+			return sink.Flush()
+		})
+		Expect(rec.Code).To(Equal(206))
+		Expect(rec.Header().Get("Content-Range")).To(Equal("bytes 0-1/4"))
+		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx1"), "headers the route set first stay")
+		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "the op's header map reaches the response whole")
+		Expect(rec.Body.String()).To(Equal("ab"))
+		Expect(rec.Flushed).To(BeTrue(), "Flush reaches the connection through the wrapper")
+	})
+	Describe("x-amz-request-charged", func() {
+		var alice, bob *op.UserRecord
+		BeforeEach(func() {
+			alice = store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+			bob = store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "bob"}, OpMask: op.OpTypeAll})
+		})
+		// statBucket serves HEAD /plain as user with a requester-pays bucket
+		// that alice owns loaded, answering with fail when it is set.
+		statBucket := func(user *op.UserRecord, fail error) *httptest.ResponseRecorder {
+			h := newHandler(store, authAs(user), s3.Config{})
+			h.Register("stat_bucket", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+				r.BucketRec = &op.BucketRecord{Info: meta.BucketInfo{Owner: meta.UserOwner(alice.Info.UserID), RequesterPays: true}}
+				if fail != nil {
+					return fail
+				}
+				s3.SetCommonHeaders(w, r)
+				w.WriteHeader(http.StatusOK)
+				return nil
+			})
+			return serveReq(h, http.MethodHead, "/plain", nil)
+		}
+		It("is sent to a requester that does not own the requester-pays bucket", func() {
+			Expect(statBucket(bob, nil).Header().Get("x-amz-request-charged")).To(Equal("requester"))
+		})
+		It("is not sent to the bucket's owner", func() {
+			Expect(statBucket(alice, nil).Header()).NotTo(HaveKey("X-Amz-Request-Charged"))
+		})
+		It("is not sent with an error, which end_header sends only when !is_err()", func() {
+			rec := statBucket(bob, op.ErrAccessDenied)
+			Expect(rec.Code).To(Equal(403))
+			Expect(rec.Header()).NotTo(HaveKey("X-Amz-Request-Charged"))
+		})
+	})
+	Describe("a document sent whole in one chunk", func() {
+		type doc struct {
+			XMLName xml.Name     `xml:"Doc"`
+			Name    xmltext.Text `xml:"Name"`
+		}
+		var srv *httptest.Server
+		BeforeEach(func() {
+			h := newHandler(store, s3.AnonymousOnly{}, s3.Config{})
+			h.Register("list_buckets", func(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
+				s3.WriteChunkedXMLForTest(ctx, w, r, doc{Name: "a<b"})
+				return nil
+			})
+			srv = httptest.NewServer(h)
+			DeferCleanup(srv.Close)
+		})
+		It("goes out chunked, with neither Content-Length nor Accept-Ranges", func(ctx SpecContext) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/", nil)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(resp.Body.Close)
+			Expect(resp.TransferEncoding).To(Equal([]string{"chunked"}))
+			Expect(resp.ContentLength).To(BeEquivalentTo(-1))
+			Expect(resp.Header.Get("Accept-Ranges")).To(BeEmpty())
+			Expect(resp.Header.Get("Content-Type")).To(Equal("application/xml"))
+			Expect(resp.Header.Get("x-amz-request-id")).NotTo(BeEmpty())
+			b, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(b)).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Doc><Name>a&lt;b</Name></Doc>`))
+		})
+		It("answers a HEAD with Content-Length 0 and no body", func(ctx SpecContext) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead, srv.URL+"/", nil)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(resp.Body.Close)
+			Expect(resp.TransferEncoding).To(BeEmpty())
+			Expect(resp.Header.Get("Content-Length")).To(Equal("0"))
+			Expect(resp.Header.Get("Accept-Ranges")).To(BeEmpty())
+		})
+	})
+})
+
+// errReader fails every read with err.
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+var _ = Describe("AnonymousOnly", func() {
+	It("authenticates an unsigned request as anonymous, its payload unsigned", func(ctx SpecContext) {
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/?versionId=x", errReader{errors.New("unread")})
+		res, err := s3.AnonymousOnly{}.Authenticate(ctx, req, op.PayloadSigned)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Identity).To(Equal(op.Anonymous()))
+		Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
+		Expect(res.Body).To(BeNil(), "the request keeps its own body")
+	})
+	It("refuses credentials however the query spells their names", func(ctx SpecContext) {
+		for _, target := range []string{"/?X-AMZ-CREDENTIAL=a", "/?awsaccesskeyid=a", "/?signature=a"} {
+			_, err := s3.AnonymousOnly{}.Authenticate(ctx, httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil), 0)
+			Expect(err).To(MatchError(op.ErrNotImplemented), target)
+		}
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", bytes.NewReader(nil))
+		req.Header.Set("Authorization", "")
+		_, err := s3.AnonymousOnly{}.Authenticate(ctx, req, 0)
+		Expect(err).To(MatchError(op.ErrNotImplemented), "an empty Authorization header")
+	})
+})
