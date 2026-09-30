@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,6 +26,21 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	cmd := newRootCmd(stdin, stdout, stderr)
 	cmd.SetArgs(args)
 	return cmd.ExecuteContext(ctx)
+}
+
+// Argv rewrites os.Args for cobra. When the binary was invoked as radosgw,
+// which is how Rook launches it, everything after the program name is
+// ceph's argv and becomes "serve -- <args>", so cobra stays the one entry
+// point and rgw-go's own flags come from RGW_GO_* variables. Otherwise it is
+// os.Args[1:] unchanged.
+func Argv(argv []string) []string {
+	if len(argv) == 0 {
+		return nil
+	}
+	if filepath.Base(argv[0]) == "radosgw" {
+		return append([]string{"serve", "--"}, argv[1:]...)
+	}
+	return argv[1:]
 }
 
 func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {

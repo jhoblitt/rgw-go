@@ -20,7 +20,8 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+	// Not os.Args[1:]: installed as radosgw, the whole command line is ceph's.
+	if err := cli.Run(ctx, cli.Argv(os.Args), os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "rgw-go:", err)
 		return 1
 	}

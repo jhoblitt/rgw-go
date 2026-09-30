@@ -25,3 +25,17 @@ var _ = Describe("Run", func() {
 		Expect(err).To(MatchError(ContainSubstring("not implemented")))
 	})
 })
+
+var _ = Describe("Argv", func() {
+	It("passes rgw-go's own argv through", func() {
+		Expect(cli.Argv([]string{"/usr/bin/rgw-go", "version"})).To(Equal([]string{"version"}))
+	})
+	It("rewrites radosgw's argv into serve -- args", func() {
+		Expect(cli.Argv([]string{"/usr/bin/radosgw", "--foreground", "--id=rgw.a", "--rgw-frontends=beast port=8080"})).
+			To(Equal([]string{"serve", "--", "--foreground", "--id=rgw.a", "--rgw-frontends=beast port=8080"}))
+	})
+	It("matches the base name only", func() {
+		Expect(cli.Argv([]string{"radosgw"})).To(Equal([]string{"serve", "--"}))
+		Expect(cli.Argv([]string{"/opt/radosgw-wrapper", "x"})).To(Equal([]string{"x"}))
+	})
+})
