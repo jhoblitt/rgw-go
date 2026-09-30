@@ -481,6 +481,28 @@ review and verified against the tree.
   release. Nothing stored differs, because the OSD writes the records;
   the cost is only that a Tentacle-only request feature waits for the
   release to be raised, which is the trade the encoding rule accepts.
+- **`setuser` and `setgroup` numbers are read strictly.** radosgw reads
+  either value with `atoi`, takes a non-zero result as the id, and looks
+  anything else up as a name (`global_init.cc` at v19.2.6 and v20.2.4). So
+  it takes any leading number: `12abc`, ` 12` and `+12` are id 12 and a
+  user named `1password` is uid 1, while `0` is looked up as a name and
+  radosgw fails to start unless a user or group is named `0`. On glibc
+  x86_64 the id is the number modulo 2^32, as the v19.2.6 and v20.2.4
+  binaries show: 2147483648 is id 2147483648, 4294967295 is `(uid_t)-1` or
+  `(gid_t)-1`, which `setuid` and `setgid` refuse with EINVAL at the drop,
+  4294967296 is 0 and so a name, and 4294967297 is id 1. rgw-go takes
+  only a whole decimal string from 0 to 2147483647 as the id and looks up
+  anything else, so `12abc`, `1password` and 2147483648 are names, and
+  `0` is root's id, which asks for no change.
+- **`-i` names the gateway and `--show_args` prints nothing.** radosgw
+  starts as a client, and ceph's early-argument parser takes `-i` only
+  for other daemon types (`ceph_argparse_early_args` in
+  `ceph_argparse.cc` at v19.2.6 and v20.2.4), so `radosgw -i rgw.a` keeps
+  the name `client.admin` and ceph's option parser skips both words.
+  rgw-go takes `-i` as it takes `--id` and runs as `client.rgw.a`.
+  radosgw prints its arguments on `--show_args` and goes on; rgw-go drops
+  the flag. Rook passes `--id` and neither of these, so a Rook-managed
+  gateway is unaffected.
 
 ### Request parsing and dispatch differences
 
