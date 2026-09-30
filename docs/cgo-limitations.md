@@ -179,6 +179,22 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Measure:** allocation and copy cost on large objects; CPU profile with the
   cgo boundary attributed, as the spec's phase 1 section asks.
 
+### A read needs its buffer sized up front
+
+- **Evidence:** `rados_read_op_read` reads into a buffer of the length its
+  caller gives, and go-ceph passes a Go buffer of that length. librados's
+  C++ `read(0, 0)`, with which radosgw reads a whole system object into a
+  bufferlist (`driver/rados/config/impl.cc:46-60` at v19.2.6), has no C
+  equivalent: a zero length reads into an empty buffer, which librados
+  fails with ERANGE when data remains (`radosclient.ReadStep`). A caller
+  reading an object of unknown size therefore stats it first or reads into
+  a buffer as large as the object can be. The driver reads each realm,
+  period, zonegroup and zone object into a 4 MiB buffer (`rootObjectMax`),
+  which goceph allocates in full for every such read.
+- **Status:** accepted for the few reads at startup; a path that reads
+  small objects often needs a size it knows, a stat, or a pooled buffer.
+- **Measure:** allocation per read against the object's size.
+
 ### Cancellation stops only the client
 
 - **Evidence:** `rados_aio_cancel` makes the Objecter drop the operation with

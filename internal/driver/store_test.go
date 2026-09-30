@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -20,109 +18,158 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
-	"github.com/jhoblitt/rgw-go/internal/radosclient/radosclientfakes"
+	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
 
-// captureLogs sends slog's default logger to a buffer until the spec ends.
-// slog.SetDefault also points the log package's output at the new handler,
-// and restoring the old default logger leaves it there, so the cleanup puts
-// log's writer and flags back too.
-func captureLogs() *bytes.Buffer {
-	var buf bytes.Buffer
-	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	DeferCleanup(func() {
-		slog.SetDefault(oldLogger)
-		log.SetOutput(oldWriter)
-		log.SetFlags(oldFlags)
-	})
-	return &buf
+// recordingCluster is a fakerados cluster that counts its required-release
+// reads, fails them with releaseErr when it is set, fails a read op on an
+// object readErrs names with its error, and records the pool handles it
+// opens.
+type recordingCluster struct {
+	*fakerados.Cluster
+	releaseReads int
+	releaseErr   error
+	readErrs     map[string]error
+	opened       []*recordingPool
 }
 
-var _ = Describe("the driver skeleton", func() {
+func (c *recordingCluster) RequiredOSDRelease(ctx context.Context) (string, error) {
+	c.releaseReads++
+	if c.releaseErr != nil {
+		return "", c.releaseErr
+	}
+	return c.Cluster.RequiredOSDRelease(ctx)
+}
+
+func (c *recordingCluster) Pool(ctx context.Context, pool, namespace string) (radosclient.Pool, error) {
+	p, err := c.Cluster.Pool(ctx, pool, namespace)
+	if err != nil {
+		return nil, err
+	}
+	rp := &recordingPool{Pool: p, readErrs: c.readErrs}
+	c.opened = append(c.opened, rp)
+	return rp, nil
+}
+
+// recordingPool counts Close calls on a pool handle and fails a read op on
+// an object readErrs names with its error.
+type recordingPool struct {
+	radosclient.Pool
+	readErrs map[string]error
+	closes   int
+}
+
+func (p *recordingPool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
+	if err := p.readErrs[oid]; err != nil {
+		return 0, err
+	}
+	return p.Pool.Read(ctx, oid, op, flags)
+}
+
+func (p *recordingPool) Close() error {
+	p.closes++
+	return p.Pool.Close()
+}
+
+var _ = Describe("the driver", func() {
 	var (
-		cluster *radosclientfakes.FakeCluster
-		conf    *cephconf.Options
+		cluster *recordingCluster
+		opts    *cephconf.Options
 	)
 	BeforeEach(func() {
-		cluster = &radosclientfakes.FakeCluster{}
-		cluster.RequiredOSDReleaseReturns("squid", nil)
-		conf = cephconf.NewOptions(cephconf.MapGetter{
-			"rgw_zone":      "ceph-objectstore",
-			"rgw_zonegroup": "ceph-objectstore",
-			"rgw_realm":     "ceph-objectstore",
-		})
+		c := fakerados.New()
+		c.SetRequiredOSDRelease("squid")
+		seedRookZone(c, "ceph-objectstore", true)
+		cluster = &recordingCluster{Cluster: c}
+		opts = conf(map[string]string{"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore"})
 	})
 
 	Describe("Open", func() {
-		It("detects the release and names the zone from configuration", func(ctx SpecContext) {
-			s, err := driver.Open(ctx, cluster, conf, driver.Options{})
+		It("detects the release from the cluster's required OSD release", func(ctx SpecContext) {
+			s, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.Release()).To(Equal(denc.Squid))
-			Expect(s.Zone().Name).To(Equal("ceph-objectstore"))
-			Expect(s.ZoneGroup().Name).To(Equal("ceph-objectstore"))
-			Expect(s.Realm().Name).To(Equal("ceph-objectstore"))
+			Expect(cluster.releaseReads).To(Equal(1))
 		})
 
-		It("keeps the zone, zonegroup and realm names apart and resolves nothing else", func(ctx SpecContext) {
-			conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_zone": "z", "rgw_zonegroup": "zg", "rgw_realm": "r"})
-			s, err := driver.Open(ctx, cluster, conf, driver.Options{})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(s.Zone()).To(Equal(meta.Zone{Name: "z"}))
-			Expect(s.ZoneParams()).To(Equal(meta.ZoneParams{Name: "z"}), "a zone's parameters carry its name")
-			Expect(s.ZoneGroup()).To(Equal(meta.ZoneGroup{Name: "zg"}))
-			Expect(s.Realm()).To(Equal(meta.Realm{Name: "r"}))
-			Expect(s.Period()).To(Equal(meta.Period{}))
-		})
-
-		It("honors a release override", func(ctx SpecContext) {
+		It("honors a release override without reading the cluster's", func(ctx SpecContext) {
 			t := denc.Tentacle
-			s, err := driver.Open(ctx, cluster, conf, driver.Options{Release: &t})
+			s, err := driver.Open(ctx, cluster, opts, driver.Options{Release: &t})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.Release()).To(Equal(denc.Tentacle))
-			Expect(cluster.RequiredOSDReleaseCallCount()).To(BeZero())
+			Expect(cluster.releaseReads).To(BeZero())
 		})
 
 		It("refuses a cluster below the Squid floor", func(ctx SpecContext) {
-			cluster.RequiredOSDReleaseReturns("reef", nil)
-			_, err := driver.Open(ctx, cluster, conf, driver.Options{})
+			cluster.SetRequiredOSDRelease("reef")
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).To(MatchError(radosclient.ErrReleaseTooOld))
 			Expect(err).To(MatchError(ContainSubstring(`"reef"`)))
 		})
 
 		It("encodes for the newest known release on a cluster newer than every known one", func(ctx SpecContext) {
-			cluster.RequiredOSDReleaseReturns("vampire", nil)
-			s, err := driver.Open(ctx, cluster, conf, driver.Options{})
+			cluster.SetRequiredOSDRelease("vampire")
+			s, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.Release()).To(Equal(denc.Tentacle))
 		})
 
 		It("fails when the required release cannot be read", func(ctx SpecContext) {
 			boom := errors.New("osd dump failed")
-			cluster.RequiredOSDReleaseReturns("", boom)
-			_, err := driver.Open(ctx, cluster, conf, driver.Options{})
+			cluster.releaseErr = boom
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).To(MatchError(boom))
 		})
 
-		DescribeTable("fails when a zone name cannot be read",
+		DescribeTable("fails when an option naming the zone or its root pools cannot be read",
 			func(ctx SpecContext, option string) {
-				m := cephconf.MapGetter{"rgw_zone": "z", "rgw_zonegroup": "zg", "rgw_realm": "r"}
+				m := cephconf.MapGetter{
+					"rgw_realm": "", "rgw_realm_id": "", "rgw_zonegroup": "", "rgw_zonegroup_id": "",
+					"rgw_zone": "ceph-objectstore", "rgw_zone_id": "", "rgw_region": "", "rgw_region_root_pool": ".rgw.root",
+					"rgw_realm_root_pool": ".rgw.root", "rgw_zonegroup_root_pool": ".rgw.root",
+					"rgw_zone_root_pool": ".rgw.root", "rgw_period_root_pool": ".rgw.root",
+				}
 				delete(m, option)
 				_, err := driver.Open(ctx, cluster, cephconf.NewOptions(m), driver.Options{})
 				Expect(err).To(MatchError(cephconf.ErrUnknownOption))
 				Expect(err).To(MatchError(ContainSubstring(option)))
 			},
-			Entry("rgw_zone", "rgw_zone"),
-			Entry("rgw_zonegroup", "rgw_zonegroup"),
 			Entry("rgw_realm", "rgw_realm"),
+			Entry("rgw_realm_id", "rgw_realm_id"),
+			Entry("rgw_zonegroup", "rgw_zonegroup"),
+			Entry("rgw_zonegroup_id", "rgw_zonegroup_id"),
+			Entry("rgw_zone", "rgw_zone"),
+			Entry("rgw_zone_id", "rgw_zone_id"),
+			Entry("rgw_region", "rgw_region"),
+			Entry("rgw_region_root_pool", "rgw_region_root_pool"),
+			Entry("rgw_realm_root_pool", "rgw_realm_root_pool"),
+			Entry("rgw_zonegroup_root_pool", "rgw_zonegroup_root_pool"),
+			Entry("rgw_zone_root_pool", "rgw_zone_root_pool"),
+			Entry("rgw_period_root_pool", "rgw_period_root_pool"),
 		)
+
+		It("opens the root pool once for its four options and closes it with Close", func(ctx SpecContext) {
+			s, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cluster.opened).To(HaveLen(1))
+			Expect([]string{cluster.opened[0].Name(), cluster.opened[0].Namespace()}).To(Equal([]string{meta.RootPool, ""}))
+			Expect(s.Close()).To(Succeed())
+			Expect(cluster.opened[0].closes).To(Equal(1))
+		})
+
+		It("closes the pools it opened when the zone does not resolve", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, conf(map[string]string{"rgw_zone": "missing"}), driver.Options{})
+			Expect(err).To(MatchError(driver.ErrNoZone))
+			Expect(cluster.opened).To(HaveLen(1))
+			Expect(cluster.opened[0].closes).To(Equal(1))
+		})
 	})
 
 	Context("once open", func() {
 		var s *driver.Store
 		BeforeEach(func(ctx SpecContext) {
 			var err error
-			s, err = driver.Open(ctx, cluster, conf, driver.Options{})
+			s, err = driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -130,11 +177,6 @@ var _ = Describe("the driver skeleton", func() {
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
 			},
-			Entry("Placement", func(_ context.Context, s *driver.Store) error {
-				_, err := s.Placement(meta.PlacementRule{Name: "default-placement"})
-				return err
-			}),
-
 			Entry("GetUser", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetUser(ctx, meta.UserID{ID: "alice"})
 				return err
@@ -276,7 +318,7 @@ var _ = Describe("the driver skeleton", func() {
 			env := s.Env()
 			Expect([]any{env.Zone, env.Users, env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata}).
 				To(HaveEach(BeIdenticalTo(s)))
-			Expect(env.Conf).To(BeIdenticalTo(conf))
+			Expect(env.Conf).To(BeIdenticalTo(opts))
 			Expect(env.Authz).To(BeNil(), "authz is the caller's")
 			Expect(env.Metrics).To(BeNil(), "metrics are the caller's")
 			Expect(env.HostID).To(BeEmpty(), "the host id is the caller's")
@@ -294,7 +336,8 @@ var _ = Describe("the driver skeleton", func() {
 			}
 
 			It("runs workers until the context ends and stops them together", func(ctx SpecContext) {
-				logs := captureLogs()
+				var logs bytes.Buffer
+				DeferCleanup(driver.CaptureLog(&logs))
 				started := make(chan struct{}, 2)
 				stopped := make(chan string, 2)
 				for _, name := range []string{"a", "b"} {
