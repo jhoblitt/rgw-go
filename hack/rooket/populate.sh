@@ -138,17 +138,10 @@ period_zonegroup() {
 # reload, and only a restart of its pod ended it. docs/ceph-upstream-bugs.md
 # records the probable causes of the delay and of the hang.
 wait_reload() {
-	local gid deadline=$((SECONDS + 180))
-	gid=$(jq '.gid' <<<"${rgw}")
-	until ceph_cmd service dump -f json | jq -e --argjson gid "${gid}" \
-		'[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value.gid] | any(. != $gid)' \
-		>/dev/null; do
-		((SECONDS < deadline)) ||
-			die "the radosgw did not finish reloading the committed period in 180s; restart it with" \
-				"'ROOKET_NAME=${ROOKET_NAME} ${rooket} kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw'" \
-				"and rerun once the service map lists it alone"
-		sleep 5
-	done
+	# shellcheck disable=SC2016 # $gid is the jq filter's variable
+	wait_rgw "the radosgw did not finish reloading the committed period" \
+		"restart it with 'ROOKET_NAME=${ROOKET_NAME} ${rooket} kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw' and rerun once the service map lists it alone" \
+		'any(.[]; .gid != $gid)' --argjson gid "$(jq '.gid' <<<"${rgw}")" >/dev/null
 }
 
 # The zonegroup belongs to a realm, so the changes are committed to a new

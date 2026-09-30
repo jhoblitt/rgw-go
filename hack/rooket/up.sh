@@ -58,6 +58,7 @@ echo "${image}" >"${out}/image"
 
 # populate.sh, like any S3 client of the specs, reaches the radosgw from the
 # host.
-endpoint=$(rgw_endpoint "$(rgw_daemon)")
+rgw=$(rgw_daemon)
+endpoint=$(rgw_endpoint "${rgw}")
 curl -fsS --max-time 10 -o /dev/null "${endpoint}/" || die "the host cannot reach the radosgw at ${endpoint}"
 echo "${ROOKET_NAME} (${image}) is up: CEPH_CONF=${out}/ceph.conf, radosgw at ${endpoint}"

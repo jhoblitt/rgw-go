@@ -47,7 +47,7 @@ on `PATH`.
 | `populate.sh` | writes the data set through the radosgw and records it in `manifest.json` |
 | `down.sh` | `rooket down --delete-disks` and removes `out/<release>/`, even when rooket fails |
 | `diag.sh` | collects pod logs, Rook status and Ceph's view for CI, with no admin keyring or S3 secret key, each call bounded by a timeout |
-| `lib.sh` | the Rook release, cluster naming and toolbox helpers the scripts share |
+| `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers the scripts share |
 
 The chart values pin `cephImage.tag`, a plain `vX.Y.Z` that is the one place
 a release's Ceph version is set: `up.sh` checks every daemon runs it and
@@ -59,6 +59,25 @@ used: its CephObjectStoreUser and bucket claim would add a user and a bucket
 to the zone the gate counts. `host-network` sits in `config.yaml` rather than
 on the command line because Rook cannot move a running cluster onto host
 networking, so every later `up` must keep it.
+
+## Finding the radosgw
+
+The scripts find the radosgw, and the realm, zonegroup and zone it serves, in
+Ceph's service map. A radosgw registers there under a new gid each time it
+starts or reloads its realm. The manager drops the old gid as soon as that
+instance closes its session, but one that ends without closing it stays until
+it has sent no beacon for a minute (`mgr_service_beacon_grace`), so after a
+restart or a reload the map can list both for about that long. `make
+cluster-up` against a running cluster can restart the radosgw through its
+helm upgrade, and `populate.sh` reloads it. The scripts therefore wait up to
+three minutes for the map to settle, to one radosgw or, after a reload, to
+the reloaded one, and then stop with the entries they saw. A reload that has
+not finished by then has hung; a restart of the radosgw's pod has ended such
+a hang, and `docs/ceph-upstream-bugs.md` records its probable causes. That
+stop names the restart command, with `ROOKET_NAME` set; the scripts never
+restart the radosgw themselves. A map that has not settled to one radosgw by
+then lists none that is running or more than one, since the manager has
+long dropped any that stopped.
 
 ## Output
 
