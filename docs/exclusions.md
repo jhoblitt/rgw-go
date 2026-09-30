@@ -702,8 +702,9 @@ go1.27.1's.
 ### Zone and placement differences
 
 rgw-go resolves its zone and its placements from the root pool as radosgw's
-startup does at the v19.2.6 and v20.2.4 tags, and only reads. Where the
-result differs, rgw-go does the following.
+startup does at the v19.2.6 and v20.2.4 tags, and only reads. It reads the
+options its driver uses at startup as well. Where the result differs, rgw-go
+does the following.
 
 - **A storage class without a data pool.** A storage class that a zone
   placement lists without a data pool resolves to the STANDARD class's
@@ -770,6 +771,52 @@ result differs, rgw-go does the following.
   rgw_period_latest_epoch_info_oid, whose defaults they are
   (`driver/rados/config/realm.cc:44-48`, `zonegroup.cc:37-42`,
   `zone.cc:36-40` and `period.cc:38-45` at v19.2.6 and v20.2.4).
+- **Options read once.** The driver reads the `rgw_*` options it uses once,
+  at startup, so a change made with `ceph config set` while rgw-go runs takes
+  effect at its next start. None of those options carries Ceph's `startup`
+  flag, and radosgw reads several where it uses them, so there the change
+  takes effect at the next use: the usage-log shard counts each time it names
+  a usage object (`usage_log_hash`, `driver/rados/rgw_rados.cc:1615-1628` at
+  v19.2.6, `:1718-1731` at v20.2.4) and
+  `rgw_override_bucket_index_max_shards` at each bucket creation
+  (`init_default_bucket_layout`, `driver/rados/rgw_bucket.cc:2790-2796` at
+  v19.2.6, `:2908-2910` at v20.2.4).
+- **Shard counts and the bucket-index AIO limit that are not positive.** A
+  zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards` or
+  `rgw_lc_max_objs`, and a zero `rgw_bucket_index_max_aio`, is used as 1,
+  and rgw-go logs an error naming the option and the value it read. With
+  `rgw_usage_max_shards` at 1, rgw-go names every usage object `usage.0`.
+  Ceph's config refuses an `rgw_usage_max_user_shards` below its minimum of
+  1 before either gateway reads it (`Option::validate`,
+  `common/options.cc:99-109` at v19.2.6, `:100-110` at v20.2.4). On a zero
+  AIO limit radosgw skips or never finishes every batch of bucket-index
+  operations ("radosgw skips or never finishes every bucket-index batch on
+  a zero rgw_bucket_index_max_aio"). radosgw accepts a zero or negative
+  `rgw_usage_max_shards` or `rgw_lc_max_objs`:
+  - A zero faults on the first request that shards by it
+    (`docs/ceph-upstream-bugs.md`, "radosgw faults on a zero
+    rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards").
+  - A negative `rgw_usage_max_shards` does not fault. `usage_log_hash` holds
+    it in an `int`, and taking the unsigned hash modulo it converts it to a
+    huge unsigned divisor (`driver/rados/rgw_rados.cc:1625-1626` at v19.2.6,
+    `:1728-1729` at v20.2.4), so radosgw names each usage object by the
+    hash itself, `usage.<hash>`, where rgw-go writes `usage.0`.
+  - A negative `rgw_lc_max_objs` makes `RGWLC::initialize` allocate an
+    array of that many shard names (`rgw_lc.cc:237-241` at v19.2.6 and
+    v20.2.4), which throws at radosgw's startup
+    (`driver/rados/rgw_rados.cc:1326-1327` at v19.2.6, `:1310-1311` at
+    v20.2.4).
+- **Counts too large for radosgw's integers.** rgw-go holds a shard count in
+  32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
+  63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.
+  radosgw caps it at 7877 too, but only after narrowing it to a 32-bit
+  `int` (`rgw_lc.cc:237-239` at v19.2.6 and v20.2.4): 2^31 becomes INT_MIN
+  and throws at startup, as a negative value does, and 2^32 becomes 0.
+  radosgw narrows a shard count above 2^32-1 into a 32-bit integer
+  elsewhere too: the usage-log shard counts in `usage_log_hash`, as above,
+  and a new bucket's index shard count (`rgw_bucket_layout.h:55` at v19.2.6
+  and v20.2.4). At v19.2.6 it narrows an AIO limit above 2^32-1 the same
+  way (`cls/rgw/cls_rgw_client.h:277`).
 
 ### S3 handler differences
 
