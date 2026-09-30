@@ -2,6 +2,8 @@ package op_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -59,11 +61,11 @@ var _ = Describe("Run", func() {
 		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrNoSuchBucket))
 		Expect(rec.calls).To(Equal([]string{"init"}))
 	})
-	It("denies a user whose op mask lacks the op's type before verifying", func(ctx SpecContext) {
+	It("denies a user whose op mask lacks the op's type once verify has run", func(ctx SpecContext) {
 		req.Identity.OpMask = op.OpTypeRead
 		rec.mask = op.OpTypeWrite
 		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrAccessDenied))
-		Expect(rec.calls).To(Equal([]string{"init"}))
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
 	})
 	It("requires every bit of the op's mask", func(ctx SpecContext) {
 		req.Identity.OpMask = op.OpTypeWrite
@@ -74,7 +76,7 @@ var _ = Describe("Run", func() {
 		zone.ZoneReturns(meta.Zone{Name: "ro", ReadOnly: true})
 		rec.mask = op.OpTypeDelete
 		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrAccessDenied))
-		Expect(rec.calls).To(Equal([]string{"init"}))
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
 		req.Identity.System = true
 		rec.calls = nil
 		Expect(op.Run(ctx, rec, req)).To(Succeed(), "a system identity may write a read-only zone")
@@ -92,13 +94,58 @@ var _ = Describe("Run", func() {
 		Expect(op.Run(ctx, rec, req)).To(Succeed(), "admin identity")
 		Expect(rec.calls).To(Equal([]string{"init", "verify", "execute", "complete"}))
 	})
-	It("lets an admin identity through any verify error, not only AccessDenied", func(ctx SpecContext) {
-		// ErrQuotaExceeded, not ErrMFARequired: the latter shares AccessDenied/403 with
-		// ErrAccessDenied and is indistinguishable from it under errors.Is.
-		rec.permErr = op.ErrQuotaExceeded
+	DescribeTable("lets an admin identity through an access denial",
+		func(ctx SpecContext, permErr error) {
+			rec.permErr = permErr
+			req.Identity.Admin = true
+			Expect(op.Run(ctx, rec, req)).To(Succeed())
+			Expect(rec.calls).To(Equal([]string{"init", "verify", "execute", "complete"}))
+		},
+		Entry("AccessDenied from EACCES", op.ErrAccessDenied),
+		Entry("AccessDenied from EPERM", &op.Error{Code: "AccessDenied", Status: 403, Errno: 1}),
+		Entry("AuthorizationError from ERR_AUTHORIZATION", op.ErrAuthorization),
+		Entry("a wrapped AccessDenied carrying a message", fmt.Errorf("evaluating: %w", op.ErrAccessDenied.WithMessage("denied"))),
+	)
+	DescribeTable("returns every other verify error to an admin identity",
+		func(ctx SpecContext, permErr error) {
+			rec.permErr = permErr
+			req.Identity.Admin = true
+			Expect(op.Run(ctx, rec, req)).To(MatchError(permErr))
+			Expect(rec.calls).To(Equal([]string{"init", "verify"}))
+		},
+		Entry("QuotaExceeded", op.ErrQuotaExceeded),
+		Entry("NoSuchKey", op.ErrNoSuchKey),
+		Entry("InvalidArgument", op.ErrInvalidArgument),
+		Entry("ERR_MFA_REQUIRED, although it shares AccessDenied/403 with EACCES", op.ErrMFARequired),
+		Entry("an error carrying no *Error", errors.New("boom")),
+	)
+	It("lets the op mask decide over an unmarked verify error", func(ctx SpecContext) {
+		rec.permErr = op.ErrNoSuchKey
+		req.Identity.OpMask = op.OpTypeRead
+		rec.mask = op.OpTypeWrite
+		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrAccessDenied))
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
+	})
+	It("returns a BeforeVerify refusal to an admin identity", func(ctx SpecContext) {
+		rec.permErr = op.BeforeVerify(op.ErrUserSuspended)
 		req.Identity.Admin = true
-		Expect(op.Run(ctx, rec, req)).To(Succeed())
-		Expect(rec.calls).To(Equal([]string{"init", "verify", "execute", "complete"}))
+		err := op.Run(ctx, rec, req)
+		Expect(err).To(MatchError(op.ErrUserSuspended))
+		Expect(op.IsBeforeVerify(err)).To(BeTrue(), "the mark on %v", err)
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
+	})
+	It("returns a BeforeVerify refusal ahead of a failing op mask", func(ctx SpecContext) {
+		rec.permErr = op.BeforeVerify(op.ErrUserSuspended)
+		req.Identity.OpMask = op.OpTypeRead
+		rec.mask = op.OpTypeWrite
+		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrUserSuspended))
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
+	})
+	It("never lets an admin identity through a BeforeVerify access denial", func(ctx SpecContext) {
+		rec.permErr = op.BeforeVerify(op.ErrAccessDenied)
+		req.Identity.Admin = true
+		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrAccessDenied))
+		Expect(rec.calls).To(Equal([]string{"init", "verify"}))
 	})
 	It("never lets an admin identity past the op mask", func(ctx SpecContext) {
 		req.Identity.Admin = true
@@ -110,6 +157,28 @@ var _ = Describe("Run", func() {
 		rec.execErr = op.ErrQuotaExceeded
 		Expect(op.Run(ctx, rec, req)).To(MatchError(op.ErrQuotaExceeded))
 		Expect(rec.calls).To(Equal([]string{"init", "verify", "execute", "complete"}))
+	})
+})
+
+var _ = Describe("BeforeVerify", func() {
+	It("leaves nil unmarked", func() {
+		Expect(op.BeforeVerify(nil)).To(Succeed())
+		Expect(op.IsBeforeVerify(nil)).To(BeFalse())
+	})
+	It("keeps the refusal it marks, so the refusal renders unchanged", func() {
+		refusal := op.ErrUserSuspended.WithMessage("suspended")
+		marked := op.BeforeVerify(refusal)
+		Expect(marked).To(MatchError(op.ErrUserSuspended))
+		Expect(marked).To(MatchError(refusal.Error()))
+		Expect(op.AsError(marked)).To(BeIdenticalTo(refusal))
+	})
+	It("is found through further wrapping", func() {
+		err := fmt.Errorf("verifying: %w", op.BeforeVerify(op.ErrAccessDenied))
+		Expect(op.IsBeforeVerify(err)).To(BeTrue(), "the mark on %v", err)
+	})
+	It("is absent from an unmarked refusal", func() {
+		Expect(op.IsBeforeVerify(op.ErrUserSuspended)).To(BeFalse(), "bare")
+		Expect(op.IsBeforeVerify(fmt.Errorf("verifying: %w", op.ErrUserSuspended))).To(BeFalse(), "wrapped")
 	})
 })
 

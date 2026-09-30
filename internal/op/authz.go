@@ -21,16 +21,21 @@ type Authorizer interface {
 	VerifyBucket(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
 	// VerifyObject authorizes a against r.ObjState within r.BucketRec.
 	VerifyObject(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
-	// VerifyBucketIn is VerifyBucket against an explicit bucket and key while
-	// the request's own bucket keeps supplying the public-access block and the
-	// requester-pays check, as radosgw's verify_bucket_permission(s, arn,
-	// user_acl, bucket_acl, policy, ...) does with s still the request:
-	// CopyObject's source (rgw_op.cc:5454-5457 at v19.2.6, :6020-6023 at
-	// v20.2.4) and DeleteObjects' per-key check (:6829-6837). key.Name "" is
-	// the bucket ARN.
+	// VerifyBucketIn is VerifyBucket against an explicit bucket and key:
+	// CopyObject's source and DeleteObjects' per-key check. key.Name "" is the
+	// bucket ARN. Every input that describes the resource comes from bucket:
+	// the ARN, the ACL, the bucket policy, parsed with bucket's own tenant, and
+	// the owner. bucket's public-access block applies as well as the request's
+	// bucket's: IgnorePublicACLs holds when either block sets it, and each
+	// block's RestrictPublicBuckets is judged against its own bucket's owner.
+	// Beyond its block, the request's bucket supplies only the requester-pays
+	// check and the x-amz-expected-bucket-owner comparison, whose header names
+	// the request's bucket.
 	VerifyBucketIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, key meta.ObjKey) error
 	// VerifyObjectIn is VerifyObject against an explicit object in an explicit
-	// bucket: UploadPartCopy's source (rgw_op.cc:3955-3963 at v19.2.6).
+	// bucket, UploadPartCopy's source, with VerifyBucketIn's split of inputs
+	// between the two buckets; an object with no ACL of its own gets a default
+	// ACL owned by bucket's owner.
 	VerifyObjectIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, obj *ObjectState) error
 }
 

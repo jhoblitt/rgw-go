@@ -28,8 +28,8 @@ type Identity struct {
 	// OpMask is the RGW_OP_TYPE_* bits the user may perform; Run checks it.
 	OpMask uint32
 	Caps   meta.Caps
-	// Admin is radosgw's is_admin(): Run lets such an identity through any
-	// error from VerifyPermission.
+	// Admin is radosgw's is_admin(): Run lets such an identity through an
+	// unmarked access denial from VerifyPermission.
 	Admin bool
 	// System is a system user's request: no quota, and it may modify a
 	// read-only zone.
