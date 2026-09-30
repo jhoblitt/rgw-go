@@ -91,6 +91,22 @@ rgw_daemon() {
 		'length == 1' | jq -c '.[0]'
 }
 
+# use_site sets rgw to the service map entry of the cluster's one radosgw, and
+# realm, zonegroup and zone to the site it serves, which admin names.
+use_site() {
+	rgw=$(rgw_daemon)
+	realm=$(jq -r '.metadata.realm_name // empty' <<<"${rgw}")
+	zonegroup=$(jq -r '.metadata.zonegroup_name // empty' <<<"${rgw}")
+	zone=$(jq -r '.metadata.zone_name // empty' <<<"${rgw}")
+	[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
+		die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
+}
+
+# Without the site options radosgw-admin works in a zone named default, which
+# it creates on first use and the radosgw never serves.
+admin() {
+	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
+}
 
 # rgw_endpoint prints the URL the host reaches the radosgw rgw_daemon printed
 # at: it is host-networked, so its pod's IP is its node's.

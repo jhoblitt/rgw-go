@@ -20,18 +20,7 @@ use_release "${1:-}"
 [[ -f "${out}/ceph.conf" ]] || die "no ${out}/ceph.conf; run make cluster-up RELEASE=${release} first"
 ceph_version=$(pinned_version)
 
-rgw=$(rgw_daemon)
-realm=$(jq -r '.metadata.realm_name // empty' <<<"${rgw}")
-zonegroup=$(jq -r '.metadata.zonegroup_name // empty' <<<"${rgw}")
-zone=$(jq -r '.metadata.zone_name // empty' <<<"${rgw}")
-[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
-	die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
-
-# Without the site options radosgw-admin works in a zone named default, which
-# it creates on first use and the radosgw never serves.
-admin() {
-	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
-}
+use_site
 
 # operator_admin runs radosgw-admin as Rook's operator does, in the operator's
 # pod with the config and keyring it keeps for the cluster (Rook's
