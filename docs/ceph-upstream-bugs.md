@@ -992,3 +992,62 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   fix.
 - **Found:** phase 1 unit G, early-argument parsing, 2026-09-29; reproduced
   2026-09-29 on the v19.2.6 and v20.2.4 images.
+
+## radosgw ignores a bad port in an IPv6 endpoint
+
+- **Kind:** defect, unfixed through main. Unreproduced on a running
+  radosgw; a C++ reproducer of the function shows it.
+- **Evidence:**
+  - For an IPv6 `endpoint` or `ssl_endpoint`, `parse_endpoint` parses the
+    port with `parse_port` and then the address with `make_address_v6`,
+    passing both the same error code and checking it only after the
+    second (`rgw_asio_frontend.cc:574` then `:580` at v19.2.6, `:526` then
+    `:532` at v20.2.4, `:542` then `:548` on main at 7ed73efc1be). The IPv4
+    branch returns on the port's error first (`:585-588` at v19.2.6).
+  - boost asio's `socket_ops::inet_pton`, which `make_address_v6` calls,
+    clears the last error on entry and after the system `inet_pton` sets
+    the error code from errno, so a successful address parse resets the
+    port's error (boost 1.82 `socket_ops.ipp:2537` and `:2765-2766`, 1.87
+    `:2604` and `:2832-2833`; the tags build 1.82 and 1.87,
+    `CMakeLists.txt:709` and `:723` at v19.2.6, `:754` and `:768` at
+    v20.2.4).
+  - `parse_port` returns what `strtoul` read, truncated to 16 bits, even
+    when it sets the error (`:537-547` at v19.2.6). So `endpoint=[::1]:http`
+    listens on port 0, an ephemeral port, and `endpoint=[::1]:70000` on port
+    4464, where `endpoint=127.0.0.1:http` and `endpoint=127.0.0.1:70000`
+    are refused.
+  - A reproducer compiles `parse_port` and `parse_endpoint`, copied
+    verbatim from v20.2.4 (`:489-548`, identical to v19.2.6 `:537-596`),
+    against boost 1.83 and prints `[::1]:http -> ec=ok port=0`,
+    `[::1]:70000 -> ec=ok port=4464`, `127.0.0.1:http -> ec=Invalid
+    argument port=0` and `127.0.0.1:70000 -> ec=Numerical result out of
+    range port=4464`.
+- **Releases:** v13.2.3 and later on mimic, and v14.1.0 and later, through
+  v19.2.6, v20.2.4 and main. The IPv6 branch came with a3b4124fd25, "rgw:
+  beast frontend parses ipv6 addrs"
+  ([ceph/ceph#24887](https://github.com/ceph/ceph/pull/24887), the fix for
+  [#36662](https://tracker.ceph.com/issues/36662)), and its mimic
+  backport, and has never checked the port's error.
+- **rgw-go:** refuses an IPv6 endpoint whose port does not parse, as
+  radosgw refuses an IPv4 one (`parseEndpoint`,
+  `internal/frontend/spec.go`); `docs/exclusions.md` records the
+  difference.
+- **Upstream:** no tracker issue or pull request reports or fixes it.
+  Searched 2026-09-29, each search first run on a known match:
+  - the tracker's full text, all projects, for `parse_endpoint`,
+    `parse_port` and `"endpoint=["` (known match: #36662's description);
+  - ceph/ceph pull requests by keyword for `parse_endpoint` (known match:
+    #24887), which finds only
+    [ceph/ceph#66290](https://github.com/ceph/ceph/pull/66290) and
+    [ceph/ceph#27008](https://github.com/ceph/ceph/pull/27008), neither of
+    which changes the function;
+  - every open ceph/ceph pull request, and every `rgw` pull request closed
+    since 2025-10-01, by whether it changes `src/rgw/rgw_asio_frontend.cc`
+    (known match: [ceph/ceph#68920](https://github.com/ceph/ceph/pull/68920)),
+    with each such pull request's copy of `parse_endpoint` checked. None
+    changes it; the ssl hot-reload pull requests only move its caller.
+  On main, only 9e5d4bd1a5d (default ports) and ed70d843df4 (spelling)
+  have changed the function since the IPv6 branch arrived. Not filed:
+  filing waits on a reproduction on a running radosgw.
+- **Found:** phase 1 frontend work (unit G), 2026-09-29; the reproducer
+  was run in review; not reproduced on a running radosgw.
