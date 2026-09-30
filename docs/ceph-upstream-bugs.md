@@ -390,6 +390,85 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
   on disposable Squid and Tentacle clusters.
 
+## radosgw writes ACL owner and grantee names into its XML unescaped
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** at v19.2.6 the S3 ACL writer puts the owner's ID and display
+  name between their tags as they are (`rgw_acl_s3.cc:177`, `:179`), and a
+  canonical-user grantee's the same way (`:260`, `:262`). GetBucketAcl and
+  GetObjectAcl send that text as their document after the XML declaration
+  (`dump_start`, `rgw_rest.cc:571-577`): `RGWGetACLs::execute` builds it with
+  `rgw::s3::write_policy_xml` (`rgw_op.cc:5725-5734`), and
+  `RGWGetACLs_ObjStore_S3::send_response` writes it with `dump_body`
+  (`rgw_rest_s3.cc:3605-3614`), outside the XML formatter, which escapes
+  the text of radosgw's other documents (`xml_stream_escaper`,
+  `escape.cc:134-169`).
+  - A display name holding markup therefore yields malformed XML, as `A&B`
+    does, or well-formed XML that a client reads as another name or with
+    extra markup, as `&amp;` (read as `&`) and `<b/>` (an empty `b`
+    element) do; Python's ElementTree parses these documents so.
+  - Only an administrator can set such a name. User create and modify, which
+    radosgw-admin and the admin API run, copy the display name as given
+    (`driver/rados/rgw_user.cc:1755`, `:2070`) and hold it to the IAM
+    user-name pattern `[\w+=,.@-]+` only for an account's users (`:1840`,
+    `:2198`; `rgw_rest_iam.cc:172-188`).
+  - The same at v20.2.4, where rgw_acl_s3.cc and escape.cc are
+    byte-identical to v19.2.6 (`rgw_rest.cc:576-582`,
+    `rgw_op.cc:6305-6314`, `rgw_rest_s3.cc:3888-3897`, `rgw_user.cc:1761`,
+    `:2076`, `:1846`, `:2204`, `rgw_rest_iam.cc:175-191`), and on main,
+    which writes the same lines (2026-09-30).
+- **Releases:** every release checked: v17.2.0, v18.2.8, v19.2.0, v19.2.6,
+  v20.2.0, v20.2.4, v21.3.0 and main. The owner writer already wrote the ID
+  and display name raw in 2009 (`rgw_acl.h:341-346` at f8fb331226c).
+- **rgw-go:** the ACL documents (unit Z) escape the owner's and each
+  grantee's ID and display name with `xmltext.Escape`, the escaping
+  radosgw's formatter gives the text of its other documents (owner decision
+  12c). `docs/exclusions.md` records the difference.
+- **Upstream:** no tracker issue or pull request reports or fixes it
+  (searched 2026-09-29). Each search was first run on a known match.
+  - tracker.ceph.com, full text: every project's issues of every status
+    through the issue filter "any searchable field contains", which covers
+    subjects, descriptions and notes. It finds
+    [#80948](https://tracker.ceph.com/issues/80948) by
+    `oath_totp_validate4_callback`, a word only in its description, and
+    [#73564](https://tracker.ceph.com/issues/73564) by a phrase only in a
+    note; the site's search misses the first. Terms: `rgw_acl_s3`,
+    `write_policy_xml`, `xml_stream_escaper`, `escape_xml`,
+    `ACLOwner to_xml`, `ACLGrant to_xml`, `GetBucketAcl`, `GetObjectAcl`,
+    `acl escape`, `acl escaping`, `DisplayName escape`,
+    `display name escape`, `acl ampersand`, `acl xml invalid`,
+    `acl xml malformed`, `acl not well-formed`, `unescaped xml`,
+    `xml escape`, `xml escaping`, `ampersand`, `acl special characters`,
+    `display name special characters`. Also the subjects of the 1,652 rgw
+    issues updated since 2026-06-01.
+  - Pull requests touching `src/rgw/rgw_acl_s3.cc` or its header. Merged:
+    no change in the file's history on main since its creation in 2012
+    escapes these fields (`git log -G escape` finds none), and squid and
+    tentacle have not touched it since the floor tags. Open and closed
+    unmerged: a scan of each pull request's changed files, which flags
+    [ceph/ceph#54526](https://github.com/ceph/ceph/pull/54526) among
+    November 2023's merged rgw pull requests, finds the file in 2 of the
+    1,562 open pull requests, which change only an include, and in 38
+    of the 2,156 closed unmerged pull requests labelled rgw (the labeler
+    adds that label to every pull request touching `src/rgw/` since
+    2020-11-12). None of those changes escapes these fields; ten that
+    touch over 2,000 files, branches merged onto the wrong base, were
+    not read.
+  - Pull request text (titles, bodies and comments), which finds
+    [ceph/ceph#54526](https://github.com/ceph/ceph/pull/54526) by a phrase
+    only in its body: `acl escape`, `acl xml escape`, `DisplayName escape`,
+    `display name xml`, `rgw_acl_s3 escape`, `to_xml escape`,
+    `xml_stream_escaper`, `acl ampersand`, `GetBucketAcl xml`,
+    `acl invalid xml`. The one hit,
+    [ceph/ceph#19845](https://github.com/ceph/ceph/pull/19845), reworked the
+    formatter's escaping and does not touch the ACL writer.
+  - Related: [#59077](https://tracker.ceph.com/issues/59077), open since
+    2023-03, proposes refusing user IDs and display names that hold REST or
+    IAM-policy delimiters; it does not mention the ACL documents.
+  - Not filed: the defect has not been reproduced on a running cluster.
+- **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the
+  source, not reproduced.
+
 ## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
 
 - **Kind:** defect, unfixed through main.
