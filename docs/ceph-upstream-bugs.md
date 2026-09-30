@@ -469,6 +469,261 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the
   source, not reproduced.
 
+## radosgw ignores a payload-hash mismatch on bodies read by read_all_input
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - A signed single-chunk body gets an `AWSv4ComplSingle` completer (v19.2.6
+    `rgw_rest_s3.cc:5903-5946`; v20.2.4 `:6470-6517`), whose `complete()`
+    compares the body's SHA-256 with `x-amz-content-sha256`
+    (`rgw_auth_s3.cc:1737-1756`; v20.2.4 `:1714-1733`).
+  - `RGWOp::read_all_input` and `get_json_input` read the body, call
+    `do_aws4_auth_completion()` and drop its result (v19.2.6
+    `rgw_op.h:215-237`; v20.2.4 `:229-251`). `do_aws4_auth_completion` moves
+    the completer out of the request before it checks (v19.2.6
+    `rgw_op.cc:1367`; v20.2.4 `:1604`), so any later call returns 0.
+  - CreateBucket, PutBucketAcl and PutObjectAcl, PutBucketPolicy,
+    PutObjectTagging and PutBucketTagging, CompleteMultipartUpload and
+    DeleteObjects read their body through `read_all_input` (v19.2.6
+    `rgw_rest_s3.cc:2491`, `rgw_rest.cc:1474`, `rgw_op.cc:8078`,
+    `rgw_rest_s3.cc:788`, `:880`, `rgw_rest.cc:1590`, `:1672`; v20.2.4
+    `rgw_rest_s3.cc:2611`, `rgw_rest.cc:1479`, `rgw_op.cc:9004`,
+    `rgw_rest_s3.cc:870`, `:962`, `rgw_rest.cc:1595`, `:1677`). The checks
+    that the ACL PUTs, CompleteMultipartUpload and DeleteObjects make
+    afterwards therefore always pass (v19.2.6 `rgw_rest_s3.cc:3618-3623`,
+    `:4073`, `:4244`; v20.2.4 `:3901-3906`, `:4601`, `:4792`), and none of
+    these ops compares a Content-MD5 instead. radosgw acts on a signed body
+    whose hash does not match and answers as if it did; the mismatch is only
+    logged, at level 10.
+  - The other subresource PUTs read their body the same way: lifecycle,
+    object lock, legal hold, replication, versioning, website, CORS, request
+    payment, retention, public-access block and encryption (v19.2.6
+    `rgw_rest.cc:1482-1496`, `rgw_op.cc:8616`, `:8747`, and six sites in
+    `rgw_rest_s3.cc`). Of them only the lifecycle PUT compares a Content-MD5,
+    when one is sent (`rgw_op.cc:5942-5981`).
+  - PutObject and UploadPart do return the verdict (v19.2.6
+    `rgw_rest_s3.cc:2706-2714`, `rgw_op.cc:4439`; v20.2.4
+    `rgw_rest_s3.cc:2867-2875`, `rgw_op.cc:4671`).
+  - It is a regression. 0214b4a7afb, "rgw: handle aws4 completion when
+    reading all op data" (first in v17.1.0), moved these ops to the helper.
+    Before it, CreateBucket, the ACL PUTs, CompleteMultipartUpload,
+    DeleteObjects and the versioning, website and CORS PUTs returned the
+    verdict (v16.2.15 `rgw_rest_s3.cc:2268-2271`, `:3341`, `:3721`, `:3903`,
+    `:1978`, `:2052`, `:3486`).
+  - The same code is on main (`rgw_op.h:237` and `:248`, 7ed73efc1be,
+    2026-09-25).
+- **Trigger:** a signed request whose body changes after signing. The
+  signature covers the `x-amz-content-sha256` value, not the body, so anyone
+  who can alter a request between the client and radosgw (plain HTTP, or
+  behind a proxy that terminates TLS) can replace such a body, for example a
+  bucket policy, an ACL, a DeleteObjects key list or a CompleteMultipartUpload
+  part list, and radosgw acts on the replacement.
+- **Releases:** every release from v17.1.0 on; checked at v16.2.15, which
+  returns the verdict, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1 verifies the hash before it acts: every op that acts on
+  a request body reads the body to its end first, and a mismatch is 400
+  XAmzContentSHA256Mismatch with nothing changed (units M, W and P). That is
+  a difference from radosgw, which those units record in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports or fixes it
+  (full-text tracker and all-time pull-request search, 2026-09-30). The
+  helper came with [ceph/ceph#39678](https://github.com/ceph/ceph/pull/39678).
+  Not filed: the defect has not been reproduced on a running cluster, and
+  filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit A, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw checks a copy source with inputs from the destination bucket
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** CopyObject and UploadPartCopy authorize their source inside
+  `verify_permission` through the request's `req_state`, whose bucket is the
+  destination (v19.2.6 `rgw_op.cc:5420-5422` and `:5454-5459`, `:3933-3934`
+  and `:3956-3961`; v20.2.4 `:5986-5988`, `:6020-6025`, `:4142-4143` and
+  `:4165-4170`). The source's ACLs and stored policy are read, but three
+  inputs are the destination's:
+  - Owner: for an identity that belongs to an account, the cross-account
+    decision compares the account with `s->bucket_owner` (v19.2.6
+    `rgw_common.cc:1386-1403`; v20.2.4 `:1414-1433`), the owner of the
+    destination's ACL (`rgw_op.cc:552`; v20.2.4 `:582`). An account user
+    copying from another account's bucket into their own account's bucket
+    takes the same-account path, which consults no ACL and allows on an
+    Allow from an identity policy, or for the account root (v19.2.6
+    `rgw_common.cc:1236-1244`; v20.2.4 `:1249-1257`). The source's owner
+    need grant nothing, where a GET of the same object needs its grant.
+    CopyObject decides on the bucket owner alone. UploadPartCopy decides on
+    the owner of the source object's ACL and falls back to `s->bucket_owner`
+    (v19.2.6 `rgw_common.cc:1533-1534`; v20.2.4 `:1585-1586`), and a source
+    object with no ACL attr gets a default ACL owned by `s->bucket_owner`
+    (v19.2.6 `rgw_op.cc:421-422`, `:307-310`; v20.2.4 `:451-452`,
+    `:350-353`), so UploadPartCopy is affected only for a source object
+    whose ACL is missing or names no owner.
+  - Tenant: the source bucket's policy is parsed with `s->bucket_tenant`,
+    the destination's tenant (v19.2.6 `rgw_op.cc:419`; v20.2.4 `:449`). The
+    parser binds a Resource whose account is empty or `*` to that tenant
+    (`rgw_iam_policy.cc:690-696`; v20.2.4 `:703-709`), while the source
+    object's ARN carries the source's tenant, which a match compares
+    (`rgw_arn.cc:126-130` and `:335-337` at both tags). In a cross-tenant
+    copy the policy's Resource elements never match the source object and
+    its NotResource elements never exclude it, so a Deny the owner scoped
+    with Resource does not stop a copy that the source's ACL allows. A
+    Resource that names the source's tenant fails the parse
+    (`rgw_iam_policy.cc:697-701`; v20.2.4 `:710-714`); see the next entry.
+  - Public-access block: the permission state takes the bucket and its
+    public-access block from the request (v19.2.6 `rgw_common.cc:1099-1109`,
+    `rgw_op.cc:585`; v20.2.4 `rgw_common.cc:1112-1122`, `rgw_op.cc:615`).
+    The source's ACLs are evaluated with the destination's IgnorePublicAcls
+    (v19.2.6 `rgw_common.cc:1420-1423`, `:1572-1575`; v20.2.4 `:1453-1454`,
+    `:1628-1629`), and v20.2.4 tests RestrictPublicBuckets with the
+    destination's block and owner against the source's policy (`:1376-1377`,
+    `:1543-1544`); v19.2.6 does not evaluate RestrictPublicBuckets. A public
+    ACL grant, or on v20.2.4 a public policy, on a source whose owner
+    blocked it lets a requester copy the object into a bucket without the
+    block, where a GET is refused.
+  - v20.2.4's source check also compares `x-amz-expected-bucket-owner` with
+    the destination's owner (`rgw_common.cc:1407-1412`, `:1575-1580`). That
+    header names the destination bucket, so this comparison is correct.
+  - The owner and tenant inputs are the same on main (`rgw_common.cc:1430`,
+    `:1607`, `rgw_op.cc:524-526`, 7ed73efc1be, 2026-09-25).
+- **Trigger:** a requester who may write to the destination: an account user
+  whose account owns it, for the owner input; a requester whose destination
+  is in another tenant than the source, for the tenant input; and a
+  destination without the source's public-access block, for the last.
+- **Releases:** every Squid and Tentacle release; checked at v19.2.6, v20.2.4
+  and main. The owner input came with IAM accounts in f917e999c2c, "rgw: add
+  cross-account policy evaluation" (first in v19.1.0), and the tenant input
+  in v19.2.0 and v20.1.0 (see Upstream); reef parsed the source's policy
+  with the source's tenant (v18.2.8 `rgw_op.cc:403`).
+- **rgw-go:** phase 1 (unit Z) checks a copy source against the source
+  bucket: its owner decides the cross-account path, is the object-owner
+  fallback and owns a default object ACL; its policy is parsed with its own
+  tenant; and its public-access block applies in addition to the
+  destination's. The destination supplies only requester pays and the
+  `x-amz-expected-bucket-owner` comparison. That is a difference from
+  radosgw, which unit Z records in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The tenant input
+  came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169) and
+  its squid backport
+  [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221), the fix for
+  [#67464](https://tracker.ceph.com/issues/67464), which pass the request's
+  tenant where reef passed the source's.
+  [#61954](https://tracker.ceph.com/issues/61954) concerns the same
+  UploadPartCopy check, for a source policy that was never read. Not filed:
+  the defect has not been reproduced on a running cluster, and filing needs
+  a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw terminates on a copy source whose bucket policy does not parse
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - CopyObject and UploadPartCopy parse the source bucket's stored policy
+    first thing in `verify_permission`, with no handler (v19.2.6
+    `rgw_op.cc:5420` and `:3933` into `read_obj_policy`, `:419`; v20.2.4
+    `:5986`, `:4142`, `:449`). The parse constructs a `Policy` (v19.2.6
+    `rgw_op.cc:328-338`; v20.2.4 `rgw_common.cc:3275-3285`), which throws
+    `PolicyParseException` when it fails (`rgw_iam_policy.cc:1815-1824`;
+    v20.2.4 `:1850-1859`). The same parse of the request's own bucket
+    policy has a handler, which answers 403 (v19.2.6 `rgw_op.cc:598-615`;
+    v20.2.4 `:628-645`).
+  - Nothing on the request path catches the exception. `process_request`
+    catches only `DigestException` (v19.2.6 `rgw_process.cc:343` and
+    `:410`; v20.2.4 `:345` and `:417`), and the completion handler of the
+    beast connection coroutine rethrows it (v19.2.6
+    `rgw_asio_frontend.cc:1203-1205`, `:1220-1222`; v20.2.4 `:1116-1117`,
+    `:1133-1134`). The frontend runs on radosgw's io_context pool (v19.2.6
+    `rgw_appmain.cc:474`; v20.2.4 `:482`), whose threads call `ioctx.run()`
+    with no handler either (v19.2.6 `common/async/context_pool.h:81-85`;
+    v20.2.4 `:80-84`; `common/Thread.h:72-82` at both tags), so the
+    exception leaves the thread and `std::terminate` ends the process.
+  - A stored policy fails the parse when the parser has changed since it was
+    stored, which the handler for the request's own bucket anticipates ("a
+    parsing failure here means we broke backward compatibility", v19.2.6
+    `rgw_op.cc:603-606`). From v19.2.0 a policy that parses for its own
+    bucket fails too: the source's policy is parsed with the destination's
+    tenant (previous entry), and a Resource naming the source's tenant,
+    which the source's PutBucketPolicy accepts (v19.2.6
+    `rgw_op.cc:8099-8101`; v20.2.4 `:9025-9027`), fails for any other
+    tenant (`rgw_iam_policy.cc:697-701`; v20.2.4 `:710-714`).
+  - The same code is on main (`rgw_op.cc:524`, `rgw_process.cc:461`,
+    `rgw_asio_frontend.cc:1204` and `:1221`, 7ed73efc1be, 2026-09-25).
+- **Trigger:** a CopyObject or UploadPartCopy that names such a source and
+  reaches `verify_permission`. The parse comes before the copy's permission
+  checks, so the requester needs no grant on either bucket; for a source
+  whose policy names its own tenant, any such request whose destination
+  bucket is in another tenant ends the process.
+- **Releases:** every release checked, v19.2.6, v20.2.4 and main; the
+  cross-tenant case from v19.2.0 and v20.1.0.
+- **rgw-go:** phase 1 (unit Z) refuses a copy whose source bucket policy does
+  not parse with 403 AccessDenied, for every identity with no admin bypass,
+  and parses the source's policy with the source's own tenant, so a policy
+  that parses for its own bucket parses for a copy too. That is a difference
+  from radosgw, which unit Z records in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The cross-tenant
+  case came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169)
+  and [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221) (previous
+  entry). Not filed: the defect has not been reproduced on a running
+  cluster, and filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw answers 200 to a CreateBucket that loses a race to another owner
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - `RGWCreateBucket::execute` reads the bucket first (v19.2.6
+    `rgw_op.cc:3541-3546`; v20.2.4 `:3769-3774`). A bucket another owner
+    already holds is refused there with 409 BucketAlreadyExists, since its
+    ACL, owner included, differs from the request's (v19.2.6
+    `rgw_op.cc:3569-3578`, `rgw_acl.cc:62-64`, `rgw_common.cc:113`; v20.2.4
+    `rgw_op.cc:3797-3806`, `rgw_common.cc:114`).
+  - When the name is free at that read and another owner's create lands
+    before this request's own (`rgw_op.cc:3640`; v20.2.4 `:3868`),
+    `RGWRados::create_bucket` returns EEXIST with the existing bucket's info
+    (`rgw_rados.cc:2422-2450`; v20.2.4 `:2530-2558`), and
+    `RadosBucket::create` returns `-ERR_BUCKET_EXISTS` for another owner, as
+    it does for the same owner (`rgw_sal_rados.cc:182-183`; v20.2.4
+    `:192-193`). `execute` continues past that code (`rgw_op.cc:3646-3647`;
+    v20.2.4 `:3874-3875`). Its ownership re-check runs only for a bucket
+    that existed at the read, and only when metadata is uploaded, which S3's
+    CreateBucket never does (`rgw_op.cc:3649-3665`, `rgw_op.h:1121`; v20.2.4
+    `rgw_op.cc:3877-3893`, `rgw_op.h:1189`). `send_response` turns
+    `-ERR_BUCKET_EXISTS` into 200 (`rgw_rest_s3.cc:2544-2547`; v20.2.4
+    `:2705-2708`).
+  - The client is told its create succeeded, for a bucket that another owner
+    holds and that is not linked to the client. What it can then do in that
+    bucket is what the other owner's ACL and policy allow.
+  - It is a regression. At v18.2.8 `RadosUser::create_bucket` returned EEXIST
+    for another owner (`rgw_sal_rados.cc:276-277`), which CreateBucket
+    answered with 409 (`rgw_rest_s3.cc:2545-2548`, `rgw_common.cc:109`).
+    e2eb66a3617, "rgw/sal: move User::create_bucket() to Bucket::create()"
+    (first in v19.1.0), changed that return to `-ERR_BUCKET_EXISTS`.
+  - The same code is on main (`rgw_sal_rados.cc:219-220`,
+    `rgw_rest_s3.cc:2822-2826`, 7ed73efc1be, 2026-09-25).
+- **Releases:** every Squid and Tentacle release; checked at v18.2.8, which
+  answers 409, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1 (unit M) answers 409 BucketAlreadyExists whenever
+  another owner holds the name, whether it is found at the read or at the
+  create. That is a difference from radosgw, which unit M records in
+  `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports the race (full-text
+  tracker and all-time pull-request search, 2026-09-30). The return came
+  with e2eb66a3617 in
+  [ceph/ceph#50599](https://github.com/ceph/ceph/pull/50599).
+  [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722), open, the fix
+  proposed for [#76398](https://tracker.ceph.com/issues/76398) on
+  CreateBucket's error codes for an existing bucket, changes that return to
+  `-EEXIST` without mentioning the race. `rgw_bucket_eexist_override`
+  ([#70369](https://tracker.ceph.com/issues/70369),
+  [ceph/ceph#62186](https://github.com/ceph/ceph/pull/62186), in v21.0.0 and
+  later, off by default) answers 409 to every `-ERR_BUCKET_EXISTS`, the race
+  included. Not filed: the defect has not been reproduced on a running
+  cluster, and filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit M, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
 ## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
 
 - **Kind:** defect, unfixed through main.
