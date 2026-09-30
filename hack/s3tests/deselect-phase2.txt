@@ -1,0 +1,176 @@
+# Tests of the phase 1 s3-tests parity set that call a phase 2 feature and
+# carry no marker run.sh's EXCLUDED_MARKERS removes, at run.sh's
+# S3TESTS_COMMIT. run.sh deselects every line on both gateways, and stops when
+# a line names no collected test or, since pytest's --deselect matches node-id
+# prefixes, would deselect a test the lists do not name. The PR that lands a
+# feature deletes its lines and re-records the radosgw baselines.
+# Format: a pytest node id, then "#" and the calls that need the feature.
+
+# bucket versioning: each enables it (PutBucketVersioning)
+s3tests/functional/test_s3.py::test_bucket_list_return_data_versioning # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_concurrent_multi_object_delete # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_object_put_acl_mtime # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_object_copy_versioned_bucket # PutBucketVersioning
+s3tests/functional/test_s3.py::test_object_copy_versioned_url_encoding # PutBucketVersioning
+s3tests/functional/test_s3.py::test_object_copy_versioning_multipart_upload # PutBucketVersioning
+s3tests/functional/test_s3.py::test_multipart_copy_versioned # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_bucket_create_suspend # PutBucketVersioning
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_stack_delete_merkers # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_suspend_versions # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_suspended_copy # PutBucketVersioning
+s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_all # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_special_names # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_create_overwrite_multipart # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_obj_list_marker # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_copy_obj_version # PutBucketVersioning
+s3tests/functional/test_s3.py::test_versioning_multi_object_delete # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker_create # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioned_object_acl # PutBucketVersioning
+s3tests/functional/test_s3.py::test_versioned_object_acl_no_version_specified # PutBucketVersioning
+s3tests/functional/test_s3.py::test_versioned_concurrent_object_create_concurrent_remove # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioned_concurrent_object_create_and_remove # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_bucket_atomic_upload_return_version_id # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_versioning_bucket_multipart_upload_return_version_id # PutBucketVersioning, ListObjectVersions
+s3tests/functional/test_s3.py::test_get_versioned_object_attributes # PutBucketVersioning
+s3tests/functional/test_s3.py::test_put_current_object_if_none_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_multipart_put_current_object_if_none_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_put_current_object_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_multipart_put_current_object_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_put_object_current_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_current_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_version_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_current_if_match_last_modified_time # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_version_if_match_last_modified_time # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_current_if_match_size # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_object_version_if_match_size # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match_last_modified_time # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match_last_modified_time # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match_size # PutBucketVersioning
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match_size # PutBucketVersioning
+
+# object lock
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_bucket # PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_enable_after_create # PutBucketVersioning, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_with_days_and_years # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_days # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_years # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_mode # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_status # CreateBucket with object lock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_suspend_versioning # CreateBucket with object lock, PutBucketVersioning
+s3tests/functional/test_s3.py::test_object_lock_get_obj_lock # CreateBucket with object lock, PutObjectLockConfiguration, GetObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_get_obj_lock_invalid_bucket # GetObjectLockConfiguration
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention # CreateBucket with object lock, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_bucket # PutObjectRetention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_mode # CreateBucket with object lock, PutObjectRetention
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention # CreateBucket with object lock, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention_iso8601 # CreateBucket with object lock, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention_invalid_bucket # GetObjectRetention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_versionid # CreateBucket with object lock, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_override_default_retention # CreateBucket with object lock, PutObjectLockConfiguration, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_increase_period # CreateBucket with object lock, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period # CreateBucket with object lock, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period_bypass # CreateBucket with object lock, PutObjectRetention, GetObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_retention # CreateBucket with object lock, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_delete_multipart_object_with_retention # CreateBucket with object lock, object lock headers on CreateMultipartUpload, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_retention_and_marker # CreateBucket with object lock, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_multi_delete_object_with_retention # CreateBucket with object lock, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_put_legal_hold # CreateBucket with object lock, PutObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_bucket # PutObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_status # CreateBucket with object lock, PutObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_get_legal_hold # CreateBucket with object lock, PutObjectLegalHold, GetObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_get_legal_hold_invalid_bucket # GetObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_on # CreateBucket with object lock, PutObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_delete_multipart_object_with_legal_hold_on # CreateBucket with object lock, PutObjectLegalHold, object lock headers on CreateMultipartUpload
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_off # CreateBucket with object lock, PutObjectLegalHold
+s3tests/functional/test_s3.py::test_object_lock_get_obj_metadata # CreateBucket with object lock, PutObjectRetention, PutObjectLegalHold, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_uploading_obj # CreateBucket with object lock, PutObjectLegalHold, object lock headers on PutObject, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_governance_with_bypass # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_governance_without_bypass # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject
+s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_compliance # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject
+
+# POST object (browser-form uploads)
+s3tests/functional/test_s3.py::test_post_object_anonymous_request # POST object
+s3tests/functional/test_s3.py::test_post_object_authenticated_request # POST object
+s3tests/functional/test_s3.py::test_post_object_authenticated_no_content_type # POST object
+s3tests/functional/test_s3.py::test_post_object_authenticated_request_bad_access_key # POST object
+s3tests/functional/test_s3.py::test_post_object_set_success_code # POST object
+s3tests/functional/test_s3.py::test_post_object_set_invalid_success_code # POST object
+s3tests/functional/test_s3.py::test_post_object_upload_larger_than_chunk # POST object
+s3tests/functional/test_s3.py::test_post_object_set_key_from_filename # POST object
+s3tests/functional/test_s3.py::test_post_object_ignored_header # POST object
+s3tests/functional/test_s3.py::test_post_object_case_insensitive_condition_fields # POST object
+s3tests/functional/test_s3.py::test_post_object_escaped_field_values # POST object
+s3tests/functional/test_s3.py::test_post_object_success_redirect_action # POST object
+s3tests/functional/test_s3.py::test_post_object_invalid_signature # POST object
+s3tests/functional/test_s3.py::test_post_object_invalid_access_key # POST object
+s3tests/functional/test_s3.py::test_post_object_invalid_date_format # POST object
+s3tests/functional/test_s3.py::test_post_object_no_key_specified # POST object
+s3tests/functional/test_s3.py::test_post_object_missing_signature # POST object
+s3tests/functional/test_s3.py::test_post_object_missing_policy_condition # POST object
+s3tests/functional/test_s3.py::test_post_object_user_specified_header # POST object
+s3tests/functional/test_s3.py::test_post_object_request_missing_policy_specified_field # POST object
+s3tests/functional/test_s3.py::test_post_object_condition_is_case_sensitive # POST object
+s3tests/functional/test_s3.py::test_post_object_expires_is_case_sensitive # POST object
+s3tests/functional/test_s3.py::test_post_object_expired_policy # POST object
+s3tests/functional/test_s3.py::test_post_object_wrong_bucket # POST object
+s3tests/functional/test_s3.py::test_post_object_invalid_request_field_value # POST object
+s3tests/functional/test_s3.py::test_post_object_missing_expires_condition # POST object
+s3tests/functional/test_s3.py::test_post_object_missing_conditions_list # POST object
+s3tests/functional/test_s3.py::test_post_object_upload_size_limit_exceeded # POST object
+s3tests/functional/test_s3.py::test_post_object_missing_content_length_argument # POST object
+s3tests/functional/test_s3.py::test_post_object_invalid_content_length_argument # POST object
+s3tests/functional/test_s3.py::test_post_object_upload_size_below_minimum # POST object
+s3tests/functional/test_s3.py::test_post_object_upload_size_rgw_chunk_size_bug # POST object
+s3tests/functional/test_s3.py::test_post_object_empty_conditions # POST object
+s3tests/functional/test_s3.py::test_post_object_tags_anonymous_request # POST object
+s3tests/functional/test_s3.py::test_post_object_tags_authenticated_request # POST object
+
+# CORS, including the OPTIONS preflight
+s3tests/functional/test_s3.py::test_object_raw_get_x_amz_expires_not_expired # OPTIONS preflight on the presigned URL before its GET
+s3tests/functional/test_s3.py::test_object_raw_get_x_amz_expires_not_expired_tenant # OPTIONS preflight on the presigned URL before its GET
+s3tests/functional/test_s3.py::test_set_cors # PutBucketCors, GetBucketCors, DeleteBucketCors
+s3tests/functional/test_s3.py::test_cors_origin_response # PutBucketCors, GetBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_origin_wildcard # PutBucketCors, GetBucketCors
+s3tests/functional/test_s3.py::test_cors_header_option # PutBucketCors, GetBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_get_object # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_get_object_tenant # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_get_object_v2 # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_get_object_tenant_v2 # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object_with_acl # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object_v2 # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_v2 # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_with_acl # PutBucketCors, OPTIONS preflight
+
+# public access block
+s3tests/functional/test_s3.py::test_get_undefined_public_block # GetPublicAccessBlock, DeletePublicAccessBlock
+s3tests/functional/test_s3.py::test_get_public_block_deny_bucket_policy # PutPublicAccessBlock, GetPublicAccessBlock
+s3tests/functional/test_s3.py::test_put_public_block # PutPublicAccessBlock, GetPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_put_bucket_acls # PutPublicAccessBlock, GetPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_object_canned_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_policy # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_policy_with_principal # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_restrict_public_buckets # PutPublicAccessBlock, DeletePublicAccessBlock
+s3tests/functional/test_s3.py::test_ignore_public_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_put_get_delete_public_block # PutPublicAccessBlock, GetPublicAccessBlock, DeletePublicAccessBlock
+
+# policy status
+s3tests/functional/test_s3.py::test_get_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_public_acl_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_authpublic_acl_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_publicpolicy_acl_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_nonpublicpolicy_acl_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_nonpublicpolicy_principal_bucket_policy_status # GetBucketPolicyStatus
+
+# client checksums at the Tentacle level
+s3tests/functional/test_s3.py::test_get_checksum_object_attributes # x-amz-checksum-sha256 on PutObject

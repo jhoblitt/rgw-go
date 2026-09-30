@@ -12,12 +12,14 @@ make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.6 under Rook v1.20.7
 make populate RELEASE=squid
 make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
+make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
 make cluster-down RELEASE=squid
 
 make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.20.7
 make populate RELEASE=tentacle
 make integration RELEASE=tentacle
 make gate RELEASE=tentacle
+make s3tests RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
 
@@ -27,6 +29,11 @@ with `ROOKET_NAME=rgw-go-<release> rooket k ...`, never with the ambient
 `kubectl`; `ROOKET=<path>` makes the targets run a rooket other than the one
 on `PATH`.
 
+`make cluster-up` rewrites `out/<release>/` without the `manifest.json` the
+gate reads, so `make populate` runs before `make gate` after every
+`make cluster-up`, in a fresh worktree too. Against a populated cluster it
+writes the same data and manifest again.
+
 ## Prerequisites
 
 - rooket at the commit `.github/workflows/integration.yml` pins, with its own
@@ -35,6 +42,8 @@ on `PATH`.
   `cluster-down` removes it with the disk image, so both need root;
   `rooket sudoers install` removes the prompt.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
+- `git`, `curl` and `python3` with `venv`, with access to GitHub and PyPI,
+  for `hack/s3tests/run.sh`.
 - librados 19.2.6 or later with its headers: both releases' admin keys are
   AES256KRB5, which older librados cannot parse.
 
@@ -185,3 +194,71 @@ that `/usr/bin/radosgw` resolves to it, that every library it links is in the
 image, that `radosgw.ceph`, `ceph`, `radosgw-admin` and `rados` print the base
 image's versions, and that the image names its base. `hack/image/out/`,
 ignored by git, holds each release's binary and each builder's Go build cache.
+
+## s3-tests
+
+```sh
+make gate RELEASE=squid                                # first: the gate counts the zone's users
+make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1    # GATEWAY=rgw-go runs the same set against rgw-go
+```
+
+`hack/s3tests/run.sh` runs [ceph/s3-tests](https://github.com/ceph/s3-tests)
+at the commit it pins (`run.sh --print-commit`) against the release's radosgw,
+or against the rgw-go whose URL `out/<release>/rgw-go.endpoint` holds. The set
+is `test_s3.py` and `test_headers.py` minus the s3-tests markers `run.sh`
+excludes, of features not implemented yet and of `docs/exclusions.md`, and
+minus the tests `hack/s3tests/deselect-phase2.txt` and `deselect-phase3.txt`
+name: tests that call a later phase's feature but carry none of those
+markers. Both gateways run the same set, `fails_on_rgw` tests included, since
+both must fail those alike.
+
+`run.sh` creates the s3-tests users with `radosgw-admin`, with fixed keys so
+that every run writes the same conf: `s3tests-main`, `s3tests-alt`,
+`s3tt$s3tests-tenant`, `s3tests-iam` with the `user-policy`, `roles` and
+`oidc-provider` caps, and `s3tests-root1` and `s3tests-root2`, the roots of
+the accounts `RGW11111111111111111` and `RGW22222222222222222`. They stay for
+later runs, and the gate fails on a zone that holds users the manifest does
+not list, so `make gate` runs before `make s3tests`, never after. Before and
+after each run `run.sh` removes the buckets the three s3 users own: s3-tests
+removes only those of its own run, and `test_list_buckets_paginated` wants
+the main user to own none. It then collects the tails of the objects the run
+deleted, several hundred megabytes, with `radosgw-admin gc process
+--include-all`: radosgw's own collector waits two hours, and the parity
+settings turn it off.
+
+For `make gate` to pass again, remove the users with their buckets, then
+the accounts, then the tails the removal leaves for the collector, which
+the gate's data pool check would count. `run.sh` creates them again on its
+next run.
+
+```sh
+export ROOKET_NAME=rgw-go-squid
+admin() {
+	rooket k -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin "$@" \
+		--rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+}
+for uid in s3tests-main s3tests-alt 's3tt$s3tests-tenant' s3tests-iam s3tests-root1 s3tests-root2; do
+	admin user rm --uid "${uid}" --purge-data
+done
+admin account rm --account-id RGW11111111111111111
+admin account rm --account-id RGW22222222222222222
+admin gc process --include-all
+```
+
+Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
+report `hack/parity` reads, with `.log` (pytest's output), `.conf` (the
+s3-tests conf) and `.freeze` (the Python version and the packages the venv
+held; s3-tests' `requirements.txt` pins none) beside it. The checkout and the
+venv stay in `out/src` and `out/venv` and are rebuilt when the pin changes;
+the pin is bumped by hand, and the baselines re-recorded with it. `run.sh`
+exits 0 when pytest ran the whole set, whatever the tests' outcomes, and
+nonzero when it could not.
+
+Each line of a deselect list is a pytest node id and, after `#`, the calls
+that need the feature. `run.sh` stops before any test runs when a line names
+no test the markers leave, because it was renamed, removed or marked at the
+pinned commit, or when a line would also remove a test the lists do not name,
+since pytest's `--deselect` removes every node id that starts with its
+argument. `run.sh --print-deselect` prints a digest of the listed ids, which a
+recorded baseline carries. The PR that lands a later phase's feature deletes
+its lines and re-records the radosgw baselines.
