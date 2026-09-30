@@ -282,15 +282,39 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     `log_usage` when usage logging is enabled and from usage read and trim.
   The same holds at v20.2.4 (`rgw_lc.cc:2031`, `rgw_rados.cc:1728-1729`, and
   GC's `obj_names[-1]` via `rgw_shards_mod` returning -1, `rgw_tools.h:63-71`).
+  A negative value is accepted too. A negative `rgw_lc_max_objs` or
+  `rgw_gc_max_objs` fails earlier, at startup: `RGWLC::initialize` and
+  `RGWGC::initialize` allocate an array of that many shard names
+  (`rgw_lc.cc:237-241` and `driver/rados/rgw_gc.cc:35-37` at v19.2.6 and
+  v20.2.4), which with GCC throws a plain `std::bad_alloc`;
+  `RGWRados::init_complete` runs both (`rgw_rados.cc:1326-1327` and, with
+  GC, `:1223-1225` at v19.2.6; `:1310-1311` and `:1285-1287` at v20.2.4). A
+  negative `rgw_usage_max_shards` does not fault, but `usage_log_hash`
+  converts it to an unsigned divisor of 2^32 minus its magnitude, so each
+  usage object is named by the hash itself (`rgw_rados.cc:1615-1628` at
+  v19.2.6, `:1718-1731` at v20.2.4). The all-users usage read and trim walk
+  the shard index up from 0 until the name comes back to `usage.0`, the read
+  also stopping once it is truncated or has filled its entry budget
+  (`:1681-1714` and `:1723-1733` at v19.2.6, `:1784-1817` and `:1826-1836`
+  at v20.2.4). That divisor puts `usage.0` at least 2^31 steps away, each a
+  RADOS call, and a missing shard object only moves the walk on: both skip
+  ENOENT (`:1697-1698`, `:1729-1730`; v20.2.4 `:1800-1801`, `:1832-1833`),
+  and the read clears `is_truncated` before its call
+  (`cls/rgw/cls_rgw_client.cc:798-799` at v19.2.6, `:607-608` at v20.2.4).
+  The admin API reaches both: a usage GET that names no user or bucket, and
+  a usage DELETE with `remove-all`, read or trim for a user with an empty
+  id (`rgw_rest_usage.cc:38-41`, `:69`, `:91-94` and `:108-120`, the same
+  at both tags; `rgw_sal_rados.cc:252` and `:261` at v19.2.6, `:269` and
+  `:278` at v20.2.4). This loop is from code reading, not reproduced.
 - **Releases:** every release. GC faults as a SIGFPE at v19.2.2 and as an
   out-of-bounds read from v19.2.3 and v20.1.0 on; LC and usage fault as a
   SIGFPE throughout, since the `rgw_shards_mod` guard does not cover their
   direct modulo.
 - **rgw-go:** config validation rgw-go must add. Phase 1 rejects or floors a
-  zero `rgw_gc_max_objs` (GC worker, unit W), `rgw_lc_max_objs` and
-  `rgw_usage_max_shards` (metadata and lifecycle path, unit M) at startup
-  rather than faulting on first use, and never divides by a shard count without
-  guarding it.
+  zero `rgw_gc_max_objs` (GC worker, unit W), and a zero or negative
+  `rgw_lc_max_objs` and `rgw_usage_max_shards` (metadata and lifecycle path,
+  unit M), at startup rather than faulting on first use, and never divides
+  by a shard count without guarding it.
 - **Upstream:** [#80991](https://tracker.ceph.com/issues/80991); its fix,
   [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), adds min: 1 to
   the three options and is in review.
@@ -1744,3 +1768,50 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   reproduction on a running radosgw.
 - **Found:** phase 1 auth work (unit A), checking the frontend's
   percent-escape entry against `url_decode`, 2026-09-30.
+
+## radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** `rgw_bucket_index_max_aio`, the number of bucket-index
+  operations radosgw keeps in flight across a bucket's shards, is a `uint`
+  with no `min:` (`common/options/rgw.yaml.in:195-202` at v19.2.6,
+  `:201-208` at v20.2.4), so a configured 0 is accepted.
+  - v19.2.6: `CLSRGWConcurrentIO::operator()` issues shard operations while
+    `max_aio-- > 0` (`cls/rgw/cls_rgw_client.cc:28`), so a zero issues none.
+    `BucketIndexAioManager::wait_for_completions` then returns false because
+    nothing is pending (`:139-141`), and the batch returns 0. Bucket-index
+    initialization on bucket creation (`services/svc_bi_rados.cc:369-371`)
+    and listing (`driver/rados/rgw_rados.cc:9710-9713`) are among the batches
+    that report success without touching a shard.
+  - v20.2.4: each batch reads the option into a `size_t` and hands it to
+    `rgwrados::shard_io` as its window, as the index-header read does
+    (`services/svc_bi_rados.cc:374-391`). Before sending a shard operation,
+    the reader and both writers wait for a completion while
+    `outstanding.size() >= max_concurrent` (`driver/rados/shard_io.h:353`,
+    `:480` and `:603`), which a zero window satisfies with nothing
+    outstanding. `async_wait` only parks the caller (`:213-226`), and only a
+    shard operation's completion wakes it (`maybe_complete`, `:228-238`), so
+    the batch never finishes: a request's coroutine stays suspended, and a
+    blocking caller waits forever (`svc_bi_rados.cc:389-390`).
+- **Releases:** v19.2.6 skips the batch; v20.2.4 and main (a956c21a8c9,
+  2026-09-30, `rgw.yaml.in:232-239`, `shard_io.h:359`, `:486` and `:610`)
+  never finish it.
+- **rgw-go:** reads the option once at startup and uses a zero as 1, with an
+  error-level log line naming the option, so the driver's bucket-index
+  fan-out always has a window. `docs/exclusions.md` records the difference.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), the fix for
+  [#80991](https://tracker.ceph.com/issues/80991), adds `min: 1` to
+  `rgw_lc_max_objs`, `rgw_usage_max_shards` and `rgw_gc_max_objs` only.
+  - tracker.ceph.com: the full-text search of every project's issues, open
+    and closed, which finds #80991 by `rgw_usage_max_shards`. Terms:
+    `rgw_bucket_index_max_aio`, `bucket_index_max_aio`,
+    `CLSRGWConcurrentIO` and `max_concurrent shard_io`: no results.
+  - ceph/ceph pull requests through `gh search prs`, which finds #72160 by
+    `rgw_usage_max_shards`. Term `rgw_bucket_index_max_aio`: six pull
+    requests (#28558, #49795, #59199, #59222, #60628 and #61760), none
+    about a zero window.
+- **Found:** phase 1 unit M, validating the driver's options, 2026-09-30;
+  not reproduced on a running cluster.
