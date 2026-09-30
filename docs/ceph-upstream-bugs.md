@@ -1651,3 +1651,96 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     backports).
 - **Found:** phase 1 gateway work (unit G), 2026-09-30, reading
   `RGWListBuckets_ObjStore_S3` for rgw-go's ListBuckets.
+
+## url_decode reads outside its hex table for a byte above 0x7f after "%"
+
+- **Kind:** defect, unfixed through main. Reproduced by calling the
+  `url_decode` that the librgw2 19.2.6 and 20.2.4 packages ship; not
+  reproduced on a running radosgw.
+- **Evidence:**
+  - `hex_to_num` looks an escape's digits up in `HexTable`'s 256-byte
+    table with the `char` cast to `int` (`rgw_common.cc:1690-1692` at
+    v19.2.6, `:1753-1755` at v20.2.4, `:1779-1781` on main at
+    a956c21a8c9). `char` is signed on x86_64, so a byte from 0x80 to 0xff
+    indexes from -128 to -1 and reads the 128 bytes before the table.
+    `url_decode` takes a negative value as a bad digit and empties its
+    result, and uses any other as the digit (`:1701-1734` at v19.2.6,
+    `:1764-1797` at v20.2.4).
+  - A program `dlopen`s `librgw.so.2` from librgw2-19.2.6-0.el9 and
+    librgw2-20.2.4-0.el9 and calls the exported `url_decode` on `%`, each
+    byte from 0x80 to 0xff, and `0`. In 19.2.6, 104 of the 128 bytes read
+    as the digit 0, 21 as other digits and 3 (0x90, 0x98, 0xe0) as none;
+    in 20.2.4, 102 as 0, 17 as others and 9 as none. `%\xc3\xbc` decodes
+    to a NUL byte in both. What the read finds depends on the build.
+- **Releases:** v19.2.6, v20.2.4 and main (a956c21a8c9, 2026-09-30).
+- **rgw-go:** takes such a byte as no hex digit, so the result is empty,
+  as for any other bad digit; `docs/exclusions.md` records the
+  difference.
+- **Upstream:** no issue or pull request fixes it.
+  [#4755](https://tracker.ceph.com/issues/4755) (2013, Resolved), on
+  `url_decode` assuming a signed `char` on armhf, remarked in passing that
+  `hex_to_num` "has an obvious related bug in places where char is _not_
+  unsigned"; the lookup it names still reads outside the table. Searched
+  2026-09-30, each search first run on a known match:
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds
+    [#81000](https://tracker.ceph.com/issues/81000) by `dir suggest during
+    reshard`. Terms: `url_decode` (#4755 and reports on `+` and on policy
+    decoding), `hex_to_num` (#4755,
+    [#6672](https://tracker.ceph.com/issues/6672) on the table's
+    initialization race, and #8702 on `+`), `HexTable` (none),
+    `percent-encoded`, `bad escape` and `escape sequence` (unrelated
+    issues only).
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609) by `guard
+    against dir suggest during reshard`. Terms: `hex_to_num`
+    ([ceph/ceph#783](https://github.com/ceph/ceph/pull/783), the
+    initialization race), `HexTable`, `invalid url-encoding` and `rgw
+    signed char` (none), and `url_decode` (23 pull requests; none changes
+    `hex_to_num`).
+  Not filed: filing waits on a reproduction on a running radosgw.
+- **Found:** phase 1 auth work (unit A), transcribing `url_decode`,
+  2026-09-29; the shipped libraries were called the same day.
+
+## A malformed percent-escape in the path makes radosgw serve another path
+
+- **Kind:** defect, unfixed through main. Unreproduced on a running
+  radosgw: found by reading the code at v19.2.6 and v20.2.4.
+- **Evidence:**
+  - `RGWREST::preprocess` decodes the path with `url_decode` and checks
+    the result only for a NUL (`rgw_rest.cc:2182-2186` at v19.2.6,
+    `:2204-2208` at v20.2.4). `url_decode` returns an empty string for an
+    escape with a character that is no hex digit, such as `%zz`, and stops
+    at a `%` with fewer than two characters after it
+    (`rgw_common.cc:1725-1726` and `:1718-1719` at v19.2.6, `:1788-1789`
+    and `:1781-1782` at v20.2.4), so `/b/k%` and `/b/k%4` decode as
+    `/b/k`. A virtual-hosted request's bucket is put in front of the path
+    before the decode (`rgw_rest.cc:2154-2161` at v19.2.6), so it is
+    emptied with the rest.
+  - The S3 handler reads an empty path as naming neither bucket nor
+    object (`init_from_header`, `rgw_rest_s3.cc:4908-4914` at v19.2.6,
+    `:5468-5474` at v20.2.4). So `GET /b/%zz` is served as `GET /`, a
+    ListBuckets, and a request for the key `k%` acts on the key `k`.
+  - SigV4 signs the same decode: the canonical URI is `aws4_uri_recode`
+    of the path, and `/` when that is empty (`get_v4_canonical_uri`,
+    `rgw_auth_s3.h:598-612` at v19.2.6, `:601-615` at v20.2.4), so the
+    signature such a request needs is one over the path radosgw serves.
+- **Releases:** v19.2.6, v20.2.4 and main (`url_decode` still returns an
+  empty string, `rgw_common.cc:1815` at a956c21a8c9).
+- **rgw-go:** net/http answers such a request `400 Bad Request` before any
+  handler runs; `docs/exclusions.md` records the difference under
+  "Frontend differences".
+- **Upstream:** no issue reports the path.
+  [#71458](https://tracker.ceph.com/issues/71458) (CVE-2025-48052,
+  Resolved) was the same empty result crashing UploadPartCopy through
+  `x-amz-copy-source`; its fix,
+  [ceph/ceph#63521](https://github.com/ceph/ceph/pull/63521), guards that
+  caller in `rgw_op.cc` and changes `url_decode` only by a blank line.
+  Searched 2026-09-30 with the methods and known matches of the entry
+  above: tracker terms `url encoding`, `invalid url`, `malformed url`,
+  `percent sign` and `bad escape` find #71458, its backports and
+  unrelated issues; pull request terms `url_decode` and `invalid
+  url-encoding` find no fix for the path. Not filed: filing waits on a
+  reproduction on a running radosgw.
+- **Found:** phase 1 auth work (unit A), checking the frontend's
+  percent-escape entry against `url_decode`, 2026-09-30.
