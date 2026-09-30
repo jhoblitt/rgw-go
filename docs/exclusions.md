@@ -503,6 +503,16 @@ review and verified against the tree.
   radosgw prints its arguments on `--show_args` and goes on; rgw-go drops
   the flag. Rook passes `--id` and neither of these, so a Rook-managed
   gateway is unaffected.
+- **An admin is served past a failed permission check only on an access
+  denial.** When the permission check refuses a request from an admin or
+  system user, rgw-go serves it anyway only if the refusal is an access
+  denial (AccessDenied from `EACCES` or `EPERM`, or AuthorizationError),
+  on both releases, as Tentacle's radosgw does. Squid's radosgw serves
+  such a user past any error from that check, invalid parameters it
+  parses there included, such as a listing's `max-keys`; on a Squid
+  cluster rgw-go returns every error but an access denial instead.
+  Tentacle's radosgw narrowed the override because the other errors may
+  be invalid input.
 
 ### Request parsing and dispatch differences
 

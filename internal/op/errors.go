@@ -19,7 +19,7 @@ type Error struct {
 	Status  int
 	Message string
 	// Errno is the magnitude of rgw_err::ret radosgw would carry: an errno or
-	// an ERR_* number from rgw_common.h. It is informational.
+	// an ERR_* number from rgw_common.h. Run's admin override is decided on it.
 	Errno int
 }
 
