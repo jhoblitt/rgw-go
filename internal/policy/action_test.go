@@ -46,6 +46,6 @@ var _ = Describe("Action", func() {
 		}
 	})
 	It("renders no name for a value past the table", func() {
-		Expect((policy.S3All + 1).String()).To(BeEmpty())
+		Expect(policy.ActionCount.String()).To(BeEmpty())
 	})
 })

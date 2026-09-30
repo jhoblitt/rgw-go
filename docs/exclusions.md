@@ -876,6 +876,30 @@ does the following.
   passes its check that `host` is signed (`rgw_auth_s3.cc:793` at v19.2.6,
   `:770` at v20.2.4); for rgw-go it is absent.
 
+### Authorization differences
+
+rgw-go evaluates bucket and identity policies as radosgw's `rgw::IAM` code
+does. Where the two differ, checked against the v19.2.6 and v20.2.4 tags,
+rgw-go does the following.
+
+- **ARN patterns match component by component.** rgw-go splits an ARN
+  pattern, such as an `ArnEquals`, `ArnLike`, `ArnNotEquals` or `ArnNotLike`
+  condition's, and the ARN it is matched against at every colon, and matches
+  each component on its own with fnmatch's rules (`policy.MatchPolicy`).
+  radosgw's `match_policy` hands `substr` the next colon's position where it
+  expects a length, so it compares every component after the first together
+  with the text after it (`rgw_common.cc:2178-2179` at v19.2.6,
+  `:2241-2242` at v20.2.4, which `arn_like` calls,
+  `rgw_iam_policy.cc:845-852` and `:864-871`). A pattern such as
+  `arn:aws:sns:*:123456789012:topic` therefore matches
+  `arn:aws:sns:us-east-1:123456789012:topic` in rgw-go and not in radosgw.
+  A statement whose `ArnLike` or `ArnEquals` condition names such a pattern
+  takes effect in rgw-go where radosgw's is skipped, whether it allows or
+  denies; under `ArnNotLike` or `ArnNotEquals` the reverse holds, so rgw-go
+  can skip a Deny that radosgw applies (`rgw_iam_policy.cc:1001` at
+  v19.2.6, `:1005` at v20.2.4). Action names have one colon and match
+  alike. `docs/ceph-upstream-bugs.md` records the defect.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
