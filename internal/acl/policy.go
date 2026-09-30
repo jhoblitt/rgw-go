@@ -47,7 +47,7 @@ type GrantEntry struct {
 // keys may repeat. Encode and MarshalJSON write Grants in multimap order,
 // sorted by key with equal keys in slice order, without reordering the
 // caller's slice, and DecodeList returns them in that order.
-type List struct {
+type List struct { //nolint:recvcheck // add_grant and remove_canon_user_grant mutate the list, while it encodes by value as every stored type does
 	UserMap     map[string]int32
 	GroupMap    map[uint32]int32
 	RefererList []Referer

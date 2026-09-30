@@ -878,6 +878,118 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Upstream:** not filed; a quirk.
 - **Found:** phase 0 gate, Task 15.
 
+## radosgw lets a matching referer grant replace the requester's own ACL grants
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `rgw_acl.cc`, `rgw_acl.h` and `rgw_acl_swift.cc` are the same
+  blobs at v19.2.6 and v20.2.4, so each of their lines below holds at both.
+  - `RGWAccessControlPolicy::verify_permission` asks `get_perm` for
+    `perm | RGW_PERM_READ_OBJS | RGW_PERM_WRITE_OBJS` (`rgw_acl.cc:208`). An
+    S3 grant holds at most FULL_CONTROL, so unless Swift's container flags
+    are granted too, the flags `get_perm` gathers from the user map, the
+    owner and the groups fall short of that mask, and it calls
+    `get_referer_perm` whenever the request has a Referer (`:190-192`).
+  - `get_referer_perm` starts from those flags and assigns each matching
+    referer grant's flags over them (`:137-158`). A match therefore discards
+    the requester's own grant, the owner's implicit READ_ACP and WRITE_ACP,
+    and the group grants alike.
+  - A Swift container ACL is built on `create_default` for the user who
+    sets it (`rgw_rest_swift.cc:706-717`; v20.2.4 `:704-715`), normally the
+    owner, who so keeps FULL_CONTROL, and each `.r:host` entry of its read
+    list becomes a referer grant holding `RGW_PERM_READ_OBJS`
+    (`rgw_acl_swift.cc:21`, `:57-96`, `:146-149`, `:180-191`).
+  - The bucket ACL check passes the request's `HTTP_REFERER`, and `perm` as
+    both the mask and the permission (`rgw_common.cc:1128-1130`,
+    `:1420-1423`; v20.2.4 `:1141-1143`, `:1451-1454`). No check before it
+    spares the owner (`:1342-1372`, `:1405-1409`; v20.2.4 `:1366-1393`,
+    `:1435-1439`). An account user's requests to its own account's buckets
+    never consult ACLs (`:1397-1403`; v20.2.4 `:1427-1433`), so an owner is
+    affected only as a user outside any account.
+  - So on a bucket whose Swift read ACL is `.r:example.com` and which has no
+    bucket policy, the owner's PutObject (`rgw_op.cc:3982-3985`; v20.2.4
+    `:4191-4194`) with a `Referer: http://example.com/page` header is refused
+    with 403: its WRITE, from FULL_CONTROL, is replaced by READ_OBJS, which
+    counts only as READ and READ_ACP (`rgw_acl.cc:216-221`). Without the
+    header the same request succeeds.
+  - The replacement came with 11d4370eaf7, "rgw: partially respect Swift's
+    negative, HTTP referer-based ACLs", so that a negative `.r:-host` grant,
+    stored with no flags, could revoke what `.r:*` gives through the
+    AllUsers group.
+- **Releases:** every release since v12.1.0; checked at v19.2.6 and v20.2.4,
+  at the squid and tentacle branch heads (a742f50616e, 2026-09-03;
+  c9579b573bc, 2026-09-29), which carry the same `rgw_acl.cc` and
+  `rgw_acl.h`, and at main (fb19b5bced2, 2026-09-30), whose two files differ
+  only in their modelines, one include and `generate_test_instances`.
+- **rgw-go:** mirrors it, so that either gateway answers a request on a
+  shared zone alike: `acl.List.RefererPerm` replaces the flags as
+  `get_referer_perm` does, and the spec "lets a matching referer grant
+  replace even the owner's own grant, as radosgw does"
+  (`internal/acl/eval_test.go`) pins it.
+- **Upstream:** no issue or pull request reports it. Not filed: filing waits
+  on a reproduction on a running system and a C++ reproducer.
+  [#18841](https://tracker.ceph.com/issues/18841) (Resolved) is the
+  negative-referer report the replacement answered, through
+  [ceph/ceph#14344](https://github.com/ceph/ceph/pull/14344), after a first
+  attempt, [ceph/ceph#13294](https://github.com/ceph/ceph/pull/13294), was
+  closed unmerged. Searched 2026-09-29 and 2026-09-30, each method checked
+  first on a known match:
+  - the tracker's issue filter on any searchable field, every project and
+    status, checked on `cls_otp_divzero_repro`, which only a comment on
+    #80948 holds: `get_referer_perm` and `referer_list` find nothing,
+    `ACLReferer` only #18685, its backport #18895 and a cleanup (#39619),
+    and `RGW_PERM_READ_OBJS` only #18517, about Swift's default container
+    ACLs. The tracker's full-text search for referer with acl, owner,
+    denied, 403 and AccessDenied finds no report of it either; its closest
+    hits are #18841 and #18685.
+  - `gh search prs --repo ceph/ceph`, checked on a phrase that only
+    #14344's body holds: `get_referer_perm` and `ACLReferer` find nothing,
+    `referer_list` only #14344.
+  - ceph/ceph pull requests by the files they change, for
+    `src/rgw/rgw_acl.cc` and `src/rgw/rgw_acl.h`, checked on the merged
+    #14344, #13005, #65374 and #65742: none of the 1561 open ones touches
+    either. Of the 3462 closed unmerged since 2024-01-01, only #43978 (the
+    owner's `get_perm` flags widened to FULL_CONTROL, the referer step left
+    as is) and #57539 (subuser permission masks) are ACL changes; the rest
+    carry the two files among hundreds or thousands of others.
+- **Found:** phase 1 unit Z, Task 6's transcription of `get_perm`,
+  2026-09-29; derived from the source, not reproduced.
+
+## radosgw ends a Referer's userinfo at an @ in its path
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `ACLReferer::get_http_host` (`rgw_acl.h:253-270`, the same
+  blob at v19.2.6 and v20.2.4) takes what follows the first `://`, drops
+  everything through the first `@` after it, wherever that `@` falls, and
+  ends the host at the first `/` or `:`. An `@` in the path or query thus
+  ends the userinfo: `http://evil.example/x@good.example/` has the host
+  `good.example`. A query is not cut either: `http://example.com?x` has the
+  host `example.com?x`. `is_match` compares that host with a referer
+  grant's spec (`:212-233`), so a Swift referer ACL (`.r:host` or
+  `.r:-host`) is decided by what follows the `@`, not by the page's host:
+  with `.r:good.example` on a container, a request whose Referer is the URL
+  above matches the grant. The parse came with 941dfad6717, "rgw: swift: The
+  http referer should be parsed to compare in swift API".
+- **Releases:** every release since v12.0.0; checked at v19.2.6, v20.2.4, the
+  squid and tentacle branch heads and main, as for the previous entry.
+- **rgw-go:** mirrors it: `acl.Referer.IsMatch` parses the host as
+  `get_http_host` does, and the spec "the first @ after the scheme ends the
+  userinfo, even in the path" (`internal/acl/eval_test.go`) pins it.
+- **Upstream:** no issue or pull request reports it. Not filed, for the same
+  reason as the previous entry.
+  [#18685](https://tracker.ceph.com/issues/18685) (Resolved) asked for the
+  Referer's host to be compared rather than the whole value; its fix,
+  [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005), wrote this
+  parse. Searched with the previous entry's methods: the tracker filter
+  finds `get_http_host` only in #39619, a string_view cleanup, and the
+  full-text search for referer with userinfo, host parse and hostname finds
+  only #18685, its backports and unrelated reports; `gh search prs` finds
+  `get_http_host` only in #13005 and in #50330, an unrelated `RGWEnv::get`
+  fix; the file sweep is the previous entry's.
+- **Found:** phase 1 unit Z, Task 6's transcription of `is_match`,
+  2026-09-29; derived from the source, not reproduced.
+
 ## cls_version's header documents EAGAIN, but the class returns ECANCELED
 
 - **Kind:** quirk. ECANCELED is the code radosgw relies on; the header
