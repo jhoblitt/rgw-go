@@ -940,3 +940,55 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **rgw-go:** unaffected; it sends no auth commands.
 - **Upstream:** [#80998](https://tracker.ceph.com/issues/80998).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-016); verified 2026-09-27.
+
+## The --name error lists the entity types as raw bytes
+
+- **Kind:** defect, a regression new in v19.2.6 and v20.2.4; fixed on the
+  squid and tentacle branches, in no release yet.
+- **Evidence:**
+  - `EntityName::get_valid_types_as_str` streams
+    `STR_TO_ENTITY_TYPE[i].first`, an `entity_type_t`, which is a `uint8_t`
+    (`entity_name.cc:145-155`, `msgr.h:89`, identical at v19.2.6 and
+    v20.2.4), so it writes each type's byte instead of its name. Its one
+    caller is the `-n`/`--name` error of `ceph_argparse_early_args`
+    (`ceph_argparse.cc:528`; v20.2.4 `:532`), which `global_pre_init` runs
+    for radosgw and every other program built on `global_init`.
+  - Reproduced on the release images without a cluster, since early
+    arguments are parsed before any configuration is read:
+    `podman run --rm --network=none quay.io/ceph/ceph:v19.2.6 radosgw
+    --name=bogus.x`, and the same on `v20.2.4`, both exit 1 with identical
+    output, shown here through `cat -v`: `error parsing 'bogus.x': expected
+    string of the form TYPE.ID, valid types are:  , ^A, ^D, ^B, ^P, ^H`. The
+    list is the bytes 0x20, 0x01, 0x04, 0x02, 0x10 and 0x08, which are auth,
+    mon, osd, mds, mgr and client. The v21.1.0 image prints `valid types are:
+    auth, mon, osd, mds, mgr, client`.
+  - The regression is main's ad8e5eb399a, "common/entity_name: cleanup
+    entity_name::type", which made the table (type, name) pairs and changed
+    the stream from `.str` to `.first`. It reached the floor releases as
+    e03a5724798 on squid and f92ac6f3e6a on tentacle; v19.2.5, v20.2.3 and
+    v21.1.0 print the names. Ceph commit 18e32faf20a, "common/entity_name:
+    print type names in get_valid_types_as_str()", streams `.second`. Its
+    `Fixes:` line names 0753b1d5326, which only adds a `type_str` field to
+    `EntityName::dump`.
+- **Releases:** v19.2.6 and v20.2.4, and main between ad8e5eb399a and
+  18e32faf20a.
+- **rgw-go:** unaffected. `cephconf.ParseEarly` rejects the same names and
+  prints the type names: `valid types are: auth, mon, osd, mds, mgr,
+  client`.
+- **Upstream:** [#79678](https://tracker.ceph.com/issues/79678), resolved,
+  lists "EntityName valid-types garbage" among the cephx merge's make-check
+  fallout, fixed on main by
+  [ceph/ceph#71165](https://github.com/ceph/ceph/pull/71165). Its squid
+  backport is [#79640](https://tracker.ceph.com/issues/79640) with
+  [ceph/ceph#71190](https://github.com/ceph/ceph/pull/71190), and its
+  tentacle backport [#79638](https://tracker.ceph.com/issues/79638) with
+  [ceph/ceph#71191](https://github.com/ceph/ceph/pull/71191); both backport
+  trackers also carry the MonClient.h build break,
+  [#79628](https://tracker.ceph.com/issues/79628), and bear its title. The
+  three pull requests merged between 2026-08-19 and 2026-08-21. Neither
+  backport tracker names a release: "Released In" is empty on both, and
+  "Fixed In" is v19.2.6-238-g5e2e9bc161 and v20.2.4-36-g7364075cb8, commits
+  past the floor tags, so no released Squid or Tentacle version carries the
+  fix.
+- **Found:** phase 1 unit G, early-argument parsing, 2026-09-29; reproduced
+  2026-09-29 on the v19.2.6 and v20.2.4 images.
