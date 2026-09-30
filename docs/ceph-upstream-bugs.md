@@ -1242,3 +1242,59 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   filing waits on a reproduction on a running radosgw.
 - **Found:** phase 1 frontend work (unit G), 2026-09-29; the reproducer
   was run in review; not reproduced on a running radosgw.
+
+## Squid's radosgw fails to start when its realm search meets a realm whose period cannot be read
+
+- **Kind:** defect, fixed on main and tentacle, unfixed on squid.
+  Unreproduced: found by reading the code at v19.2.6.
+- **Evidence:** at v19.2.6, when the zone is found but its realm's current
+  period does not hold it, `RGWSI_Zone::do_start` searches every realm for
+  the zone (`search_realm_with_zone`, `services/svc_zone.cc:178-192`). The
+  search skips a realm it cannot open (`:105-109`) but returns the error of
+  `RGWRealm::find_zone` (`:111-116`), which returns its period's init error
+  although it logs "period init failed ... skipping"
+  (`rgw_realm.cc:216-242`), and `do_start` then fails (`svc_zone.cc:189-191`).
+  A realm with an empty current period is one such realm: `RGWPeriod::init`
+  reads `periods..latest_epoch` for it and gets ENOENT
+  (`rgw_period.cc:14-46`). The search runs for an empty current period too,
+  so a realm without a readable period stops radosgw from starting,
+  although SiteConfig::load, which runs first, falls back to the local
+  zonegroup for it (`driver/rados/rgw_zone.cc:1239-1250`). radosgw-admin
+  writes an initial period with every realm it creates
+  (`driver/rados/rgw_zone.cc:513-522`), so the shape needs a period removed
+  or a realm written outside it.
+- **Releases:** squid. v20.2.4 has no realm search: `RGWSI_Zone::do_start`
+  takes the zonegroup and zone from SiteConfig
+  (`services/svc_zone.cc:98-103` at v20.2.4).
+- **rgw-go:** searches no realm. Without a readable period it takes the
+  local zonegroup and starts, as Tentacle does (`docs/exclusions.md`,
+  "Zone and placement differences").
+- **Upstream:** fixed on main by
+  [ceph/ceph#63266](https://github.com/ceph/ceph/pull/63266) for
+  [#71291](https://tracker.ceph.com/issues/71291), which reports another
+  failure of the same search, "incorrect zonegroup" with two realms: it
+  removes `search_realm_with_zone` with the rest of `do_start`'s duplicated
+  startup logic. Backported to tentacle by
+  [ceph/ceph#66300](https://github.com/ceph/ceph/pull/66300)
+  ([#73890](https://tracker.ceph.com/issues/73890)) before v20.2.4. No
+  squid backport: #71291's only copy is tentacle's, and origin/squid
+  (a742f50616e, 2026-09-03) still calls the search. No issue reports this
+  failure (searched 2026-09-30); each search was first run on a known
+  match.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds
+    [#80948](https://tracker.ceph.com/issues/80948) by
+    `oath_totp_validate4_callback`, a word only in its description. Terms:
+    `search_realm_with_zone` (only
+    [#56313](https://tracker.ceph.com/issues/56313), a crash while listing
+    realms), `search_realm_conf`, `RGWRealm::find_zone`, `realm.find_zone`
+    and `can't open realm skipping` (none), `period init failed skipping`
+    (four unrelated issues) and `searching for the correct realm` (three
+    test logs).
+  - ceph/ceph pull requests through `gh search prs`, which finds #63266
+    and #66300 by "remove duplicated startup logic". Terms:
+    `search_realm_with_zone` (#63266 and the configstore refactor #62398),
+    `period init failed` (#62398), `find_zone` (closed zipper work in
+    progress only) and `RGWRealm find_zone` (none).
+- **Found:** phase 1 metadata work (unit M), 2026-09-29, reading
+  `RGWSI_Zone::do_start` for rgw-go's zone resolution.

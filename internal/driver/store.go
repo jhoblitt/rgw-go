@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -27,13 +28,8 @@ type Store struct {
 	cluster radosclient.Cluster
 	conf    *cephconf.Options
 	release denc.Release
-
-	// The zone this gateway serves, known only by the names configuration
-	// gives it.
-	zone      meta.Zone
-	params    meta.ZoneParams
-	zoneGroup meta.ZoneGroup
-	realm     meta.Realm
+	zone    *zoneConfig
+	pools   *poolCache
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -51,31 +47,38 @@ var (
 	_ op.MetadataStore  = (*Store)(nil)
 )
 
-// Open connects the driver to cluster: detects the release, and reads
-// rgw_zone, rgw_zonegroup and rgw_realm.
+// Open connects the driver to cluster: it detects the release, then
+// resolves the zone the gateway serves from the root pools and logs it.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{cluster: cluster, conf: conf, release: release}
-	for _, name := range []struct {
-		option string
-		dst    *string
-	}{
-		{"rgw_zone", &s.zone.Name},
-		{"rgw_zonegroup", &s.zoneGroup.Name},
-		{"rgw_realm", &s.realm.Name},
-	} {
-		v, err := conf.String(name.option)
-		if err != nil {
-			return nil, fmt.Errorf("reading the zone names: %w", err)
-		}
-		*name.dst = v
+	names, err := readZoneNames(conf)
+	if err != nil {
+		return nil, err
 	}
-	s.params.Name = s.zone.Name
-	return s, nil
+	pools := newPoolCache(cluster)
+	zc, err := openZone(ctx, conf, pools, names, release)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
+	zc.log(ctx)
+	return &Store{cluster: cluster, conf: conf, release: release, zone: zc, pools: pools}, nil
 }
+
+// openZone opens the root pools and resolves the zone from them.
+func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, names zoneNames, rel denc.Release) (*zoneConfig, error) {
+	roots, err := openRootPools(ctx, conf, pools)
+	if err != nil {
+		return nil, err
+	}
+	return resolveZone(ctx, roots, names, rel)
+}
+
+// Close closes the pools the Store opened. The workers stop with Run's
+// context, not here.
+func (s *Store) Close() error { return s.pools.closeAll() }
 
 func detectRelease(ctx context.Context, cluster radosclient.Cluster, override *denc.Release) (denc.Release, error) {
 	if override != nil {
@@ -113,24 +116,24 @@ func (s *Store) Env() *op.Env {
 func (s *Store) Release() denc.Release { return s.release }
 
 // Zone implements op.ZoneInfo.
-func (s *Store) Zone() meta.Zone { return s.zone }
+func (s *Store) Zone() meta.Zone { return s.zone.Zone }
 
 // ZoneGroup implements op.ZoneInfo.
-func (s *Store) ZoneGroup() meta.ZoneGroup { return s.zoneGroup }
+func (s *Store) ZoneGroup() meta.ZoneGroup { return s.zone.ZoneGroup }
 
 // ZoneParams implements op.ZoneInfo.
-func (s *Store) ZoneParams() meta.ZoneParams { return s.params }
+func (s *Store) ZoneParams() meta.ZoneParams { return s.zone.Params }
 
-// Realm implements op.ZoneInfo.
-func (s *Store) Realm() meta.Realm { return s.realm }
+// Realm implements op.ZoneInfo; it is the zero Realm without one.
+func (s *Store) Realm() meta.Realm { return s.zone.Realm }
 
-// Period implements op.ZoneInfo.
-func (s *Store) Period() meta.Period { return meta.Period{} }
+// Period implements op.ZoneInfo; it is the zero Period without one.
+func (s *Store) Period() meta.Period { return s.zone.Period }
 
-// Placement implements op.ZoneInfo.
-func (s *Store) Placement(meta.PlacementRule) (op.Placement, error) {
-	return op.Placement{}, op.ErrNotImplemented
-}
+// PeriodConfig returns the realm's default quotas and rate limits: the
+// period's config, or the realm's period_config object when the zonegroup
+// is not in the period.
+func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
 
 // GetUser implements op.UserStore.
 func (s *Store) GetUser(context.Context, meta.UserID) (*op.UserRecord, error) {

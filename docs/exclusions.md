@@ -694,6 +694,78 @@ go1.27.1's.
   set (`:637-642` at v19.2.6, `:642-647` at v20.2.4); rgw-go's `serve`
   builds the header from the release alone.
 
+### Zone and placement differences
+
+rgw-go resolves its zone and its placements from the root pool as radosgw's
+startup does at the v19.2.6 and v20.2.4 tags, and only reads. Where the
+result differs, rgw-go does the following.
+
+- **A storage class without a data pool.** A storage class that a zone
+  placement lists without a data pool resolves to the STANDARD class's
+  data pool in rgw-go's placement resolution (`op.ZoneInfo.Placement`).
+  radosgw's `RGWZonePlacementInfo::get_data_pool` returns an empty pool for
+  it (`rgw_zone_types.h:281-290` at v19.2.6 and v20.2.4).
+- **No bootstrap.** rgw-go writes nothing at startup. When no zone or
+  zonegroup resolves, it refuses to start with `driver.ErrNoZone`, naming
+  the object it looked for, and it refuses to start on a root pool it cannot
+  open. radosgw creates what is missing instead. SiteConfig::load creates
+  the default zone and zonegroup (read_or_create_default_zone and
+  read_or_create_default_zonegroup, `driver/rados/rgw_zone.cc:1214`, `:1222`
+  and `:1312` at v19.2.6, `:1208`, `:1216` and `:1306` at v20.2.4), Squid's
+  zone service creates the default zonegroup (create_default_zg,
+  `services/svc_zone.cc:214` at v19.2.6), and the config store creates a
+  missing root pool when it reads from it (`rgw_init_ioctx` with create set,
+  `driver/rados/config/impl.cc:53` at v19.2.6 and v20.2.4).
+- **A zonegroup without a master zone.** A zonegroup with one zone and no
+  master zone gets that zone as its master in rgw-go's memory, and rgw-go
+  writes nothing back. radosgw makes the zone the master and writes the
+  zonegroup back (`init_zg_from_period` and `init_zg_from_local`,
+  `services/svc_zone.cc:513-533` and `:595-601` at v19.2.6, `:349-369` and
+  `:399-405` at v20.2.4). Both refuse to start on a zonegroup whose master
+  zone is none of its zones.
+- **No search of other realms.** When the realm's current period does not
+  hold the zone, Squid's radosgw searches every realm for it
+  (`search_realm_with_zone`, `services/svc_zone.cc:83-126` and `:178-192`
+  at v19.2.6). rgw-go takes the local zonegroup instead, as
+  SiteConfig::load does on both releases (`driver/rados/rgw_zone.cc:1239-1250`
+  at v19.2.6, `:1233-1244` at v20.2.4) and as Tentacle's radosgw, which has
+  no such search, then serves. A realm whose period cannot be read, such as
+  one with no current period, therefore stops Squid's radosgw from starting
+  but not rgw-go (`docs/ceph-upstream-bugs.md`, "Squid's radosgw fails to
+  start when its realm search meets a realm whose period cannot be read").
+  radosgw-admin writes an initial period with every realm it creates
+  (`driver/rados/rgw_zone.cc:513-522` at both tags), so that shape needs
+  writes made outside it.
+- **A default realm without a default zone.** When neither rgw_realm nor
+  rgw_realm_id is set and the default realm has no default zone, rgw-go
+  serves the zone named `default` and the realm that zone names, as
+  SiteConfig::load does on both releases (`driver/rados/rgw_zone.cc:1206-1216`
+  and `:1229-1237` at v19.2.6, `:1200-1210` and `:1223-1231` at v20.2.4) and
+  as Tentacle's radosgw, which takes its zone from SiteConfig
+  (`services/svc_zone.cc:98-103` at v20.2.4), then serves. Squid's zone
+  service looks the zone up again through the default realm
+  (`services/svc_zone.cc:150-155` at v19.2.6), does not find it, and stops
+  radosgw with ENOENT unless the zonegroup is named `default` (`:237-248`).
+- **rgw_realm_id, rgw_zonegroup_id and rgw_zone_id.** rgw-go honors them on
+  both releases as Squid's zone service does: an id takes precedence over
+  the name and the default object, and the name is then not read
+  (`RGWSystemMetaObj::init`, `rgw_zone.cc:106-145` at v19.2.6). Tentacle's
+  radosgw resolves the zonegroup and zone by name or default object alone
+  (SiteConfig::load, which reads no id, `driver/rados/rgw_zone.cc:1184-1227`
+  at v19.2.6, `:1178-1221` at v20.2.4) and uses rgw_realm_id only for the
+  realm it reports (`services/svc_zone.cc:93` at v20.2.4). On either
+  release, SiteConfig::load still reads a configured realm or zone name and
+  refuses one that does not resolve, even when an id is set.
+- **The default-object and latest-epoch names.** rgw-go reads the default
+  realm, zonegroup and zone objects and a period's latest epoch under their
+  default names, `default.realm`, `default.zonegroup.<realm id>`,
+  `default.zone.<realm id>` and `periods.<period id>.latest_epoch`.
+  radosgw takes those names from rgw_default_realm_info_oid,
+  rgw_default_zonegroup_info_oid, rgw_default_zone_info_oid and
+  rgw_period_latest_epoch_info_oid, whose defaults they are
+  (`driver/rados/config/realm.cc:44-48`, `zonegroup.cc:37-42`,
+  `zone.cc:36-40` and `period.cc:38-45` at v19.2.6 and v20.2.4).
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

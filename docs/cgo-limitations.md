@@ -146,7 +146,13 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Status:** worked around by the design's read-op route, which depends on
   the OSD accepting a modifying method in a read op. The goceph integration
   spec confirms it: cls hello write_return_data run in a ReturnVec ReadOp
-  returns its output and its xattr persists.
+  returns its output and its xattr persists. The route is bounded: the OSD
+  serves such an op as a write, so without ReturnVec it returns no step's
+  output, and with ReturnVec it fails the op with EOVERFLOW, applying
+  nothing, when any step's output passes `osd_max_write_op_reply_len`, 64
+  bytes by default (PrimaryLogPG::execute_ctx, `src/osd/PrimaryLogPG.cc:4210-4246`
+  at v19.2.6, `:4287-4323` at v20.2.4). Found in the M Task 1 review;
+  fakerados models both.
 
 ### The locator is per I/O context, not per operation
 
@@ -172,6 +178,22 @@ finds a new limit, and update the status when one is fixed or measured.
   it into Go. Reads land in pinned Go memory.
 - **Measure:** allocation and copy cost on large objects; CPU profile with the
   cgo boundary attributed, as the spec's phase 1 section asks.
+
+### A read needs its buffer sized up front
+
+- **Evidence:** `rados_read_op_read` reads into a buffer of the length its
+  caller gives, and go-ceph passes a Go buffer of that length. librados's
+  C++ `read(0, 0)`, with which radosgw reads a whole system object into a
+  bufferlist (`driver/rados/config/impl.cc:46-60` at v19.2.6), has no C
+  equivalent: a zero length reads into an empty buffer, which librados
+  fails with ERANGE when data remains (`radosclient.ReadStep`). A caller
+  reading an object of unknown size therefore stats it first or reads into
+  a buffer as large as the object can be. The driver reads each realm,
+  period, zonegroup and zone object into a 4 MiB buffer (`rootObjectMax`),
+  which goceph allocates in full for every such read.
+- **Status:** accepted for the few reads at startup; a path that reads
+  small objects often needs a size it knows, a stat, or a pooled buffer.
+- **Measure:** allocation per read against the object's size.
 
 ### Cancellation stops only the client
 
