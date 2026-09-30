@@ -24,6 +24,62 @@ defect or quirk. Update it when an upstream issue is filed, when upstream
 fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 `docs/cgo-limitations.md`, not here.
 
+| Entry | Upstream issues | Upstream fix PRs |
+| --- | --- | --- |
+| [Squid does not guard listing-time index suggestions against resharding](#squid-does-not-guard-listing-time-index-suggestions-against-resharding) | [#81000](https://tracker.ceph.com/issues/81000) | [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609) |
+| [check_disk_state removes a multipart part's index entry from the wrong shard](#check_disk_state-removes-a-multipart-parts-index-entry-from-the-wrong-shard) | [#81121](https://tracker.ceph.com/issues/81121) | none |
+| [cls_rgw complete_op writes a stale epoch back when it cancels](#cls_rgw-complete_op-writes-a-stale-epoch-back-when-it-cancels) | [#80894](https://tracker.ceph.com/issues/80894), [#81002](https://tracker.ceph.com/issues/81002) | [ceph/ceph#72097](https://github.com/ceph/ceph/pull/72097) |
+| [cls_rgw encodes a packed value of exactly 65536 as 0](#cls_rgw-encodes-a-packed-value-of-exactly-65536-as-0) | [#80995](https://tracker.ceph.com/issues/80995) | none |
+| [Squid before 19.2.3 refuses a delete marker on top of a delete marker](#squid-before-1923-refuses-a-delete-marker-on-top-of-a-delete-marker) | none | [ceph/ceph#54957](https://github.com/ceph/ceph/pull/54957), [ceph/ceph#62740](https://github.com/ceph/ceph/pull/62740) |
+| [cls_rgw usage trim never removes a payer-keyed record](#cls_rgw-usage-trim-never-removes-a-payer-keyed-record) | [#72593](https://tracker.ceph.com/issues/72593), [#80999](https://tracker.ceph.com/issues/80999) | [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) |
+| [cls_rgw usage trim with a bucket filter stalls behind 1000 other records](#cls_rgw-usage-trim-with-a-bucket-filter-stalls-behind-1000-other-records) | [#58136](https://tracker.ceph.com/issues/58136) | [ceph/ceph#49168](https://github.com/ceph/ceph/pull/49168) |
+| [radosgw faults on a zero rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards](#radosgw-faults-on-a-zero-rgw_gc_max_objs-rgw_lc_max_objs-or-rgw_usage_max_shards) | [#80991](https://tracker.ceph.com/issues/80991) | [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160) |
+| [radosgw truncates a long aws-chunked trailer section instead of rejecting it](#radosgw-truncates-a-long-aws-chunked-trailer-section-instead-of-rejecting-it) | [#81122](https://tracker.ceph.com/issues/81122) | none |
+| [radosgw accepts a negative or overflowing aws-chunked chunk size](#radosgw-accepts-a-negative-or-overflowing-aws-chunked-chunk-size) | [#81123](https://tracker.ceph.com/issues/81123) | none |
+| [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none |
+| [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | none | none |
+| [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |
+| [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | none | none |
+| [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | none | none |
+| [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none |
+| [Squid accepts RestrictPublicBuckets but never enforces it](#squid-accepts-restrictpublicbuckets-but-never-enforces-it) | [#65741](https://tracker.ceph.com/issues/65741), [#70860](https://tracker.ceph.com/issues/70860), [#70859](https://tracker.ceph.com/issues/70859) | [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206) |
+| [radosgw answers 200 to a CreateBucket that loses a race to another owner](#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner) | none | [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) |
+| [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | none | none |
+| [radosgw's bypass-gc bucket removal fails once a tail stripe is gone](#radosgws-bypass-gc-bucket-removal-fails-once-a-tail-stripe-is-gone) | [#24789](https://tracker.ceph.com/issues/24789), [#40587](https://tracker.ceph.com/issues/40587) | [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984), [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956) |
+| [The 2pc queue's reserved size drifts upward](#the-2pc-queues-reserved-size-drifts-upward) | none | none |
+| [The 2pc queue's self-heal is skipped when another write comes first](#the-2pc-queues-self-heal-is-skipped-when-another-write-comes-first) | [#80994](https://tracker.ceph.com/issues/80994) | none |
+| [The 2pc queue hands out reservation id 0, which radosgw treats as none](#the-2pc-queue-hands-out-reservation-id-0-which-radosgw-treats-as-none) | [#80996](https://tracker.ceph.com/issues/80996) | [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163) |
+| [radosgw's notification queue listing never pages past 1024 queues](#radosgws-notification-queue-listing-never-pages-past-1024-queues) | [#73812](https://tracker.ceph.com/issues/73812), [#73893](https://tracker.ceph.com/issues/73893), [#73894](https://tracker.ceph.com/issues/73894) | [ceph/ceph#66246](https://github.com/ceph/ceph/pull/66246), [ceph/ceph#66345](https://github.com/ceph/ceph/pull/66345), [ceph/ceph#66491](https://github.com/ceph/ceph/pull/66491) |
+| [Squid's realm reload hangs when a pubsub HTTP push has lost its wakeup](#squids-realm-reload-hangs-when-a-pubsub-http-push-has-lost-its-wakeup) | none | [ceph/ceph#57632](https://github.com/ceph/ceph/pull/57632) |
+| [radosgw's realm reload waits out the notification manager's timers](#radosgws-realm-reload-waits-out-the-notification-managers-timers) | [#71963](https://tracker.ceph.com/issues/71963), [#72004](https://tracker.ceph.com/issues/72004), [#72003](https://tracker.ceph.com/issues/72003) | [ceph/ceph#63986](https://github.com/ceph/ceph/pull/63986) |
+| [radosgw caches any control-pool UPDATE_OBJ notify payload unchecked](#radosgw-caches-any-control-pool-update_obj-notify-payload-unchecked) | none | none |
+| [radosgw aborts the process after 100 failed control-watch re-registrations](#radosgw-aborts-the-process-after-100-failed-control-watch-re-registrations) | [#80992](https://tracker.ceph.com/issues/80992) | none |
+| [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |
+| [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | none | none |
+| [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none |
+| [cls_version's header documents EAGAIN, but the class returns ECANCELED](#cls_versions-header-documents-eagain-but-the-class-returns-ecanceled) | none | none |
+| [cls_lock get_info and assert_locked fail with EIO on an expired ephemeral lock](#cls_lock-get_info-and-assert_locked-fail-with-eio-on-an-expired-ephemeral-lock) | [#80993](https://tracker.ceph.com/issues/80993), [#56575](https://tracker.ceph.com/issues/56575) | none |
+| [cls_otp divides by a stored step_size that is never validated](#cls_otp-divides-by-a-stored-step_size-that-is-never-validated) | [#80948](https://tracker.ceph.com/issues/80948) | none |
+| [cls_otp computes the replay index from an unsigned window distance](#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance) | [#80949](https://tracker.ceph.com/issues/80949) | none |
+| [librbd leaks the update-watch context when registration fails](#librbd-leaks-the-update-watch-context-when-registration-fails) | none | none |
+| [The monitor's default for insecure key creation lags auth_allowed_ciphers](#the-monitors-default-for-insecure-key-creation-lags-auth_allowed_ciphers) | [#80997](https://tracker.ceph.com/issues/80997) | none |
+| [The monitor reports a refused cephx key type as EINVAL](#the-monitor-reports-a-refused-cephx-key-type-as-einval) | [#80998](https://tracker.ceph.com/issues/80998) | none |
+| [The --name error lists the entity types as raw bytes](#the---name-error-lists-the-entity-types-as-raw-bytes) | [#79678](https://tracker.ceph.com/issues/79678), [#79640](https://tracker.ceph.com/issues/79640), [#79638](https://tracker.ceph.com/issues/79638) | [ceph/ceph#71165](https://github.com/ceph/ceph/pull/71165), [ceph/ceph#71190](https://github.com/ceph/ceph/pull/71190), [ceph/ceph#71191](https://github.com/ceph/ceph/pull/71191) |
+| [radosgw ignores a bad port in an IPv6 endpoint](#radosgw-ignores-a-bad-port-in-an-ipv6-endpoint) | none | none |
+| [Squid's radosgw fails to start when its realm search meets a realm whose period cannot be read](#squids-radosgw-fails-to-start-when-its-realm-search-meets-a-realm-whose-period-cannot-be-read) | none | [ceph/ceph#63266](https://github.com/ceph/ceph/pull/63266), [ceph/ceph#66300](https://github.com/ceph/ceph/pull/66300) |
+| [radosgw-admin bucket rm exits 0 when it removes nothing](#radosgw-admin-bucket-rm-exits-0-when-it-removes-nothing) | none | none |
+| [radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token](#radosgws-s3-listbuckets-reads-neither-max-buckets-nor-continuation-token) | [#72315](https://tracker.ceph.com/issues/72315), [#75463](https://tracker.ceph.com/issues/75463) | [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742), [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920) |
+| [url_decode reads outside its hex table for a byte above 0x7f after "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-) | [#4755](https://tracker.ceph.com/issues/4755) | none |
+| [A malformed percent-escape in the path makes radosgw serve another path](#a-malformed-percent-escape-in-the-path-makes-radosgw-serve-another-path) | none | none |
+| [radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio](#radosgw-skips-or-never-finishes-every-bucket-index-batch-on-a-zero-rgw_bucket_index_max_aio) | none | none |
+| [radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads](#radosgw-clamps-a-copy-of-rgw_override_bucket_index_max_shards-that-bucket-creation-never-reads) | none | none |
+| [radosgw wraps an rgw_cache_expiry_interval above 18446744073 seconds](#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds) | none | none |
+| [radosgw spins or stops caching on a negative usage-log or quota interval](#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval) | none | none |
+| [radosgw's ARN conditions compare each ARN component with the text after it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it) | none | none |
+| [radosgw takes any policy Action starting with a wildcard for every action](#radosgw-takes-any-policy-action-starting-with-a-wildcard-for-every-action) | none | none |
+
+Every new entry adds its row to this table, in document order.
+
 ## Squid does not guard listing-time index suggestions against resharding
 
 - **Kind:** defect, fixed in Tentacle.
@@ -41,7 +97,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   its suggestions; its Squid-level listing matches radosgw and does not.
   `docs/exclusions.md` states the guard per release.
 - **Upstream:** [#81000](https://tracker.ceph.com/issues/81000) requests the
-  squid backport of 461be1cd3d5.
+  squid backport of 461be1cd3d5, which came with
+  [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609).
 - **Found:** final phase 0 review, 2026-09-26.
 
 ## check_disk_state removes a multipart part's index entry from the wrong shard
@@ -556,6 +613,46 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 planning of unit A, 2026-09-29; derived from the source
   and verified 2026-09-30, not reproduced.
 
+## radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned
+
+- **Kind:** defect, a regression; fixed upstream, but in no squid or tentacle
+  release yet.
+- **Evidence:**
+  - Unless `rgw_sigv4_insecure` is set, `get_v4_canonical_headers` refuses a
+    request that carries a Content-Type header its SignedHeaders do not list,
+    logging "Signature rejected: 'content-type' supplied but not in
+    CanonicalHeaders" (`rgw_auth_s3.cc:788-802` at v19.2.6, `:765-779` at
+    v20.2.4). The same block requires `host` and every `x-amz-*` header to be
+    signed. So a presigned PUT URL signed over `host` alone fails once the
+    client that uses it sends a Content-Type.
+  - The check came with the CVE-2026-54330 hardening, "rgw: Follow
+    guidelines when verifying SigV4 signatures" (d8ba9d0cb06 on squid and
+    683fad73231 on tentacle, both 2026-06-16); v19.2.5 and v20.2.3 do not
+    have it.
+  - The fix, 534308306f2, removes the Content-Type requirement and keeps the
+    `host` and `x-amz-*` checks.
+- **Releases:** v19.2.6 and v20.2.4. The fix is on main (c3179de982f,
+  2026-08-21), the squid branch (18d35e32770, 2026-08-26) and the tentacle
+  branch (7e2e2072822, 2026-09-03), but neither branch has had a release
+  since (checked 2026-09-30). The first tag that carries it is v21.1.1
+  (2026-09-10), an umbrella release candidate; no umbrella tag ever carried
+  the check.
+- **rgw-go:** not decided yet: its SigV4 signature check is not written.
+  `auth.Config.Insecure`, which reads `rgw_sigv4_insecure`, lists the
+  Content-Type check among those the option skips.
+- **Upstream:** [#79674](https://tracker.ceph.com/issues/79674), resolved,
+  with its duplicate [#79708](https://tracker.ceph.com/issues/79708) and its
+  backports [#79723](https://tracker.ceph.com/issues/79723) (squid),
+  [#79725](https://tracker.ceph.com/issues/79725) (tentacle) and
+  [#79724](https://tracker.ceph.com/issues/79724) (umbrella). The fix is
+  [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), backported by
+  [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296) (squid),
+  [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364) (tentacle) and
+  [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) (umbrella).
+- **Found:** phase 1 authentication work (unit A), 2026-09-30, in the
+  prior-art search for url_decode; verified in the source at both tags. Not
+  reproduced by rgw-go; the reporter of #79674 met it on a v20.2.4 cluster.
+
 ## radosgw checks a copy source with inputs from the destination bucket
 
 - **Kind:** defect, unfixed through main.
@@ -1043,10 +1140,12 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Releases:** every Squid release through v19.2.6; v20.2.0 through v20.2.2.
 - **rgw-go:** cannot fix a coexisting radosgw; `docs/exclusions.md` records
   the hazard. Phase 3's own reading of the registry must advance its marker.
-- **Upstream:** [#73812](https://tracker.ceph.com/issues/73812). Its squid
-  backport, [#73893](https://tracker.ceph.com/issues/73893), is under review;
-  the tentacle backport, [#73894](https://tracker.ceph.com/issues/73894), is
-  resolved.
+- **Upstream:** [#73812](https://tracker.ceph.com/issues/73812), fixed by
+  [ceph/ceph#66246](https://github.com/ceph/ceph/pull/66246). Its squid
+  backport, [#73893](https://tracker.ceph.com/issues/73893), is under review
+  as [ceph/ceph#66345](https://github.com/ceph/ceph/pull/66345); the tentacle
+  backport, [#73894](https://tracker.ceph.com/issues/73894), is resolved by
+  [ceph/ceph#66491](https://github.com/ceph/ceph/pull/66491).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-004); verified 2026-09-27.
   `docs/exclusions.md` already recorded it.
 
@@ -1918,6 +2017,185 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 unit M, validating the driver's options, 2026-09-30;
   not reproduced on a running cluster.
 
+## radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - `rgw_override_bucket_index_max_shards` is a `uint` with no `max:`
+    (`common/options/rgw.yaml.in:177-193` at v19.2.6, `:183-199` at
+    v20.2.4).
+  - `RGWRados::init_complete` copies it, or the zone's
+    `bucket_index_max_shards` when it is 0, into the member
+    `bucket_index_max_shards`, lowers the copy to `get_max_bucket_shards()`,
+    65521, and logs "bucket index max shards is too large, reset to value:
+    65521" (`driver/rados/rgw_rados.cc:1334-1341` at v19.2.6, `:1323-1330`
+    at v20.2.4; `services/svc_bi_rados.h:33` and `:94-96` at v19.2.6, `:34`
+    and `:95-97` at v20.2.4). Nothing else in `src/rgw` uses that member,
+    declared at `rgw_rados.h:401` (v19.2.6) and `:413` (v20.2.4).
+  - Bucket creation reads the option itself: `init_default_bucket_layout`
+    gives the new index that many shards when it is above 0, and the zone's
+    `bucket_index_max_shards` otherwise, neither clamped
+    (`driver/rados/rgw_bucket.cc:2790-2796` at v19.2.6; `:2905-2914` at
+    v20.2.4, where a shard count the caller passes comes first).
+  - Above 7877 shards, `rgw_shards_mod` reduces the key's hash modulo 65521
+    before the shard count (`driver/rados/rgw_tools.h:46-55` at v19.2.6,
+    `:63-72` at v20.2.4), so a bucket created with more than 65521 shards
+    never places an entry on a shard above 65520. `radosgw-admin bucket
+    reshard` refuses more than 65521 shards (`rgw_admin.cc:3027-3030` at
+    v19.2.6, `radosgw-admin/radosgw-admin.cc:3224-3227` at v20.2.4), and
+    dynamic resharding caps its target there (`rgw_rados.cc:10591` at
+    v19.2.6, `:11521` at v20.2.4); bucket creation does not.
+- **Impact:** the log line reports a limit that is not applied, and a bucket
+  created while the option is above 65521 has index shards that never hold
+  an entry.
+- **Releases:** v19.2.6, v20.2.4 and main (7f50f7a552c, 2026-09-30,
+  `rgw_rados.cc:1408-1412` and `rgw_bucket.cc:3088-3090`); older releases
+  not checked.
+- **rgw-go:** reads the option once at startup, without radosgw's clamp
+  (`internal/driver/options.go`); nothing in rgw-go reads it yet.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  [#70980](https://tracker.ceph.com/issues/70980), "a bucket can only
+  effectively use up to 65,521 bucket index shards", was rejected on
+  2025-04-18 once `radosgw-admin bucket reshard` was shown to refuse 65522
+  shards; bucket creation through this option was not checked there.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #80991 by
+    `rgw_usage_max_shards`. Terms: `rgw_override_bucket_index_max_shards`
+    (fifteen issues, none about its bound), `get_max_bucket_shards` and the
+    log line as a quoted phrase (none), and `65521` (#70980; #20934 with its
+    backports, a fixed bug that resharded buckets to 65521 shards; and
+    unrelated QA reports).
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#72160 by `rgw_usage_max_shards`. Terms:
+    `rgw_override_bucket_index_max_shards` (fourteen pull requests),
+    `init_default_bucket_layout` (six) and the words of the log line
+    (21), none bounding the option at bucket creation, and
+    `get_max_bucket_shards` (none).
+- **Found:** phase 1 unit M, reading the driver's options, 2026-09-30; not
+  reproduced on a running cluster.
+
+## radosgw wraps an rgw_cache_expiry_interval above 18446744073 seconds
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - `rgw_cache_expiry_interval` is a `uint` count of seconds with no `max:`,
+    default 900, where 0 turns expiry off
+    (`common/options/rgw.yaml.in:3324-3336` at v19.2.6, `:3509-3521` at
+    v20.2.4).
+  - The object cache and each chained cache assign
+    `std::chrono::seconds(get_val<uint64_t>("rgw_cache_expiry_interval"))`
+    to an expiry of type `ceph::timespan` (`rgw_cache.h:173` and `:210-211`
+    at v19.2.6, `:174` and `:211-212` at v20.2.4;
+    `services/svc_sys_obj_cache.h:150` and `:174-175` at v19.2.6, `:152`
+    and `:176-177` at v20.2.4). `ceph::timespan` counts nanoseconds in a
+    `uint64_t` (`common/ceph_time.h:66` and `:74` at v19.2.6, `:63` and
+    `:71` at v20.2.4), so the conversion multiplies by 10^9 modulo 2^64: any
+    value above 18446744073 s, about 584 years, wraps.
+  - A lookup misses once its entry is older than the result
+    (`rgw_cache.cc:30-31` at both tags; `svc_sys_obj_cache.h:184-187` at
+    v19.2.6, `:186-189` at v20.2.4). Compiled with the same types (g++
+    15.3.1, x86-64): 18446744074 s becomes 0.29 s, so an entry expires 0.29 s
+    after it is cached; 2^55 s and 2^63 s become 0, which turns expiry off;
+    2^64-1 s, whose `std::chrono::seconds` count is -1, becomes 2^64 - 10^9
+    ns, about 584 years, so it expires nothing.
+- **Releases:** v19.2.6, v20.2.4 and main (7f50f7a552c, 2026-09-30,
+  `rgw_cache.h:174` and `:211`, `svc_sys_obj_cache.h:152` and `:176`); older
+  releases not checked.
+- **rgw-go:** reads the option once at startup and holds any value above
+  about 9.2e9 s as the longest Duration, about 292 years
+  (`internal/driver/options.go`), so it never wraps. No rgw-go cache reads
+  it yet; the one that does records the difference in `docs/exclusions.md`.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #80991 by
+    `rgw_usage_max_shards`. Terms: `rgw_cache_expiry_interval` and
+    `cache_expiry_interval` (twelve issues: multisite cache-coherence reports
+    and backports, #77531, #77554, #77731, #80389 and #80864 through #80866;
+    #24346, entries never refreshed after the interval, fixed by
+    [ceph/ceph#22324](https://github.com/ceph/ceph/pull/22324), with its
+    backports; and a luminous performance regression), and `expiry miss`
+    (thirteen, none about the option). None reports the conversion.
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#72160 by `rgw_usage_max_shards`. Terms:
+    `rgw_cache_expiry_interval` (nine pull requests: #22324 with its
+    backports, the cache-version changes #69748 and #71143, #46304 and
+    release notes) and `cache_expiry_interval` (none). None changes the
+    conversion.
+- **Found:** phase 1 unit M, reviewing the driver's options, 2026-09-30; the
+  conversion was checked by compiling it with radosgw's types, not
+  reproduced on a running cluster.
+
+## radosgw spins or stops caching on a negative usage-log or quota interval
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** `rgw_usage_log_tick_interval`, `rgw_bucket_quota_ttl`,
+  `rgw_user_quota_bucket_sync_interval`, `rgw_user_quota_sync_interval` and
+  `rgw_user_quota_sync_wait_time` are `int` counts of seconds with no `min:`
+  (`common/options/rgw.yaml.in:1651`, `:2168`, `:2262`, `:2275` and `:2298`
+  at v19.2.6; `:1734`, `:2260`, `:2362`, `:2375` and `:2398` at v20.2.4),
+  so a negative value is accepted. What radosgw does with one, the same at
+  both tags unless noted:
+  - Usage-log tick: each firing of the usage logger's timer flushes and
+    re-arms it `rgw_usage_log_tick_interval` seconds later
+    (`rgw_log.cc:105-117`). `add_event_after` converts the seconds to a
+    signed `signedspan` and adds it to the monotonic clock as an unsigned
+    `timespan` (`common/Timer.cc:137-150`; `common/ceph_time.h:467-470` at
+    v19.2.6, `:464-467` at v20.2.4), so a negative interval schedules the
+    event that far in the past, and the timer thread flushes without pause.
+  - Stats-cache TTL: `RGWQuotaCache::set_stats`, which the bucket and owner
+    stats caches share, adds the TTL, and half of it, to the current time
+    (`rgw_quota.cc:136-139`) through `utime_t`'s `operator+=(double)`, which
+    casts the seconds to `__u64` (`include/utime.h:528-535`). C++ leaves
+    that cast undefined for a negative value; with GCC on x86-64 it wraps,
+    so `expiration` lands that far before now and `get_stats` never returns
+    a cached stat, reading it from RADOS on every quota check
+    (`rgw_quota.cc:158-164`). Below about -1.79e9 s, the current Unix time,
+    the sum wraps below zero instead, and `cap_to_u32_max` pins
+    `expiration` at 2^32-1, in 2106, so the cached stat never expires.
+  - Bucket-sync interval: at v19.2.6 `BucketsSyncThread` waits
+    `std::chrono::seconds(rgw_user_quota_bucket_sync_interval)`
+    (`rgw_quota.cc:378-381`), which a negative makes return at once, so the
+    thread loops without pause. v20.2.4 converts the value to `uint64_t`,
+    multiplies it by a `double` factor and waits at least 1 s
+    (`rgw_quota.cc:394-401`); with the default factor of 1 and g++ on
+    x86-64, -1 through -1024 wait 1 s, and anything lower converts back to a
+    negative wait and spins.
+  - Owner-sync interval: `OwnerSyncThread` waits
+    `std::chrono::seconds(rgw_user_quota_sync_interval)`
+    (`rgw_quota.cc:427-428` at v19.2.6, `:448-449` at v20.2.4), so a
+    negative makes it run `sync_all_owners` without pause.
+  - Sync wait: `RGWOwnerStatsCache::sync_owner` adds the wait to the owner's
+    last full sync (`rgw_quota.cc:642-648` at v19.2.6, `:663-669` at
+    v20.2.4), which a negative puts before now, so every owner the pass does
+    not skip as idle gets a full sync on every pass.
+  A zero spins the tick, the owner-sync thread and v19.2.6's bucket-sync
+  thread too; a zero TTL or sync wait acts as a small negative one does. The
+  conversions were checked by compiling them with radosgw's types (g++
+  15.3.1, x86-64, at -O2 and -O0).
+- **Releases:** v19.2.6, v20.2.4 and main (7f50f7a552c, 2026-09-30,
+  `rgw_log.cc:116`, `rgw_quota.cc:137-138`, `:392-399`, `:447` and `:663`,
+  and still no `min:`); older releases not checked.
+- **rgw-go:** reads each option once at startup, keeping a negative value
+  (`internal/driver/options.go`); nothing in rgw-go consumes them yet.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #80991 by
+    `rgw_usage_max_shards`. Terms: the five option names, two to five issues
+    each (unrelated reports that mention the options, and older quota and
+    usage-log bugs), none about a negative value.
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#72160 by `rgw_usage_max_shards`. Terms: the five option names,
+    none to six pull requests each (option descriptions in #71303 and
+    #13395, and older quota changes), none bounding them.
+- **Found:** phase 1 unit M, reviewing the driver's options, 2026-09-30; not
+  reproduced on a running cluster.
+
 ## radosgw's ARN conditions compare each ARN component with the text after it
 
 - **Kind:** defect, unfixed through main.
@@ -1981,3 +2259,44 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     #70481 fix, and #62284, bucket logging). None fixes it.
 - **Found:** phase 1 authorization work (unit Z), 2026-09-29, transcribing
   `match_policy` for rgw-go's policy matching.
+
+## radosgw takes any policy Action starting with a wildcard for every action
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - The policy parser tests only the first character of an Action or
+    NotAction string: when it is `*`, the statement gets every action
+    (`allValue`), and only other strings are matched against the action
+    names (`rgw_iam_policy.cc:629-638` at v19.2.6, `:642-651` at v20.2.4).
+    So `"*:GetObject"` or `"*Object"` means every action, where matching
+    it as a pattern would give only the actions it names.
+  - A `Principal` or `NotPrincipal` given as a string is tested the same
+    way (`:625-628` at v19.2.6, `:638-641` at v20.2.4), so `"Principal":
+    "*x"` is the wildcard principal.
+- **Impact:** an Allow statement whose Action starts with `*` grants every
+  action, not only those its pattern names; a Deny statement denies every
+  action.
+- **Releases:** v19.2.6, v20.2.4 and main (7f50f7a552c, 2026-09-30,
+  `rgw_iam_policy.cc:791`); older releases not checked.
+- **rgw-go:** not decided yet: its policy parser is not written.
+  `policy.MatchAction` notes that radosgw's parser takes such a pattern for
+  `*` before any matching.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #80991 by
+    `rgw_usage_max_shards`. Terms: `is_valid_action`, `allValue` and `*:Get`
+    (none), `wildcard action` (#68040, on removing a deny-all bucket policy,
+    and #62292, a Resource wildcard fixed by
+    [ceph/ceph#53156](https://github.com/ceph/ceph/pull/53156)) and
+    `NotAction` (#73983, NotAction not evaluated, and #68029, a null
+    dereference in `rgw_iam_policy.cc`).
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#72160 by `rgw_usage_max_shards`. Terms: `is_valid_action`
+    (#46824, spelling fixes), `allValue` (#70533, policy-evaluation
+    logging) and `policy action wildcard` (eleven pull requests; the only
+    change to action parsing, #20629, stops the action loop at its first
+    match). None fixes it.
+- **Found:** phase 1 authorization work (unit Z), 2026-09-30, writing
+  rgw-go's action matching; not reproduced on a running radosgw.
