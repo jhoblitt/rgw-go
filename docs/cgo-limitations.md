@@ -146,7 +146,13 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Status:** worked around by the design's read-op route, which depends on
   the OSD accepting a modifying method in a read op. The goceph integration
   spec confirms it: cls hello write_return_data run in a ReturnVec ReadOp
-  returns its output and its xattr persists.
+  returns its output and its xattr persists. The route is bounded: the OSD
+  serves such an op as a write, so without ReturnVec it returns no step's
+  output, and with ReturnVec it fails the op with EOVERFLOW, applying
+  nothing, when any step's output passes `osd_max_write_op_reply_len`, 64
+  bytes by default (PrimaryLogPG::execute_ctx, `src/osd/PrimaryLogPG.cc:4210-4246`
+  at v19.2.6, `:4287-4323` at v20.2.4). Found in the M Task 1 review;
+  fakerados models both.
 
 ### The locator is per I/O context, not per operation
 
