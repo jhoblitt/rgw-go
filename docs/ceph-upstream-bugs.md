@@ -1353,3 +1353,46 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     purge-objects` (the 2019 fixes for a `--purge-objects` hang).
 - **Found:** phase 1 unit T, the s3-tests harness's bucket purge,
   2026-09-29.
+
+## radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token
+
+- **Kind:** defect, fixed on main after v20.2.4. Unreproduced on a running
+  radosgw; found by reading the source.
+- **Evidence:**
+  - `RGWListBuckets_ObjStore_S3::get_params` sets `limit = -1` and reads
+    no query parameter (`rgw_rest_s3.h:133-136` at v19.2.6, `:134-137` at
+    v20.2.4), so `max-buckets`, `continuation-token` and `prefix` are
+    ignored and every ListBuckets returns all of the owner's buckets.
+  - `send_response_begin`, `send_response_data` and `send_response_end`
+    write the owner and the buckets and no `ContinuationToken` or `Prefix`
+    element (`rgw_rest_s3.cc:1511-1547` at v19.2.6, `:1622-1658` at
+    v20.2.4).
+  - A client that pages with `max-buckets` gets every bucket in its first
+    response and no token to continue from.
+- **Releases:** v19.2.6 and v20.2.4. On main, e0d797da790, merged as
+  c531eec199d, reads `max-buckets` and `continuation-token` and writes
+  `ContinuationToken`; it leaves `prefix` unread.
+- **rgw-go:** reproduces it on both releases: its ListBuckets reads none of
+  the three parameters and writes neither element (`listBuckets`,
+  `internal/s3/listbuckets.go`). Revisit when a floor release carries the
+  fix.
+- **Upstream:** [#72315](https://tracker.ceph.com/issues/72315), "support
+  paginated s3 ListBuckets", resolved on main by
+  [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742); no squid or
+  tentacle backport issue or pull request exists. `prefix` is
+  [#75463](https://tracker.ceph.com/issues/75463), open, with
+  [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920). Searched
+  2026-09-30; each search was first run on a known match:
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #72315 by
+    `continuation-token`, a word only in its description. Terms:
+    `max-buckets`, `continuation-token` and `ListBuckets` (#72315, #75463,
+    and the resolved #57901 and its backports for the 1000-bucket
+    truncation; nothing else about pagination).
+  - ceph/ceph pull requests through `gh search prs`, which finds #64742 by
+    "paginated ListBuckets". Terms: `paginated ListBuckets` (#64742 only)
+    and `ListBuckets` in titles (#64742 and the truncation fix
+    [ceph/ceph#48559](https://github.com/ceph/ceph/pull/48559) with its
+    backports).
+- **Found:** phase 1 gateway work (unit G), 2026-09-30, reading
+  `RGWListBuckets_ObjStore_S3` for rgw-go's ListBuckets.
