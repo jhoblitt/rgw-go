@@ -1815,3 +1815,67 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     about a zero window.
 - **Found:** phase 1 unit M, validating the driver's options, 2026-09-30;
   not reproduced on a running cluster.
+
+## radosgw's ARN conditions compare each ARN component with the text after it
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - `match_policy` walks a pattern and an input colon by colon, but takes
+    each piece as `input.substr(last_pos_input, cur_pos_input)` and
+    `pattern.substr(last_pos_pattern, cur_pos_pattern)`
+    (`rgw_common.cc:2178-2179` at v19.2.6, `:2241-2242` at v20.2.4).
+    `substr`'s second argument is a length, and it is given the next
+    colon's position, so every piece after the first runs past its colon
+    into the components after it, cut at a different length in the
+    pattern and in the input, and `match_wildcards` compares those.
+  - `arn_like` calls it for `ArnEquals` and `ArnLike`, and negated for
+    `ArnNotEquals` and `ArnNotLike` (`rgw_iam_policy.cc:845-852` and
+    `:996-1001` at v19.2.6, `:864-871` and `:1000-1005` at v20.2.4),
+    although its comment says each of the six components is checked
+    separately. So neither `arn:aws:sns:*:123456789012:topic` nor
+    `arn:aws:sns:us-east-1:*:topic` matches
+    `arn:aws:sns:us-east-1:123456789012:topic`, `arn:aws:s3:*:*:bucket`
+    does not match `arn:aws:s3:::bucket`, `arn:aws:s3:::bucket/*/x` does
+    not match `arn:aws:s3:::bucket/abc/x`, and `x:a\:y` matches `x:a:y`.
+    A pattern whose only wildcard ends it, such as
+    `arn:aws:s3:::bucket/*`, still compares correctly. Action matching is
+    unaffected: every action name has one colon.
+  - Verified by compiling radosgw's `match_policy` unchanged in the
+    v19.2.6 and v20.2.4 images and running generated cases; not
+    reproduced on a running radosgw. Of 116,003 generated cases whose
+    pattern and input hold the same number of colons, two or more, 38,485
+    answer differently from matching each component on its own; with
+    fewer colons, or unequal counts, the two agree on all 483,997.
+  - The comparison dates from ff18f84c70f (2016-12-12, "rgw: Added a
+    globbing method for AWS Policies"). ARN conditions reach it since
+    62c3e5ec69f (2025-03-13, "rgw/iam: add policy evaluation for
+    Arn-based Conditions"), and main still has it at dffaf990666.
+- **Impact:** a Deny whose ARN pattern has a wildcard component can fail to
+  apply. `ArnNotLike` and `ArnNotEquals` negate the same wrong answer, so a
+  statement using them can apply where its author meant it not to.
+- **Releases:** every release that evaluates ARN conditions: v19.2.3 and
+  later squid, every tentacle release from v20.1.0, and v18.2.8 and later
+  reef.
+- **rgw-go:** does not reproduce it. Its ARN conditions match each
+  component on its own with `MatchWildcards` (`policy.MatchPolicy`), and
+  `docs/exclusions.md` records the difference.
+- **Upstream:** none known. Searched 2026-09-30; each search was first run
+  on a known match:
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds the QA runs
+    listing ceph/ceph#57907 by `match_wildcards`, a word only in their
+    descriptions. Terms: `match_policy`, `arn_like`, `ArnLike`,
+    `ArnEquals`, `ArnNotLike`, `MATCH_POLICY_ARN` and `aws:SourceArn`. The
+    only ARN-condition issue is
+    [#70481](https://tracker.ceph.com/issues/70481), "iam policy parses
+    ArnLike/ArnEquals conditions but evaluates them to false", with its
+    reef and squid backports #70595 and #70596; its fix routed ARN
+    conditions through `match_policy`. Nothing reports the comparison.
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#57907 by `match_wildcards`. Terms: `match_policy`
+    (ceph/ceph#53156 and #16491, both on `match_wildcards`, and an
+    unrelated logging change), `arn_like` (none) and `ArnLike`
+    ([ceph/ceph#62285](https://github.com/ceph/ceph/pull/62285), the
+    #70481 fix, and #62284, bucket logging). None fixes it.
+- **Found:** phase 1 authorization work (unit Z), 2026-09-29, transcribing
+  `match_policy` for rgw-go's policy matching.
