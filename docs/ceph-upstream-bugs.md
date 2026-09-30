@@ -1298,3 +1298,58 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     progress only) and `RGWRealm find_zone` (none).
 - **Found:** phase 1 metadata work (unit M), 2026-09-29, reading
   `RGWSI_Zone::do_start` for rgw-go's zone resolution.
+
+## radosgw-admin bucket rm exits 0 when it removes nothing
+
+- **Kind:** defect.
+- **Evidence:**
+  - `radosgw-admin bucket rm` calls `RGWBucketAdminOp::remove_bucket` and
+    discards what it returns (`rgw_admin.cc:8768-8778` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:9226-9237` at v20.2.4).
+    `remove_bucket` returns the error of finding the bucket and of removing
+    it (`driver/rados/rgw_bucket.cc:1289-1308` at v19.2.6; the lookup is at
+    `:1451-1455` at v20.2.4), so the command exits 0 whether or not it
+    removed the bucket.
+  - Reproduced on the rooket clusters on 2026-09-29, with the site options.
+    On rgw-go-squid (19.2.6), `bucket rm --bucket s3t-leftover-tenant
+    --purge-objects`, for a bucket that exists only as
+    `s3tt/s3t-leftover-tenant`, printed nothing and exited 0, and the
+    bucket stayed listed. On rgw-go-tentacle (20.2.4), `bucket rm --bucket
+    no-such-bucket-rgw-go --purge-objects` exited 0, while `bucket stats`
+    on the same name failed with `(2002)` and exit status 2.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  `radosgw-admin/radosgw-admin.cc:9853-9864`).
+- **rgw-go:** unaffected as a gateway: the tool is Ceph's. The s3-tests
+  harness removes buckets with it, so `hack/s3tests/run.sh` lists the
+  user's buckets again afterwards and stops when one is left, and it names
+  a tenant's bucket `tenant/name`, the form `bucket rm` finds.
+- **Upstream:** no issue reports it (searched 2026-09-30); each search
+  method was first run on a known match. Upstream main's own exit-code
+  tests record the behaviour without calling it a bug:
+  `src/test/rgw/radosgw-admin/test-bucket-exit-codes.sh`, added in
+  ad8b642adad (2026-09-15, in no release), says "rm ignores the op's return
+  value, so missing --bucket silently exits 0" (`:835`) and expects exit 0
+  from `bucket rm --bucket=no-such-bucket --purge-objects` (`:222`), while
+  it marks 42 known bugs of other commands `XFAIL`. The nearest report is
+  [#80577](https://tracker.ceph.com/issues/80577), Fix Under Review, on the
+  exit codes of `bucket stats`, `bucket list`, `bucket reshard` and
+  `bucket set-min-shards`; its fix,
+  [ceph/ceph#71858](https://github.com/ceph/ceph/pull/71858) (open), leaves
+  `bucket rm` as it is.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds
+    [#79678](https://tracker.ceph.com/issues/79678) by `valid-types
+    garbage`. Terms: `bucket rm exit code`, `bucket rm return code`,
+    `bucket rm exit status`, `bucket rm nonexistent`, `bucket rm
+    non-existent`, `bucket rm does not exist`, `bucket rm silently`,
+    `remove_bucket return value`, `radosgw-admin exit code 0` and
+    `radosgw-admin returns 0 error`: #80577 and unrelated issues only.
+  - ceph/ceph pull requests through `gh search prs`, which finds #71165 by
+    `get_valid_types_as_str`. Terms: `"bucket rm" radosgw-admin`,
+    `remove_bucket radosgw-admin return`, `BUCKET_RM`, `radosgw-admin
+    "bucket rm" exit`, `radosgw-admin bucket commands return codes` and
+    `radosgw-admin return code` (none), `radosgw-admin exit code` (two
+    radosgw-admin refactors), `80577` (#71858) and `bucket rm
+    purge-objects` (the 2019 fixes for a `--purge-objects` hang).
+- **Found:** phase 1 unit T, the s3-tests harness's bucket purge,
+  2026-09-29.

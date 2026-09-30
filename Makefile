@@ -14,7 +14,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 .PHONY: help
 help: ## Print this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make <target>\n\nTargets:\n"} \
-	     /^[a-zA-Z_-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	     /^[a-zA-Z0-9_-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 .PHONY: print-golangci-version
 print-golangci-version: ## Print the pinned golangci-lint version (CI reads this)
@@ -129,6 +129,14 @@ gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
 	RGW_GO_TEST_MANIFEST=$(CLUSTER_OUT)/manifest.json \
 	RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v
+
+# The gateway s3tests runs against, and the run id that names its reports.
+GATEWAY ?= radosgw
+RUN ?= local
+
+.PHONY: s3tests
+s3tests: need-release ## Run the phase 1 s3-tests set against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
+	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
 .PHONY: cluster-down
 cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output

@@ -1,0 +1,10 @@
+# Tests of the phase 1 s3-tests parity set that call a phase 3 feature and
+# carry no marker run.sh's EXCLUDED_MARKERS removes, at run.sh's
+# S3TESTS_COMMIT. run.sh deselects every line on both gateways, and stops when
+# a line names no collected test or, since pytest's --deselect matches node-id
+# prefixes, would deselect a test the lists do not name. The PR that lands a
+# feature deletes its lines and re-records the radosgw baselines.
+# Format: a pytest node id, then "#" and the calls that need the feature.
+
+# the ?usage extension
+s3tests/functional/test_s3.py::test_account_usage # ListBuckets with ?usage

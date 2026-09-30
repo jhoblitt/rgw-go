@@ -59,13 +59,53 @@ ceph_cmd() {
 	toolbox ceph --connect-timeout=20 --rados-mon-op-timeout=20 "$@"
 }
 
+# wait_rgw polls Ceph's service map until the jq filter $3, given the
+# arguments after it, holds for the array of its radosgw entries, and prints
+# that array. A radosgw registers under a new gid, its librados instance id,
+# each time it starts or reloads its realm. The manager drops the old gid as
+# soon as that instance closes its session, but one that ends without closing
+# it stays until it has sent no beacon for mgr_service_beacon_grace (60 s), so
+# after a restart or a reload the map can list both for about a minute. After
+# 180 s it stops, reporting that $1 and, with the entries it last read, the
+# caller's diagnosis $2; it never restarts a radosgw itself.
+wait_rgw() {
+	local what=$1 diagnosis=$2 filter=$3 deadline=$((SECONDS + 180)) daemons
+	shift 3
+	until daemons=$(ceph_cmd service dump -f json |
+		jq -c '[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value]') &&
+		jq -e "$@" "${filter}" <<<"${daemons}" >/dev/null; do
+		if ((SECONDS >= deadline)); then
+			[[ -n "${daemons}" ]] || die "${what} in 180s: ceph service dump failed, so the service map could not be read"
+			die "${what} in 180s (radosgw entries: ${daemons}); ${diagnosis}"
+		fi
+		sleep 5
+	done
+	echo "${daemons}"
+}
+
 # rgw_daemon prints the service map entry of the cluster's one radosgw: the
 # realm, zonegroup and zone it serves are in its metadata.
 rgw_daemon() {
-	local daemons
-	daemons=$(ceph_cmd service dump -f json | jq -c '[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value]')
-	[[ $(jq length <<<"${daemons}") == 1 ]] || die "want one radosgw in the service map, have ${daemons}"
-	jq -c '.[0]' <<<"${daemons}"
+	wait_rgw "the service map did not settle to one radosgw" \
+		"the manager drops a stopped radosgw within about a minute, so none is running or more than one is" \
+		'length == 1' | jq -c '.[0]'
+}
+
+# use_site sets rgw to the service map entry of the cluster's one radosgw, and
+# realm, zonegroup and zone to the site it serves, which admin names.
+use_site() {
+	rgw=$(rgw_daemon)
+	realm=$(jq -r '.metadata.realm_name // empty' <<<"${rgw}")
+	zonegroup=$(jq -r '.metadata.zonegroup_name // empty' <<<"${rgw}")
+	zone=$(jq -r '.metadata.zone_name // empty' <<<"${rgw}")
+	[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
+		die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
+}
+
+# Without the site options radosgw-admin works in a zone named default, which
+# it creates on first use and the radosgw never serves.
+admin() {
+	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
 }
 
 # rgw_endpoint prints the URL the host reaches the radosgw rgw_daemon printed

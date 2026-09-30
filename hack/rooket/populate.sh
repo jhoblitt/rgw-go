@@ -20,18 +20,7 @@ use_release "${1:-}"
 [[ -f "${out}/ceph.conf" ]] || die "no ${out}/ceph.conf; run make cluster-up RELEASE=${release} first"
 ceph_version=$(pinned_version)
 
-rgw=$(rgw_daemon)
-realm=$(jq -r '.metadata.realm_name // empty' <<<"${rgw}")
-zonegroup=$(jq -r '.metadata.zonegroup_name // empty' <<<"${rgw}")
-zone=$(jq -r '.metadata.zone_name // empty' <<<"${rgw}")
-[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
-	die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
-
-# Without the site options radosgw-admin works in a zone named default, which
-# it creates on first use and the radosgw never serves.
-admin() {
-	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
-}
+use_site
 
 # operator_admin runs radosgw-admin as Rook's operator does, in the operator's
 # pod with the config and keyring it keeps for the cluster (Rook's
@@ -138,17 +127,10 @@ period_zonegroup() {
 # reload, and only a restart of its pod ended it. docs/ceph-upstream-bugs.md
 # records the probable causes of the delay and of the hang.
 wait_reload() {
-	local gid deadline=$((SECONDS + 180))
-	gid=$(jq '.gid' <<<"${rgw}")
-	until ceph_cmd service dump -f json | jq -e --argjson gid "${gid}" \
-		'[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value.gid] | any(. != $gid)' \
-		>/dev/null; do
-		((SECONDS < deadline)) ||
-			die "the radosgw did not finish reloading the committed period in 180s; restart it with" \
-				"'ROOKET_NAME=${ROOKET_NAME} ${rooket} kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw'" \
-				"and rerun once the service map lists it alone"
-		sleep 5
-	done
+	# shellcheck disable=SC2016 # $gid is the jq filter's variable
+	wait_rgw "the radosgw did not finish reloading the committed period" \
+		"restart it with 'ROOKET_NAME=${ROOKET_NAME} ${rooket} kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw' and rerun once the service map lists it alone" \
+		'any(.[]; .gid != $gid)' --argjson gid "$(jq '.gid' <<<"${rgw}")" >/dev/null
 }
 
 # The zonegroup belongs to a realm, so the changes are committed to a new
