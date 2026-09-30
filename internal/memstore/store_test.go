@@ -29,7 +29,7 @@ var _ = Describe("the zone", func() {
 		p, err := store.Placement(meta.PlacementRule{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p).To(Equal(op.Placement{
-			Rule:          meta.PlacementRule{Name: "default-placement"},
+			Rule:          meta.PlacementRule{Name: "default-placement", StorageClass: meta.StorageClassStandard},
 			DataPool:      meta.Pool{Name: "default.rgw.buckets.data"},
 			IndexPool:     meta.Pool{Name: "default.rgw.buckets.index"},
 			DataExtraPool: meta.Pool{Name: "default.rgw.buckets.non-ec"},
@@ -50,6 +50,7 @@ var _ = Describe("the zone", func() {
 						StorageClasses: meta.ZoneStorageClasses{
 							meta.StorageClassStandard: {DataPool: &std},
 							"COLD":                    {DataPool: &cold, CompressionType: &lz4},
+							"NO_POOL":                 {},
 						},
 					},
 				}},
@@ -66,21 +67,40 @@ var _ = Describe("the zone", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{p.DataPool, p.Compression}).To(Equal([]any{meta.Pool{Name: "cold.data"}, "lz4"}))
 		})
-		It("resolves a storage class the target lacks to STANDARD's pool, as get_data_pool does", func() {
-			p, err := store.Placement(meta.PlacementRule{Name: "fast", StorageClass: "GLACIER"})
+		It("refuses a storage class the target lacks with InvalidLocationConstraint, as find_zone_placement does", func() {
+			_, err := store.Placement(meta.PlacementRule{Name: "fast", StorageClass: "GLACIER"})
+			Expect(err).To(MatchError(op.ErrInvalidLocationConstraint))
+		})
+		It("gives a storage class without a data pool STANDARD's", func() {
+			p, err := store.Placement(meta.PlacementRule{Name: "fast", StorageClass: "NO_POOL"})
 			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{p.DataPool, p.Compression}).To(Equal([]any{meta.Pool{Name: "fast.data"}, ""}))
+			Expect([]any{p.Rule, p.DataPool}).To(Equal([]any{meta.PlacementRule{Name: "fast", StorageClass: "NO_POOL"}, meta.Pool{Name: "fast.data"}}))
 		})
 		It("puts extra data in the STANDARD pool when the target has no extra pool, as get_data_extra_pool does", func() {
 			p, err := store.Placement(meta.PlacementRule{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(p.Rule).To(Equal(meta.PlacementRule{Name: "fast"}), "the zonegroup's default")
+			Expect(p.Rule).To(Equal(meta.PlacementRule{Name: "fast", StorageClass: meta.StorageClassStandard}), "the zonegroup's default")
 			Expect(p.DataExtraPool).To(Equal(meta.Pool{Name: "fast.data"}))
 		})
 		It("refuses an unknown rule with InvalidLocationConstraint", func() {
 			_, err := store.Placement(meta.PlacementRule{Name: "nope"})
 			Expect(err).To(MatchError(op.ErrInvalidLocationConstraint))
 		})
+	})
+	It("takes the default placement's storage class for a rule with neither a name nor a class", func() {
+		cold := meta.Pool{Name: "cold.data"}
+		store := memstore.New(memstore.Config{
+			Params: meta.ZoneParams{PlacementPools: map[string]meta.ZonePlacementInfo{
+				"fast": {StorageClasses: meta.ZoneStorageClasses{meta.StorageClassStandard: {}, "COLD": {DataPool: &cold}}},
+			}},
+			ZoneGroup: meta.ZoneGroup{Name: "zg", DefaultPlacement: meta.PlacementRule{Name: "fast", StorageClass: "COLD"}},
+		})
+		p, err := store.Placement(meta.PlacementRule{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]any{p.Rule, p.DataPool}).To(Equal([]any{meta.PlacementRule{Name: "fast", StorageClass: "COLD"}, cold}))
+		p, err = store.Placement(meta.PlacementRule{StorageClass: meta.StorageClassStandard})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(p.Rule).To(Equal(meta.PlacementRule{Name: "fast", StorageClass: meta.StorageClassStandard}), "a class of its own is kept")
 	})
 	It("returns the configured realm and period", func() {
 		realm := meta.Realm{ID: "r", Name: "realm"}

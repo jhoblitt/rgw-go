@@ -694,6 +694,18 @@ go1.27.1's.
   set (`:637-642` at v19.2.6, `:642-647` at v20.2.4); rgw-go's `serve`
   builds the header from the release alone.
 
+### Zone and placement differences
+
+rgw-go resolves its zone and its placements from the root pool as radosgw's
+startup does at the v19.2.6 and v20.2.4 tags, and only reads. Where the
+result differs, rgw-go does the following.
+
+- **A storage class without a data pool.** A storage class that a zone
+  placement lists without a data pool resolves to the STANDARD class's
+  data pool in rgw-go's placement resolution (`op.ZoneInfo.Placement`).
+  radosgw's `RGWZonePlacementInfo::get_data_pool` returns an empty pool for
+  it (`rgw_zone_types.h:281-290` at v19.2.6 and v20.2.4).
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

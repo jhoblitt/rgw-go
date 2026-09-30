@@ -156,10 +156,13 @@ func (s *Store) Realm() meta.Realm { return s.cfg.Realm }
 // Period implements op.ZoneInfo.
 func (s *Store) Period() meta.Period { return s.cfg.Period }
 
-// Placement implements op.ZoneInfo through the zone's placement pools, as
-// RGWZonePlacementInfo resolves them: a storage class the target lacks takes
-// the STANDARD class's data pool (get_data_pool), and a target without a
-// data-extra pool puts extra data there too (get_data_extra_pool).
+// Placement implements op.ZoneInfo through the zone's placement pools. A
+// rule without a name takes the zonegroup's default placement, and its
+// storage class when the rule has none either. The rule must then name a
+// placement of the zone and a storage class it has, as radosgw's
+// find_zone_placement requires, the empty class being STANDARD. The pools
+// are RGWZonePlacementInfo's: the class's data pool, else STANDARD's; the
+// data-extra pool, else STANDARD's data pool (get_data_extra_pool).
 func (s *Store) Placement(rule meta.PlacementRule) (op.Placement, error) {
 	if rule.Name == "" {
 		def := s.cfg.ZoneGroup.DefaultPlacement
@@ -170,19 +173,23 @@ func (s *Store) Placement(rule meta.PlacementRule) (op.Placement, error) {
 	if !ok {
 		return op.Placement{}, fmt.Errorf("placement %s: %w", rule, op.ErrInvalidLocationConstraint)
 	}
-	standard := info.StorageClasses[meta.StorageClassStandard]
-	class, ok := info.StorageClasses[rule.CanonicalStorageClass()]
-	data := class.DataPool
-	if !ok {
-		data = standard.DataPool
+	sc := rule.CanonicalStorageClass()
+	class, ok := info.StorageClasses[sc]
+	if !ok && sc != meta.StorageClassStandard {
+		return op.Placement{}, fmt.Errorf("placement %s: storage class %s: %w", rule.Name, sc, op.ErrInvalidLocationConstraint)
+	}
+	standard := deref(info.StorageClasses[meta.StorageClassStandard].DataPool)
+	data := standard
+	if class.DataPool != nil {
+		data = *class.DataPool
 	}
 	extra := info.DataExtraPool
-	if extra == (meta.Pool{}) {
-		extra = deref(standard.DataPool)
+	if extra.Name == "" {
+		extra = standard
 	}
 	return op.Placement{
-		Rule:          rule,
-		DataPool:      deref(data),
+		Rule:          meta.PlacementRule{Name: rule.Name, StorageClass: sc},
+		DataPool:      data,
 		IndexPool:     info.IndexPool,
 		DataExtraPool: extra,
 		Compression:   deref(class.CompressionType),
