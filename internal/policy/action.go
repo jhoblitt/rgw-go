@@ -9,8 +9,8 @@ type Action uint16
 // Squid lacks the seven Tentacle added (PostBucketLogging, the two
 // GetObject*Attributes, the four Replicate* ones), and neither floor knows
 // the two Account*PublicAccessBlock actions. The numbering is never
-// persisted, so the superset is harmless; which actions a release knows is
-// the policy evaluator's concern.
+// persisted, so the superset is harmless; Known says which actions a release
+// knows.
 const (
 	S3GetObject Action = iota
 	S3GetObjectVersion
@@ -99,10 +99,12 @@ const (
 	s3AllCount
 )
 
-// actionNames is actpairs (rgw_iam_policy.cc) inverted: each action's name,
-// "s3:" and the action_t name without its service prefix; the wildcard
-// S3All is "s3:*".
-var actionNames = [s3AllCount]string{ //nolint:gosec // G101 takes the action names for credentials
+// actionNames is actpairs (rgw_iam_policy.cc) inverted. An s3 action's name is
+// "s3:" and the action_t name without its service prefix; the other services'
+// names are spelled as actpairs spells them, which is not always as the
+// constants are ("iam:AddClientIdToOIDCProvider", and v20.2.4's misspelled
+// "iam:RemoveCientIdFromOIDCProvider"). Each service's All is "<service>:*".
+var actionNames = [ActionCount]string{ //nolint:gosec // G101 takes the action names for credentials
 	S3GetObject:                        "s3:GetObject",
 	S3GetObjectVersion:                 "s3:GetObjectVersion",
 	S3PutObject:                        "s3:PutObject",
@@ -186,6 +188,92 @@ var actionNames = [s3AllCount]string{ //nolint:gosec // G101 takes the action na
 	S3PutAccountPublicAccessBlock:      "s3:PutAccountPublicAccessBlock",
 	S3GetAccountPublicAccessBlock:      "s3:GetAccountPublicAccessBlock",
 	S3All:                              "s3:*",
+
+	S3ObjectLambdaGetObject:                 "s3-object-lambda:GetObject",
+	S3ObjectLambdaListBucket:                "s3-object-lambda:ListBucket",
+	S3ObjectLambdaAll:                       "s3-object-lambda:*",
+	IAMPutUserPolicy:                        "iam:PutUserPolicy",
+	IAMGetUserPolicy:                        "iam:GetUserPolicy",
+	IAMDeleteUserPolicy:                     "iam:DeleteUserPolicy",
+	IAMListUserPolicies:                     "iam:ListUserPolicies",
+	IAMAttachUserPolicy:                     "iam:AttachUserPolicy",
+	IAMDetachUserPolicy:                     "iam:DetachUserPolicy",
+	IAMListAttachedUserPolicies:             "iam:ListAttachedUserPolicies",
+	IAMCreateRole:                           "iam:CreateRole",
+	IAMDeleteRole:                           "iam:DeleteRole",
+	IAMModifyRoleTrustPolicy:                "iam:ModifyRoleTrustPolicy",
+	IAMGetRole:                              "iam:GetRole",
+	IAMListRoles:                            "iam:ListRoles",
+	IAMPutRolePolicy:                        "iam:PutRolePolicy",
+	IAMGetRolePolicy:                        "iam:GetRolePolicy",
+	IAMListRolePolicies:                     "iam:ListRolePolicies",
+	IAMDeleteRolePolicy:                     "iam:DeleteRolePolicy",
+	IAMAttachRolePolicy:                     "iam:AttachRolePolicy",
+	IAMDetachRolePolicy:                     "iam:DetachRolePolicy",
+	IAMListAttachedRolePolicies:             "iam:ListAttachedRolePolicies",
+	IAMCreateOIDCProvider:                   "iam:CreateOIDCProvider",
+	IAMDeleteOIDCProvider:                   "iam:DeleteOIDCProvider",
+	IAMGetOIDCProvider:                      "iam:GetOIDCProvider",
+	IAMListOIDCProviders:                    "iam:ListOIDCProviders",
+	IAMAddClientIDToOIDCProvider:            "iam:AddClientIdToOIDCProvider",
+	IAMRemoveClientIDFromOIDCProvider:       "iam:RemoveCientIdFromOIDCProvider",
+	IAMUpdateOIDCProviderThumbprint:         "iam:UpdateOIDCProviderThumbprint",
+	IAMTagRole:                              "iam:TagRole",
+	IAMListRoleTags:                         "iam:ListRoleTags",
+	IAMUntagRole:                            "iam:UntagRole",
+	IAMUpdateRole:                           "iam:UpdateRole",
+	IAMCreateUser:                           "iam:CreateUser",
+	IAMGetUser:                              "iam:GetUser",
+	IAMUpdateUser:                           "iam:UpdateUser",
+	IAMDeleteUser:                           "iam:DeleteUser",
+	IAMListUsers:                            "iam:ListUsers",
+	IAMCreateAccessKey:                      "iam:CreateAccessKey",
+	IAMUpdateAccessKey:                      "iam:UpdateAccessKey",
+	IAMDeleteAccessKey:                      "iam:DeleteAccessKey",
+	IAMListAccessKeys:                       "iam:ListAccessKeys",
+	IAMCreateGroup:                          "iam:CreateGroup",
+	IAMGetGroup:                             "iam:GetGroup",
+	IAMUpdateGroup:                          "iam:UpdateGroup",
+	IAMDeleteGroup:                          "iam:DeleteGroup",
+	IAMListGroups:                           "iam:ListGroups",
+	IAMAddUserToGroup:                       "iam:AddUserToGroup",
+	IAMRemoveUserFromGroup:                  "iam:RemoveUserFromGroup",
+	IAMListGroupsForUser:                    "iam:ListGroupsForUser",
+	IAMPutGroupPolicy:                       "iam:PutGroupPolicy",
+	IAMGetGroupPolicy:                       "iam:GetGroupPolicy",
+	IAMListGroupPolicies:                    "iam:ListGroupPolicies",
+	IAMDeleteGroupPolicy:                    "iam:DeleteGroupPolicy",
+	IAMAttachGroupPolicy:                    "iam:AttachGroupPolicy",
+	IAMDetachGroupPolicy:                    "iam:DetachGroupPolicy",
+	IAMListAttachedGroupPolicies:            "iam:ListAttachedGroupPolicies",
+	IAMGenerateCredentialReport:             "iam:GenerateCredentialReport",
+	IAMGenerateServiceLastAccessedDetails:   "iam:GenerateServiceLastAccessedDetails",
+	IAMSimulateCustomPolicy:                 "iam:SimulateCustomPolicy",
+	IAMSimulatePrincipalPolicy:              "iam:SimulatePrincipalPolicy",
+	IAMAll:                                  "iam:*",
+	STSAssumeRole:                           "sts:AssumeRole",
+	STSAssumeRoleWithWebIdentity:            "sts:AssumeRoleWithWebIdentity",
+	STSGetSessionToken:                      "sts:GetSessionToken",
+	STSTagSession:                           "sts:TagSession",
+	STSAll:                                  "sts:*",
+	SNSGetTopicAttributes:                   "sns:GetTopicAttributes",
+	SNSDeleteTopic:                          "sns:DeleteTopic",
+	SNSPublish:                              "sns:Publish",
+	SNSSetTopicAttributes:                   "sns:SetTopicAttributes",
+	SNSCreateTopic:                          "sns:CreateTopic",
+	SNSListTopics:                           "sns:ListTopics",
+	SNSAll:                                  "sns:*",
+	OrganizationsDescribeAccount:            "organizations:DescribeAccount",
+	OrganizationsDescribeOrganization:       "organizations:DescribeOrganization",
+	OrganizationsDescribeOrganizationalUnit: "organizations:DescribeOrganizationalUnit",
+	OrganizationsDescribePolicy:             "organizations:DescribePolicy",
+	OrganizationsListChildren:               "organizations:ListChildren",
+	OrganizationsListParents:                "organizations:ListParents",
+	OrganizationsListPoliciesForTarget:      "organizations:ListPoliciesForTarget",
+	OrganizationsListRoots:                  "organizations:ListRoots",
+	OrganizationsListPolicies:               "organizations:ListPolicies",
+	OrganizationsListTargetsForPolicy:       "organizations:ListTargetsForPolicy",
+	OrganizationsAll:                        "organizations:*",
 }
 
 // actionsByName inverts actionNames for ParseAction.
@@ -197,8 +285,8 @@ var actionsByName = func() map[string]Action {
 	return m
 }()
 
-// String returns the "s3:Name" form, "s3:*" for S3All, and "" for a value
-// that names no action.
+// String returns the "service:Name" form, "service:*" for a service's All,
+// and "" for a value that names no action.
 func (a Action) String() string {
 	if int(a) >= len(actionNames) {
 		return ""
@@ -206,8 +294,8 @@ func (a Action) String() string {
 	return actionNames[a]
 }
 
-// ParseAction parses the "s3:Name" form, exactly as String renders it; ok is
-// false for a name radosgw does not know.
+// ParseAction parses the "service:Name" form, exactly as String renders it; ok
+// is false for a name no action has. Known says whether a release accepts it.
 func ParseAction(s string) (a Action, ok bool) {
 	a, ok = actionsByName[s]
 	return a, ok
