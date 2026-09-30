@@ -37,7 +37,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw truncates a long aws-chunked trailer section instead of rejecting it](#radosgw-truncates-a-long-aws-chunked-trailer-section-instead-of-rejecting-it) | [#81122](https://tracker.ceph.com/issues/81122) | none | ✓ |
 | [radosgw accepts a negative or overflowing aws-chunked chunk size](#radosgw-accepts-a-negative-or-overflowing-aws-chunked-chunk-size) | [#81123](https://tracker.ceph.com/issues/81123) | none | ✓ |
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
-| [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | none | none | ✓ |
+| [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | none | none | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | none | none | ✓ |
@@ -566,7 +566,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw ignores a payload-hash mismatch on bodies read by read_all_input
 
-- **Kind:** defect, a regression; unfixed through main.
+- **Kind:** defect, a regression; unfixed through main, with a fix in review.
 - **Evidence:**
   - A signed single-chunk body gets an `AWSv4ComplSingle` completer (v19.2.6
     `rgw_rest_s3.cc:5903-5946`; v20.2.4 `:6470-6517`), whose `complete()`
@@ -619,13 +619,26 @@ Every new entry adds its row to this table, in document order.
   a request body reads the body to its end first, and a mismatch is 400
   XAmzContentSHA256Mismatch with nothing changed (units M, W and P). That is
   a difference from radosgw, which those units record in `docs/exclusions.md`.
-- **Upstream:** no tracker issue or pull request reports or fixes it
-  (full-text tracker and all-time pull-request search, 2026-09-30). The
-  helper came with [ceph/ceph#39678](https://github.com/ceph/ceph/pull/39678).
-  Not filed: the defect has not been reproduced on a running cluster, and
-  filing needs a live reproduction and a C++ reproducer.
+- **Upstream:** we filed [#81230](https://tracker.ceph.com/issues/81230).
+  The fix in review is
+  [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) (draft): both
+  helpers return the completion's result, a two-line `rgw_op.h` change that
+  covers every affected op. It has not been compiled against a patched build
+  yet; the pull request says so, and Ceph's CI builds it. No earlier tracker
+  issue or pull request reports it (full-text tracker and all-time
+  pull-request search, 2026-09-30).
+  [#71607](https://tracker.ceph.com/issues/71607) and
+  [ceph/ceph#64569](https://github.com/ceph/ceph/pull/64569) are related but
+  distinct: they changed only the single-object DeleteObj `get_params` path.
+  The helper came with
+  [ceph/ceph#39678](https://github.com/ceph/ceph/pull/39678).
 - **Found:** phase 1 planning of unit A, 2026-09-29; derived from the source
-  and verified 2026-09-30, not reproduced.
+  and verified 2026-09-30. Reproduced live on v19.2.6 and v20.2.4 on
+  2026-09-30. PutBucketTagging, PutBucketPolicy and CreateBucket accept a
+  substituted body, and the readback shows the substitute applied, while
+  PutObject answers 400. With `debug_rgw=20` the completer logs the mismatch
+  while the op answers 2xx. The reproducer, its output and the debug excerpt
+  are attached to the tracker issue.
 
 ## radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned
 
