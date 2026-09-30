@@ -766,6 +766,55 @@ result differs, rgw-go does the following.
   (`driver/rados/config/realm.cc:44-48`, `zonegroup.cc:37-42`,
   `zone.cc:36-40` and `period.cc:38-45` at v19.2.6 and v20.2.4).
 
+### S3 handler differences
+
+rgw-go runs an S3 request through radosgw's `process_request` steps and
+renders its responses and error documents as radosgw's `end_header` and
+`abort_early` do. Where the two differ, checked against the v19.2.6 and
+v20.2.4 tags, rgw-go does the following.
+
+- **Every document is XML.** radosgw's S3 handler chooses its formatter
+  per request: the `format` query parameter when it is `xml`, `json` or
+  `html`, and otherwise the `Accept` header's type when it is `text/xml`,
+  `application/xml`, `application/json` or `text/html`, so `format=json` or
+  `Accept: application/json` turns error documents and the listings into
+  JSON (`allocate_formatter`, `rgw_rest.cc:1732-1764` at v19.2.6,
+  `:1736-1768` at v20.2.4, which `RGWRESTMgr_S3::get_handler` calls with
+  the format configurable, `rgw_rest_s3.cc:5262-5264` and `:5822-5824`).
+  A NUL in the URL is refused before any formatter exists, so
+  `abort_early` answers it with a JSON document,
+  `{"Code":"InvalidRequest","Message":"","RequestId":"…","HostId":"…"}`,
+  and `Content-Type: application/json` (`rgw_rest.cc:2182-2186` and
+  `:676-681` at v19.2.6, `:2204-2208` and `:681-686` at v20.2.4). rgw-go
+  renders every S3 document and error document as XML, those included.
+- **No `Bucket` header.** With `rgw_expose_bucket` set, which defaults to
+  false, radosgw names the bucket in a `Bucket` header on an error it
+  answers through `abort_early`, one refused before the op executes
+  (`dump_bucket_from_state`, `rgw_rest.cc:428-438`, called at `:715` at
+  v19.2.6 and `:720` at v20.2.4). rgw-go never sends the header.
+- **The request cap is fixed at startup.** rgw-go refuses a request past
+  `rgw_max_concurrent_requests` as radosgw's default `throttler`
+  scheduler does, with 503 SlowDown, and counts the refused request until
+  it is answered, as that scheduler does. It applies the value it read at
+  startup, where radosgw's scheduler follows a runtime change
+  (`SimpleThrottler::handle_conf_change`,
+  `rgw_dmclock_async_scheduler.h:176-183` at v19.2.6, `:175-182` at
+  v20.2.4), and it has no counterpart to the experimental `dmclock`
+  scheduler that `rgw_scheduler_type` selects.
+- **Go's reason phrases.** net/http writes Go's reason phrase after every
+  status code. radosgw writes the phrase its own `http_codes` table gives
+  (`rgw_rest.cc:44-88` at v19.2.6 and v20.2.4), so a status line differs
+  wherever the two phrases differ: a SlowDown or ServiceUnavailable error
+  is `503 Service Unavailable` from rgw-go and `503 Slow Down` from radosgw
+  (`:85`). net/http cannot send another phrase without taking over the
+  connection, and clients act on the code.
+- **Canonical header names.** net/http sends every header name rgw-go
+  writes in its canonical case, such as `X-Amz-Request-Id` and `Etag`.
+  radosgw sends each name as its source spells it, such as
+  `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
+  `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
+  Header names are case-insensitive (RFC 9110, section 5.1).
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
