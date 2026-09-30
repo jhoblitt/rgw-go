@@ -1186,11 +1186,15 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     never consult ACLs (`:1397-1403`; v20.2.4 `:1427-1433`), so an owner is
     affected only as a user outside any account.
   - So on a bucket whose Swift read ACL is `.r:example.com` and which has no
-    bucket policy, the owner's PutObject (`rgw_op.cc:3982-3985`; v20.2.4
+    bucket policy, the owner's S3 PutObject (`rgw_op.cc:3982-3985`; v20.2.4
     `:4191-4194`) with a `Referer: http://example.com/page` header is refused
     with 403: its WRITE, from FULL_CONTROL, is replaced by READ_OBJS, which
-    counts only as READ and READ_ACP (`rgw_acl.cc:216-221`). Without the
-    header the same request succeeds.
+    counts only as READ and READ_ACP (`rgw_acl.cc:216-221`). Without the header
+    the same request succeeds. Over Swift the owner's PUT still succeeds: the
+    check falls back to the user ACL (`rgw_common.cc:1427-1430`; v20.2.4
+    `:1461-1466`), which radosgw loads only for Swift, as the bucket owner's
+    account ACL, by default FULL_CONTROL for the owner, and checks with no
+    Referer (`rgw_op.cc:588-590`, `:453-482`; v20.2.4 `:618-620`, `:483-512`).
   - The replacement came with 11d4370eaf7, "rgw: partially respect Swift's
     negative, HTTP referer-based ACLs", so that a negative `.r:-host` grant,
     stored with no flags, could revoke what `.r:*` gives through the
@@ -1215,22 +1219,29 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   first on a known match:
   - the tracker's issue filter on any searchable field, every project and
     status, checked on `cls_otp_divzero_repro`, which only a comment on
-    #80948 holds: `get_referer_perm` and `referer_list` find nothing,
-    `ACLReferer` only #18685, its backport #18895 and a cleanup (#39619),
-    and `RGW_PERM_READ_OBJS` only #18517, about Swift's default container
-    ACLs. The tracker's full-text search for referer with acl, owner,
-    denied, 403 and AccessDenied finds no report of it either; its closest
-    hits are #18841 and #18685.
+    [#80948](https://tracker.ceph.com/issues/80948) holds: `get_referer_perm`
+    and `referer_list` find nothing, `ACLReferer` only
+    [#18685](https://tracker.ceph.com/issues/18685), its backport
+    [#18895](https://tracker.ceph.com/issues/18895) and a cleanup
+    ([#39619](https://tracker.ceph.com/issues/39619)), and `RGW_PERM_READ_OBJS`
+    only [#18517](https://tracker.ceph.com/issues/18517), about Swift's default
+    container ACLs. The tracker's full-text search for referer with acl, owner,
+    denied, 403 and AccessDenied finds no report of it either; its closest hits
+    are #18841 and #18685.
   - `gh search prs --repo ceph/ceph`, checked on a phrase that only
     #14344's body holds: `get_referer_perm` and `ACLReferer` find nothing,
     `referer_list` only #14344.
-  - ceph/ceph pull requests by the files they change, for
-    `src/rgw/rgw_acl.cc` and `src/rgw/rgw_acl.h`, checked on the merged
-    #14344, #13005, #65374 and #65742: none of the 1561 open ones touches
-    either. Of the 3462 closed unmerged since 2024-01-01, only #43978 (the
-    owner's `get_perm` flags widened to FULL_CONTROL, the referer step left
-    as is) and #57539 (subuser permission masks) are ACL changes; the rest
-    carry the two files among hundreds or thousands of others.
+  - ceph/ceph pull requests by the files they change, for `src/rgw/rgw_acl.cc`
+    and `src/rgw/rgw_acl.h`, checked on the merged #14344,
+    [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005),
+    [ceph/ceph#65374](https://github.com/ceph/ceph/pull/65374) and
+    [ceph/ceph#65742](https://github.com/ceph/ceph/pull/65742): none of the 1561
+    open ones touches either. Of the 3462 closed unmerged since 2024-01-01, only
+    [ceph/ceph#43978](https://github.com/ceph/ceph/pull/43978) (the owner's
+    `get_perm` flags widened to FULL_CONTROL, the referer step left as is) and
+    [ceph/ceph#57539](https://github.com/ceph/ceph/pull/57539) (subuser
+    permission masks) are ACL changes; the rest carry the two files among
+    hundreds or thousands of others.
 - **Found:** phase 1 unit Z, Task 6's transcription of `get_perm`,
   2026-09-29; derived from the source, not reproduced.
 
@@ -1256,16 +1267,17 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   `get_http_host` does, and the spec "the first @ after the scheme ends the
   userinfo, even in the path" (`internal/acl/eval_test.go`) pins it.
 - **Upstream:** no issue or pull request reports it. Not filed, for the same
-  reason as the previous entry.
-  [#18685](https://tracker.ceph.com/issues/18685) (Resolved) asked for the
-  Referer's host to be compared rather than the whole value; its fix,
-  [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005), wrote this
-  parse. Searched with the previous entry's methods: the tracker filter
-  finds `get_http_host` only in #39619, a string_view cleanup, and the
-  full-text search for referer with userinfo, host parse and hostname finds
+  reason as the previous entry. [#18685](https://tracker.ceph.com/issues/18685)
+  (Resolved) asked for the Referer's host to be compared rather than the whole
+  value; its fix, [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005),
+  wrote this parse. Searched with the previous entry's methods: the tracker
+  filter finds `get_http_host` only in
+  [#39619](https://tracker.ceph.com/issues/39619), a string_view cleanup, and
+  the full-text search for referer with userinfo, host parse and hostname finds
   only #18685, its backports and unrelated reports; `gh search prs` finds
-  `get_http_host` only in #13005 and in #50330, an unrelated `RGWEnv::get`
-  fix; the file sweep is the previous entry's.
+  `get_http_host` only in #13005 and in
+  [ceph/ceph#50330](https://github.com/ceph/ceph/pull/50330), an unrelated
+  `RGWEnv::get` fix; the file sweep is the previous entry's.
 - **Found:** phase 1 unit Z, Task 6's transcription of `is_match`,
   2026-09-29; derived from the source, not reproduced.
 
@@ -1624,12 +1636,21 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     `remove_bucket return value`, `radosgw-admin exit code 0` and
     `radosgw-admin returns 0 error`: #80577 and unrelated issues only.
   - ceph/ceph pull requests through `gh search prs`, which finds #71165 by
-    `get_valid_types_as_str`. Terms: `"bucket rm" radosgw-admin`,
-    `remove_bucket radosgw-admin return`, `BUCKET_RM`, `radosgw-admin
-    "bucket rm" exit`, `radosgw-admin bucket commands return codes` and
-    `radosgw-admin return code` (none), `radosgw-admin exit code` (two
-    radosgw-admin refactors), `80577` (#71858) and `bucket rm
-    purge-objects` (the 2019 fixes for a `--purge-objects` hang).
+    `get_valid_types_as_str`. Terms: `BUCKET_RM` (none) and `80577` (#71858).
+    The multi-word terms were rerun on 2026-09-30 with each word its own
+    argument and `bucket rm` a phrase, a method that finds
+    [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609) by `guard against
+    dir suggest during reshard`: `"bucket rm" radosgw-admin`, `remove_bucket
+    radosgw-admin return`, `radosgw-admin "bucket rm" exit` and `bucket rm
+    purge-objects` find bypass-gc and multisite changes to the removal and the
+    2019 fixes for a `--purge-objects` hang; `radosgw-admin bucket commands
+    return codes`, `radosgw-admin return code` and `radosgw-admin exit code`
+    find #71858, [ceph/ceph#71155](https://github.com/ceph/ceph/pull/71155)
+    (exit-code tests for the command-line handling) and the open radosgw-admin
+    refactors [ceph/ceph#69145](https://github.com/ceph/ceph/pull/69145) and
+    [ceph/ceph#71462](https://github.com/ceph/ceph/pull/71462), whose `bucket
+    rm` still discards what `remove_bucket` returns. None changes `bucket rm`'s
+    exit status.
 - **Found:** phase 1 unit T, the s3-tests harness's bucket purge,
   2026-09-29.
 
