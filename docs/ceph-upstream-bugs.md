@@ -282,15 +282,39 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     `log_usage` when usage logging is enabled and from usage read and trim.
   The same holds at v20.2.4 (`rgw_lc.cc:2031`, `rgw_rados.cc:1728-1729`, and
   GC's `obj_names[-1]` via `rgw_shards_mod` returning -1, `rgw_tools.h:63-71`).
+  A negative value is accepted too. A negative `rgw_lc_max_objs` or
+  `rgw_gc_max_objs` fails earlier, at startup: `RGWLC::initialize` and
+  `RGWGC::initialize` allocate an array of that many shard names
+  (`rgw_lc.cc:237-241` and `driver/rados/rgw_gc.cc:35-37` at v19.2.6 and
+  v20.2.4), which with GCC throws a plain `std::bad_alloc`;
+  `RGWRados::init_complete` runs both (`rgw_rados.cc:1326-1327` and, with
+  GC, `:1223-1225` at v19.2.6; `:1310-1311` and `:1285-1287` at v20.2.4). A
+  negative `rgw_usage_max_shards` does not fault, but `usage_log_hash`
+  converts it to an unsigned divisor of 2^32 minus its magnitude, so each
+  usage object is named by the hash itself (`rgw_rados.cc:1615-1628` at
+  v19.2.6, `:1718-1731` at v20.2.4). The all-users usage read and trim walk
+  the shard index up from 0 until the name comes back to `usage.0`, the read
+  also stopping once it is truncated or has filled its entry budget
+  (`:1681-1714` and `:1723-1733` at v19.2.6, `:1784-1817` and `:1826-1836`
+  at v20.2.4). That divisor puts `usage.0` at least 2^31 steps away, each a
+  RADOS call, and a missing shard object only moves the walk on: both skip
+  ENOENT (`:1697-1698`, `:1729-1730`; v20.2.4 `:1800-1801`, `:1832-1833`),
+  and the read clears `is_truncated` before its call
+  (`cls/rgw/cls_rgw_client.cc:798-799` at v19.2.6, `:607-608` at v20.2.4).
+  The admin API reaches both: a usage GET that names no user or bucket, and
+  a usage DELETE with `remove-all`, read or trim for a user with an empty
+  id (`rgw_rest_usage.cc:38-41`, `:69`, `:91-94` and `:108-120`, the same
+  at both tags; `rgw_sal_rados.cc:252` and `:261` at v19.2.6, `:269` and
+  `:278` at v20.2.4). This loop is from code reading, not reproduced.
 - **Releases:** every release. GC faults as a SIGFPE at v19.2.2 and as an
   out-of-bounds read from v19.2.3 and v20.1.0 on; LC and usage fault as a
   SIGFPE throughout, since the `rgw_shards_mod` guard does not cover their
   direct modulo.
 - **rgw-go:** config validation rgw-go must add. Phase 1 rejects or floors a
-  zero `rgw_gc_max_objs` (GC worker, unit W), `rgw_lc_max_objs` and
-  `rgw_usage_max_shards` (metadata and lifecycle path, unit M) at startup
-  rather than faulting on first use, and never divides by a shard count without
-  guarding it.
+  zero `rgw_gc_max_objs` (GC worker, unit W), and a zero or negative
+  `rgw_lc_max_objs` and `rgw_usage_max_shards` (metadata and lifecycle path,
+  unit M), at startup rather than faulting on first use, and never divides
+  by a shard count without guarding it.
 - **Upstream:** [#80991](https://tracker.ceph.com/issues/80991); its fix,
   [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), adds min: 1 to
   the three options and is in review.
@@ -468,6 +492,340 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   - Not filed: the defect has not been reproduced on a running cluster.
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the
   source, not reproduced.
+
+## radosgw ignores a payload-hash mismatch on bodies read by read_all_input
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - A signed single-chunk body gets an `AWSv4ComplSingle` completer (v19.2.6
+    `rgw_rest_s3.cc:5903-5946`; v20.2.4 `:6470-6517`), whose `complete()`
+    compares the body's SHA-256 with `x-amz-content-sha256`
+    (`rgw_auth_s3.cc:1737-1756`; v20.2.4 `:1714-1733`).
+  - `RGWOp::read_all_input` and `get_json_input` read the body, call
+    `do_aws4_auth_completion()` and drop its result (v19.2.6
+    `rgw_op.h:215-237`; v20.2.4 `:229-251`). `do_aws4_auth_completion` moves
+    the completer out of the request before it checks (v19.2.6
+    `rgw_op.cc:1367`; v20.2.4 `:1604`), so any later call returns 0.
+  - CreateBucket, PutBucketAcl and PutObjectAcl, PutBucketPolicy,
+    PutObjectTagging and PutBucketTagging, CompleteMultipartUpload and
+    DeleteObjects read their body through `read_all_input` (v19.2.6
+    `rgw_rest_s3.cc:2491`, `rgw_rest.cc:1474`, `rgw_op.cc:8078`,
+    `rgw_rest_s3.cc:788`, `:880`, `rgw_rest.cc:1590`, `:1672`; v20.2.4
+    `rgw_rest_s3.cc:2611`, `rgw_rest.cc:1479`, `rgw_op.cc:9004`,
+    `rgw_rest_s3.cc:870`, `:962`, `rgw_rest.cc:1595`, `:1677`). The checks
+    that the ACL PUTs, CompleteMultipartUpload and DeleteObjects make
+    afterwards therefore always pass (v19.2.6 `rgw_rest_s3.cc:3618-3623`,
+    `:4073`, `:4244`; v20.2.4 `:3901-3906`, `:4601`, `:4792`), and none of
+    these ops compares a Content-MD5 instead. radosgw acts on a signed body
+    whose hash does not match and answers as if it did; the mismatch is only
+    logged, at level 10.
+  - The other subresource PUTs read their body the same way: lifecycle,
+    object lock, legal hold, replication, versioning, website, CORS, request
+    payment, retention, public-access block and encryption (v19.2.6
+    `rgw_rest.cc:1482-1496`, `rgw_op.cc:8616`, `:8747`, and six sites in
+    `rgw_rest_s3.cc`). Of them only the lifecycle PUT compares a Content-MD5,
+    when one is sent (`rgw_op.cc:5942-5981`).
+  - PutObject and UploadPart do return the verdict (v19.2.6
+    `rgw_rest_s3.cc:2706-2714`, `rgw_op.cc:4439`; v20.2.4
+    `rgw_rest_s3.cc:2867-2875`, `rgw_op.cc:4671`).
+  - It is a regression. 0214b4a7afb, "rgw: handle aws4 completion when
+    reading all op data" (first in v17.1.0), moved these ops to the helper.
+    Before it, CreateBucket, the ACL PUTs, CompleteMultipartUpload,
+    DeleteObjects and the versioning, website and CORS PUTs returned the
+    verdict (v16.2.15 `rgw_rest_s3.cc:2268-2271`, `:3341`, `:3721`, `:3903`,
+    `:1978`, `:2052`, `:3486`).
+  - The same code is on main (`rgw_op.h:237` and `:248`, 7ed73efc1be,
+    2026-09-25).
+- **Trigger:** a signed request whose body changes after signing. The
+  signature covers the `x-amz-content-sha256` value, not the body, so anyone
+  who can alter a request between the client and radosgw (plain HTTP, or
+  behind a proxy that terminates TLS) can replace such a body, for example a
+  bucket policy, an ACL, a DeleteObjects key list or a CompleteMultipartUpload
+  part list, and radosgw acts on the replacement.
+- **Releases:** every release from v17.1.0 on; checked at v16.2.15, which
+  returns the verdict, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1 verifies the hash before it acts: every op that acts on
+  a request body reads the body to its end first, and a mismatch is 400
+  XAmzContentSHA256Mismatch with nothing changed (units M, W and P). That is
+  a difference from radosgw, which those units record in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports or fixes it
+  (full-text tracker and all-time pull-request search, 2026-09-30). The
+  helper came with [ceph/ceph#39678](https://github.com/ceph/ceph/pull/39678).
+  Not filed: the defect has not been reproduced on a running cluster, and
+  filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit A, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw checks a copy source with inputs from the destination bucket
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** CopyObject and UploadPartCopy authorize their source inside
+  `verify_permission` through the request's `req_state`, whose bucket is the
+  destination (v19.2.6 `rgw_op.cc:5420-5422` and `:5454-5459`, `:3933-3934`
+  and `:3956-3961`; v20.2.4 `:5986-5988`, `:6020-6025`, `:4142-4143` and
+  `:4165-4170`). The source's ACLs and stored policy are read, but three
+  inputs are the destination's:
+  - Owner: for an identity that belongs to an account, the cross-account
+    decision compares the account with `s->bucket_owner` (v19.2.6
+    `rgw_common.cc:1386-1403`; v20.2.4 `:1414-1433`), the owner of the
+    destination's ACL (`rgw_op.cc:552`; v20.2.4 `:582`). An account user
+    copying from another account's bucket into their own account's bucket
+    takes the same-account path, which consults no ACL and allows on an
+    Allow from an identity policy, or for the account root (v19.2.6
+    `rgw_common.cc:1236-1244`; v20.2.4 `:1249-1257`). The source's owner
+    need grant nothing, where a GET of the same object needs its grant.
+    CopyObject decides on the bucket owner alone. UploadPartCopy decides on
+    the owner of the source object's ACL and falls back to `s->bucket_owner`
+    (v19.2.6 `rgw_common.cc:1533-1534`; v20.2.4 `:1585-1586`), and a source
+    object with no ACL attr gets a default ACL owned by `s->bucket_owner`
+    (v19.2.6 `rgw_op.cc:421-422`, `:307-310`; v20.2.4 `:451-452`,
+    `:350-353`), so UploadPartCopy is affected only for a source object
+    whose ACL is missing or names no owner.
+  - Tenant: the source bucket's policy is parsed with `s->bucket_tenant`,
+    the destination's tenant (v19.2.6 `rgw_op.cc:419`; v20.2.4 `:449`). The
+    parser binds a Resource whose account is empty or `*` to that tenant
+    (`rgw_iam_policy.cc:690-696`; v20.2.4 `:703-709`), while the source
+    object's ARN carries the source's tenant, which a match compares
+    (`rgw_arn.cc:126-130` and `:335-337` at both tags). In a cross-tenant
+    copy the policy's Resource elements never match the source object and
+    its NotResource elements never exclude it, so a Deny the owner scoped
+    with Resource does not stop a copy that the source's ACL allows. A
+    Resource that names the source's tenant fails the parse
+    (`rgw_iam_policy.cc:697-701`; v20.2.4 `:710-714`); see the next entry.
+  - Public-access block: the permission state takes the bucket and its
+    public-access block from the request (v19.2.6 `rgw_common.cc:1099-1109`,
+    `rgw_op.cc:585`; v20.2.4 `rgw_common.cc:1112-1122`, `rgw_op.cc:615`).
+    The source's ACLs are evaluated with the destination's IgnorePublicAcls
+    (v19.2.6 `rgw_common.cc:1420-1423`, `:1572-1575`; v20.2.4 `:1453-1454`,
+    `:1628-1629`), and v20.2.4 tests RestrictPublicBuckets with the
+    destination's block and owner against the source's policy (`:1376-1377`,
+    `:1543-1544`); v19.2.6 does not evaluate RestrictPublicBuckets. A public
+    ACL grant, or on v20.2.4 a public policy, on a source whose owner
+    blocked it lets a requester copy the object into a bucket without the
+    block, where a GET is refused.
+  - v20.2.4's source check also compares `x-amz-expected-bucket-owner` with
+    the destination's owner (`rgw_common.cc:1407-1412`, `:1575-1580`). That
+    header names the destination bucket, so this comparison is correct.
+  - The owner and tenant inputs are the same on main (`rgw_common.cc:1430`,
+    `:1607`, `rgw_op.cc:524-526`, 7ed73efc1be, 2026-09-25).
+- **Trigger:** a requester who may write to the destination: an account user
+  whose account owns it, for the owner input; a requester whose destination
+  is in another tenant than the source, for the tenant input; and a
+  destination without the source's public-access block, for the last.
+- **Releases:** every Squid and Tentacle release; checked at v19.2.6, v20.2.4
+  and main. The owner input came with IAM accounts in f917e999c2c, "rgw: add
+  cross-account policy evaluation" (first in v19.1.0), and the tenant input
+  in v19.2.0 and v20.1.0 (see Upstream); reef parsed the source's policy
+  with the source's tenant (v18.2.8 `rgw_op.cc:403`).
+- **rgw-go:** phase 1 (unit Z) checks a copy source against the source
+  bucket: its owner decides the cross-account path, is the object-owner
+  fallback and owns a default object ACL; its policy is parsed with its own
+  tenant; and its public-access block applies in addition to the
+  destination's. The destination supplies only requester pays and the
+  `x-amz-expected-bucket-owner` comparison. That is a difference from
+  radosgw, which unit Z records in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The tenant input
+  came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169) and
+  its squid backport
+  [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221), the fix for
+  [#67464](https://tracker.ceph.com/issues/67464), which pass the request's
+  tenant where reef passed the source's.
+  [#61954](https://tracker.ceph.com/issues/61954) concerns the same
+  UploadPartCopy check, for a source policy that was never read. Not filed:
+  the defect has not been reproduced on a running cluster, and filing needs
+  a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw terminates on a copy source or system request whose bucket policy does not parse
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - CopyObject and UploadPartCopy parse the source bucket's stored policy
+    first thing in `verify_permission`, with no handler (v19.2.6
+    `rgw_op.cc:5420` and `:3933` into `read_obj_policy`, `:419`; v20.2.4
+    `:5986`, `:4142`, `:449`). The parse constructs a `Policy` (v19.2.6
+    `rgw_op.cc:328-338`; v20.2.4 `rgw_common.cc:3275-3285`), which throws
+    `PolicyParseException` when it fails (`rgw_iam_policy.cc:1815-1824`;
+    v20.2.4 `:1850-1859`). The same parse of the request's own bucket
+    policy has a handler, which answers 403 (v19.2.6 `rgw_op.cc:598-615`;
+    v20.2.4 `:628-645`).
+  - Nothing on the request path catches the exception. `process_request`
+    catches only `DigestException` (v19.2.6 `rgw_process.cc:343` and
+    `:410`; v20.2.4 `:345` and `:417`), and the completion handler of the
+    beast connection coroutine rethrows it (v19.2.6
+    `rgw_asio_frontend.cc:1203-1205`, `:1220-1222`; v20.2.4 `:1116-1117`,
+    `:1133-1134`). The frontend runs on radosgw's io_context pool (v19.2.6
+    `rgw_appmain.cc:474`; v20.2.4 `:482`), whose threads call `ioctx.run()`
+    with no handler either (v19.2.6 `common/async/context_pool.h:81-85`;
+    v20.2.4 `:80-84`; `common/Thread.h:72-82` at both tags), so the
+    exception leaves the thread and `std::terminate` ends the process.
+  - A stored policy fails the parse when the parser has changed since it was
+    stored, which the handler for the request's own bucket anticipates ("a
+    parsing failure here means we broke backward compatibility", v19.2.6
+    `rgw_op.cc:603-606`). From v19.2.0 a policy that parses for its own
+    bucket fails too: the source's policy is parsed with the destination's
+    tenant (previous entry), and a Resource naming the source's tenant,
+    which the source's PutBucketPolicy accepts (v19.2.6
+    `rgw_op.cc:8099-8101`; v20.2.4 `:9025-9027`), fails for any other
+    tenant (`rgw_iam_policy.cc:697-701`; v20.2.4 `:710-714`).
+  - A system request, one authenticated as a system user as multisite sync
+    is (`rgw_auth_filters.h:320-330`; v20.2.4 `:348-356`), meets the same
+    unhandled parse on its own bucket. The handler in `init_permissions`
+    refuses only other requests (`rgw_op.cc:612-614`; v20.2.4 `:642-644`),
+    so a system request goes on to `read_permissions`, whose
+    `rgw_build_object_policies` calls `read_obj_policy` on the same bucket
+    (`rgw_op.cc:8003-8009`, `:646-648`; v20.2.4 `:8921-8927`, `:676-678`),
+    and that parses the policy again with no handler (`:419`; v20.2.4
+    `:449`).
+  - The same code is on main (`rgw_op.cc:524`, `rgw_process.cc:461`,
+    `rgw_asio_frontend.cc:1204` and `:1221`, 7ed73efc1be, 2026-09-25).
+- **Trigger:** a CopyObject or UploadPartCopy that names such a source and
+  reaches `verify_permission`. The parse comes before the copy's permission
+  checks, so the requester needs no grant on either bucket; for a source
+  whose policy names its own tenant, any such request whose destination
+  bucket is in another tenant ends the process. Also an object request by
+  a system user on a bucket whose own stored policy does not parse.
+- **Releases:** every release checked, v19.2.6, v20.2.4 and main; the
+  cross-tenant case from v19.2.0 and v20.1.0.
+- **rgw-go:** phase 1 (unit Z) refuses a copy whose source bucket policy does
+  not parse with 403 AccessDenied, for every identity with no admin bypass,
+  and parses the source's policy with the source's own tenant, so a policy
+  that parses for its own bucket parses for a copy too. For the request's
+  own bucket it refuses such a policy with 403 unless the requester is an
+  admin, and does not parse it again. That is a difference from radosgw,
+  which unit Z records in `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The cross-tenant
+  case came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169)
+  and [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221) (previous
+  entry). Not filed: the defect has not been reproduced on a running
+  cluster, and filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
+
+## radosgw checks a CopyObject source against its bucket's ACL, not the object's
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - CopyObject reads the source object's ACL into `src_acl` and never uses
+    it (v19.2.6 `rgw_op.cc:5409`, `:5420-5422`; v20.2.4 `:5975`,
+    `:5986-5988`). It authorizes `s3:GetObject` with
+    `verify_bucket_permission`, passing the source bucket's ACL
+    (`:5437-5459`; v20.2.4 `:6003-6025`), and when no policy decides, that
+    ACL is checked for READ, the permission `s3:GetObject` maps to
+    (`rgw_common.cc:1412-1432`, `rgw_iam_policy.h:237-252`; v20.2.4
+    `rgw_common.cc:1442-1469`, `rgw_iam_policy.h:247-265`).
+  - So a READ grant on the source bucket, which for S3 means listing it,
+    lets its grantee copy any object in it into a bucket they may write,
+    including an object whose own ACL grants them nothing and whose GET is
+    refused; and a READ grant on an object alone no longer lets its grantee
+    copy it. UploadPartCopy still checks the object's ACL
+    (`verify_object_permission` with `cs_acl`, `rgw_op.cc:3956-3961`;
+    v20.2.4 `:4165-4170`).
+  - It is a regression. At v18.2.8 CopyObject checked `src_acl` for READ
+    (`rgw_op.cc:5415-5428`). 897d4063871, "rgw/auth: object ops use new
+    verify_bucket_permission() overload" (first in v19.1.0), replaced that
+    check with the bucket form.
+  - The same code is on main (`rgw_op.cc:6328`, `:6340` and `:6374`,
+    7ed73efc1be, 2026-09-25).
+- **Releases:** every Squid and Tentacle release; checked at v18.2.8, which
+  checks the object's ACL, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1's plan mirrors it: W's CopyObject checks its source
+  with `VerifyBucketPermissionIn`, the bucket form. Not yet ruled; if rgw-go
+  checks the object's ACL instead, `docs/exclusions.md` records the
+  difference.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The bucket form
+  reached squid through
+  [ceph/ceph#56863](https://github.com/ceph/ceph/pull/56863). Not filed: the
+  defect has not been reproduced on a running cluster, and filing needs a
+  live reproduction and a C++ reproducer.
+- **Found:** reading the copy-source checks for the previous entries,
+  2026-09-30; derived from the source, not reproduced.
+
+## Squid accepts RestrictPublicBuckets but never enforces it
+
+- **Kind:** defect, fixed in Tentacle.
+- **Evidence:**
+  - A bucket's public-access block carries RestrictPublicBuckets
+    (`rgw_public_access.h:41`), but at v19.2.6 nothing in `src/rgw` reads it
+    except the block's printer (`rgw_public_access.cc:32`). A bucket whose
+    owner sets it keeps granting its public bucket policy to every
+    requester.
+  - 07ad231606d, "rgw: implement RestrictPublicBuckets from
+    PublicAccessBlock" (first in v20.1.0), makes the bucket and object checks
+    refuse a requester outside the bucket owner's account when the bucket
+    policy is public (v20.2.4 `rgw_common.cc:1374-1380`, `:1541-1547`).
+- **Releases:** every release before v20.1.0, checked at v19.2.6; fixed from
+  v20.1.0, checked at v20.2.4.
+- **rgw-go:** phase 1 (unit Z) enforces it on both releases, as v20.2.4's
+  radosgw does. That is a difference from Squid's radosgw, which unit Z
+  records in `docs/exclusions.md`.
+- **Upstream:** [#65741](https://tracker.ceph.com/issues/65741), fixed by
+  [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206). Its squid
+  backport, [#70860](https://tracker.ceph.com/issues/70860), is New with no
+  pull request, and the reef one,
+  [#70859](https://tracker.ceph.com/issues/70859), was rejected (tracker and
+  pull-request search, 2026-09-30).
+- **Found:** reading the copy-source checks for the copy-source entries
+  above, 2026-09-30; derived from the source.
+
+## radosgw answers 200 to a CreateBucket that loses a race to another owner
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - `RGWCreateBucket::execute` reads the bucket first (v19.2.6
+    `rgw_op.cc:3541-3546`; v20.2.4 `:3769-3774`). A bucket another owner
+    already holds is refused there with 409 BucketAlreadyExists, since its
+    ACL, owner included, differs from the request's (v19.2.6
+    `rgw_op.cc:3569-3578`, `rgw_acl.cc:62-64`, `rgw_common.cc:113`; v20.2.4
+    `rgw_op.cc:3797-3806`, `rgw_common.cc:114`).
+  - When the name is free at that read and another owner's create lands
+    before this request's own (`rgw_op.cc:3640`; v20.2.4 `:3868`),
+    `RGWRados::create_bucket` returns EEXIST with the existing bucket's info
+    (`rgw_rados.cc:2422-2450`; v20.2.4 `:2530-2558`), and
+    `RadosBucket::create` returns `-ERR_BUCKET_EXISTS` for another owner, as
+    it does for the same owner (`rgw_sal_rados.cc:182-183`; v20.2.4
+    `:192-193`). `execute` continues past that code (`rgw_op.cc:3646-3647`;
+    v20.2.4 `:3874-3875`). Its ownership re-check runs only for a bucket
+    that existed at the read, and only when metadata is uploaded, which S3's
+    CreateBucket never does (`rgw_op.cc:3649-3665`, `rgw_op.h:1121`; v20.2.4
+    `rgw_op.cc:3877-3893`, `rgw_op.h:1189`). `send_response` turns
+    `-ERR_BUCKET_EXISTS` into 200 (`rgw_rest_s3.cc:2544-2547`; v20.2.4
+    `:2705-2708`).
+  - The client is told its create succeeded, for a bucket that another owner
+    holds and that is not linked to the client. What it can then do in that
+    bucket is what the other owner's ACL and policy allow.
+  - It is a regression. At v18.2.8 `RadosUser::create_bucket` returned EEXIST
+    for another owner (`rgw_sal_rados.cc:276-277`), which CreateBucket
+    answered with 409 (`rgw_rest_s3.cc:2545-2548`, `rgw_common.cc:109`).
+    e2eb66a3617, "rgw/sal: move User::create_bucket() to Bucket::create()"
+    (first in v19.1.0), changed that return to `-ERR_BUCKET_EXISTS`.
+  - The same code is on main (`rgw_sal_rados.cc:219-220`,
+    `rgw_rest_s3.cc:2822-2826`, 7ed73efc1be, 2026-09-25).
+- **Releases:** every Squid and Tentacle release; checked at v18.2.8, which
+  answers 409, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1 (unit M) answers 409 BucketAlreadyExists whenever
+  another owner holds the name, whether it is found at the read or at the
+  create. That is a difference from radosgw, which unit M records in
+  `docs/exclusions.md`.
+- **Upstream:** no tracker issue or pull request reports the race (full-text
+  tracker and all-time pull-request search, 2026-09-30). The return came
+  with e2eb66a3617 in
+  [ceph/ceph#50599](https://github.com/ceph/ceph/pull/50599).
+  [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722), open, the fix
+  proposed for [#76398](https://tracker.ceph.com/issues/76398) on
+  CreateBucket's error codes for an existing bucket, changes that return to
+  `-EEXIST` without mentioning the race. `rgw_bucket_eexist_override`
+  ([#70369](https://tracker.ceph.com/issues/70369),
+  [ceph/ceph#62186](https://github.com/ceph/ceph/pull/62186), in v21.0.0 and
+  later, off by default) answers 409 to every `-ERR_BUCKET_EXISTS`, the race
+  included. Not filed: the defect has not been reproduced on a running
+  cluster, and filing needs a live reproduction and a C++ reproducer.
+- **Found:** phase 1 planning of unit M, 2026-09-29; derived from the source
+  and verified 2026-09-30, not reproduced.
 
 ## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
 
@@ -907,11 +1265,15 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     never consult ACLs (`:1397-1403`; v20.2.4 `:1427-1433`), so an owner is
     affected only as a user outside any account.
   - So on a bucket whose Swift read ACL is `.r:example.com` and which has no
-    bucket policy, the owner's PutObject (`rgw_op.cc:3982-3985`; v20.2.4
+    bucket policy, the owner's S3 PutObject (`rgw_op.cc:3982-3985`; v20.2.4
     `:4191-4194`) with a `Referer: http://example.com/page` header is refused
     with 403: its WRITE, from FULL_CONTROL, is replaced by READ_OBJS, which
-    counts only as READ and READ_ACP (`rgw_acl.cc:216-221`). Without the
-    header the same request succeeds.
+    counts only as READ and READ_ACP (`rgw_acl.cc:216-221`). Without the header
+    the same request succeeds. Over Swift the owner's PUT still succeeds: the
+    check falls back to the user ACL (`rgw_common.cc:1427-1430`; v20.2.4
+    `:1461-1466`), which radosgw loads only for Swift, as the bucket owner's
+    account ACL, by default FULL_CONTROL for the owner, and checks with no
+    Referer (`rgw_op.cc:588-590`, `:453-482`; v20.2.4 `:618-620`, `:483-512`).
   - The replacement came with 11d4370eaf7, "rgw: partially respect Swift's
     negative, HTTP referer-based ACLs", so that a negative `.r:-host` grant,
     stored with no flags, could revoke what `.r:*` gives through the
@@ -936,22 +1298,29 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   first on a known match:
   - the tracker's issue filter on any searchable field, every project and
     status, checked on `cls_otp_divzero_repro`, which only a comment on
-    #80948 holds: `get_referer_perm` and `referer_list` find nothing,
-    `ACLReferer` only #18685, its backport #18895 and a cleanup (#39619),
-    and `RGW_PERM_READ_OBJS` only #18517, about Swift's default container
-    ACLs. The tracker's full-text search for referer with acl, owner,
-    denied, 403 and AccessDenied finds no report of it either; its closest
-    hits are #18841 and #18685.
+    [#80948](https://tracker.ceph.com/issues/80948) holds: `get_referer_perm`
+    and `referer_list` find nothing, `ACLReferer` only
+    [#18685](https://tracker.ceph.com/issues/18685), its backport
+    [#18895](https://tracker.ceph.com/issues/18895) and a cleanup
+    ([#39619](https://tracker.ceph.com/issues/39619)), and `RGW_PERM_READ_OBJS`
+    only [#18517](https://tracker.ceph.com/issues/18517), about Swift's default
+    container ACLs. The tracker's full-text search for referer with acl, owner,
+    denied, 403 and AccessDenied finds no report of it either; its closest hits
+    are #18841 and #18685.
   - `gh search prs --repo ceph/ceph`, checked on a phrase that only
     #14344's body holds: `get_referer_perm` and `ACLReferer` find nothing,
     `referer_list` only #14344.
-  - ceph/ceph pull requests by the files they change, for
-    `src/rgw/rgw_acl.cc` and `src/rgw/rgw_acl.h`, checked on the merged
-    #14344, #13005, #65374 and #65742: none of the 1561 open ones touches
-    either. Of the 3462 closed unmerged since 2024-01-01, only #43978 (the
-    owner's `get_perm` flags widened to FULL_CONTROL, the referer step left
-    as is) and #57539 (subuser permission masks) are ACL changes; the rest
-    carry the two files among hundreds or thousands of others.
+  - ceph/ceph pull requests by the files they change, for `src/rgw/rgw_acl.cc`
+    and `src/rgw/rgw_acl.h`, checked on the merged #14344,
+    [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005),
+    [ceph/ceph#65374](https://github.com/ceph/ceph/pull/65374) and
+    [ceph/ceph#65742](https://github.com/ceph/ceph/pull/65742): none of the 1561
+    open ones touches either. Of the 3462 closed unmerged since 2024-01-01, only
+    [ceph/ceph#43978](https://github.com/ceph/ceph/pull/43978) (the owner's
+    `get_perm` flags widened to FULL_CONTROL, the referer step left as is) and
+    [ceph/ceph#57539](https://github.com/ceph/ceph/pull/57539) (subuser
+    permission masks) are ACL changes; the rest carry the two files among
+    hundreds or thousands of others.
 - **Found:** phase 1 unit Z, Task 6's transcription of `get_perm`,
   2026-09-29; derived from the source, not reproduced.
 
@@ -977,16 +1346,17 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   `get_http_host` does, and the spec "the first @ after the scheme ends the
   userinfo, even in the path" (`internal/acl/eval_test.go`) pins it.
 - **Upstream:** no issue or pull request reports it. Not filed, for the same
-  reason as the previous entry.
-  [#18685](https://tracker.ceph.com/issues/18685) (Resolved) asked for the
-  Referer's host to be compared rather than the whole value; its fix,
-  [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005), wrote this
-  parse. Searched with the previous entry's methods: the tracker filter
-  finds `get_http_host` only in #39619, a string_view cleanup, and the
-  full-text search for referer with userinfo, host parse and hostname finds
+  reason as the previous entry. [#18685](https://tracker.ceph.com/issues/18685)
+  (Resolved) asked for the Referer's host to be compared rather than the whole
+  value; its fix, [ceph/ceph#13005](https://github.com/ceph/ceph/pull/13005),
+  wrote this parse. Searched with the previous entry's methods: the tracker
+  filter finds `get_http_host` only in
+  [#39619](https://tracker.ceph.com/issues/39619), a string_view cleanup, and
+  the full-text search for referer with userinfo, host parse and hostname finds
   only #18685, its backports and unrelated reports; `gh search prs` finds
-  `get_http_host` only in #13005 and in #50330, an unrelated `RGWEnv::get`
-  fix; the file sweep is the previous entry's.
+  `get_http_host` only in #13005 and in
+  [ceph/ceph#50330](https://github.com/ceph/ceph/pull/50330), an unrelated
+  `RGWEnv::get` fix; the file sweep is the previous entry's.
 - **Found:** phase 1 unit Z, Task 6's transcription of `is_match`,
   2026-09-29; derived from the source, not reproduced.
 
@@ -1345,12 +1715,21 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     `remove_bucket return value`, `radosgw-admin exit code 0` and
     `radosgw-admin returns 0 error`: #80577 and unrelated issues only.
   - ceph/ceph pull requests through `gh search prs`, which finds #71165 by
-    `get_valid_types_as_str`. Terms: `"bucket rm" radosgw-admin`,
-    `remove_bucket radosgw-admin return`, `BUCKET_RM`, `radosgw-admin
-    "bucket rm" exit`, `radosgw-admin bucket commands return codes` and
-    `radosgw-admin return code` (none), `radosgw-admin exit code` (two
-    radosgw-admin refactors), `80577` (#71858) and `bucket rm
-    purge-objects` (the 2019 fixes for a `--purge-objects` hang).
+    `get_valid_types_as_str`. Terms: `BUCKET_RM` (none) and `80577` (#71858).
+    The multi-word terms were rerun on 2026-09-30 with each word its own
+    argument and `bucket rm` a phrase, a method that finds
+    [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609) by `guard against
+    dir suggest during reshard`: `"bucket rm" radosgw-admin`, `remove_bucket
+    radosgw-admin return`, `radosgw-admin "bucket rm" exit` and `bucket rm
+    purge-objects` find bypass-gc and multisite changes to the removal and the
+    2019 fixes for a `--purge-objects` hang; `radosgw-admin bucket commands
+    return codes`, `radosgw-admin return code` and `radosgw-admin exit code`
+    find #71858, [ceph/ceph#71155](https://github.com/ceph/ceph/pull/71155)
+    (exit-code tests for the command-line handling) and the open radosgw-admin
+    refactors [ceph/ceph#69145](https://github.com/ceph/ceph/pull/69145) and
+    [ceph/ceph#71462](https://github.com/ceph/ceph/pull/71462), whose `bucket
+    rm` still discards what `remove_bucket` returns. None changes `bucket rm`'s
+    exit status.
 - **Found:** phase 1 unit T, the s3-tests harness's bucket purge,
   2026-09-29.
 
@@ -1396,3 +1775,207 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     backports).
 - **Found:** phase 1 gateway work (unit G), 2026-09-30, reading
   `RGWListBuckets_ObjStore_S3` for rgw-go's ListBuckets.
+
+## url_decode reads outside its hex table for a byte above 0x7f after "%"
+
+- **Kind:** defect, unfixed through main. Reproduced by calling the
+  `url_decode` that the librgw2 19.2.6 and 20.2.4 packages ship; not
+  reproduced on a running radosgw.
+- **Evidence:**
+  - `hex_to_num` looks an escape's digits up in `HexTable`'s 256-byte
+    table with the `char` cast to `int` (`rgw_common.cc:1690-1692` at
+    v19.2.6, `:1753-1755` at v20.2.4, `:1779-1781` on main at
+    a956c21a8c9). `char` is signed on x86_64, so a byte from 0x80 to 0xff
+    indexes from -128 to -1 and reads the 128 bytes before the table.
+    `url_decode` takes a negative value as a bad digit and empties its
+    result, and uses any other as the digit (`:1701-1734` at v19.2.6,
+    `:1764-1797` at v20.2.4).
+  - A program `dlopen`s `librgw.so.2` from librgw2-19.2.6-0.el9 and
+    librgw2-20.2.4-0.el9 and calls the exported `url_decode` on `%`, each
+    byte from 0x80 to 0xff, and `0`. In 19.2.6, 104 of the 128 bytes read
+    as the digit 0, 21 as other digits and 3 (0x90, 0x98, 0xe0) as none;
+    in 20.2.4, 102 as 0, 17 as others and 9 as none. `%\xc3\xbc` decodes
+    to a NUL byte in both. What the read finds depends on the build.
+- **Releases:** v19.2.6, v20.2.4 and main (a956c21a8c9, 2026-09-30).
+- **rgw-go:** takes such a byte as no hex digit, so the result is empty,
+  as for any other bad digit; `docs/exclusions.md` records the
+  difference.
+- **Upstream:** no issue or pull request fixes it.
+  [#4755](https://tracker.ceph.com/issues/4755) (2013, Resolved), on
+  `url_decode` assuming a signed `char` on armhf, remarked in passing that
+  `hex_to_num` "has an obvious related bug in places where char is _not_
+  unsigned"; the lookup it names still reads outside the table. Searched
+  2026-09-30, each search first run on a known match:
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds
+    [#81000](https://tracker.ceph.com/issues/81000) by `dir suggest during
+    reshard`. Terms: `url_decode` (#4755 and reports on `+` and on policy
+    decoding), `hex_to_num` (#4755,
+    [#6672](https://tracker.ceph.com/issues/6672) on the table's
+    initialization race, and #8702 on `+`), `HexTable` (none),
+    `percent-encoded`, `bad escape` and `escape sequence` (unrelated
+    issues only).
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609) by `guard
+    against dir suggest during reshard`. Terms: `hex_to_num`
+    ([ceph/ceph#783](https://github.com/ceph/ceph/pull/783), the
+    initialization race), `HexTable`, `invalid url-encoding` and `rgw
+    signed char` (none), and `url_decode` (23 pull requests; none changes
+    `hex_to_num`).
+  Not filed: filing waits on a reproduction on a running radosgw.
+- **Found:** phase 1 auth work (unit A), transcribing `url_decode`,
+  2026-09-29; the shipped libraries were called the same day.
+
+## A malformed percent-escape in the path makes radosgw serve another path
+
+- **Kind:** defect, unfixed through main. Unreproduced on a running
+  radosgw: found by reading the code at v19.2.6 and v20.2.4.
+- **Evidence:**
+  - `RGWREST::preprocess` decodes the path with `url_decode` and checks
+    the result only for a NUL (`rgw_rest.cc:2182-2186` at v19.2.6,
+    `:2204-2208` at v20.2.4). `url_decode` returns an empty string for an
+    escape with a character that is no hex digit, such as `%zz`, and stops
+    at a `%` with fewer than two characters after it
+    (`rgw_common.cc:1725-1726` and `:1718-1719` at v19.2.6, `:1788-1789`
+    and `:1781-1782` at v20.2.4), so `/b/k%` and `/b/k%4` decode as
+    `/b/k`. A virtual-hosted request's bucket is put in front of the path
+    before the decode (`rgw_rest.cc:2154-2161` at v19.2.6), so it is
+    emptied with the rest.
+  - The S3 handler reads an empty path as naming neither bucket nor
+    object (`init_from_header`, `rgw_rest_s3.cc:4908-4914` at v19.2.6,
+    `:5468-5474` at v20.2.4). So `GET /b/%zz` is served as `GET /`, a
+    ListBuckets, and a request for the key `k%` acts on the key `k`.
+  - SigV4 signs the same decode: the canonical URI is `aws4_uri_recode`
+    of the path, and `/` when that is empty (`get_v4_canonical_uri`,
+    `rgw_auth_s3.h:598-612` at v19.2.6, `:601-615` at v20.2.4), so the
+    signature such a request needs is one over the path radosgw serves.
+- **Releases:** v19.2.6, v20.2.4 and main (`url_decode` still returns an
+  empty string, `rgw_common.cc:1815` at a956c21a8c9).
+- **rgw-go:** net/http answers such a request `400 Bad Request` before any
+  handler runs; `docs/exclusions.md` records the difference under
+  "Frontend differences".
+- **Upstream:** no issue reports the path.
+  [#71458](https://tracker.ceph.com/issues/71458) (CVE-2025-48052,
+  Resolved) was the same empty result crashing UploadPartCopy through
+  `x-amz-copy-source`; its fix,
+  [ceph/ceph#63521](https://github.com/ceph/ceph/pull/63521), guards that
+  caller in `rgw_op.cc` and changes `url_decode` only by a blank line.
+  Searched 2026-09-30 with the methods and known matches of the entry
+  above: tracker terms `url encoding`, `invalid url`, `malformed url`,
+  `percent sign` and `bad escape` find #71458, its backports and
+  unrelated issues; pull request terms `url_decode` and `invalid
+  url-encoding` find no fix for the path. Not filed: filing waits on a
+  reproduction on a running radosgw.
+- **Found:** phase 1 auth work (unit A), checking the frontend's
+  percent-escape entry against `url_decode`, 2026-09-30.
+
+## radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:** `rgw_bucket_index_max_aio`, the number of bucket-index
+  operations radosgw keeps in flight across a bucket's shards, is a `uint`
+  with no `min:` (`common/options/rgw.yaml.in:195-202` at v19.2.6,
+  `:201-208` at v20.2.4), so a configured 0 is accepted.
+  - v19.2.6: `CLSRGWConcurrentIO::operator()` issues shard operations while
+    `max_aio-- > 0` (`cls/rgw/cls_rgw_client.cc:28`), so a zero issues none.
+    `BucketIndexAioManager::wait_for_completions` then returns false because
+    nothing is pending (`:139-141`), and the batch returns 0. Bucket-index
+    initialization on bucket creation (`services/svc_bi_rados.cc:369-371`)
+    and listing (`driver/rados/rgw_rados.cc:9710-9713`) are among the batches
+    that report success without touching a shard.
+  - v20.2.4: each batch reads the option into a `size_t` and hands it to
+    `rgwrados::shard_io` as its window, as the index-header read does
+    (`services/svc_bi_rados.cc:374-391`). Before sending a shard operation,
+    the reader and both writers wait for a completion while
+    `outstanding.size() >= max_concurrent` (`driver/rados/shard_io.h:353`,
+    `:480` and `:603`), which a zero window satisfies with nothing
+    outstanding. `async_wait` only parks the caller (`:213-226`), and only a
+    shard operation's completion wakes it (`maybe_complete`, `:228-238`), so
+    the batch never finishes: a request's coroutine stays suspended, and a
+    blocking caller waits forever (`svc_bi_rados.cc:389-390`).
+- **Releases:** v19.2.6 skips the batch; v20.2.4 and main (a956c21a8c9,
+  2026-09-30, `rgw.yaml.in:232-239`, `shard_io.h:359`, `:486` and `:610`)
+  never finish it.
+- **rgw-go:** reads the option once at startup and uses a zero as 1, with an
+  error-level log line naming the option, so the driver's bucket-index
+  fan-out always has a window. `docs/exclusions.md` records the difference.
+- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
+  each search method was first run on a known match. Not filed: filing waits
+  on a reproduction on a running system.
+  [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), the fix for
+  [#80991](https://tracker.ceph.com/issues/80991), adds `min: 1` to
+  `rgw_lc_max_objs`, `rgw_usage_max_shards` and `rgw_gc_max_objs` only.
+  - tracker.ceph.com: the full-text search of every project's issues, open
+    and closed, which finds #80991 by `rgw_usage_max_shards`. Terms:
+    `rgw_bucket_index_max_aio`, `bucket_index_max_aio`,
+    `CLSRGWConcurrentIO` and `max_concurrent shard_io`: no results.
+  - ceph/ceph pull requests through `gh search prs`, which finds #72160 by
+    `rgw_usage_max_shards`. Term `rgw_bucket_index_max_aio`: six pull
+    requests (#28558, #49795, #59199, #59222, #60628 and #61760), none
+    about a zero window.
+- **Found:** phase 1 unit M, validating the driver's options, 2026-09-30;
+  not reproduced on a running cluster.
+
+## radosgw's ARN conditions compare each ARN component with the text after it
+
+- **Kind:** defect, unfixed through main.
+- **Evidence:**
+  - `match_policy` walks a pattern and an input colon by colon, but takes
+    each piece as `input.substr(last_pos_input, cur_pos_input)` and
+    `pattern.substr(last_pos_pattern, cur_pos_pattern)`
+    (`rgw_common.cc:2178-2179` at v19.2.6, `:2241-2242` at v20.2.4).
+    `substr`'s second argument is a length, and it is given the next
+    colon's position, so every piece after the first runs past its colon
+    into the components after it, cut at a different length in the
+    pattern and in the input, and `match_wildcards` compares those.
+  - `arn_like` calls it for `ArnEquals` and `ArnLike`, and negated for
+    `ArnNotEquals` and `ArnNotLike` (`rgw_iam_policy.cc:845-852` and
+    `:996-1001` at v19.2.6, `:864-871` and `:1000-1005` at v20.2.4),
+    although its comment says each of the six components is checked
+    separately. So neither `arn:aws:sns:*:123456789012:topic` nor
+    `arn:aws:sns:us-east-1:*:topic` matches
+    `arn:aws:sns:us-east-1:123456789012:topic`, `arn:aws:s3:*:*:bucket`
+    does not match `arn:aws:s3:::bucket`, `arn:aws:s3:::bucket/*/x` does
+    not match `arn:aws:s3:::bucket/abc/x`, and `x:a\:y` matches `x:a:y`.
+    A pattern whose only wildcard ends it, such as
+    `arn:aws:s3:::bucket/*`, still compares correctly. Action matching is
+    unaffected: every action name has one colon.
+  - Verified by compiling radosgw's `match_policy` unchanged in the
+    v19.2.6 and v20.2.4 images and running generated cases; not
+    reproduced on a running radosgw. Of 116,003 generated cases whose
+    pattern and input hold the same number of colons, two or more, 38,485
+    answer differently from matching each component on its own; with
+    fewer colons, or unequal counts, the two agree on all 483,997.
+  - The comparison dates from ff18f84c70f (2016-12-12, "rgw: Added a
+    globbing method for AWS Policies"). ARN conditions reach it since
+    62c3e5ec69f (2025-03-13, "rgw/iam: add policy evaluation for
+    Arn-based Conditions"), and main still has it at dffaf990666.
+- **Impact:** a Deny whose ARN pattern has a wildcard component can fail to
+  apply. `ArnNotLike` and `ArnNotEquals` negate the same wrong answer, so a
+  statement using them can apply where its author meant it not to.
+- **Releases:** every release that evaluates ARN conditions: v19.2.3 and
+  later squid, every tentacle release from v20.1.0, and v18.2.8 and later
+  reef.
+- **rgw-go:** does not reproduce it. Its ARN conditions match each
+  component on its own with `MatchWildcards` (`policy.MatchPolicy`), and
+  `docs/exclusions.md` records the difference.
+- **Upstream:** none known. Searched 2026-09-30; each search was first run
+  on a known match:
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds the QA runs
+    listing ceph/ceph#57907 by `match_wildcards`, a word only in their
+    descriptions. Terms: `match_policy`, `arn_like`, `ArnLike`,
+    `ArnEquals`, `ArnNotLike`, `MATCH_POLICY_ARN` and `aws:SourceArn`. The
+    only ARN-condition issue is
+    [#70481](https://tracker.ceph.com/issues/70481), "iam policy parses
+    ArnLike/ArnEquals conditions but evaluates them to false", with its
+    reef and squid backports #70595 and #70596; its fix routed ARN
+    conditions through `match_policy`. Nothing reports the comparison.
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#57907 by `match_wildcards`. Terms: `match_policy`
+    (ceph/ceph#53156 and #16491, both on `match_wildcards`, and an
+    unrelated logging change), `arn_like` (none) and `ArnLike`
+    ([ceph/ceph#62285](https://github.com/ceph/ceph/pull/62285), the
+    #70481 fix, and #62284, bucket logging). None fixes it.
+- **Found:** phase 1 authorization work (unit Z), 2026-09-29, transcribing
+  `match_policy` for rgw-go's policy matching.

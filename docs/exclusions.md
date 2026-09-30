@@ -664,7 +664,12 @@ go1.27.1's.
   server parses the request-target with `url.ParseRequestURI`
   (`request.go:1142-1144`), which refuses such an escape in the path
   (`net/url/url.go:112-119`, through `setPath`, `:506` and `:660-664`).
-  radosgw serves such a request.
+  radosgw serves such a request for another path: its `url_decode`
+  empties the path at a bad hex digit and cuts it at an escape the path
+  ends in, so `GET /b/%zz` is served as `GET /`, a ListBuckets, and a
+  request for the key `k%` acts on the key `k` (`docs/ceph-upstream-bugs.md`,
+  "A malformed percent-escape in the path makes radosgw serve another
+  path").
 - **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
   requests in flight finish for up to 30 s, Rook's default termination
   grace period, before it closes every connection and ends the requests
