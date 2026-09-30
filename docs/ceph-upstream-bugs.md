@@ -53,13 +53,13 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Squid's realm reload hangs when a pubsub HTTP push has lost its wakeup](#squids-realm-reload-hangs-when-a-pubsub-http-push-has-lost-its-wakeup) | none | [ceph/ceph#57632](https://github.com/ceph/ceph/pull/57632) |  |
 | [radosgw's realm reload waits out the notification manager's timers](#radosgws-realm-reload-waits-out-the-notification-managers-timers) | [#71963](https://tracker.ceph.com/issues/71963), [#72004](https://tracker.ceph.com/issues/72004), [#72003](https://tracker.ceph.com/issues/72003) | [ceph/ceph#63986](https://github.com/ceph/ceph/pull/63986) |  |
 | [radosgw caches any control-pool UPDATE_OBJ notify payload unchecked](#radosgw-caches-any-control-pool-update_obj-notify-payload-unchecked) | none | none |  |
-| [radosgw aborts the process after 100 failed control-watch re-registrations](#radosgw-aborts-the-process-after-100-failed-control-watch-re-registrations) | [#80992](https://tracker.ceph.com/issues/80992) | none |  |
+| [radosgw aborts the process after 100 failed control-watch re-registrations](#radosgw-aborts-the-process-after-100-failed-control-watch-re-registrations) | [#80992](https://tracker.ceph.com/issues/80992) | [ceph/ceph#72251](https://github.com/ceph/ceph/pull/72251) |  |
 | [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |  |
 | [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | none | none | ✓ |
 | [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none | ✓ |
 | [cls_version's header documents EAGAIN, but the class returns ECANCELED](#cls_versions-header-documents-eagain-but-the-class-returns-ecanceled) | none | none |  |
 | [cls_lock get_info and assert_locked fail with EIO on an expired ephemeral lock](#cls_lock-get_info-and-assert_locked-fail-with-eio-on-an-expired-ephemeral-lock) | [#80993](https://tracker.ceph.com/issues/80993), [#56575](https://tracker.ceph.com/issues/56575) | none |  |
-| [cls_otp divides by a stored step_size that is never validated](#cls_otp-divides-by-a-stored-step_size-that-is-never-validated) | [#80948](https://tracker.ceph.com/issues/80948) | none | ✓ |
+| [cls_otp divides by a stored step_size that is never validated](#cls_otp-divides-by-a-stored-step_size-that-is-never-validated) | [#80948](https://tracker.ceph.com/issues/80948) | [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250) | ✓ |
 | [cls_otp computes the replay index from an unsigned window distance](#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance) | [#80949](https://tracker.ceph.com/issues/80949) | none | ✓ |
 | [librbd leaks the update-watch context when registration fails](#librbd-leaks-the-update-watch-context-when-registration-fails) | none | none |  |
 | [The monitor's default for insecure key creation lags auth_allowed_ciphers](#the-monitors-default-for-insecure-key-creation-lags-auth_allowed_ciphers) | [#80997](https://tracker.ceph.com/issues/80997) | none | ✓ |
@@ -374,9 +374,12 @@ Every new entry adds its row to this table, in document order.
   `rgw_lc_max_objs` and `rgw_usage_max_shards` (metadata and lifecycle path,
   unit M), at startup rather than faulting on first use, and never divides
   by a shard count without guarding it.
-- **Upstream:** [#80991](https://tracker.ceph.com/issues/80991); its fix,
-  [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), adds min: 1 to
-  the three options and is in review.
+- **Upstream:** [#80991](https://tracker.ceph.com/issues/80991), which we
+  filed. Its fix, [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160),
+  opened in response by the maintainer Matthew Heler (mheler) and not a
+  draft, adds `min: 1` to the three options in `rgw.yaml.in` and is in
+  review. It was verified to cover all three sites, and the option minimum
+  also clamps a 0 already stored in the configuration when it is loaded.
   [#75958](https://tracker.ceph.com/issues/75958), a crash when
   rgw_gc_max_objs changes at runtime, is related but has a different trigger.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27;
@@ -1316,9 +1319,16 @@ Every new entry adds its row to this table, in document order.
   the counter on success, among other reinit fixes, but the stale bot closed
   it unreviewed; it was filed for
   [#73564](https://tracker.ceph.com/issues/73564), a different symptom (a
-  watch2 segfault).
+  watch2 segfault). The draft
+  [ceph/ceph#72251](https://github.com/ceph/ceph/pull/72251) revives it with
+  abhishek593's commit unchanged and fixes both #73564 and #80992: it resets
+  `retries` on a successful re-registration, returns after a failed
+  `unregister_watch()`, and schedules one `C_ReinitWatch` at a time through
+  an atomic `reinit_pending` flag, with a move constructor added because
+  `RGWSI_Notify` holds a `std::vector<RGWWatcher>`.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27;
-  not reproduced on a running cluster.
+  derived from the source, not reproduced on a running cluster, which would
+  take over 100 failures in one radosgw's lifetime.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
@@ -1510,7 +1520,8 @@ Every new entry adds its row to this table, in document order.
   time step, `oath_totp_validate4_callback` substitutes 30
   (`liboath/totp.c:542-543`) and validates a correct code, so a non-negative
   result reaches the division and the OSD faults on the integer divide by
-  zero.
+  zero. `trim_expired()` also reads `step_size`, for its replay window
+  (`cls_otp.cc:100` at v19.2.6 and v20.2.4, main `:96`).
 - **Trigger:** privileged only. Storing `step_size == 0` needs direct RADOS
   write caps on the OTP pool (`<zone>.rgw.otp`, `svc_otp.cc:22-24`), or the
   RGW admin cap `metadata=write` via `metadata put otp:<uid>`, whose
@@ -1524,9 +1535,18 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** no cls_otp client yet (phase 2, MFA). When it writes OTP
   entries it must reject a zero `step_size`, and it must not divide by a
   stored `step_size` without guarding it.
-- **Upstream:** [#80948](https://tracker.ceph.com/issues/80948).
+- **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
+  [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
+  file-local `effective_step_size()` that uses liboath's default time step
+  (`OATH_TOTP_DEFAULT_TIME_STEP_SIZE`) for a stored 0, at the divide and in
+  `trim_expired()`'s replay window, so it also guards entries already stored
+  with 0.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-012); liboath premise and
-  trigger verified 2026-09-27; not reproduced on a running cluster.
+  trigger verified 2026-09-27; confirmed in the source at v19.2.6, v20.2.4
+  and main. A userspace reproducer that calls liboath alone, on
+  [#80948's note-1](https://tracker.ceph.com/issues/80948#note-1), fails
+  with SIGFPE (exit status 136) for a `step_size` of 0 and runs normally for
+  30. No run on a live OSD was attempted: it would be a crash reproduction.
 
 ## cls_otp computes the replay index from an unsigned window distance
 
