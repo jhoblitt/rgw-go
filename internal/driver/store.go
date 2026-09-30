@@ -27,6 +27,7 @@ type Options struct {
 type Store struct {
 	cluster radosclient.Cluster
 	conf    *cephconf.Options
+	opts    options
 	release denc.Release
 	zone    *zoneConfig
 	pools   *poolCache
@@ -47,8 +48,9 @@ var (
 	_ op.MetadataStore  = (*Store)(nil)
 )
 
-// Open connects the driver to cluster: it detects the release, then
-// resolves the zone the gateway serves from the root pools and logs it.
+// Open connects the driver to cluster: it detects the release, resolves the
+// zone the gateway serves from the root pools, reads the options, and logs
+// the zone and the options that ask for a worker it does not run.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
@@ -63,8 +65,13 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	opts, err := readOptions(conf)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	zc.log(ctx)
-	return &Store{cluster: cluster, conf: conf, release: release, zone: zc, pools: pools}, nil
+	opts.logWorkersNotRun(ctx)
+	return &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools}, nil
 }
 
 // openZone opens the root pools and resolves the zone from them.

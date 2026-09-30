@@ -163,6 +163,16 @@ var _ = Describe("the driver", func() {
 			Expect(cluster.opened).To(HaveLen(1))
 			Expect(cluster.opened[0].closes).To(Equal(1))
 		})
+
+		It("fails naming a driver option it cannot read, and closes the pools it opened", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, conf(map[string]string{
+				"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore",
+				"rgw_bucket_quota_ttl": "lots",
+			}), driver.Options{})
+			Expect(err).To(MatchError(ContainSubstring("rgw_bucket_quota_ttl")))
+			Expect(cluster.opened).To(HaveLen(1))
+			Expect(cluster.opened[0].closes).To(Equal(1))
+		})
 	})
 
 	Context("once open", func() {
