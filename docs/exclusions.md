@@ -565,6 +565,135 @@ v20.2.4 tags, rgw-go does the following.
   GetObject a Squid radosgw would run, so authentication refuses no
   request radosgw takes.
 
+### Frontend differences
+
+rgw-go serves radosgw's beast frontend configuration on net/http. Where
+the two differ, checked against the v19.2.6 and v20.2.4 tags, rgw-go does
+the following; a difference only one release shows names it. The
+`rgw_asio_frontend.cc` lines cited are those tags', and the net/http ones
+go1.27.1's.
+
+- **TCP options.** TCP_NODELAY is on, Go's default, unless `tcp_nodelay`
+  is set to anything but `1`; beast turns it off unless `tcp_nodelay=1`
+  (`rgw_asio_frontend.cc:1165` at v19.2.6, `:1083` at v20.2.4). TCP
+  keepalive is on too, Go's default of probes after 15 s idle, where
+  beast sets none.
+- **No `Connection: Keep-Alive` header.** beast writes `Connection:
+  Keep-Alive` or `Connection: close` on every response
+  ([`rgw_asio_client.cc:152-158`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L152-L158)
+  at both tags); net/http writes the header only to close the connection
+  or to keep an HTTP/1.0 one open, which HTTP/1.1 clients treat alike.
+- **Keys accepted and ignored**, each logged once at startup:
+  `max_connection_backlog`, since Go listens with the kernel's backlog;
+  `so_reuseport`, which on Tentacle sets `SO_REUSEPORT` (`:651-693` at
+  v20.2.4); `ssl_ciphersuites`, since TLS 1.3 cipher suites are Go's, so
+  even a value naming no suite, which radosgw refuses, is accepted;
+  `prefix`, which radosgw prepends to the request path when it picks the
+  API to serve it (`rgw_rest.h:610-617` at v19.2.6, `:622-629` at
+  v20.2.4); and, on Squid, `ssl_reload`, which re-reads the certificate
+  on an interval (`:1096-1130` at v19.2.6), where rgw-go reads it once.
+- **TLS versions and suites.** rgw-go's `MinVersion` makes TLS 1.2 the
+  floor whatever `ssl_options` says. crypto/tls implements TLS 1.0 and 1.1
+  (`crypto/tls/common.go:1219-1224`); radosgw leaves them out through its
+  default `no_sslv2:no_sslv3:no_tlsv1:no_tlsv1_1`, which it applies only
+  when `ssl_options` is absent. `no_tlsv1_2` raises the floor to 1.3.
+  `no_sslv2`, `no_sslv3`, `no_tlsv1`, `no_tlsv1_1`, `no_compression` and
+  `single_dh_use` change nothing, since crypto/tls has no SSL, the floor
+  leaves out TLS 1.0 and 1.1, and it never compresses or reuses an ECDHE
+  key. `default_workarounds`, OpenSSL's workarounds for broken peers, has
+  no crypto/tls counterpart and is accepted without effect. Any other
+  item, `no_tlsv1_3` included, is logged and ignored, as radosgw does
+  (`:1019-1021` at v19.2.6, `:937-939` at v20.2.4). `ssl_ciphers` selects
+  by name only, the OpenSSL or IANA name of one of Go's six ECDHE AEAD
+  suites for TLS 1.2; any other item, an OpenSSL cipher expression such
+  as `HIGH:!aNULL` among them, is logged and skipped, and a list that
+  selects no suite is refused, where OpenSSL would evaluate the
+  expression.
+- **ssl keys without a TLS listener.** rgw-go accepts `ssl_private_key`,
+  `ssl_options`, `ssl_ciphers` and `ssl_ciphersuites` without a TLS
+  listener and logs them as unused. Squid never reads them then, since
+  `ssl_init` returns first (`:941-944` at v19.2.6). Tentacle applies them
+  to an SSL context no listener uses, so it refuses an `ssl_ciphers` or
+  `ssl_ciphersuites` that selects nothing (`:943-972` at v20.2.4), where
+  rgw-go accepts it.
+- **Certificates come from files named in the entry.** A `config://`
+  source, which radosgw reads from the monitors' config-key store, is
+  refused naming its key, and the `$realm`, `$zone` and other variables
+  radosgw expands in the paths (`ExpandMetaVar`, `:1063-1065` at v19.2.6,
+  `:993-996` at v20.2.4) are not expanded. rgw-go also does not read
+  `rgw_frontend_defaults`. Its default at both tags,
+  `beast ssl_certificate=config://rgw/cert/$realm/$zone.crt ssl_private_key=config://rgw/cert/$realm/$zone.key`,
+  adds each of the two keys to every beast entry that does not name it
+  (`set_default_config`, `rgw_frontend.cc:50-59`, applied at
+  `rgw_appmain.cc:462-465` at v19.2.6 and `:470-472` at v20.2.4), and
+  radosgw loads the certificate and key only for a TLS listener
+  (`:941-944` at v19.2.6, `:974-983` at v20.2.4). So on radosgw a TLS
+  listener without `ssl_certificate` serves the config-key certificate
+  when one is stored, where rgw-go refuses the listener, naming its key;
+  and an entry naming only `ssl_certificate` gets
+  `ssl_private_key=config://…`, which radosgw tries before it falls back
+  to the certificate's file (`:1067-1074` at v19.2.6, `:998-1005` at
+  v20.2.4), where rgw-go reads the key from the certificate's file at
+  once. Rook names its certificate file in the entry, and its key file
+  for some secret types (`pkg/operator/ceph/object/config.go:77-92` at
+  rook f09547c14).
+- **Timeouts per operation.** `request_timeout_ms` bounds each read of
+  the request body and each write of the response, as beast's timer
+  does, and an operation that times out ends the connection
+  (`rgw_asio_frontend_timer.h:20-56` at both tags). For a connection's
+  first request one deadline covers the wait and the header, as beast's
+  timer does (`server.go:2038-2040`); on a kept-alive connection net/http
+  times the wait for the next request and the read of its header
+  separately, the header from its first byte (`:2163-2181`), where
+  beast's one timer covers both. After the response, net/http reads what
+  the handler left of the body only up to 256 KiB and otherwise closes
+  the connection (`transfer.go:999-1019`), where beast discards all of it
+  to keep the connection (`:362-389` at v19.2.6, `:372-399` at v20.2.4).
+- **Header limit and malformed requests.** net/http enforces
+  `max_header_size` with 4096 bytes of slack for its read buffer and
+  answers a longer header with `431 Request Header Fields Too Large` and
+  a text body; beast answers a header over the limit, as any request it
+  cannot parse, with an empty `400 Bad Request` (`:275-289` at both
+  tags), where net/http's 400 carries a text body. `max_header_size=0`
+  sets beast's limit to 0, so radosgw answers every request with that
+  empty 400 (`:643-657` at v19.2.6, `:595-609` at v20.2.4), where rgw-go
+  takes 0 as net/http's 1 MiB default.
+- **Malformed percent-escapes in the path.** net/http answers `400 Bad
+  Request`, with a text body and before any handler runs, a request whose
+  path holds a malformed percent-escape such as `%zz` or a lone `%`: the
+  server parses the request-target with `url.ParseRequestURI`
+  (`request.go:1142-1144`), which refuses such an escape in the path
+  (`net/url/url.go:112-119`, through `setPath`, `:506` and `:660-664`).
+  radosgw serves such a request.
+- **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
+  requests in flight finish for up to 30 s, Rook's default termination
+  grace period, before it closes every connection and ends the requests
+  still running. radosgw closes every connection at once
+  (`AsioFrontend::stop`, `:1226-1245` at v19.2.6); Tentacle waits for the
+  requests in flight first only when `rgw_graceful_stop` is set, and it
+  defaults to false (`:1139-1171` at v20.2.4). rgw-go reads neither
+  `rgw_graceful_stop` nor `rgw_exit_timeout_secs`.
+- **Ports and endpoints parse strictly.** rgw-go refuses port 0 and a
+  port with anything but digits. radosgw reads a port with `strtoul` and
+  refuses it only above 65535 or when `strtoul` reads no digits at all
+  (`parse_port`, `:537-547` at v19.2.6, `:489-499` at v20.2.4), so
+  `port=0` listens on an ephemeral port in each address family, and
+  `port=80abc` and `port=+80` on port 80. For an IPv6 endpoint radosgw
+  ignores even those errors (`docs/ceph-upstream-bugs.md`, "radosgw
+  ignores a bad port in an IPv6 endpoint"), so `endpoint=[::1]:http`
+  listens on an ephemeral port and `endpoint=[::1]:70000` on port 4464.
+- **One beast frontend.** A second `beast` entry in `rgw_frontends` is
+  refused; radosgw starts a frontend for each entry, with its own
+  listeners and settings (`init_frontends2`, `rgw_appmain.cc:457-514` at
+  v19.2.6, `:465-522` at v20.2.4).
+- **`Server` header.** It names the release rgw-go detects for the
+  cluster, `Ceph Object Gateway (squid)` or `(tentacle)`, where radosgw's
+  names the release it was built as (`rgw_rest.cc:641` at v19.2.6, `:646`
+  at v20.2.4); the two agree once every gateway runs the cluster's
+  release. radosgw sends `rgw_service_provider_name` instead when it is
+  set (`:637-642` at v19.2.6, `:642-647` at v20.2.4); rgw-go's `serve`
+  builds the header from the release alone.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

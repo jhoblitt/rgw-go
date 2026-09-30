@@ -83,13 +83,6 @@ func ParseBeast(entry string) (Spec, error) {
 			return Spec{}, fmt.Errorf("parsing %s=%s: %w", kv.key, kv.val, err)
 		}
 	}
-	// Tentacle's init_ssl refuses a key without a certificate whatever the
-	// listeners (rgw_asio_frontend.cc:904-906 at v20.2.4); Squid's ssl_init
-	// returns before the check when no TLS listener is configured (:941-943
-	// at v19.2.6).
-	if seen["ssl_private_key"] && !seen["ssl_certificate"] {
-		return Spec{}, errors.New("no ssl_certificate configured for ssl_private_key")
-	}
 	return s, nil
 }
 

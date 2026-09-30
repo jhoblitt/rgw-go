@@ -132,6 +132,11 @@ var _ = Describe("ParseBeast", func() {
 				s.SSLOptions = []string{}
 			})),
 		Entry("whitespace around a value is trimmed, as parse_key_value does", "beast port=80\t", spec(func(s *frontend.Spec) { s.Ports = []int{80} })),
+		Entry("a private key without a certificate, which rgw_frontend_defaults supplies to radosgw",
+			"beast ssl_port=443 ssl_private_key=/k", spec(func(s *frontend.Spec) {
+				s.SSLPorts = []int{443}
+				s.SSLPrivateKey = "/k"
+			})),
 		Entry("keys rgw-go does not implement are reported with every value",
 			"beast port=80 prefix=/s3 so_reuseport=1 ssl_ciphersuites=TLS_AES_128_GCM_SHA256 tls_groups=X25519 ssl_reload=60 prefix=/b bogus",
 			spec(func(s *frontend.Spec) {
@@ -164,9 +169,6 @@ var _ = Describe("ParseBeast", func() {
 		Entry("an unclosed bracket", "beast endpoint=[::1:80", "endpoint=[::1:80"),
 		Entry("text after the bracket that is not :port", "beast endpoint=[::1]80", "endpoint=[::1]80"),
 		Entry("an empty ssl_endpoint", "beast ssl_endpoint= ssl_certificate=c", "ssl_endpoint="),
-		Entry("a private key without a certificate on a TLS listener", "beast ssl_port=443 ssl_private_key=/k", "ssl_certificate"),
-		Entry("a private key without a certificate and no TLS listener, as Tentacle's init_ssl refuses it", "beast port=80 ssl_private_key=/k", "ssl_certificate"),
-		Entry("an empty private key without a certificate, which radosgw tests for presence", "beast port=80 ssl_private_key=", "ssl_certificate"),
 	)
 	It("refuses a framework other than beast", func() {
 		_, err := frontend.ParseBeast("civetweb port=80")
