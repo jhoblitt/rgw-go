@@ -820,6 +820,62 @@ v20.2.4 tags, rgw-go does the following.
   `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
   Header names are case-insensitive (RFC 9110, section 5.1).
 
+### Request authentication differences
+
+rgw-go authenticates an S3 request from the headers and target radosgw's
+`req_info` reads, which beast files as the client sent them. Go's
+net/http server hands rgw-go some of them in another form. Where the two
+differ, checked against the v19.2.6 and v20.2.4 tags and Go 1.27.1, rgw-go
+does the following.
+
+- **A byte above 0x7f in a percent-escape is a bad hex digit.** radosgw's
+  `url_decode` looks such a byte up outside its hex table and decodes
+  whatever it finds there, which differs by build: in the 19.2.6 and
+  20.2.4 packages most such bytes decode as the digit 0 (`hex_to_num`,
+  `rgw_common.cc:1690-1692` at v19.2.6, `:1753-1755` at v20.2.4; the
+  entry on `url_decode`'s hex table in `docs/ceph-upstream-bugs.md`).
+  rgw-go takes such a byte as no hex
+  digit, so the decode is empty, as for any other bad digit. It reaches
+  the query, which net/http does not check; net/http refuses such an
+  escape in the path.
+- **The Host of an absolute-form request is the target's authority.** For
+  a request line such as `GET http://b.example.com/k HTTP/1.1`, net/http
+  takes the target's authority as the request's host and drops the Host
+  header (`net/http/request.go:1172-1175` and `server.go:1087`). beast
+  files the Host header as `HTTP_HOST` (`rgw_asio_client.cc:36-66` at
+  v19.2.6 and v20.2.4), which `req_info` reads (`rgw_common.cc:246` at
+  v19.2.6, `:256` at v20.2.4). When the header names another host than
+  the target, rgw-go reads a signed `host` header, and the host that
+  names a virtual-hosted bucket, from the target's authority, where
+  radosgw reads them from the header. HTTP/1.1 clients send the absolute
+  form to proxies.
+- **A chunked request's Transfer-Encoding reads as `chunked`, and its
+  Trailer header is not seen.** net/http accepts a single Transfer-Encoding
+  header whose value is `chunked` in any case, removes the header and
+  records the encoding as `chunked` (`net/http/transfer.go:639-664` and
+  `:598-600`); it ignores the header on an HTTP/1.0 request (`:647-649`).
+  Under chunked encoding it also removes the Trailer header, keeping only
+  the field names it declares (`:775-790`). beast files both headers with
+  their values as sent (`rgw_asio_client.cc:36-66` at v19.2.6 and
+  v20.2.4), and radosgw looks a signed header up among them
+  (`rgw_auth_s3.cc:749-759` at v19.2.6, `:726-736` at v20.2.4). So in
+  rgw-go a signed `transfer-encoding` header reads `chunked` whatever its
+  case was, and is absent on HTTP/1.0, and a signed `trailer` header on a
+  chunked request is absent; an absent signed header is left out of the
+  canonical headers, as radosgw leaves out one the request lacks. radosgw
+  signs the values the client sent. A request that signs
+  `Transfer-Encoding: chunked` in lower case over HTTP/1.1, and signs no
+  Trailer header, is authenticated alike.
+- **An empty Host header on HTTP/1.0 is no Host header.** HTTP/1.1
+  requires a Host header, so rgw-go takes an empty host on an HTTP/1.1
+  request as a Host header sent empty, as beast files it: `HTTP_HOST` set
+  to an empty value. HTTP/1.0 does not, and net/http removes the header
+  either way (`net/http/server.go:1069-1087`), so on an HTTP/1.0 request
+  rgw-go cannot tell an empty Host header from none and takes it as none.
+  For radosgw a signed `host` on such a request is present and empty, and
+  passes its check that `host` is signed (`rgw_auth_s3.cc:793` at v19.2.6,
+  `:770` at v20.2.4); for rgw-go it is absent.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
