@@ -1785,8 +1785,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   - `hex_to_num` looks an escape's digits up in `HexTable`'s 256-byte
     table with the `char` cast to `int` (`rgw_common.cc:1690-1692` at
     v19.2.6, `:1753-1755` at v20.2.4, `:1779-1781` on main at
-    a956c21a8c9). `char` is signed on x86_64, so a byte from 0x80 to 0xff
-    indexes from -128 to -1 and reads the 128 bytes before the table.
+    a956c21a8c9). ceph compiles every build with `-fsigned-char`
+    (`src/CMakeLists.txt:95` at v19.2.6, `:102` at v20.2.4), so on every
+    architecture a byte from 0x80 to 0xff indexes from -128 to -1 and
+    reads the 128 bytes before the table.
     `url_decode` takes a negative value as a bad digit and empties its
     result, and uses any other as the digit (`:1701-1734` at v19.2.6,
     `:1764-1797` at v20.2.4).
