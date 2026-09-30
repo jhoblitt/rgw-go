@@ -482,6 +482,45 @@ review and verified against the tree.
   the cost is only that a Tentacle-only request feature waits for the
   release to be raised, which is the trade the encoding rule accepts.
 
+### Request parsing and dispatch differences
+
+rgw-go parses an S3 request's Host, path and query, and picks the op that
+serves it, as radosgw's `RGWREST::preprocess`, `init_from_header` and
+`op_*` methods do. Where the two differ, checked against the v19.2.6 and
+v20.2.4 tags, rgw-go does the following.
+
+- **`?notification` ignores `rgw_enable_apis`.** radosgw routes a bucket's
+  `?notification` to its notification ops only when `rgw_enable_apis`
+  names `notifications` or `pubsub` (`is_notification_op`,
+  `rgw_rest_s3.h:710-715` at v19.2.6 and `:737-742` at v20.2.4, fed by
+  `rgw_appmain.cc:304-305` and `:313-314`); the default names
+  `notifications`. With neither named, the key selects nothing and the
+  request falls through the method's later branches to `list_bucket`,
+  `create_bucket` or `delete_bucket`, so `DELETE /b?notification`
+  deletes the bucket. rgw-go answers `?notification` with the
+  notification op whatever `rgw_enable_apis` names.
+- **The CNAME fallback resolves no CNAME and knows no s3website
+  hostnames.** When the Host matches none of its hostnames and
+  `rgw_resolve_cname` is set (it defaults to false), radosgw looks up the
+  Host's CNAME and matches that instead (`rgw_rest.cc:2086` at v19.2.6,
+  `:2103` at v20.2.4). A Host that matches nothing, looks like no IP
+  address and passes `validate_bucket_name` is the bucket when any
+  hostname is configured, the s3website ones included:
+  `rgw_dns_s3website_name` and the zonegroup's s3website hostnames
+  (`:235-238`, and `:2136-2143` at v19.2.6, `:2153-2160` at v20.2.4).
+  rgw-go matches the Host itself, never its CNAME, and takes it as the
+  bucket only when `rgw_dns_name` or the zonegroup's hostnames name one,
+  so with s3website hostnames alone the Host never names the bucket.
+- **On Squid, `?attributes` is GetObjectAttributes.** The object
+  `op_get` of Squid's radosgw has no attributes branch
+  (`rgw_rest_s3.cc:4805-4821` at v19.2.6), so `GET /b/k?attributes` is
+  GetObject there and returns the object's body; Tentacle's runs
+  GetObjectAttributes (`:5370-5371` at v20.2.4). rgw-go routes the
+  request to GetObjectAttributes on both releases, the Tentacle feature
+  level. On Squid it still accepts the signed payload forms of the
+  GetObject a Squid radosgw would run, so authentication refuses no
+  request radosgw takes.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
