@@ -638,7 +638,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
   and verified 2026-09-30, not reproduced.
 
-## radosgw terminates on a copy source whose bucket policy does not parse
+## radosgw terminates on a copy source or system request whose bucket policy does not parse
 
 - **Kind:** defect, unfixed through main.
 - **Evidence:**
@@ -670,20 +670,32 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
     which the source's PutBucketPolicy accepts (v19.2.6
     `rgw_op.cc:8099-8101`; v20.2.4 `:9025-9027`), fails for any other
     tenant (`rgw_iam_policy.cc:697-701`; v20.2.4 `:710-714`).
+  - A system request, one authenticated as a system user as multisite sync
+    is (`rgw_auth_filters.h:320-330`; v20.2.4 `:348-356`), meets the same
+    unhandled parse on its own bucket. The handler in `init_permissions`
+    refuses only other requests (`rgw_op.cc:612-614`; v20.2.4 `:642-644`),
+    so a system request goes on to `read_permissions`, whose
+    `rgw_build_object_policies` calls `read_obj_policy` on the same bucket
+    (`rgw_op.cc:8003-8009`, `:646-648`; v20.2.4 `:8921-8927`, `:676-678`),
+    and that parses the policy again with no handler (`:419`; v20.2.4
+    `:449`).
   - The same code is on main (`rgw_op.cc:524`, `rgw_process.cc:461`,
     `rgw_asio_frontend.cc:1204` and `:1221`, 7ed73efc1be, 2026-09-25).
 - **Trigger:** a CopyObject or UploadPartCopy that names such a source and
   reaches `verify_permission`. The parse comes before the copy's permission
   checks, so the requester needs no grant on either bucket; for a source
   whose policy names its own tenant, any such request whose destination
-  bucket is in another tenant ends the process.
+  bucket is in another tenant ends the process. Also an object request by
+  a system user on a bucket whose own stored policy does not parse.
 - **Releases:** every release checked, v19.2.6, v20.2.4 and main; the
   cross-tenant case from v19.2.0 and v20.1.0.
 - **rgw-go:** phase 1 (unit Z) refuses a copy whose source bucket policy does
   not parse with 403 AccessDenied, for every identity with no admin bypass,
   and parses the source's policy with the source's own tenant, so a policy
-  that parses for its own bucket parses for a copy too. That is a difference
-  from radosgw, which unit Z records in `docs/exclusions.md`.
+  that parses for its own bucket parses for a copy too. For the request's
+  own bucket it refuses such a policy with 403 unless the requester is an
+  admin, and does not parse it again. That is a difference from radosgw,
+  which unit Z records in `docs/exclusions.md`.
 - **Upstream:** no tracker issue or pull request reports it (full-text
   tracker and all-time pull-request search, 2026-09-30). The cross-tenant
   case came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169)
@@ -692,6 +704,73 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
   cluster, and filing needs a live reproduction and a C++ reproducer.
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
   and verified 2026-09-30, not reproduced.
+
+## radosgw checks a CopyObject source against its bucket's ACL, not the object's
+
+- **Kind:** defect, a regression; unfixed through main.
+- **Evidence:**
+  - CopyObject reads the source object's ACL into `src_acl` and never uses
+    it (v19.2.6 `rgw_op.cc:5409`, `:5420-5422`; v20.2.4 `:5975`,
+    `:5986-5988`). It authorizes `s3:GetObject` with
+    `verify_bucket_permission`, passing the source bucket's ACL
+    (`:5437-5459`; v20.2.4 `:6003-6025`), and when no policy decides, that
+    ACL is checked for READ, the permission `s3:GetObject` maps to
+    (`rgw_common.cc:1412-1432`, `rgw_iam_policy.h:237-252`; v20.2.4
+    `rgw_common.cc:1442-1469`, `rgw_iam_policy.h:247-265`).
+  - So a READ grant on the source bucket, which for S3 means listing it,
+    lets its grantee copy any object in it into a bucket they may write,
+    including an object whose own ACL grants them nothing and whose GET is
+    refused; and a READ grant on an object alone no longer lets its grantee
+    copy it. UploadPartCopy still checks the object's ACL
+    (`verify_object_permission` with `cs_acl`, `rgw_op.cc:3956-3961`;
+    v20.2.4 `:4165-4170`).
+  - It is a regression. At v18.2.8 CopyObject checked `src_acl` for READ
+    (`rgw_op.cc:5415-5428`). 897d4063871, "rgw/auth: object ops use new
+    verify_bucket_permission() overload" (first in v19.1.0), replaced that
+    check with the bucket form.
+  - The same code is on main (`rgw_op.cc:6328`, `:6340` and `:6374`,
+    7ed73efc1be, 2026-09-25).
+- **Releases:** every Squid and Tentacle release; checked at v18.2.8, which
+  checks the object's ACL, and at v19.2.6, v20.2.4 and main.
+- **rgw-go:** phase 1's plan mirrors it: W's CopyObject checks its source
+  with `VerifyBucketPermissionIn`, the bucket form. Not yet ruled; if rgw-go
+  checks the object's ACL instead, `docs/exclusions.md` records the
+  difference.
+- **Upstream:** no tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-30). The bucket form
+  reached squid through
+  [ceph/ceph#56863](https://github.com/ceph/ceph/pull/56863). Not filed: the
+  defect has not been reproduced on a running cluster, and filing needs a
+  live reproduction and a C++ reproducer.
+- **Found:** reading the copy-source checks for the previous entries,
+  2026-09-30; derived from the source, not reproduced.
+
+## Squid accepts RestrictPublicBuckets but never enforces it
+
+- **Kind:** defect, fixed in Tentacle.
+- **Evidence:**
+  - A bucket's public-access block carries RestrictPublicBuckets
+    (`rgw_public_access.h:41`), but at v19.2.6 nothing in `src/rgw` reads it
+    except the block's printer (`rgw_public_access.cc:32`). A bucket whose
+    owner sets it keeps granting its public bucket policy to every
+    requester.
+  - 07ad231606d, "rgw: implement RestrictPublicBuckets from
+    PublicAccessBlock" (first in v20.1.0), makes the bucket and object checks
+    refuse a requester outside the bucket owner's account when the bucket
+    policy is public (v20.2.4 `rgw_common.cc:1374-1380`, `:1541-1547`).
+- **Releases:** every release before v20.1.0, checked at v19.2.6; fixed from
+  v20.1.0, checked at v20.2.4.
+- **rgw-go:** phase 1 (unit Z) enforces it on both releases, as v20.2.4's
+  radosgw does. That is a difference from Squid's radosgw, which unit Z
+  records in `docs/exclusions.md`.
+- **Upstream:** [#65741](https://tracker.ceph.com/issues/65741), fixed by
+  [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206). Its squid
+  backport, [#70860](https://tracker.ceph.com/issues/70860), is New with no
+  pull request, and the reef one,
+  [#70859](https://tracker.ceph.com/issues/70859), was rejected (tracker and
+  pull-request search, 2026-09-30).
+- **Found:** reading the copy-source checks for the copy-source entries
+  above, 2026-09-30; derived from the source.
 
 ## radosgw answers 200 to a CreateBucket that loses a race to another owner
 
