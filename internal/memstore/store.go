@@ -42,6 +42,7 @@ type Store struct {
 	buckets   map[string]*bucket        // "tenant/name" -> bucket
 	instances map[string]*bucket        // bucket id -> bucket
 	uploads   map[string]*upload        // uploadKey -> upload
+	accounts  map[string]*op.AccountRecord
 	usage     []op.UsageEntry
 	metadata  map[string]map[string]op.MetadataEntry // section -> key -> entry
 }
@@ -72,6 +73,7 @@ type part struct {
 var (
 	_ op.ZoneInfo       = (*Store)(nil)
 	_ op.UserStore      = (*Store)(nil)
+	_ op.AccountStore   = (*Store)(nil)
 	_ op.BucketStore    = (*Store)(nil)
 	_ op.ObjectStore    = (*Store)(nil)
 	_ op.MultipartStore = (*Store)(nil)
@@ -129,6 +131,7 @@ func New(cfg Config) *Store {
 	return &Store{
 		cfg:       cfg,
 		users:     map[string]*op.UserRecord{},
+		accounts:  map[string]*op.AccountRecord{},
 		keys:      map[string]string{},
 		emails:    map[string]string{},
 		buckets:   map[string]*bucket{},
