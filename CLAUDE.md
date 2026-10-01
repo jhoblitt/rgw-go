@@ -40,8 +40,6 @@ before writing Go here.
   with `ROOKET_NAME=rgw-go-<release>`.
 - Implementation tasks go to Opus 5.5 code-workers in worktrees; judgment stays on the
   session model.
-- At most 4 subagents in flight at once, of any model level, and at most 1 of them on Fable.
-  Queue the rest. A tighter limit the owner gives for a session wins while it lasts.
 - `docs/exclusions.md` is canonical for rgw-rs too: announce every material change to the
   rgw-rs Claude session.
 - Design: docs/superpowers/specs/2026-09-25-rgw-go-design.md. Plans: docs/superpowers/plans/.
