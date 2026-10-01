@@ -138,6 +138,15 @@ RUN ?= local
 s3tests: need-release ## Run the phase 1 s3-tests set against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
 	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
+# hack/parity's package doc owns the result file and the comparison rules.
+.PHONY: parity-record
+parity-record: ## Record a baseline from RUN-FILES: make parity-record SUITE=s3tests FORMAT=junit OUT=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.6 s3tests_commit=..." FILES="a.xml b.xml"
+	go run ./hack/parity record --format $(FORMAT) --suite $(SUITE) --out $(OUT) $(foreach kv,$(META),--meta $(kv)) $(FILES)
+
+.PHONY: parity-check
+parity-check: ## Compare a candidate result with a baseline: make parity-check BASELINE=... CANDIDATE=...
+	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CANDIDATE)
+
 .PHONY: cluster-down
 cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output
 	ROOKET=$(ROOKET_BIN) hack/rooket/down.sh $(RELEASE)
