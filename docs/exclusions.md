@@ -559,17 +559,18 @@ review and verified against the tree.
   Tentacle's radosgw narrowed the override because the other errors may
   be invalid input.
 - **ACL documents escape what radosgw writes raw.** radosgw writes the
-  owner's and each grantee's ID and display name into the GetBucketAcl and
-  GetObjectAcl documents without XML escaping (`rgw_acl_s3.cc:172-180` and
-  `:246-274` at v19.2.6 and v20.2.4). A display name holding markup
+  owner's and each grantee's ID and display name, and an email grantee's
+  address, into the GetBucketAcl and GetObjectAcl documents without XML
+  escaping (`rgw_acl_s3.cc:172-180` and `:246-274` at v19.2.6 and
+  v20.2.4). A display name holding markup
   therefore yields either malformed XML, as `A&B` and `a<b` do, or
   well-formed XML that parses to another name or carries extra markup, as
   `&amp;` (read back as `&`) and `<b/>` (an empty `b` element) do. rgw-go
   escapes that text as radosgw's XML formatter escapes the text of its
   other documents (`xml_stream_escaper`, `src/common/escape.cc:134-169`).
   The stored ACL is the same either way; only the rendered document
-  differs, and only for an ID or display name holding `&`, `<`, `>`, `'`,
-  `"` or a control byte.
+  differs, and only for an ID, display name or email address holding `&`,
+  `<`, `>`, `'`, `"` or a control byte.
 
 ### Command-line differences
 
