@@ -370,6 +370,51 @@ review and verified against the tree.
   removal, user change or quota change is invisible to rgw-go for the
   cache lifetime, and rgw-go's writes are invisible to a coexisting
   radosgw. The only alternative is running with the cache disabled.
+  rgw-go honors a notify by invalidating the named entry and re-reading
+  it on the next access, whichever op the record carries, because
+  radosgw applies an `UPDATE_OBJ` payload unchecked
+  (`docs/ceph-upstream-bugs.md`, "radosgw caches any control-pool
+  UPDATE_OBJ notify payload unchecked"). It sends `UPDATE_OBJ` with the
+  written record after its own writes, so that a coexisting radosgw need
+  not re-read. A control watch that cannot be registered, at startup or
+  after it is lost, is retried after a pause that doubles from 1 s to
+  30 s, for ever, with the cache disabled meanwhile. radosgw instead
+  fails to start when a first registration fails (`init_watch`,
+  `services/svc_notify.cc:243-261` at v19.2.6, `:207-221` at v20.2.4),
+  and later re-registers a lost watch at once and can abort the process
+  (`docs/ceph-upstream-bugs.md`, "radosgw aborts the process after 100
+  failed control-watch re-registrations"). radosgw abandons a watch
+  whose control object was deleted: the OSD answers ENOENT to any watch
+  op on a missing object (`osd/PrimaryLogPG.cc:6967-6969` at v19.2.6,
+  `:7036-7038` at v20.2.4), the unwatch that `RGWWatcher::reinit` sends
+  first among them, and `reinit` takes that for a shutdown and returns
+  without re-registering or rescheduling
+  (`services/svc_notify.cc:95-101` at v19.2.6, `:93-99` at v20.2.4).
+  That watch stays down, and radosgw's cache off, until radosgw
+  restarts, even if the object is created again
+  (`docs/ceph-upstream-bugs.md`, "radosgw abandons a control watch whose
+  control object is deleted"); radosgw itself creates control objects
+  only at startup (`init_watch`, `services/svc_notify.cc:231-238` at
+  v19.2.6, `:198-205` at v20.2.4). rgw-go instead creates a missing
+  control object again, with the `create(false)` it runs at startup,
+  when a registration fails with ENOENT, and its watch comes back.
+  rgw-go creates, watches and sends on the control objects
+  whatever `rgw_cache_enabled` says. With it false radosgw sends no
+  notify, because its only sender is the cache
+  (`RGWSI_SysObj_Cache::distribute_cache`,
+  `services/svc_sys_obj_cache.cc:452-463` at both releases), which it
+  builds only when the option is true: its startup hands the option down
+  as `have_cache` (`rgw_appmain.cc:255` at v19.2.6, `:264` at v20.2.4),
+  and the cache is built only under it
+  (`driver/rados/rgw_service.cc:88-90` at v19.2.6, `:79-81` at v20.2.4).
+  Squid still creates and watches the control objects (`:75`,
+  `:113-114`, `:139-145`), and Tentacle does neither (`:66-68`,
+  `:98-100`, `:120-126`). rgw-go does not read
+  `rgw_inject_notify_timeout_probability`, a `level: dev` fault-injection
+  option (`rgw.yaml.in:3342` at v19.2.6, `:3527` at v20.2.4) with which
+  radosgw drops that share of the notifies it receives, unacked
+  (`RGWWatcher::handle_notify`, `services/svc_notify.cc:66-75` at
+  v19.2.6, `:64-73` at v20.2.4); at its default of 0 both drop none.
 - **GC shard formats.** Each GC shard is in either the omap-era format or
   the queue-era format. radosgw reads the object version of each shard
   through the version class to decide which, tries the queue class behind

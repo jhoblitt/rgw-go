@@ -168,6 +168,9 @@ var _ = Describe("BucketInfo index shards", func() {
 		_, ok := meta.IndexShard("small.bin", 0)
 		Expect(ok).To(BeFalse())
 	})
+	It("hashes as ceph_str_hash_linux", func() {
+		Expect(meta.StrHashLinux("a")).To(BeEquivalentTo(17138))
+	})
 })
 
 // indexNormalBytes is bucket_index_normal_layout as Squid writes it (v1) or

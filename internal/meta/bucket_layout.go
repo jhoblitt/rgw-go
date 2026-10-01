@@ -428,8 +428,8 @@ const (
 	shardsPrime1 = 65521
 )
 
-// strHashLinux is ceph_str_hash_linux.
-func strHashLinux(s string) uint32 {
+// StrHashLinux is ceph_str_hash_linux.
+func StrHashLinux(s string) uint32 {
 	var h uint32
 	for _, c := range []byte(s) {
 		h = (h + uint32(c)<<4 + uint32(c)>>4) * 11
@@ -448,7 +448,7 @@ func IndexShard(key string, numShards uint32) (shard uint32, ok bool) {
 	if numShards == 0 {
 		return 0, false
 	}
-	h := strHashLinux(key)
+	h := StrHashLinux(key)
 	h ^= (h & 0xff) << 24
 	if numShards <= shardsPrime0 {
 		return h % shardsPrime0 % numShards, true

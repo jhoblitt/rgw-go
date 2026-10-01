@@ -54,6 +54,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's realm reload waits out the notification manager's timers](#radosgws-realm-reload-waits-out-the-notification-managers-timers) | [#71963](https://tracker.ceph.com/issues/71963), [#72004](https://tracker.ceph.com/issues/72004), [#72003](https://tracker.ceph.com/issues/72003) | [ceph/ceph#63986](https://github.com/ceph/ceph/pull/63986) |  |
 | [radosgw caches any control-pool UPDATE_OBJ notify payload unchecked](#radosgw-caches-any-control-pool-update_obj-notify-payload-unchecked) | none | none |  |
 | [radosgw aborts the process after 100 failed control-watch re-registrations](#radosgw-aborts-the-process-after-100-failed-control-watch-re-registrations) | [#80992](https://tracker.ceph.com/issues/80992) | [ceph/ceph#72251](https://github.com/ceph/ceph/pull/72251) |  |
+| [radosgw abandons a control watch whose control object is deleted](#radosgw-abandons-a-control-watch-whose-control-object-is-deleted) | [#59217](https://tracker.ceph.com/issues/59217) | none |  |
+| [radosgw keeps only the low 32 bits of rgw_num_control_oids](#radosgw-keeps-only-the-low-32-bits-of-rgw_num_control_oids) | none | none |  |
 | [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |  |
 | [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | none | none | ✓ |
 | [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none | ✓ |
@@ -1398,19 +1400,24 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, unfixed through main.
 - **Evidence:** at v19.2.6 `RGWWatcher::reinit` calls `abort()` once
   `retries > 100` (`svc_notify.cc:89-93`). `retries` is a per-watcher counter
-  initialised to 0 (`:36`) and incremented on every failed unregister or
-  register (`:103`, `:111`); nothing resets it, so it counts failures over the
-  whole process lifetime, and each failure reschedules `reinit` at once with no
-  backoff (`handle_error` → `C_ReinitWatch`, `:82-86`). The counter and abort
-  arrived with ff248d7ed94, "rgw: Try to handle unwatch errors sensibly", first
-  released in v19.2.3, and its main-line twin 34366f0f0d8, first released in
+  initialised to 0 (`:36`) and incremented on every failed register or
+  non-ENOENT unregister (`:103`, `:111`); nothing resets it, so it counts
+  failures over the whole process lifetime, and each failure reschedules
+  `reinit` at once with no backoff (`handle_error` → `C_ReinitWatch`,
+  `:82-86`; `:104`, `:112`). An unwatch that answers ENOENT is the
+  exception: `reinit` then returns and reschedules nothing (`:99-101`),
+  which abandons the watch (see "radosgw abandons a control watch whose
+  control object is deleted"). The counter and abort arrived with
+  ff248d7ed94, "rgw: Try to handle unwatch errors sensibly", first released
+  in v19.2.3, and its main-line twin 34366f0f0d8, first released in
   v20.1.0; v19.2.2's `reinit` has no counter and reschedules for ever
   (`:88-101`). The same at v20.2.4 (`svc_notify.cc:87-91`). The default
   `rados_osd_op_timeout` is 0 (`global.yaml.in:6379`), so a watch op blocks
   rather than fails during a transient OSD outage and does not by itself reach
   the counter.
 - **Releases:** v19.2.3 and later, v20.1.0 and later, through v19.2.6, v20.2.4
-  and main; v19.2.2 and earlier do not abort.
+  and main; Squid before v19.2.3 does not abort. Reef got the same change in
+  v18.2.8 (c95ea88269d), below rgw-go's floor.
 - **rgw-go:** phase 1's driver control-watch re-registration (unit M) must back
   off between attempts and retry without ever aborting the process, and must
   not count re-registration failures unboundedly over the process lifetime.
@@ -1429,6 +1436,129 @@ Every new entry adds its row to this table, in document order.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-018); verified 2026-09-27;
   derived from the source, not reproduced on a running cluster, which would
   take over 100 failures in one radosgw's lifetime.
+
+## radosgw abandons a control watch whose control object is deleted
+
+- **Kind:** defect, a regression: the abandonment #59217 reported, which
+  ceph/ceph#50707 fixed in 2023, reintroduced for ENOENT by
+  ceph/ceph#62253; unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - Deleting a control object disconnects its watchers (`_delete_oid`,
+    `osd/PrimaryLogPG.cc:8255-8264`, `:8332-8341`), and the client hands
+    each watch ENOTCONN (`osdc/Objecter.cc:924-928`, `:961-966`).
+  - `RGWWatcher::handle_error` removes the watcher and schedules `reinit`
+    (`rgw/services/svc_notify.cc:82-87`, `:80-85`). Removing it disables the
+    metadata cache: `remove_watcher` calls `_set_enabled(false)`
+    (`:354-365`, `:341-352`), which reaches `ObjectCache::set_enabled`
+    through the cache's callback (`:386-392`, `:373-379`;
+    `rgw/services/svc_sys_obj_cache.cc:30-32` and `:504-507` at both), and
+    that drops every entry and makes every lookup miss
+    (`rgw/rgw_cache.cc:303-311` and `:18` at both).
+  - The watch had registered, so `unregister_done` is false (`:34`, `:156`,
+    `:166`; `:131`) and `reinit` first unregisters it (`:95-96`, `:93-94`).
+    The unwatch is a WATCH op, and the OSD answers ENOENT to any WATCH op on
+    a missing object (`osd/PrimaryLogPG.cc:6967-6969`, `:7036-7038`).
+  - `reinit` takes ENOENT from the unwatch for a shutdown, "Going down there
+    is no such watch", and returns without registering, rescheduling or
+    counting a retry (`:99-101`, `:97-99`). Only `handle_error` and `reinit`
+    itself schedule `C_ReinitWatch` (`:86`, `:104`, `:112`; `:84`, `:102`,
+    `:110`), and a watch that is not registered gets no further error, so
+    nothing tries again.
+  - radosgw creates control objects only at startup (`init_watch`'s
+    `create(false)`, `:231-238`, `:198-205`). The watch stays down, and the
+    cache off, until radosgw restarts, even after another gateway's startup
+    or rgw-go creates the object again. Every metadata read then goes to
+    RADOS; nothing is served stale.
+  - Before 2023 `reinit` returned on any failed unwatch, without
+    re-registering or rescheduling (`svc_notify.cc:87-98` at f9aae71af3a~1),
+    which #59217 reported. f9aae71af3a (ceph/ceph#50707, "Fixes:
+    https://tracker.ceph.com/issues/59217") removed that return and made a
+    failed register reschedule. "rgw: Try to handle unwatch errors sensibly"
+    put the return back for ENOENT alone, its message reading "IF we get
+    `-ENOENT` from unwatch just stop trying to renew": 34366f0f0d8 on main,
+    first released in v20.1.0, ff248d7ed94 on squid, first released in
+    v19.2.3, and c95ea88269d on reef, first released in v18.2.8. v19.2.2's
+    `reinit`, between the two, logs the failed unwatch, re-registers, and
+    reschedules while the object is missing (`:88-101`), so it recovers once
+    the object exists again.
+- **Releases:** v18.2.8, v19.2.3 and later, and v20.1.0 and later, through
+  v19.2.6, v20.2.4 and main (checked 2026-10-01); v19.2.2 and v18.2.7
+  recover.
+- **rgw-go:** when a registration fails with ENOENT, the driver creates that
+  control object again with startup's `create(false)` and keeps
+  re-registering with its backoff (`internal/driver/notify.go`'s
+  `watchLoop`), so its watch comes back. `docs/exclusions.md` records the
+  difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction, which decides
+  whether to reopen #59217 or file the regression new.
+  [#59217](https://tracker.ceph.com/issues/59217), "metadata cache: if a
+  watcher is disconnected and reinit() fails, it won't be retried again",
+  reported the abandonment, and
+  [ceph/ceph#50707](https://github.com/ceph/ceph/pull/50707) fixed it
+  (merged 2023-04-06), backported by
+  [ceph/ceph#51017](https://github.com/ceph/ceph/pull/51017) (reef),
+  [ceph/ceph#54014](https://github.com/ceph/ceph/pull/54014) (pacific) and
+  [ceph/ceph#54015](https://github.com/ceph/ceph/pull/54015) (quincy).
+  [ceph/ceph#62253](https://github.com/ceph/ceph/pull/62253) (merged
+  2025-03-18; squid
+  [ceph/ceph#62402](https://github.com/ceph/ceph/pull/62402), reef
+  [ceph/ceph#62403](https://github.com/ceph/ceph/pull/62403)), made for
+  [#70422](https://tracker.ceph.com/issues/70422), "radosgw crashes trying
+  to renew watch on an object that does not exist", reintroduced it for
+  ENOENT, which it treats as a shutdown. No issue or pull request reports
+  the regression or changes the early return; the draft
+  [ceph/ceph#72251](https://github.com/ceph/ceph/pull/72251), the fix for
+  #80992, and the closed
+  [ceph/ceph#68207](https://github.com/ceph/ceph/pull/68207) it revives
+  leave the `-2` return untouched (searched 2026-10-01). Each search method
+  was first run on a known match.
+  - tracker.ceph.com: every project's issues of every status through the
+    issue filter "any searchable field contains", which finds #80992 by
+    `reinit` and #70422 by the quoted phrase `"unwatch2() returned"`, which
+    appears only in its description. Terms: `reinit` (124 issues, 18 in
+    rgw), `unregister_watch` (26, 3 in rgw), `C_ReinitWatch`, `RGWWatcher`,
+    and the quoted phrases `"no such watch"`,
+    `"Going down there is no such watch"`, `"unregister_watch() returned"`
+    and `"register_watch() returned"`. Besides #59217 and #70422, the
+    nearest are #80992, and #73361 with its backports, a crash when
+    `C_ReinitWatch` races `finalize_watch`.
+  - ceph/ceph pull requests through `gh search prs`, which finds
+    ceph/ceph#72251 and ceph/ceph#68207 by `reinit`. Terms: `reinit`
+    (finding ceph/ceph#50707), `unregister_watch` (finding it and its three
+    backports), `C_ReinitWatch`, `RGWWatcher`, `RGWSI_Notify`, `svc_notify`,
+    `"unwatch errors"` (ceph/ceph#62253 and its backports) and
+    `"no such watch"` (none, the phrase being only in the code).
+- **Found:** phase 1 unit M, Task 2's re-review, 2026-10-01, as a regression
+  of an upstream report and fix; derived from the source, not reproduced.
+
+## radosgw keeps only the low 32 bits of rgw_num_control_oids
+
+- **Kind:** quirk. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `rgw_num_control_oids` is a `type: int` option with no `min` or `max`
+    and `with_legacy: true` (`common/options/rgw.yaml.in:1115-1129`,
+    `:1174-1191`), so its legacy field is an `int64_t` (`OPTION_OPT_INT`,
+    `common/config_values.h:41` at both).
+  - `init_watch` assigns it to `int num_watchers`
+    (`rgw/services/svc_notify.h:37`, `:33`; `rgw/services/svc_notify.cc:201`,
+    `:165`). Ceph builds as C++20 (`src/CMakeLists.txt:216`, `:243`), which
+    defines the narrowing as modular, so only the low 32 bits count, read
+    as a signed int.
+  - The narrowed count then names the objects as any count does
+    (`svc_notify.cc:203-221`, `:167-183`): 2^32 becomes 0, the single
+    legacy object `notify`; 2^31 becomes -2^31, one object, `notify.0`;
+    2^32+8 becomes 8, `notify.0` to `notify.7`. A value just below 2^31
+    makes radosgw allocate and create that many control objects at startup.
+- **Releases:** v19.2.6 and v20.2.4, the tags checked.
+- **rgw-go:** matches it: `controlOIDs` keeps the low 32 bits the same way
+  (`internal/driver/notify.go`), so both gateways name the same control
+  objects for any setting. It is reachable only by misconfiguration.
+- **Upstream:** not filed; a quirk.
+- **Found:** phase 1 unit M, Task 2, 2026-10-01; derived from the source, not
+  reproduced.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
