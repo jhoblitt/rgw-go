@@ -47,7 +47,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | [#81304](https://tracker.ceph.com/issues/81304) | [ceph/ceph#72304](https://github.com/ceph/ceph/pull/72304) | ✓ |
 | [radosgw's bypass-gc bucket removal fails once a tail stripe is gone](#radosgws-bypass-gc-bucket-removal-fails-once-a-tail-stripe-is-gone) | [#24789](https://tracker.ceph.com/issues/24789), [#40587](https://tracker.ceph.com/issues/40587) | [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984), [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956) |  |
 | [The 2pc queue's reserved size drifts upward](#the-2pc-queues-reserved-size-drifts-upward) | none | none |  |
-| [The 2pc queue's self-heal is skipped when another write comes first](#the-2pc-queues-self-heal-is-skipped-when-another-write-comes-first) | [#80994](https://tracker.ceph.com/issues/80994) | none | ✓ |
+| [The 2pc queue's self-heal is skipped when another write comes first](#the-2pc-queues-self-heal-is-skipped-when-another-write-comes-first) | [#80994](https://tracker.ceph.com/issues/80994) | [ceph/ceph#72212](https://github.com/ceph/ceph/pull/72212) | ✓ |
 | [The 2pc queue hands out reservation id 0, which radosgw treats as none](#the-2pc-queue-hands-out-reservation-id-0-which-radosgw-treats-as-none) | [#80996](https://tracker.ceph.com/issues/80996) | [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163) | ✓ |
 | [radosgw's notification queue listing never pages past 1024 queues](#radosgws-notification-queue-listing-never-pages-past-1024-queues) | [#73812](https://tracker.ceph.com/issues/73812), [#73893](https://tracker.ceph.com/issues/73893), [#73894](https://tracker.ceph.com/issues/73894) | [ceph/ceph#66246](https://github.com/ceph/ceph/pull/66246), [ceph/ceph#66345](https://github.com/ceph/ceph/pull/66345), [ceph/ceph#66491](https://github.com/ceph/ceph/pull/66491) |  |
 | [Squid's realm reload hangs when a pubsub HTTP push has lost its wakeup](#squids-realm-reload-hangs-when-a-pubsub-http-push-has-lost-its-wakeup) | none | [ceph/ceph#57632](https://github.com/ceph/ceph/pull/57632) |  |
@@ -65,7 +65,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [The monitor's default for insecure key creation lags auth_allowed_ciphers](#the-monitors-default-for-insecure-key-creation-lags-auth_allowed_ciphers) | [#80997](https://tracker.ceph.com/issues/80997) | none | ✓ |
 | [The monitor reports a refused cephx key type as EINVAL](#the-monitor-reports-a-refused-cephx-key-type-as-einval) | [#80998](https://tracker.ceph.com/issues/80998) | none | ✓ |
 | [The --name error lists the entity types as raw bytes](#the---name-error-lists-the-entity-types-as-raw-bytes) | [#79678](https://tracker.ceph.com/issues/79678), [#79640](https://tracker.ceph.com/issues/79640), [#79638](https://tracker.ceph.com/issues/79638) | [ceph/ceph#71165](https://github.com/ceph/ceph/pull/71165), [ceph/ceph#71190](https://github.com/ceph/ceph/pull/71190), [ceph/ceph#71191](https://github.com/ceph/ceph/pull/71191) |  |
-| [radosgw ignores a bad port in an IPv6 endpoint](#radosgw-ignores-a-bad-port-in-an-ipv6-endpoint) | none | none | ✓ |
+| [radosgw ignores a bad port in an IPv6 endpoint](#radosgw-ignores-a-bad-port-in-an-ipv6-endpoint) | [#81305](https://tracker.ceph.com/issues/81305) | [ceph/ceph#72305](https://github.com/ceph/ceph/pull/72305) | ✓ |
 | [Squid's radosgw fails to start when its realm search meets a realm whose period cannot be read](#squids-radosgw-fails-to-start-when-its-realm-search-meets-a-realm-whose-period-cannot-be-read) | none | [ceph/ceph#63266](https://github.com/ceph/ceph/pull/63266), [ceph/ceph#66300](https://github.com/ceph/ceph/pull/66300) |  |
 | [radosgw-admin bucket rm exits 0 when it removes nothing](#radosgw-admin-bucket-rm-exits-0-when-it-removes-nothing) | none | none | ✓ |
 | [radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token](#radosgws-s3-listbuckets-reads-neither-max-buckets-nor-continuation-token) | [#72315](https://tracker.ceph.com/issues/72315), [#75463](https://tracker.ceph.com/issues/75463) | [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742), [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920) |  |
@@ -1152,7 +1152,7 @@ Every new entry adds its row to this table, in document order.
 
 ## The 2pc queue's self-heal is skipped when another write comes first
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** at v19.2.6 reserve recomputes `reserved_size` from the
   outstanding reservations only when the queue head's urgent data decoded
   below struct version 3 (`cls_2pc_queue.cc:135`), and every write re-encodes
@@ -1171,7 +1171,11 @@ Every new entry adds its row to this table, in document order.
   maintainer's comment there calls it a duplicate of the drift fix for
   [#74713](https://tracker.ceph.com/issues/74713), but that fix is what added
   the reserve-only recompute, and every branch still recomputes only in
-  reserve.
+  reserve. The fix in review is
+  [ceph/ceph#72212](https://github.com/ceph/ceph/pull/72212) (open), opened
+  on 2026-09-29, after #80994, by the issue's assignee. It recomputes the
+  reserved size on every write path, not only in reserve. We open no
+  competing pull request.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-002); verified 2026-09-27.
 
 ## The 2pc queue hands out reservation id 0, which radosgw treats as none
@@ -1765,8 +1769,8 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw ignores a bad port in an IPv6 endpoint
 
-- **Kind:** defect, unfixed through main. Unreproduced on a running
-  radosgw; a C++ reproducer of the function shows it.
+- **Kind:** defect, unfixed through main, with a fix in review. Unreproduced
+  on a running radosgw; C++ reproducers of the function show it.
 - **Evidence:**
   - For an IPv6 `endpoint` or `ssl_endpoint`, `parse_endpoint` parses the
     port with `parse_port` and then the address with `make_address_v6`,
@@ -1802,8 +1806,12 @@ Every new entry adds its row to this table, in document order.
   radosgw refuses an IPv4 one (`parseEndpoint`,
   `internal/frontend/spec.go`); `docs/exclusions.md` records the
   difference.
-- **Upstream:** no tracker issue or pull request reports or fixes it.
-  Searched 2026-09-29, each search first run on a known match:
+- **Upstream:** we filed [#81305](https://tracker.ceph.com/issues/81305).
+  The fix in review is
+  [ceph/ceph#72305](https://github.com/ceph/ceph/pull/72305) (draft), which
+  makes the IPv6 branch return on the port's error, as the IPv4 branch does.
+  No earlier tracker issue or pull request reports it. Searched 2026-09-29,
+  each search first run on a known match:
   - the tracker's full text, all projects, for `parse_endpoint`,
     `parse_port` and `"endpoint=["` (known match: #36662's description);
   - ceph/ceph pull requests by keyword for `parse_endpoint` (known match:
@@ -1817,10 +1825,13 @@ Every new entry adds its row to this table, in document order.
     with each such pull request's copy of `parse_endpoint` checked. None
     changes it; the ssl hot-reload pull requests only move its caller.
   On main, only 9e5d4bd1a5d (default ports) and ed70d843df4 (spelling)
-  have changed the function since the IPv6 branch arrived. Not filed:
-  filing waits on a reproduction on a running radosgw.
+  have changed the function since the IPv6 branch arrived.
 - **Found:** phase 1 frontend work (unit G), 2026-09-29; the reproducer
-  was run in review; not reproduced on a running radosgw.
+  was run in review. The rgw-bug-reproduction session confirmed it on
+  2026-10-01 with its own reproducer, the two functions copied verbatim
+  against a real boost::asio: `[::1]:notaport` gives port 0 and
+  `[::1]:99999` port 34463, both with no error, while
+  `127.0.0.1:notaport` is refused. Not reproduced on a running radosgw.
 
 ## Squid's radosgw fails to start when its realm search meets a realm whose period cannot be read
 
