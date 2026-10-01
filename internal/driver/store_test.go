@@ -210,6 +210,15 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
+			Entry("GetAccount", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetAccount(ctx, "RGW00000000000000001")
+				return err
+			}),
+			Entry("AccountName", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.AccountName(ctx, "RGW00000000000000001")
+				return err
+			}),
+
 			Entry("GetBucket", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetBucket(ctx, "", "plain")
 				return err
@@ -326,7 +335,7 @@ var _ = Describe("the driver", func() {
 
 		It("gives an Env whose every store is itself and whose options are Open's", func() {
 			env := s.Env()
-			Expect([]any{env.Zone, env.Users, env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata}).
+			Expect([]any{env.Zone, env.Users, env.Accounts, env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata}).
 				To(HaveEach(BeIdenticalTo(s)))
 			Expect(env.Conf).To(BeIdenticalTo(opts))
 			Expect(env.Authz).To(BeNil(), "authz is the caller's")

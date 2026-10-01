@@ -40,6 +40,7 @@ type Store struct {
 var (
 	_ op.ZoneInfo       = (*Store)(nil)
 	_ op.UserStore      = (*Store)(nil)
+	_ op.AccountStore   = (*Store)(nil)
 	_ op.BucketStore    = (*Store)(nil)
 	_ op.ObjectStore    = (*Store)(nil)
 	_ op.MultipartStore = (*Store)(nil)
@@ -109,6 +110,7 @@ func (s *Store) Env() *op.Env {
 	return &op.Env{
 		Zone:      s,
 		Users:     s,
+		Accounts:  s,
 		Buckets:   s,
 		Objects:   s,
 		Multipart: s,
@@ -170,6 +172,16 @@ func (s *Store) RemoveUser(context.Context, *op.UserRecord) error {
 // ListUserBuckets implements op.UserStore.
 func (s *Store) ListUserBuckets(context.Context, meta.Owner, string, int) (ents []meta.BucketEnt, next string, more bool, err error) {
 	return nil, "", false, op.ErrNotImplemented
+}
+
+// GetAccount implements op.AccountStore.
+func (s *Store) GetAccount(context.Context, string) (*op.AccountRecord, error) {
+	return nil, op.ErrNotImplemented
+}
+
+// AccountName implements op.AccountStore.
+func (s *Store) AccountName(context.Context, string) (string, error) {
+	return "", op.ErrNotImplemented
 }
 
 // GetBucket implements op.BucketStore.
