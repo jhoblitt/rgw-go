@@ -291,3 +291,29 @@ since pytest's `--deselect` removes every node id that starts with its
 argument. `run.sh --print-deselect` prints a digest of the listed ids, which a
 recorded baseline carries. The PR that lands a later phase's feature deletes
 its lines and re-records the radosgw baselines.
+
+## Parity baselines
+
+`test/s3tests/baseline/<release>.json` is radosgw's outcome for every test of
+the set on that release's cluster, recorded by `hack/parity` from two runs in a
+row; a test whose outcome differed between them is listed as `unstable`, and a
+comparison skips it. rgw-go's run is compared with it, and must match every
+other outcome, failures included. `hack/parity`'s package doc holds the file's
+schema and the comparison's rules.
+
+```sh
+make gate RELEASE=squid
+make s3tests RELEASE=squid GATEWAY=radosgw RUN=base1
+make s3tests RELEASE=squid GATEWAY=radosgw RUN=base2
+make parity-record SUITE=s3tests FORMAT=junit OUT=test/s3tests/baseline/squid.json \
+	META="release=squid ceph_version=$(jq -r .ceph_version hack/rooket/out/squid/manifest.json) gateway=radosgw s3tests_commit=$(hack/s3tests/run.sh --print-commit) deselect=$(hack/s3tests/run.sh --print-deselect) pytest_freeze=$(sha256sum hack/s3tests/out/squid-radosgw-base2.freeze | cut -c1-12)" \
+	FILES="hack/s3tests/out/squid-radosgw-base1.xml hack/s3tests/out/squid-radosgw-base2.xml"
+```
+
+A baseline carries the s3-tests commit, the deselect lists' digest, the
+release and its Ceph version, and `make parity-check` refuses to compare
+results that differ in any of them: bumping the s3-tests pin or the Ceph pin,
+or changing a deselect list, re-records both releases' baselines in the same
+change. `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
+`.freeze` file beside the last run, a record of the venv rather than a key
+the comparison checks.
