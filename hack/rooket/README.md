@@ -192,6 +192,20 @@ Rook's probe, an anonymous `curl -i http://127.0.0.1:8080/`, answers 200 with
 profiles. `serve_integration_test.go` in `internal/cli` runs this command
 under `make integration`, over TLS too, and stops it with SIGTERM.
 
+## The seam microbenchmark
+
+`make bench-seam RELEASE=squid` runs `hack/bench/seam.sh`, which sweeps the
+seam microbenchmark in `test/bench/seam` over the `rgw-go-test` pool, one
+process per completion mode, then measures its floor with `rados bench` from
+the cluster's own image, run on the host through `ROOKET_ENGINE` (podman by
+default), and renders `hack/bench/out/<release>/seam-<UTC time>/REPORT.md`
+with `hack/bench/report`. It measures the host as much as the seam, so run it
+with nothing else busy; `noise.log` in the run directory samples the load and
+the busiest processes every 15 seconds. Each 4 MiB write waits for 5 GiB free
+in the pool, writes about 3.9 GiB and is removed before the next, and the
+sweep leaves the pool as it found it. `BENCH_QUICK=1` runs a short sweep, and
+the script's header lists its other settings.
+
 ## The derived image
 
 `make image RELEASE=<release>` builds the image Rook runs rgw-go in and prints
