@@ -39,7 +39,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
-| [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | none | none | ✓ |
+| [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | none | none | ✓ |
 | [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none | ✓ |
 | [Squid accepts RestrictPublicBuckets but never enforces it](#squid-accepts-restrictpublicbuckets-but-never-enforces-it) | [#65741](https://tracker.ceph.com/issues/65741), [#70860](https://tracker.ceph.com/issues/70860), [#70859](https://tracker.ceph.com/issues/70859) | [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206) |  |
@@ -682,7 +682,8 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw checks a copy source with inputs from the destination bucket
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review for the owner
+  and tenant inputs.
 - **Evidence:** CopyObject and UploadPartCopy authorize their source inside
   `verify_permission` through the request's `req_state`, whose bucket is the
   destination (v19.2.6 `rgw_op.cc:5420-5422` and `:5454-5459`, `:3933-3934`
@@ -748,19 +749,32 @@ Every new entry adds its row to this table, in document order.
   destination's. The destination supplies only requester pays and the
   `x-amz-expected-bucket-owner` comparison. That is a difference from
   radosgw, which unit Z records in `docs/exclusions.md`.
-- **Upstream:** no tracker issue or pull request reports it (full-text
-  tracker and all-time pull-request search, 2026-09-30). The tenant input
-  came with [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169) and
-  its squid backport
-  [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221), the fix for
-  [#67464](https://tracker.ceph.com/issues/67464), which pass the request's
-  tenant where reef passed the source's.
+- **Upstream:** we filed [#81248](https://tracker.ceph.com/issues/81248).
+  The fix in review is
+  [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) (draft): the
+  source check takes the source bucket's tenant and owner, through a new
+  `verify_bucket_permission` overload that leaves the other callers
+  unchanged. It does not change the public-access block input: the source
+  check still applies the destination's IgnorePublicAcls and
+  RestrictPublicBuckets, which matters only for a public source, and the
+  issue and the pull request leave that as a follow-up. The pull request
+  has not been compiled against a patched build yet, and says so. No
+  earlier tracker issue or pull request reports it (full-text tracker and
+  all-time pull-request search, 2026-09-30). The tenant input came with
+  [ceph/ceph#59169](https://github.com/ceph/ceph/pull/59169) and its squid
+  backport [ceph/ceph#59221](https://github.com/ceph/ceph/pull/59221), the
+  fix for [#67464](https://tracker.ceph.com/issues/67464), which pass the
+  request's tenant where reef passed the source's.
   [#61954](https://tracker.ceph.com/issues/61954) concerns the same
-  UploadPartCopy check, for a source policy that was never read. Not filed:
-  the defect has not been reproduced on a running cluster, and filing needs
-  a live reproduction and a C++ reproducer.
+  UploadPartCopy check, for a source policy that was never read.
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the source
-  and verified 2026-09-30, not reproduced.
+  and verified 2026-09-30. Reproduced live on v19.2.6 and v20.2.4 on
+  2026-09-30, cross-tenant with IAM accounts: tenant B's GET of tenant A's
+  private object answers 403, while B's CopyObject of the same object into
+  B's own bucket answers 200, and the copy reads back byte-identical. The
+  radosgw log shows the account-root grant deciding `s3:copy_obj`. The
+  reproducer, written in Go, its output and the patch are attached to the
+  tracker issue.
 
 ## radosgw terminates on a copy source or system request whose bucket policy does not parse
 
