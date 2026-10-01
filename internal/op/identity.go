@@ -57,13 +57,27 @@ func Anonymous() Identity {
 // AuthResult is what authentication resolves a request to.
 type AuthResult struct {
 	Identity Identity
-	// Body replaces the request body when the payload is signed in chunks;
-	// nil keeps the request's own body.
+	// Body, when non-nil, replaces the request body: the payload after
+	// aws-chunked decoding, verified as it is read. The Read that ends the
+	// payload returns the verification error instead of io.EOF (an
+	// XAmzContentSHA256Mismatch, SignatureDoesNotMatch, LimitExceeded or
+	// InvalidArgument *Error; a truncated stream is io.ErrUnexpectedEOF), so
+	// an op that stores a body reads it to EOF before it completes.
 	Body io.Reader
+	// ContentLength is the length of Body when Body is non-nil: the
+	// x-amz-decoded-content-length of an aws-chunked payload, which radosgw
+	// makes the request's content length (AWSv4ComplMulti::modify_request_state,
+	// rgw_auth_s3.cc:1532-1542 at v19.2.6, :1509-1519 at v20.2.4), otherwise
+	// the request's own Content-Length; -1 when unknown. Ignored when Body is
+	// nil. An authenticator that returns a Body sets it: the zero value is an
+	// empty body, not an unknown one.
+	ContentLength int64
 	// PayloadSHA256 is the x-amz-content-sha256 value, "UNSIGNED-PAYLOAD" when
-	// the header is absent, which is radosgw's fallback.
+	// the header is absent, as radosgw takes it (get_v4_exp_payload_hash,
+	// rgw_auth_s3.h:638-661 at v19.2.6, :641-664 at v20.2.4).
 	PayloadSHA256 string
-	Presigned     bool
+	// Presigned is set when the credentials came in the query string.
+	Presigned bool
 }
 
 // PayloadForms is the set of signed payload forms an op accepts. radosgw's

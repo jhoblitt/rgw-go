@@ -11,6 +11,7 @@ import (
 type Env struct {
 	Zone      ZoneInfo
 	Users     UserStore
+	Accounts  AccountStore
 	Buckets   BucketStore
 	Objects   ObjectStore
 	Multipart MultipartStore
