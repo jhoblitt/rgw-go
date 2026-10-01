@@ -27,7 +27,7 @@ import (
 
 func testEnv(store *memstore.Store) *op.Env {
 	return &op.Env{
-		Zone: store, Users: store, Buckets: store, Objects: store, Multipart: store, Stats: store,
+		Zone: store, Users: store, Accounts: store, Buckets: store, Objects: store, Multipart: store, Stats: store,
 		Usage: store, Metadata: store, Authz: op.OwnerOnly{}, Metrics: op.NopMetrics{},
 		Now: func() time.Time { return time.Unix(0x68d7a1b2, 0) }, HostID: "4155-z-zg",
 	}
@@ -288,7 +288,7 @@ var _ = Describe("Handler", func() {
 	Describe("the request body", func() {
 		It("is the authenticator's body when it returns one, counted on put_obj as the op reads it", func() {
 			as := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
-				return &op.AuthResult{Identity: op.Anonymous(), Body: strings.NewReader("decoded")}, nil
+				return &op.AuthResult{Identity: op.Anonymous(), Body: strings.NewReader("decoded"), ContentLength: int64(len("decoded"))}, nil
 			})
 			h = newHandler(store, as, s3.Config{})
 			var seen *op.Request
@@ -304,7 +304,44 @@ var _ = Describe("Handler", func() {
 			Expect(string(got)).To(Equal("decoded"))
 			Expect(seen.BytesIn).To(BeEquivalentTo(len("decoded")), "radosgw's accounting sits above the chunk decoder")
 		})
-		It("counts what a plain put_obj reads", func() {
+		// AWSv4ComplMulti::modify_request_state sets content_length to
+		// x-amz-decoded-content-length (rgw_auth_s3.cc:1532-1542 at v19.2.6,
+		// :1509-1519 at v20.2.4).
+		DescribeTable("comes with the authenticator's content length, not the wire's",
+			func(length int64) {
+				alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+				as := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+					return &op.AuthResult{
+						Identity:      op.Identity{User: &alice.Info, Owner: meta.UserOwner(alice.Info.UserID), OpMask: op.OpTypeAll},
+						Body:          strings.NewReader("hello"),
+						ContentLength: length,
+						PayloadSHA256: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+					}, nil
+				})
+				h = newHandler(store, as, s3.Config{})
+				var (
+					seen *op.Request
+					got  []byte
+				)
+				h.Register("put_obj", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
+					seen = r
+					var err error
+					got, err = io.ReadAll(r.Body)
+					w.WriteHeader(http.StatusOK)
+					return err
+				})
+				const sig = "0000000000000000000000000000000000000000000000000000000000000000"
+				wire := "5;chunk-signature=" + sig + "\r\nhello\r\n0;chunk-signature=" + sig + "\r\n\r\n"
+				rec := serveReq(h, http.MethodPut, "/plain/k", strings.NewReader(wire), "X-Amz-Decoded-Content-Length", "5")
+				Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+				Expect(string(got)).To(Equal("hello"))
+				Expect(seen.ContentLength).To(Equal(length), "the authenticator's length, not the wire's %d", len(wire))
+				Expect(seen.BytesIn).To(BeEquivalentTo(5), "the decoded bytes the op read, not the wire's")
+			},
+			Entry("the decoded length of an aws-chunked upload", int64(5)),
+			Entry("-1, a length the authenticator does not know", int64(-1)),
+		)
+		It("counts what a plain put_obj reads, and keeps its length", func() {
 			var seen *op.Request
 			h.Register("put_obj", func(_ context.Context, w http.ResponseWriter, r *op.Request) error {
 				seen = r
@@ -314,6 +351,7 @@ var _ = Describe("Handler", func() {
 			})
 			serveReq(h, http.MethodPut, "/plain/k", strings.NewReader("hello"))
 			Expect(seen.BytesIn).To(BeEquivalentTo(5))
+			Expect(seen.ContentLength).To(BeEquivalentTo(5), "the request's own, the authenticator returning no body")
 		})
 		It("counts nothing on any other route, though the op reads a body", func() {
 			var seen *op.Request

@@ -377,13 +377,15 @@ func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error
 	WriteError(ctx, w, r, err)
 }
 
-// applyAuth gives r the authenticated identity, and the authenticator's body
-// when it replaces the request's, a reader that verifies the payload as it
-// is read. Nothing reads the request body before this.
+// applyAuth gives r the authenticated identity and, when the authenticator
+// replaces the request body with a reader that verifies the payload as it is
+// read, that reader and its length. Nothing reads the request body before
+// this.
 func applyAuth(r *op.Request, res *op.AuthResult) {
 	r.Identity = res.Identity
 	if res.Body != nil {
 		r.Body = res.Body
+		r.ContentLength = res.ContentLength
 	}
 }
 
