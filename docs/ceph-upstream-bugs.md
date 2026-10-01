@@ -69,7 +69,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Squid's radosgw fails to start when its realm search meets a realm whose period cannot be read](#squids-radosgw-fails-to-start-when-its-realm-search-meets-a-realm-whose-period-cannot-be-read) | none | [ceph/ceph#63266](https://github.com/ceph/ceph/pull/63266), [ceph/ceph#66300](https://github.com/ceph/ceph/pull/66300) |  |
 | [radosgw-admin bucket rm exits 0 when it removes nothing](#radosgw-admin-bucket-rm-exits-0-when-it-removes-nothing) | none | none | ✓ |
 | [radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token](#radosgws-s3-listbuckets-reads-neither-max-buckets-nor-continuation-token) | [#72315](https://tracker.ceph.com/issues/72315), [#75463](https://tracker.ceph.com/issues/75463) | [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742), [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920) |  |
-| [url_decode reads outside its hex table for a byte above 0x7f after "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-) | [#4755](https://tracker.ceph.com/issues/4755) | none |  |
+| [url_decode reads outside its hex table for a byte above 0x7f after "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-) | [#4755](https://tracker.ceph.com/issues/4755), [#81267](https://tracker.ceph.com/issues/81267) | [ceph/ceph#72272](https://github.com/ceph/ceph/pull/72272) |  |
 | [A malformed percent-escape in the path makes radosgw serve another path](#a-malformed-percent-escape-in-the-path-makes-radosgw-serve-another-path) | none | none | ✓ |
 | [radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio](#radosgw-skips-or-never-finishes-every-bucket-index-batch-on-a-zero-rgw_bucket_index_max_aio) | none | none | ✓ |
 | [radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads](#radosgw-clamps-a-copy-of-rgw_override_bucket_index_max_shards-that-bucket-creation-never-reads) | [#70980](https://tracker.ceph.com/issues/70980) | [ceph/ceph#72256](https://github.com/ceph/ceph/pull/72256) |  |
@@ -1976,9 +1976,9 @@ Every new entry adds its row to this table, in document order.
 
 ## url_decode reads outside its hex table for a byte above 0x7f after "%"
 
-- **Kind:** defect, unfixed through main. Reproduced by calling the
-  `url_decode` that the librgw2 19.2.6 and 20.2.4 packages ship; not
-  reproduced on a running radosgw.
+- **Kind:** defect, unfixed through main, with a fix in review. Reproduced
+  by calling the `url_decode` that the librgw2 19.2.6 and 20.2.4 packages
+  ship, and under AddressSanitizer; not reproduced on a running radosgw.
 - **Evidence:**
   - `hex_to_num` looks an escape's digits up in `HexTable`'s 256-byte
     table with the `char` cast to `int` (`rgw_common.cc:1690-1692` at
@@ -1996,11 +1996,20 @@ Every new entry adds its row to this table, in document order.
     as the digit 0, 21 as other digits and 3 (0x90, 0x98, 0xe0) as none;
     in 20.2.4, 102 as 0, 17 as others and 9 as none. `%\xc3\xbc` decodes
     to a NUL byte in both. What the read finds depends on the build.
+  - A reproducer that copies `HexTable`, its lookup and `url_decode`
+    verbatim, built with `-fsigned-char -fsanitize=address`, reports a
+    global-buffer-overflow read in the lookup for `%` followed by any byte
+    above 0x7f (index -128 for 0x80), and runs clean with the fix below.
 - **Releases:** v19.2.6, v20.2.4 and main (a956c21a8c9, 2026-09-30).
 - **rgw-go:** takes such a byte as no hex digit, so the result is empty,
   as for any other bad digit; `docs/exclusions.md` records the
   difference.
-- **Upstream:** no issue or pull request fixes it.
+- **Upstream:** we filed [#81267](https://tracker.ceph.com/issues/81267),
+  which cites #4755, rather than comment on a resolved issue from 2013. The
+  fix in review is [ceph/ceph#72272](https://github.com/ceph/ceph/pull/72272)
+  (draft), a one-line change that indexes the table with the byte as
+  `unsigned char`, so a byte above 0x7f finds the table's in-bounds -1 and
+  is refused as a bad digit. Not found by us: #4755 reported it first.
   [#4755](https://tracker.ceph.com/issues/4755) (2013, Resolved), on
   `url_decode` assuming a signed `char` on armhf, remarked in passing that
   `hex_to_num` "has an obvious related bug in places where char is _not_
@@ -2022,9 +2031,10 @@ Every new entry adds its row to this table, in document order.
     initialization race), `HexTable`, `invalid url-encoding` and `rgw
     signed char` (none), and `url_decode` (23 pull requests; none changes
     `hex_to_num`).
-  Not filed: filing waits on a reproduction on a running radosgw.
 - **Found:** phase 1 auth work (unit A), transcribing `url_decode`,
-  2026-09-29; the shipped libraries were called the same day.
+  2026-09-29; the shipped libraries were called the same day. The
+  rgw-bug-reproduction session reproduced it under AddressSanitizer on
+  2026-09-30, and attached the reproducer to the tracker issue.
 
 ## A malformed percent-escape in the path makes radosgw serve another path
 
