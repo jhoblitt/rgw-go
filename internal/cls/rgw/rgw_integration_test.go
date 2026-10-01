@@ -30,9 +30,10 @@ type manifest struct {
 		NumShards int    `json:"num_shards"`
 	} `json:"buckets"`
 	Objects []struct {
-		Bucket string `json:"bucket"`
-		Key    string `json:"key"`
-		Size   uint64 `json:"size"`
+		Bucket      string `json:"bucket"`
+		Key         string `json:"key"`
+		Size        uint64 `json:"size"`
+		Compression string `json:"compression"`
 	} `json:"objects"`
 }
 
@@ -112,12 +113,15 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 		}
 
 		want := map[string]uint64{}
+		compressed := map[string]bool{}
 		for _, o := range m.Objects {
 			if o.Bucket == "plain" {
 				want[o.Key] = o.Size
+				compressed[o.Key] = o.Compression != ""
 			}
 		}
 		got := map[string]uint64{}
+		stored := map[string]uint64{}
 		for k, en := range merged {
 			Expect(en.Key.Name).To(Equal(k), "entry name under index key %q", k)
 			Expect(en.Key.Instance).To(BeEmpty())
@@ -125,9 +129,18 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 			Expect(ok).To(BeTrue(), "index key %q is namespaced", k)
 			Expect(en.Exists).To(BeTrue(), "%s exists", name)
 			Expect(en.Meta.ETag).To(MatchRegexp(etagRE.String()), "%s etag", name)
-			got[name] = en.Meta.Size
+			// radosgw indexes the bytes it stored, after any compression, as size and the client's length as accounted_size (src/rgw/driver/rados/rgw_putobj_processor.cc:393 at v19.2.6, :427 at v20.2.4).
+			got[name] = en.Meta.AccountedSize
+			stored[name] = en.Meta.Size
 		}
 		Expect(got).To(Equal(want))
+		for name, size := range want {
+			if compressed[name] {
+				Expect(stored[name]).To(BeNumerically("<", size), "%s stored size", name)
+			} else {
+				Expect(stored[name]).To(Equal(size), "%s stored size", name)
+			}
+		}
 		Expect(merged).To(HaveKey("__underscore.bin"))
 	})
 
