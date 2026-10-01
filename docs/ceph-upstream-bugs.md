@@ -44,7 +44,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none | ✓ |
 | [Squid accepts RestrictPublicBuckets but never enforces it](#squid-accepts-restrictpublicbuckets-but-never-enforces-it) | [#65741](https://tracker.ceph.com/issues/65741), [#70860](https://tracker.ceph.com/issues/70860), [#70859](https://tracker.ceph.com/issues/70859) | [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206) |  |
 | [radosgw answers 200 to a CreateBucket that loses a race to another owner](#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner) | [#76398](https://tracker.ceph.com/issues/76398) | [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) |  |
-| [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | none | none | ✓ |
+| [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | [#81304](https://tracker.ceph.com/issues/81304) | [ceph/ceph#72304](https://github.com/ceph/ceph/pull/72304) | ✓ |
 | [radosgw's bypass-gc bucket removal fails once a tail stripe is gone](#radosgws-bypass-gc-bucket-removal-fails-once-a-tail-stripe-is-gone) | [#24789](https://tracker.ceph.com/issues/24789), [#40587](https://tracker.ceph.com/issues/40587) | [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984), [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956) |  |
 | [The 2pc queue's reserved size drifts upward](#the-2pc-queues-reserved-size-drifts-upward) | none | none |  |
 | [The 2pc queue's self-heal is skipped when another write comes first](#the-2pc-queues-self-heal-is-skipped-when-another-write-comes-first) | [#80994](https://tracker.ceph.com/issues/80994) | none | ✓ |
@@ -996,7 +996,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** at v19.2.6 `RGWOp_Bucket_Remove::execute` passes `bypass-gc`
   to `RGWBucketAdminOp::remove_bucket` without calling `set_max_aio`
   (`rgw_rest_bucket.cc:225-248`), so `max_aio` keeps its default of 0
@@ -1036,18 +1036,29 @@ Every new entry adds its row to this table, in document order.
   deleted and sends the tail deletes with `pool_full_try`, as the GC worker
   does (`rgw_gc.cc:371`, `:413-415`, `:677`). N's purge task records the
   difference in `docs/exclusions.md`.
-- **Upstream:** no tracker issue or pull request reports or fixes it
-  (full-text tracker and all-time pull-request search, 2026-09-29). The admin
+- **Upstream:** we filed [#81304](https://tracker.ceph.com/issues/81304).
+  The fix in review is
+  [ceph/ceph#72304](https://github.com/ceph/ceph/pull/72304) (draft), which
+  clamps the budget in `remove_bypass_gc` with `std::max(1, ...)`, as the
+  index checks already do. Related but distinct:
+  [#24789](https://tracker.ceph.com/issues/24789) and
+  [#40587](https://tracker.ceph.com/issues/40587), ENOENT on an already
+  missing stripe, and [#73348](https://tracker.ceph.com/issues/73348), copied
+  objects. No earlier tracker issue or pull request reports it (full-text
+  tracker and all-time pull-request search, 2026-09-29). The admin
   op reached the loop through
   [ceph/ceph#60227](https://github.com/ceph/ceph/pull/60227) and its squid
   backport [ceph/ceph#62994](https://github.com/ceph/ceph/pull/62994); the
   forwarding on main came with
   [ceph/ceph#71016](https://github.com/ceph/ceph/pull/71016), the fix for
-  [#80213](https://tracker.ceph.com/issues/80213). Not filed: the defect has
-  not been reproduced on a running cluster, and filing needs a live
-  reproduction and a C++ reproducer.
-- **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source,
-  not reproduced.
+  [#80213](https://tracker.ceph.com/issues/80213).
+- **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source.
+  The rgw-bug-reproduction session reproduced it on running v19.2.6 and
+  v20.2.4 clusters on 2026-10-01. It removed a bucket of five 16 MiB
+  multipart objects through the admin API with `bypass-gc` and
+  `purge-objects`. The bucket was gone, but four tail stripes of one object
+  remained (two `__multipart_`, two `__shadow_`). The same removal through
+  `radosgw-admin` left none.
 
 ## radosgw's bypass-gc bucket removal fails once a tail stripe is gone
 
