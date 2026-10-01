@@ -43,7 +43,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
 | [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none | ✓ |
 | [Squid accepts RestrictPublicBuckets but never enforces it](#squid-accepts-restrictpublicbuckets-but-never-enforces-it) | [#65741](https://tracker.ceph.com/issues/65741), [#70860](https://tracker.ceph.com/issues/70860), [#70859](https://tracker.ceph.com/issues/70859) | [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206) |  |
-| [radosgw answers 200 to a CreateBucket that loses a race to another owner](#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner) | none | [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) |  |
+| [radosgw answers 200 to a CreateBucket that loses a race to another owner](#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner) | [#76398](https://tracker.ceph.com/issues/76398) | [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) |  |
 | [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | none | none | ✓ |
 | [radosgw's bypass-gc bucket removal fails once a tail stripe is gone](#radosgws-bypass-gc-bucket-removal-fails-once-a-tail-stripe-is-gone) | [#24789](https://tracker.ceph.com/issues/24789), [#40587](https://tracker.ceph.com/issues/40587) | [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984), [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956) |  |
 | [The 2pc queue's reserved size drifts upward](#the-2pc-queues-reserved-size-drifts-upward) | none | none |  |
@@ -935,7 +935,8 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw answers 200 to a CreateBucket that loses a race to another owner
 
-- **Kind:** defect, a regression; unfixed through main.
+- **Kind:** defect, a regression; unfixed through main, with a fix in review
+  upstream.
 - **Evidence:**
   - `RGWCreateBucket::execute` reads the bucket first (v19.2.6
     `rgw_op.cc:3541-3546`; v20.2.4 `:3769-3774`). A bucket another owner
@@ -972,21 +973,26 @@ Every new entry adds its row to this table, in document order.
   another owner holds the name, whether it is found at the read or at the
   create. That is a difference from radosgw, which unit M records in
   `docs/exclusions.md`.
-- **Upstream:** no tracker issue or pull request reports the race (full-text
-  tracker and all-time pull-request search, 2026-09-30). The return came
-  with e2eb66a3617 in
+- **Upstream:** [#76398](https://tracker.ceph.com/issues/76398) (Fix Under
+  Review), on CreateBucket's error codes for an existing bucket, and its open
+  fix [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) were both
+  opened on 2026-05-01, before our sessions. Neither mentions the race, but
+  #68722 covers it: `RadosBucket::create` returns `-EEXIST` for another
+  owner, which CreateBucket answers with 409 BucketAlreadyExists, and its new
+  handling of `-ERR_BUCKET_EXISTS` applies only to the same owner, whatever
+  `rgw_bucket_eexist_override` says. Until it merges, radosgw answers 200 by
+  default on v19.2.6, v20.2.4 and main. We file nothing, neither a duplicate
+  issue nor a competing pull request. The return came with e2eb66a3617 in
   [ceph/ceph#50599](https://github.com/ceph/ceph/pull/50599).
-  [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722), open, the fix
-  proposed for [#76398](https://tracker.ceph.com/issues/76398) on
-  CreateBucket's error codes for an existing bucket, changes that return to
-  `-EEXIST` without mentioning the race. `rgw_bucket_eexist_override`
+  `rgw_bucket_eexist_override`
   ([#70369](https://tracker.ceph.com/issues/70369),
   [ceph/ceph#62186](https://github.com/ceph/ceph/pull/62186), in v21.0.0 and
   later, off by default) answers 409 to every `-ERR_BUCKET_EXISTS`, the race
-  included. Not filed: the defect has not been reproduced on a running
-  cluster, and filing needs a live reproduction and a C++ reproducer.
+  included.
 - **Found:** phase 1 planning of unit M, 2026-09-29; derived from the source
-  and verified 2026-09-30, not reproduced.
+  and verified 2026-09-30. The rgw-bug-reproduction session confirmed the
+  mechanism at v19.2.6, v20.2.4 and main, and checked that #68722 changes
+  the race's path; it was not reproduced on a running cluster.
 
 ## radosgw's admin API bypass-gc removal leaks a tail and runs unbounded
 
