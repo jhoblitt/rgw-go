@@ -2421,8 +2421,10 @@ Every new entry adds its row to this table, in document order.
   releases not checked.
 - **rgw-go:** reads the option once at startup and holds any value above
   about 9.2e9 s as the longest Duration, about 292 years
-  (`internal/driver/options.go`), so it never wraps. No rgw-go cache reads
-  it yet; the one that does records the difference in `docs/exclusions.md`.
+  (`internal/driver/options.go`), so it never wraps. The metadata cache
+  (`internal/driver/cache.go`) expires its entries after it, and
+  `docs/exclusions.md` records the difference ("A cache expiry interval too
+  large for radosgw's clock").
 - **Upstream:** [#81218](https://tracker.ceph.com/issues/81218), which we
   filed. Its fix, [ceph/ceph#72255](https://github.com/ceph/ceph/pull/72255),
   a draft, gives the option `min: 0` and `max: 17_G` in `rgw.yaml.in`, so

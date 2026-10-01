@@ -852,17 +852,23 @@ does the following.
   data pool in rgw-go's placement resolution (`op.ZoneInfo.Placement`).
   radosgw's `RGWZonePlacementInfo::get_data_pool` returns an empty pool for
   it (`rgw_zone_types.h:281-290` at v19.2.6 and v20.2.4).
-- **No bootstrap.** rgw-go writes nothing at startup. When no zone or
-  zonegroup resolves, it refuses to start with `driver.ErrNoZone`, naming
-  the object it looked for, and it refuses to start on a root pool it cannot
-  open. radosgw creates what is missing instead. SiteConfig::load creates
-  the default zone and zonegroup (read_or_create_default_zone and
-  read_or_create_default_zonegroup, `driver/rados/rgw_zone.cc:1214`, `:1222`
-  and `:1312` at v19.2.6, `:1208`, `:1216` and `:1306` at v20.2.4), Squid's
-  zone service creates the default zonegroup (create_default_zg,
-  `services/svc_zone.cc:214` at v19.2.6), and the config store creates a
-  missing root pool when it reads from it (`rgw_init_ioctx` with create set,
-  `driver/rados/config/impl.cc:53` at v19.2.6 and v20.2.4).
+- **No bootstrap.** rgw-go writes nothing at startup but the control
+  objects, which radosgw creates too. When no zone or zonegroup resolves,
+  it refuses to start with `driver.ErrNoZone`, naming the object it looked
+  for, and it refuses to start on a root pool or a control pool it cannot
+  open. A metadata pool found missing later fails the request that needs
+  it, naming the pool. radosgw creates what is missing instead.
+  SiteConfig::load creates the default zone and zonegroup
+  (read_or_create_default_zone and read_or_create_default_zonegroup,
+  `driver/rados/rgw_zone.cc:1214`, `:1222` and `:1312` at v19.2.6, `:1208`,
+  `:1216` and `:1306` at v20.2.4), Squid's zone service creates the default
+  zonegroup (create_default_zg, `services/svc_zone.cc:214` at v19.2.6), and
+  the config store creates a missing root pool when it reads from it
+  (`rgw_init_ioctx` with create set, `driver/rados/config/impl.cc:53` at
+  v19.2.6 and v20.2.4), as the notify service and the system-object layer
+  create the control pool and any metadata pool they open
+  (`rgw_get_rados_ref`, `driver/rados/rgw_tools.cc:107-108` at v19.2.6,
+  `:108-109` at v20.2.4).
 - **A zonegroup without a master zone.** A zonegroup with one zone and no
   master zone gets that zone as its master in rgw-go's memory, and rgw-go
   writes nothing back. radosgw makes the zone the master and writes the
@@ -958,6 +964,16 @@ does the following.
   and a new bucket's index shard count (`rgw_bucket_layout.h:55` at v19.2.6
   and v20.2.4). At v19.2.6 it narrows an AIO limit above 2^32-1 the same
   way (`cls/rgw/cls_rgw_client.h:277`).
+- **A cache expiry interval too large for radosgw's clock.** rgw-go caps
+  `rgw_cache_expiry_interval` at 9223372036 s, about 292 years, the longest
+  interval its clock holds, so with a larger value an entry of its metadata
+  cache never expires in practice; 0 turns expiry off for both gateways.
+  radosgw counts the interval in nanoseconds in an unsigned 64-bit integer,
+  so it uses a value up to 18446744073 s, about 584 years, as given and
+  wraps a larger one: 18446744074 s expires an entry 0.29 s after it is
+  cached, and a multiple of 2^55 s turns expiry off
+  (`docs/ceph-upstream-bugs.md`, "[radosgw wraps an rgw_cache_expiry_interval
+  above 18446744073 seconds](ceph-upstream-bugs.md#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds)").
 
 ### S3 handler differences
 

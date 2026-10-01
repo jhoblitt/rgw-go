@@ -47,6 +47,30 @@ type sysobjs struct {
 	now     func() time.Time
 }
 
+// openSysObj builds the metadata cache and the notifier on the zone's
+// control pool and creates the control objects, as radosgw's notify service
+// does at start (init_watch, services/svc_notify.cc:199-264 at v19.2.6,
+// :162-224 at v20.2.4), whose failure fails radosgw's start. The cache
+// stays disabled until every control watch is registered, and for good when
+// rgw_cache_enabled is false, while the notifier still watches and sends
+// (docs/exclusions.md).
+func openSysObj(ctx context.Context, pools *poolCache, params meta.ZoneParams, o options, r denc.Release) (*sysobjs, error) {
+	cache := newObjectCache(o.cacheLRUSize, o.cacheExpiry, params.DomainRoot, time.Now)
+	control, err := pools.get(ctx, params.ControlPool)
+	if err != nil {
+		return nil, err
+	}
+	onEnabled := cache.setEnabled
+	if !o.cacheEnabled {
+		onEnabled = func(bool) {}
+	}
+	n := newNotifier(control, controlOIDs(o.numControlOIDs), r, o.maxNotifyRetries, cache.onNotify, onEnabled)
+	if err := n.createControlObjects(ctx); err != nil {
+		return nil, err
+	}
+	return &sysobjs{pools: pools, cache: cache, notify: n, release: r, now: time.Now}, nil
+}
+
 // readParams says what a read returns. attrs are the user.rgw. xattrs
 // unless rawAttrs asks for every one, as radosgw's raw_attrs does. With objv
 // the read checks the version objv read before, when it reads RADOS, and

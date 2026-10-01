@@ -629,3 +629,78 @@ var _ = Describe("sysobjs", func() {
 		Expect(s.remove(ctx, obj, nil)).To(Succeed(), "nor does a failed invalidation fail a remove")
 	})
 })
+
+var _ = Describe("openSysObj", func() {
+	const control = "zone.rgw.control"
+	var (
+		c      *fakerados.Cluster
+		pools  *poolCache
+		params meta.ZoneParams
+		o      options
+	)
+	BeforeEach(func() {
+		DeferCleanup(captureLog(GinkgoWriter))
+		c = fakerados.New()
+		c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)
+		pools = newPoolCache(c)
+		DeferCleanup(pools.closeAll)
+		params = meta.ZoneParams{DomainRoot: meta.ParsePool("zone.rgw.meta:root"), ControlPool: meta.ParsePool(control)}
+		o = options{cacheEnabled: true, cacheLRUSize: 25000, cacheExpiry: 900 * time.Second, numControlOIDs: 8, maxNotifyRetries: 10}
+	})
+
+	// run runs the notifier until the spec ends and waits for every control
+	// watch.
+	run := func(ctx context.Context, n *notifier) {
+		runCtx, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- n.run(runCtx) }()
+		DeferCleanup(func() {
+			cancel()
+			Eventually(done).WithTimeout(time.Second).Should(Receive())
+		})
+		for _, oid := range n.oids {
+			Eventually(func() int { return c.Watches(control, "", oid) }).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(Equal(1), oid)
+		}
+	}
+
+	It("builds the cache and the notifier from the options and creates the control objects", func(ctx SpecContext) {
+		o = options{cacheEnabled: true, cacheLRUSize: 7, cacheExpiry: 30 * time.Second, numControlOIDs: 0, maxNotifyRetries: 3}
+		sys, err := openSysObj(ctx, pools, params, o, denc.Tentacle)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Object(control, "", "notify")).NotTo(BeNil(), "rgw_num_control_oids 0 is the legacy object")
+		Expect(sys.notify.oids).To(Equal([]string{"notify"}))
+		Expect(sys.notify.maxRetries).To(BeEquivalentTo(3))
+		Expect(sys.notify.release).To(Equal(denc.Tentacle))
+		Expect(sys.release).To(Equal(denc.Tentacle))
+		Expect(sys.cache.limit).To(BeEquivalentTo(7))
+		Expect(sys.cache.expiry).To(Equal(30 * time.Second))
+		Expect(sys.cache.domainRoot).To(Equal(params.DomainRoot))
+		Expect(cacheEnabled(sys.cache)).To(BeFalse(), "off until every control watch is registered")
+	})
+
+	It("enables the cache once every control watch is registered", func(ctx SpecContext) {
+		sys, err := openSysObj(ctx, pools, params, o, denc.Squid)
+		Expect(err).NotTo(HaveOccurred())
+		run(ctx, sys.notify)
+		Eventually(func() bool { return cacheEnabled(sys.cache) }).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(BeTrue())
+	})
+
+	It("keeps the cache off when rgw_cache_enabled is false, and still watches and sends", func(ctx SpecContext) {
+		o.cacheEnabled = false
+		sys, err := openSysObj(ctx, pools, params, o, denc.Squid)
+		Expect(err).NotTo(HaveOccurred())
+		run(ctx, sys.notify)
+		Consistently(func() bool { return cacheEnabled(sys.cache) }).WithTimeout(50 * time.Millisecond).WithPolling(5 * time.Millisecond).Should(BeFalse())
+		obj := sysObj{pool: params.DomainRoot, oid: "plain"}
+		_, err = sys.write(ctx, obj, []byte("d"), nil, true, time.Time{}, &objv{write: newWriteVersion()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Notifies(control, "", sys.notify.pick(normalName(obj.pool, obj.oid)))).To(HaveLen(1))
+	})
+
+	It("fails naming the control pool it cannot open", func(ctx SpecContext) {
+		c.FailPool(control)
+		_, err := openSysObj(ctx, pools, params, o, denc.Squid)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(err).To(MatchError(ContainSubstring(control)))
+	})
+})
