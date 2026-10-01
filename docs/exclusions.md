@@ -570,8 +570,8 @@ v20.2.4 tags, rgw-go does the following.
 rgw-go serves radosgw's beast frontend configuration on net/http. Where
 the two differ, checked against the v19.2.6 and v20.2.4 tags, rgw-go does
 the following; a difference only one release shows names it. The
-`rgw_asio_frontend.cc` lines cited are those tags', and the net/http ones
-go1.27.1's.
+`rgw_asio_frontend.cc` lines cited are those tags', and the net/http,
+crypto/tls and net/url ones go1.27.1's.
 
 - **TCP options.** TCP_NODELAY is on, Go's default, unless `tcp_nodelay`
   is set to anything but `1`; beast turns it off unless `tcp_nodelay=1`
@@ -583,6 +583,10 @@ go1.27.1's.
   ([`rgw_asio_client.cc:152-158`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L152-L158)
   at both tags); net/http writes the header only to close the connection
   or to keep an HTTP/1.0 one open, which HTTP/1.1 clients treat alike.
+  A response whose connection then closes over a body the handler left
+  unread carries no `Connection: close` either: under the full duplex
+  rgw-go serves each request in, net/http decides to close only after the
+  header is out (`server.go:1447-1473` and `:1552-1560`).
 - **Keys accepted and ignored**, each logged once at startup:
   `max_connection_backlog`, since Go listens with the kernel's backlog;
   `so_reuseport`, which on Tentacle sets `SO_REUSEPORT` (`:651-693` at
@@ -658,6 +662,14 @@ go1.27.1's.
   sets beast's limit to 0, so radosgw answers every request with that
   empty 400 (`:643-657` at v19.2.6, `:595-609` at v20.2.4), where rgw-go
   takes 0 as net/http's 1 MiB default.
+- **Host header refusals.** net/http answers `400 Bad Request`, with a
+  text body and before any handler runs, an HTTP/1.1 request without a
+  Host header (`server.go:1069-1073`), one with more than one
+  (`request.go:1161-1163`), and one whose Host holds a byte its host
+  validator refuses (`server.go:1074-1076`). beast answers 400 only to a
+  request it cannot parse (`:275-289` at both tags) and files each header
+  it reads, so a repeated Host's last value wins (`rgw_asio_client.cc:36-66`
+  at v19.2.6 and v20.2.4); radosgw serves all three.
 - **Malformed percent-escapes in the path.** net/http answers `400 Bad
   Request`, with a text body and before any handler runs, a request whose
   path holds a malformed percent-escape such as `%zz` or a lone `%`: the
