@@ -1,0 +1,23 @@
+{"Time":"2026-09-28T03:11:00.000000000Z","Action":"start","Package":"github.com/ceph/go-ceph/rgw/admin"}
+{"Time":"2026-09-28T03:11:00.010000000Z","Action":"run","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite"}
+{"Time":"2026-09-28T03:11:00.010100000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite","Output":"=== RUN   TestRadosGWTestSuite\n"}
+{"Time":"2026-09-28T03:11:00.020000000Z","Action":"run","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestAccount"}
+{"Time":"2026-09-28T03:11:00.020100000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestAccount","Output":"=== RUN   TestRadosGWTestSuite/TestAccount\n"}
+{"Time":"2026-09-28T03:11:00.020200000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestAccount","Output":"    account_test.go:21: accounts are not supported by this release\n"}
+{"Time":"2026-09-28T03:11:00.020300000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestAccount","Output":"--- SKIP: TestRadosGWTestSuite/TestAccount (0.00s)\n"}
+{"Time":"2026-09-28T03:11:00.020400000Z","Action":"skip","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestAccount","Elapsed":0}
+{"Time":"2026-09-28T03:11:00.030000000Z","Action":"run","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage"}
+{"Time":"2026-09-28T03:11:00.030100000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage","Output":"=== RUN   TestRadosGWTestSuite/TestUsage\n"}
+{"Time":"2026-09-28T03:11:00.530000000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage","Output":"    usage_test.go:30: \n"}
+{"Time":"2026-09-28T03:11:00.530100000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage","Output":"        \tError:      \tShould not be empty, but was []\n"}
+{"Time":"2026-09-28T03:11:00.530200000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage","Output":"--- FAIL: TestRadosGWTestSuite/TestUsage (0.50s)\n"}
+{"Time":"2026-09-28T03:11:00.530300000Z","Action":"fail","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUsage","Elapsed":0.5}
+{"Time":"2026-09-28T03:11:00.540000000Z","Action":"run","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUser"}
+{"Time":"2026-09-28T03:11:00.540100000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUser","Output":"=== RUN   TestRadosGWTestSuite/TestUser\n"}
+{"Time":"2026-09-28T03:11:00.840000000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUser","Output":"--- PASS: TestRadosGWTestSuite/TestUser (0.30s)\n"}
+{"Time":"2026-09-28T03:11:00.840100000Z","Action":"pass","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite/TestUser","Elapsed":0.3}
+{"Time":"2026-09-28T03:11:00.850000000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite","Output":"--- FAIL: TestRadosGWTestSuite (0.84s)\n"}
+{"Time":"2026-09-28T03:11:00.850100000Z","Action":"fail","Package":"github.com/ceph/go-ceph/rgw/admin","Test":"TestRadosGWTestSuite","Elapsed":0.84}
+{"Time":"2026-09-28T03:11:00.860000000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Output":"FAIL\n"}
+{"Time":"2026-09-28T03:11:00.870000000Z","Action":"output","Package":"github.com/ceph/go-ceph/rgw/admin","Output":"FAIL\tgithub.com/ceph/go-ceph/rgw/admin\t0.870s\n"}
+{"Time":"2026-09-28T03:11:00.870100000Z","Action":"fail","Package":"github.com/ceph/go-ceph/rgw/admin","Elapsed":0.87}

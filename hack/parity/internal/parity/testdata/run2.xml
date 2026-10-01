@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="1" failures="2" skipped="1" tests="6" time="1.215" timestamp="2026-09-28T03:21:00.000000+00:00" hostname="host">
+    <testcase classname="s3tests.functional.test_s3" name="test_a" time="0.105" />
+    <testcase classname="s3tests.functional.test_s3" name="test_b" time="0.231">
+      <failure message="AssertionError: assert 403 == 200">def test_b():
+&gt;       assert status == 200
+E       AssertionError: assert 403 == 200</failure>
+    </testcase>
+    <testcase classname="s3tests.functional.test_s3" name="test_c" time="0.150">
+      <failure message="AssertionError: assert 1 == 2">def test_c():
+&gt;       assert len(keys) == 2
+E       AssertionError: assert 1 == 2</failure>
+    </testcase>
+    <testcase classname="s3tests.functional.test_s3" name="test_d" time="0.001">
+      <skipped type="pytest.skip" message="not supported">s3tests/functional/test_s3.py:42: not supported</skipped>
+    </testcase>
+    <testcase classname="s3tests.functional.test_s3" name="test_e" time="0.002">
+      <error message="failed on setup with &quot;botocore.exceptions.ClientError&quot;">botocore.exceptions.ClientError</error>
+    </testcase>
+    <testcase classname="s3tests.functional.test_s3" name="test_f" time="0.138" />
+  </testsuite>
+</testsuites>
