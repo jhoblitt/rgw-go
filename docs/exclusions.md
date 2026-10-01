@@ -914,12 +914,6 @@ v20.2.4 tags, rgw-go does the following.
   (`rgw_rest.cc:2182-2186`, `:2290-2304` and `:676-681` at v19.2.6,
   `:2204-2208`, `:2312-2326` and `:681-686` at v20.2.4). rgw-go renders
   every S3 document and error document as XML, those included.
-- **The S3 handler's request ids count up.** The S3 handler numbers its
-  requests from a counter in the transaction id's 21 hex digits; radosgw
-  draws each number at random (`StoreDriver::get_new_req_id`,
-  `rgw_sal_store.h:27-29` at v19.2.6, `:101-103` at v20.2.4). The id keeps
-  radosgw's form, and the answer to a request for an API rgw-go does not
-  serve draws its number at random, as radosgw does.
 - **No `Bucket` header.** With `rgw_expose_bucket` set, which defaults to
   false, radosgw names the bucket in a `Bucket` header on an error it
   answers through `abort_early`, one refused before the op executes

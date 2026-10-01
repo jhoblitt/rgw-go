@@ -96,13 +96,20 @@ var _ = Describe("Handler", func() {
 			`<Owner><ID>anonymous</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>`))
 	})
 	It("stamps x-amz-request-id and Server on every response", func() {
+		const id = `^tx[0-9a-f]{21}-0068d7a1b2-4155-z$`
 		rec := get("/")
-		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000001-0068d7a1b2-4155-z"))
+		first := rec.Header().Get("x-amz-request-id")
+		Expect(first).To(MatchRegexp(id))
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
-		Expect(get("/").Header().Get("x-amz-request-id")).To(HavePrefix("tx000000000000000000002-"), "sequence advances")
+		second := get("/").Header().Get("x-amz-request-id")
+		Expect(second).To(MatchRegexp(id))
+		Expect(second).NotTo(Equal(first))
+		other := serveReq(newHandler(store, s3.AnonymousOnly{}, s3.Config{}), http.MethodGet, "/", nil)
+		Expect(other.Header().Get("x-amz-request-id")).NotTo(Equal(first),
+			"a second handler's first number is drawn at random, as radosgw's get_new_req_id draws it, not counted from the same start")
 		rec = serveReq(h, "PATCH", "/", nil)
 		Expect(rec.Code).To(Equal(405))
-		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000003-0068d7a1b2-4155-z"), "refused before dispatch")
+		Expect(rec.Header().Get("x-amz-request-id")).To(MatchRegexp(id), "refused before dispatch")
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
 	})
 	It("renders radosgw's error document for a route without a handler", func() {
@@ -110,7 +117,7 @@ var _ = Describe("Handler", func() {
 		Expect(rec.Code).To(Equal(501))
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message></Message>` +
-			`<BucketName>plain</BucketName><RequestId>tx000000000000000000001-0068d7a1b2-4155-z</RequestId><HostId>4155-z-zg</HostId></Error>`))
+			`<BucketName>plain</BucketName><RequestId>` + rec.Header().Get("x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "end_header's error branch sets the length through dump_content_length, rgw_rest.cc:620-624")
 	})
@@ -436,7 +443,7 @@ var _ = Describe("Handler", func() {
 			h.ServeHTTP(rec, req)
 			Expect(rec.Code).To(Equal(500))
 			Expect(rec.Body.String()).To(ContainSubstring("<Code>InternalError</Code>"))
-			Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx000000000000000000001-0068d7a1b2-4155-z"))
+			Expect(rec.Header().Get("x-amz-request-id")).To(MatchRegexp(`^tx[0-9a-f]{21}-0068d7a1b2-4155-z$`))
 			name, status, _, _, _ := m.ObserveArgsForCall(0)
 			Expect([]any{name, status}).To(Equal([]any{"unknown", 500}))
 			Expect(store.Usage()).To(BeEmpty(), "LogUsage drops a request with no identity, as radosgw's flush does")

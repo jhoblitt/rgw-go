@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -28,7 +29,6 @@ type Handler struct {
 	cfg     Config
 	metrics op.Metrics
 	routes  map[routeKey]HandlerFunc
-	seq     atomic.Uint64
 	// inflight is SimpleThrottler's outstanding_requests.
 	inflight atomic.Int64
 }
@@ -205,7 +205,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer h.metrics.InFlight(-1)
 
 	now := h.env.Clock()
-	id := op.TransID(h.seq.Add(1), now, h.cfg.TransIDSuffix)
+	// radosgw draws each request's number at random (StoreDriver::get_new_req_id,
+	// rgw_sal_store.h:27-29 at v19.2.6, :101-103 at v20.2.4).
+	id := op.TransID(rand.Uint64(), now, h.cfg.TransIDSuffix) //nolint:gosec // a request id must be unique, not unpredictable
 	w.Header().Set("x-amz-request-id", id)
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
