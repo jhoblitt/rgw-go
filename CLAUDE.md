@@ -25,6 +25,9 @@ before writing Go here.
   which every build, test and lint passes (Makefile `GO_TAGS`, .golangci.yml, CI).
 - `docs/cgo-limitations.md` is the registry of go-ceph, librados and cgo limitations for
   the pure-Go question; add or update an entry whenever a task, review or benchmark finds one.
+- `docs/rados-format-opportunities.md` is the registry of changes to radosgw's RADOS formats
+  that would improve performance while staying S3-compliant; add an entry whenever work meets
+  one. rgw-go keeps the formats byte-identical, and recording an entry never blocks a task.
 - `docs/ceph-upstream-bugs.md` is the registry of defects in upstream ceph/ceph that rgw-go
   meets (radosgw, the RGW classes, librados, librbd, the OSD, the monitors); add or update an
   entry, with evidence at a named release tag, whenever work meets one, and share it with
