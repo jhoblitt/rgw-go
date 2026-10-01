@@ -70,7 +70,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw-admin bucket rm exits 0 when it removes nothing](#radosgw-admin-bucket-rm-exits-0-when-it-removes-nothing) | none | none | ✓ |
 | [radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token](#radosgws-s3-listbuckets-reads-neither-max-buckets-nor-continuation-token) | [#72315](https://tracker.ceph.com/issues/72315), [#75463](https://tracker.ceph.com/issues/75463) | [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742), [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920) |  |
 | [url_decode reads outside its hex table for a byte above 0x7f after "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-) | [#4755](https://tracker.ceph.com/issues/4755), [#81267](https://tracker.ceph.com/issues/81267) | [ceph/ceph#72272](https://github.com/ceph/ceph/pull/72272) |  |
-| [A malformed percent-escape in the path makes radosgw serve another path](#a-malformed-percent-escape-in-the-path-makes-radosgw-serve-another-path) | none | none | ✓ |
+| [A malformed percent-escape in the path makes radosgw serve another path](#a-malformed-percent-escape-in-the-path-makes-radosgw-serve-another-path) | [#71458](https://tracker.ceph.com/issues/71458), [#81301](https://tracker.ceph.com/issues/81301) | [ceph/ceph#72301](https://github.com/ceph/ceph/pull/72301) |  |
 | [radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio](#radosgw-skips-or-never-finishes-every-bucket-index-batch-on-a-zero-rgw_bucket_index_max_aio) | none | none | ✓ |
 | [radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads](#radosgw-clamps-a-copy-of-rgw_override_bucket_index_max_shards-that-bucket-creation-never-reads) | [#70980](https://tracker.ceph.com/issues/70980) | [ceph/ceph#72256](https://github.com/ceph/ceph/pull/72256) |  |
 | [radosgw wraps an rgw_cache_expiry_interval above 18446744073 seconds](#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds) | [#81218](https://tracker.ceph.com/issues/81218) | [ceph/ceph#72255](https://github.com/ceph/ceph/pull/72255) | ✓ |
@@ -2038,8 +2038,8 @@ Every new entry adds its row to this table, in document order.
 
 ## A malformed percent-escape in the path makes radosgw serve another path
 
-- **Kind:** defect, unfixed through main. Unreproduced on a running
-  radosgw: found by reading the code at v19.2.6 and v20.2.4.
+- **Kind:** defect, unfixed through main, with a fix in review. Reproduced
+  on a running radosgw at v19.2.6 and v20.2.4.
 - **Evidence:**
   - `RGWREST::preprocess` decodes the path with `url_decode` and checks
     the result only for a NUL (`rgw_rest.cc:2182-2186` at v19.2.6,
@@ -2064,7 +2064,15 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** net/http answers such a request `400 Bad Request` before any
   handler runs; `docs/exclusions.md` records the difference under
   "Frontend differences".
-- **Upstream:** no issue reports the path.
+- **Upstream:** we filed [#81301](https://tracker.ceph.com/issues/81301),
+  which cites #71458 and ceph/ceph#63521, rather than comment on the
+  resolved CVE. The fix in review is
+  [ceph/ceph#72301](https://github.com/ceph/ceph/pull/72301) (draft): a
+  strict `url_decode` that reports a malformed escape, which the path's
+  routing callers refuse with 400, plus unit tests. The lenient `url_decode`
+  stays as it is, so #71458's empty copy-source check still holds. Not found
+  by us: #71458 reported the same `url_decode` result first, through
+  another caller.
   [#71458](https://tracker.ceph.com/issues/71458) (CVE-2025-48052,
   Resolved) was the same empty result crashing UploadPartCopy through
   `x-amz-copy-source`; its fix,
@@ -2074,10 +2082,15 @@ Every new entry adds its row to this table, in document order.
   above: tracker terms `url encoding`, `invalid url`, `malformed url`,
   `percent sign` and `bad escape` find #71458, its backports and
   unrelated issues; pull request terms `url_decode` and `invalid
-  url-encoding` find no fix for the path. Not filed: filing waits on a
-  reproduction on a running radosgw.
+  url-encoding` find no fix for the path.
 - **Found:** phase 1 auth work (unit A), checking the frontend's
-  percent-escape entry against `url_decode`, 2026-09-30.
+  percent-escape entry against `url_decode`, 2026-09-30. The
+  rgw-bug-reproduction session reproduced it on running v19.2.6 and v20.2.4
+  clusters the same day. `GET /repro/k%` returns the body of key `k`, while
+  `GET /repro/k%25` answers 404. `GET /repro/%zz` returns a ListAllMyBuckets
+  result for a URL that names an object in bucket `repro`. The radosgw log
+  shows the routing on the decoded path. The reproducer, written in Go, its
+  output and the log are attached to the tracker issue.
 
 ## radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio
 
