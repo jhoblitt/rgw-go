@@ -71,7 +71,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's S3 ListBuckets reads neither max-buckets nor continuation-token](#radosgws-s3-listbuckets-reads-neither-max-buckets-nor-continuation-token) | [#72315](https://tracker.ceph.com/issues/72315), [#75463](https://tracker.ceph.com/issues/75463) | [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742), [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920) |  |
 | [url_decode reads outside its hex table for a byte above 0x7f after "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-) | [#4755](https://tracker.ceph.com/issues/4755), [#81267](https://tracker.ceph.com/issues/81267) | [ceph/ceph#72272](https://github.com/ceph/ceph/pull/72272) |  |
 | [A malformed percent-escape in the path makes radosgw serve another path](#a-malformed-percent-escape-in-the-path-makes-radosgw-serve-another-path) | [#71458](https://tracker.ceph.com/issues/71458), [#81301](https://tracker.ceph.com/issues/81301) | [ceph/ceph#72301](https://github.com/ceph/ceph/pull/72301) |  |
-| [radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio](#radosgw-skips-or-never-finishes-every-bucket-index-batch-on-a-zero-rgw_bucket_index_max_aio) | none | none | ✓ |
+| [radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio](#radosgw-skips-or-never-finishes-every-bucket-index-batch-on-a-zero-rgw_bucket_index_max_aio) | [#81302](https://tracker.ceph.com/issues/81302) | [ceph/ceph#72302](https://github.com/ceph/ceph/pull/72302) | ✓ |
 | [radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads](#radosgw-clamps-a-copy-of-rgw_override_bucket_index_max_shards-that-bucket-creation-never-reads) | [#70980](https://tracker.ceph.com/issues/70980) | [ceph/ceph#72256](https://github.com/ceph/ceph/pull/72256) |  |
 | [radosgw wraps an rgw_cache_expiry_interval above 18446744073 seconds](#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds) | [#81218](https://tracker.ceph.com/issues/81218) | [ceph/ceph#72255](https://github.com/ceph/ceph/pull/72255) | ✓ |
 | [radosgw spins or stops caching on a negative usage-log or quota interval](#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval) | [#81226](https://tracker.ceph.com/issues/81226) | [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261) | ✓ |
@@ -2094,7 +2094,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** `rgw_bucket_index_max_aio`, the number of bucket-index
   operations radosgw keeps in flight across a bucket's shards, is a `uint`
   with no `min:` (`common/options/rgw.yaml.in:195-202` at v19.2.6,
@@ -2122,9 +2122,12 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reads the option once at startup and uses a zero as 1, with an
   error-level log line naming the option, so the driver's bucket-index
   fan-out always has a window. `docs/exclusions.md` records the difference.
-- **Upstream:** no issue or pull request reports it (searched 2026-09-30);
-  each search method was first run on a known match. Not filed: filing waits
-  on a reproduction on a running system.
+- **Upstream:** we filed [#81302](https://tracker.ceph.com/issues/81302).
+  The fix in review is
+  [ceph/ceph#72302](https://github.com/ceph/ceph/pull/72302) (draft), which
+  adds `min: 1` to the option, so that `Option::validate` refuses a zero on
+  every configuration path. No earlier issue or pull request reports it
+  (searched 2026-09-30); each search method was first run on a known match.
   [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160), the fix for
   [#80991](https://tracker.ceph.com/issues/80991), adds `min: 1` to
   `rgw_lc_max_objs`, `rgw_usage_max_shards` and `rgw_gc_max_objs` only.
@@ -2136,8 +2139,12 @@ Every new entry adds its row to this table, in document order.
     `rgw_usage_max_shards`. Term `rgw_bucket_index_max_aio`: six pull
     requests (#28558, #49795, #59199, #59222, #60628 and #61760), none
     about a zero window.
-- **Found:** phase 1 unit M, validating the driver's options, 2026-09-30;
-  not reproduced on a running cluster.
+- **Found:** phase 1 unit M, validating the driver's options, 2026-09-30.
+  The rgw-bug-reproduction session reproduced it on running clusters the
+  same day with `radosgw-admin bucket list --rgw-bucket-index-max-aio=0` on
+  a bucket holding eight objects. On v19.2.6 it printed `[]` and exited 0;
+  on v20.2.4 it hung until a 30-second timeout ended it (exit 124). The
+  output and the patch are attached to the tracker issue.
 
 ## radosgw clamps a copy of rgw_override_bucket_index_max_shards that bucket creation never reads
 
