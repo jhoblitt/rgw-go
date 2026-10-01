@@ -1,7 +1,9 @@
-// Package xmltext escapes XML element text as ceph's XMLFormatter does, so the
-// XML documents rgw-go writes, the S3 responses and the admin API's XML alike,
-// carry radosgw's bytes. It imports only the standard library, so any package
-// that renders XML may use it.
+// Package xmltext writes and reads XML as radosgw does. It escapes element
+// text as ceph's XMLFormatter does, so the XML documents rgw-go writes, the S3
+// responses and the admin API's XML alike, carry radosgw's bytes, and it reads
+// a request body into the element tree radosgw's RGWXMLParser builds, refusing
+// what expat refuses. It imports only the standard library, so any package
+// that renders or parses XML may use it.
 package xmltext
 
 import (

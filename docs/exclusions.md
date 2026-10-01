@@ -559,17 +559,18 @@ review and verified against the tree.
   Tentacle's radosgw narrowed the override because the other errors may
   be invalid input.
 - **ACL documents escape what radosgw writes raw.** radosgw writes the
-  owner's and each grantee's ID and display name into the GetBucketAcl and
-  GetObjectAcl documents without XML escaping (`rgw_acl_s3.cc:172-180` and
-  `:246-274` at v19.2.6 and v20.2.4). A display name holding markup
+  owner's and each grantee's ID and display name, and an email grantee's
+  address, into the GetBucketAcl and GetObjectAcl documents without XML
+  escaping (`rgw_acl_s3.cc:172-180` and `:246-274` at v19.2.6 and
+  v20.2.4). A display name holding markup
   therefore yields either malformed XML, as `A&B` and `a<b` do, or
   well-formed XML that parses to another name or carries extra markup, as
   `&amp;` (read back as `&`) and `<b/>` (an empty `b` element) do. rgw-go
   escapes that text as radosgw's XML formatter escapes the text of its
   other documents (`xml_stream_escaper`, `src/common/escape.cc:134-169`).
   The stored ACL is the same either way; only the rendered document
-  differs, and only for an ID or display name holding `&`, `<`, `>`, `'`,
-  `"` or a control byte.
+  differs, and only for an ID, display name or email address holding `&`,
+  `<`, `>`, `'`, `"` or a control byte.
 
 ### Command-line differences
 
@@ -616,10 +617,11 @@ checked against the v19.2.6 and v20.2.4 tags, rgw-go does the following.
 
 ### Request parsing and dispatch differences
 
-rgw-go parses an S3 request's Host, path and query, and picks the op that
-serves it, as radosgw's `RGWREST::preprocess`, `init_from_header` and
-`op_*` methods do. Where the two differ, checked against the v19.2.6 and
-v20.2.4 tags, rgw-go does the following.
+rgw-go parses an S3 request's Host, path and query, picks the op that
+serves it, and reads its XML body, as radosgw's `RGWREST::preprocess`,
+`init_from_header` and `op_*` methods and its `RGWXMLParser` do. Where the
+two differ, checked against the v19.2.6 and v20.2.4 tags, rgw-go does the
+following.
 
 - **`?notification` ignores `rgw_enable_apis`.** radosgw routes a bucket's
   `?notification` to its notification ops only when `rgw_enable_apis`
@@ -669,6 +671,27 @@ v20.2.4 tags, rgw-go does the following.
   level. On Squid it still accepts the signed payload forms of the
   GetObject a Squid radosgw would run, so authentication refuses no
   request radosgw takes.
+- **S3 XML request bodies are read with Go's `encoding/xml`, not expat.**
+  radosgw reads them with expat, without namespace processing and without
+  an unknown-encoding handler (`RGWXMLParser`, `rgw_xml.cc:158` and
+  `:219-221` at v19.2.6 and v20.2.4). rgw-go reads them through one
+  reader, `xmltext.Parse`, which keeps names as written, prefix included,
+  as radosgw does, and adds the well-formedness checks expat makes and Go's
+  decoder skips. It still refuses with 400 some bodies expat reads: one
+  declaring ISO-8859-1 or US-ASCII, or written in UTF-16, the encodings
+  expat knows besides UTF-8; one whose XML declaration names a version
+  other than 1.0; one with a name holding more than one colon; and one that
+  references an entity declared in its DTD, or an undeclared entity where
+  the DTD has an external subset or a parameter-entity reference. rgw-go
+  ignores a DTD's attribute declarations, which expat applies: both the
+  defaults and the trimming and collapsing of whitespace in a value whose
+  declared type is tokenized, such as NMTOKEN or ID. So an ACL grantee
+  whose `xsi:type` comes only from such a default, or holds whitespace
+  such a declaration would remove, is refused.
+  rgw-go reads some bodies expat refuses: attributes not separated by
+  whitespace; a malformed document type declaration, which Go's decoder
+  passes through unparsed; and a character reference to a surrogate code
+  point, which Go's decoder reads as U+FFFD.
 
 ### Frontend differences
 
