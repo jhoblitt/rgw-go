@@ -7,8 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/jhoblitt/rgw-go/internal/cli"
 )
@@ -18,7 +16,7 @@ func main() {
 }
 
 func run() int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cli.NotifyContext(context.Background())
 	defer stop()
 	// Not os.Args[1:]: installed as radosgw, the whole command line is ceph's.
 	if err := cli.Run(ctx, cli.Argv(os.Args), os.Stdin, os.Stdout, os.Stderr); err != nil {

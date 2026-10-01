@@ -8,7 +8,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -63,19 +62,9 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (RGW_GO_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (RGW_GO_LOG_FORMAT)")
-	cmd.AddCommand(newServeCmd(), newVersionCmd())
+	cmd.AddCommand(newServeCmd(v), newVersionCmd())
 
 	return cmd
-}
-
-func newServeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "serve",
-		Short: "Run the gateway (not implemented in phase 0)",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return errors.New("serve: not implemented in phase 0")
-		},
-	}
 }
 
 func newVersionCmd() *cobra.Command {
