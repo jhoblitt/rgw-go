@@ -27,15 +27,15 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | Entry | Upstream issues | Upstream fix PRs | Found by us |
 | --- | --- | --- | --- |
 | [Squid does not guard listing-time index suggestions against resharding](#squid-does-not-guard-listing-time-index-suggestions-against-resharding) | [#81000](https://tracker.ceph.com/issues/81000), [#81217](https://tracker.ceph.com/issues/81217) | [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609), [ceph/ceph#72254](https://github.com/ceph/ceph/pull/72254) |  |
-| [check_disk_state removes a multipart part's index entry from the wrong shard](#check_disk_state-removes-a-multipart-parts-index-entry-from-the-wrong-shard) | [#81121](https://tracker.ceph.com/issues/81121) | none | ✓ |
+| [check_disk_state removes a multipart part's index entry from the wrong shard](#check_disk_state-removes-a-multipart-parts-index-entry-from-the-wrong-shard) | [#81121](https://tracker.ceph.com/issues/81121) | [ceph/ceph#72306](https://github.com/ceph/ceph/pull/72306) | ✓ |
 | [cls_rgw complete_op writes a stale epoch back when it cancels](#cls_rgw-complete_op-writes-a-stale-epoch-back-when-it-cancels) | [#80894](https://tracker.ceph.com/issues/80894), [#81002](https://tracker.ceph.com/issues/81002) | [ceph/ceph#72097](https://github.com/ceph/ceph/pull/72097) |  |
-| [cls_rgw encodes a packed value of exactly 65536 as 0](#cls_rgw-encodes-a-packed-value-of-exactly-65536-as-0) | [#80995](https://tracker.ceph.com/issues/80995) | none | ✓ |
+| [cls_rgw encodes a packed value of exactly 65536 as 0](#cls_rgw-encodes-a-packed-value-of-exactly-65536-as-0) | [#80995](https://tracker.ceph.com/issues/80995) | [ceph/ceph#72307](https://github.com/ceph/ceph/pull/72307) | ✓ |
 | [Squid before 19.2.3 refuses a delete marker on top of a delete marker](#squid-before-1923-refuses-a-delete-marker-on-top-of-a-delete-marker) | none | [ceph/ceph#54957](https://github.com/ceph/ceph/pull/54957), [ceph/ceph#62740](https://github.com/ceph/ceph/pull/62740) |  |
 | [cls_rgw usage trim never removes a payer-keyed record](#cls_rgw-usage-trim-never-removes-a-payer-keyed-record) | [#72593](https://tracker.ceph.com/issues/72593), [#80999](https://tracker.ceph.com/issues/80999) | [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) |  |
 | [cls_rgw usage trim with a bucket filter stalls behind 1000 other records](#cls_rgw-usage-trim-with-a-bucket-filter-stalls-behind-1000-other-records) | [#58136](https://tracker.ceph.com/issues/58136) | [ceph/ceph#49168](https://github.com/ceph/ceph/pull/49168) |  |
 | [radosgw faults on a zero rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards](#radosgw-faults-on-a-zero-rgw_gc_max_objs-rgw_lc_max_objs-or-rgw_usage_max_shards) | [#80991](https://tracker.ceph.com/issues/80991) | [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160) | ✓ |
-| [radosgw truncates a long aws-chunked trailer section instead of rejecting it](#radosgw-truncates-a-long-aws-chunked-trailer-section-instead-of-rejecting-it) | [#81122](https://tracker.ceph.com/issues/81122) | none | ✓ |
-| [radosgw accepts a negative or overflowing aws-chunked chunk size](#radosgw-accepts-a-negative-or-overflowing-aws-chunked-chunk-size) | [#81123](https://tracker.ceph.com/issues/81123) | none | ✓ |
+| [radosgw truncates a long aws-chunked trailer section instead of rejecting it](#radosgw-truncates-a-long-aws-chunked-trailer-section-instead-of-rejecting-it) | [#81122](https://tracker.ceph.com/issues/81122) | [ceph/ceph#72308](https://github.com/ceph/ceph/pull/72308) | ✓ |
+| [radosgw accepts a negative or overflowing aws-chunked chunk size](#radosgw-accepts-a-negative-or-overflowing-aws-chunked-chunk-size) | [#81123](https://tracker.ceph.com/issues/81123) | [ceph/ceph#72309](https://github.com/ceph/ceph/pull/72309) | ✓ |
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
@@ -114,7 +114,7 @@ Every new entry adds its row to this table, in document order.
 
 ## check_disk_state removes a multipart part's index entry from the wrong shard
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** when a listing reconciles a head that exists, v19.2.6's
   `check_disk_state` walks the head's manifest and, for each location in the
   multipart namespace, calls `delete_obj_index` on an `rgw_obj` rebuilt by
@@ -181,6 +181,11 @@ Every new entry adds its row to this table, in document order.
   version of the fix that was closed unmerged. #16767 and #44660 were closed by
   [ceph/ceph#49709](https://github.com/ceph/ceph/pull/49709), which fixed
   another cause.
+  The fix in review, which we opened, is
+  [ceph/ceph#72306](https://github.com/ceph/ceph/pull/72306) (draft). Before
+  removing a part's index entry, `check_disk_state` takes the index hash
+  source from the head object's name, so the removal goes to the shard the
+  writer indexed the part on.
 - **Found:** phase 1 plan review, 2026-09-28; verified 2026-09-29;
   reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
 
@@ -232,7 +237,7 @@ Every new entry adds its row to this table, in document order.
 
 ## cls_rgw encodes a packed value of exactly 65536 as 0
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** at v19.2.6 `encode_packed_val` uses the two-byte form for
   values up to and including 0x10000 and writes `(uint16_t)val`
   (`cls_rgw_types.h:272-275`), so 65536 is stored, and decodes, as 0. It
@@ -255,6 +260,11 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** [#80995](https://tracker.ceph.com/issues/80995); its
   confirmation note carries the live output from both releases and a C++
   reproducer, `repro_packed_val.cc`.
+  The fix in review, which we opened, is
+  [ceph/ceph#72307](https://github.com/ceph/ceph/pull/72307) (draft). The
+  bound becomes `< 0x10000`, so 65536 takes the four-byte form. Only encoding
+  changes, since decoding follows the width tag, so the format is unchanged;
+  a value already stored as 0 stays 0.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-009); verified 2026-09-27;
   reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
 
@@ -396,7 +406,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw truncates a long aws-chunked trailer section instead of rejecting it
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** at v20.2.4 `AWSv4ComplMulti::complete` reads the trailer
   section into a 256-byte buffer but caps each read at 256 - pos - 1 bytes
   (`rgw_auth_s3.cc:1573-1576`; v19.2.6 `:1596-1599`). beast answers a
@@ -436,12 +446,17 @@ Every new entry adds its row to this table, in document order.
   reef through [ceph/ceph#58435](https://github.com/ceph/ceph/pull/58435).
   [ceph/ceph#64934](https://github.com/ceph/ceph/pull/64934) rewrote the
   trailer parse but kept this read loop, and was closed unmerged.
+  The fix in review, which we opened, is
+  [ceph/ceph#72308](https://github.com/ceph/ceph/pull/72308) (draft). It
+  grows the trailer buffer from 256 to 1024 bytes, enough for a signed
+  SHA-512 trailer, and corrects the read cap, so a section that is still too
+  long meets the size check and is refused rather than cut short.
 - **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
   on disposable Squid and Tentacle clusters.
 
 ## radosgw accepts a negative or overflowing aws-chunked chunk size
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, unfixed through main, with a fix in review.
 - **Evidence:** at v19.2.6 `AWSv4ComplMulti::ChunkMeta::create_next` reads
   each chunk size with `std::strtoull(metabuf, &data_field_end, 16)` and
   rejects only a parse that consumed nothing (`rgw_auth_s3.cc:1127-1132`);
@@ -482,6 +497,11 @@ Every new entry adds its row to this table, in document order.
   chunk-metadata parse with other inputs; the latter's
   [ceph/ceph#35350](https://github.com/ceph/ceph/pull/35350) was closed
   unmerged.
+  The fix in review, which we opened, is
+  [ceph/ceph#72309](https://github.com/ceph/ceph/pull/72309) (draft). It
+  parses the size strictly: one to sixteen hex digits, ending at `;` or the
+  line's CRLF, and anything else is refused with 400 before any data is
+  stored. On main, that restores the check #63326 dropped.
 - **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
   on disposable Squid and Tentacle clusters.
 
