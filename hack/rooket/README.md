@@ -163,6 +163,35 @@ rooket k -n rook-ceph exec deploy/rook-ceph-tools -- rados -p ceph-objectstore.r
 `users.uid` holds `alice`, `alice.buckets`, `t1$bob` and `t1$bob.buckets`; the
 index pool holds eleven `.dir.<bucket id>.<n>` shards per bucket.
 
+## Running rgw-go against the cluster
+
+rgw-go runs on the host against a populated cluster with the command line Rook
+gives radosgw. Named `radosgw`, the binary takes its whole command line as
+ceph's; rgw-go's own settings come from `RGW_GO_*` variables:
+
+```sh
+out=hack/rooket/out/squid
+go build -tags=ceph_preview -o "${TMPDIR}/radosgw" ./cmd/rgw-go
+RGW_GO_METRICS_ADDR=127.0.0.1:9283 RGW_GO_LOG_LEVEL=debug \
+"${TMPDIR}/radosgw" --foreground --name=client.admin -c "${out}/ceph.conf" \
+	--default-log-to-stderr=true --default-err-to-stderr=true \
+	'--rgw-frontends=beast endpoint=127.0.0.1:8080' \
+	--rgw-realm="$(jq -r .realm "${out}/manifest.json")" \
+	--rgw-zonegroup="$(jq -r .zonegroup "${out}/manifest.json")" \
+	--rgw-zone="$(jq -r .zone "${out}/manifest.json")"
+```
+
+Rook's probe, an anonymous `curl -i http://127.0.0.1:8080/`, answers 200 with
+`Server: Ceph Object Gateway (squid)` and the empty listing:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>anonymous</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>
+```
+
+`http://127.0.0.1:9283/metrics` and `/debug/pprof/` serve the metrics and
+profiles. `serve_integration_test.go` in `internal/cli` runs this command
+under `make integration`, over TLS too, and stops it with SIGTERM.
+
 ## The derived image
 
 `make image RELEASE=<release>` builds the image Rook runs rgw-go in and prints

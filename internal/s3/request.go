@@ -52,16 +52,7 @@ const (
 func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) {
 	host := hostName(req.Host)
 	rawPath := req.URL.EscapedPath()
-	uri := req.URL.Path
-	if b := hostBucket(host, cfg.DNSNames); b != "" {
-		// preprocess puts the bucket in front of the undecoded URI and decodes
-		// the two together (rgw_rest.cc:2154-2161 at v19.2.6).
-		sep := "/"
-		if strings.HasPrefix(rawPath, "/") {
-			sep = ""
-		}
-		uri = urlDecode("/"+b+sep+rawPath, false)
-	}
+	uri := DecodedURI(req, cfg)
 	if strings.IndexByte(uri, 0) >= 0 {
 		return Parsed{}, op.ErrInvalidRequest // ERR_ZERO_IN_URL
 	}
@@ -102,6 +93,24 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 		r.Object = meta.ObjKey{Name: object, Instance: query.Get("versionId")}
 	}
 	return p, nil
+}
+
+// DecodedURI is the path radosgw picks a request's API and bucket by, its
+// decoded_uri: with a bucket the Host names, preprocess puts the bucket in
+// front of the undecoded URI and decodes the two together
+// (rgw_rest.cc:2154-2161 and :2182 at v19.2.6, :2171-2177 and :2204 at
+// v20.2.4); otherwise it is the decoded path.
+func DecodedURI(req *http.Request, cfg Config) string {
+	b := hostBucket(hostName(req.Host), cfg.DNSNames)
+	if b == "" {
+		return req.URL.Path
+	}
+	rawPath := req.URL.EscapedPath()
+	sep := "/"
+	if strings.HasPrefix(rawPath, "/") {
+		sep = ""
+	}
+	return urlDecode("/"+b+sep+rawPath, false)
 }
 
 // PostAuthInit finishes parsing once the request is authenticated, as

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/ceph/go-ceph/rados"
@@ -24,10 +25,17 @@ const (
 
 // Config is how Connect reaches a cluster.
 type Config struct {
-	Cluster          string   // ceph cluster name, default "ceph"
-	Name             string   // entity name, e.g. "client.rgw.a"; default "client.admin"
-	ConfigFile       string   // "" searches CEPH_CONF or the default config files
-	NoConfigFile     bool     // --no-config-file: skip that search; a named ConfigFile is still read
+	// Cluster is the ceph cluster name. "" is "ceph" without a ConfigFile;
+	// with one, librados names the cluster after the file it reads, as
+	// radosgw does.
+	Cluster string
+	Name    string // entity name, e.g. "client.rgw.a"; default "client.admin"
+	// ConfigFile is -c, "" to read the files CEPH_CONF names or else the
+	// default ones.
+	ConfigFile string
+	// NoConfigFile is --no-config-file: skip the default files, and take
+	// a ConfigFile or CEPH_CONF none of whose files can be read as no file.
+	NoConfigFile     bool
 	Args             []string // ceph-style argv handed to librados after the early arguments
 	Mode             Mode     // default ModeCallback
 	MaxInflightOps   int      // 0 derives from objecter_inflight_ops after connect
@@ -35,7 +43,13 @@ type Config struct {
 }
 
 func (c Config) withDefaults() Config {
-	if c.Cluster == "" {
+	// radosgw's parse_config_files, which runs whether or not a file is
+	// read, names the cluster "ceph" when no -c was given, and otherwise
+	// after the first file of the list it reads, leaving it empty when it
+	// reads none (config.cc:355-357 and :382-384 at v19.2.6, :356-358 and
+	// :383-385 at v20.2.4). librados names a cluster it was created without
+	// only when it reads a file, so the first case is set here.
+	if c.Cluster == "" && c.ConfigFile == "" {
 		c.Cluster = "ceph"
 	}
 	if c.Name == "" {
@@ -116,7 +130,7 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 	if err != nil {
 		return nil, toSeamError("create connection", err)
 	}
-	if err := configure(ctx, conn, cfg); err != nil {
+	if err := configure(ctx, conn, cfg, slog.Default()); err != nil {
 		conn.Shutdown()
 		return nil, err
 	}
@@ -166,22 +180,34 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 	return c, nil
 }
 
-// configure reads the config file, CEPH_ARGS and Args into conn. Given no
-// path, rados_conf_read_file searches CEPH_CONF or the default list, and
-// finding no file there is not an error: ceph's global_pre_init only warns
-// "did not load config file, using default settings" and goes on.
-func configure(ctx context.Context, conn *rados.Conn, cfg Config) error {
+// configure reads the config file, CEPH_ARGS and Args into conn in
+// global_pre_init's order (global_init.cc:133-168 at v19.2.6 and v20.2.4).
+// Given no path, rados_conf_read_file reads the files CEPH_CONF names, or
+// else the default list, which --no-config-file skips (config.cc:428-435 at
+// v19.2.6, :429-436 at v20.2.4). A list none of whose files can be read is
+// an error only for -c without --no-config-file: without -c,
+// global_pre_init warns "did not load config file, using default settings"
+// and goes on, and under --no-config-file it goes on silently. configure
+// logs to log.
+func configure(ctx context.Context, conn *rados.Conn, cfg Config, log *slog.Logger) error {
 	var err error
 	switch {
 	case cfg.ConfigFile != "":
 		err = conn.ReadConfigFile(cfg.ConfigFile)
-	case cfg.NoConfigFile:
-	default:
+	case !cfg.NoConfigFile:
 		err = conn.ReadDefaultConfigFile()
-		if errors.Is(toSeamError("read config file", err), radosclient.ErrNotFound) {
-			slog.WarnContext(ctx, "no ceph.conf found, continuing with defaults")
+		if notFound(err) {
+			log.WarnContext(ctx, "no ceph.conf found, continuing with defaults")
 			err = nil
 		}
+	default:
+		if _, ok := os.LookupEnv("CEPH_CONF"); ok {
+			err = conn.ReadDefaultConfigFile()
+		}
+	}
+	if cfg.NoConfigFile && notFound(err) {
+		log.DebugContext(ctx, "no config file read under --no-config-file", slog.String("conf", cfg.ConfigFile))
+		err = nil
 	}
 	if err != nil {
 		return toSeamError("read config file", err)
@@ -195,6 +221,41 @@ func configure(ctx context.Context, conn *rados.Conn, cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// notFound reports whether a config file read failed because no file of its
+// list could be read, which parse_config_files reports as ENOENT whatever
+// kept each file from being read.
+func notFound(err error) bool {
+	return errors.Is(toSeamError("read config file", err), radosclient.ErrNotFound)
+}
+
+// ConfiguredOptions configures a librados handle from cfg as Connect does,
+// without connecting, and returns the named options' values from it: what
+// the config file, CEPH_ARGS and cfg.Args set, before connect applies the
+// mon config store. radosgw fixes the ids it drops privileges to from that
+// view (global_init.cc:227-318 at v19.2.6 and v20.2.4), before it fetches
+// the mon config (:369-381). It logs nothing: Connect reads the same files
+// and logs what it finds once.
+func ConfiguredOptions(ctx context.Context, cfg Config, names ...string) (map[string]string, error) {
+	cfg = cfg.withDefaults()
+	conn, err := rados.NewConnWithClusterAndUser(cfg.Cluster, cfg.Name)
+	if err != nil {
+		return nil, toSeamError("create connection", err)
+	}
+	defer conn.Shutdown()
+	if err := configure(ctx, conn, cfg, slog.New(slog.DiscardHandler)); err != nil {
+		return nil, err
+	}
+	vals := make(map[string]string, len(names))
+	for _, name := range names {
+		v, err := conn.GetConfigOption(name)
+		if err != nil {
+			return nil, toSeamError("config get "+name, err)
+		}
+		vals[name] = v
+	}
+	return vals, nil
 }
 
 // begin counts a call that uses the connection outside a Pool, refusing it

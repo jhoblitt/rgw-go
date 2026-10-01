@@ -526,6 +526,49 @@ review and verified against the tree.
   differs, and only for an ID or display name holding `&`, `<`, `>`, `'`,
   `"` or a control byte.
 
+### Command-line differences
+
+rgw-go takes radosgw's command line, which is how Rook starts it, and
+reads its own settings from `RGW_GO_*` variables. Where the two differ,
+checked against the v19.2.6 and v20.2.4 tags, rgw-go does the following.
+
+- **`--version` names rgw-go's build.** `-v` and `--version` print
+  rgw-go's module version, revision, build time and Go version, such as
+  `v1.0.0 (16c59f7d80f3) built 2026-10-01T15:27:32Z go1.27.1`. radosgw
+  prints `ceph version 19.2.6 (<sha1>) squid (stable)`, and at v20.2.4
+  `ceph version 20.2.4 (<sha1>) tentacle (stable - <build type>)`
+  (`pretty_version_to_str`, `version.cc:46-54` at v19.2.6, `:46-59` at
+  v20.2.4, printed from `ceph_argparse.cc:505-508` and `:509-512`). Rook
+  reads the Ceph version from `ceph --version`
+  (`pkg/operator/ceph/controller/version.go:71-73` at rook f09547c14),
+  which the derived image keeps as Ceph's.
+- **The usage adds rgw-go's settings.** `-h` and `--help` print radosgw's
+  usage (`rgw_main.cc:42-56` at both tags, `ceph_argparse.cc:550-573` at
+  v19.2.6, `:554-577` at v20.2.4), then the `RGW_GO_*` variables rgw-go
+  reads.
+- **Errors and logs go to stderr.** radosgw points its stderr at its
+  stdout before anything else (`rgw_main.cc:69-77` at both tags), so its
+  refusal of an empty command line, `<argv[0]>: -h or --help for usage`,
+  and each log line it writes to stderr reach stdout. rgw-go writes its
+  logs, and that refusal as `rgw-go: -h or --help for usage`, to stderr.
+  Both exit 1 on an empty command line.
+- **SIGHUP reopens nothing, and rgw-go never daemonizes.** radosgw reopens
+  its log file and ops log file on SIGHUP (`rgw_signal.cc:40-45`,
+  registered at `rgw_main.cc:127`, at both tags), as a log rotation's
+  postrotate asks it to. rgw-go has no log file to reopen: it logs SIGHUP at
+  debug level and keeps serving. Both stop on SIGINT and SIGTERM
+  (`:134-135`) and keep serving on SIGUSR1, which radosgw hands to its
+  SIGTERM handler (`:136`) only to skip the shutdown for it
+  (`rgw_signal.cc:84-85`); rgw-go logs it at debug level. radosgw forks
+  into the background unless it runs in the
+  foreground (`:113-114`): the `daemonize` option is on for a daemon, and
+  `-f` or `--foreground` turns it off, as does `-d`, which also sends its
+  log to stderr (`config.cc:674-684` at v19.2.6, `:675-685` at v20.2.4).
+  rgw-go always runs in the foreground and logs to stderr; it hands both
+  flags to librados, which applies `-d`'s log settings to its own logging,
+  and neither changes how rgw-go runs. Rook passes `--foreground`
+  (`pkg/operator/ceph/object/spec.go:454` at rook f09547c14).
+
 ### Request parsing and dispatch differences
 
 rgw-go parses an S3 request's Host, path and query, and picks the op that
@@ -543,6 +586,23 @@ v20.2.4 tags, rgw-go does the following.
   `create_bucket` or `delete_bucket`, so `DELETE /b?notification`
   deletes the bucket. rgw-go answers `?notification` with the
   notification op whatever `rgw_enable_apis` names.
+- **The admin, Swift and zero APIs answer 405.** When `rgw_enable_apis`
+  names `admin`, `swift`, `swift_auth` or `zero`, radosgw serves that API
+  at `rgw_admin_entry`, `rgw_swift_url_prefix`, `rgw_swift_auth_entry` or
+  `zero` (`rgw_appmain.cc:307-366` at v19.2.6, `:316-375` at v20.2.4).
+  rgw-go serves none of them. It keeps every path at or under each of
+  those entries, and under each parent `register_resource` adds for a
+  nested entry, from the S3 handler (`rgw_rest.cc:1935-1966` at v19.2.6,
+  `:1952-1983` at v20.2.4), matching them as radosgw does against the path
+  with a virtual-hosted bucket in front (`:2154-2160` and `:2182` at
+  v19.2.6, `:2171-2177` and `:2204` at v20.2.4), so a virtual-hosted key
+  such as `admin/x` stays S3's. It answers each request there as radosgw
+  answers one no handler takes: 405 MethodNotAllowed, or 400
+  InvalidRequest for a NUL in the path (`:2182-2186` and `:2290-2304` at
+  v19.2.6, `:2204-2208` and `:2312-2326` at v20.2.4). With
+  `rgw_swift_url_prefix` set to `/`, radosgw serves no S3 and Swift at
+  every path; rgw-go answers every request 405, as it does when
+  `rgw_enable_apis` names neither `s3` nor `s3website`.
 - **The CNAME fallback resolves no CNAME and knows no s3website
   hostnames.** When the Host matches none of its hostnames and
   `rgw_resolve_cname` is set (it defaults to false), radosgw looks up the
@@ -570,8 +630,8 @@ v20.2.4 tags, rgw-go does the following.
 rgw-go serves radosgw's beast frontend configuration on net/http. Where
 the two differ, checked against the v19.2.6 and v20.2.4 tags, rgw-go does
 the following; a difference only one release shows names it. The
-`rgw_asio_frontend.cc` lines cited are those tags', and the net/http ones
-go1.27.1's.
+`rgw_asio_frontend.cc` lines cited are those tags', and the net/http,
+crypto/tls and net/url ones go1.27.1's.
 
 - **TCP options.** TCP_NODELAY is on, Go's default, unless `tcp_nodelay`
   is set to anything but `1`; beast turns it off unless `tcp_nodelay=1`
@@ -583,6 +643,10 @@ go1.27.1's.
   ([`rgw_asio_client.cc:152-158`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L152-L158)
   at both tags); net/http writes the header only to close the connection
   or to keep an HTTP/1.0 one open, which HTTP/1.1 clients treat alike.
+  A response whose connection then closes over a body the handler left
+  unread carries no `Connection: close` either: under the full duplex
+  rgw-go serves each request in, net/http decides to close only after the
+  header is out (`server.go:1447-1473` and `:1552-1560`).
 - **Keys accepted and ignored**, each logged once at startup:
   `max_connection_backlog`, since Go listens with the kernel's backlog;
   `so_reuseport`, which on Tentacle sets `SO_REUSEPORT` (`:651-693` at
@@ -658,6 +722,14 @@ go1.27.1's.
   sets beast's limit to 0, so radosgw answers every request with that
   empty 400 (`:643-657` at v19.2.6, `:595-609` at v20.2.4), where rgw-go
   takes 0 as net/http's 1 MiB default.
+- **Host header refusals.** net/http answers `400 Bad Request`, with a
+  text body and before any handler runs, an HTTP/1.1 request without a
+  Host header (`server.go:1069-1073`), one with more than one
+  (`request.go:1161-1163`), and one whose Host holds a byte its host
+  validator refuses (`server.go:1074-1076`). beast answers 400 only to a
+  request it cannot parse (`:275-289` at both tags) and files each header
+  it reads, so a repeated Host's last value wins (`rgw_asio_client.cc:36-66`
+  at v19.2.6 and v20.2.4); radosgw serves all three.
 - **Malformed percent-escapes in the path.** net/http answers `400 Bad
   Request`, with a text body and before any handler runs, a request whose
   path holds a malformed percent-escape such as `%zz` or a lone `%`: the
@@ -695,9 +767,10 @@ go1.27.1's.
   cluster, `Ceph Object Gateway (squid)` or `(tentacle)`, where radosgw's
   names the release it was built as (`rgw_rest.cc:641` at v19.2.6, `:646`
   at v20.2.4); the two agree once every gateway runs the cluster's
-  release. radosgw sends `rgw_service_provider_name` instead when it is
-  set (`:637-642` at v19.2.6, `:642-647` at v20.2.4); rgw-go's `serve`
-  builds the header from the release alone.
+  release. Both send `rgw_service_provider_name` instead when it is set
+  (`:637-642` at v19.2.6, `:642-647` at v20.2.4), but rgw-go reads it once
+  at startup, where radosgw reads it for every response, so a change made
+  while the gateway runs takes effect at rgw-go's next start.
 
 ### Zone and placement differences
 
@@ -833,12 +906,14 @@ v20.2.4 tags, rgw-go does the following.
   JSON (`allocate_formatter`, `rgw_rest.cc:1732-1764` at v19.2.6,
   `:1736-1768` at v20.2.4, which `RGWRESTMgr_S3::get_handler` calls with
   the format configurable, `rgw_rest_s3.cc:5262-5264` and `:5822-5824`).
-  A NUL in the URL is refused before any formatter exists, so
-  `abort_early` answers it with a JSON document,
-  `{"Code":"InvalidRequest","Message":"","RequestId":"…","HostId":"…"}`,
-  and `Content-Type: application/json` (`rgw_rest.cc:2182-2186` and
-  `:676-681` at v19.2.6, `:2204-2208` and `:681-686` at v20.2.4). rgw-go
-  renders every S3 document and error document as XML, those included.
+  A NUL in the URL, and a request no API's handler takes, are refused
+  before any formatter exists, so `abort_early` answers each with a JSON
+  document, such as
+  `{"Code":"InvalidRequest","Message":"","RequestId":"…","HostId":"…"}`
+  or its 405 MethodNotAllowed, and `Content-Type: application/json`
+  (`rgw_rest.cc:2182-2186`, `:2290-2304` and `:676-681` at v19.2.6,
+  `:2204-2208`, `:2312-2326` and `:681-686` at v20.2.4). rgw-go renders
+  every S3 document and error document as XML, those included.
 - **No `Bucket` header.** With `rgw_expose_bucket` set, which defaults to
   false, radosgw names the bucket in a `Bucket` header on an error it
   answers through `abort_early`, one refused before the op executes

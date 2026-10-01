@@ -58,8 +58,10 @@ func (d deadlines) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // connDeadlines is one request's hold on its connection's two deadlines. The
-// handler may read in one goroutine while it writes in another, but net/http
-// allows neither two reads of the body nor two writes at once.
+// handler may read in one goroutine while it writes in another; net/http
+// serializes concurrent reads of the body under the body's lock
+// (transfer.go:844-845 at go1.27.1) and leaves the response's writes to the
+// handler to serialize.
 type connDeadlines struct {
 	rc      *http.ResponseController
 	timeout time.Duration

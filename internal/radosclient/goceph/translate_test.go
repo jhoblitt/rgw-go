@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/ceph/go-ceph/rados"
 	. "github.com/onsi/ginkgo/v2"
@@ -454,6 +455,10 @@ var _ = Describe("Config", func() {
 		Expect(cfg).To(Equal(goceph.Config{Cluster: "c", Name: "client.rgw.a", Mode: goceph.ModePipe}))
 	})
 
+	It("leaves the cluster unnamed beside a ConfigFile, for librados to name after the file", func() {
+		Expect(goceph.WithDefaults(goceph.Config{ConfigFile: "/etc/ceph/prod.conf"}).Cluster).To(BeEmpty())
+	})
+
 	DescribeTable("refuses a negative in-flight limit before touching librados",
 		func(ctx SpecContext, cfg goceph.Config) {
 			cfg.ConfigFile = "/nonexistent/ceph.conf"
@@ -496,14 +501,97 @@ var _ = Describe("Config", func() {
 			Expect(goceph.ConfiguredOption(ctx, cfg, "objecter_inflight_ops")).To(Equal("77"))
 		})
 
-		It("continues with librados's defaults and a warning when the default search finds no file", func(ctx SpecContext) {
-			logs := captureLogs()
+		It("continues with librados's defaults when the default search finds no file", func(ctx SpecContext) {
 			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster + "-missing"}, "objecter_inflight_ops")).To(Equal("1024"))
-			Expect(logs.String()).To(ContainSubstring(`"msg":"no ceph.conf found, continuing with defaults"`))
+		})
+
+		It("warns once, from Connect, that the default search found no file", func(ctx SpecContext) {
+			logs := captureLogs()
+			// An argument librados cannot parse stops Connect after the
+			// config file is read and before it connects.
+			cfg := goceph.Config{Cluster: cluster + "-missing", Args: []string{"--objecter_inflight_ops=bogus"}}
+			_, err := goceph.ConfiguredOptions(ctx, goceph.Config{Cluster: cfg.Cluster}, "objecter_inflight_ops")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(logs.String()).NotTo(ContainSubstring("no ceph.conf found"), "ConfiguredOptions reads the files Connect reads next")
+			_, err = goceph.Connect(ctx, cfg)
+			Expect(err).To(MatchError(ContainSubstring("parse args")))
+			Expect(strings.Count(logs.String(), `"msg":"no ceph.conf found, continuing with defaults"`)).To(Equal(1))
 		})
 
 		It("fails when a named file is missing", func(ctx SpecContext) {
 			_, err := goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, ConfigFile: filepath.Join(home, "missing.conf")}, "fsid")
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+		})
+
+		It("reads the files CEPH_CONF names under NoConfigFile, as ceph does without -c", func(ctx SpecContext) {
+			GinkgoT().Setenv("CEPH_CONF", filepath.Join(home, ".ceph", cluster+".conf"))
+			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, NoConfigFile: true}, "objecter_inflight_ops")).
+				To(Equal("77"))
+		})
+
+		It("goes on silently under NoConfigFile when CEPH_CONF names no readable file", func(ctx SpecContext) {
+			logs := captureLogs()
+			GinkgoT().Setenv("CEPH_CONF", filepath.Join(home, "missing.conf"))
+			Expect(goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, NoConfigFile: true}, "objecter_inflight_ops")).
+				To(Equal("1024"))
+			Expect(logs.String()).NotTo(ContainSubstring("no ceph.conf found"))
+		})
+
+		It("goes on under NoConfigFile when a named file is missing, as radosgw does with -c", func(ctx SpecContext) {
+			cfg := goceph.Config{Cluster: cluster, ConfigFile: filepath.Join(home, "missing.conf"), NoConfigFile: true}
+			Expect(goceph.ConfiguredOption(ctx, cfg, "objecter_inflight_ops")).To(Equal("1024"))
+		})
+
+		It("still fails under NoConfigFile on a file that does not parse", func(ctx SpecContext) {
+			bad := filepath.Join(home, "bad.conf")
+			Expect(os.WriteFile(bad, []byte("[global\n"), 0o600)).To(Succeed())
+			_, err := goceph.ConfiguredOption(ctx, goceph.Config{Cluster: cluster, ConfigFile: bad, NoConfigFile: true}, "fsid")
+			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(MatchError(radosclient.ErrNotFound))
+		})
+	})
+
+	Describe("naming the cluster", func() {
+		var dir string
+
+		BeforeEach(func() {
+			unsetenv("CEPH_CONF")
+			dir = GinkgoT().TempDir()
+			for _, name := range []string{"prod.conf", "settings"} {
+				Expect(os.WriteFile(filepath.Join(dir, name), []byte("[global]\n"), 0o600)).To(Succeed())
+			}
+		})
+
+		// $cluster in an option's value expands to the cluster's name when
+		// the option is read.
+		DescribeTable("as radosgw's parse_config_files names it",
+			func(ctx SpecContext, cfg goceph.Config, want string) {
+				if cfg.ConfigFile != "" {
+					cfg.ConfigFile = filepath.Join(dir, cfg.ConfigFile)
+				}
+				cfg.Args = []string{"--rgw_zone=$cluster"}
+				Expect(goceph.ConfiguredOption(ctx, cfg, "rgw_zone")).To(Equal(want))
+			},
+			Entry("after the -c file read, less .conf", goceph.Config{ConfigFile: "prod.conf"}, "prod"),
+			Entry("ceph after a -c file whose name does not end in .conf", goceph.Config{ConfigFile: "settings"}, "ceph"),
+			Entry("ceph without -c, under --no-config-file too", goceph.Config{NoConfigFile: true}, "ceph"),
+			Entry("empty when --no-config-file lets a missing -c file go", goceph.Config{ConfigFile: "missing.conf", NoConfigFile: true}, ""),
+			Entry("--cluster over the file's name", goceph.Config{Cluster: "given", ConfigFile: "prod.conf"}, "given"),
+		)
+	})
+
+	Describe("ConfiguredOptions", func() {
+		It("reads what the argv sets before any connect", func(ctx SpecContext) {
+			cfg := goceph.Config{NoConfigFile: true, Args: []string{"--setuser=ceph", "--setgroup=disk"}}
+			Expect(goceph.ConfiguredOptions(ctx, cfg, "setuser", "setgroup", "setuser_match_path")).To(Equal(map[string]string{
+				"setuser":            "ceph",
+				"setgroup":           "disk",
+				"setuser_match_path": "",
+			}))
+		})
+
+		It("fails on an option librados does not know", func(ctx SpecContext) {
+			_, err := goceph.ConfiguredOptions(ctx, goceph.Config{NoConfigFile: true}, "setuser", "no_such_option")
 			Expect(err).To(MatchError(radosclient.ErrNotFound))
 		})
 	})
