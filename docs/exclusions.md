@@ -474,7 +474,38 @@ review and verified against the tree.
   `:230-298` at v20.2.4; `docs/ceph-upstream-bugs.md`, "radosgw's zlib
   decompress reports success on a truncated stream"). rgw-go also fails
   a read whose blocks decode to fewer bytes than the block map gives the
-  range. radosgw's compressors write none of these blocks, so only a
+  range, and a read on any block that decodes to more or fewer bytes than
+  the block map gives it: the distance to the next block's `old_ofs`, and
+  to `orig_size` for the last block, as `RGWPutObj_Compress::process` and
+  `RGWPutObj::execute` record them for the bytes they took in
+  (`rgw_compression.cc:44-87` at v19.2.6 and v20.2.4; `rgw_op.cc:4459` at
+  v19.2.6, `:4691` at v20.2.4). It refuses such a block before writing any
+  of it, and a block whose header claims more before allocating for it,
+  where radosgw allocates whatever the block's header claims and passes on
+  whatever the block decodes to. On an lz4 block too short for its own
+  count and pair table, radosgw throws an exception nothing catches and the
+  process ends (`docs/ceph-upstream-bugs.md`, "radosgw terminates on a
+  stored lz4 block too short for its pair table"); rgw-go fails the read.
+  It also refuses a block whose block map gives it more than 1 GiB,
+  decoded or stored (`compression.MaxBlockLen`), before buffering or
+  decoding it, where radosgw buffers and decodes it whole. radosgw makes a
+  block from one read of at most `rgw_max_chunk_size` (`rgw_rest.cc:1071-1078`
+  at v19.2.6, `:1076-1083` at v20.2.4), an option with no minimum or
+  maximum (`rgw.yaml.in:84-98`, `:84-101`) and a default of 4 MiB, and
+  writes in chunks of that size, which an OSD refuses past
+  `osd_max_write_size`, 90 MiB by default (`PrimaryLogPG.cc:2139-2147` at
+  v19.2.6, `:2186-2194` at v20.2.4); multisite sync makes blocks of 512
+  KiB. Every refusal in this entry answers 500 UnknownError, except a block
+  its codec refuses, as radosgw's decompress does, once the block has passed
+  rgw-go's own length checks; that refusal keeps the decompress's return for
+  the handler. The length checks come first: the block map's lengths and
+  `compression.MaxBlockLen` before the codec runs, then the length a
+  snappy, zstd or lz4 header claims before the codec decodes, and zlib's
+  output while it inflates. A block that fails one of them answers 500
+  UnknownError even where radosgw's decompress would refuse its body too
+  and radosgw, before any of the body has gone out, answers 403
+  AccessDenied or 404 NoSuchKey.
+  radosgw's compressors write none of these blocks, so only a
   damaged object reads differently: where radosgw sends fewer or wrong
   bytes, rgw-go fails the GET. The other way round, rgw-go's inflater
   keeps a 32 KiB window whatever the stored window bits say, so it may
@@ -690,6 +721,30 @@ review and verified against the tree.
     in the default 4 MiB stripes, or one appended to more than 2^21 times at
     any stripe size. A caller that walks whole objects that large iterates
     instead, under `PartBounds`' bound.
+  - The driver's object read walks the stripes of the range it reads, from
+    the one holding the range's first byte, as `iterate_obj` does
+    (`driver/rados/rgw_rados.cc:7466-7536` at v19.2.6, `:8321-8391` at
+    v20.2.4). It fails with 500 UnknownError at the first step that does not
+    move past the previous offset, at a stripe that starts after the offset
+    it needs, where the manifest ends before the range does, and past
+    `meta.MaxWalkStripes` stripes; it refuses at once a range whose bytes
+    past the head need more stripes than that in the largest stripes the
+    rules allow. The bytes of the stripes before the failure are already
+    written. radosgw's walk loops on the first, on the second reads the
+    next stripe's object at an offset and length computed from a negative
+    difference, and on the third ends the response short of its
+    Content-Length without an error; it has no stripe bound.
+- **A stripe shorter than its manifest says fails the read.** radosgw hands
+  on the bytes such a read returned and then waits for an offset no later
+  read starts at, so the GET ends without an error, its body short of its
+  Content-Length (`get_obj_data::flush` and `drain`,
+  `driver/rados/rgw_rados.cc:7345-7379` and `rgw_rados.h:1730-1741` at
+  v19.2.6, `:8196-8230` and `rgw_rados.h:1810-1821` at v20.2.4). rgw-go
+  hands on the same bytes, then fails the read with 500 InternalError. It
+  fails a compressed object's read with 500 UnknownError before reading
+  anything when the blocks the range needs reach past the object's stored
+  bytes; radosgw reads what there is and ends the response short. Only a
+  damaged object reads differently.
 
 ### Command-line differences
 
@@ -1132,6 +1187,20 @@ does the following.
   cached, and a multiple of 2^55 s turns expiry off
   (`docs/ceph-upstream-bugs.md`, "[radosgw wraps an rgw_cache_expiry_interval
   above 18446744073 seconds](ceph-upstream-bugs.md#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds)").
+- **The read window counts buffers and holds them until written.** rgw-go
+  keeps a GET's reads within `rgw_get_obj_window_size`, but a piece's share
+  of the window is the buffer it reads into, a pooled
+  `rgw_get_obj_max_req_size` for a piece of more than half that, and it
+  holds the share until its bytes are written to the client. radosgw counts
+  the bytes a read asks for (`get_obj_iterate_cb`,
+  `driver/rados/rgw_rados.cc:7436` at v19.2.6, `:8287` at v20.2.4), and its
+  throttles give the share back when the read completes
+  (`BlockingAioThrottle::put` and `YieldingAioThrottle::put`,
+  `rgw_aio_throttle.cc:65-79` and `:155-170` at v19.2.6 and v20.2.4),
+  keeping the completed pieces that wait behind a slower earlier one outside
+  the window. So rgw-go has fewer reads in flight for pieces of just over
+  half a request, and while a slow read or a slow client holds a GET back;
+  in exchange the buffers a GET holds stay within the window.
 
 ### S3 handler differences
 
