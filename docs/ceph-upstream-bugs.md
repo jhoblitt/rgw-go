@@ -95,6 +95,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | none | none | ✓ |
 | [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | none | none | ✓ |
 | [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
+| [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), pending (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), pending (Service) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3669,3 +3670,72 @@ Every new entry adds its row to this table, in document order.
   a hammer to jewel upgrade, closed Won't Fix.
 - **Found:** phase 1 unit N, Task 2 review, 2026-10-01; derived from the
   source, not reproduced.
+
+## radosgw drops all but the first OIDC provider or Service principal in a statement
+
+- **Kind:** defect, security-relevant. The OIDC half is fixed on main after
+  v20.2.4 and not backported; the Service half is unfixed through main.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - A statement keeps its Principal and NotPrincipal entries in a
+    `boost::container::flat_set<rgw::auth::Principal>`
+    (`rgw_iam_policy.h:536-537`, `:589-590`), and the parser adds each with
+    `pri.emplace` (`rgw_iam_policy.cc:733-734`, `:745-746`). A flat set's
+    emplace keeps the first of two equivalent principals and drops the
+    second.
+  - `Principal`'s `==` and `<` compare only its kind and its `rgw_user`,
+    the tenant and the id (`rgw_basic_types.h:228-234`, `:245-251`). An OIDC
+    provider principal holds its URL in `idp_url` and leaves the `rgw_user`
+    empty (`:155-156`, `:158-159`); the parser builds it from the
+    `oidc-provider/<url>` resource of an AWS or Federated ARN
+    (`rgw_iam_policy.cc:554-556`, `:564-566`). v20.2.4's Service principal
+    holds its name in `service_id`, again with an empty `rgw_user`
+    (`rgw_basic_types.h:187-191`; `rgw_iam_policy.cc:591-592`).
+  - So any two OIDC providers in one statement's list are equivalent, and so,
+    on v20.2.4, are any two services: the list keeps the first in document
+    order. The identities match on what was dropped: a web identity matches
+    an OIDC principal by `idp_url` (`WebIdentityApplier::is_identity`,
+    `rgw_auth.cc:762-766`, `:778-782`), and v20.2.4's service identity
+    matches by `service_id` (`ServiceIdentity::is_identity`,
+    `rgw_auth.h:877-879`).
+  - A statement whose Principal list does not hold the identity does not
+    apply to it, and one whose NotPrincipal list does not hold it applies
+    (`rgw_iam_policy.cc:1196-1198`, `:1253-1255` and `:1271-1273`;
+    `:1200-1202`, `:1257-1259` and `:1275-1277`).
+- **Impact:**
+  - A Deny statement whose Principal names two OIDC providers does not
+    apply to the second, so that provider's web identity escapes the Deny
+    wherever another statement allows it. radosgw evaluates OIDC principals
+    in a role's trust policy, at AssumeRoleWithWebIdentity
+    (`rgw_rest_sts.cc:860`, `:864`).
+  - In a NotPrincipal list the dropped principal is no longer excepted. A
+    Deny with NotPrincipal then applies to it. An Allow with NotPrincipal,
+    which v19.2.6 accepts and v20.2.4 refuses at parse
+    (`rgw_iam_policy.cc:773-776` at v20.2.4), then grants it.
+  - Two Service principals collapse the same way on v20.2.4. Its only
+    service identity is bucket logging's (`rgw_bucket_logging.cc:989`), so
+    that half reaches only the bucket-logging target check.
+- **Releases:** checked at v19.2.6 and v20.2.4, and at the squid and
+  tentacle branch heads (a742f50616e, 2026-09-03; 7411a080411, 2026-09-30),
+  whose `==` compares only the kind and the `rgw_user`; older releases not
+  checked. On main (06adccc25d6, 2026-10-01) `==` and `<` also compare
+  `idp_url`, so OIDC providers no longer collapse, but not `service_id`
+  (`rgw_basic_types.h:247-255`).
+- **rgw-go:** `policy.Principal` keeps the URL and the service name, and
+  Go's `==` compares them (`internal/policy/principal.go`). rgw-go parses
+  policies from phase 1 unit Z's Task 5, which decides whether its
+  principal sets mirror the collapse.
+- **Upstream:**
+  - The OIDC half is fixed on ceph main by 1a780f21758, "rgw/oidc: enforce
+    trust policy principal scope for OIDC providers", which adds `idp_url` to
+    `==` and `<`. It came with
+    [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850), merged
+    2026-09-03 for tracker [#76069](https://tracker.ceph.com/issues/76069).
+    That pull request adds global OIDC providers; it is a feature, not a fix
+    for this defect, and is not backported: no v19 or v20 tag contains
+    1a780f21758, nor do the squid and tentacle branch heads above.
+  - The Service half: pending: sent to rgw-bug-reproduction; filing waits on
+    the owner's choice of disclosure channel.
+- **Found:** phase 1 unit Z, Task 2, 2026-10-01, transcribing
+  `rgw::auth::Principal`; derived from the source, not reproduced.
