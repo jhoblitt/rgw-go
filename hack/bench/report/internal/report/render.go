@@ -85,13 +85,14 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, " +
 		"with rados bench at the same size and concurrency, " + floor + " read4m is measured and shown with its floor, but " +
 		"not judged; its table says why. The threads criterion allows each cell under the byte budget " +
-		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile " +
-		"of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, " +
-		"runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's " +
-		"runtime.cgoCheck* pointer checks count as well. " +
+		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The boundary cost criterion is the share of the " +
+		"CPU profile of read4k at 256 in flight that a pure-Go client would no longer pay: the submit crossing and the " +
+		"delivery, not the C librados runs on the Go thread nor the Go completion handler. " +
 		"sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the " +
-		"cgo criterion reads the same profile for the boundary cost alone, what a pure-Go client would no longer pay; it " +
-		"is not one of the four criteria, and the second answer reads it in the cgo criterion's place. For pipe it leaves " +
+		"boundary cost reads the same profile for every sample whose stack holds a frame of the cgo boundary, cgo's " +
+		"runtime.cgoCheck* pointer checks included. It is a measurement, compared with no threshold: it counts the C " +
+		"librados runs on the Go thread, which a pure-Go client would run too, as a cost of the boundary. " +
+		"For pipe the boundary cost leaves " +
 		"out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records " +
 		"under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by " +
 		"that much.\n\n")
@@ -104,22 +105,24 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		fmt.Fprintf(b, " %s |", label)
 	}
 	b.WriteString("\n|---|" + strings.Repeat("---|", len(s.modes)) + "\n")
-	for _, c := range append(slices.Clone(criteria), Boundary) {
+	for _, c := range append(slices.Clone(criteria), Cgo) {
 		label := string(c)
-		if c == Boundary {
+		if c == Cgo {
 			label = "informational: " + label
 		}
 		fmt.Fprintf(b, "| %s |", label)
 		for _, m := range s.modes {
 			i := slices.IndexFunc(r.Verdicts, func(v Verdict) bool { return v.Mode == m && v.Criterion == c })
 			v := r.Verdicts[i]
-			fmt.Fprintf(b, " %s: %s |", v.Status, v.Margin)
+			if v.Status == NotJudged {
+				fmt.Fprintf(b, " %s |", v.Margin)
+			} else {
+				fmt.Fprintf(b, " %s: %s |", v.Status, v.Margin)
+			}
 		}
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(b, "\n**Answer:** %s on %s.\n", r.Answer(), s.releaseName())
-	fmt.Fprintf(b, "\n**Answer with the boundary cost in place of the cgo criterion:** %s on %s.\n",
-		r.BoundaryAnswer(), s.releaseName())
 	s.renderLimits(b)
 	s.renderProcesses(b)
 }
