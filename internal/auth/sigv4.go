@@ -56,6 +56,7 @@ type authData struct {
 	v4          *v4Credentials // nil for v2
 	presigned   bool
 	payloadHash string // x-amz-content-sha256 or UNSIGNED-PAYLOAD
+	payload     payloadClass
 }
 
 // verify reports whether the client's signature is the server's for secret,
@@ -322,9 +323,13 @@ func expectedPayloadHash(rv *requestView) string {
 	return unsignedPayload
 }
 
-// authDataV4 is get_auth_data_v4 up to its signature factory
-// (rgw_rest_s3.cc:5771-5853 at v19.2.6, :6338-6420 at v20.2.4). The method is
-// the request's: radosgw signs an OPTIONS CORS request over its
+// authDataV4 is get_auth_data_v4 (rgw_rest_s3.cc:5771-6000 at v19.2.6,
+// :6338-6571 at v20.2.4) but for its per-op payload whitelist, which needs
+// the route and is acceptedBy, and for its non-S3 ops (is_non_s3_op: the STS,
+// IAM, OIDC and topic ops), whose payload hash radosgw takes from the
+// PayloadHash query parameter and never completes (:5807-5818 and :5882,
+// :6374-6385 and :6449); rgw-go does not route those ops. The method is the
+// request's: radosgw signs an OPTIONS CORS request over its
 // Access-Control-Request-Method instead.
 func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*authData, error) {
 	var (
@@ -344,12 +349,16 @@ func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*a
 		return nil, err
 	}
 	payloadHash := expectedPayloadHash(rv)
+	pc, err := classifyPayload(rv, payloadHash)
+	if err != nil {
+		return nil, err
+	}
 	creq := canonicalRequestV4(rv.req.Method, canonicalURIV4(rv.rawPath), canonicalQueryV4(rv.rawQuery, presigned),
 		hdrs, c.signedHeaders, payloadHash)
 	sts := stringToSignV4(c.date, c.scope, creq)
 	d := &authData{
 		accessKey: c.accessKey, signature: c.signature, canonicalRequest: creq, stringToSign: sts,
-		v4: c, presigned: presigned, payloadHash: payloadHash,
+		v4: c, presigned: presigned, payloadHash: payloadHash, payload: pc,
 	}
 	d.sign = func(secret string) (string, error) { return signatureV4(signingKeyV4(secret, c.scope), sts), nil }
 	return d, nil
