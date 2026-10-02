@@ -85,9 +85,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | none | none | ✓ |
 | [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | none | none | ✓ |
 | [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | none | none | ✓ |
-| [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | pending | pending |  |
-| [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | pending | pending |  |
-| [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | pending | pending |  |
+| [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | none | none | ✓ |
+| [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | none | none | ✓ |
+| [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3072,6 +3072,14 @@ Every new entry adds its row to this table, in document order.
     that starts in the head;
   - and spins one on an overwrite or delete of the object, in
     `update_gc_chain`, whose chain grows until memory runs out.
+- **Reachability:** a peer zone needs no access to this zone's pools. For an
+  encrypted object, multisite fetch decodes the manifest the source zone
+  sends and walks it in `read_manifest_parts` with the same `operator++`
+  (`RGWRadosPutObj::process_attrs`, `driver/rados/rgw_rados.cc:3536-3543`;
+  `rgw_crypt.cc:685-704`, at v19.2.6), so a rogue or compromised peer zone
+  can spin the destination's sync worker with a stripe-0 rule. radosgw's
+  decrypt setup walks a stored manifest the same way (`rgw_rest_s3.cc:693`
+  and `:2833` at v19.2.6).
 - **Releases:** every release since v19.0.0 for the part lookup, where
   `obj_find_part` and its caller arrived (8ae61ca5064 and 01d8b4c38bd,
   2023-11-21), and v19.2.6 and v20.2.4 for the other walks, the releases
@@ -3083,7 +3091,14 @@ Every new entry adds its row to this table, in document order.
   that does not move past the previous offset, so for a part that starts in
   the head rgw-go refuses a HEAD that radosgw answers; `docs/exclusions.md`
   records the difference.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused. Related, not a
+  duplicate: [#66705](https://tracker.ceph.com/issues/66705) (2024) reported
+  an infinite loop in the same part lookup for an upload of a single part,
+  which [ceph/ceph#58288](https://github.com/ceph/ceph/pull/58288) fixed;
+  that fix does not reach a stripe-0 rule, whose iterator never gets to the
+  end. Being a crash and a cross-zone hang, it waits on the owner's choice
+  of disclosure channel.
 - **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
   review of rgw-go's part lookup; derived from the source, not reproduced.
 
@@ -3147,7 +3162,8 @@ Every new entry adds its row to this table, in document order.
   manifests yet. Its manifest walks refuse a stripe-0 rule past the head ("radosgw
   hangs or faults walking a manifest whose rule has a stripe size of 0",
   above).
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
   review of rgw-go's manifest walks; derived from the source, not
   reproduced.
@@ -3219,6 +3235,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/cls/rgw/ops_gc.go`) call the same class methods, so the
   overwrite happens in the OSD whichever gateway wrote the entries. Because
   rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit W, Task 2, 2026-10-01, adding cls_rgw's omap-era
   gc methods; derived from the source, not reproduced.
