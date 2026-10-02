@@ -5,7 +5,6 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 )
 
@@ -67,14 +66,14 @@ func DecodeCacheNotifyInfo(d *denc.Decoder) CacheNotifyInfo {
 // ObjectCacheInfo is ObjectCacheInfo, one cached system object. The C++ also
 // holds time_added, a monotonic clock reading that is never encoded.
 type ObjectCacheInfo struct {
-	Status   int32              `json:"status"`
-	Flags    uint32             `json:"flags"`
-	Epoch    uint64             `json:"-"`
-	Data     []byte             `json:"-"`
-	Xattrs   map[string][]byte  `json:"-"`
-	RMXattrs map[string][]byte  `json:"-"`
-	Meta     ObjectMetaInfo     `json:"meta"`
-	Version  version.ObjVersion `json:"-"`
+	Status   int32             `json:"status"`
+	Flags    uint32            `json:"flags"`
+	Epoch    uint64            `json:"-"`
+	Data     []byte            `json:"-"`
+	Xattrs   map[string][]byte `json:"-"`
+	RMXattrs map[string][]byte `json:"-"`
+	Meta     ObjectMetaInfo    `json:"meta"`
+	Version  ObjVersion        `json:"-"`
 }
 
 // MarshalJSON renders ObjectCacheInfo::dump in its order, meta last. It
@@ -151,7 +150,7 @@ func DecodeObjectCacheInfo(d *denc.Decoder) ObjectCacheInfo {
 		c.Epoch = d.U64()
 	}
 	if h.Version >= 5 {
-		c.Version = version.DecodeObjVersion(d)
+		c.Version = DecodeObjVersion(d)
 	}
 	d.EndStruct(h)
 	return c

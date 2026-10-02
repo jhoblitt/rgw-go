@@ -22,14 +22,15 @@ import (
 )
 
 // recordingCluster is a fakerados cluster that counts its required-release
-// reads, fails them with releaseErr when it is set, fails a read op on an
-// object readErrs names with its error, and records the pool handles it
-// opens.
+// reads, fails them with releaseErr when it is set, fails a read or write op
+// on an object readErrs or writeErrs names with its error, and records the
+// pool handles it opens.
 type recordingCluster struct {
 	*fakerados.Cluster
 	releaseReads int
 	releaseErr   error
 	readErrs     map[string]error
+	writeErrs    map[string]error
 	opened       []*recordingPool
 }
 
@@ -46,17 +47,18 @@ func (c *recordingCluster) Pool(ctx context.Context, pool, namespace string) (ra
 	if err != nil {
 		return nil, err
 	}
-	rp := &recordingPool{Pool: p, readErrs: c.readErrs}
+	rp := &recordingPool{Pool: p, readErrs: c.readErrs, writeErrs: c.writeErrs}
 	c.opened = append(c.opened, rp)
 	return rp, nil
 }
 
-// recordingPool counts Close calls on a pool handle and fails a read op on
-// an object readErrs names with its error.
+// recordingPool counts Close calls on a pool handle and fails a read or
+// write op on an object readErrs or writeErrs names with its error.
 type recordingPool struct {
 	radosclient.Pool
-	readErrs map[string]error
-	closes   int
+	readErrs  map[string]error
+	writeErrs map[string]error
+	closes    int
 }
 
 func (p *recordingPool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
@@ -66,12 +68,21 @@ func (p *recordingPool) Read(ctx context.Context, oid string, op *radosclient.Re
 	return p.Pool.Read(ctx, oid, op, flags)
 }
 
+func (p *recordingPool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
+	if err := p.writeErrs[oid]; err != nil {
+		return 0, err
+	}
+	return p.Pool.Write(ctx, oid, op, flags)
+}
+
 func (p *recordingPool) Close() error {
 	p.closes++
 	return p.Pool.Close()
 }
 
 var _ = Describe("the driver", func() {
+	// control is the control pool seedRookZone's zone names.
+	const control = "ceph-objectstore.rgw.control"
 	var (
 		cluster *recordingCluster
 		opts    *cephconf.Options
@@ -148,13 +159,53 @@ var _ = Describe("the driver", func() {
 			Entry("rgw_period_root_pool", "rgw_period_root_pool"),
 		)
 
-		It("opens the root pool once for its four options and closes it with Close", func(ctx SpecContext) {
+		It("opens the root pool once for its four options and the control pool, and closes both with Close", func(ctx SpecContext) {
 			s, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cluster.opened).To(HaveLen(1))
+			Expect(cluster.opened).To(HaveLen(2))
 			Expect([]string{cluster.opened[0].Name(), cluster.opened[0].Namespace()}).To(Equal([]string{meta.RootPool, ""}))
+			Expect([]string{cluster.opened[1].Name(), cluster.opened[1].Namespace()}).To(Equal([]string{control, ""}))
 			Expect(s.Close()).To(Succeed())
 			Expect(cluster.opened[0].closes).To(Equal(1))
+			Expect(cluster.opened[1].closes).To(Equal(1))
+		})
+
+		It("creates the control objects in the zone's control pool", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			for i := range 8 {
+				Expect(cluster.Object(control, "", fmt.Sprintf("notify.%d", i))).NotTo(BeNil(), "notify.%d", i)
+			}
+		})
+
+		It("creates as many control objects as rgw_num_control_oids names", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, conf(map[string]string{
+				"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore",
+				"rgw_num_control_oids": "0",
+			}), driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cluster.Object(control, "", "notify")).NotTo(BeNil(), "0 is the single legacy object")
+			Expect(cluster.Object(control, "", "notify.0")).To(BeNil())
+		})
+
+		It("fails naming the control pool it cannot open, and closes the pools it opened", func(ctx SpecContext) {
+			cluster.FailPool(control)
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+			Expect(err).To(MatchError(ContainSubstring(control)))
+			Expect(cluster.opened).To(HaveLen(1))
+			Expect(cluster.opened[0].closes).To(Equal(1))
+		})
+
+		It("fails naming a control object it cannot create, and closes the pools it opened", func(ctx SpecContext) {
+			boom := errors.New("no space")
+			cluster.writeErrs = map[string]error{"notify.5": boom}
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).To(MatchError(boom))
+			Expect(err).To(MatchError(ContainSubstring("notify.5")))
+			Expect(cluster.opened).To(HaveLen(2))
+			Expect(cluster.opened[0].closes).To(Equal(1))
+			Expect(cluster.opened[1].closes).To(Equal(1))
 		})
 
 		It("closes the pools it opened when the zone does not resolve", func(ctx SpecContext) {
@@ -452,10 +503,28 @@ var _ = Describe("the driver", func() {
 			})
 
 			It("runs until its context ends when no worker is registered", func(ctx SpecContext) {
-				cancel, done := run(ctx)
+				var bare driver.Store
+				runCtx, cancel := context.WithCancel(ctx)
+				DeferCleanup(cancel)
+				done := make(chan error, 1)
+				go func() { done <- bare.Run(runCtx) }()
 				Consistently(done).WithTimeout(50 * time.Millisecond).WithPolling(5 * time.Millisecond).ShouldNot(Receive())
 				cancel()
 				Eventually(done).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Receive(Succeed()))
+			})
+
+			It("keeps a watch on every control object until its context ends", func(ctx SpecContext) {
+				cancel, done := run(ctx)
+				for i := range 8 {
+					oid := fmt.Sprintf("notify.%d", i)
+					Eventually(func() int { return cluster.Watches(control, "", oid) }).
+						WithTimeout(time.Second).WithPolling(time.Millisecond).Should(Equal(1), oid)
+				}
+				cancel()
+				Eventually(done).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Receive(Succeed()))
+				for i := range 8 {
+					Expect(cluster.Watches(control, "", fmt.Sprintf("notify.%d", i))).To(BeZero(), "notify.%d", i)
+				}
 			})
 		})
 	})

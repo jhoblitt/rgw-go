@@ -193,6 +193,10 @@ finds a new limit, and update the status when one is fixed or measured.
   which goceph allocates in full for every such read.
 - **Status:** accepted for the few reads at startup; a path that reads
   small objects often needs a size it knows, a stat, or a pooled buffer.
+  The metadata reads (`sysobjs.read`) read into a 4 KiB buffer with a stat
+  in the same operation, and read an object the stat shows larger again
+  at that size, so only a metadata object above 4 KiB costs a second round
+  trip.
 - **Measure:** allocation per read against the object's size.
 
 ### Cancellation stops only the client

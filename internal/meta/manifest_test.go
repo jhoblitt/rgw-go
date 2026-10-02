@@ -10,7 +10,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
@@ -631,7 +630,7 @@ func orderCacheInfo() meta.ObjectCacheInfo {
 		Xattrs:   map[string][]byte{"x": []byte("1")},
 		RMXattrs: map[string][]byte{"r": []byte("2")},
 		Meta:     meta.ObjectMetaInfo{Size: 5},
-		Version:  version.ObjVersion{Ver: 3, Tag: "tag"},
+		Version:  meta.ObjVersion{Ver: 3, Tag: "tag"},
 	}
 }
 
@@ -680,13 +679,13 @@ var _ = Describe("CacheNotifyInfo", func() {
 			encCacheInfoBody(e, false)
 		})
 		want := orderCacheInfo()
-		want.RMXattrs, want.Epoch, want.Version = nil, 0, version.ObjVersion{}
+		want.RMXattrs, want.Epoch, want.Version = nil, 0, meta.ObjVersion{}
 		Expect(decodeWhole(b, meta.DecodeObjectCacheInfo)).To(Equal(want))
 	})
 	It("reads ObjectCacheInfo version 3, with removed attrs but no epoch", func() {
 		b := encoded(func(e *denc.Encoder) { beginEnd(e, 3, 3, func() { encCacheInfoBody(e, true) }) })
 		want := orderCacheInfo()
-		want.Epoch, want.Version = 0, version.ObjVersion{}
+		want.Epoch, want.Version = 0, meta.ObjVersion{}
 		Expect(decodeWhole(b, meta.DecodeObjectCacheInfo)).To(Equal(want))
 	})
 	It("reads ObjectMetaInfo and RGWCacheNotifyInfo version 1, with neither compat byte nor length", func() {

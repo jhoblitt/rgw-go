@@ -31,6 +31,7 @@ type Store struct {
 	release denc.Release
 	zone    *zoneConfig
 	pools   *poolCache
+	sysobj  *sysobjs
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -50,8 +51,11 @@ var (
 )
 
 // Open connects the driver to cluster: it detects the release, resolves the
-// zone the gateway serves from the root pools, reads the options, and logs
-// the zone and the options that ask for a worker it does not run.
+// zone the gateway serves from the root pools, reads the options, creates
+// the control objects in the zone's control pool, and logs the zone and the
+// options that ask for a worker it does not run. The control watches, which
+// keep the metadata cache coherent with every other gateway, run as Run's
+// control-watch worker.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
@@ -70,9 +74,15 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	sys, err := openSysObj(ctx, pools, zc.Params, opts, release)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
-	return &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools}, nil
+	s := &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys}
+	s.AddWorker("control-watch", sys.notify.run)
+	return s, nil
 }
 
 // openZone opens the root pools and resolves the zone from them.
