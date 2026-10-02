@@ -515,6 +515,17 @@ Every new entry adds its row to this table, in document order.
     bytes.
   - On main `create_next` no longer rejects even a parse that consumed
     nothing (`rgw_auth_s3.cc:1146-1151`, 2026-09-29).
+  - The same call also reads past the bytes received. `parsing_buf`, a
+    `boost::container::static_vector` of `META_MAX_SIZE` (101) bytes
+    (`rgw_auth_s3.h:354` at v19.2.6, `:356` at v20.2.4), is not
+    NUL-terminated, so when the bytes received end in hex digits or
+    blanks, strtoull runs on into the vector's unused storage. The run
+    stays inside the object: it stops at the vector's size field, whose
+    high bytes are zero because the size is at most 101 (measured with
+    GCC 15 and Boost's layout). The value it yields is never used: the
+    parse then fails the checks for `;` and the CRLF, which are bounded
+    by the size, and is refused with 400. It is not security-relevant,
+    and #72309's bounded `std::from_chars` parse removes it too.
 - **Releases:** every release since v12.1.0; checked at v19.2.6, v20.2.4 and
   main.
 - **rgw-go:** phase 1 (unit A) accepts a chunk size only as strict hex, 1 to
