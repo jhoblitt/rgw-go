@@ -240,7 +240,8 @@ func Seam(ctx context.Context, dir string) (SeamReport, error) {
 		return SeamReport{}, err
 	}
 	r := SeamReport{Verdicts: s.verdicts()}
-	r.Passing = passing(s.modes, r.Verdicts)
+	r.Passing = passing(s.modes, r.Verdicts, func(v Verdict) bool { return !v.Informational })
+	r.BoundaryPassing = passing(s.modes, r.Verdicts, func(v Verdict) bool { return v.Criterion != Cgo })
 	r.Markdown = s.render(r)
 	return r, nil
 }

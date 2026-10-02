@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Criterion is one of the four tests that say cgo is not a phase 1
@@ -55,29 +56,46 @@ type Verdict struct {
 	// Unstable lists the cells feeding the verdict whose floor runs before
 	// and after them differ by more than maxFloorDrift.
 	Unstable []string
+	// Informational marks a verdict reported beside the criteria and not
+	// counted in the answer.
+	Informational bool
 }
 
-// SeamReport is a sweep directory rendered: its markdown, every verdict, and
-// the judged modes that pass all four criteria.
+// Boundary reads the cgo criterion's profile for the boundary cost alone,
+// Share.Boundary, against the same threshold. It is informational: Answer
+// leaves it out, and BoundaryAnswer reads it in place of Cgo.
+const Boundary Criterion = "boundary cost<=10% of CPU (librados's C and the Go completion handler excluded)"
+
+// SeamReport is a sweep directory rendered: its markdown, every verdict, the
+// judged modes that pass all four criteria, and those that pass them with
+// the boundary cost in place of the cgo criterion.
 type SeamReport struct {
-	Markdown string
-	Verdicts []Verdict
-	Passing  []string
+	Markdown        string
+	Verdicts        []Verdict
+	Passing         []string
+	BoundaryPassing []string
 }
 
 // Answer says which judged modes pass all four criteria.
-func (r SeamReport) Answer() string {
-	switch len(r.Passing) {
+func (r SeamReport) Answer() string { return answer(r.Passing) }
+
+// BoundaryAnswer says which judged modes pass all four criteria with the
+// boundary cost in place of the cgo criterion.
+func (r SeamReport) BoundaryAnswer() string { return answer(r.BoundaryPassing) }
+
+func answer(modes []string) string {
+	switch len(modes) {
 	case 0:
 		return "no judged mode passes all four criteria"
 	case 1:
-		return r.Passing[0] + " passes all four criteria"
+		return modes[0] + " passes all four criteria"
 	default:
-		return strings.Join(r.Passing, " and ") + " pass all four criteria"
+		return strings.Join(modes, " and ") + " pass all four criteria"
 	}
 }
 
-func passing(modes []string, vs []Verdict) []string {
+// passing returns the judged modes whose verdicts that counts all pass.
+func passing(modes []string, vs []Verdict, counts func(Verdict) bool) []string {
 	var out []string
 	for _, m := range modes {
 		if !judged[m] {
@@ -85,7 +103,7 @@ func passing(modes []string, vs []Verdict) []string {
 		}
 		ok := true
 		for _, v := range vs {
-			if v.Mode == m && v.Status != Pass {
+			if v.Mode == m && counts(v) && v.Status != Pass {
 				ok = false
 			}
 		}
@@ -99,7 +117,7 @@ func passing(modes []string, vs []Verdict) []string {
 func (s *sweep) verdicts() []Verdict {
 	var vs []Verdict
 	for _, m := range s.modes {
-		for _, v := range []Verdict{s.throughput(m), s.latency(m), s.threads(m), s.cgo(m)} {
+		for _, v := range []Verdict{s.throughput(m), s.latency(m), s.threads(m), s.cgo(m), s.boundary(m)} {
 			v.Mode, v.Judged = m, judged[m]
 			vs = append(vs, v)
 		}
@@ -270,17 +288,35 @@ func (s *sweep) threads(mode string) Verdict {
 }
 
 func (s *sweep) cgo(mode string) Verdict {
+	return s.profileShare(mode, Cgo, func(sh Share) time.Duration { return sh.Cgo })
+}
+
+func (s *sweep) boundary(mode string) Verdict {
+	v := s.profileShare(mode, Boundary, Share.Boundary)
+	v.Informational = true
+	// Pipe mode's completion is written to the pipe by a librados thread,
+	// which the profile samples under runtime._ExternalCode with no frame
+	// that tells that write from librados's other work.
+	if mode == "pipe" && v.Status != Incomplete {
+		v.Margin += "; leaves out pipe's write(2) per completion, unmeasured"
+	}
+	return v
+}
+
+// profileShare judges the part of mode's read4k profile at 256 that part
+// returns against the cgo criterion's threshold.
+func (s *sweep) profileShare(mode string, c Criterion, part func(Share) time.Duration) Verdict {
 	p, ok := s.profiles[mode]
 	if !ok {
-		return Verdict{Criterion: Cgo, Status: Incomplete, Margin: "missing: cpu-" + mode + "-read4k-256.pprof"}
+		return Verdict{Criterion: c, Status: Incomplete, Margin: "missing: cpu-" + mode + "-read4k-256.pprof"}
 	}
-	pct := p.share.percent(p.share.Cgo)
+	pct := p.share.percent(part(p.share))
 	status := Pass
 	if pct > maxCgoPercent {
 		status = Fail
 	}
 	return Verdict{
-		Criterion: Cgo,
+		Criterion: c,
 		Status:    status,
 		Margin:    fmt.Sprintf("%.1f%% of %s sampled, margin %+.1f points", pct, p.share.Total, maxCgoPercent-pct),
 	}

@@ -389,13 +389,61 @@ var _ = Describe("Seam", func() {
 			HaveField("Judged", false),
 		)), "sync's profile is reported beside the judged modes'")
 		Expect(r.Markdown).To(ContainSubstring("\n## CPU profiles\n"))
+		Expect(r.Markdown).To(ContainSubstring("| mode | profile | sampled | cgo frames | C under runtime.cgocall | " +
+			"(i) submit crossing | (ii) delivery | boundary cost | Go completion handler | threads outside Go | largest cgo frames, cumulative |"))
 		for _, row := range []string{
-			`(?m)^\| sync \| cpu-sync-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.0% \| `,
-			`(?m)^\| callback \| cpu-callback-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.0% \| `,
-			`(?m)^\| pipe \| cpu-pipe-read4k-256\.pprof \| 1\.5s \| 84\.0% \| 18\.0% \| 0\.0% \| `,
+			`(?m)^\| sync \| cpu-sync-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.7% \| 0\.0% \| 0\.7% \| 0\.0% \| 0\.0% \| `,
+			`(?m)^\| callback \| cpu-callback-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.7% \| 0\.0% \| 0\.7% \| 0\.0% \| 0\.0% \| `,
+			`(?m)^\| pipe \| cpu-pipe-read4k-256\.pprof \| 1\.5s \| 84\.0% \| 18\.0% \| 66\.0% \| 0\.0% \| 66\.0% \| 0\.0% \| 0\.0% \| `,
 		} {
-			Expect(r.Markdown).To(MatchRegexp(row), "the cgo share, the C under runtime.cgocall, and the threads the Go runtime does not run")
+			Expect(r.Markdown).To(MatchRegexp(row), "the cgo share, then how it divides, and the threads the Go runtime does not run")
 		}
+	})
+
+	It("reports the boundary cost beside the cgo criterion without judging by it", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("callback", report.Boundary, report.Pass, "0.7% of 1.5s sampled, margin +9.3 points"),
+			HaveField("Informational", true),
+		)))
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("pipe", report.Boundary, report.Fail,
+				"66.0% of 1.5s sampled, margin -56.0 points; leaves out pipe's write(2) per completion, unmeasured"),
+			HaveField("Informational", true),
+		)), "pipe's C side of a completion is sampled outside every Go frame")
+		for _, mode := range []string{"sync", "callback"} {
+			Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+				HaveField("Mode", mode), HaveField("Criterion", report.Boundary),
+				HaveField("Margin", Not(ContainSubstring("write(2)"))),
+			)), mode)
+		}
+		Expect(r.Markdown).To(ContainSubstring("For pipe it leaves out the C side of each completion, one write(2) to the " +
+			"pipe on a librados thread, which the profile records under runtime._ExternalCode with no frame to tell it by: " +
+			"it is unmeasured, and pipe's boundary cost is low by that much."))
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| cgo<=10% of CPU \|.*\|\n\| informational: boundary cost<=10% of CPU `+
+			`\(librados's C and the Go completion handler excluded\) \| PASS: 0\.7% `),
+			"the informational row sits directly under the cgo criterion's")
+		Expect(r.Markdown).To(ContainSubstring("**Answer:** callback passes all four criteria on tentacle.\n" +
+			"\n**Answer with the boundary cost in place of the cgo criterion:** callback passes all four criteria on tentacle.\n"))
+	})
+
+	It("answers again with the boundary cost where the cgo criterion fails on librados's C", func(ctx SpecContext) {
+		dir := sweep()
+		data, err := os.ReadFile("testdata/pprof/c-heavy.pprof")
+		Expect(err).NotTo(HaveOccurred())
+		for _, mode := range []string{"callback", "pipe"} {
+			Expect(os.WriteFile(filepath.Join(dir, "cpu-"+mode+"-read4k-256.pprof"), data, 0o600)).To(Succeed())
+		}
+		r, err := report.Seam(ctx, dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.Fail, "98.7% of 1.49s sampled")),
+			"nearly every sample is C under runtime.cgocall")
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Boundary, report.Pass, "0.0% of 1.49s sampled")))
+		Expect(r.Passing).To(BeEmpty())
+		Expect(r.BoundaryPassing).To(Equal([]string{"callback", "pipe"}))
+		Expect(r.Answer()).To(Equal("no judged mode passes all four criteria"))
+		Expect(r.BoundaryAnswer()).To(Equal("callback and pipe pass all four criteria"))
 	})
 
 	It("fails when a mode's file is missing a cell another mode has", func(ctx SpecContext) {
@@ -573,5 +621,23 @@ var _ = Describe("CgoShare", func() {
 	It("refuses output with no samples", func() {
 		_, err := report.ParseTraces(strings.NewReader("File: seam.test\nType: cpu\n"))
 		Expect(err).To(MatchError(ContainSubstring("no samples")))
+	})
+
+	It("divides each sample, once, by the frame nearest its leaf, for callback and pipe stacks alike", func() {
+		data, err := os.ReadFile("testdata/traces/boundary.txt")
+		Expect(err).NotTo(HaveOccurred())
+		s, err := report.ParseTraces(bytes.NewReader(data))
+		Expect(err).NotTo(HaveOccurred())
+		ms := time.Millisecond
+		Expect(s.Total).To(Equal(420 * ms))
+		Expect(s.Cgo).To(Equal(250*ms),
+			"every stack with a cgo frame, the pointer check included, and none of the pipe's drain without one")
+		Expect(s.InC).To(Equal(130*ms), "the submission's C and the C the handler calls, in either mode")
+		Expect(s.Submit).To(Equal(50*ms), "the crossing out of runtime.cgocall, the pointer check, the pinner, and the handler's own crossings")
+		Expect(s.Delivery).To(Equal(80*ms), "runtime.cgocallback* above the handler, and the pipe's read in drain")
+		Expect(s.Handler).To(Equal(70*ms), "aioComplete's Go work, under the callback and under drain")
+		Expect(s.Boundary()).To(Equal(130 * ms))
+		Expect(s.External).To(Equal(40 * ms))
+		Expect(s.Total).To(Equal(s.External+50*ms+s.InC+s.Submit+s.Delivery+s.Handler), "each sample is counted once")
 	})
 })

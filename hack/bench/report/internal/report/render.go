@@ -76,8 +76,15 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		"divides by the mean of the two runs, and a cell whose runs differ by more than 10% of that mean is flagged unstable " +
 		"beside the verdict it feeds. The threads criterion allows each cell under the byte budget " +
 		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile " +
-		"of read4k at 256 in flight whose stacks hold runtime.cgocall, runtime.cgocallback*, a _Cfunc_ stub or runtime.(*Pinner). " +
-		"sync parks an OS thread per operation in flight and is the baseline, not judged.\n\n")
+		"of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, " +
+		"runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's " +
+		"runtime.cgoCheck* pointer checks count as well. " +
+		"sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the " +
+		"cgo criterion reads the same profile for the boundary cost alone, what a pure-Go client would no longer pay; it " +
+		"is not one of the four criteria, and the second answer reads it in the cgo criterion's place. For pipe it leaves " +
+		"out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records " +
+		"under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by " +
+		"that much.\n\n")
 	b.WriteString("| criterion |")
 	for _, m := range s.modes {
 		label := m
@@ -87,8 +94,12 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		fmt.Fprintf(b, " %s |", label)
 	}
 	b.WriteString("\n|---|" + strings.Repeat("---|", len(s.modes)) + "\n")
-	for _, c := range criteria {
-		fmt.Fprintf(b, "| %s |", c)
+	for _, c := range append(slices.Clone(criteria), Boundary) {
+		label := string(c)
+		if c == Boundary {
+			label = "informational: " + label
+		}
+		fmt.Fprintf(b, "| %s |", label)
 		for _, m := range s.modes {
 			i := slices.IndexFunc(r.Verdicts, func(v Verdict) bool { return v.Mode == m && v.Criterion == c })
 			v := r.Verdicts[i]
@@ -97,6 +108,8 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(b, "\n**Answer:** %s on %s.\n", r.Answer(), s.releaseName())
+	fmt.Fprintf(b, "\n**Answer with the boundary cost in place of the cgo criterion:** %s on %s.\n",
+		r.BoundaryAnswer(), s.releaseName())
 	s.renderLimits(b)
 	s.renderProcesses(b)
 }
@@ -249,17 +262,26 @@ func (s *sweep) renderProfiles(b *strings.Builder) {
 		"under the Go stack that called it, ending in runtime.cgocall, so the cgo share holds the C that Go calls ran, " +
 		"librados's submission included, as well as the crossing itself; that C is the second share. A sample of a " +
 		"thread the Go runtime does not run, librados's messenger and finisher threads among them, is recorded under " +
-		"runtime._ExternalCode; that is the third share, and outside the cgo share.\n\n")
-	b.WriteString("| mode | profile | sampled | cgo frames | C under runtime.cgocall | threads outside Go | largest cgo frames, cumulative |\n")
-	b.WriteString("|" + strings.Repeat("---|", 7) + "\n")
+		"runtime._ExternalCode; that is the last share, and outside the cgo share.\n\n" +
+		"The columns between divide the profile by the frame nearest each sample's leaf, so no sample counts twice. " +
+		"(i), the submit crossing, is the cgo machinery around the C: runtime.cgocall's Go side, the _Cfunc_ stubs, the " +
+		"Pinner and the pointer checks, the completion handler's own calls into C included. (ii), the delivery, is how a " +
+		"completion reaches Go: the runtime.cgocallback* frames for callback, (*aioPipe).drain and the pipe read it waits " +
+		"in for pipe, and nothing for sync, whose wake happens in C. Neither counts the Go completion handler, " +
+		"rados.aioComplete, shown for reference: a pure-Go client runs one too. The boundary cost is (i) plus (ii).\n\n")
+	b.WriteString("| mode | profile | sampled | cgo frames | C under runtime.cgocall | (i) submit crossing | (ii) delivery | " +
+		"boundary cost | Go completion handler | threads outside Go | largest cgo frames, cumulative |\n")
+	b.WriteString("|" + strings.Repeat("---|", 11) + "\n")
 	for _, m := range ordered(keySet(s.profiles), modeOrder) {
 		p := s.profiles[m]
 		var top []string
 		for _, f := range p.share.Frames[:min(len(p.share.Frames), 5)] {
 			top = append(top, fmt.Sprintf("%s %s", f.Name, f.Cum))
 		}
-		fmt.Fprintf(b, "| %s | %s | %s | %.1f%% | %.1f%% | %.1f%% | %s |\n", m, p.file, p.share.Total,
-			p.share.percent(p.share.Cgo), p.share.percent(p.share.InC), p.share.percent(p.share.External), strings.Join(top, "; "))
+		sh := p.share
+		fmt.Fprintf(b, "| %s | %s | %s | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %s |\n", m, p.file, sh.Total,
+			sh.percent(sh.Cgo), sh.percent(sh.InC), sh.percent(sh.Submit), sh.percent(sh.Delivery), sh.percent(sh.Boundary()),
+			sh.percent(sh.Handler), sh.percent(sh.External), strings.Join(top, "; "))
 	}
 }
 

@@ -25,17 +25,38 @@ type Frame struct {
 // Share is how much of a CPU profile's sampled time has a cgo frame on its
 // stack: Cgo of Total, and each cgo frame's cumulative time, largest first.
 //
-// InC is the part of Cgo whose leaf is runtime.cgocall. The runtime records
-// a sample taken while a Go thread runs C under the Go stack that made the
-// call, which ends in runtime.cgocall (sigprof), so InC is the C, librados's
-// included, that Go calls ran, and the crossing itself. External is the time
-// sampled on threads the runtime does not run, librados's own among them,
-// which the runtime records under runtime._ExternalCode (sigprofNonGoPC).
+// The other fields divide the profile so that each sample counts in at most
+// one of them, the one its frame nearest the leaf decides:
+//
+//   - External is the time sampled on threads the runtime does not run,
+//     librados's own among them, which the runtime records under
+//     runtime._ExternalCode (sigprofNonGoPC).
+//   - InC is the time whose leaf is runtime.cgocall: the runtime records a
+//     sample taken while a Go thread runs C under the Go stack that made the
+//     call (sigprof), so InC is the C that Go calls ran, librados's included.
+//   - Submit, (i), is the cgo machinery around that C: runtime.cgocall's own
+//     Go side, the _Cfunc_ stubs, the Pinner and the runtime.cgoCheck* pointer
+//     checks, wherever they run, the handler's nested calls included.
+//   - Delivery, (ii), is how a completion reaches Go: the runtime.cgocallback*
+//     frames a callback arrives through, or the pipe's drain goroutine and the
+//     read it waits in, short of the handler either one calls.
+//   - Handler is the Go completion handler, rados.aioComplete, and the Go it
+//     calls; a pure-Go client runs one too.
+//
+// A sample of the handler's nested cgo call lands in InC or Submit, not in
+// Handler, because the walk from the leaf meets runtime.cgocall first; Cgo
+// counts it once as well, since it counts samples, not frames.
 type Share struct {
-	Total, Cgo    time.Duration
-	InC, External time.Duration
-	Frames        []Frame
+	Total, Cgo                time.Duration
+	InC, External             time.Duration
+	Submit, Delivery, Handler time.Duration
+	Frames                    []Frame
 }
+
+// Boundary is the boundary cost, what a pure-Go client would no longer pay:
+// the submit crossing and the delivery mechanism, without librados's C or
+// the Go completion handler.
+func (s Share) Boundary() time.Duration { return s.Submit + s.Delivery }
 
 // percent is d as a percentage of the profile's sampled time.
 func (s Share) percent(d time.Duration) float64 {
@@ -45,14 +66,48 @@ func (s Share) percent(d time.Duration) float64 {
 	return 100 * float64(d) / float64(s.Total)
 }
 
+// The frames that tell the boundary cost's parts apart.
+const (
+	aioComplete  = "github.com/ceph/go-ceph/rados.aioComplete"
+	aioPipeDrain = "github.com/ceph/go-ceph/rados.(*aioPipe).drain"
+)
+
 // cgoFrame reports whether a function is a frame of the cgo boundary: the
-// call into C, the callback from C, a cgo-generated stub, or the Pinner that
-// keeps Go memory in place for C.
+// machinery of a call into C, or the callback from C.
 func cgoFrame(name string) bool {
+	return cgoMachinery(name) || strings.HasPrefix(name, "runtime.cgocallback")
+}
+
+// cgoMachinery reports whether a function is part of a call into C: the call
+// itself, a cgo-generated stub, the Pinner that keeps Go memory in place for
+// C, or the pointer checks cgo inserts before the call.
+func cgoMachinery(name string) bool {
 	return name == "runtime.cgocall" ||
-		strings.HasPrefix(name, "runtime.cgocallback") ||
 		strings.HasPrefix(name, "_Cfunc_") || strings.Contains(name, "._Cfunc_") ||
-		strings.HasPrefix(name, "runtime.(*Pinner).")
+		strings.HasPrefix(name, "runtime.(*Pinner).") ||
+		strings.HasPrefix(name, "runtime.cgoCheck")
+}
+
+// part returns the field of s a sample with the stack frames, leaf first,
+// counts in, or nil for Go time outside the boundary.
+func part(s *Share, frames []string) *time.Duration {
+	switch {
+	case slices.Contains(frames, "runtime._ExternalCode"):
+		return &s.External
+	case frames[0] == "runtime.cgocall":
+		return &s.InC
+	}
+	for _, f := range frames {
+		switch {
+		case f == aioComplete:
+			return &s.Handler
+		case cgoMachinery(f):
+			return &s.Submit
+		case strings.HasPrefix(f, "runtime.cgocallback"), f == aioPipeDrain:
+			return &s.Delivery
+		}
+	}
+	return nil
 }
 
 // CgoShare reads the CPU profile at path through go tool pprof's -traces
@@ -93,11 +148,8 @@ func parseTraces(r io.Reader) (Share, error) {
 			return
 		}
 		s.Total += value
-		if frames[0] == "runtime.cgocall" {
-			s.InC += value
-		}
-		if slices.Contains(frames, "runtime._ExternalCode") {
-			s.External += value
+		if p := part(&s, frames); p != nil {
+			*p += value
 		}
 		hit := false
 		for _, f := range slices.Compact(slices.Sorted(slices.Values(frames))) {

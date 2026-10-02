@@ -1,0 +1,74 @@
+File: seam.test
+Type: cpu
+Duration: 2s, Total samples = 420000000ns (21.00%)
+-----------+-------------------------------------------------------
+40000000ns   [libceph-common.so.2]
+             runtime._ExternalCode
+-----------+-------------------------------------------------------
+50000000ns   runtime.futex
+             runtime.notesleep
+             runtime.mPark
+-----------+-------------------------------------------------------
+100000000ns   runtime.cgocall
+             github.com/ceph/go-ceph/rados._Cfunc_rados_aio_read_op_operate
+             github.com/ceph/go-ceph/rados.(*ReadOp).OperateAsync
+             github.com/jhoblitt/rgw-go/internal/radosclient/goceph.(*pool).Read
+-----------+-------------------------------------------------------
+20000000ns   runtime.exitsyscall
+             runtime.cgocall
+             github.com/ceph/go-ceph/rados._Cfunc_rados_aio_read_op_operate
+             github.com/ceph/go-ceph/rados.(*ReadOp).OperateAsync
+-----------+-------------------------------------------------------
+10000000ns   runtime.cgoIsGoPointer
+             runtime.cgoCheckArg
+             runtime.cgoCheckPointer
+             github.com/ceph/go-ceph/rados.(*ReadOp).OperateAsync
+-----------+-------------------------------------------------------
+10000000ns   runtime.setPinned (inline)
+             runtime.(*Pinner).Pin
+             github.com/ceph/go-ceph/rados.(*ReadOp).OperateAsync
+-----------+-------------------------------------------------------
+30000000ns   runtime.cgocallbackg1
+             runtime.cgocallbackg
+             runtime.cgocallback
+-----------+-------------------------------------------------------
+40000000ns   runtime.mallocgc
+             github.com/ceph/go-ceph/rados.(*ReadOp).update
+             github.com/ceph/go-ceph/rados.aioComplete
+             github.com/ceph/go-ceph/rados.aioCompleteCallback
+             github.com/ceph/go-ceph/rados._cgoexp_0123456789ab_aioCompleteCallback
+             runtime.cgocallbackg1
+             runtime.cgocallbackg
+             runtime.cgocallback
+-----------+-------------------------------------------------------
+20000000ns   runtime.cgocall
+             github.com/ceph/go-ceph/rados._Cfunc_rados_aio_get_version
+             github.com/ceph/go-ceph/rados.aioComplete
+             github.com/ceph/go-ceph/rados.aioCompleteCallback
+             runtime.cgocallbackg1
+             runtime.cgocallbackg
+             runtime.cgocallback
+-----------+-------------------------------------------------------
+10000000ns   runtime.entersyscall
+             runtime.cgocall
+             github.com/ceph/go-ceph/rados._Cfunc_rados_aio_get_return_value
+             github.com/ceph/go-ceph/rados.aioComplete
+             github.com/ceph/go-ceph/rados.aioCompleteCallback
+             runtime.cgocallbackg1
+             runtime.cgocallbackg
+             runtime.cgocallback
+-----------+-------------------------------------------------------
+50000000ns   syscall.Syscall
+             os.(*File).Read
+             io.ReadFull
+             github.com/ceph/go-ceph/rados.(*aioPipe).drain
+-----------+-------------------------------------------------------
+30000000ns   github.com/ceph/go-ceph/rados.(*ReadOp).update
+             github.com/ceph/go-ceph/rados.aioComplete
+             github.com/ceph/go-ceph/rados.(*aioPipe).drain
+-----------+-------------------------------------------------------
+10000000ns   runtime.cgocall
+             github.com/ceph/go-ceph/rados._Cfunc_rados_aio_get_version
+             github.com/ceph/go-ceph/rados.aioComplete
+             github.com/ceph/go-ceph/rados.(*aioPipe).drain
+-----------+-------------------------------------------------------
