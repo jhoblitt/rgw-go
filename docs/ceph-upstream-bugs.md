@@ -1740,10 +1740,15 @@ Every new entry adds its row to this table, in document order.
   (`cls_lock_ops.h:255` and `:257`).
 - **Releases:** every release since v14.1.0; checked at v19.2.6, v20.2.4 and
   main.
-- **rgw-go:** unaffected; it has no cls_lock client yet. radosgw's one
-  ephemeral lock, the bucket reshard lock (`rgw_reshard.cc:734`), is never
-  read with either method; rgw-go must do the same if it takes that lock.
-  `docs/exclusions.md` records the failure mode.
+- **rgw-go:** unaffected. `internal/cls/lock` binds both methods, as
+  `GetInfo` and `AssertLocked`, but rgw-go takes no ephemeral lock and sends
+  neither for one; the package documents the restriction on both and on
+  `TypeExclusiveEphemeral`. The fakerados lock emulator removes an expired
+  ephemeral lock's object as the class does, so a spec that reads one gets
+  EIO as from the OSD. radosgw's one ephemeral lock, the bucket reshard lock
+  (`rgw_reshard.cc:734`), is never read with either method; rgw-go must do
+  the same if it takes that lock. `docs/exclusions.md` records the failure
+  mode.
 - **Upstream:** [#80993](https://tracker.ceph.com/issues/80993). Upstream QA
   logged the failure in 2022 as
   [#56575](https://tracker.ceph.com/issues/56575), which was resolved by a
