@@ -524,6 +524,25 @@ var _ = Describe("a read op", func() {
 		Expect(c.Object(poolName, ns, "created").Xattrs).To(HaveKeyWithValue("x", []byte("2")), "a class write creates the object")
 	})
 
+	It("counts the read ops run on each object with Reads, a failed one too, and no write op", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("abc"))
+		op := radosclient.NewReadOp()
+		op.Stat()
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		op = radosclient.NewReadOp()
+		op.Stat()
+		_, err = p.Read(ctx, "absent", op, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		wop := radosclient.NewWriteOp()
+		wop.WriteFull([]byte("x"))
+		_, err = p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Reads(poolName, ns, "obj")).To(Equal(1), "obj")
+		Expect(c.Reads(poolName, ns, "absent")).To(Equal(1), "absent")
+		Expect(c.Reads(poolName, ns, "never")).To(BeZero(), "never")
+	})
+
 	It("reads a range, a short tail and nothing past the end", func(ctx SpecContext) {
 		c.Put(poolName, ns, "obj", []byte("abcdef"))
 		op := radosclient.NewReadOp()
