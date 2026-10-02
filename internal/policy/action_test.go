@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
@@ -47,5 +48,13 @@ var _ = Describe("Action", func() {
 	})
 	It("renders no name for a value past the table", func() {
 		Expect(policy.ActionCount.String()).To(BeEmpty())
+	})
+	It("has an ActionNone that no name maps to", func() {
+		Expect(policy.ActionNone.String()).To(BeEmpty())
+		a, ok := policy.ParseAction("")
+		Expect(ok).To(BeFalse(), "\"\" parsed as %v", a)
+		Expect(policy.Known(policy.ActionNone, denc.Squid)).To(BeFalse(), "squid")
+		Expect(policy.Known(policy.ActionNone, denc.Tentacle)).To(BeFalse(), "tentacle")
+		Expect(policy.AllValue().Has(policy.ActionNone)).To(BeFalse(), "even every action's set lacks it")
 	})
 })

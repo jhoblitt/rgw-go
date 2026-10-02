@@ -99,6 +99,13 @@ const (
 	s3AllCount
 )
 
+// ActionNone is the action of an op radosgw's IAM never evaluates: the admin
+// API's ops, which radosgw authorizes by user caps (RGWRESTOp::verify_permission,
+// rgw_rest.cc:1687-1690 at v19.2.6, :1691-1694 at v20.2.4). It lies past
+// ActionCount, so String renders it as "", ParseAction never returns it,
+// Known is false for it and no ActionSet holds it.
+const ActionNone Action = 0xFFFF
+
 // actionNames is actpairs (rgw_iam_policy.cc) inverted. An s3 action's name is
 // "s3:" and the action_t name without its service prefix; the other services'
 // names are spelled as actpairs spells them, which is not always as the
