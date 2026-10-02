@@ -79,7 +79,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw spins or stops caching on a negative usage-log or quota interval](#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval) | [#81226](https://tracker.ceph.com/issues/81226) | [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261) | ✓ |
 | [radosgw's ARN conditions compare each ARN component with the text after it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it) | none | none | ✓ |
 | [radosgw takes any policy Action starting with a wildcard for every action](#radosgw-takes-any-policy-action-starting-with-a-wildcard-for-every-action) | [#81229](https://tracker.ceph.com/issues/81229) | [ceph/ceph#72262](https://github.com/ceph/ceph/pull/72262) | ✓ |
-| [radosgw reads a tagging body whose root is not Tagging as an empty tag set](#radosgw-reads-a-tagging-body-whose-root-is-not-tagging-as-an-empty-tag-set) | pending | pending |  |
+| [radosgw reads a tagging body whose root is not Tagging as an empty tag set](#radosgw-reads-a-tagging-body-whose-root-is-not-tagging-as-an-empty-tag-set) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2675,9 +2675,10 @@ Every new entry adds its row to this table, in document order.
     lookup and answers 400 (`rgw_rest_s3.cc:2229-2232` at v19.2.6, `:2332`
     at v20.2.4), and PutBucketWebsite passes `mandatory` as true (`:2298`
     at v19.2.6, `:2401` at v20.2.4).
-  - The optional lookup came with dc808953f2f (2019-01-03, "rgw: rework
-    lifecycle parsing"). Before it, the handlers dereferenced the result of
-    `parser.find_first("Tagging")` unchecked.
+  - The optional lookup came with dc808953f2f (authored 2018-11-01,
+    committed 2019-01-03, "rgw: rework lifecycle parsing"). Before it, the
+    handlers dereferenced the result of `parser.find_first("Tagging")`
+    unchecked.
 - **Impact:** a client that sends a Tagging document under another root
   name, or under a prefix, clears the object's or bucket's tags and is told
   it succeeded. AWS is expected to refuse such a body with MalformedXML; that
@@ -2690,6 +2691,17 @@ Every new entry adds its row to this table, in document order.
   the empty set, and the spec "reads a document whose root is not Tagging as
   the empty set" (`internal/tags/xml_test.go`) pins it. Because rgw-go
   behaves as radosgw does, `docs/exclusions.md` has no entry for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR for the silent clearing; it is unfiled while filing is
+  paused. Related, and to be cited when it is filed:
+  [#44967](https://tracker.ceph.com/issues/44967) (2020) reported the same
+  wrong-root input crashing the pre-rework handler, which dereferenced
+  `find_first("Tagging")` unchecked.
+  [ceph/ceph#34715](https://github.com/ceph/ceph/pull/34715) fixed it on
+  mimic, and the luminous backport
+  [ceph/ceph#34441](https://github.com/ceph/ceph/pull/34441) closed
+  unmerged. Nautilus and later never had that crash, because dc808953f2f had
+  replaced the handler; that rework is what brought in this erase, which
+  #44967 did not describe.
 - **Found:** phase 1 authorization work (unit Z, Task 8), 2026-10-01,
   transcribing the Tagging parse; derived from the source, not reproduced.
