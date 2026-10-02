@@ -968,15 +968,38 @@ does the following.
 
 - **A storage class without a data pool.** A storage class that a zone
   placement lists without a data pool resolves to the STANDARD class's
-  data pool in rgw-go's placement resolution (`op.ZoneInfo.Placement`).
-  radosgw's `RGWZonePlacementInfo::get_data_pool` returns an empty pool for
-  it (`rgw_zone_types.h:281-290` at v19.2.6 and v20.2.4).
+  data pool in rgw-go's placement resolution (`op.ZoneInfo.Placement`) and
+  in the driver's object pool resolution, so rgw-go stats and reads the
+  objects that class places from STANDARD's pool. radosgw's
+  `RGWZonePlacementInfo::get_data_pool` returns an empty pool for it
+  (`rgw_zone_types.h:281-290` at v19.2.6 and v20.2.4). A stat or read
+  through that pool opens a pool with an empty name, which librados refuses
+  with EINVAL (`librados/RadosClient.cc:686-687` at v19.2.6, `:688-689` at
+  v20.2.4), so by code reading radosgw answers 400 InvalidArgument. Where
+  the STANDARD class has no data pool either, rgw-go answers 400
+  InvalidArgument as well.
+- **A bucket whose placement resolves to no data pool.** When the bucket has
+  no explicit data pool, which both gateways take first
+  (`RGWZoneParams::get_head_data_pool`, `driver/rados/rgw_zone.h:287-294` at
+  v19.2.6, `:309-316` at v20.2.4), and neither the bucket's placement rule
+  nor the zonegroup's default placement names a placement of the zone,
+  rgw-go answers a stat of the bucket's objects with 500 UnknownError,
+  naming the placement: the -EIO, "probably
+  misconfiguration", that radosgw's head-object helpers answer for the same
+  zone (`get_obj_head_ref`, `driver/rados/rgw_rados.cc:2508-2512` at
+  v19.2.6, `:2616-2620` at v20.2.4). radosgw's object stat drops that
+  failure and opens a pool with an empty name, so it answers 400
+  InvalidArgument instead (`docs/ceph-upstream-bugs.md`, "radosgw's object
+  stat ignores a data pool it cannot resolve").
 - **No bootstrap.** rgw-go writes nothing at startup but the control
   objects, which radosgw creates too. When no zone or zonegroup resolves,
   it refuses to start with `driver.ErrNoZone`, naming the object it looked
   for, and it refuses to start on a root pool or a control pool it cannot
   open. A metadata pool found missing later fails the request that needs
-  it, naming the pool. radosgw creates what is missing instead.
+  it, naming the pool. A data pool found missing is not created either:
+  rgw-go stats an object in it as absent, and a read or write that needs
+  the pool fails, naming it. radosgw creates what is missing instead, a
+  data pool on the first stat, read or write that opens it.
   SiteConfig::load creates the default zone and zonegroup
   (read_or_create_default_zone and read_or_create_default_zonegroup,
   `driver/rados/rgw_zone.cc:1214`, `:1222` and `:1312` at v19.2.6, `:1208`,
@@ -985,9 +1008,12 @@ does the following.
   the config store creates a missing root pool when it reads from it
   (`rgw_init_ioctx` with create set, `driver/rados/config/impl.cc:53` at
   v19.2.6 and v20.2.4), as the notify service and the system-object layer
-  create the control pool and any metadata pool they open
+  create the control pool and any metadata pool they open, and the object
+  stat, read and write paths any data pool they open
   (`rgw_get_rados_ref`, `driver/rados/rgw_tools.cc:107-108` at v19.2.6,
-  `:108-109` at v20.2.4).
+  `:108-109` at v20.2.4; the stat reaches it through `get_raw_obj_ref`,
+  `driver/rados/rgw_rados.cc:2530-2543` at v19.2.6, `:2638-2650` at
+  v20.2.4).
 - **A zonegroup without a master zone.** A zonegroup with one zone and no
   master zone gets that zone as its master in rgw-go's memory, and rgw-go
   writes nothing back. radosgw makes the zone the master and writes the
@@ -1072,6 +1098,19 @@ does the following.
     v20.2.4), which throws at radosgw's startup
     (`driver/rados/rgw_rados.cc:1326-1327` at v19.2.6, `:1310-1311` at
     v20.2.4).
+- **Read sizes that cannot read.** rgw-go refuses to start on a zero
+  `rgw_max_chunk_size` or `rgw_get_obj_max_req_size`, or on an
+  `rgw_get_obj_window_size` below `rgw_get_obj_max_req_size`, naming the
+  three values. Ceph's config sets no minimum on any of them
+  (`common/options/rgw.yaml.in:84-98` and `:1899-1918` at v19.2.6,
+  `:84-101` and `:1999-2018` at v20.2.4), and radosgw starts with them.
+  With a window below the request size, radosgw fails every RADOS read of
+  a GET that is longer than the window with EDEADLK (`BlockingAioThrottle::get`
+  and `YieldingAioThrottle::get`, `rgw_aio_throttle.cc:40-42` and
+  `:131-132` at v19.2.6 and v20.2.4), so the GET fails; a GET that the
+  prefetched head serves alone still succeeds. With a zero request size, a
+  GET of a non-empty object never finishes (`docs/ceph-upstream-bugs.md`,
+  "radosgw never finishes a GET on a zero rgw_get_obj_max_req_size").
 - **Counts too large for radosgw's integers.** rgw-go holds a shard count in
   32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
   63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.
