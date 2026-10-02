@@ -1302,6 +1302,53 @@ differ, rgw-go does the following.
   "[radosgw cannot load a bucket whose entry point is from before version
   8](ceph-upstream-bugs.md#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8)").
 
+### Object read differences
+
+rgw-go serves GetObject and HeadObject as radosgw's `RGWGetObj` does: its
+range and conditional parsing, the part redirect, and every refusal before
+the data is read. Where the two differ, checked against the v19.2.6 and
+v20.2.4 tags, rgw-go does the following.
+
+- **Torrents.** `?torrent` on an object with a stored torrent answers 501
+  NotImplemented, where radosgw serves the torrent. When the
+  `user.rgw.torrent` attr is absent, radosgw also looks for the
+  `rgw.torrent` omap key that older releases wrote
+  (`RadosObject::get_torrent_info`, `driver/rados/rgw_sal_rados.cc:2465-2499`
+  at v19.2.6, `:3058-3092` at v20.2.4); rgw-go does not, so it answers 404
+  NoSuchKey for an object whose torrent lives only there. An SSE-C object
+  and an object with no torrent answer as on radosgw.
+- **Swift large objects.** An S3 GET or HEAD of an object carrying
+  `user.rgw.user_manifest` or `user.rgw.slo_manifest` answers 501
+  NotImplemented, where radosgw composes the object from its segments
+  (`rgw_op.cc:2373-2394` at v19.2.6, `:2606-2627` at v20.2.4). Only
+  radosgw's Swift API, which is excluded, writes such objects.
+- **Cloud read-through.** On Tentacle, a GET of an object transitioned to a
+  cloud tier that allows read-through answers 403 InvalidObjectState,
+  "This object was transitioned to cloud-s3", and logs an error. radosgw
+  starts a restore and answers 400 RequestTimeout, "restore is still in
+  progress" (`rgw_op.cc:1083-1111` at v20.2.4). Every other answer of the
+  cloud-tier check, a restore in progress or done, a tier without
+  read-through, a tier that is not an S3 tier and a failed tier lookup, is
+  radosgw's.
+- **SSE-C reads.** A GET or HEAD of an SSE-C object whose customer-key
+  headers pass every check radosgw makes answers 501 NotImplemented until
+  rgw-go decrypts SSE-C, which "Key management" above requires; radosgw
+  decrypts it. Every refusal before that is radosgw's.
+- **An empty header reads as no header.** rgw-go takes `Range`,
+  `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
+  and the three `x-amz-server-side-encryption-customer-*` headers as absent
+  when they are sent with an empty value. radosgw reads the empty value: an
+  empty `Range` on an empty object is 416 InvalidRange
+  (`rgw_op.cc:2396-2401` at v19.2.6, `:2629-2634` at v20.2.4), an empty
+  `If-Match` is 412 PreconditionFailed, as no ETag starts the empty string,
+  an empty date is 400 InvalidArgument, and an empty customer algorithm is
+  400 InvalidEncryptionAlgorithmError rather than InvalidArgument.
+- **X-Rgw-Auth.** radosgw answers a GET carrying an `X-Rgw-Auth` header
+  with the status and headers alone, as for HEAD, for its cache server's
+  authentication check (`rgw_op.cc:2179` and `:2271-2274` at v19.2.6,
+  `:2414` and `:2507-2510` at v20.2.4). rgw-go ignores the header and serves
+  the body.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
