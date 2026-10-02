@@ -39,7 +39,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
-| [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | pending | pending |  |
+| [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | none | none | ✓ |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
 | [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none | ✓ |
@@ -93,8 +93,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | none | none | ✓ |
 | [radosgw's object stat ignores a data pool it cannot resolve](#radosgws-object-stat-ignores-a-data-pool-it-cannot-resolve) | none | none | ✓ |
 | [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | none | none | ✓ |
-| [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | pending | pending |  |
-| [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | pending | pending |  |
+| [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | none | none | ✓ |
+| [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -756,22 +756,33 @@ Every new entry adds its row to this table, in document order.
   `:6933-6935` at v20.2.4). So any SigV4 request that names the access key
   ID of a secret holding a byte above 0x7f reaches the undefined behaviour,
   whoever sends it and whatever its signature.
-  - Unreproduced, by code reading: libstdc++'s range insert would see a
-    distance of SIZE_MAX and throw `std::length_error`, which
-    `Strategy::apply` catches as a `std::exception` and turns into -EPERM, a
-    403 (`rgw/rgw_auth.cc:490-555` at v19.2.6, `:505-570` at v20.2.4). A
-    build whose standard library checks iterator ranges would abort the
-    process instead.
-  - That makes it relevant to denial of service wherever an administrator
-    has set such a secret, though it is no authentication bypass: the throw
-    yields no key, so no other secret can sign as this one.
+  - libstdc++'s range insert sees a distance of SIZE_MAX and throws
+    `std::length_error`, which `Strategy::apply` catches as a
+    `std::exception` and turns into -EPERM, a 403 (`rgw/rgw_auth.cc:490-555`
+    at v19.2.6, `:505-570` at v20.2.4). A probe of the same insert, built
+    with g++ 11.5, 13.5, 14.4 and 15.3, throws it both plainly and with
+    `-D_GLIBCXX_ASSERTIONS`, which the shipped el9 packages likely carry
+    through `RPM_OPT_FLAGS` (`ceph.spec.in:1360-1361`; Ceph's own CMake
+    adds it only to a Debug build, `src/CMakeLists.txt:190-193`). Only
+    `-D_GLIBCXX_DEBUG`, which no shipped build uses, aborts instead. Not
+    reproduced against a running radosgw.
+  - So the only effect is that the user holding such a secret can never
+    authenticate. It is not security-relevant: nothing crashes, and the
+    throw yields no key, so no other secret can sign as this one.
 - **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6; older releases not
   checked.
 - **rgw-go:** derives the signing key from the secret's own bytes
   (`signingKeyV4`, `internal/auth/sigv4.go`), as AWS clients do, so such a
   secret signs and verifies. `docs/exclusions.md` records the difference
   ("A secret key signs with its own bytes").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this site. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused. It is the same
+  `-fsigned-char` high-byte class as [url_decode reads outside its hex table
+  for a byte above 0x7f after
+  "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-),
+  which we filed as [#81267](https://tracker.ceph.com/issues/81267) with a
+  fix in review, [ceph/ceph#72272](https://github.com/ceph/ceph/pull/72272);
+  a report of this site cross-references them.
 - **Found:** phase 1 unit A, Task 3, 2026-10-01, transcribing
   `get_v4_signing_key`; derived from the source, not reproduced.
 
@@ -3554,8 +3565,9 @@ Every new entry adds its row to this table, in document order.
 
 ## rados_nobjects_list_seek reports the position it was given, not the one it lands at
 
-- **Kind:** quirk, with a small mismatch between librados.h and the
-  implementation. Unreproduced: derived from the source.
+- **Kind:** documentation defect: librados.h promises the rounded
+  position, the implementation returns its argument, and upstream's tests
+  pin the implementation. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`; each pair of lines below is
   v19.2.6's, then v20.2.4's.
   - librados.h documents `rados_nobjects_list_seek` as returning the "actual
@@ -3593,7 +3605,12 @@ Every new entry adds its row to this table, in document order.
   at or before the resume point and ignores the seek's return value, so a
   seek that lands at the group's start costs a replay, recorded in
   `docs/cgo-limitations.md`, and repeats nothing.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused. The return value
+  is intended: upstream's own test asserts that the seek returns its
+  argument (`src/test/librados/list.cc:181` and `:384` at v19.2.6), so the
+  fix is to librados.h's `@returns`, with a note on the fresh-listing
+  restart.
 - **Found:** phase 1 unit N, Task 2, 2026-10-01, implementing
   `Pool.ListObjectsFrom`; derived from the source, not reproduced.
 
@@ -3644,6 +3661,11 @@ Every new entry adds its row to this table, in document order.
   A first page does not seek, and reads the deletion as an empty listing
   because go-ceph's `Iter.Err` takes ENOENT for the end.
   `docs/cgo-limitations.md` records both.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused. Related but
+  distinct: [#51846](https://tracker.ceph.com/issues/51846), a LibRadosList
+  cursor test that did not complete, and
+  [#20632](https://tracker.ceph.com/issues/20632), the same assert string on
+  a hammer to jewel upgrade, closed Won't Fix.
 - **Found:** phase 1 unit N, Task 2 review, 2026-10-01; derived from the
   source, not reproduced.
