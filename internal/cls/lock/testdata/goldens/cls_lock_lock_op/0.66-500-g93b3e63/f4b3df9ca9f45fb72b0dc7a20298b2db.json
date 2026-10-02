@@ -1,0 +1,10 @@
+{
+    "name": "lock",
+    "type": "exclusive",
+    "cookie": "",
+    "tag": "",
+    "description": "",
+    "duration": "5.000000",
+    "flags": 0
+}
+

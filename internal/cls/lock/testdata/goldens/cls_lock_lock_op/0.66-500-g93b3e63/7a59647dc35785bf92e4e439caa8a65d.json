@@ -1,0 +1,10 @@
+{
+    "name": "mylock",
+    "type": "exclusive",
+    "cookie": "",
+    "tag": "new_tag",
+    "description": "",
+    "duration": "0.000000",
+    "flags": 1
+}
+

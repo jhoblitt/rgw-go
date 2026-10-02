@@ -1,0 +1,10 @@
+{
+    "name": "gc_process",
+    "type": "exclusive",
+    "cookie": "",
+    "tag": "",
+    "description": "",
+    "duration": "600.000000",
+    "flags": 0
+}
+

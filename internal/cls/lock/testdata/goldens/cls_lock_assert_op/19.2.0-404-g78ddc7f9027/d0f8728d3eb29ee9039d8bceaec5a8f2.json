@@ -1,0 +1,7 @@
+{
+    "name": "rbd_lock",
+    "type": "exclusive",
+    "cookie": "",
+    "tag": ""
+}
+

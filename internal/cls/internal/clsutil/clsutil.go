@@ -3,6 +3,7 @@
 package clsutil
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -19,6 +20,25 @@ func Encode(v Request, r denc.Release) []byte {
 	e := denc.NewEncoder()
 	v.Encode(e, r)
 	return e.Bytes()
+}
+
+// ReadFramed returns the bytes of one ENCODE_START-framed value at the
+// decoder's position, header included, and advances past it: u8 version, u8
+// compat, u32 length, then length bytes. It lets a class package carry a
+// nested struct it does not decode. It returns nil once the decoder has
+// failed.
+func ReadFramed(d *denc.Decoder) []byte {
+	v := d.U8()
+	c := d.U8()
+	n := d.U32()
+	body := d.Raw(int(n))
+	if d.Err() != nil {
+		return nil
+	}
+	out := make([]byte, 0, 6+len(body))
+	out = append(out, v, c)
+	out = binary.LittleEndian.AppendUint32(out, n)
+	return append(out, body...)
 }
 
 // DecodeReply decodes the output of class.method with dec once the op has

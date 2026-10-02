@@ -1,0 +1,10 @@
+{
+    "name": "rbd_lock",
+    "type": "exclusive",
+    "cookie": "auto 140354632365040",
+    "tag": "internal",
+    "description": "",
+    "duration": "0.000000",
+    "flags": 0
+}
+

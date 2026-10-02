@@ -1,0 +1,10 @@
+{
+    "name": "mylock",
+    "type": "shared",
+    "cookie": "",
+    "tag": "non-default tag",
+    "description": "",
+    "duration": "0.000000",
+    "flags": 0
+}
+
