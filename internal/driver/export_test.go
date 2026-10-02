@@ -100,3 +100,28 @@ func (s *Store) PooledBuffersForTest() int64 { return s.pooledReadBufs.Load() }
 func (s *Store) ReadStoredForTest(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
 	return s.readStored(ctx, st, ofs, n, w)
 }
+
+// SetClock makes now the clock s stamps its metadata and cls_user writes
+// with.
+func SetClock(s *Store, now func() time.Time) { s.sysobj.now = now }
+
+// LinkBucket is linkBucket for the external specs.
+var LinkBucket = (*Store).linkBucket
+
+// UnlinkBucket is unlinkBucket for the external specs.
+var UnlinkBucket = (*Store).unlinkBucket
+
+// SyncBucketOwnerStats is syncOwnerStats for the external specs.
+var SyncBucketOwnerStats = (*Store).syncOwnerStats
+
+// ReadOwnerStats is readOwnerStats for the external specs.
+var ReadOwnerStats = (*Store).readOwnerStats
+
+// CompleteOwnerStatsSync is completeOwnerStatsSync for the external specs.
+var CompleteOwnerStatsSync = (*Store).completeOwnerStatsSync
+
+// ReadShardHeaders is readShardHeaders for the external specs.
+var ReadShardHeaders = (*Store).readShardHeaders
+
+// ReadIndexStats is readIndexStats for the external specs.
+var ReadIndexStats = (*Store).readIndexStats

@@ -61,6 +61,10 @@ type UserStore interface {
 	// either, the indexes and the bucket list may already be gone.
 	RemoveUser(ctx context.Context, rec *UserRecord) error
 	// ListUserBuckets pages the owner's bucket list from marker, at most
-	// maxEntries entries; more reports whether entries remain past next.
+	// maxEntries entries, which must not be negative. When the page has
+	// entries, more reports whether entries remain past next. A maxEntries
+	// of 0 lists nothing, and more need not report what remains: radosgw's
+	// listing then ends with an empty next marker (rgw_op.cc:2604 at
+	// v19.2.6, :2836 at v20.2.4), so a caller stops on an empty page.
 	ListUserBuckets(ctx context.Context, owner meta.Owner, marker string, maxEntries int) (ents []meta.BucketEnt, next string, more bool, err error)
 }

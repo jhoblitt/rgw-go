@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -169,4 +170,15 @@ func storedVersion(c *fakerados.Cluster, oid string) meta.ObjVersion {
 	v := version.DecodeObjVersion(d)
 	Expect(d.Err()).NotTo(HaveOccurred(), oid)
 	return meta.ObjVersion(v)
+}
+
+// seedShardHeader stores hdr, encoded at the Squid release, as the omap
+// header of the bucket index shard oid in the namespace-less indexPool,
+// creating the shard when it does not exist and keeping its entries when it
+// does.
+func seedShardHeader(c *fakerados.Cluster, indexPool, oid string, hdr rgwcls.DirHeader) {
+	if c.Object(indexPool, "", oid) == nil {
+		c.Put(indexPool, "", oid, nil)
+	}
+	c.Object(indexPool, "", oid).OmapHdr = encode(hdr)
 }
