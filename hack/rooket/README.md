@@ -213,7 +213,11 @@ beside the floor and not judged. It measures the host as much as the seam, so ru
 with nothing else busy; `noise.log` in the run directory samples the load and
 the busiest processes every 15 seconds. Each 4 MiB write waits for 5 GiB free
 in the pool, writes about 3.9 GiB and is removed before the next, and the
-sweep leaves the pool as it found it. A full sweep took about an hour per
+sweep leaves the pool as it found it; one that fails partway removes the
+floor's objects and those of the benchmark process that was running, then
+exits with the failure's status. The Go cells take their client config from
+the release's rooket output, as the floor does, and the sweep refuses an
+`RGW_GO_TEST_CEPH_CONF` naming another file. A full sweep took about an hour per
 release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the
 script's header lists its other settings.
 

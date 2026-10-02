@@ -33,6 +33,11 @@
 # among conc objects that a write wrote for it, as each seam worker reads its
 # own object.
 #
+# A sweep that fails partway removes what it left in the pool, the objects of
+# the floor namespaces it wrote to and of the benchmark process that was
+# running, and exits with the failure's status, whether or not the removal
+# succeeds.
+#
 # Environment:
 #   BENCH_TIME              benchtime of each time-bounded cell (20s)
 #   BENCH_FLOOR_SECONDS     seconds of each time-bounded rados bench run (20)
@@ -46,7 +51,8 @@
 #   GO_TAGS                 build tags besides integration (ceph_preview)
 #   BENCH_FLOOR_IMAGE       floor image (quay.io/ceph/ceph:v<linked librados version>); must run that release
 #   ROOKET_ENGINE           container engine that runs rados bench (podman)
-#   RGW_GO_TEST_CEPH_CONF   client config (hack/rooket/out/<release>/ceph.conf)
+#   RGW_GO_TEST_CEPH_CONF   unset, or hack/rooket/out/<release>/ceph.conf: the Go cells
+#                           and the floor must reach the same cluster
 set -euo pipefail
 
 bench_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -66,7 +72,12 @@ fi
 : "${BENCH_WRITE4M_OBJECTS:=1000}" "${BENCH_OVER_OBJECTS:=640}" "${BENCH_MIN_AVAIL_GIB:=5}"
 : "${BENCH_TIMEOUT:=2h}" "${GO_TAGS:=ceph_preview}"
 engine=${ROOKET_ENGINE:-podman}
-conf=${RGW_GO_TEST_CEPH_CONF:-${out}/ceph.conf}
+# The floor's rados reads ${out}, so the Go cells take their client config
+# from there too, or the two halves of a ratio could measure two clusters.
+conf=${out}/ceph.conf
+if [[ -n "${RGW_GO_TEST_CEPH_CONF:-}" && "$(realpath -m "${RGW_GO_TEST_CEPH_CONF}")" != "$(realpath -m "${conf}")" ]]; then
+	die "RGW_GO_TEST_CEPH_CONF is ${RGW_GO_TEST_CEPH_CONF}, but the floor reaches the ${release} cluster through ${conf}: unset it"
+fi
 [[ -f "${conf}" && -f "${out}/image" ]] || die "no ${conf} or ${out}/image: run make cluster-up RELEASE=${release}"
 cluster_image=$(cat "${out}/image")
 readonly pool=rgw-go-test
@@ -97,7 +108,79 @@ sample_noise() {
 }
 sample_noise &
 sampler=$!
-trap 'kill "${sampler}" 2>/dev/null || true' EXIT
+
+# bench_pid is the benchmark process running, if any, and is cleared once
+# wait has reaped it, so that nothing signals a pid the system may reuse.
+# bench_ns is the namespace of the benchmark process that ran last, bench-<pid>,
+# until that process has exited cleanly, having removed its objects itself.
+# floor_ns holds the namespaces the floor wrote to.
+bench_pid=
+bench_ns=
+declare -A floor_ns=()
+
+# purge removes every object in namespace ns of the pool: rados bench's data
+# objects with one concurrent cleanup, then whatever is left, a run's
+# metadata or a benchmark process's objects, by name. The toolbox lists them
+# and removes them eight rados rm at a time, up to 1024 names each: a large
+# write4k cell leaves hundreds of thousands, which one rm at a time takes most
+# of an hour to remove.
+purge() { # ns
+	local ns=$1 left
+	if [[ "${ns}" == bench-floor-* ]]; then
+		toolbox rados -p "${pool}" -N "${ns}" cleanup --prefix benchmark_data -t 64 || return 1
+	fi
+	if ! left=$(toolbox rados -p "${pool}" -N "${ns}" ls | wc -l); then
+		say "listing the objects left in ${ns} failed"
+		return 1
+	fi
+	((left > 0)) || return 0
+	say "removing ${left} objects left in ${ns}"
+	# pipefail, so that a listing that fails partway, leaving xargs a partial
+	# list, fails the purge rather than passing for a clean one.
+	# shellcheck disable=SC2016 # expanded by the toolbox's shell
+	if ! toolbox bash -c 'set -o pipefail; rados -p "$1" -N "$2" ls | xargs -r -d "\n" -n 1024 -P 8 rados -p "$1" -N "$2" rm' \
+		purge "${pool}" "${ns}"; then
+		say "listing or removing the objects left in ${ns} failed"
+		return 1
+	fi
+	say "removed what was left in ${ns}"
+}
+
+# clean_up_after_failure removes what the sweep left in the pool. It runs in
+# a subshell of the exit trap, where errexit is off, so it checks each step.
+clean_up_after_failure() { # benchmark namespace
+	local ns failed=0
+	if [[ -n "$1" ]]; then
+		purge "$1" || failed=1
+	fi
+	for ns in "${!floor_ns[@]}"; do
+		purge "${ns}" || failed=1
+	done
+	return "${failed}"
+}
+
+# on_exit stops the noise sampler and, when the sweep failed, the benchmark
+# process still running, then removes what the sweep left. It exits with the
+# sweep's own status: a removal that fails too is reported, not returned.
+on_exit() {
+	local status=$?
+	trap - EXIT
+	kill "${sampler}" 2>/dev/null || true
+	if ((status != 0)); then
+		if [[ -n "${bench_pid}" ]]; then
+			kill "${bench_pid}" 2>/dev/null || true
+			wait "${bench_pid}" 2>/dev/null || true
+		fi
+		say "the sweep failed with status ${status}; removing what it left in ${pool}"
+		if (clean_up_after_failure "${bench_ns}"); then
+			say "removed what the failed sweep left in ${pool}"
+		else
+			echo "${script}: removing what the failed sweep left in ${pool} failed as well; the sweep's status, ${status}, stands" >&2
+		fi
+	fi
+	exit "${status}"
+}
+trap on_exit EXIT
 
 # pool_avail prints the bytes ceph df says the pool can still take.
 pool_avail() {
@@ -128,7 +211,16 @@ bench() {
 		-test.benchtime "${BENCH_TIME}" -mode="${mode}")
 	[[ -z "${results}" ]] || args+=(-results="${results}")
 	say "bench ${mode}: $* (load $(cut -d' ' -f1-3 /proc/loadavg))"
-	RGW_GO_TEST_CEPH_CONF="${conf}" "${bin}" "${args[@]}" "$@" 2>&1 | tee -a "${dir}/bench-${mode}.log"
+	# In the background so that the exit trap knows its pid, and with it the
+	# namespace of the objects it writes.
+	RGW_GO_TEST_CEPH_CONF="${conf}" "${bin}" "${args[@]}" "$@" > >(tee -a "${dir}/bench-${mode}.log") 2>&1 &
+	bench_pid=$!
+	bench_ns=bench-${bench_pid}
+	local status=0
+	wait "${bench_pid}" || status=$?
+	bench_pid=
+	((status == 0)) || exit "${status}"
+	bench_ns=
 	say "bench ${mode} done (load $(cut -d' ' -f1-3 /proc/loadavg))"
 }
 
@@ -192,6 +284,7 @@ floor_run() { # image shape conc bracket
 	local image=$1 shape=$2 conc=$3 bracket=$4 size=4096 run
 	[[ "${shape}" != *4m ]] || size=4194304
 	run=floor-${shape}-${conc}-${bracket:-single}-${image##*:}
+	floor_ns[bench-floor-${size}]=1
 	case "${shape}" in
 	write4k)
 		rados_bench "${image}" "${shape}" write "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 0 "${run}" "${bracket}"
@@ -269,12 +362,19 @@ objecter() {
 	ceph_cmd config get client.admin "$1" 2>/dev/null || echo unknown
 }
 
-# host_librados prints the package version of the librados the benchmark
-# links, which can differ from the release of the cluster.
+# host_librados prints the package version of the host's librados2, which
+# can differ from the release of the cluster, or unknown. rpm prints "package
+# librados2 is not installed" to stdout, so a query's output counts only when
+# it succeeds.
 host_librados() {
-	rpm -q --qf '%{VERSION}-%{RELEASE}' librados2 2>/dev/null ||
-		dpkg-query -W -f '${Version}' librados2 2>/dev/null ||
+	local v
+	if v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' librados2 2>/dev/null); then
+		echo "${v}"
+	elif v=$(dpkg-query -W -f '${Version}' librados2 2>/dev/null) && [[ -n "${v}" ]]; then
+		echo "${v}"
+	else
 		echo unknown
+	fi
 }
 
 # linked_librados prints the path of the librados the benchmark binary links
