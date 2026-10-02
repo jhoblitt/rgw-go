@@ -1,6 +1,9 @@
 package driver
 
 import (
+	"context"
+	"time"
+
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -45,4 +48,44 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 // DataPoolForTest is dataPool for the external specs.
 func (s *Store) DataPoolForTest(rule meta.PlacementRule, bucket meta.BucketID) (meta.Pool, bool) {
 	return s.dataPool(rule, bucket)
+}
+
+// WriteEntryPoint is writeEntryPoint for the external specs, without attrs
+// and at the time now, under a tracker that checks read and sets write when
+// each has a Ver; it returns the version the tracker holds after the write.
+func WriteEntryPoint(s *Store, ctx context.Context, ep meta.BucketEntryPoint, exclusive bool, read, write meta.ObjVersion) (meta.ObjVersion, error) {
+	v := &objv{read: read, write: write}
+	err := s.writeEntryPoint(ctx, ep, nil, exclusive, time.Time{}, v)
+	return v.read, err
+}
+
+// RemoveEntryPoint is removeEntryPoint for the external specs, checking read
+// when it has a Ver.
+func RemoveEntryPoint(s *Store, ctx context.Context, tenant, name string, read meta.ObjVersion) error {
+	var v *objv
+	if read.Ver != 0 {
+		v = &objv{read: read}
+	}
+	return s.removeEntryPoint(ctx, tenant, name, v)
+}
+
+// WriteInstance is writeInstance for the external specs, without attrs, at
+// the time now and setting write.
+func WriteInstance(s *Store, ctx context.Context, info meta.BucketInfo, exclusive bool, write meta.ObjVersion) error {
+	return s.writeInstance(ctx, &info, nil, exclusive, time.Time{}, &objv{write: write})
+}
+
+// RemoveInstance is removeInstance for the external specs, unchecked.
+func RemoveInstance(s *Store, ctx context.Context, b meta.BucketID) error {
+	return s.removeInstance(ctx, b, nil)
+}
+
+// ReadEntryPoint is readEntryPoint for the external specs: the entry point
+// with the attrs and the version it was read with.
+func ReadEntryPoint(s *Store, ctx context.Context, tenant, name string) (meta.BucketEntryPoint, map[string][]byte, meta.ObjVersion, error) {
+	e, err := s.readEntryPoint(ctx, tenant, name)
+	if err != nil {
+		return meta.BucketEntryPoint{}, nil, meta.ObjVersion{}, err
+	}
+	return e.ep, e.attrs, e.v.read, nil
 }

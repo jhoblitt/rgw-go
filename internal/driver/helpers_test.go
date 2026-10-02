@@ -3,6 +3,9 @@ package driver_test
 import (
 	"maps"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -142,4 +145,28 @@ func conf(kv map[string]string) *cephconf.Options {
 	}
 	maps.Copy(m, kv)
 	return cephconf.NewOptions(m)
+}
+
+// rookRoot is the namespace of rookMetaPool that holds the zone's
+// domain_root, where a bucket's entry point and instance live.
+const rookRoot = "root"
+
+// seedVersioned stores data under oid in the domain root with attrs and
+// version v in its cls_version xattr.
+func seedVersioned(c *fakerados.Cluster, oid string, data []byte, attrs map[string][]byte, v meta.ObjVersion) {
+	c.Put(rookMetaPool, rookRoot, oid, data)
+	obj := c.Object(rookMetaPool, rookRoot, oid)
+	maps.Copy(obj.Xattrs, attrs)
+	obj.Xattrs[version.XattrName] = encode(v)
+}
+
+// storedVersion decodes the cls_version xattr of the domain-root object oid.
+func storedVersion(c *fakerados.Cluster, oid string) meta.ObjVersion {
+	GinkgoHelper()
+	obj := c.Object(rookMetaPool, rookRoot, oid)
+	Expect(obj).NotTo(BeNil(), oid)
+	d := denc.NewDecoder(obj.Xattrs[version.XattrName])
+	v := version.DecodeObjVersion(d)
+	Expect(d.Err()).NotTo(HaveOccurred(), oid)
+	return meta.ObjVersion(v)
 }

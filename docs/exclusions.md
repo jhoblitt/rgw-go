@@ -1276,6 +1276,32 @@ rgw-go does the following.
   v19.2.6, `:1005` at v20.2.4). Action names have one colon and match
   alike. `docs/ceph-upstream-bugs.md` records the defect.
 
+### Bucket metadata differences
+
+rgw-go reads and writes a bucket's entry point and instance objects as
+radosgw's RADOS driver does at the v19.2.6 and v20.2.4 tags. Where the two
+differ, rgw-go does the following.
+
+- **An entry point from before version 8 is not converted.** radosgw wrote
+  such an entry point before Dumpling (0.67). It is itself an
+  `RGWBucketInfo` and names no instance (`RGWBucketEntryPoint::decode`,
+  `rgw_common.h:1134-1142` at v19.2.6, `:1177-1185` at v20.2.4). Before it
+  sets attrs on an instance without `has_instance_obj`, which no bucket
+  created since Octopus carries, radosgw reads the bucket's entry point,
+  and on finding one of these converts the bucket: it writes an instance
+  from the embedded info and a current entry point that names it
+  (`merge_and_store_attrs`, `set_bucket_instance_attrs` and
+  `convert_old_bucket_info`, `driver/rados/rgw_sal_rados.cc:771-778` and
+  `driver/rados/rgw_bucket.cc:3237-3304` at v19.2.6, `:789-796` and
+  `:3359-3421` at v20.2.4). It removes attrs through `put_info`, which
+  reads no entry point (`rgw_op.cc:1232-1235` at v19.2.6, `:1469-1472` at
+  v20.2.4). rgw-go reads the entry point where radosgw does, before it sets
+  attrs, and refuses that write with 500 InternalError, naming the bucket.
+  Only a record read by its instance id reaches that write, because neither
+  gateway loads such a bucket by name (`docs/ceph-upstream-bugs.md`,
+  "[radosgw cannot load a bucket whose entry point is from before version
+  8](ceph-upstream-bugs.md#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8)").
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

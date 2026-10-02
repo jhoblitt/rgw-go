@@ -334,26 +334,12 @@ var _ = Describe("the driver", func() {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
 
-			Entry("GetBucket", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetBucket(ctx, "", "plain")
-				return err
-			}),
-			Entry("GetBucketInstance", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetBucketInstance(ctx, meta.BucketID{Name: "plain", ID: "zone.1.1"})
-				return err
-			}),
 			Entry("CreateBucket", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(meta.UserID{ID: "alice"}), Exclusive: true})
 				return err
 			}),
 			Entry("DeleteBucket", func(ctx context.Context, s *driver.Store) error {
 				return s.DeleteBucket(ctx, &op.BucketRecord{})
-			}),
-			Entry("PutBucketInfo", func(ctx context.Context, s *driver.Store) error {
-				return s.PutBucketInfo(ctx, &op.BucketRecord{})
-			}),
-			Entry("PutBucketAttrs", func(ctx context.Context, s *driver.Store) error {
-				return s.PutBucketAttrs(ctx, &op.BucketRecord{}, map[string][]byte{"user.rgw.x-amz-tagging": nil}, nil)
 			}),
 			Entry("ListObjects", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.ListObjects(ctx, &op.BucketRecord{}, op.ListObjectsParams{MaxKeys: 1000})

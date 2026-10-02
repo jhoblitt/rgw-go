@@ -297,16 +297,6 @@ func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) erro
 	return op.ErrNotImplemented
 }
 
-// GetBucket implements op.BucketStore.
-func (s *Store) GetBucket(context.Context, string, string) (*op.BucketRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// GetBucketInstance implements op.BucketStore.
-func (s *Store) GetBucketInstance(context.Context, meta.BucketID) (*op.BucketRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
 // CreateBucket implements op.BucketStore.
 func (s *Store) CreateBucket(context.Context, op.CreateBucketParams) (*op.BucketRecord, error) {
 	return nil, op.ErrNotImplemented
@@ -314,16 +304,6 @@ func (s *Store) CreateBucket(context.Context, op.CreateBucketParams) (*op.Bucket
 
 // DeleteBucket implements op.BucketStore.
 func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
-}
-
-// PutBucketInfo implements op.BucketStore.
-func (s *Store) PutBucketInfo(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
-}
-
-// PutBucketAttrs implements op.BucketStore.
-func (s *Store) PutBucketAttrs(context.Context, *op.BucketRecord, map[string][]byte, []string) error {
 	return op.ErrNotImplemented
 }
 
