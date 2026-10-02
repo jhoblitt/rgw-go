@@ -109,7 +109,8 @@ func (c *Cluster) SetConfig(name, value string) {
 }
 
 // SetClock sets the clock that stamps an object's mtime when a write op
-// carries none; it is time.Now until then.
+// carries none, and that class emulators read through ClassCall.Now, as
+// LockClass does to expire lock holders; it is time.Now until then.
 func (c *Cluster) SetClock(now func() time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

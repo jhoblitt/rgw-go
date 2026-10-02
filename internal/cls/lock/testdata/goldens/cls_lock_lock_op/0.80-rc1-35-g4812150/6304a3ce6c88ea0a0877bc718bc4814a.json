@@ -1,0 +1,10 @@
+{
+    "name": "TestLock",
+    "type": "exclusive",
+    "cookie": "Cookie",
+    "tag": "",
+    "description": "",
+    "duration": "0.000000",
+    "flags": 1
+}
+

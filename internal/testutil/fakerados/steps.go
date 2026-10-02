@@ -93,6 +93,10 @@ func (c *ClassCall) Object() *Object { return c.x.obj }
 // exist, as a class's first write to a missing object creates it.
 func (c *ClassCall) Create() *Object { return c.x.create() }
 
+// Now returns the cluster's clock, which SetClock sets, as a class reads the
+// OSD's with ceph_clock_now.
+func (c *ClassCall) Now() time.Time { return c.x.cluster.now() }
+
 // Remove removes the op's object and returns 0, or -ENOENT when it does not
 // exist, as cls_cxx_remove does.
 func (c *ClassCall) Remove() int32 {

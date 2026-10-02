@@ -1,0 +1,10 @@
+{
+    "name": "rbd_lock",
+    "type": "shared",
+    "cookie": "bar",
+    "tag": "",
+    "description": "",
+    "duration": "0.000000",
+    "flags": 0
+}
+

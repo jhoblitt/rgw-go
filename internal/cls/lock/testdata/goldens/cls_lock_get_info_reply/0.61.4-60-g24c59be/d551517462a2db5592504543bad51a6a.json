@@ -1,0 +1,14 @@
+{
+    "lock_type": "exclusive",
+    "tag": "new_tag",
+    "lockers": [
+        {
+            "locker": "client.4126",
+            "description": "",
+            "cookie": "",
+            "expiration": "0.000000",
+            "addr": "192.168.106.228:0/3012258"
+        }
+    ]
+}
+

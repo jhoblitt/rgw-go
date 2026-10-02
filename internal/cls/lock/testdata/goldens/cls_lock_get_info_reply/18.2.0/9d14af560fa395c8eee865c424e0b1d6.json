@@ -1,0 +1,14 @@
+{
+    "lock_type": "shared",
+    "tag": "",
+    "lockers": [
+        {
+            "locker": "client.4702",
+            "description": "new description",
+            "cookie": "",
+            "expiration": "0.000000",
+            "addr": "172.21.5.153:0/3502565915"
+        }
+    ]
+}
+
