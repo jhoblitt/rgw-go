@@ -104,6 +104,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw terminates on a stored lz4 block too short for its pair table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table) | pending | pending |  |
 | [Tentacle's radosgw answers EIO for an index shard its header read means to skip](#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip) | pending | pending |  |
 | [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | pending | pending |  |
+| [Squid's negated condition operators hold when any pair differs, and its Null ignores its values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values) | [#73146](https://tracker.ceph.com/issues/73146), [#74736](https://tracker.ceph.com/issues/74736) | [ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606), [ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188), [ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214), [ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444) |  |
+| [radosgw's date conditions wrap past 2554 and before 1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4123,3 +4125,112 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 metadata plane (unit M, Task 6), 2026-10-02, writing
   the cls_user emulator; derived from the source, not reproduced.
+
+## Squid's negated condition operators hold when any pair differs, and its Null ignores its values
+
+- **Kind:** defect, fixed in v20.2.3 and unfixed on squid. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - At v19.2.6, `StringNotEquals`, `StringNotEqualsIgnoreCase`,
+    `StringNotLike`, `ArnNotEquals` and `ArnNotLike` evaluate
+    `orrible(std::not_fn(f))` over every pair of a value the key holds and
+    a condition value, and `NumericNotEquals` and `DateNotEquals` evaluate
+    `shortible(std::not_fn(equal_to))` (`rgw_iam_policy.cc:890-892`,
+    `:898-899`, `:905-906`, `:921-923`, `:943-945` and `:999-1001`; the
+    helpers at `rgw_iam_policy.h:482-514`). Each holds when some pair
+    differs, so `StringNotEquals` with the values `alice` and `bob` holds
+    for the user `bob`, who differs from `alice`, and a negated operator on
+    a key holding two values holds whenever one of them differs. AWS's
+    negated operators hold when the key's value matches none of the
+    condition's.
+  - `Null` answers whether the key is absent and ignores its values
+    (`rgw_iam_policy.cc:857-859`), so `"Null": {"k": "false"}`, which asks
+    that the key be present, holds only when it is absent.
+  - v20.2.4 evaluates the negated operators as `multimap_none` and
+    `typed_none`, which hold when no pair matches
+    (`rgw_iam_policy.cc:910-912`, `:918-919`, `:925-926`, `:941-943`,
+    `:964-966` and `:1003-1005`; `rgw_iam_policy.h:514-525` and
+    `:548-567`), and compares `Null`'s values, through `as_bool`, with
+    whether the key is absent (`rgw_iam_policy.cc:876-879`). Its
+    `ConditionTest` cases pin both (`test/rgw/test_rgw_iam_policy.cc`). The
+    changes are 225241d6ae6 ("rgw/iam: fix NotEquals conditions to use AND
+    logic instead of OR", 2025-09-20; tentacle cherry-pick a3732175a7c) and
+    1d0c8c286cc ("rgw/iam: match value of Null condition", 2026-02-03;
+    tentacle cherry-pick ec9e7445814). `NotIpAddress` already held only
+    when no pair matched at v19.2.6 (`rgw_iam_policy.cc:974-992`).
+- **Impact:** on Squid, an Allow guarded by a negated operator grants a
+  request whose value the condition lists, once the condition lists another
+  value or the key holds another; a Deny so guarded denies it. A `Null`
+  condition that asks for the key's presence holds exactly when the key is
+  absent.
+- **Releases:** v19.2.6 and the squid branch head (a742f50616e,
+  2026-09-03), and v20.2.0 through v20.2.2; v20.2.3 and v20.2.4 carry both
+  changes. Older squid releases not checked.
+- **rgw-go:** follows the zone's release: `policy.Semantics`'s
+  `NotMeansNone` and `NullTestsValues` select v19.2.6's rule on Squid and
+  v20.2.4's on Tentacle (`internal/policy/condition.go`).
+- **Upstream:** fixed upstream and tracked; both first shipped in a stable
+  release in v20.2.3, and main carries them from the development tags
+  v21.0.0 (NotEquals) and v21.0.1 (Null).
+  - NotEquals: [#73146](https://tracker.ceph.com/issues/73146), fixed on
+    main by 225241d6ae6 ([ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606),
+    merged 2025-10-06) and backported to tentacle as a3732175a7c
+    ([ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214)); the squid
+    backport [ceph/ceph#67213](https://github.com/ceph/ceph/pull/67213) is open.
+  - Null: [#74736](https://tracker.ceph.com/issues/74736), fixed on main by
+    1d0c8c286cc ([ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188),
+    merged 2026-04-17) and backported to tentacle as ec9e7445814
+    ([ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444)); the squid
+    backport [ceph/ceph#68445](https://github.com/ceph/ceph/pull/68445) is open.
+- **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing
+  `Condition::eval` at both tags; derived from the source, not reproduced.
+
+## radosgw's date conditions wrap past 2554 and before 1970
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source, with the conversions compiled and run.
+- **Evidence:** paths are under `src/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - `Condition::as_date` converts a date condition's values and the
+    environment's value to `ceph::real_time` (`rgw/rgw_iam_policy.h:384-401`,
+    `:403-420`), a count of unsigned 64-bit nanoseconds since the epoch
+    (`common/ceph_time.h:66` and `:74`, `:63` and `:71`), and the date
+    operators compare those counts (`rgw/rgw_iam_policy.cc:940-959`,
+    `:961-979`).
+  - A value `std::stod` converts whole is a count of seconds; its whole
+    seconds and its fraction are each cast to `uint64_t` and summed in
+    nanoseconds (`rgw/rgw_iam_policy.h:390-394`, `:409-413`). The seconds
+    cast is undefined behaviour for a count of -1 or less, NaN, or 2^64
+    and more, and the fraction cast for any negative count, NaN, or 2^64
+    and more; x86-64 code from GCC 11.5, 13.5 and 15.3 alike gives 2^63 -
+    10^9 nanoseconds for `-1`, which compares as
+    2262-04-11T23:47:15.854775808Z. The seconds-to-nanoseconds multiply
+    and the sum are signed int64 (`std::chrono::nanoseconds`), which
+    overflows, also undefined, for a count from about 9.2e9 seconds, year
+    2262, up to 2^64, and on x86-64 for NaN and for a count of -1 or less,
+    whose casts there give the integer indefinite. A count between -1 and
+    0, such as -0.5, overflows nothing and reaches only the fraction cast.
+    GCC's imul and add wrap two's-complement, as unsigned arithmetic does,
+    so only the casts could differ on another architecture.
+  - Any other value goes to `from_iso_8601` (`common/iso_8601.cc:51-151`
+    at both tags), whose seconds `real_clock::from_time_t` converts to
+    nanoseconds modulo 2^64 (`common/ceph_time.h:149-151`, `:146-148`), so
+    an instant past 2554-07-21T23:34:33.709551615Z wraps:
+    `2600-01-01T00:00:00Z` compares as 2015-06-13T00:25:26.290448384Z. It
+    checks the range of no field but the year, and a month or day of `00`
+    in 1970 gives an instant before the epoch, which wraps the other way:
+    `1970-01-00` compares as 2554-07-20T23:34:33.709551616Z.
+- **Impact:** `{"DateLessThan": {"aws:CurrentTime":
+  "2600-01-01T00:00:00Z"}}`, meant to hold for centuries, does not hold
+  today; the epoch date `-1` compares as 2262, and `-0.5` as 2554.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw/rgw_iam_policy.h:488`); older releases not checked.
+- **rgw-go:** reproduces it, the undefined cast as radosgw's x86-64 build
+  computes it (`policy.AsDate`); `docs/exclusions.md` records that a build
+  for another architecture may answer otherwise.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing `as_date`. A
+  verbatim transcription of `as_date`, `from_iso_8601` and
+  `internal_timegm`, compiled with GCC 15.3, agrees with rgw-go on 43 date
+  inputs, and its double-to-integer arithmetic gives the same answers under
+  GCC 11.5 and 13.5; not reproduced on a running radosgw.
