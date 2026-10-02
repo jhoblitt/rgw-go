@@ -212,12 +212,16 @@ type sweep struct {
 	procs    []*benchProcess
 	inferred bool
 	cellProc map[key]int
-	cells    map[key]Cell
-	modes    []string
-	shapes   []string
-	over     []Cell
-	floors   map[floorKey]Floor
-	profiles map[string]profile
+	// unbracketed marks a sweep recorded before the floor bracketed its
+	// cells: one floor run per cell, after the sweep, from the cluster's
+	// own image.
+	unbracketed bool
+	cells       map[key]Cell
+	modes       []string
+	shapes      []string
+	over        []Cell
+	floors      map[floorKey]Floor
+	profiles    map[string]profile
 }
 
 // profile is a mode's read4k CPU profile at 256 in flight.
@@ -503,6 +507,12 @@ func (s *sweep) readFloors() error {
 		if !slices.Contains(brackets, f.Bracket) {
 			return fmt.Errorf("bracket %q is not before, after or empty", f.Bracket)
 		}
+		if s.unbracketed {
+			if f.Bracket != "" || f.Image != "" {
+				return errors.New("a floor line with a bracket or an image in a sweep whose env.json names neither")
+			}
+			f.Image = s.floorImage
+		}
 		if f.Image != s.floorImage && f.Image != s.clusterImage {
 			return fmt.Errorf("a floor run from %s, neither the floor image nor the cluster's", f.Image)
 		}
@@ -552,6 +562,15 @@ func (s *sweep) checkFloorImage() error {
 			return v, nil
 		}
 		return "", fmt.Errorf("env.json names no %s", name)
+	}
+	// A sweep recorded before the floor came from the linked librados's
+	// release names only the cluster's image, which its floor ran from.
+	_, hasCluster := s.env["cluster_image"]
+	_, hasFloor := s.env["floor_image"]
+	if image, err := field("image"); err == nil && !hasCluster && !hasFloor {
+		s.unbracketed = true
+		s.floorImage, s.clusterImage = image, image
+		return nil
 	}
 	var errs []error
 	librados, err := field("librados_version")

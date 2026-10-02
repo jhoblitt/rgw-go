@@ -33,6 +33,16 @@ func (s *sweep) renderEnv(b *strings.Builder) {
 	for _, k := range s.envKeys {
 		fmt.Fprintf(b, "| %s | %s |\n", k, envValue(s.env[k]))
 	}
+	if s.unbracketed {
+		librados := "unrecorded"
+		if v, ok := s.env["host_librados"].(string); ok && v != "" {
+			librados = v
+		}
+		fmt.Fprintf(b, "\nThis sweep predates the bracketed floor and the floor image: each floor ran once, after the "+
+			"sweep, from the cluster's own image, %s, while the benchmark linked the host's librados, %s. Its throughput "+
+			"and latency ratios are shown but not decided.\n", s.clusterImage, librados)
+		return
+	}
 	fmt.Fprintf(b, "\nThe judged floor is rados bench from %s, Ceph %s, the release of the librados the benchmark links.",
 		s.floorImage, s.floorVersion)
 	if s.clusterImage == s.floorImage {

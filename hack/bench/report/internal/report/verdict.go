@@ -189,6 +189,18 @@ func (s *sweep) throughput(mode string) Verdict {
 		func(r float64) bool { return r < minThroughputRatio },
 		func(r float64) float64 { return r - minThroughputRatio })
 	v.Criterion = Throughput
+	return s.unbracketedVerdict(v)
+}
+
+// unbracketedVerdict leaves a ratio criterion undecided in a sweep whose
+// floor ran once per cell after the sweep: the cluster and the host change
+// enough between a cell and a floor run long after it that the ratio cannot
+// be read as the seam's.
+func (s *sweep) unbracketedVerdict(v Verdict) Verdict {
+	if s.unbracketed && v.Status != Incomplete {
+		v.Status = Inconclusive
+		v.Margin = "unbracketed floor, one run after the sweep; " + v.Margin
+	}
 	return v
 }
 
@@ -199,7 +211,7 @@ func (s *sweep) latency(mode string) Verdict {
 		func(r float64) bool { return r > maxLatencyRatio },
 		func(r float64) float64 { return maxLatencyRatio - r })
 	v.Criterion = Latency
-	return v
+	return s.unbracketedVerdict(v)
 }
 
 // growthAt is a cell's thread growth against one baseline.

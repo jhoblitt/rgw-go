@@ -16,8 +16,11 @@ const maxFloorDrift = 0.10
 // after them; any other cell has a single run. cluster is the run of the
 // cluster's own image, where it differs from the floor image, which the
 // criteria do not judge by.
+//
+// A sweep recorded before the floor bracketed its cells has a single run
+// for every cell, after the sweep: unbracketed.
 type cellFloor struct {
-	judged                         bool
+	judged, unbracketed            bool
 	before, after, single, cluster *Floor
 }
 
@@ -29,10 +32,11 @@ func (s *sweep) floorAt(shape string, conc int) cellFloor {
 		return nil
 	}
 	cf := cellFloor{
-		judged: judgedCell(shape, conc),
-		before: run("before", s.floorImage),
-		after:  run("after", s.floorImage),
-		single: run("", s.floorImage),
+		judged:      judgedCell(shape, conc) && !s.unbracketed,
+		unbracketed: s.unbracketed,
+		before:      run("before", s.floorImage),
+		after:       run("after", s.floorImage),
+		single:      run("", s.floorImage),
 	}
 	if s.clusterImage != s.floorImage {
 		cf.cluster = run("", s.clusterImage)
@@ -118,6 +122,8 @@ func (cf cellFloor) ratio(v float64, metric func(Floor) float64) string {
 // both runs, how far they drifted.
 func (cf cellFloor) note() string {
 	switch {
+	case cf.unbracketed && cf.single != nil:
+		return "single run after the sweep"
 	case !cf.judged && cf.single != nil:
 		return "single run"
 	case !cf.judged, cf.before == nil && cf.after == nil:

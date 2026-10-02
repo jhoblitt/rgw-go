@@ -83,6 +83,30 @@ func editEnv(dir string, change func(env map[string]any)) string {
 	return dir
 }
 
+// legacySweep is the testdata as a sweep recorded before the floor
+// bracketed its cells and came from the linked librados's release: one
+// floor run per cell, after the sweep, from the cluster's own image.
+func legacySweep() string {
+	GinkgoHelper()
+	dir := sweep(func(file string, line map[string]any) bool {
+		if file != "floor.jsonl" {
+			return true
+		}
+		if line["bracket"] == "after" || line["image"] != "quay.io/ceph/ceph:v19.2.6" {
+			return false
+		}
+		delete(line, "bracket")
+		delete(line, "image")
+		return true
+	})
+	return editEnv(dir, func(env map[string]any) {
+		for _, k := range []string{"cluster_image", "floor_image", "floor_image_version", "librados_version", "librados_path"} {
+			delete(env, k)
+		}
+		env["image"] = "quay.io/ceph/ceph:v20.2.4"
+	})
+}
+
 // remove deletes the named files from a sweep directory.
 func remove(dir string, names ...string) string {
 	GinkgoHelper()
@@ -199,6 +223,30 @@ var _ = Describe("Seam", func() {
 		Entry("a floor image of another release", func(env map[string]any) { env["floor_image_version"] = "20.2.4" },
 			"the floor image quay.io/ceph/ceph:v19.2.6 runs Ceph 20.2.4, but the benchmark links librados 19.2.6"),
 	)
+
+	It("renders a sweep recorded before the bracketed floor, without deciding its ratios", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, legacySweep())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring("This sweep predates the bracketed floor and the floor image: each floor ran " +
+			"once, after the sweep, from the cluster's own image, quay.io/ceph/ceph:v20.2.4, while the benchmark linked " +
+			"the host's librados, 19.2.6-1.fc43."))
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Inconclusive,
+			"unbracketed floor, one run after the sweep; worst 0.95x (read4m at 4), margin +0.15")),
+			"read4m at 4's single run is the old before run, 548.8 ops/s")
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Inconclusive, "unbracketed floor, one run after the sweep; worst ")))
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 \| 1131 \| 0\.97x \| 1\.04x \| single run after the sweep \|$`))
+	})
+
+	It("refuses a floor line naming a bracket or image in a sweep that predates them", func(ctx SpecContext) {
+		dir := editEnv(sweep(), func(env map[string]any) {
+			for _, k := range []string{"cluster_image", "floor_image", "floor_image_version", "librados_version"} {
+				delete(env, k)
+			}
+			env["image"] = "quay.io/ceph/ceph:v20.2.4"
+		})
+		_, err := report.Seam(ctx, dir)
+		Expect(err).To(MatchError(ContainSubstring("a floor line with a bracket or an image in a sweep whose env.json names neither")))
+	})
 
 	It("refuses a floor run from an image that is neither the floor's nor the cluster's", func(ctx SpecContext) {
 		dir := sweep(func(file string, line map[string]any) bool {
