@@ -732,3 +732,13 @@ var _ = Describe("hand-built fixtures", func() {
 		Expect(encodeWith(denc.Squid, want.Encode)).To(Equal(b))
 	})
 })
+
+var _ = DescribeTable("BucketID.Key is rgw_bucket::get_key at its default delimiters",
+	func(b meta.BucketID, want string) {
+		Expect(b.Key()).To(Equal(want))
+	},
+	Entry("a name alone", meta.BucketID{Name: "b"}, "b"),
+	Entry("a tenant and an id", meta.BucketID{Tenant: "t", Name: "b", ID: "id"}, "t/b:id"),
+	Entry("an id without a tenant", meta.BucketID{Name: "b", ID: "id"}, "b:id"),
+	Entry("a marker, which get_key leaves out", meta.BucketID{Name: "b", Marker: "m"}, "b"),
+)

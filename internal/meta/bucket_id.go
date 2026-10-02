@@ -105,6 +105,11 @@ func (b BucketID) key(tenantDelim, idDelim byte) string {
 	return s.String()
 }
 
+// Key is rgw_bucket::get_key at its default delimiters: "tenant/name:id", the
+// tenant only when set and the id only when set. It is the location key
+// radosgw puts in the zones_trace of its bucket index operations.
+func (b BucketID) Key() string { return b.key('/', ':') }
+
 // EntryPointOID is the bucket entrypoint object's name in the metadata root
 // pool, RGWSI_Bucket::get_entrypoint_meta_key: "<name>" or "<tenant>/<name>".
 func (b BucketID) EntryPointOID() string { return b.key('/', 0) }
