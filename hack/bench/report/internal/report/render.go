@@ -33,24 +33,30 @@ func (s *sweep) renderEnv(b *strings.Builder) {
 	for _, k := range s.envKeys {
 		fmt.Fprintf(b, "| %s | %s |\n", k, envValue(s.env[k]))
 	}
-	if s.unbracketed {
+	switch {
+	case s.unbracketed:
 		librados := "unrecorded"
 		if v, ok := s.env["host_librados"].(string); ok && v != "" {
 			librados = v
 		}
 		fmt.Fprintf(b, "\nThis sweep predates the bracketed floor and the floor image: each floor ran once, after the "+
 			"sweep, from the cluster's own image, %s, while the benchmark linked the host's librados, %s. Its throughput "+
-			"and latency ratios are shown but not decided.\n", s.clusterImage, librados)
+			"and latency ratios are shown but not decided.", s.clusterImage, librados)
+	case s.clusterImage == s.floorImage:
+		fmt.Fprintf(b, "\nThe judged floor is rados bench from %s, Ceph %s, the release of the librados the benchmark "+
+			"links. The cluster runs the same image.", s.floorImage, s.floorVersion)
+	default:
+		fmt.Fprintf(b, "\nThe judged floor is rados bench from %s, Ceph %s, the release of the librados the benchmark "+
+			"links. The cluster runs %s; its own rados bench ran once more at each judged cell, shown beside the judged "+
+			"floor and not judged.", s.floorImage, s.floorVersion, s.clusterImage)
+	}
+	// rados bench sends an allocation hint with every write unless told not
+	// to; the Go cells send none.
+	if noHints, ok := s.env["floor_no_hints"].(bool); ok && noHints {
+		b.WriteString(" The floor's writes pass --no-hints, so rados bench sends no allocation hints, as the Go cells send none.\n")
 		return
 	}
-	fmt.Fprintf(b, "\nThe judged floor is rados bench from %s, Ceph %s, the release of the librados the benchmark links.",
-		s.floorImage, s.floorVersion)
-	if s.clusterImage == s.floorImage {
-		b.WriteString(" The cluster runs the same image.\n")
-		return
-	}
-	fmt.Fprintf(b, " The cluster runs %s; its own rados bench ran once more at each judged cell, "+
-		"shown beside the judged floor and not judged.\n", s.clusterImage)
+	b.WriteString(" The floor's writes carried rados bench's allocation hints, which the Go cells do not send.\n")
 }
 
 func envValue(v any) string {

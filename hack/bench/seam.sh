@@ -34,7 +34,8 @@
 # a time window, so that both sides write the same bytes, and starts only
 # once the pool reports BENCH_MIN_AVAIL_GIB available. Each rand floor reads
 # among conc objects that a write wrote for it, as each seam worker reads its
-# own object.
+# own object. Every floor write passes --no-hints: rados bench otherwise sends
+# an allocation hint with each write, and the Go cells send none.
 #
 # A sweep that fails partway removes what it left in the pool, the objects of
 # the floor namespaces it wrote to and of the benchmark process that was
@@ -405,7 +406,7 @@ rados_bench() {
 	local image=$1 shape=$2 op=$3 size=$4 conc=$5 seconds=$6 max=$7 objects=$8 run=$9 bracket=${10} raw summary
 	local args=(-N "bench-floor-${size}" bench "${seconds}" "${op}" -t "${conc}" --run-name "${run}")
 	if [[ "${op}" == write ]]; then
-		args+=(-b "${size}" --no-cleanup)
+		args+=(-b "${size}" --no-cleanup --no-hints)
 		((max == 0)) || args+=(--max-objects "${max}")
 	else
 		args+=(--no-verify)
@@ -457,7 +458,7 @@ floor_run() { # image shape conc bracket
 		;;
 	read4k | read4m)
 		rados_cmd "${image}" 600 -N "bench-floor-${size}" bench 600 write -t "${conc}" -b "${size}" --max-objects "${conc}" \
-			--no-cleanup --run-name "${run}" >>"${log}" 2>&1 || die "writing the rand set of ${run} failed"
+			--no-cleanup --no-hints --run-name "${run}" >>"${log}" 2>&1 || die "writing the rand set of ${run} failed"
 		rados_bench "${image}" "${shape}" rand "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 "${conc}" "${run}" "${bracket}"
 		;;
 	*) die "no floor for ${shape}" ;;
@@ -580,7 +581,7 @@ say "floor from ${floor_image} (Ceph ${floor_version}, as ${librados_path}); the
 # shellcheck disable=SC2153 # ROOKET_VERSION is the caller's, when set
 jq -n --arg release "${release}" --arg ceph_version "$(pinned_version)" --arg cluster_image "${cluster_image}" \
 	--arg floor_image "${floor_image}" --arg floor_image_version "${floor_version}" \
-	--arg librados_version "${librados_version}" --arg librados_path "${librados_path}" \
+	--arg librados_version "${librados_version}" --arg librados_path "${librados_path}" --argjson floor_no_hints true \
 	--arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 	--arg rooket_version "${ROOKET_VERSION:-$("${rooket}" version 2>/dev/null | head -1)}" \
 	--argjson nproc "$(nproc)" --argjson mem_total_kib "$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)" \

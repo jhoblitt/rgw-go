@@ -100,7 +100,7 @@ func legacySweep() string {
 		return true
 	})
 	return editEnv(dir, func(env map[string]any) {
-		for _, k := range []string{"cluster_image", "floor_image", "floor_image_version", "librados_version", "librados_path"} {
+		for _, k := range []string{"cluster_image", "floor_image", "floor_image_version", "librados_version", "librados_path", "floor_no_hints"} {
 			delete(env, k)
 		}
 		env["image"] = "quay.io/ceph/ceph:v20.2.4"
@@ -173,6 +173,20 @@ var _ = Describe("Seam", func() {
 		Expect(r.Markdown).To(ContainSubstring("\n## read4m\n\nNot judged: rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate"))
 		Expect(r.Markdown).To(ContainSubstring("Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16,"))
 		Expect(r.Markdown).To(ContainSubstring("read4m is measured and shown with its floor, but not judged; its table says why."))
+	})
+
+	It("says whether the floor's writes sent rados bench's allocation hints", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring(" The floor's writes pass --no-hints, so rados bench sends no allocation hints, " +
+			"as the Go cells send none.\n"))
+		r, err = report.Seam(ctx, editEnv(sweep(), func(env map[string]any) { delete(env, "floor_no_hints") }))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring(" The floor's writes carried rados bench's allocation hints, which the Go cells "+
+			"do not send.\n"), "a sweep that does not record the flag predates it")
+		r, err = report.Seam(ctx, legacySweep())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring("shown but not decided. The floor's writes carried rados bench's allocation hints"))
 	})
 
 	It("flags a judged cell whose two floor runs differ by more than 10% as unstable", func(ctx SpecContext) {
