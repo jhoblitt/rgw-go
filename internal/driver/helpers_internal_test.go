@@ -42,10 +42,11 @@ func logRecords(buf *bytes.Buffer) []map[string]any {
 	return recs
 }
 
-// conf is Options over every option readOptions reads, at radosgw's v19.2.6
-// defaults, with kv on top.
+// conf is Options over every option readOptions and loadReadConfig read, at
+// radosgw's v19.2.6 defaults, with kv on top.
 func conf(kv map[string]string) *cephconf.Options {
 	m := cephconf.MapGetter{
+		"rgw_max_chunk_size": "4194304", "rgw_get_obj_max_req_size": "4194304", "rgw_get_obj_window_size": "16777216",
 		"rgw_cache_enabled": "true", "rgw_cache_lru_size": "25000", "rgw_cache_expiry_interval": "900",
 		"rgw_num_control_oids": "8", "rgw_max_notify_retries": "10",
 		"rgw_enable_usage_log": "false", "rgw_usage_log_flush_threshold": "1024", "rgw_usage_log_tick_interval": "30",

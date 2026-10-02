@@ -32,6 +32,9 @@ type Store struct {
 	zone    *zoneConfig
 	pools   *poolCache
 	sysobj  *sysobjs
+	readCfg readConfig
+	// headBufs holds the *[]byte buffers prefetches read the head into.
+	headBufs sync.Pool
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -77,13 +80,17 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	readCfg, err := loadReadConfig(conf)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	sys, err := openSysObj(ctx, pools, zc.Params, opts, release)
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
-	s := &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys}
+	s := &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg}
 	s.AddWorker("control-watch", sys.notify.run)
 	return s, nil
 }
@@ -323,11 +330,6 @@ func (s *Store) PutBucketAttrs(context.Context, *op.BucketRecord, map[string][]b
 // ListObjects implements op.BucketStore.
 func (s *Store) ListObjects(context.Context, *op.BucketRecord, op.ListObjectsParams) (op.ListObjectsResult, error) {
 	return op.ListObjectsResult{}, op.ErrNotImplemented
-}
-
-// StatObject implements op.ObjectStore.
-func (s *Store) StatObject(context.Context, *op.BucketRecord, meta.ObjKey) (*op.ObjectState, error) {
-	return nil, op.ErrNotImplemented
 }
 
 // ReadObject implements op.ObjectStore.

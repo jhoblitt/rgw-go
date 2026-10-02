@@ -90,6 +90,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | none | none | ✓ |
 | [radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32](#radosgws-tail-stripe-names-go-negative-at-stripe-231-and-repeat-at-232) | pending | pending |  |
 | [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | pending | pending |  |
+| [radosgw's object stat ignores a data pool it cannot resolve](#radosgws-object-stat-ignores-a-data-pool-it-cannot-resolve) | pending | pending |  |
+| [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3411,3 +3413,69 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 metadata plane (unit M, Task 4), 2026-10-01,
   implementing the RADOS driver's RemoveUser; derived from the source, not
   reproduced.
+
+## radosgw's object stat ignores a data pool it cannot resolve
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `get_obj_state_impl` calls `obj_to_raw` and drops its result
+    (`driver/rados/rgw_rados.cc:6144-6145`, `:6898-6899`), so when
+    `rgw_get_obj_data_pool` resolves neither the bucket's placement nor the
+    zonegroup's default placement (`driver/rados/rgw_obj_manifest.cc:411-430`
+    at both) the raw object keeps an empty pool. `rgw_obj_select::get_raw_obj`
+    drops the same result for tail objects (`:441-449` at both).
+  - `raw_obj_stat` opens that pool through `get_raw_obj_ref`, which replaces
+    only an empty oid (`driver/rados/rgw_rados.cc:2530-2543`, `:2638-2650`),
+    and `rgw_get_rados_ref`, which opens with create set
+    (`driver/rados/rgw_tools.cc:102-117`, `:103-118`).
+  - `rgw_init_ioctx` finds no pool named "" and calls `pool_create("")`
+    (`:29-31`, `:30-32`), which librados refuses with EINVAL before it
+    contacts a monitor (`librados/RadosClient.cc:683-687`, `:685-689`), so
+    nothing is created on the cluster. The stat fails with EINVAL, which the
+    S3 error table renders as 400 InvalidArgument (`rgw/rgw_common.cc:61`,
+    `:62`).
+  - The head-object helpers check the same result and answer -EIO,
+    "probably misconfiguration" (`get_obj_head_ioctx`,
+    `driver/rados/rgw_rados.cc:2483-2487`, `:2590-2595`; `get_obj_head_ref`,
+    `:2508-2512`, `:2616-2620`), which the S3 error table lacks, so they
+    answer 500 UnknownError where the stat answers 400.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
+  `get_obj_state_impl` still drops the result at `rgw_rados.cc:7448`).
+- **rgw-go:** the driver's pool resolution answers 500 UnknownError, naming
+  the placement, as radosgw's head-object helpers do;
+  `docs/exclusions.md` records the difference from radosgw's stat.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 3, 2026-10-01, transcribing radosgw's
+  object stat for the driver; derived from the source, not reproduced.
+
+## radosgw never finishes a GET on a zero rgw_get_obj_max_req_size
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `rgw_get_obj_max_req_size` is a size option with no minimum
+    (`common/options/rgw.yaml.in:1908-1918`, `:2008-2018`).
+  - `Read::iterate` passes it to `iterate_obj` as the longest piece one read
+    takes (`driver/rados/rgw_rados.cc:7449` and `:7455-7456`, `:8300` and
+    `:8310-8311`). `iterate_obj` caps every piece at it (`:7506-7508` and
+    `:7523`, `:8361-8363` and `:8378`), so at 0 every piece is empty, and
+    both of its loops advance by the piece's length (`:7516-7517` and
+    `:7530-7531`, `:8371-8372` and `:8385-8386`), so neither ends while a
+    byte of the range remains.
+  - Each pass calls `get_obj_iterate_cb`. A piece the prefetched head covers
+    returns at once (`:7408-7421`, `:8259-8272`); any other sends a RADOS
+    read (`:7425-7441`, `:8276-8292`).
+- **Impact:** with the option at 0, a GET of a non-empty object never
+  finishes. HEAD does not iterate.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
+  the option still has no minimum, `rgw.yaml.in:2268-2277`, and
+  `iterate_obj` caps the piece the same way, `rgw_rados.cc:9022` and
+  `:9038`).
+- **rgw-go:** refuses to start on a zero `rgw_get_obj_max_req_size`, naming
+  the value; `docs/exclusions.md` records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 3, 2026-10-01, in review of the driver's
+  read options; derived from the source, not reproduced.

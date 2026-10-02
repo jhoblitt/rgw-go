@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,22 +24,46 @@ func objKey(k meta.ObjKey) meta.ObjKey {
 	return k
 }
 
+// prefetchLen is rgw_max_chunk_size's default, the most PrefetchObject
+// returns of an object's data.
+const prefetchLen = 4 << 20
+
 // StatObject implements op.ObjectStore.
 func (s *Store) StatObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	st, _, err := s.stat(rec, key)
+	return st, err
+}
+
+// PrefetchObject implements op.ObjectStore: StatObject plus a copy of the
+// object's first prefetchLen bytes, memstore holding the object whole.
+func (s *Store) PrefetchObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st, o, err := s.stat(rec, key)
+	if err != nil || o == nil {
+		return st, err
+	}
+	st.Head = slices.Clone(o.data[:min(len(o.data), prefetchLen)])
+	return st, nil
+}
+
+// stat returns key's state in rec's bucket and its object, nil when it does
+// not exist; the caller holds the lock.
+func (s *Store) stat(rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, *object, error) {
 	b, err := s.instance(rec)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	o, ok := b.objects[objKey(key)]
 	if !ok {
-		return &op.ObjectState{Bucket: rec, Key: key}, nil
+		return &op.ObjectState{Bucket: rec, Key: key}, nil, nil
 	}
 	st := o.state
 	st.Bucket, st.Key = rec, key
 	st.Attrs = cloneAttrs(o.state.Attrs)
-	return &st, nil
+	return &st, o, nil
 }
 
 // ReadObject implements op.ObjectStore, writing the range to sink in one
