@@ -233,6 +233,24 @@ func (p *pool) Namespace() string { return p.state.namespace }
 // ID returns the pool's id, which librados resolved when the Pool opened.
 func (p *pool) ID() int64 { return p.state.id }
 
+// RequiredAlignment reads the alignment only when the pool requires one, as
+// RGWRados::get_required_alignment does.
+func (p *pool) RequiredAlignment(ctx context.Context) (uint64, error) {
+	var align uint64
+	err := p.withIOContext(ctx, "required alignment", func(ioctx *rados.IOContext) error {
+		need, err := ioctx.RequiresAlignment()
+		if err != nil {
+			return toSeamError("requires alignment", err)
+		}
+		if !need {
+			return nil
+		}
+		align, err = ioctx.Alignment()
+		return toSeamError("required alignment", err)
+	})
+	return align, err
+}
+
 // WithLocator returns a Pool whose operations set loc as the object locator,
 // "" for none. It shares this Pool's I/O contexts, and closing it does
 // nothing.

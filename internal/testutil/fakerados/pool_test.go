@@ -972,6 +972,45 @@ var _ = Describe("the cluster", func() {
 		Expect(c.Object("pool", "", "obj")).To(BeNil())
 	})
 
+	It("reports a pool's required alignment, 0 until set, across its namespaces and derived handles", func(ctx SpecContext) {
+		ec, err := c.Pool(ctx, "ec", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ec.RequiredAlignment(ctx)).To(BeZero(), "before SetRequiredAlignment")
+		c.SetRequiredAlignment("ec", 8192)
+		Expect(ec.RequiredAlignment(ctx)).To(BeEquivalentTo(8192), "the pool set")
+		ns, err := c.Pool(ctx, "ec", "ns")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ns.RequiredAlignment(ctx)).To(BeEquivalentTo(8192), "another namespace of the pool")
+		Expect(ec.WithLocator("loc").RequiredAlignment(ctx)).To(BeEquivalentTo(8192), "a handle WithLocator derived")
+		replicated, err := c.Pool(ctx, "replicated", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(replicated.RequiredAlignment(ctx)).To(BeZero(), "a pool never set")
+	})
+
+	It("refuses RequiredAlignment on a closed pool and after the context ends", func(ctx SpecContext) {
+		c.SetRequiredAlignment("pool", 4096)
+		p, err := c.Pool(ctx, "pool", "")
+		Expect(err).NotTo(HaveOccurred())
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = p.RequiredAlignment(canceled)
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(p.Close()).To(Succeed())
+		_, err = p.RequiredAlignment(ctx)
+		Expect(err).To(MatchError(radosclient.ErrClosed))
+	})
+
+	It("runs an op carrying OpFlagFullTry, which only a full pool would heed", func(ctx SpecContext) {
+		c.Put("pool", "", "obj", []byte("v"))
+		p, err := c.Pool(ctx, "pool", "")
+		Expect(err).NotTo(HaveOccurred())
+		op := radosclient.NewWriteOp()
+		op.Remove()
+		_, err = p.Write(ctx, "obj", op, radosclient.OpFlagFullTry)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Object("pool", "", "obj")).To(BeNil())
+	})
+
 	It("refuses an op flag or comparison librados does not define with ErrBadOp", func(ctx SpecContext) {
 		p, err := c.Pool(ctx, "pool", "")
 		Expect(err).NotTo(HaveOccurred())

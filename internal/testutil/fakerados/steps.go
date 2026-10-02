@@ -111,7 +111,7 @@ const stepFlagsMask = radosclient.StepFlagExcl | radosclient.StepFlagFailOK |
 
 // opFlagsMask is every op flag the seam defines.
 const opFlagsMask = radosclient.OpFlagBalanceReads | radosclient.OpFlagLocalizeReads |
-	radosclient.OpFlagIgnoreCache | radosclient.OpFlagReturnVec
+	radosclient.OpFlagIgnoreCache | radosclient.OpFlagFullTry | radosclient.OpFlagReturnVec
 
 // validate refuses what goceph refuses before it submits an op: a flag or a
 // comparison librados does not define, a flags step with no step before it,

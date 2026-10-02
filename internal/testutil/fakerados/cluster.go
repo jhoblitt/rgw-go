@@ -31,6 +31,7 @@ type Cluster struct {
 	maxReply   int
 	stores     map[storeKey]*store
 	poolIDs    map[string]int64
+	alignments map[string]uint64
 	failPools  map[string]bool
 	now        func() time.Time
 	closed     bool
@@ -81,14 +82,15 @@ func (f *failure) take() error {
 // New returns an empty cluster whose required OSD release is squid.
 func New() *Cluster {
 	return &Cluster{
-		release:   "squid",
-		config:    map[string]string{},
-		classes:   map[string]*class{},
-		maxReply:  defaultMaxWriteOpReplyLen,
-		stores:    map[storeKey]*store{},
-		poolIDs:   map[string]int64{},
-		failPools: map[string]bool{},
-		now:       time.Now,
+		release:    "squid",
+		config:     map[string]string{},
+		classes:    map[string]*class{},
+		maxReply:   defaultMaxWriteOpReplyLen,
+		stores:     map[storeKey]*store{},
+		poolIDs:    map[string]int64{},
+		alignments: map[string]uint64{},
+		failPools:  map[string]bool{},
+		now:        time.Now,
 	}
 }
 
@@ -135,6 +137,17 @@ func (c *Cluster) SetMaxWriteOpReplyLen(n int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.maxReply = n
+}
+
+// SetRequiredAlignment sets the alignment every handle on the named pool
+// reports, whatever its namespace, as an erasure-coded pool without
+// overwrites reports its stripe width. A pool keeps 0, a replicated pool's,
+// until then. Only the report changes: the pool still runs every op as a
+// replicated pool does.
+func (c *Cluster) SetRequiredAlignment(pool string, alignment uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.alignments[pool] = alignment
 }
 
 // FailPool makes opening the named pool fail with ENOENT, as opening a pool

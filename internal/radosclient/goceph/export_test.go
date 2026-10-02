@@ -4,8 +4,6 @@ import (
 	"context"
 	"syscall"
 
-	"github.com/ceph/go-ceph/rados"
-
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
@@ -21,14 +19,8 @@ func TranslateWrite(b writeBuilder, op *radosclient.WriteOp) error {
 	return err
 }
 
-// TranslateFlags exposes the op-flag mapping, dropping the error the specs never trigger.
-func TranslateFlags(f radosclient.OpFlags) rados.OperationFlags {
-	out, err := translateFlags(f)
-	if err != nil {
-		panic(err)
-	}
-	return out
-}
+// TranslateFlags exposes the op-flag mapping.
+var TranslateFlags = translateFlags
 
 // ToSeamError exposes the go-ceph to seam error mapping.
 var ToSeamError = toSeamError

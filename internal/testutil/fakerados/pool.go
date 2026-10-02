@@ -43,6 +43,21 @@ func (p *Pool) Namespace() string { return p.ns }
 // of the pool, in the order the cluster first saw each pool.
 func (p *Pool) ID() int64 { return p.store.id }
 
+// RequiredAlignment returns what SetRequiredAlignment set for the pool, 0
+// until then.
+func (p *Pool) RequiredAlignment(ctx context.Context) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	c := p.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := p.usable("required alignment"); err != nil {
+		return 0, err
+	}
+	return c.alignments[p.name], nil
+}
+
 // WithLocator returns a handle on the same objects: the fake keeps an object
 // by name alone. Closing it does nothing, as closing a goceph handle derived
 // by WithLocator does nothing.
