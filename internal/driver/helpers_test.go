@@ -4,6 +4,7 @@ import (
 	"maps"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
@@ -47,6 +48,8 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 		UserUIDPool:   meta.ParsePool(store + ".rgw.meta:users.uid"),
 		UserKeysPool:  meta.ParsePool(store + ".rgw.meta:users.keys"),
 		UserEmailPool: meta.ParsePool(store + ".rgw.meta:users.email"),
+		UserSwiftPool: meta.ParsePool(store + ".rgw.meta:users.swift"),
+		AccountPool:   meta.ParsePool(store + ".rgw.meta:accounts"),
 		LogPool:       meta.ParsePool(store + ".rgw.log"),
 		UsageLogPool:  meta.ParsePool(store + ".rgw.log:usage"),
 		PlacementPools: map[string]meta.ZonePlacementInfo{"default-placement": {
@@ -81,6 +84,42 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 		c.Put(root, "", meta.PeriodOID(ids.periodID, 1), encode(period))
 	}
 	return ids
+}
+
+// rookMetaPool is the pool whose namespaces hold the metadata of the zone
+// seedRookZone seeds for the store "ceph-objectstore".
+const rookMetaPool = "ceph-objectstore.rgw.meta"
+
+// seedUser stores info in that zone as radosgw's PutOperation does: the
+// users.uid object holding the RGWUID and the RGWUserInfo, with attrs and
+// version v as its xattrs, and an index object holding the RGWUID for each
+// active access key and for the lower-cased email.
+func seedUser(c *fakerados.Cluster, info meta.UserInfo, attrs map[string][]byte, v meta.ObjVersion) {
+	uid := meta.UID(info.UserID.String())
+	c.Put(rookMetaPool, "users.uid", string(uid), encode(meta.UserObject{UID: uid, Info: info}))
+	obj := c.Object(rookMetaPool, "users.uid", string(uid))
+	maps.Copy(obj.Xattrs, attrs)
+	obj.Xattrs[version.XattrName] = encode(v)
+	for id, k := range info.AccessKeys {
+		if k.Active {
+			c.Put(rookMetaPool, "users.keys", id, encode(uid))
+		}
+	}
+	if info.Email != "" {
+		c.Put(rookMetaPool, "users.email", lowerASCII(info.Email), encode(uid))
+	}
+}
+
+// lowerASCII is boost::to_lower in the C locale radosgw runs in, which
+// lower-cases ASCII letters alone.
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // conf is Options over every option the driver's specs need, at radosgw's
