@@ -69,7 +69,8 @@ benchmark processes:
 No judged mode passes all four criteria on either release, nor with the
 boundary cost in place of (d). (a) and (b) are undecided because each floor
 ran once, 5 to 55 minutes after the cells it divides, and (c) because each
-mode ran its cells in a few shared processes. What the numbers show:
+mode ran its cells in a few shared processes. (a) and (b) leave read4m out,
+for the reasons below. What the numbers show:
 
 - **The cgo share is steady across releases and above 10% in every mode:**
   25.6% and 26.5% in callback, 18.8% and 19.5% in pipe, 37.0% and 41.1% in
@@ -108,6 +109,16 @@ mode ran its cells in a few shared processes. What the numbers show:
   submit, pipe about half to deliver; the pointer checks alone, which only
   the reading of the plan's list as examples counts, are 0.5% and 0.6% of
   callback's profile and 0.7% and 0.4% of pipe's.
+
+  (ii) counts only the Go side of delivery. Pipe's C side is one 8-byte
+  write(2) to the pipe per completion, on the librados thread that completes
+  the operation (the fork's `rados/aio_notifier.go`, `aio_pipe_complete`),
+  which the profile samples under `runtime._ExternalCode` with no frame to
+  tell it from librados's other work. A pure-Go client would not pay it, so
+  pipe's boundary cost is low by an unmeasured amount, against margins of 0.8
+  and 1.7 points. Pipe's `runtime._ExternalCode` share is no higher than
+  callback's (40.9% and 39.7% against 43.0% and 41.5%), which suggests the
+  write is small.
 - **Thread growth, (c), is bounded but not decided.** Within one process the
   runtime keeps the threads a cell grows, so a cell's own idle count leaves
   out what earlier cells of its process grew. Against each cell's own idle
@@ -145,6 +156,19 @@ mode ran its cells in a few shared processes. What the numbers show:
   floor in callback and pipe on Squid; on Tentacle, against a floor 13 to 15%
   faster than Squid's, callback was 0.66x to 0.82x, pipe 0.85x to 0.89x and
   sync 0.75x to 0.84x.
+- **read4m is shown but not judged.** rados bench's 4 MiB rand floor is no
+  floor for the Go read4m cell: it ran at about a quarter of the cell's rate
+  in a cut-down Tentacle run (328 and 377 objects a second against 1308 to
+  1318), flat across concurrency, and the matched-release image did not close
+  the gap. It differs where it matters: rand picks each object at random
+  with replacement, where each Go worker reads its own; its fixed object
+  names land on fixed placement groups; its objects carried allocation hints;
+  and it runs the upstream container's client library, where the benchmark
+  links Fedora's build of the same release. Every floor write now passes
+  `--no-hints`, as the Go cells send no hint. Two follow-ups, not yet made,
+  would let read4m be judged: the Go read4m cell picking a random object
+  among its conc each iteration, as rand does, and the floor running a
+  `rados` linked to the host's own librados.
 
 How exposed each criterion is to the host's noise: the cgo share and the
 boundary cost are fractions of the benchmark process's own profile, and they

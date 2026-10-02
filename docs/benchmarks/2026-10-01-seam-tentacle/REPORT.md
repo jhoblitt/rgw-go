@@ -26,11 +26,11 @@
 | rooket_version | rooket v0.0.0-20260928053658-3d8551957e08 |
 | write4m_objects | 1000 |
 
-This sweep predates the bracketed floor and the floor image: each floor ran once, after the sweep, from the cluster's own image, quay.io/ceph/ceph:v20.2.4, while the benchmark linked the host's librados, 19.2.6-1.fc43. Its throughput and latency ratios are shown but not decided.
+This sweep predates the bracketed floor and the floor image: each floor ran once, after the sweep, from the cluster's own image, quay.io/ceph/ceph:v20.2.4, while the benchmark linked the host's librados, 19.2.6-1.fc43. Its throughput and latency ratios are shown but not decided. The floor's writes carried rados bench's allocation hints, which the Go cells do not send.
 
 ## Verdict
 
-cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and read4m and write4m at 1, 4 and 16, with rados bench at the same size and concurrency, which in this sweep ran once per cell, after the sweep. The threads criterion allows each cell under the byte budget GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's runtime.cgoCheck* pointer checks count as well. sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the cgo criterion reads the same profile for the boundary cost alone, what a pure-Go client would no longer pay; it is not one of the four criteria, and the second answer reads it in the cgo criterion's place.
+cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, with rados bench at the same size and concurrency, which in this sweep ran once per cell, after the sweep. read4m is measured and shown with its floor, but not judged; its table says why. The threads criterion allows each cell under the byte budget GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's runtime.cgoCheck* pointer checks count as well. sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the cgo criterion reads the same profile for the boundary cost alone, what a pure-Go client would no longer pay; it is not one of the four criteria, and the second answer reads it in the cgo criterion's place. For pipe it leaves out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by that much.
 
 | criterion | sync (baseline) | callback | pipe |
 |---|---|---|---|
@@ -38,7 +38,7 @@ cgo is not a bottleneck on a release when one of the callback and pipe modes pas
 | mean latency<=1.25x floor | INCONCLUSIVE: unbracketed floor, one run after the sweep; worst 1.34x (read4k at 64), margin -0.09 | INCONCLUSIVE: unbracketed floor, one run after the sweep; worst 1.53x (read4k at 64), margin -0.28 | INCONCLUSIVE: unbracketed floor, one run after the sweep; worst 1.18x (read4k at 256), margin +0.07 |
 | threads<=gomaxprocs+8 | FAIL: against each cell's own idle count, worst +266 of 40 allowed (read4k at 512), margin -226; against its process's first, worst +532 of 40 allowed (read4k at 512), margin -492 | INCONCLUSIVE: against each cell's own idle count, worst +38 of 40 allowed (headwrite4k at 512), margin +2; against its process's first, worst +81 of 40 allowed (headwrite4k at 512), margin -41 | INCONCLUSIVE: against each cell's own idle count, worst +29 of 40 allowed (read4k at 512), margin +11; against its process's first, worst +116 of 40 allowed (indexrtt at 512), margin -76 |
 | cgo<=10% of CPU | FAIL: 41.1% of 53.74s sampled, margin -31.1 points | FAIL: 26.5% of 1m7.19s sampled, margin -16.5 points | FAIL: 19.5% of 1m13.99s sampled, margin -9.5 points |
-| informational: boundary cost<=10% of CPU (librados's C and the Go completion handler excluded) | PASS: 3.9% of 53.74s sampled, margin +6.1 points | PASS: 5.2% of 1m7.19s sampled, margin +4.8 points | PASS: 8.3% of 1m13.99s sampled, margin +1.7 points |
+| informational: boundary cost<=10% of CPU (librados's C and the Go completion handler excluded) | PASS: 3.9% of 53.74s sampled, margin +6.1 points | PASS: 5.2% of 1m7.19s sampled, margin +4.8 points | PASS: 8.3% of 1m13.99s sampled, margin +1.7 points; leaves out pipe's write(2) per completion, unmeasured |
 
 **Answer:** no judged mode passes all four criteria on tentacle.
 
@@ -97,6 +97,8 @@ These cells carry no process id, so a mode's cells may have shared a benchmark p
 | 512 | pipe | 103020 | 4946 | 108656 | 220585 | 393761 | 103376 | 41.4 | 86→112 (+26) | 0 | 4228 | 120773 | 1.17x | 0.86x | single run after the sweep |
 
 ## read4m
+
+Not judged: rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate, flat across concurrency, and differs from them where it matters: rand picks its objects at random with replacement, its fixed object names land on fixed placement groups, its objects carried allocation hints before the floor passed --no-hints, and its client library is another build. Its ratios are shown, but the throughput and latency criteria leave read4m out until the floor reads as the Go cell does.
 
 | conc | mode | n | ops/s | p50 µs | p99 µs | p999 µs | mean µs | CPU µs/op | threads | errors | floor ops/s | floor mean µs | ops ÷ floor | mean ÷ floor | floor runs |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|

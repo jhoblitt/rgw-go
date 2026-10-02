@@ -48,3 +48,13 @@ find that image. A host's librados need not match the cluster: where the
 cluster runs another release, its own image's `rados bench` runs once more at
 each cell the criteria compare and is reported beside the judged floor, not
 judged. `env.json` records both images and the linked librados's version.
+Every floor write passes `--no-hints`, since the Go cells send no allocation
+hint, and `env.json` records `floor_no_hints`; the 2026-10-01 floors were
+written with rados bench's hints. read4m is shown against its floor but not
+judged, as `docs/cgo-limitations.md` explains.
+
+A sweep that fails partway, including one whose benchmark process or floor
+run a watchdog stops, removes what it left in the pool before it exits. The
+toolbox removes a benchmark's objects eight `rados rm` at a time; in a
+cut-down Squid run that took 56 s for 52082 objects, so the roughly 530000 a
+failed large write4k cell can leave take about ten minutes.
