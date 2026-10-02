@@ -1344,6 +1344,19 @@ rgw-go does the following.
   can skip a Deny that radosgw applies (`rgw_iam_policy.cc:1001` at
   v19.2.6, `:1005` at v20.2.4). Action names have one colon and match
   alike. `docs/ceph-upstream-bugs.md` records the defect.
+- **Out-of-range epoch seconds in a date condition convert as on x86-64.**
+  `as_date` casts a count's whole seconds and its fraction to `uint64_t`
+  and sums them in signed int64 nanoseconds. The seconds cast (a count of
+  -1 or less, NaN, or 2^64 and more), the fraction cast (any negative
+  count, NaN, or 2^64 and more) and the signed multiply and sum (a count
+  from about 9.2e9 seconds up to 2^64, and on x86-64 NaN and a count of -1
+  or less) are all undefined in C++; a count between -1 and 0 reaches only
+  the fraction cast (`rgw_iam_policy.h:390-394` at v19.2.6, `:409-413` at
+  v20.2.4; `docs/ceph-upstream-bugs.md`, "radosgw's date conditions wrap
+  past 2554 and before 1970"). rgw-go computes in uint64 what radosgw's
+  x86-64 build computes, on whatever architecture rgw-go runs; only the
+  casts could make a radosgw built for another architecture answer
+  otherwise.
 
 ### Bucket metadata differences
 
