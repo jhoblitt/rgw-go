@@ -96,6 +96,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | none | none | ✓ |
 | [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
 | [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), pending (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), pending (Service) |  |
+| [radosgw cannot load a bucket whose entry point is from before version 8](#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3739,3 +3740,60 @@ Every new entry adds its row to this table, in document order.
     the owner's choice of disclosure channel.
 - **Found:** phase 1 unit Z, Task 2, 2026-10-01, transcribing
   `rgw::auth::Principal`; derived from the source, not reproduced.
+
+## radosgw cannot load a bucket whose entry point is from before version 8
+
+- **Kind:** defect, a regression since Octopus. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - radosgw wrote entry points below version 8 before Dumpling (0.67). Such
+    an entry point is itself an `RGWBucketInfo`: `RGWBucketEntryPoint::decode`
+    decodes it into `old_bucket_info`, sets `has_bucket_info` and leaves
+    `bucket` empty (`rgw_common.h:1134-1142`, `:1177-1185`).
+  - Every bucket request without an instance id, which only a system
+    request's `rgwx-bucket-instance` parameter supplies (`rgw_op.cc:498-505`,
+    `:528-535`), loads its bucket by name (`:528-541`, `:558-571`) through
+    `RadosStore::load_bucket`
+    (`driver/rados/rgw_sal_rados.cc:1595-1600`, `:2135-2140`) and
+    `RadosBucket::load_bucket` (`:610-637`, `:631-655`), and
+    `RGWRados::get_bucket_info` and `try_refresh_bucket_info` load the same way
+    (`driver/rados/rgw_rados.cc:8995-9026`, `:9940-9971`). Each reads through
+    `RGWBucketCtl::read_bucket_info`, which reads the entry point and then
+    the instance its `bucket` names, without looking at `has_bucket_info`
+    (`driver/rados/rgw_bucket.cc:3085-3129`, `:3234-3273`).
+  - For such an entry point `bucket` is empty, and so is its key
+    (`services/svc_bucket.cc:21-24` and `rgw_basic_types.cc:62-79` at both
+    tags), so the instance read is of `.bucket.meta.` in the domain root, an
+    object no radosgw writes. The load fails with ENOENT, which
+    `rgw_build_bucket_policies` answers as NoSuchBucket (`rgw_op.cc:531-540`,
+    `:561-570`).
+  - `RGWSI_Bucket_SObj::read_bucket_info` still serves the embedded info
+    (`services/svc_bucket_sobj.cc:434-439`, `:377-382`), but only the bucket
+    stats of an owner's bucket listing and the multisite sync hints call it
+    (`:620`, `:558`; `services/svc_bucket_sync_sobj.cc:85`, `:84`). The
+    conversion, `convert_old_bucket_info`, runs only inside
+    `set_bucket_instance_attrs` (`driver/rados/rgw_bucket.cc:3237-3304`,
+    `:3359-3421`), which writes a bucket already loaded.
+  - Nautilus's `RGWRados::_get_bucket_info` served the embedded info
+    (`rgw_rados.cc:8482-8489` at v14.2.22). Octopus's first releases already
+    load through an `RGWBucketCtl::read_bucket_info` without the branch
+    (`rgw_bucket.cc:3198` at v15.1.0, `:3211` at v15.2.0, `:3279-3319` at
+    v15.2.17), where `has_bucket_info` is read only by the svc function and
+    `convert_old_bucket_info`.
+- **Impact:** a bucket whose entry point is still from before version 8, on
+  a cluster that has run radosgw since before Dumpling, answers
+  NoSuchBucket to every S3 request once radosgw is Octopus or later. Its
+  data stays in place, and no S3 request reaches the conversion. Rook's
+  clusters, which postdate Dumpling, hold none.
+- **Releases:** v15.1.0, v15.2.0, v15.2.17, v19.2.6 and v20.2.4; v14.2.22
+  serves the bucket.
+- **rgw-go:** `GetBucket` (`internal/driver/bucket.go`) loads a bucket as
+  `load_bucket` does and answers NoSuchBucket the same way. `PutBucketAttrs`
+  reads the entry point where `set_bucket_instance_attrs` does, and refuses
+  a bucket that needs the conversion (`docs/exclusions.md`, "An entry point
+  from before version 8 is not converted").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 metadata plane (unit M, Task 5), 2026-10-01,
+  implementing the RADOS driver's GetBucket; derived from the source, not
+  reproduced.
