@@ -9,9 +9,14 @@
 #
 # Each benchmark process runs one completion mode, since the runtime keeps
 # the OS threads one mode grows and go-ceph's completion notifier is
-# process-wide. Per mode, one process sweeps the 4 KiB, head and index shapes
-# at CONC, one read4m at BENCH_LARGE_CONC, and one per write4m concurrency.
-# Then, per asynchronous mode, write4m runs at 64 in flight past the byte
+# process-wide. Per mode, one process sweeps the head and index shapes at
+# CONC and one read4k and write4k at the concurrencies of CONC the
+# throughput and latency criteria do not compare; each of those floors runs
+# once after them. Each cell the criteria compare, read4k and write4k at 64
+# and 256 and read4m and write4m at BENCH_LARGE_CONC, runs alone: its floor,
+# then the cell in each mode, each in a process of its own, then its floor
+# again, so that the floor brackets the cell rather than running long after
+# it. Then, per asynchronous mode, write4m runs at 64 in flight past the byte
 # budget, once with the in-flight limiter's bounds above what the cell
 # reaches and once with them derived from the objecter throttle; and, per
 # mode, read4k runs at 256 under a CPU profile.
@@ -26,7 +31,7 @@
 #   BENCH_TIME              benchtime of each time-bounded cell (20s)
 #   BENCH_FLOOR_SECONDS     seconds of each time-bounded rados bench run (20)
 #   CONC                    concurrencies of the 4 KiB, head and index shapes (1,16,64,256,512)
-#   BENCH_LARGE_CONC        concurrencies of read4m and write4m (1,4,16)
+#   BENCH_LARGE_CONC        concurrencies of read4m and write4m (1,4,16); empty skips them
 #   BENCH_WRITE4M_OBJECTS   objects per 4 MiB write cell and floor run (1000, 3.9 GiB)
 #   BENCH_OVER_OBJECTS      objects per over-budget cell (640)
 #   BENCH_MIN_AVAIL_GIB     pool space a 4 MiB write waits for (5)
@@ -47,10 +52,10 @@ source "${here}/lib.sh"
 use_release "${1:-}"
 
 if [[ "${BENCH_QUICK:-}" == 1 ]]; then
-	: "${BENCH_TIME:=5s}" "${BENCH_FLOOR_SECONDS:=5}" "${CONC:=16,256}" "${BENCH_LARGE_CONC:=16}"
+	: "${BENCH_TIME:=5s}" "${BENCH_FLOOR_SECONDS:=5}" "${CONC:=16,256}" "${BENCH_LARGE_CONC=16}"
 	: "${BENCH_WRITE4M_OBJECTS:=100}" "${BENCH_OVER_OBJECTS:=128}"
 fi
-: "${BENCH_TIME:=20s}" "${BENCH_FLOOR_SECONDS:=20}" "${CONC:=1,16,64,256,512}" "${BENCH_LARGE_CONC:=1,4,16}"
+: "${BENCH_TIME:=20s}" "${BENCH_FLOOR_SECONDS:=20}" "${CONC:=1,16,64,256,512}" "${BENCH_LARGE_CONC=1,4,16}"
 : "${BENCH_WRITE4M_OBJECTS:=1000}" "${BENCH_OVER_OBJECTS:=640}" "${BENCH_MIN_AVAIL_GIB:=5}"
 : "${BENCH_TIMEOUT:=2h}" "${GO_TAGS:=ceph_preview}"
 engine=${ROOKET_ENGINE:-podman}
@@ -58,8 +63,6 @@ conf=${RGW_GO_TEST_CEPH_CONF:-${out}/ceph.conf}
 [[ -f "${conf}" && -f "${out}/image" ]] || die "no ${conf} or ${out}/image: run make cluster-up RELEASE=${release}"
 image=$(cat "${out}/image")
 readonly pool=rgw-go-test
-# The 4 KiB, head and index shapes; the 4 MiB ones run at BENCH_LARGE_CONC.
-readonly small_shapes=read4k,write4k,headread4k,headwrite4k,indexrtt
 # Bounds no cell reaches, which leave submission to the objecter throttle.
 readonly no_limit=(-inflight-ops=1048576 -inflight-bytes=1099511627776)
 
@@ -132,9 +135,10 @@ rados_cmd() {
 # rados_bench runs rados bench in namespace bench-floor-<size> and appends
 # its summary to floor.jsonl as the shape's floor. Its arguments are the
 # shape, op, size, conc, seconds, max objects (0 for none), the objects a
-# rand reads among (0 for a write) and the run name.
+# rand reads among (0 for a write), the run name, and the bracket: before or
+# after for a run next to a cell the criteria compare, empty otherwise.
 rados_bench() {
-	local shape=$1 op=$2 size=$3 conc=$4 seconds=$5 max=$6 objects=$7 run=$8 raw summary
+	local shape=$1 op=$2 size=$3 conc=$4 seconds=$5 max=$6 objects=$7 run=$8 bracket=$9 raw summary
 	local args=(-N "bench-floor-${size}" bench "${seconds}" "${op}" -t "${conc}" --run-name "${run}")
 	if [[ "${op}" == write ]]; then
 		args+=(-b "${size}" --no-cleanup)
@@ -142,7 +146,7 @@ rados_bench() {
 	else
 		args+=(--no-verify)
 	fi
-	raw=${dir}/floor-${shape}-${conc}.txt
+	raw=${dir}/${run}.txt
 	say "rados ${args[*]} (load $(cut -d' ' -f1-3 /proc/loadavg))"
 	rados_cmd "${args[@]}" >"${raw}" 2>&1 || die "rados bench failed: $(tail -5 "${raw}")"
 	# The summary's Average IOPS is truncated to an integer, so the rate is
@@ -156,10 +160,10 @@ rados_bench() {
 		die "no summary in ${raw}"
 	read -r t n bw lat <<<"${summary}"
 	jq -cn --arg shape "${shape}" --arg op "${op}" --argjson size "${size}" --argjson conc "${conc}" \
-		--argjson seconds "${seconds}" --argjson max "${max}" --argjson objects "${objects}" \
+		--arg bracket "${bracket}" --argjson seconds "${seconds}" --argjson max "${max}" --argjson objects "${objects}" \
 		--argjson t "${t}" --argjson n "${n}" --argjson bw "${bw}" --argjson lat "${lat}" '{
 			kind: "floor", tool: "rados bench", shape: $shape, op: $op, size: $size, conc: $conc,
-			seconds: $seconds, max_objects: $max, objects: $objects, ops: $n, elapsed_s: $t,
+			bracket: $bracket, seconds: $seconds, max_objects: $max, objects: $objects, ops: $n, elapsed_s: $t,
 			ops_per_sec: ($n / $t), mean_us: ($lat * 1e6), bandwidth_mbps: $bw
 		}' >>"${dir}/floor.jsonl"
 	say "floor ${shape} at ${conc}: $(tail -1 "${dir}/floor.jsonl")"
@@ -169,21 +173,76 @@ rados_cleanup() { # size run
 	rados_cmd -N "bench-floor-$1" cleanup --run-name "$2" -t 64 >>"${log}" 2>&1 || die "rados cleanup of $2 failed"
 }
 
-# floor measures one size at one concurrency: the write, then rand over conc
-# objects written for it, each cleaned up before the next.
-floor() { # size conc write-shape read-shape write-seconds write-max
-	local size=$1 conc=$2 wshape=$3 rshape=$4 wseconds=$5 wmax=$6
-	rados_bench "${wshape}" write "${size}" "${conc}" "${wseconds}" "${wmax}" 0 "floor-${size}-${conc}"
-	rados_cleanup "${size}" "floor-${size}-${conc}"
-	rados_cmd -N "bench-floor-${size}" bench 600 write -t "${conc}" -b "${size}" --max-objects "${conc}" \
-		--no-cleanup --run-name "floor-${size}-${conc}-read" >>"${log}" 2>&1 || die "writing the rand set failed"
-	rados_bench "${rshape}" rand "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 "${conc}" "floor-${size}-${conc}-read"
-	rados_cleanup "${size}" "floor-${size}-${conc}-read"
+# floor_run measures shape's floor at conc once and removes what it wrote:
+# a write over BENCH_FLOOR_SECONDS, or of BENCH_WRITE4M_OBJECTS objects at
+# 4 MiB, or a rand over conc objects written for it. bracket is before or
+# after for a run next to a cell the criteria compare, empty otherwise.
+floor_run() { # shape conc bracket
+	local shape=$1 conc=$2 bracket=$3 size=4096 run
+	[[ "${shape}" != *4m ]] || size=4194304
+	run=floor-${shape}-${conc}-${bracket:-single}
+	case "${shape}" in
+	write4k)
+		rados_bench "${shape}" write "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 0 "${run}" "${bracket}"
+		;;
+	write4m)
+		wait_avail || die "not enough space for the write4m floor at ${conc}"
+		rados_bench "${shape}" write "${size}" "${conc}" 600 "${BENCH_WRITE4M_OBJECTS}" 0 "${run}" "${bracket}"
+		;;
+	read4k | read4m)
+		rados_cmd -N "bench-floor-${size}" bench 600 write -t "${conc}" -b "${size}" --max-objects "${conc}" \
+			--no-cleanup --run-name "${run}" >>"${log}" 2>&1 || die "writing the rand set of ${run} failed"
+		rados_bench "${shape}" rand "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 "${conc}" "${run}" "${bracket}"
+		;;
+	*) die "no floor for ${shape}" ;;
+	esac
+	rados_cleanup "${size}" "${run}"
+}
+
+# judged_cell runs a cell the criteria compare: its floor, the cell in each
+# mode in a process of its own, and its floor again.
+judged_cell() { # shape conc
+	local shape=$1 conc=$2 mode extra=()
+	if [[ "${shape}" == write4m ]]; then
+		extra=(-test.benchtime="${BENCH_WRITE4M_OBJECTS}x")
+	fi
+	floor_run "${shape}" "${conc}" before
+	for mode in sync callback pipe; do
+		if [[ "${shape}" == write4m ]]; then
+			wait_avail || die "not enough space for write4m at ${conc} in ${mode} mode"
+		fi
+		bench "${mode}" "${dir}/seam-${mode}.jsonl" -shapes="${shape}" -conc="${conc}" "${extra[@]}"
+	done
+	floor_run "${shape}" "${conc}" after
 }
 
 conc_words() {
 	echo "${1//,/ }"
 }
+
+# The concurrencies of CONC at which the throughput and latency criteria
+# compare read4k and write4k, and the rest.
+judged_small=()
+other_small=()
+for c in $(conc_words "${CONC}"); do
+	case "${c}" in
+	64 | 256) judged_small+=("${c}") ;;
+	*) other_small+=("${c}") ;;
+	esac
+done
+other_small_list=$(
+	IFS=,
+	echo "${other_small[*]}"
+)
+
+# The report pairs the 4 MiB cells with their floor runs only at 1, 4 and 16
+# in flight, so a cell elsewhere would get floor runs it shows as no floor.
+for c in $(conc_words "${BENCH_LARGE_CONC}"); do
+	case "${c}" in
+	1 | 4 | 16) ;;
+	*) die "BENCH_LARGE_CONC is ${BENCH_LARGE_CONC}: the 4 MiB cells run only at 1, 4 and 16, where the report pairs them with their floor" ;;
+	esac
+done
 
 objecter() {
 	ceph_cmd config get client.admin "$1" 2>/dev/null || echo unknown
@@ -220,11 +279,24 @@ say "building ${bin}"
 
 for mode in sync callback pipe; do
 	results=${dir}/seam-${mode}.jsonl
-	bench "${mode}" "${results}" -shapes="${small_shapes}" -conc="${CONC}"
-	bench "${mode}" "${results}" -shapes=read4m -conc="${BENCH_LARGE_CONC}"
+	bench "${mode}" "${results}" -shapes=headread4k,headwrite4k,indexrtt -conc="${CONC}"
+	if ((${#other_small[@]} > 0)); then
+		bench "${mode}" "${results}" -shapes=read4k,write4k -conc="${other_small_list}"
+	fi
+done
+for c in "${other_small[@]}"; do
+	floor_run read4k "${c}" ""
+	floor_run write4k "${c}" ""
+done
+
+for shape in read4k write4k; do
+	for c in "${judged_small[@]}"; do
+		judged_cell "${shape}" "${c}"
+	done
+done
+for shape in read4m write4m; do
 	for c in $(conc_words "${BENCH_LARGE_CONC}"); do
-		wait_avail || die "not enough space for write4m at ${c} in ${mode} mode"
-		bench "${mode}" "${results}" -shapes=write4m -conc="${c}" -test.benchtime="${BENCH_WRITE4M_OBJECTS}x"
+		judged_cell "${shape}" "${c}"
 	done
 done
 
@@ -240,14 +312,6 @@ done
 
 for mode in sync callback pipe; do
 	bench "${mode}" "" -shapes=read4k -conc=256 -test.cpuprofile="${dir}/cpu-${mode}-read4k-256.pprof"
-done
-
-for c in $(conc_words "${CONC}"); do
-	floor 4096 "${c}" write4k read4k "${BENCH_FLOOR_SECONDS}" 0
-done
-for c in $(conc_words "${BENCH_LARGE_CONC}"); do
-	wait_avail || die "not enough space for the 4 MiB floor at ${c}"
-	floor 4194304 "${c}" write4m read4m 600 "${BENCH_WRITE4M_OBJECTS}"
 done
 
 left=$(toolbox rados -p "${pool}" ls --all | wc -l)

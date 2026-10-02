@@ -80,6 +80,10 @@ type Floor struct {
 	Op    string `json:"op"`
 	Size  int64  `json:"size"`
 	Conc  int    `json:"conc"`
+	// Bracket is before or after for a run next to a cell the throughput and
+	// latency criteria compare, run just before or just after the cell's
+	// modes, and empty for the single run of any other cell.
+	Bracket string `json:"bracket"`
 	// Seconds and MaxObjects are what the run was given: it stops at
 	// whichever it reaches first, and MaxObjects 0 is no limit.
 	Seconds    int `json:"seconds"`
@@ -163,10 +167,19 @@ type overKey struct {
 	maxBytes int64
 }
 
-type floorKey struct {
+// cellKey is a cell of every mode: a shape at a concurrency.
+type cellKey struct {
 	shape string
 	conc  int
 }
+
+type floorKey struct {
+	cellKey
+	bracket string
+}
+
+// brackets are the floor runs of a cell in the order they ran.
+var brackets = []string{"before", "", "after"}
 
 // sweep is a sweep directory read.
 type sweep struct {
@@ -295,24 +308,24 @@ func (s *sweep) checkEven() error {
 	for _, m := range modeOrder {
 		modes[m] = true
 	}
-	cells := map[floorKey]bool{}
+	cells := map[cellKey]bool{}
 	for k := range s.cells {
 		modes[k.mode], shapes[k.shape] = true, true
-		cells[floorKey{k.shape, k.conc}] = true
+		cells[cellKey{k.shape, k.conc}] = true
 	}
 	s.modes = ordered(modes, modeOrder)
 	s.shapes = ordered(shapes, shapeOrder)
-	for _, fk := range slices.SortedFunc(maps.Keys(cells), s.compareCells) {
+	for _, ck := range slices.SortedFunc(maps.Keys(cells), s.compareCells) {
 		for _, m := range s.modes {
-			if _, ok := s.cells[key{m, fk.shape, fk.conc}]; !ok {
-				return fmt.Errorf("%s: conc=%d missing for mode %s", fk.shape, fk.conc, m)
+			if _, ok := s.cells[key{m, ck.shape, ck.conc}]; !ok {
+				return fmt.Errorf("%s: conc=%d missing for mode %s", ck.shape, ck.conc, m)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *sweep) compareCells(a, b floorKey) int {
+func (s *sweep) compareCells(a, b cellKey) int {
 	return cmp.Or(
 		cmp.Compare(slices.Index(s.shapes, a.shape), slices.Index(s.shapes, b.shape)),
 		cmp.Compare(a.conc, b.conc),
@@ -386,13 +399,24 @@ func (s *sweep) readFloors() error {
 		if !slices.ContainsFunc(mirrors, func(m mirror) bool { return m.shape == f.Shape }) {
 			return fmt.Errorf("shape %q has no rados bench floor", f.Shape)
 		}
-		k := floorKey{f.Shape, f.Conc}
+		if !slices.Contains(brackets, f.Bracket) {
+			return fmt.Errorf("bracket %q is not before, after or empty", f.Bracket)
+		}
+		k := floorKey{cellKey{f.Shape, f.Conc}, f.Bracket}
 		if _, dup := s.floors[k]; dup {
-			return fmt.Errorf("two floor lines for %s at conc=%d", f.Shape, f.Conc)
+			return fmt.Errorf("two floor lines for %s at conc=%d (%s)", f.Shape, f.Conc, runName(f.Bracket))
 		}
 		s.floors[k] = f
 		return nil
 	})
+}
+
+// runName names a floor run by its bracket.
+func runName(bracket string) string {
+	if bracket == "" {
+		return "single"
+	}
+	return bracket
 }
 
 // readEnv reads env.json, which seam.sh writes before the sweep, keeping

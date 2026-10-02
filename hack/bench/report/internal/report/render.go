@@ -1,6 +1,7 @@
 package report
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -53,7 +54,9 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 	b.WriteString("\n## Verdict\n\n")
 	b.WriteString("cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. " +
 		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and read4m and write4m at 1, 4 and 16, " +
-		"with rados bench at the same size and concurrency. The threads criterion allows each cell under the byte budget " +
+		"with rados bench at the same size and concurrency, run just before and just after the cell's three modes: a ratio " +
+		"divides by the mean of the two runs, and a cell whose runs differ by more than 10% of that mean is flagged unstable " +
+		"beside the verdict it feeds. The threads criterion allows each cell under the byte budget " +
 		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile " +
 		"of read4k at 256 in flight whose stacks hold runtime.cgocall, runtime.cgocallback*, a _Cfunc_ stub or runtime.(*Pinner). " +
 		"sync parks an OS thread per operation in flight and is the baseline, not judged.\n\n")
@@ -108,11 +111,11 @@ func (s *sweep) renderShape(b *strings.Builder, shape string) {
 	fmt.Fprintf(b, "\n## %s\n\n", shape)
 	b.WriteString("| conc | mode | n | ops/s | p50 µs | p99 µs | p999 µs | mean µs | CPU µs/op | threads | errors |")
 	if mirrored {
-		b.WriteString(" floor ops/s | floor mean µs | ops ÷ floor | mean ÷ floor |")
+		b.WriteString(" floor ops/s | floor mean µs | ops ÷ floor | mean ÷ floor | floor runs |")
 	}
 	b.WriteString("\n|" + strings.Repeat("---|", 11))
 	if mirrored {
-		b.WriteString(strings.Repeat("---|", 4))
+		b.WriteString(strings.Repeat("---|", 5))
 	}
 	b.WriteString("\n")
 	var concs []int
@@ -123,18 +126,15 @@ func (s *sweep) renderShape(b *strings.Builder, shape string) {
 	}
 	slices.Sort(concs)
 	for _, conc := range concs {
-		f, fok := s.floors[floorKey{shape, conc}]
+		cf := s.floorAt(shape, conc)
 		for _, m := range s.modes {
 			c := s.cells[key{m, shape, conc}]
 			fmt.Fprintf(b, "| %d | %s | %d | %s | %s | %s | %s | %s | %.1f | %d→%d (%+d) | %d |",
 				conc, m, c.N, num(c.OpsPerSec), num(c.P50us), num(c.P99us), num(c.P999us), num(c.MeanUs),
 				c.CPUusPerOp, c.ThreadsIdle, c.ThreadsPeak, c.growth(), c.Errors)
-			switch {
-			case !mirrored:
-			case fok && f.OpsPerSec > 0 && f.MeanUs > 0:
-				fmt.Fprintf(b, " %s | %s | %.2fx | %.2fx |", num(f.OpsPerSec), num(f.MeanUs), c.OpsPerSec/f.OpsPerSec, c.MeanUs/f.MeanUs)
-			default:
-				b.WriteString(" — | — | — | — |")
+			if mirrored {
+				fmt.Fprintf(b, " %s | %s | %s | %s | %s |", cf.runs(floorOps), cf.runs(floorMean),
+					cf.ratio(c.OpsPerSec, floorOps), cf.ratio(c.MeanUs, floorMean), cf.note())
 			}
 			b.WriteString("\n")
 		}
@@ -146,17 +146,19 @@ func (s *sweep) renderFloors(b *strings.Builder) {
 		return
 	}
 	b.WriteString("\n## rados bench floor\n\n")
-	b.WriteString("| shape | op | size | conc | seconds | max objects | objects read | ops | elapsed s | ops/s | mean µs | MB/s |\n")
-	b.WriteString("|" + strings.Repeat("---|", 12) + "\n")
+	b.WriteString("| shape | op | size | conc | run | seconds | max objects | objects read | ops | elapsed s | ops/s | mean µs | MB/s |\n")
+	b.WriteString("|" + strings.Repeat("---|", 13) + "\n")
 	keys := make([]floorKey, 0, len(s.floors))
 	for k := range s.floors {
 		keys = append(keys, k)
 	}
-	slices.SortFunc(keys, s.compareCells)
+	slices.SortFunc(keys, func(a, b floorKey) int {
+		return cmp.Or(s.compareCells(a.cellKey, b.cellKey), cmp.Compare(rank(a.bracket, brackets), rank(b.bracket, brackets)))
+	})
 	for _, k := range keys {
 		f := s.floors[k]
-		fmt.Fprintf(b, "| %s | %s | %d | %d | %d | %s | %s | %d | %.2f | %s | %s | %.2f |\n",
-			f.Shape, f.Op, f.Size, f.Conc, f.Seconds, count(f.MaxObjects), count(f.Objects), f.TotalOps,
+		fmt.Fprintf(b, "| %s | %s | %d | %d | %s | %d | %s | %s | %d | %.2f | %s | %s | %.2f |\n",
+			f.Shape, f.Op, f.Size, f.Conc, runName(f.Bracket), f.Seconds, count(f.MaxObjects), count(f.Objects), f.TotalOps,
 			f.ElapsedS, num(f.OpsPerSec), num(f.MeanUs), f.BandwidthMBps)
 	}
 }

@@ -100,14 +100,40 @@ var _ = Describe("Seam", func() {
 		for _, shape := range []string{"read4k", "write4k", "read4m", "write4m"} {
 			Expect(r.Markdown).To(ContainSubstring("\n## "+shape+"\n"), "shape %s", shape)
 		}
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 57000 \| 1120 \| 0\.95x \| 1\.05x \|$`),
-			"read4k at 64: 54000 ops/s against the floor's 57000, a mean of 1180 µs against 1120")
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 520 \| .* \| 560 \| 7100 \| 0\.93x \| 1\.08x \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 / 58140 \| 1131 / 1109 \| 0\.95x \| 1\.05x \| ops 4\.0%, mean 2\.0% \|$`),
+			"read4k at 64: 54000 ops/s against the mean of the floor before and after, 57000, and a mean of 1180 µs against 1120")
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 520 \| .* \| 549 / 571 \| 7171 / 7029 \| 0\.93x \| 1\.08x \| ops 4\.0%, mean 2\.0% \|$`),
 			"read4m at 4, a concurrency only the 4 MiB shapes run")
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 30000 \| .* \| — \| — \| — \| — \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 9000 \| .* \| 9500 \| 1700 \| 0\.95x \| 1\.04x \| single run \|$`),
+			"write4k at 16, which no criterion compares, has one floor run")
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 30000 \| .* \| — \| — \| — \| — \| — \|$`),
 			"read4k at 16 has no floor")
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Pass, "worst 0.92x (read4k at 256), margin +0.12")))
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Pass, "worst 1.09x (read4k at 256), margin +0.16")))
+	})
+
+	It("flags a judged cell whose two floor runs differ by more than 10% as unstable", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 256 \| callback \| \d+ \| 55000 \| .* \| 55800 / 64200 \| 4303 / 4217 \| 0\.92x \| 1\.09x \| unstable: ops 14\.0%, mean 2\.0% \|$`),
+			"the floor's ops before and after read4k at 256 differ by 14% of their mean")
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("callback", report.Throughput, report.Pass, "; unstable floor: read4k at 256 (14.0%)"),
+			HaveField("Unstable", ConsistOf("read4k at 256 (14.0%)")),
+		)), "the throughput verdict the cell feeds carries the flag")
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			HaveField("Mode", "callback"), HaveField("Criterion", report.Latency), HaveField("Unstable", BeEmpty()),
+		)), "the floor's mean latency moved 2%, under the threshold")
+	})
+
+	It("is incomplete for a judged cell with one floor run", func(ctx SpecContext) {
+		dir := sweep(func(file string, line map[string]any) bool {
+			return file != "floor.jsonl" || !is(line, "", "write4m", 4) || line["bracket"] != "after"
+		})
+		r, err := report.Seam(ctx, dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Incomplete, "missing: write4m at 4 (one floor run)")))
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 110 \| .* \| 116 / — \| 34239 / — \| — \| — \| one floor run \|$`))
 	})
 
 	It("renders the run's environment", func(ctx SpecContext) {
@@ -253,14 +279,22 @@ var _ = Describe("Seam", func() {
 				return true
 			}),
 			`shape "indexrtt" has no rados bench floor`),
-		Entry("two lines for one cell",
+		Entry("two lines for one run of a cell",
 			edit(func(file string, line map[string]any) bool {
 				if file == "floor.jsonl" && is(line, "", "read4k", 256) {
 					line["conc"] = 64.0
 				}
 				return true
 			}),
-			"two floor lines for read4k at conc=64"),
+			"two floor lines for read4k at conc=64 (before)"),
+		Entry("a run neither before nor after its cell",
+			edit(func(file string, line map[string]any) bool {
+				if file == "floor.jsonl" && is(line, "", "read4k", 64) && line["bracket"] == "after" {
+					line["bracket"] = "during"
+				}
+				return true
+			}),
+			`bracket "during" is not before, after or empty`),
 	)
 })
 

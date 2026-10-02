@@ -196,11 +196,14 @@ under `make integration`, over TLS too, and stops it with SIGTERM.
 
 `make bench-seam RELEASE=squid` runs `hack/bench/seam.sh`, which sweeps the
 seam microbenchmark in `test/bench/seam` over the `rgw-go-test` pool, never
-two completion modes in one process, then measures its floor with
-`rados bench` from the cluster's own image, run on the host through
-`ROOKET_ENGINE` (podman by default), and renders
+two completion modes in one process, measures its floor with `rados bench`
+from the cluster's own image, run on the host through `ROOKET_ENGINE`
+(podman by default), and renders
 `hack/bench/out/<release>/seam-<UTC time>/REPORT.md` with
-`hack/bench/report`. It measures the host as much as the seam, so run it
+`hack/bench/report`. Each cell the throughput and latency criteria compare
+runs alone, between a floor run just before its three modes and one just
+after them, and its ratios divide by the two runs' mean; any other mirror
+cell has one floor run. It measures the host as much as the seam, so run it
 with nothing else busy; `noise.log` in the run directory samples the load and
 the busiest processes every 15 seconds. Each 4 MiB write waits for 5 GiB free
 in the pool, writes about 3.9 GiB and is removed before the next, and the

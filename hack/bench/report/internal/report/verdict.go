@@ -50,6 +50,9 @@ type Verdict struct {
 	Judged    bool
 	Status    Status
 	Margin    string
+	// Unstable lists the cells feeding the verdict whose floor runs before
+	// and after them differ by more than maxFloorDrift.
+	Unstable []string
 }
 
 // SeamReport is a sweep directory rendered: its markdown, every verdict, and
@@ -109,38 +112,49 @@ type ratioCell struct {
 	ratio float64
 }
 
-// floorRatios returns value of each mirror cell of mode against its floor,
-// and the cells it could not compare, with the reason.
-func (s *sweep) floorRatios(mode string, value func(Cell, Floor) float64) (cells []ratioCell, missing []string) {
+// floorRatios returns cellValue of each judged mirror cell of mode over
+// floorValue of its floor, the cells it could not compare with the reason,
+// and the cells whose two floor runs drifted apart in floorValue.
+func (s *sweep) floorRatios(mode string, cellValue func(Cell) float64, floorValue func(Floor) float64) (cells []ratioCell, missing, unstable []string) {
 	for _, m := range mirrors {
 		for _, conc := range m.concs {
 			c, ok := s.cells[key{mode, m.shape, conc}]
-			f, fok := s.floors[floorKey{m.shape, conc}]
-			var why string
+			cf := s.floorAt(m.shape, conc)
+			fv, why := cf.value(floorValue)
 			switch {
 			case !ok:
 				why = "no cell"
 			case c.Errors > 0:
 				why = fmt.Sprintf("%d errors", c.Errors)
-			case !fok:
-				why = "no floor"
-			case f.OpsPerSec <= 0 || f.MeanUs <= 0:
+			case why == "" && fv <= 0:
 				why = "floor has no operations"
 			}
 			if why != "" {
 				missing = append(missing, fmt.Sprintf("%s at %d (%s)", m.shape, conc, why))
 				continue
 			}
-			cells = append(cells, ratioCell{m.shape, conc, value(c, f)})
+			if d := cf.drift(floorValue); d > maxFloorDrift {
+				unstable = append(unstable, fmt.Sprintf("%s at %d (%.1f%%)", m.shape, conc, 100*d))
+			}
+			cells = append(cells, ratioCell{m.shape, conc, cellValue(c) / fv})
 		}
 	}
-	return cells, missing
+	return cells, missing, unstable
 }
 
 // judge turns the worst of cells into a verdict: worse reports whether a is
 // worse than b, fails whether a ratio fails, and margin its distance from the
-// threshold.
-func judge(cells []ratioCell, missing []string, worse func(a, b float64) bool, fails func(float64) bool, margin func(float64) float64) Verdict {
+// threshold. The cells with an unstable floor are named after the margin.
+func judge(cells []ratioCell, missing, unstable []string, worse func(a, b float64) bool, fails func(float64) bool, margin func(float64) float64) Verdict {
+	v := judgeCells(cells, missing, worse, fails, margin)
+	if len(unstable) > 0 {
+		v.Unstable = unstable
+		v.Margin += "; unstable floor: " + strings.Join(unstable, ", ")
+	}
+	return v
+}
+
+func judgeCells(cells []ratioCell, missing []string, worse func(a, b float64) bool, fails func(float64) bool, margin func(float64) float64) Verdict {
 	var parts []string
 	if len(missing) > 0 {
 		parts = append(parts, "missing: "+strings.Join(missing, ", "))
@@ -167,8 +181,8 @@ func judge(cells []ratioCell, missing []string, worse func(a, b float64) bool, f
 }
 
 func (s *sweep) throughput(mode string) Verdict {
-	cells, missing := s.floorRatios(mode, func(c Cell, f Floor) float64 { return c.OpsPerSec / f.OpsPerSec })
-	v := judge(cells, missing,
+	cells, missing, unstable := s.floorRatios(mode, func(c Cell) float64 { return c.OpsPerSec }, floorOps)
+	v := judge(cells, missing, unstable,
 		func(a, b float64) bool { return a < b },
 		func(r float64) bool { return r < minThroughputRatio },
 		func(r float64) float64 { return r - minThroughputRatio })
@@ -177,8 +191,8 @@ func (s *sweep) throughput(mode string) Verdict {
 }
 
 func (s *sweep) latency(mode string) Verdict {
-	cells, missing := s.floorRatios(mode, func(c Cell, f Floor) float64 { return c.MeanUs / f.MeanUs })
-	v := judge(cells, missing,
+	cells, missing, unstable := s.floorRatios(mode, func(c Cell) float64 { return c.MeanUs }, floorMean)
+	v := judge(cells, missing, unstable,
 		func(a, b float64) bool { return a > b },
 		func(r float64) bool { return r > maxLatencyRatio },
 		func(r float64) float64 { return maxLatencyRatio - r })
