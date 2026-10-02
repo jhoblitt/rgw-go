@@ -11,7 +11,7 @@ import (
 // A manifest is either explicit, listing every piece in Objs, or rule-based,
 // deriving tail names from Prefix and Rules. The zero value lacks the C++
 // member defaults; NewManifest has them.
-type Manifest struct {
+type Manifest struct { //nolint:recvcheck // SetObjSize fills the manifest in place as generator::create_next does, while it encodes and reads by value as every stored type does
 	// ExplicitObjs marks the explicit form, which only very old releases wrote.
 	ExplicitObjs bool
 	// Objs maps an offset in the object to the piece holding the data there.

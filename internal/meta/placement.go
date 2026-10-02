@@ -42,6 +42,18 @@ func (p PlacementRule) CanonicalStorageClass() string {
 	return p.StorageClass
 }
 
+// InheritFrom is rgw_placement_rule::inherit_from: p, with an empty name or
+// storage class taken from r.
+func (p PlacementRule) InheritFrom(r PlacementRule) PlacementRule {
+	if p.Name == "" {
+		p.Name = r.Name
+	}
+	if p.StorageClass == "" {
+		p.StorageClass = r.StorageClass
+	}
+	return p
+}
+
 // MarshalJSON writes the string form.
 func (p PlacementRule) MarshalJSON() ([]byte, error) { return json.Marshal(p.String()) }
 

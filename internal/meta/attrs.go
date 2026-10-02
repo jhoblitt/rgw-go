@@ -18,3 +18,20 @@ const (
 	// keeps outside the user.rgw. namespace.
 	AttrObjVersion = "ceph.objclass.version"
 )
+
+// Attr names the write path sets or strips on heads, from
+// src/rgw/rgw_common.h. The tagging attr is tags.Attr.
+const (
+	AttrDeleteAt         = AttrPrefix + "delete_at"
+	AttrShadowObj        = AttrPrefix + "shadow_name"
+	AttrOLHPrefix        = AttrPrefix + "olh."
+	AttrOLHInfo          = AttrOLHPrefix + "info"
+	AttrOLHVer           = AttrOLHPrefix + "ver"
+	AttrOLHIDTag         = AttrOLHPrefix + "idtag"
+	AttrObjectRetention  = AttrPrefix + "object-retention"
+	AttrObjectLegalHold  = AttrPrefix + "object-legal-hold"
+	AttrReplicationTrace = AttrPrefix + "replication-trace"
+	AttrReplicatedAt     = AttrPrefix + "replicated-at"
+	AttrCloudTierType    = AttrPrefix + "cloud_tier_type"
+	AttrCloudTierConfig  = AttrPrefix + "cloud_tier_config"
+)

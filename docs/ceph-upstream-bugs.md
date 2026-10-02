@@ -88,6 +88,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | none | none | ✓ |
 | [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | none | none | ✓ |
 | [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | none | none | ✓ |
+| [radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32](#radosgws-tail-stripe-names-go-negative-at-stripe-231-and-repeat-at-232) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3244,3 +3245,109 @@ Every new entry adds its row to this table, in document order.
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit W, Task 2, 2026-10-01, adding cls_rgw's omap-era
   gc methods; derived from the source, not reproduced.
+
+## radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`. The lines below are the same at
+  v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01) unless a line is given
+  per tag.
+  - The manifest generator and its iterator hold the stripe number in an
+    `int cur_stripe` (`rgw/driver/rados/rgw_obj_manifest.h:609` and `:509`
+    at v19.2.6, `:620` and `:520` at v20.2.4, `:632` and `:532` on main).
+  - `generator::create_next` sets it to `(ofs - max_head_size) /
+    rule.stripe_max_size`, a u64 quotient converted to int, then adds one in
+    part 0 when `max_head_size` is non-zero
+    (`rgw/driver/rados/rgw_obj_manifest.cc:28-33`). Ceph builds as C++20
+    (`CMakeLists.txt:216` at v19.2.6, `:243` at v20.2.4), which makes the
+    conversion modular: only the low 32 bits count, read as signed. Adding one
+    to 2^31 - 1 overflows the int, which C++ leaves undefined.
+  - `get_implicit_location` names a part-0 tail stripe `"%d", (int)cur_stripe`
+    after the prefix (`rgw/rgw_obj_manifest.cc:230`), and a multipart part's
+    stripes `".%d_%d"` with the same cast (`:241`), or `".%d"` when the
+    stripe is 0 (`:236-237`).
+  - So from stripe 2^31 the names go negative, and stripe 2^32 + k takes
+    stripe k's name. In part 0 with a head, stripe 2^32 + 1 is named like
+    stripe 1; without a head, stripe 2^32 like stripe 0; in a multipart part,
+    stripe 2^32 like the part's first stripe.
+  - The writer starts each stripe with a `write_full` of its RADOS object:
+    `StripeProcessor` hands on offsets relative to the stripe
+    (`rgw/rgw_putobj.cc`), and `RadosWriter::process` writes offset 0 with
+    `write_full` (`rgw/driver/rados/rgw_putobj_processor.cc:149-150` at
+    v19.2.6, `:177-178` at v20.2.4). So the later stripe replaces the earlier
+    stripe's data, and the manifest maps both ranges to that one object.
+  - A read that walks with `operator++` names stripes as the writer does
+    (`rgw/rgw_obj_manifest.cc:56`). A read that seeks past stripe 2^31 also
+    misplaces the stripe's start: `seek` computes `stripe_ofs = part_ofs +
+    cur_stripe * rule.stripe_max_size` from the negative int (`:151-153`),
+    which comes out short by a whole number of 2^32-stripe spans, modulo
+    2^64.
+- **When it happens:** a part with a stripe numbered 2^31 or more: at
+  least 2^31 tail stripes in part 0 behind a head, which numbers them from
+  1, or more than 2^31 in a head-less part 0 or a multipart part, which
+  number them from 0.
+  Neither `rgw_obj_stripe_size` (default 4 MiB) nor `rgw_max_put_size`
+  (default 5 GiB) has a `min` or `max` (`common/options/rgw.yaml.in:1860` and
+  `:127` at v19.2.6, `:1948` and `:130` at v20.2.4, `:2211` and `:161` on
+  main).
+  - At the default stripe size behind a 4 MiB head, the names go negative in
+    an object over 8 PiB (2^53 bytes) and repeat in one over 16 PiB plus the
+    head.
+  - A PUT or UploadPart body is capped at `rgw_max_put_size`
+    (`RGWPutObj_ObjStore::verify_params` and `get_data`, `rgw/rgw_rest.cc:1053`
+    and `:1096` at v19.2.6, `:1058` and `:1101` at v20.2.4), and CopyObject
+    checks a non-system request's source against it (`rgw/rgw_op.cc:5628` at
+    v19.2.6, `:6194` at v20.2.4). At the default 5 GiB, a PUT behind a 4 MiB
+    head, or a multipart part, reaches stripe 2^31 only at a stripe size of 2
+    bytes or less, and repeats a name only at 1 byte. At the default stripe
+    size, `rgw_max_put_size` must be raised past 8 PiB.
+  - radosgw also writes whole objects as part 0 outside a PUT, through
+    `copy_obj_data` (`rgw/driver/rados/rgw_rados.cc:5034-5115` at v19.2.6,
+    `:5294-5386` at v20.2.4), which checks no size. Lifecycle transition
+    (`transition_obj`, `:5117-5184`, `:5417-5490`) and radosgw-admin's object
+    and bucket rewrite (`rewrite_obj`, `:3702-3732`, `:3887-3917`, called at
+    `rgw/rgw_admin.cc:8101` and `:8312` at v19.2.6,
+    `rgw/radosgw-admin/radosgw-admin.cc:8487` and `:8698` at v20.2.4) call it
+    without a size check either, and `copy_obj` calls it when a copy must
+    move the data (`:4877`, `:5137`), which CopyObject reaches without the
+    `rgw_max_put_size` check on a system request (`rgw/rgw_op.cc:5627`,
+    `:6193`). Multisite sync writes through `fetch_remote_obj` (`:4264`,
+    `:4467`); this entry has not checked what bounds its size.
+  - The source of such a copy can be larger than any PUT. A multipart object
+    holds up to `rgw_multipart_part_upload_limit` parts (default 10000,
+    checked in `RGWCompleteMultipart::execute`, `rgw/rgw_op.cc:6410-6411` at
+    v19.2.6, `:7205-7206` at v20.2.4) of up to `rgw_max_put_size` each, about
+    48.8 TiB at the defaults. Written as one part-0 object, that reaches
+    stripe 2^31 at a stripe size of 24999 bytes or less, and repeats a name
+    at 12499 bytes or less.
+  - An appendable object has no size limit. `AppendObjectProcessor::prepare`
+    checks only that an append starts at the object's current size, and
+    adds a part per append (`rgw/driver/rados/rgw_putobj_processor.cc:623-685`
+    at v19.2.6, `:662-724` at v20.2.4); only each append's body is capped at
+    `rgw_max_put_size`. Its own parts stay small, but grown past 8 PiB, about
+    1.7 million appends of 5 GiB, and then transitioned, rewritten or copied
+    as above, it is written as one part-0 object and reaches stripe 2^31 at
+    the default settings.
+- **Impact:** past the thresholds above, a write silently overwrites an
+  earlier stripe of the same object, and reads of the earlier range no longer
+  return its data. A PUT or a multipart part gets there only with a stripe
+  size of a few bytes or a `rgw_max_put_size` in petabytes, but at the
+  default settings an appendable object grown past 8 PiB gets there when
+  lifecycle transitions it, an admin rewrites it, or a system-request
+  CopyObject copies its data.
+- **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6; older releases not
+  checked.
+- **rgw-go:** mirrors it on purpose, so both gateways name stripes alike on a
+  shared zone. The writer's `TailObj` (`internal/meta/manifest_write.go`) and
+  the reader's iterator call one `implicitLocation`
+  (`internal/meta/manifest_iter.go`), which names a stripe by its low 32
+  bits as an int; the spec "names a stripe by its index as an int, as
+  get_implicit_location prints (int)cur_stripe"
+  (`internal/meta/manifest_write_test.go`) pins it. The reader's seek
+  computes the stripe's start as the C++ does. Go's int32 arithmetic wraps
+  where the C++ increment is undefined. Because rgw-go behaves as radosgw
+  does, `docs/exclusions.md` has no entry for it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 3, 2026-10-01, writing the plain-PUT
+  manifest generator; derived from the source, not reproduced.

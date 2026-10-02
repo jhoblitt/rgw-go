@@ -370,24 +370,23 @@ func (it *manifestIter) updateLocation() {
 		it.location = objSelect{placement: m.HeadPlacementRule, obj: m.Obj}
 		return
 	}
-	it.location = it.implicitLocation()
+	it.location = implicitLocation(it.m, it.curPartID, it.curStripe, it.ofs, it.curOverridePrefix)
 }
 
-// implicitLocation mirrors RGWObjManifest::get_implicit_location at the
-// iterator's part, stripe, offset and override prefix: the head below
-// MaxHeadSize in part 0, and otherwise the tail object named <prefix><stripe>
-// in the shadow namespace for part 0, <prefix>.<part> in the multipart
-// namespace for a part's first stripe, and <prefix>.<part>_<stripe> in the
-// shadow namespace for the rest.
-func (it *manifestIter) implicitLocation() objSelect {
-	m, partID, stripe := it.m, it.curPartID, it.curStripe
+// implicitLocation mirrors RGWObjManifest::get_implicit_location: the head
+// below MaxHeadSize in part 0, and otherwise the tail object named
+// <prefix><stripe> in the shadow namespace for part 0, <prefix>.<part> in the
+// multipart namespace for a part's first stripe, and <prefix>.<part>_<stripe>
+// in the shadow namespace for the rest. The C++ prints the part and stripe
+// as (int), so they arrive here as int32.
+func implicitLocation(m *Manifest, partID, stripe int32, ofs uint64, overridePrefix string) objSelect {
 	oid := m.Prefix
-	if it.curOverridePrefix != "" {
-		oid = it.curOverridePrefix
+	if overridePrefix != "" {
+		oid = overridePrefix
 	}
 	var ns string
 	switch {
-	case partID == 0 && it.ofs < m.MaxHeadSize:
+	case partID == 0 && ofs < m.MaxHeadSize:
 		return objSelect{placement: m.HeadPlacementRule, obj: m.Obj}
 	case partID == 0:
 		oid += strconv.Itoa(int(stripe))
