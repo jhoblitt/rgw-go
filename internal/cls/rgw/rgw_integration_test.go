@@ -5,6 +5,7 @@ package rgw_test
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,5 +201,78 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 		Expect(d.Err()).NotTo(HaveOccurred())
 		Expect(en.PendingMap).To(HaveLen(1))
 		Expect(en.PendingMap[0].Tag).To(Equal("guard-tag"))
+	})
+})
+
+var _ = Describe("the omap-era gc methods against a cluster", Label("integration"), func() {
+	var (
+		pool radosclient.Pool
+		oid  string
+		uniq string
+	)
+
+	BeforeEach(func(ctx SpecContext) {
+		cluster, err := goceph.Connect(ctx, goceph.Config{ConfigFile: cephtest.Conf()})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
+		pool, err = cluster.Pool(ctx, cephtest.TestPool, "")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
+		uniq = strconv.FormatInt(time.Now().UnixNano(), 10)
+		oid = "gcw-" + uniq
+		DeferCleanup(func(ctx SpecContext) {
+			op := radosclient.NewWriteOp()
+			op.Remove()
+			_, err := pool.Write(ctx, oid, op, radosclient.OpFlagNone)
+			if err != nil {
+				Expect(err).To(MatchError(radosclient.ErrNotFound))
+			}
+		})
+	})
+
+	write := func(ctx SpecContext, build func(*radosclient.WriteOp)) error {
+		op := radosclient.NewWriteOp()
+		build(op)
+		_, err := pool.Write(ctx, oid, op, radosclient.OpFlagNone)
+		return err
+	}
+	list := func(ctx SpecContext, expiredOnly bool) rgw.GCListRet {
+		GinkgoHelper()
+		op := radosclient.NewReadOp()
+		res := rgw.GCList(op, "", 100, expiredOnly, denc.Squid)
+		Expect(pool.Read(ctx, oid, op, radosclient.OpFlagNone)).Error().To(Succeed())
+		ret, err := res.Result()
+		Expect(err).NotTo(HaveOccurred())
+		return ret
+	}
+
+	It("lists, defers and removes an entry", func(ctx SpecContext) {
+		info := rgw.GCObjInfo{
+			Tag:   "tag-" + uniq + "\x00",
+			Chain: []rgw.GCObj{{Pool: cephtest.TestPool, Key: rgw.ObjKey{Name: "tail-" + uniq}}},
+		}
+		before := time.Now().Add(-time.Minute)
+		Expect(write(ctx, func(op *radosclient.WriteOp) { rgw.GCSetEntry(op, 0, info, denc.Squid) })).To(Succeed())
+
+		all := list(ctx, false)
+		Expect(all.Truncated).To(BeFalse())
+		Expect(all.Entries).To(HaveLen(1))
+		Expect(all.Entries[0].Tag).To(Equal(info.Tag))
+		Expect(all.Entries[0].Chain).To(Equal(info.Chain))
+		Expect(all.Entries[0].Time).To(BeTemporally(">", before))
+		Expect(list(ctx, true).Entries).To(HaveLen(1), "an entry set with no expiration is due")
+
+		Expect(write(ctx, func(op *radosclient.WriteOp) { rgw.GCDeferEntry(op, 3600, info.Tag, denc.Squid) })).To(Succeed())
+		Expect(list(ctx, true).Entries).To(BeEmpty(), "the deferred entry is not due")
+		deferred := list(ctx, false)
+		Expect(deferred.Entries).To(HaveLen(1))
+		Expect(deferred.Entries[0].Time).To(BeTemporally("~", all.Entries[0].Time.Add(time.Hour), time.Minute))
+
+		Expect(write(ctx, func(op *radosclient.WriteOp) {
+			rgw.GCRemove(op, []string{"missing-" + uniq + "\x00", info.Tag}, denc.Squid)
+		})).To(Succeed())
+		Expect(list(ctx, false).Entries).To(BeEmpty())
+		Expect(write(ctx, func(op *radosclient.WriteOp) { rgw.GCDeferEntry(op, 3600, info.Tag, denc.Squid) })).
+			To(MatchError(radosclient.ErrNotFound))
 	})
 })

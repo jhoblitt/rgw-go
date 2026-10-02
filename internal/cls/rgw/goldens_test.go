@@ -114,4 +114,10 @@ var _ = Describe("corpus goldens", func() {
 	It("cls_rgw_obj", func() {
 		goldentest.RoundTrip(dir, "cls_rgw_obj", skipJSON, rgw.DecodeGCObj, enc[rgw.GCObj])
 	})
+	It("cls_rgw_gc_remove_op", func() {
+		goldentest.RoundTrip(dir, "cls_rgw_gc_remove_op", skipJSON, rgw.DecodeGCRemoveOp, enc[rgw.GCRemoveOp])
+	})
+	It("cls_rgw_gc_defer_entry_op", func() {
+		goldentest.RoundTrip(dir, "cls_rgw_gc_defer_entry_op", skipJSON, rgw.DecodeGCDeferEntryOp, enc[rgw.GCDeferEntryOp])
+	})
 })

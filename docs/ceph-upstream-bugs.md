@@ -87,6 +87,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | pending | pending |  |
 | [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | pending | pending |  |
 | [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | pending | pending |  |
+| [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3135,3 +3136,74 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
   review of rgw-go's manifest walks; derived from the source, not
   reproduced.
+
+## cls_rgw's omap gc log loses an entry due in the same nanosecond as another
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`. The omap gc code in
+  `cls/rgw/cls_rgw.cc` is the same at v19.2.6, v20.2.4 and main
+  (06adccc25d6, 2026-10-01); each triple of lines below is v19.2.6's,
+  v20.2.4's and main's.
+  - A gc shard holds each omap-era entry twice: under `0_` plus its tag, the
+    name index, and under `1_` plus its due time, the time index
+    (`gc_index_prefixes`, `:3841`, `:4243`, `:4567`).
+  - The time key is the due time alone, formatted `%011llu.%09u` from its
+    seconds and nanoseconds; nothing of the tag goes into it
+    (`get_time_key`, `:119-125`, `:135-141`, `:124-130`).
+  - `gc_update_entry`, which serves both `gc_set_entry` and
+    `gc_defer_entry`, sets the due time to `real_clock::now()` plus
+    `expiration_secs` (`:3912-3913`, `:4314-4315`, `:4638-4639`). It then
+    writes the time key with `cls_cxx_map_set_val` (`:3928`, `:4330`,
+    `:4654`), which replaces any value already under the key. So of two
+    entries due in the same nanosecond, the later write takes the shared
+    time key and the earlier entry's time-index value is gone.
+  - `gc_list` reads only the time index (`gc_iterate_entries`,
+    `:3996-4084`, `:4398-4486`, `:4722-4810`), so the earlier entry is
+    never listed again.
+- **What is lost:** the earlier entry's time-index key, not its record.
+  - Its `0_` name-index record, chain included, stays in the shard's omap.
+    But radosgw's GC processor collects only what `gc_list` returns
+    (`RGWGC::process`, `rgw/driver/rados/rgw_gc.cc:550` at v19.2.6, `:565` at
+    v20.2.4, main `:487`), so the chain is never collected. Its tail objects
+    keep their refcount reference and leak, and the processor never removes
+    the record.
+  - Removing or deferring the earlier entry's tag later also takes the
+    survivor's time key. `gc_remove` and `gc_update_entry` delete the time
+    key computed from the stored due time (`:4144`, `:4546`, `:4870`;
+    `:3904`, `:4306`, `:4630`), and that key is the shared one, now holding
+    the survivor. The survivor then drops out of `gc_list` the same way.
+    radosgw reaches this at v19.2.6 and v20.2.4 when it defers the earlier
+    tag: `RGWRados::defer_gc` (`rgw_rados.cc:5685` at v19.2.6, `:6373` at
+    v20.2.4) calls `RGWGC::async_defer_chain`. That sends `gc_defer_entry`
+    through `gc_log_defer1` on an unconverted shard, and `gc_remove` beside
+    the queue defer on a converted one (`rgw_gc.cc:180-223` at both tags).
+    Main no longer defers.
+- **When it happens:** two writes to the same shard whose
+  `real_clock::now()` plus `expiration_secs` agree to the nanosecond.
+  `real_clock::now()` reads `CLOCK_REALTIME` on the OSD
+  (`common/ceph_time.h:115-118`, `:112-115`, `:113-116`).
+  - radosgw passes `rgw_gc_obj_min_wait` to every enqueue and defer. With
+    one value, the two writes must read the same clock value. That takes a
+    realtime clock that steps back, or a shard whose primary moves to an
+    OSD whose clock is behind. With different values, as from radosgw
+    instances configured differently or a changed setting, two writes whose
+    clock readings differ by exactly the difference collide.
+  - Only shards still on the omap log are affected. radosgw writes a new
+    omap entry only when the rgw_gc queue enqueue fails with ECANCELED or
+    EPERM, as on a shard `RGWGC::initialize` has not converted
+    (`RGWGC::send_chain`, `rgw_gc.cc:120-139` at both tags, main
+    `:121-140`). It defers through the omap log only on a shard it has not
+    seen converted (`:180-223` at both tags).
+- **Impact:** a rare leak of an object's tail on an unconverted gc shard,
+  and of the gc record that names it. Nothing reports it: the shard's
+  listing simply never returns the entry.
+- **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6; older releases not
+  checked.
+- **rgw-go:** meets it as radosgw does. `GCSetEntry` and `GCDeferEntry`
+  (`internal/cls/rgw/ops_gc.go`) call the same class methods, so the
+  overwrite happens in the OSD whichever gateway wrote the entries. Because
+  rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry for it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 2, 2026-10-01, adding cls_rgw's omap-era
+  gc methods; derived from the source, not reproduced.

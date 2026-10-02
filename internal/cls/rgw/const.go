@@ -22,6 +22,9 @@ const (
 	methodUserUsageLogTrim      = "user_usage_log_trim"
 	methodUsageLogClear         = "usage_log_clear"
 	methodGCSetEntry            = "gc_set_entry"
+	methodGCDeferEntry          = "gc_defer_entry"
+	methodGCList                = "gc_list"
+	methodGCRemove              = "gc_remove"
 	methodGuardBucketResharding = "guard_bucket_resharding"
 	methodSetBucketResharding   = "set_bucket_resharding"
 )
