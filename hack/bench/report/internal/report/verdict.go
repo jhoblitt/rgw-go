@@ -137,6 +137,9 @@ type ratioCell struct {
 // and the cells whose two floor runs drifted apart in floorValue.
 func (s *sweep) floorRatios(mode string, cellValue func(Cell) float64, floorValue func(Floor) float64) (cells []ratioCell, missing, unstable []string) {
 	for _, m := range mirrors {
+		if m.unjudged != "" {
+			continue
+		}
 		for _, conc := range m.concs {
 			c, ok := s.cells[key{mode, m.shape, conc}]
 			cf := s.floorAt(m.shape, conc)

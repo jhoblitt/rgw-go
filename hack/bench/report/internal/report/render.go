@@ -76,8 +76,9 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		floor = "which in this sweep ran once per cell, after the sweep."
 	}
 	b.WriteString("cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. " +
-		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and read4m and write4m at 1, 4 and 16, " +
-		"with rados bench at the same size and concurrency, " + floor + " The threads criterion allows each cell under the byte budget " +
+		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, " +
+		"with rados bench at the same size and concurrency, " + floor + " read4m is measured and shown with its floor, but " +
+		"not judged; its table says why. The threads criterion allows each cell under the byte budget " +
 		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile " +
 		"of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, " +
 		"runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's " +
@@ -159,8 +160,12 @@ func (s *sweep) renderLimits(b *strings.Builder) {
 }
 
 func (s *sweep) renderShape(b *strings.Builder, shape string) {
-	mirrored := slices.ContainsFunc(mirrors, func(m mirror) bool { return m.shape == shape })
+	i := slices.IndexFunc(mirrors, func(m mirror) bool { return m.shape == shape })
+	mirrored := i >= 0
 	fmt.Fprintf(b, "\n## %s\n\n", shape)
+	if mirrored && mirrors[i].unjudged != "" {
+		fmt.Fprintf(b, "Not judged: %s\n\n", mirrors[i].unjudged)
+	}
 	cluster := mirrored && s.clusterImage != s.floorImage
 	b.WriteString("| conc | mode | n | ops/s | p50 µs | p99 µs | p999 µs | mean µs | CPU µs/op | threads | errors |")
 	if mirrored {

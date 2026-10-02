@@ -152,6 +152,29 @@ var _ = Describe("Seam", func() {
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Pass, "worst 1.09x (read4k at 256), margin +0.16")))
 	})
 
+	It("shows read4m against its floor but leaves it out of throughput and latency, and says why", func(ctx SpecContext) {
+		dir := sweep(func(file string, line map[string]any) bool {
+			if file == "seam-callback.jsonl" && line["shape"] == "read4m" {
+				line["ops_per_sec"] = 1.0
+				line["mean_us"] = 1e9
+			}
+			return true
+		})
+		r, err := report.Seam(ctx, dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Pass, "worst 0.92x (read4k at 256), margin +0.12")),
+			"a read4m cell at 1 op/s fails nothing")
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Pass, "worst 1.09x (read4k at 256), margin +0.16")))
+		for _, v := range r.Verdicts {
+			Expect(v.Margin).NotTo(ContainSubstring("read4m"), "%s %s", v.Mode, v.Criterion)
+		}
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 1\.00 \| .* \| 549 / 571 \| 7171 / 7029 \| 0\.00x \| \d+\.\d+x \| ops 4\.0%, mean 2\.0% \| 1120, 3550 \|$`),
+			"read4m's cells keep their floor and ratios")
+		Expect(r.Markdown).To(ContainSubstring("\n## read4m\n\nNot judged: rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate"))
+		Expect(r.Markdown).To(ContainSubstring("Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16,"))
+		Expect(r.Markdown).To(ContainSubstring("read4m is measured and shown with its floor, but not judged; its table says why."))
+	})
+
 	It("flags a judged cell whose two floor runs differ by more than 10% as unstable", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
@@ -230,13 +253,14 @@ var _ = Describe("Seam", func() {
 		Expect(r.Markdown).To(ContainSubstring("This sweep predates the bracketed floor and the floor image: each floor ran " +
 			"once, after the sweep, from the cluster's own image, quay.io/ceph/ceph:v20.2.4, while the benchmark linked " +
 			"the host's librados, 19.2.6-1.fc43."))
-		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Inconclusive,
-			"unbracketed floor, one run after the sweep; worst 0.95x (read4m at 4), margin +0.15")),
-			"read4m at 4's single run is the old before run, 548.8 ops/s")
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("callback", report.Throughput, report.Inconclusive, "unbracketed floor, one run after the sweep; worst "),
+			HaveField("Margin", Not(ContainSubstring("read4m"))),
+		)), "read4m at 4, at 0.95x the worst cell, is not judged")
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Inconclusive, "unbracketed floor, one run after the sweep; worst ")))
 		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 \| 1131 \| 0\.97x \| 1\.04x \| single run after the sweep \|$`))
 		Expect(r.Markdown).To(ContainSubstring("with rados bench at the same size and concurrency, which in this sweep ran "+
-			"once per cell, after the sweep. The threads criterion"), "the verdict's prose describes the floor this sweep has")
+			"once per cell, after the sweep. read4m is measured"), "the verdict's prose describes the floor this sweep has")
 		Expect(r.Markdown).NotTo(ContainSubstring("run just before and just after the cell's three modes"))
 	})
 

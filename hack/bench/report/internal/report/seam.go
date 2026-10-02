@@ -103,8 +103,8 @@ type Floor struct {
 	BandwidthMBps float64 `json:"bandwidth_mbps"`
 }
 
-// mirror is a shape rados bench mirrors exactly, with the concurrencies the
-// throughput and latency criteria compare it at.
+// mirror is a shape rados bench mirrors, with the concurrencies at which the
+// sweep brackets its cells with a floor run before and after them.
 type mirror struct {
 	shape string
 	concs []int
@@ -112,16 +112,25 @@ type mirror struct {
 	// shape.
 	op   string
 	size int64
+	// unjudged says why the throughput and latency criteria leave the shape
+	// out, though its cells and ratios are shown; empty when they judge it.
+	unjudged string
 }
 
 // mirrors compares a 4 MiB shape only where its bytes in flight stay under
 // the byte budget.
 var mirrors = []mirror{
-	{"read4k", []int{64, 256}, "rand", 4096},
-	{"write4k", []int{64, 256}, "write", 4096},
-	{"read4m", []int{1, 4, 16}, "rand", 4 << 20},
-	{"write4m", []int{1, 4, 16}, "write", 4 << 20},
+	{"read4k", []int{64, 256}, "rand", 4096, ""},
+	{"write4k", []int{64, 256}, "write", 4096, ""},
+	{"read4m", []int{1, 4, 16}, "rand", 4 << 20, read4mUnjudged},
+	{"write4m", []int{1, 4, 16}, "write", 4 << 20, ""},
 }
+
+const read4mUnjudged = "rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate, flat across " +
+	"concurrency, and differs from them where it matters: rand picks its objects at random with replacement, its " +
+	"fixed object names land on fixed placement groups, its objects carried allocation hints before the floor passed " +
+	"--no-hints, and its client library is another build. Its ratios are shown, but the throughput and latency " +
+	"criteria leave read4m out until the floor reads as the Go cell does."
 
 // shapeOrder and modeOrder are the sweep's orders; anything else sorts after.
 // modeOrder is also every mode a sweep runs.

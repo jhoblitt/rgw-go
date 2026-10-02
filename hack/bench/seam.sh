@@ -19,13 +19,16 @@
 # notifier is process-wide. The head and index shapes run at CONC, and read4k
 # and write4k at the concurrencies of CONC the throughput and latency
 # criteria do not compare, each followed by one floor run. Each cell the
-# criteria compare, read4k and write4k at 64 and 256 and read4m and write4m
-# at BENCH_LARGE_CONC, runs between two floor runs, one just before its three
+# criteria compare, read4k and write4k at 64 and 256 and write4m at
+# BENCH_LARGE_CONC, runs between two floor runs, one just before its three
 # modes and one just after, so that the floor brackets the cell rather than
-# running long after it. Then, per asynchronous mode, write4m runs at 64 in
-# flight past the byte budget, once with the in-flight limiter's bounds above
-# what the cell reaches and once with them derived from the objecter
-# throttle; and, per mode, read4k runs at 256 under a CPU profile.
+# running long after it; so does read4m at BENCH_LARGE_CONC, which the report
+# shows against its floor but does not judge, since rados bench's 4 MiB rand
+# does not read as the Go cell does. Then, per asynchronous mode, write4m
+# runs at 64 in flight past the byte budget, once with the in-flight
+# limiter's bounds above what the cell reaches and once with them derived
+# from the objecter throttle; and, per mode, read4k runs at 256 under a CPU
+# profile.
 #
 # A 4 MiB write cell or floor run writes BENCH_WRITE4M_OBJECTS objects, not
 # a time window, so that both sides write the same bytes, and starts only
