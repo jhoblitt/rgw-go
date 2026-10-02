@@ -84,6 +84,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's zstd decompress reports success on a frame that fails or decodes short](#radosgws-zstd-decompress-reports-success-on-a-frame-that-fails-or-decodes-short) | pending | pending |  |
 | [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | pending | pending |  |
 | [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | pending | pending |  |
+| [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2913,3 +2914,46 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
   building the memstore's shared user and account email index; derived from
   the source, not reproduced.
+
+## radosgw's LZ4 decompress trusts its block's pair table
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source. A memory-safety defect in Ceph's compressor plugin, which radosgw
+  calls to read an object stored with lz4 compression.
+- **Evidence:** `src/compressor/lz4/LZ4Compressor.cc`, `LZ4Compressor::decompress`
+  (`:99-149` at v19.2.6, `:99-145` at v20.2.4, main 06adccc25d6 one line
+  lower).
+  - A stored lz4 block starts with a `count` and `count` pairs of
+    (original length, compressed length), decoded from the block's own bytes
+    (`:109-117` at both tags). The original lengths are summed into a
+    `uint32_t total_origin` (`:112`, `:116`), which wraps.
+  - The output buffer is allocated from that sum,
+    `ceph::buffer::ptr dstptr(total_origin)` (`:120`).
+  - Each pair is then decoded with `LZ4_decompress_safe_continue`, passing
+    the pair's original length as the output capacity and its compressed
+    length as the input length, and advancing both pointers by them
+    (`:135-146` at v19.2.6, `:131-142` at v20.2.4). Nothing checks a pair's
+    original length against what is left of `dstptr`, or its compressed
+    length against what is left of the input.
+  - So a pair table whose original lengths wrap to a small `total_origin`
+    writes past the end of the heap buffer, and a compressed length larger
+    than the remaining input reads past the end of the input buffer.
+    `compressed_len -= (sizeof(uint32_t) + sizeof(uint32_t) * count * 2)`
+    (`:118`) also underflows, as a `size_t`, for a large `count`.
+- **Reachability:** radosgw's own compressor never writes such a block:
+  `LZ4Compressor::compress` (`:36-85` at v19.2.6) records each block's true
+  lengths, so their sum is the block's real size. An S3 or Swift client
+  cannot supply a stored block's bytes. Reaching the defect needs control of
+  the stored data: a direct RADOS write, or replicated data that arrives in
+  compressed form, which this analysis has not traced end to end.
+- **Impact:** a crafted stored block corrupts radosgw's heap, or makes it
+  read out of bounds, when the object is read.
+- **Releases:** checked at v19.2.6, v20.2.4 and main 06adccc25d6.
+- **rgw-go:** not affected. `internal/compression`'s lz4 decoder checks the
+  pair table against the block's length before allocating, sums the
+  original lengths in 64 bits and refuses a total above `math.MaxInt32`,
+  sizes its output from that exact sum so every pair fits it, and checks
+  each pair's compressed length against the input that remains.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's lz4
+  decompressor; derived from the source, not reproduced.
