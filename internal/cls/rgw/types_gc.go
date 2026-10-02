@@ -109,3 +109,106 @@ func DecodeGCSetEntryOp(d *denc.Decoder) GCSetEntryOp {
 	d.EndStruct(h)
 	return o
 }
+
+// GCListOp is cls_rgw_gc_list_op, the input of gc_list and of the rgw_gc
+// class's rgw_gc_queue_list_entries. The C++ default for ExpiredOnly is true,
+// which a version 1 encoding implies.
+type GCListOp struct {
+	Marker      string
+	Max         uint32
+	ExpiredOnly bool
+}
+
+// Encode mirrors cls_rgw_gc_list_op::encode, ENCODE_START(2, 1).
+func (o GCListOp) Encode(e *denc.Encoder, _ denc.Release) {
+	f := e.BeginStruct(2, 1)
+	e.String(o.Marker)
+	e.U32(o.Max)
+	e.Bool(o.ExpiredOnly)
+	e.EndStruct(f)
+}
+
+// DecodeGCListOp mirrors cls_rgw_gc_list_op::decode, DECODE_START(2).
+func DecodeGCListOp(d *denc.Decoder) GCListOp {
+	h := d.BeginStruct(2)
+	o := GCListOp{Marker: d.String(), Max: d.U32(), ExpiredOnly: true}
+	if h.Version >= 2 {
+		o.ExpiredOnly = d.Bool()
+	}
+	d.EndStruct(h)
+	return o
+}
+
+// GCListRet is cls_rgw_gc_list_ret, the output of gc_list and of the rgw_gc
+// class's rgw_gc_queue_list_entries. NextMarker is set only when Truncated is.
+type GCListRet struct {
+	Entries    []GCObjInfo
+	NextMarker string
+	Truncated  bool
+}
+
+// Encode mirrors cls_rgw_gc_list_ret::encode, ENCODE_START(2, 1).
+func (o GCListRet) Encode(e *denc.Encoder, r denc.Release) {
+	f := e.BeginStruct(2, 1)
+	denc.EncodeSlice(e, o.Entries, func(e *denc.Encoder, i GCObjInfo) { i.Encode(e, r) })
+	e.String(o.NextMarker)
+	e.Bool(o.Truncated)
+	e.EndStruct(f)
+}
+
+// DecodeGCListRet mirrors cls_rgw_gc_list_ret::decode, DECODE_START(2).
+func DecodeGCListRet(d *denc.Decoder) GCListRet {
+	h := d.BeginStruct(2)
+	var o GCListRet
+	o.Entries = denc.DecodeSlice(d, DecodeGCObjInfo)
+	if h.Version >= 2 {
+		o.NextMarker = d.String()
+	}
+	o.Truncated = d.Bool()
+	d.EndStruct(h)
+	return o
+}
+
+// GCRemoveOp is cls_rgw_gc_remove_op, the input of gc_remove.
+type GCRemoveOp struct {
+	Tags []string
+}
+
+// Encode mirrors cls_rgw_gc_remove_op::encode, ENCODE_START(1, 1).
+func (o GCRemoveOp) Encode(e *denc.Encoder, _ denc.Release) {
+	f := e.BeginStruct(1, 1)
+	denc.EncodeSlice(e, o.Tags, (*denc.Encoder).String)
+	e.EndStruct(f)
+}
+
+// DecodeGCRemoveOp mirrors cls_rgw_gc_remove_op::decode, DECODE_START(1).
+func DecodeGCRemoveOp(d *denc.Decoder) GCRemoveOp {
+	h := d.BeginStruct(1)
+	o := GCRemoveOp{Tags: denc.DecodeSlice(d, (*denc.Decoder).String)}
+	d.EndStruct(h)
+	return o
+}
+
+// GCDeferEntryOp is cls_rgw_gc_defer_entry_op, the input of gc_defer_entry.
+type GCDeferEntryOp struct {
+	ExpirationSecs uint32
+	Tag            string
+}
+
+// Encode mirrors cls_rgw_gc_defer_entry_op::encode, ENCODE_START(1, 1).
+func (o GCDeferEntryOp) Encode(e *denc.Encoder, _ denc.Release) {
+	f := e.BeginStruct(1, 1)
+	e.U32(o.ExpirationSecs)
+	e.String(o.Tag)
+	e.EndStruct(f)
+}
+
+// DecodeGCDeferEntryOp mirrors cls_rgw_gc_defer_entry_op::decode, DECODE_START(1).
+func DecodeGCDeferEntryOp(d *denc.Decoder) GCDeferEntryOp {
+	h := d.BeginStruct(1)
+	var o GCDeferEntryOp
+	o.ExpirationSecs = d.U32()
+	o.Tag = d.String()
+	d.EndStruct(h)
+	return o
+}

@@ -313,3 +313,52 @@ var _ = Describe("reply decoding", func() {
 		Expect(err).To(MatchError(denc.ErrShortBuffer))
 	})
 })
+
+var _ = Describe("the omap-era gc methods", func() {
+	It("gc_list sends cls_rgw_gc_list_op and decodes cls_rgw_gc_list_ret", func() {
+		op := radosclient.NewReadOp()
+		res := rgw.GCList(op, "m", 128, true, denc.Squid)
+		step := soleExec(op.Steps(), "gc_list")
+		Expect(decodeWhole(step.In, rgw.DecodeGCListOp)).To(Equal(rgw.GCListOp{Marker: "m", Max: 128, ExpiredOnly: true}))
+		want := rgw.GCListRet{Entries: []rgw.GCObjInfo{{Tag: "t\x00"}}, NextMarker: "n", Truncated: true}
+		step.Result.Set(encodeAt(want, denc.Squid), 0)
+		got, err := res.Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(want))
+	})
+
+	It("gc_remove and gc_defer_entry go in order on one write op", func() {
+		op := radosclient.NewWriteOp()
+		rgw.GCRemove(op, []string{"a\x00", "b\x00"}, denc.Squid)
+		rgw.GCDeferEntry(op, 7200, "a\x00", denc.Squid)
+		steps := op.Steps()
+		Expect(steps).To(HaveLen(2))
+		remove := soleExec(steps[:1], "gc_remove")
+		Expect(decodeWhole(remove.In, rgw.DecodeGCRemoveOp)).To(Equal(rgw.GCRemoveOp{Tags: []string{"a\x00", "b\x00"}}))
+		deferred := soleExec(steps[1:], "gc_defer_entry")
+		Expect(decodeWhole(deferred.In, rgw.DecodeGCDeferEntryOp)).To(Equal(rgw.GCDeferEntryOp{ExpirationSecs: 7200, Tag: "a\x00"}))
+	})
+
+	It("gc_remove", func() {
+		eachGolden("cls_rgw_gc_remove_op", "gc_remove", rgw.DecodeGCRemoveOp,
+			func(op *radosclient.WriteOp, v rgw.GCRemoveOp) { rgw.GCRemove(op, v.Tags, denc.Squid) })
+	})
+
+	It("gc_defer_entry", func() {
+		eachGolden("cls_rgw_gc_defer_entry_op", "gc_defer_entry", rgw.DecodeGCDeferEntryOp,
+			func(op *radosclient.WriteOp, v rgw.GCDeferEntryOp) {
+				rgw.GCDeferEntry(op, v.ExpirationSecs, v.Tag, denc.Squid)
+			})
+	})
+
+	It("sends expired_only false and names gc_list in a reply that fails to decode", func() {
+		op := radosclient.NewReadOp()
+		res := rgw.GCList(op, "", 0, false, denc.Squid)
+		step := soleExec(op.Steps(), "gc_list")
+		Expect(decodeWhole(step.In, rgw.DecodeGCListOp)).To(Equal(rgw.GCListOp{Max: 0, ExpiredOnly: false}))
+		step.Result.Set([]byte{2, 1, 100, 0, 0, 0}, 0)
+		_, err := res.Result()
+		Expect(err).To(MatchError(denc.ErrShortBuffer))
+		Expect(err).To(MatchError(ContainSubstring("rgw: decoding gc_list reply")))
+	})
+})

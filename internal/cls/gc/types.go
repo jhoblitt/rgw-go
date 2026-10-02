@@ -113,60 +113,17 @@ func DecodeQueueDeferEntryOp(d *denc.Decoder) QueueDeferEntryOp {
 	return o
 }
 
-// ListOp is cls_rgw_gc_list_op, the rgw_gc_queue_list_entries request. The
-// C++ default for ExpiredOnly is true, which a version 1 encoding implies.
-type ListOp struct {
-	Marker      string
-	Max         uint32
-	ExpiredOnly bool
-}
-
-// Encode mirrors cls_rgw_gc_list_op::encode, ENCODE_START(2, 1).
-func (o ListOp) Encode(e *denc.Encoder, _ denc.Release) {
-	f := e.BeginStruct(2, 1)
-	e.String(o.Marker)
-	e.U32(o.Max)
-	e.Bool(o.ExpiredOnly)
-	e.EndStruct(f)
-}
+// ListOp is the rgw_gc_queue_list_entries request, cls_rgw_gc_list_op: the
+// rgw_gc client sends cls_rgw's struct (cls_rgw_gc_client.cc), so the type
+// lives with cls_rgw's gc_list.
+type ListOp = rgw.GCListOp
 
 // DecodeListOp mirrors cls_rgw_gc_list_op::decode, DECODE_START(2).
-func DecodeListOp(d *denc.Decoder) ListOp {
-	h := d.BeginStruct(2)
-	o := ListOp{Marker: d.String(), Max: d.U32(), ExpiredOnly: true}
-	if h.Version >= 2 {
-		o.ExpiredOnly = d.Bool()
-	}
-	d.EndStruct(h)
-	return o
-}
+func DecodeListOp(d *denc.Decoder) ListOp { return rgw.DecodeGCListOp(d) }
 
-// ListRet is cls_rgw_gc_list_ret, the rgw_gc_queue_list_entries reply.
-// NextMarker is set only when Truncated is.
-type ListRet struct {
-	Entries    []rgw.GCObjInfo
-	NextMarker string
-	Truncated  bool
-}
-
-// Encode mirrors cls_rgw_gc_list_ret::encode, ENCODE_START(2, 1).
-func (o ListRet) Encode(e *denc.Encoder, r denc.Release) {
-	f := e.BeginStruct(2, 1)
-	denc.EncodeSlice(e, o.Entries, func(e *denc.Encoder, i rgw.GCObjInfo) { i.Encode(e, r) })
-	e.String(o.NextMarker)
-	e.Bool(o.Truncated)
-	e.EndStruct(f)
-}
+// ListRet is the rgw_gc_queue_list_entries reply, cls_rgw_gc_list_ret, which
+// the rgw_gc client also borrows from cls_rgw.
+type ListRet = rgw.GCListRet
 
 // DecodeListRet mirrors cls_rgw_gc_list_ret::decode, DECODE_START(2).
-func DecodeListRet(d *denc.Decoder) ListRet {
-	h := d.BeginStruct(2)
-	var o ListRet
-	o.Entries = denc.DecodeSlice(d, rgw.DecodeGCObjInfo)
-	if h.Version >= 2 {
-		o.NextMarker = d.String()
-	}
-	o.Truncated = d.Bool()
-	d.EndStruct(h)
-	return o
-}
+func DecodeListRet(d *denc.Decoder) ListRet { return rgw.DecodeGCListRet(d) }

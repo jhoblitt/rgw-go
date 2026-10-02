@@ -1,7 +1,9 @@
 package rgw_test
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,7 +19,8 @@ import (
 // master version, sync flag, reshard status and Tentacle reshard log count;
 // the entry meta's user data, appendable flag and main's restore fields; the
 // list marker; removed objects' instances; usage payers, s3select and op
-// counters; gc object instances and times; and the packed-value widths.
+// counters; gc object instances and times, and gc tags ending in the NUL
+// radosgw's object tags carry; and the packed-value widths.
 
 func decodeWhole[T any](b []byte, dec func(*denc.Decoder) T) T {
 	GinkgoHelper()
@@ -788,5 +791,41 @@ var _ = Describe("gc fixtures", func() {
 			e.EndStruct(o)
 		})
 		Expect(decodeWhole(b, rgw.DecodeGCObj)).To(Equal(rgw.GCObj{Pool: "pool", Key: rgw.ObjKey{Name: "oid"}, Loc: "loc"}))
+	})
+
+	It("writes cls_rgw_gc_remove_op's tags as a counted list of strings", func() {
+		b := build(func(e *denc.Encoder) {
+			e.U8(1)   // struct_v
+			e.U8(1)   // struct_compat
+			e.U32(19) // length
+			e.U32(2)
+			e.String("tag-a\x00")
+			e.String("b")
+		})
+		want := rgw.GCRemoveOp{Tags: []string{"tag-a\x00", "b"}}
+		Expect(decodeWhole(b, rgw.DecodeGCRemoveOp)).To(Equal(want))
+		for _, r := range releases {
+			Expect(encodeAt(want, r)).To(Equal(b))
+		}
+	})
+
+	It("writes cls_rgw_gc_defer_entry_op's expiration before its tag", func() {
+		b := build(func(e *denc.Encoder) {
+			e.U8(1)   // struct_v
+			e.U8(1)   // struct_compat
+			e.U32(14) // length
+			e.U32(3600)
+			e.String("gc-tag")
+		})
+		want := rgw.GCDeferEntryOp{ExpirationSecs: 3600, Tag: "gc-tag"}
+		Expect(decodeWhole(b, rgw.DecodeGCDeferEntryOp)).To(Equal(want))
+		for _, r := range releases {
+			Expect(encodeAt(want, r)).To(Equal(b))
+		}
+
+		mutated := slices.Clone(b)
+		binary.LittleEndian.PutUint32(mutated[6:], 0x01020304)
+		Expect(decodeWhole(mutated, rgw.DecodeGCDeferEntryOp)).To(Equal(rgw.GCDeferEntryOp{ExpirationSecs: 0x01020304, Tag: "gc-tag"}))
+		Expect(encodeAt(rgw.GCDeferEntryOp{ExpirationSecs: 0x01020304, Tag: "gc-tag"}, denc.Squid)).To(Equal(mutated))
 	})
 })
