@@ -446,6 +446,7 @@ var opFlags = []struct {
 	{radosclient.OpFlagBalanceReads, rados.OperationBalanceReads},
 	{radosclient.OpFlagLocalizeReads, rados.OperationLocalizeReads},
 	{radosclient.OpFlagIgnoreCache, rados.OperationIgnoreCache},
+	{radosclient.OpFlagFullTry, rados.OperationFullTry},
 	{radosclient.OpFlagReturnVec, rados.OperationReturnVec},
 }
 

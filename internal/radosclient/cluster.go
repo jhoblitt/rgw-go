@@ -39,7 +39,15 @@ type StatsReporter interface {
 	Stats() Stats
 }
 
+//counterfeiter:generate . Pool
+
 // Pool is an I/O context: one pool and one namespace, with an optional object locator.
+//
+// Every operation through a Pool runs with full-try, as radosgw's
+// rgw_init_ioctx sets it on every I/O context, and an implementation owes
+// that: at a full pool or one at its quota, an op that adds data fails at
+// once with ENOSPC or EDQUOT instead of waiting for space, and a delete
+// proceeds.
 type Pool interface {
 	// Name returns the pool name.
 	Name() string
@@ -47,6 +55,11 @@ type Pool interface {
 	Namespace() string
 	// ID returns the pool's id, which radosgw records in bucket index entries.
 	ID() int64
+	// RequiredAlignment returns the pool's required write alignment in bytes,
+	// 0 when it needs none: an erasure-coded pool without overwrites needs
+	// its stripe width. radosgw sizes its chunks and stripes to a multiple of
+	// it (RGWRados::get_max_chunk_size, get_max_aligned_size).
+	RequiredAlignment(ctx context.Context) (uint64, error)
 	// WithLocator returns a Pool whose operations set the given object locator key.
 	WithLocator(loc string) Pool
 	// Read runs a read op and returns the object version the OSD reports for

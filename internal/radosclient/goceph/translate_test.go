@@ -251,6 +251,15 @@ var _ = Describe("translating seam ops", func() {
 		Expect(goceph.TranslateFlags(radosclient.OpFlagBalanceReads | radosclient.OpFlagIgnoreCache)).
 			To(Equal(rados.OperationBalanceReads | rados.OperationIgnoreCache))
 		Expect(goceph.TranslateFlags(radosclient.OpFlagLocalizeReads)).To(Equal(rados.OperationLocalizeReads))
+		Expect(goceph.TranslateFlags(radosclient.OpFlagFullTry)).To(Equal(rados.OperationFullTry), "full try")
+		Expect(goceph.TranslateFlags(radosclient.OpFlagFullTry|radosclient.OpFlagReturnVec)).
+			To(Equal(rados.OperationFullTry|rados.OperationReturnVec), "full try with return vec")
+	})
+
+	It("refuses an op flag the seam does not define with ErrBadOp", func() {
+		_, err := goceph.TranslateFlags(radosclient.OpFlagReturnVec | radosclient.OpFlags(1<<20))
+		Expect(err).To(MatchError(radosclient.ErrBadOp))
+		Expect(err).To(MatchError(ContainSubstring("0x100000")), "only the undefined bit is named")
 	})
 })
 

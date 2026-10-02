@@ -235,6 +235,7 @@ var _ = Describe("OpFlags", func() {
 		Expect(radosclient.OpFlagBalanceReads).To(Equal(radosclient.OpFlags(1)), "BALANCE_READS")
 		Expect(radosclient.OpFlagLocalizeReads).To(Equal(radosclient.OpFlags(2)), "LOCALIZE_READS")
 		Expect(radosclient.OpFlagIgnoreCache).To(Equal(radosclient.OpFlags(8)), "IGNORE_CACHE")
+		Expect(radosclient.OpFlagFullTry).To(Equal(radosclient.OpFlags(64)), "FULL_TRY")
 		Expect(radosclient.OpFlagReturnVec).To(Equal(radosclient.OpFlags(1024)), "RETURNVEC")
 	})
 })

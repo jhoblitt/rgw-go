@@ -94,11 +94,20 @@ func openPool(c *cluster, name, namespace string) (*pool, error) {
 // open creates an I/O context on the pool and namespace. It is never called
 // with s.mu held.
 func (s *poolState) open() (*rados.IOContext, error) {
+	op := "open pool " + s.name
 	ioctx, err := s.cluster.conn.OpenIOContext(s.name)
 	if err != nil {
-		return nil, toSeamError("open pool "+s.name, err)
+		return nil, toSeamError(op, err)
 	}
 	ioctx.SetNamespace(s.namespace)
+	// radosgw's rgw_init_ioctx sets full-try on every I/O context so that, at
+	// a full pool or its quota, an op that adds data fails at once with ENOSPC
+	// or EDQUOT instead of waiting in the Objecter for space (src/rgw/driver/
+	// rados/rgw_tools.cc:97-98 at v19.2.6, :98-99 at v20.2.4).
+	if err := ioctx.SetPoolFullTry(); err != nil {
+		ioctx.Destroy()
+		return nil, toSeamError(op, err)
+	}
 	return ioctx, nil
 }
 
@@ -232,6 +241,24 @@ func (p *pool) Namespace() string { return p.state.namespace }
 
 // ID returns the pool's id, which librados resolved when the Pool opened.
 func (p *pool) ID() int64 { return p.state.id }
+
+// RequiredAlignment reads the alignment only when the pool requires one, as
+// RGWRados::get_required_alignment does.
+func (p *pool) RequiredAlignment(ctx context.Context) (uint64, error) {
+	var align uint64
+	err := p.withIOContext(ctx, "required alignment", func(ioctx *rados.IOContext) error {
+		need, err := ioctx.RequiresAlignment()
+		if err != nil {
+			return toSeamError("requires alignment", err)
+		}
+		if !need {
+			return nil
+		}
+		align, err = ioctx.Alignment()
+		return toSeamError("required alignment", err)
+	})
+	return align, err
+}
 
 // WithLocator returns a Pool whose operations set loc as the object locator,
 // "" for none. It shares this Pool's I/O contexts, and closing it does

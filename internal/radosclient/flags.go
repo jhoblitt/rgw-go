@@ -15,7 +15,16 @@ const (
 	OpFlagBalanceReads  OpFlags = 1 << 0
 	OpFlagLocalizeReads OpFlags = 1 << 1
 	OpFlagIgnoreCache   OpFlags = 1 << 3
-	OpFlagReturnVec     OpFlags = 1 << 10 // LIBRADOS_OPERATION_RETURNVEC
+	// OpFlagFullTry is LIBRADOS_OPERATION_FULL_TRY (librados.h:129). Without
+	// it the Objecter holds a write to a full pool, or one at its quota, until
+	// the pool has room; with it the OSD runs the op, which fails with EDQUOT
+	// or ENOSPC only when it would add bytes or objects, so a delete succeeds.
+	// It is the op-scoped form of the full-try radosgw sets through
+	// set_pool_full_try on every I/O context. Every op through a Pool already
+	// runs with full-try, so on a goceph Pool the flag is redundant; it
+	// remains for op-scoped use, and fakerados accepts it.
+	OpFlagFullTry   OpFlags = 1 << 6
+	OpFlagReturnVec OpFlags = 1 << 10 // LIBRADOS_OPERATION_RETURNVEC
 )
 
 // StepFlags modify one step of a write op.

@@ -345,6 +345,26 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				}
 			})
 
+			It("reports no required alignment on the replicated test pool", func(ctx SpecContext) {
+				Expect(pool.RequiredAlignment(ctx)).To(BeZero())
+			})
+
+			It("runs a remove with OpFlagFullTry", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.WriteFull([]byte("x"))
+				_, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := radosclient.NewWriteOp()
+				rm.Remove()
+				_, err = pool.Write(ctx, oid, rm, radosclient.OpFlagFullTry)
+				Expect(err).NotTo(HaveOccurred())
+
+				r := radosclient.NewReadOp()
+				r.Stat()
+				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(MatchError(radosclient.ErrNotFound), "the object is gone")
+			})
+
 			It("stamps the modification time a write op sets, asynchronously in the async modes", func(ctx SpecContext) {
 				mtime := time.Date(2024, 5, 6, 7, 8, 9, 123456789, time.UTC)
 				w := radosclient.NewWriteOp()
