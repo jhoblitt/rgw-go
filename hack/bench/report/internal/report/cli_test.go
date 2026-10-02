@@ -48,7 +48,7 @@ var _ = Describe("Run", func() {
 
 	It("writes no report when the sweep cannot be read", func(ctx SpecContext) {
 		dir := GinkgoT().TempDir()
-		Expect(run(ctx, "seam", "--dir", dir)).To(MatchError(ContainSubstring("no seam cells")))
+		Expect(run(ctx, "seam", "--dir", dir)).To(MatchError(ContainSubstring("missing env.json")))
 		Expect(filepath.Join(dir, "REPORT.md")).NotTo(BeAnExistingFile())
 	})
 })

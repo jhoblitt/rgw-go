@@ -18,6 +18,10 @@
 //   - every cpu-<mode>-read4k-256.pprof, through go tool pprof, which must
 //     be on PATH.
 //
+// It renders nothing, and names what is missing, unless the directory holds
+// env.json, floor.jsonl, and seam-<mode>.jsonl and
+// cpu-<mode>-read4k-256.pprof for each of sync, callback and pipe.
+//
 // --dir can also come from REPORT_DIR, and every flag but --config from the
 // config file --config names. The root's --log-level (debug, info, warn or
 // error; info by default) and --log-format (json or text; json by default)

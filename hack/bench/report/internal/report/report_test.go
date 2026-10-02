@@ -68,6 +68,22 @@ func is(line map[string]any, mode, shape string, conc int) bool {
 	return (mode == "" || line["mode"] == mode) && line["shape"] == shape && line["conc"] == float64(conc)
 }
 
+// remove deletes the named files from a sweep directory.
+func remove(dir string, names ...string) string {
+	GinkgoHelper()
+	for _, n := range names {
+		Expect(os.Remove(filepath.Join(dir, n))).To(Succeed())
+	}
+	return dir
+}
+
+// artifacts are the files every sweep directory holds before its report.
+var artifacts = []string{
+	"env.json", "floor.jsonl",
+	"seam-sync.jsonl", "seam-callback.jsonl", "seam-pipe.jsonl",
+	"cpu-sync-read4k-256.pprof", "cpu-callback-read4k-256.pprof", "cpu-pipe-read4k-256.pprof",
+}
+
 func verdict(mode string, c report.Criterion, s report.Status, margin string) types.GomegaMatcher {
 	return SatisfyAll(
 		HaveField("Mode", mode),
@@ -123,7 +139,7 @@ var _ = Describe("Seam", func() {
 			verdict("callback", report.Threads, report.Pass, "worst +2 of 16 allowed"),
 			HaveField("Judged", true),
 		)))
-		Expect(r.Passing).To(Equal([]string{"callback"}), "sync's failure does not count against the release")
+		Expect(r.Passing).To(Equal([]string{"callback"}), "sync's failure does not count against the release, and pipe fails the cgo criterion")
 		Expect(r.Markdown).To(ContainSubstring("callback passes all four criteria"))
 	})
 
@@ -141,7 +157,7 @@ var _ = Describe("Seam", func() {
 
 	It("fails a criterion on its worst cell and gives the margin", func(ctx SpecContext) {
 		dir := sweep(func(file string, line map[string]any) bool {
-			if file == "seam.jsonl" && is(line, "callback", "write4k", 256) {
+			if file == "seam-callback.jsonl" && is(line, "callback", "write4k", 256) {
 				line["ops_per_sec"] = 12000.0
 				line["mean_us"] = 21000.0
 			}
@@ -156,7 +172,7 @@ var _ = Describe("Seam", func() {
 
 	It("counts a cell whose iterations failed as missing", func(ctx SpecContext) {
 		dir := sweep(func(file string, line map[string]any) bool {
-			if file == "seam.jsonl" && is(line, "callback", "read4k", 64) {
+			if file == "seam-callback.jsonl" && is(line, "callback", "read4k", 64) {
 				line["errors"] = 3.0
 			}
 			return true
@@ -174,19 +190,54 @@ var _ = Describe("Seam", func() {
 		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| callback \| write4m \| 64 \| derived \| .* \| 23→24 \| \+1 \| 16 \| 600 \|$`))
 	})
 
-	It("judges the cgo share of the read4k profile at 256 in flight", func(ctx SpecContext) {
+	It("judges the cgo share of each mode's read4k profile at 256 in flight", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.Pass, "2.7% of 1.5s sampled, margin +7.3 points")))
-		Expect(r.Verdicts).To(ContainElement(verdict("sync", report.Cgo, report.Incomplete, "missing: cpu-sync-read4k-256.pprof")))
+		Expect(r.Verdicts).To(ContainElement(verdict("pipe", report.Cgo, report.Fail, "84.0% of 1.5s sampled, margin -74.0 points")))
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("sync", report.Cgo, report.Pass, "2.7% of 1.5s sampled"),
+			HaveField("Judged", false),
+		)), "sync's profile is reported beside the judged modes'")
 		Expect(r.Markdown).To(ContainSubstring("\n## CPU profiles\n"))
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| callback \| cpu-callback-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.0% \| `),
-			"the cgo share, the C under runtime.cgocall, and the threads the Go runtime does not run")
+		for _, row := range []string{
+			`(?m)^\| sync \| cpu-sync-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.0% \| `,
+			`(?m)^\| callback \| cpu-callback-read4k-256\.pprof \| 1\.5s \| 2\.7% \| 2\.0% \| 0\.0% \| `,
+			`(?m)^\| pipe \| cpu-pipe-read4k-256\.pprof \| 1\.5s \| 84\.0% \| 18\.0% \| 0\.0% \| `,
+		} {
+			Expect(r.Markdown).To(MatchRegexp(row), "the cgo share, the C under runtime.cgocall, and the threads the Go runtime does not run")
+		}
 	})
 
 	It("fails when a mode's file is missing a cell another mode has", func(ctx SpecContext) {
-		_, err := report.Seam(ctx, "testdata/uneven")
+		dir := sweep(func(file string, line map[string]any) bool {
+			return file != "seam-pipe.jsonl" || !is(line, "pipe", "read4k", 256)
+		})
+		_, err := report.Seam(ctx, dir)
 		Expect(err).To(MatchError(ContainSubstring("conc=256 missing for mode pipe")))
+	})
+
+	It("fails when a mode's file holds no cells", func(ctx SpecContext) {
+		dir := sweep(func(file string, _ map[string]any) bool { return file != "seam-pipe.jsonl" })
+		_, err := report.Seam(ctx, dir)
+		Expect(err).To(MatchError(ContainSubstring("conc=16 missing for mode pipe")))
+	})
+
+	DescribeTable("refuses a sweep that lacks an artifact, naming it",
+		func(ctx SpecContext, name string) {
+			_, err := report.Seam(ctx, remove(sweep(), name))
+			Expect(err).To(MatchError(ContainSubstring("missing " + name)))
+		},
+		Entry("the environment", "env.json"),
+		Entry("the floor", "floor.jsonl"),
+		Entry("a mode's cells", "seam-pipe.jsonl"),
+		Entry("the baseline's profile", "cpu-sync-read4k-256.pprof"),
+		Entry("a judged mode's profile", "cpu-callback-read4k-256.pprof"),
+	)
+
+	It("names every artifact an empty directory lacks", func(ctx SpecContext) {
+		_, err := report.Seam(ctx, GinkgoT().TempDir())
+		Expect(err).To(MatchError(ContainSubstring("missing " + strings.Join(artifacts, ", "))))
 	})
 
 	DescribeTable("refuses a floor it cannot match to a mirror shape",
@@ -211,11 +262,6 @@ var _ = Describe("Seam", func() {
 			}),
 			"two floor lines for read4k at conc=64"),
 	)
-
-	It("refuses a directory without seam cells", func(ctx SpecContext) {
-		_, err := report.Seam(ctx, GinkgoT().TempDir())
-		Expect(err).To(MatchError(ContainSubstring("no seam cells")))
-	})
 })
 
 // traces is go tool pprof -traces -unit=ns output, with an inlined frame and
@@ -248,7 +294,7 @@ Duration: 20.01s, Total samples = 140000000ns ( 0.70%)
 
 var _ = Describe("CgoShare", func() {
 	It("counts every sample with a cgo or pinner frame anywhere on its stack", func(ctx SpecContext) {
-		s, err := report.CgoShare(ctx, "testdata/pprof/heavy.pprof")
+		s, err := report.CgoShare(ctx, "testdata/cpu-pipe-read4k-256.pprof")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(s.Total).To(Equal(1500 * time.Millisecond))
 		Expect(s.Cgo).To(Equal(1260*time.Millisecond),

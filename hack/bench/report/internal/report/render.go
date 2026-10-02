@@ -25,7 +25,7 @@ func (s *sweep) render(r SeamReport) string {
 
 func (s *sweep) renderEnv(b *strings.Builder) {
 	if len(s.envKeys) == 0 {
-		b.WriteString("\nThe directory has no env.json.\n")
+		b.WriteString("\nenv.json records nothing.\n")
 		return
 	}
 	b.WriteString("\n| env.json | |\n|---|---|\n")

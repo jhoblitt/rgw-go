@@ -110,10 +110,42 @@ var mirrors = []mirror{
 }
 
 // shapeOrder and modeOrder are the sweep's orders; anything else sorts after.
+// modeOrder is also every mode a sweep runs.
 var (
 	shapeOrder = []string{"read4k", "write4k", "read4m", "write4m", "headread4k", "headwrite4k", "indexrtt"}
 	modeOrder  = []string{"sync", "callback", "pipe"}
 )
+
+// artifacts are the files seam.sh writes into every sweep directory before
+// it renders the report.
+func artifacts() []string {
+	names := []string{"env.json", "floor.jsonl"}
+	for _, m := range modeOrder {
+		names = append(names, "seam-"+m+".jsonl")
+	}
+	for _, m := range modeOrder {
+		names = append(names, "cpu-"+m+"-read4k-256.pprof")
+	}
+	return names
+}
+
+// checkArtifacts fails naming every artifact dir lacks.
+func checkArtifacts(dir string) error {
+	var missing []string
+	for _, name := range artifacts() {
+		_, err := os.Stat(filepath.Join(dir, name))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			missing = append(missing, name)
+		case err != nil:
+			return err
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s is not a whole sweep: missing %s", dir, strings.Join(missing, ", "))
+	}
+	return nil
+}
 
 // judged are the modes the criteria are applied to. sync parks an OS thread
 // per operation in flight, so it is the baseline the other two are read
@@ -172,6 +204,9 @@ func Seam(ctx context.Context, dir string) (SeamReport, error) {
 }
 
 func readSweep(ctx context.Context, dir string) (*sweep, error) {
+	if err := checkArtifacts(dir); err != nil {
+		return nil, err
+	}
 	s := &sweep{dir: dir, cells: map[key]Cell{}, floors: map[floorKey]Floor{}, profiles: map[string]profile{}}
 	files, err := filepath.Glob(filepath.Join(dir, "seam*.jsonl"))
 	if err != nil {
@@ -253,10 +288,13 @@ func (s *sweep) addCell(c Cell) error {
 	return nil
 }
 
-// checkEven fails when one mode lacks a cell another mode has, and orders
-// the modes and shapes.
+// checkEven fails when one mode, of those the cells name and those every
+// sweep runs, lacks a cell another mode has, and orders the modes and shapes.
 func (s *sweep) checkEven() error {
 	modes, shapes := map[string]bool{}, map[string]bool{}
+	for _, m := range modeOrder {
+		modes[m] = true
+	}
 	cells := map[floorKey]bool{}
 	for k := range s.cells {
 		modes[k.mode], shapes[k.shape] = true, true
@@ -341,8 +379,7 @@ func rank(v string, known []string) int {
 }
 
 func (s *sweep) readFloors() error {
-	path := filepath.Join(s.dir, "floor.jsonl")
-	err := readLines(path, func(f Floor) error {
+	return readLines(filepath.Join(s.dir, "floor.jsonl"), func(f Floor) error {
 		if f.Kind != "floor" {
 			return fmt.Errorf("kind %q is not floor", f.Kind)
 		}
@@ -356,19 +393,12 @@ func (s *sweep) readFloors() error {
 		s.floors[k] = f
 		return nil
 	})
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
 }
 
 // readEnv reads env.json, which seam.sh writes before the sweep, keeping
 // its numbers as written.
 func (s *sweep) readEnv() error {
 	data, err := os.ReadFile(filepath.Join(s.dir, "env.json"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}

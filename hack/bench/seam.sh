@@ -13,8 +13,8 @@
 # at CONC, one read4m at BENCH_LARGE_CONC, and one per write4m concurrency.
 # Then, per asynchronous mode, write4m runs at 64 in flight past the byte
 # budget, once with the in-flight limiter's bounds above what the cell
-# reaches and once with them derived from the objecter throttle, and read4k
-# runs at 256 under a CPU profile.
+# reaches and once with them derived from the objecter throttle; and, per
+# mode, read4k runs at 256 under a CPU profile.
 #
 # A 4 MiB write cell or floor run writes BENCH_WRITE4M_OBJECTS objects, not
 # a time window, so that both sides write the same bytes, and starts only
@@ -236,6 +236,9 @@ for mode in callback pipe; do
 		bench "${mode}" "${dir}/overbudget-${mode}.jsonl" -shapes=write4m -conc=64 -budget-bytes=0 "${extra[@]}" \
 			-test.benchtime="${BENCH_OVER_OBJECTS}x"
 	done
+done
+
+for mode in sync callback pipe; do
 	bench "${mode}" "" -shapes=read4k -conc=256 -test.cpuprofile="${dir}/cpu-${mode}-read4k-256.pprof"
 done
 
