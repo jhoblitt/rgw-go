@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -35,6 +36,11 @@ type Store struct {
 	readCfg readConfig
 	// headBufs holds the *[]byte buffers prefetches read the head into.
 	headBufs sync.Pool
+	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
+	// data reads of more than half that go into, and pooledReadBufs counts
+	// those handed back and not taken out again.
+	readBufs       sync.Pool
+	pooledReadBufs atomic.Int64
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -310,11 +316,6 @@ func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 // ListObjects implements op.BucketStore.
 func (s *Store) ListObjects(context.Context, *op.BucketRecord, op.ListObjectsParams) (op.ListObjectsResult, error) {
 	return op.ListObjectsResult{}, op.ErrNotImplemented
-}
-
-// ReadObject implements op.ObjectStore.
-func (s *Store) ReadObject(context.Context, *op.ObjectState, op.ByteRange, io.Writer) error {
-	return op.ErrNotImplemented
 }
 
 // PutObject implements op.ObjectStore.

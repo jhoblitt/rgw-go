@@ -3,7 +3,9 @@ package compression_test
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math/rand/v2"
+	"strconv"
 
 	"github.com/klauspost/compress/flate"
 	"github.com/klauspost/compress/gzip"
@@ -132,6 +134,18 @@ func lz4Chained() (block, want []byte) {
 // encoders build a fixture's block from the plaintext the spec chose.
 type encoder func(src []byte) []byte
 
+// noLimit is a decode limit far above every fixture, for the specs about
+// something other than the limit.
+const noLimit = 1 << 30
+
+// expectOwnRefusal asserts that err is a refusal radosgw's decompress does
+// not share: an ErrCorrupt that is not a DecodeError.
+func expectOwnRefusal(err error) {
+	GinkgoHelper()
+	Expect(err).To(MatchError(compression.ErrCorrupt))
+	Expect(errors.As(err, new(*compression.DecodeError))).To(BeFalse(), "radosgw's decompress does not refuse it: %v", err)
+}
+
 func zlibOf(winBits int) encoder {
 	return func(src []byte) []byte { return cephZlib(winBits, src) }
 }
@@ -159,9 +173,9 @@ var _ = Describe("Decoder", func() {
 			src := plaintext(1 << 20)
 			dec, err := compression.NewDecoder(codec)
 			Expect(err).NotTo(HaveOccurred())
-			got, err := dec.Decode(nil, encode(src), message)
+			got, err := dec.Decode(nil, encode(src), len(src), message)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(got).To(Equal(src))
+			Expect(got).To(Equal(src), "a limit of exactly the decoded length takes the block")
 		},
 		Entry("zlib, raw deflate, no message (the default -15)", compression.Zlib, zlibOf(-15), nil),
 		Entry("zlib, raw deflate, message -15", compression.Zlib, zlibOf(-15), new(int32(-15))),
@@ -186,7 +200,7 @@ var _ = Describe("Decoder", func() {
 		dec, err := compression.NewDecoder(compression.LZ4)
 		Expect(err).NotTo(HaveOccurred())
 		block, want := lz4Chained()
-		got, err := dec.Decode(nil, block, nil)
+		got, err := dec.Decode(nil, block, len(want), nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(want))
 	})
@@ -198,11 +212,11 @@ var _ = Describe("Decoder", func() {
 			dec, err := compression.NewDecoder(codec)
 			Expect(err).NotTo(HaveOccurred())
 			buf := make([]byte, 0, 2<<20)
-			got, err := dec.Decode(buf, block, nil)
+			got, err := dec.Decode(buf, block, len(src), nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(src))
 			Expect(&got[0]).To(BeIdenticalTo(&buf[:1][0]), "decoded into the caller's buffer")
-			got, err = dec.Decode(make([]byte, 0, 16), block, nil)
+			got, err = dec.Decode(make([]byte, 0, 16), block, len(src), nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(src))
 		},
@@ -213,72 +227,72 @@ var _ = Describe("Decoder", func() {
 	)
 
 	DescribeTable("refuses what radosgw's decompress refuses",
-		func(codec string, encode encoder, message *int32) {
+		func(codec string, encode encoder, message *int32, ret int) {
 			dec, err := compression.NewDecoder(codec)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = dec.Decode(nil, encode(plaintext(1<<16)), message)
+			_, err = dec.Decode(nil, encode(plaintext(1<<16)), noLimit, message)
 			Expect(err).To(MatchError(compression.ErrCorrupt))
+			de, ok := errors.AsType[*compression.DecodeError](err)
+			Expect(ok).To(BeTrue(), "a DecodeError: %v", err)
+			Expect(de.Ret).To(Equal(ret), "radosgw's decompress return")
 		},
-		Entry("zstd shorter than its length header", compression.Zstd, func([]byte) []byte { return []byte{1, 2, 3} }, nil),
-		Entry("lz4 shorter than its count", compression.LZ4, func([]byte) []byte { return []byte{1, 0, 0} }, nil),
-		Entry("lz4 with a truncated pair table", compression.LZ4, func([]byte) []byte { return []byte{2, 0, 0, 0, 1, 0, 0, 0} }, nil),
+		Entry("zstd shorter than its length header", compression.Zstd, func([]byte) []byte { return []byte{1, 2, 3} }, nil, -1),
 		Entry("lz4 whose block decodes short", compression.LZ4, func(src []byte) []byte {
 			b := cephLZ4(src)
 			binary.LittleEndian.PutUint32(b[4:], uint32(len(src)+1)) // origin_len lies
 			return b
-		}, nil),
+		}, nil, -2),
 		Entry("lz4 whose block decodes long", compression.LZ4, func(src []byte) []byte {
 			b := cephLZ4(src)
 			binary.LittleEndian.PutUint32(b[4:], uint32(len(src)-1))
 			return b
-		}, nil),
+		}, nil, -1),
 		Entry("lz4 with an empty compressed block, which LZ4_decompress_safe refuses", compression.LZ4, func([]byte) []byte {
 			return lz4Header([2]int{0, 0})
-		}, nil),
-		Entry("snappy garbage", compression.Snappy, func([]byte) []byte { return []byte{0xff, 0xff, 0xff} }, nil),
+		}, nil, -1),
+		Entry("snappy garbage", compression.Snappy, func([]byte) []byte { return []byte{0xff, 0xff, 0xff} }, nil, -1),
 		Entry("snappy whose length header lies", compression.Snappy, func(src []byte) []byte {
 			b := cephSnappy(src)
 			b[0]++
 			return b
-		}, nil),
+		}, nil, -2),
 		Entry("snappy copying at offset 0, which only S2 reads as a repeat", compression.Snappy, func([]byte) []byte {
 			// "ab", then a copy of 4 at offset 1, then a copy of 4 at offset 0.
 			return []byte{10, 0x04, 'a', 'b', 0x01, 0x01, 0x01, 0x00}
-		}, nil),
-		Entry("zlib with no prefix byte", compression.Zlib, func([]byte) []byte { return nil }, nil),
-		Entry("zlib garbage after the prefix", compression.Zlib, func([]byte) []byte { return []byte{0, 0xff, 0xff, 0xff, 0xff} }, nil),
+		}, nil, -2),
+		Entry("zlib garbage after the prefix", compression.Zlib, func([]byte) []byte { return []byte{0, 0xff, 0xff, 0xff, 0xff} }, nil, -1),
 		Entry("zlib with garbage after the last member", compression.Zlib, func(src []byte) []byte {
 			return append(cephZlib(31, src), 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
-		}, new(int32(31))),
+		}, new(int32(31)), -1),
 		Entry("zlib whose zlib checksum is wrong", compression.Zlib, func(src []byte) []byte {
 			b := cephZlib(15, src)
 			b[len(b)-1] ^= 0xff
 			return b
-		}, new(int32(15))),
+		}, new(int32(15)), -1),
 		Entry("zlib whose gzip checksum is wrong", compression.Zlib, func(src []byte) []byte {
 			b := cephZlib(31, src)
 			b[len(b)-8] ^= 0xff
 			return b
-		}, new(int32(31))),
-		Entry("zlib, a zlib stream where the message asks for gzip", compression.Zlib, zlibOf(15), new(int32(31))),
-		Entry("zlib, a gzip stream where the message asks for zlib", compression.Zlib, zlibOf(31), new(int32(15))),
-		Entry("zlib, a zlib header whose window exceeds the message's", compression.Zlib, zlibOf(15), new(int32(14))),
+		}, new(int32(31)), -1),
+		Entry("zlib, a zlib stream where the message asks for gzip", compression.Zlib, zlibOf(15), new(int32(31)), -1),
+		Entry("zlib, a gzip stream where the message asks for zlib", compression.Zlib, zlibOf(31), new(int32(15)), -1),
+		Entry("zlib, a zlib header whose window exceeds the message's", compression.Zlib, zlibOf(15), new(int32(14)), -1),
 		// compressor_zlib_winsize 8: deflateInit2 deflates with a 512-byte
 		// window and says so in the header, which inflateInit2(8) then refuses.
-		Entry("zlib, the header radosgw writes for message 8", compression.Zlib, withHeader(0x18, 0x19), new(int32(8))),
-		Entry("zlib, a header window the automatic mode's bits refuse", compression.Zlib, zlibOf(15), new(int32(46))),
+		Entry("zlib, the header radosgw writes for message 8", compression.Zlib, withHeader(0x18, 0x19), new(int32(8)), -1),
+		Entry("zlib, a header window the automatic mode's bits refuse", compression.Zlib, zlibOf(15), new(int32(46)), -1),
 		Entry("zlib, a zlib header asking for a preset dictionary", compression.Zlib, func(src []byte) []byte {
 			b := cephZlib(15, src)
 			// FDICT and the DICTID of an empty dictionary, which inflate still answers Z_NEED_DICT.
 			hdr := []byte{0, 0x78, 0x20, 0, 0, 0, 1}
 			return append(hdr, b[3:]...)
-		}, new(int32(15))),
-		Entry("zlib, message -16", compression.Zlib, zlibOf(-15), new(int32(-16))),
-		Entry("zlib, message -7", compression.Zlib, zlibOf(-15), new(int32(-7))),
-		Entry("zlib, message 7", compression.Zlib, zlibOf(15), new(int32(7))),
-		Entry("zlib, message 17", compression.Zlib, zlibOf(31), new(int32(17))),
-		Entry("zlib, message 33", compression.Zlib, zlibOf(31), new(int32(33))),
-		Entry("zlib, message 48", compression.Zlib, zlibOf(31), new(int32(48))),
+		}, new(int32(15)), -1),
+		Entry("zlib, message -16", compression.Zlib, zlibOf(-15), new(int32(-16)), -1),
+		Entry("zlib, message -7", compression.Zlib, zlibOf(-15), new(int32(-7)), -1),
+		Entry("zlib, message 7", compression.Zlib, zlibOf(15), new(int32(7)), -1),
+		Entry("zlib, message 17", compression.Zlib, zlibOf(31), new(int32(17)), -1),
+		Entry("zlib, message 33", compression.Zlib, zlibOf(31), new(int32(33)), -1),
+		Entry("zlib, message 48", compression.Zlib, zlibOf(31), new(int32(48)), -1),
 	)
 
 	// radosgw's zstd decompress ignores ZSTD_decompressStream's result and
@@ -288,8 +302,8 @@ var _ = Describe("Decoder", func() {
 		func(codec string, encode encoder, message *int32) {
 			dec, err := compression.NewDecoder(codec)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = dec.Decode(nil, encode(plaintext(1<<16)), message)
-			Expect(err).To(MatchError(compression.ErrCorrupt))
+			_, err = dec.Decode(nil, encode(plaintext(1<<16)), noLimit, message)
+			expectOwnRefusal(err)
 		},
 		Entry("zstd whose frame decodes to a different length", compression.Zstd, func(src []byte) []byte {
 			return append(binary.LittleEndian.AppendUint32(nil, 5), cephZstd(src)[4:]...)
@@ -316,17 +330,84 @@ var _ = Describe("Decoder", func() {
 		dec, err := compression.NewDecoder(compression.LZ4)
 		Expect(err).NotTo(HaveOccurred())
 		b := cephLZ4(plaintext(1 << 16))
-		_, err = dec.Decode(nil, b[:len(b)-1], nil)
-		Expect(err).To(MatchError(compression.ErrCorrupt))
+		_, err = dec.Decode(nil, b[:len(b)-1], noLimit, nil)
+		expectOwnRefusal(err)
 	})
 
-	It("decodes an empty zlib block to nothing, as radosgw does", func() {
+	// LZ4Compressor::decompress decodes the count and each pair with
+	// ceph's decode, which throws end_of_buffer on a short block
+	// (LZ4Compressor.cc:110-116 at v19.2.6 and v20.2.4). Nothing between it
+	// and the beast frontend catches that, so the frontend rethrows it out of
+	// the io_context thread and the process ends (docs/ceph-upstream-bugs.md,
+	// "radosgw terminates on a stored lz4 block too short for its pair
+	// table").
+	DescribeTable("refuses an lz4 block too short for its own header, on which radosgw ends",
+		func(block []byte) {
+			dec, err := compression.NewDecoder(compression.LZ4)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = dec.Decode(nil, block, noLimit, nil)
+			expectOwnRefusal(err)
+		},
+		Entry("shorter than its count", []byte{1, 0, 0}),
+		Entry("with a truncated pair table", []byte{2, 0, 0, 0, 1, 0, 0, 0}),
+	)
+
+	DescribeTable("decodes no more than the limit, refusing a block that would decode past it",
+		func(codec string, encode encoder, message *int32) {
+			src := plaintext(1 << 20)
+			dec, err := compression.NewDecoder(codec)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = dec.Decode(nil, encode(src), len(src)-1, message)
+			expectOwnRefusal(err)
+			Expect(err).To(MatchError(ContainSubstring(strconv.Itoa(len(src)-1))), "refused by the limit")
+		},
+		Entry("zlib", compression.Zlib, zlibOf(-15), nil),
+		Entry("zlib, the byte past the limit in a later member", compression.Zlib, zlibSplit(31, 1<<20-1), new(int32(31))),
+		Entry("snappy", compression.Snappy, cephSnappy, nil),
+		Entry("zstd", compression.Zstd, cephZstd, nil),
+		Entry("lz4", compression.LZ4, func(src []byte) []byte { return cephLZ4(src) }, nil),
+	)
+
+	// A block whose header claims far more than the limit is refused from
+	// the header, so these return at once rather than allocating 4 GiB.
+	DescribeTable("refuses a header that claims more than the limit before allocating for it",
+		func(codec string, block []byte) {
+			dec, err := compression.NewDecoder(codec)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = dec.Decode(nil, block, 1<<20, nil)
+			expectOwnRefusal(err)
+			Expect(err).To(MatchError(ContainSubstring("more than 1048576")), "refused by the limit")
+		},
+		Entry("snappy", compression.Snappy, binary.AppendUvarint(nil, 0xffffffff)),
+		Entry("zstd", compression.Zstd, binary.LittleEndian.AppendUint32(nil, 0xffffffff)),
+		Entry("lz4", compression.LZ4, lz4Header([2]int{0x7fffffff, 1})),
+	)
+
+	It("stops inflating a zlib block at the limit", func() {
 		dec, err := compression.NewDecoder(compression.Zlib)
 		Expect(err).NotTo(HaveOccurred())
-		got, err := dec.Decode(nil, []byte{0}, nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
+		bomb := cephZlib(-15, make([]byte, 32<<20))
+		Expect(len(bomb)).To(BeNumerically("<", 1<<20), "32 MiB of zeros deflates small")
+		out, err := dec.Decode(make([]byte, 0, 1<<20), bomb, 1<<20, nil)
+		expectOwnRefusal(err)
+		Expect(err).To(MatchError(ContainSubstring("decodes past the limit of 1048576 bytes")))
+		Expect(out).To(BeNil())
 	})
+
+	// ZlibCompressor::decompress inflates nothing from a block of no bytes
+	// or of the prefix byte alone, and returns 0 (ZlibCompressor.cc:247-277
+	// at v19.2.6, :267-297 at v20.2.4).
+	DescribeTable("decodes an empty zlib block to nothing, as radosgw does",
+		func(block []byte) {
+			dec, err := compression.NewDecoder(compression.Zlib)
+			Expect(err).NotTo(HaveOccurred())
+			got, err := dec.Decode(nil, block, 0, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+		},
+		Entry("the prefix byte alone", []byte{0}),
+		Entry("no prefix byte", []byte(nil)),
+	)
 
 	It("knows no other codec", func() {
 		_, err := compression.NewDecoder(compression.None)

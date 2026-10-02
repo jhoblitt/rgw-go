@@ -101,6 +101,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's parse_time drops a numeric zone offset](#radosgws-parse_time-drops-a-numeric-zone-offset) | pending | pending |  |
 | [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | pending | pending |  |
 | [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | pending | pending |  |
+| [radosgw terminates on a stored lz4 block too short for its pair table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3031,9 +3032,14 @@ Every new entry adds its row to this table, in document order.
     length against what is left of the input.
   - So a pair table whose original lengths wrap to a small `total_origin`
     writes past the end of the heap buffer, and a compressed length larger
-    than the remaining input reads past the end of the input buffer.
-    `compressed_len -= (sizeof(uint32_t) + sizeof(uint32_t) * count * 2)`
-    (`:118`) also underflows, as a `size_t`, for a large `count`.
+    than the remaining input reads past the end of the input buffer. The
+    subtraction from `compressed_len` that follows the pair table (`:118`)
+    cannot underflow on radosgw's path: `decompress(src, dst)` passes
+    `src.length()` (`:95-96`), and a block shorter than its pair table throws
+    while the table is decoded (`:114-115`), before it gets there ("[radosgw
+    terminates on a stored lz4 block too short for its pair
+    table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table)",
+    below).
 - **Reachability:** radosgw's own compressor never writes such a block:
   `LZ4Compressor::compress` (`:36-85` at v19.2.6) records each block's true
   lengths, so their sum is the block's real size. An S3 or Swift client
@@ -3946,3 +3952,62 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** review of phase 1 unit R, Task 5, 2026-10-02; derived from the
   source, not reproduced.
+
+## radosgw terminates on a stored lz4 block too short for its pair table
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single one holds at both.
+  - `LZ4Compressor::decompress` reads a stored block's `count`, then
+    `count` pairs of lengths, with ceph's `decode`
+    (`compressor/lz4/LZ4Compressor.cc:110-116`). Past the end of its input
+    that decode throws `buffer::end_of_buffer`: at once when nothing is
+    left (`include/denc.h:1695-1696`, `:1694-1695`), and otherwise when the
+    integer runs past the bytes that are (`ptr::iterator_impl::operator+=`,
+    `common/buffer.cc:585-590`, `:634-639`). So a block shorter than four
+    bytes, or than four plus eight per pair its count announces, throws
+    instead of returning an error.
+  - Between the two decodes, `std::vector<std::pair<uint32_t, uint32_t>>
+    compressed_pairs(count)` value-initialises `count` pairs
+    (`compressor/lz4/LZ4Compressor.cc:111`), eight bytes each: 32 GiB for a
+    four-byte block of `ff ff ff ff`, allocated and zero-filled before the
+    first pair's decode throws. Where that allocation fails it throws
+    `std::bad_alloc`, which nothing catches either; where it succeeds the
+    process may exhaust the host's memory first.
+  - `RGWGetObj_Decompress::handle_data` calls it for every whole block of a
+    GET with no handler around the call (`rgw/rgw_compression.cc:148`). It
+    runs from `get_obj_data::flush` within `RGWRados::iterate_obj`
+    (`rgw/driver/rados/rgw_rados.cc:7345-7379`, `:8196-8230`), under
+    `RGWGetObj::execute`'s `read_op->iterate` (`rgw/rgw_op.cc:2443`,
+    `:2675`).
+  - Nothing above catches it. `rgw_process_authenticated` calls
+    `op->execute(y)` bare (`rgw/rgw_process.cc:255`, `:258`), and
+    `process_request` catches only `ceph::crypto::DigestException`
+    (`:410`, `:417`). The beast frontend's connection coroutine rethrows
+    whatever escapes it from its completion handler
+    (`rgw/rgw_asio_frontend.cc:1204` and `:1221`, `:1117` and `:1134`).
+    That handler runs inside `io_context::run()` on an `io_context_pool`
+    thread, which catches nothing (`common/async/context_pool.h:69` and
+    `:84`, `:68` and `:83`; `make_named_thread`, `common/Thread.h:73-82`),
+    so the exception leaves the thread and `std::terminate` ends the
+    process.
+- **Impact:** a GET that reads a stored lz4 block of fewer than four bytes,
+  or one whose pair table is cut short, ends the radosgw process and every
+  request it is serving, after allocating up to 32 GiB on the way for a
+  large count. A block whose pair table is whole but lies corrupts
+  memory instead ("radosgw's LZ4 decompress trusts its block's pair table",
+  above).
+- **Reachability:** as for that entry. radosgw's own compressor never
+  writes such a block, and an S3 or Swift client cannot supply a stored
+  block's bytes; it takes a writer with access to the data pool.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
+  the decode, `process_request`'s one catch and the frontend's rethrow are
+  unchanged).
+- **rgw-go:** not affected. `internal/compression`'s lz4 decoder checks the
+  block's length against its count and pair table before it reads or
+  allocates anything, and the driver fails the read with 500 UnknownError;
+  `docs/exclusions.md` records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 4, 2026-10-02, checking whether radosgw
+  refuses the short lz4 blocks rgw-go's decoder specs refuse; derived from
+  the source, not reproduced.

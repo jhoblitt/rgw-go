@@ -212,6 +212,15 @@ func (c *Cluster) Put(pool, ns, oid string, data []byte) {
 	s.lastVer[oid] = max(s.lastVer[oid], 1)
 }
 
+// Remove deletes the object, if it exists. A write op that creates the name
+// again gets a version past the one it had, as after a remove op; Put stores
+// at version 1 as ever.
+func (c *Cluster) Remove(pool, ns, oid string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.store(pool, ns).objects, oid)
+}
+
 // Watches returns the number of watches registered on the object and not
 // yet broken or closed.
 func (c *Cluster) Watches(pool, ns, oid string) int {

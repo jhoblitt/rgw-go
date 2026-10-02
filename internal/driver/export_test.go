@@ -2,10 +2,12 @@ package driver
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
@@ -88,4 +90,13 @@ func ReadEntryPoint(s *Store, ctx context.Context, tenant, name string) (meta.Bu
 		return meta.BucketEntryPoint{}, nil, meta.ObjVersion{}, err
 	}
 	return e.ep, e.attrs, e.v.read, nil
+}
+
+// PooledBuffersForTest is the number of read buffers handed back to the pool
+// and not taken out again; the pool may have dropped some of them since.
+func (s *Store) PooledBuffersForTest() int64 { return s.pooledReadBufs.Load() }
+
+// ReadStoredForTest is readStored for the external specs.
+func (s *Store) ReadStoredForTest(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
+	return s.readStored(ctx, st, ofs, n, w)
 }

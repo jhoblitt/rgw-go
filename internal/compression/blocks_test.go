@@ -120,7 +120,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		feed(compression.NewStream(dec, blocks, win, nil, &out), comp, 1, 7, 4097, 1<<20)
+		feed(compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out), comp, 1, 7, 4097, 1<<20)
 		Expect(out.Bytes()).To(Equal(src))
 	})
 
@@ -128,7 +128,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		feed(compression.NewStream(dec, blocks, win, nil, &out), comp, len(comp))
+		feed(compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out), comp, len(comp))
 		Expect(out.Bytes()).To(Equal(src))
 	})
 
@@ -137,7 +137,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, true, ofs, end)
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		feed(compression.NewStream(dec, blocks, win, nil, &out), comp[win.CompOfs:win.CompEnd+1], 4096)
+		feed(compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out), comp[win.CompOfs:win.CompEnd+1], 4096)
 		Expect(out.Bytes()).To(Equal(src[ofs : end+1]))
 	})
 
@@ -146,7 +146,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, ofs, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		feed(compression.NewStream(dec, blocks, win, nil, &out), comp, 65536)
+		feed(compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out), comp, 65536)
 		Expect(out.Bytes()).To(Equal(src[ofs:]))
 	})
 
@@ -157,7 +157,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		feed(compression.NewStream(dec, blocks, win, nil, &out), gapped, 1, 4096)
+		feed(compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out), gapped, 1, 4096)
 		Expect(out.Bytes()).To(Equal(src))
 	})
 
@@ -165,7 +165,7 @@ var _ = Describe("Stream", func() {
 		blocks[2].NewOfs--
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
-		s := compression.NewStream(dec, blocks, win, nil, io.Discard)
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, io.Discard)
 		_, err = s.Write(comp[:blocks[2].NewOfs+10])
 		Expect(err).To(MatchError(compression.ErrCorrupt))
 	})
@@ -173,7 +173,7 @@ var _ = Describe("Stream", func() {
 	It("reports a stream that ends before the last block is whole", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
-		s := compression.NewStream(dec, blocks, win, nil, io.Discard)
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, io.Discard)
 		_, err = s.Write(comp[:len(comp)-10])
 		Expect(err).NotTo(HaveOccurred())
 		Expect(s.Close()).To(MatchError(io.ErrUnexpectedEOF))
@@ -183,7 +183,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, true, 0, 10)
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		s := compression.NewStream(dec, blocks, win, nil, &out)
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out)
 		n, err := s.Write(comp[:blocks[0].Len+1])
 		Expect(err).To(MatchError(compression.ErrCorrupt))
 		Expect(n).To(BeEquivalentTo(blocks[0].Len))
@@ -194,7 +194,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		s := compression.NewStream(dec, blocks, win, nil, &out)
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out)
 		_, err = s.Write(comp)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(s.Close()).To(MatchError(compression.ErrCorrupt))
@@ -207,7 +207,7 @@ var _ = Describe("Stream", func() {
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
 		var out bytes.Buffer
-		s := compression.NewStream(dec, blocks, win, nil, &out)
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out)
 		_, err = s.Write(bad)
 		Expect(err).To(MatchError(compression.ErrCorrupt))
 		Expect(out.Len()).To(Equal(4<<20), "the first block was delivered before the second failed")
@@ -217,11 +217,103 @@ var _ = Describe("Stream", func() {
 		Expect(out.Len()).To(Equal(4 << 20))
 	})
 
+	// RGWPutObj_Compress::process records each block at the logical offset
+	// its input started at (rgw_compression.cc:44-87 at v19.2.6 and
+	// v20.2.4), and RGWPutObj::execute stores orig_size as the bytes it took
+	// in (rgw_op.cc:4459 at v19.2.6, :4691 at v20.2.4), so a block decodes to
+	// the distance to the next block's old_ofs, and the last one to
+	// orig_size.
+	Describe("each block's decoded length, from the block map", func() {
+		whole := func(origSize uint64, w io.Writer) *compression.Stream {
+			GinkgoHelper()
+			win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
+			Expect(err).NotTo(HaveOccurred())
+			return compression.NewStream(dec, blocks, origSize, win, nil, w)
+		}
+
+		It("refuses a block that decodes past it before writing any of the block", func() {
+			blocks[2].OldOfs--
+			var out bytes.Buffer
+			_, err := whole(uint64(len(src)), &out).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 1")))
+			Expect(out.Bytes()).To(Equal(src[:4<<20]))
+		})
+
+		It("refuses a block that decodes short of it before writing any of the block", func() {
+			blocks[1].OldOfs++
+			var out bytes.Buffer
+			_, err := whole(uint64(len(src)), &out).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 0")))
+			Expect(out.Len()).To(BeZero())
+		})
+
+		It("takes the last block's from orig_size", func() {
+			var out bytes.Buffer
+			_, err := whole(uint64(len(src))-1, &out).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 2")))
+			Expect(out.Bytes()).To(Equal(src[:8<<20]))
+		})
+
+		It("refuses old_ofs that go backward", func() {
+			blocks[2].OldOfs = blocks[1].OldOfs - 1
+			_, err := whole(uint64(len(src)), io.Discard).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 1")))
+		})
+
+		It("refuses an orig_size that ends before the last block starts", func() {
+			_, err := whole(blocks[2].OldOfs-1, io.Discard).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 2")))
+		})
+
+		It("refuses a block that decodes past MaxBlockLen before decoding it", func() {
+			var out bytes.Buffer
+			_, err := whole(blocks[2].OldOfs+compression.MaxBlockLen+1, &out).Write(comp)
+			Expect(err).To(MatchError(compression.ErrCorrupt))
+			Expect(err).To(MatchError(ContainSubstring("block 2 of 1073741825 decoded bytes, more than 1073741824")))
+			Expect(out.Bytes()).To(Equal(src[:8<<20]))
+		})
+	})
+
+	It("refuses a block stored in more than MaxBlockLen bytes before buffering it", func() {
+		blocks[1].Len = compression.MaxBlockLen + 1
+		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
+		Expect(err).NotTo(HaveOccurred())
+		var out bytes.Buffer
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out)
+		n, err := s.Write(comp)
+		Expect(err).To(MatchError(ContainSubstring("block 1 of 1073741825 stored bytes, more than 1073741824")))
+		Expect(n).To(BeEquivalentTo(blocks[1].NewOfs))
+		Expect(out.Bytes()).To(Equal(src[:4<<20]))
+	})
+
+	It("passes on a block its codec refuses as radosgw does as a DecodeError", func() {
+		bad := slices.Clone(comp)
+		// Past its length header, block 1 becomes copies from offsets past
+		// what it has decoded, which RawUncompress refuses.
+		for i := blocks[1].NewOfs + 4; i < blocks[1].NewOfs+blocks[1].Len; i++ {
+			bad[i] = 0xff
+		}
+		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
+		Expect(err).NotTo(HaveOccurred())
+		var out bytes.Buffer
+		_, err = compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &out).Write(bad)
+		de, ok := errors.AsType[*compression.DecodeError](err)
+		Expect(ok).To(BeTrue(), "a DecodeError: %v", err)
+		Expect(de.Ret).To(Equal(-2), "SnappyCompressor's RawUncompress failure")
+		Expect(err).To(MatchError(ContainSubstring("block 1")))
+		Expect(out.Bytes()).To(Equal(src[:4<<20]))
+	})
+
 	It("returns the destination's error", func() {
 		boom := errors.New("client went away")
 		win, err := compression.Range(blocks, false, 0, uint64(len(src)-1))
 		Expect(err).NotTo(HaveOccurred())
-		s := compression.NewStream(dec, blocks, win, nil, &failingWriter{n: 100, err: boom})
+		s := compression.NewStream(dec, blocks, uint64(len(src)), win, nil, &failingWriter{n: 100, err: boom})
 		_, err = s.Write(comp)
 		Expect(err).To(MatchError(boom))
 		Expect(s.Close()).To(MatchError(boom))

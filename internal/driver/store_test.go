@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -346,9 +345,6 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
-			Entry("ReadObject", func(ctx context.Context, s *driver.Store) error {
-				return s.ReadObject(ctx, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true, Size: 1}, op.ByteRange{Length: 1}, io.Discard)
-			}),
 			Entry("PutObject", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.PutObject(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, strings.NewReader("v"), op.PutParams{Size: 1})
 				return err

@@ -19,7 +19,10 @@ type lz4Decoder struct{}
 // lz4MaxDistance is the farthest an LZ4 match reaches back.
 const lz4MaxDistance = 1 << 16
 
-func (lz4Decoder) Decode(dst, block []byte, _ *int32) ([]byte, error) {
+func (lz4Decoder) Decode(dst, block []byte, limit int, _ *int32) ([]byte, error) {
+	// radosgw decodes the count and pairs with ceph's decode, which throws on
+	// a short block; nothing catches it before the frontend's io_context
+	// thread, so the process ends (docs/ceph-upstream-bugs.md).
 	if len(block) < 4 {
 		return nil, fmt.Errorf("%w: lz4 block shorter than its count", ErrCorrupt)
 	}
@@ -36,6 +39,9 @@ func (lz4Decoder) Decode(dst, block []byte, _ *int32) ([]byte, error) {
 	if total > math.MaxInt32 {
 		return nil, fmt.Errorf("%w: lz4 origin length %d", ErrCorrupt, total)
 	}
+	if total > uint64(max(limit, 0)) {
+		return nil, overLimit("lz4", total, limit)
+	}
 	out := grow(dst, int(total))[:total]
 	in := block[hdr:]
 	written := 0
@@ -43,16 +49,20 @@ func (lz4Decoder) Decode(dst, block []byte, _ *int32) ([]byte, error) {
 		origin := int(binary.LittleEndian.Uint32(pairs[i:]))
 		size := int(binary.LittleEndian.Uint32(pairs[i+4:]))
 		// LZ4_decompress_safe refuses an empty source whatever it is to yield.
-		if size == 0 || len(in) < size {
+		if size == 0 {
+			return nil, failed("lz4", -1, fmt.Errorf("block %d has no compressed bytes", i/8))
+		}
+		// radosgw reads past its input here instead (docs/ceph-upstream-bugs.md).
+		if len(in) < size {
 			return nil, fmt.Errorf("%w: lz4 block %d of %d compressed bytes, %d remain", ErrCorrupt, i/8, size, len(in))
 		}
 		dict := out[max(0, written-lz4MaxDistance):written]
 		n, err := lz4.UncompressBlockWithDict(in[:size], out[written:written+origin], dict)
 		if err != nil {
-			return nil, corrupt("lz4", err)
+			return nil, failed("lz4", -1, err)
 		}
 		if n != origin {
-			return nil, fmt.Errorf("%w: lz4 block %d decoded %d bytes, its pair says %d", ErrCorrupt, i/8, n, origin)
+			return nil, failed("lz4", -2, fmt.Errorf("block %d decoded %d bytes, its pair says %d", i/8, n, origin))
 		}
 		written += n
 		in = in[size:]
