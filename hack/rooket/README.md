@@ -215,7 +215,10 @@ the busiest processes every 15 seconds. Each 4 MiB write waits for 5 GiB free
 in the pool, writes about 3.9 GiB and is removed before the next, and the
 sweep leaves the pool as it found it; one that fails partway removes the
 floor's objects and those of the benchmark process that was running, then
-exits with the failure's status. The Go cells take their client config from
+exits with the failure's status. A watchdog stops a benchmark process or a
+floor run that outlives its limit, since go test's `-timeout` does not apply
+to benchmarks; `BENCH_TIMEOUT` and `BENCH_FLOOR_TIMEOUT` override the limits.
+The Go cells take their client config from
 the release's rooket output, as the floor does, and the sweep refuses an
 `RGW_GO_TEST_CEPH_CONF` naming another file. A full sweep took about an hour per
 release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the

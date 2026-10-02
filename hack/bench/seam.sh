@@ -38,15 +38,30 @@
 # running, and exits with the failure's status, whether or not the removal
 # succeeds.
 #
+# Nothing else bounds a call stuck in librados: go test's -timeout does not
+# apply to benchmarks (testing.(*M).Run stops its alarm before it runs them),
+# and a sync-mode call returns only when librados does. So a watchdog stops a
+# benchmark process that outlives its limit, SIGTERM and then SIGKILL, and
+# kills a floor run's container that outlives its own; the sweep then fails
+# into the cleanup above. A benchmark process runs one cell, and its limit is
+# that cell's planned duration and five minutes; the floor's rados also fails
+# any OSD or monitor operation that takes over two minutes.
+#
 # Environment:
-#   BENCH_TIME              benchtime of each time-bounded cell (20s)
+#   BENCH_TIME              benchtime of each time-bounded cell (20s), in whole hours,
+#                           minutes and seconds (20s, 1m30s, or plain seconds), since the
+#                           watchdog's limits derive from it; go test's 1.5s, 500ms and
+#                           100x are refused at startup
 #   BENCH_FLOOR_SECONDS     seconds of each time-bounded rados bench run (20)
 #   CONC                    concurrencies of the 4 KiB, head and index shapes (1,16,64,256,512)
 #   BENCH_LARGE_CONC        concurrencies of read4m and write4m (1,4,16); empty skips them
 #   BENCH_WRITE4M_OBJECTS   objects per 4 MiB write cell and floor run (1000, 3.9 GiB)
 #   BENCH_OVER_OBJECTS      objects per over-budget cell (640)
 #   BENCH_MIN_AVAIL_GIB     pool space a 4 MiB write waits for (5)
-#   BENCH_TIMEOUT           go test -timeout of each benchmark process (2h)
+#   BENCH_TIMEOUT           limit of each benchmark process, in seconds or as 1h30m (its
+#                           cell's planned duration, ten times BENCH_TIME or 0.1 s an
+#                           iteration of a count-bounded cell, plus 5m)
+#   BENCH_FLOOR_TIMEOUT     limit of each floor rados run (its window, plus 5m)
 #   BENCH_QUICK=1           5s, 5, CONC=16,256, BENCH_LARGE_CONC=16, 100 and 128 objects
 #   GO_TAGS                 build tags besides integration (ceph_preview)
 #   BENCH_FLOOR_IMAGE       floor image (quay.io/ceph/ceph:v<linked librados version>); must run that release
@@ -70,7 +85,7 @@ if [[ "${BENCH_QUICK:-}" == 1 ]]; then
 fi
 : "${BENCH_TIME:=20s}" "${BENCH_FLOOR_SECONDS:=20}" "${CONC:=1,16,64,256,512}" "${BENCH_LARGE_CONC=1,4,16}"
 : "${BENCH_WRITE4M_OBJECTS:=1000}" "${BENCH_OVER_OBJECTS:=640}" "${BENCH_MIN_AVAIL_GIB:=5}"
-: "${BENCH_TIMEOUT:=2h}" "${GO_TAGS:=ceph_preview}"
+: "${GO_TAGS:=ceph_preview}"
 engine=${ROOKET_ENGINE:-podman}
 # The floor's rados reads ${out}, so the Go cells take their client config
 # from there too, or the two halves of a ratio could measure two clusters.
@@ -81,6 +96,42 @@ fi
 [[ -f "${conf}" && -f "${out}/image" ]] || die "no ${conf} or ${out}/image: run make cluster-up RELEASE=${release}"
 cluster_image=$(cat "${out}/image")
 readonly pool=rgw-go-test
+
+# seconds_of prints a duration in whole seconds: a number of seconds, or Go's
+# notation in whole hours, minutes and seconds (1h30m, 20s). It refuses the
+# rest of what Go's durations and -test.benchtime accept, fractions (1.5s),
+# smaller units (500ms) and counts (100x), so a limit is never derived from a
+# duration misread.
+seconds_of() { # duration
+	local part total=0
+	if [[ "$1" =~ ^[0-9]+$ ]]; then
+		echo $((10#$1))
+		return
+	fi
+	[[ -n "$1" && "$1" =~ ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$ ]] || return 1
+	for part in "${BASH_REMATCH[@]:1}"; do
+		case "${part}" in
+		*h) total=$((total + 10#${part%h} * 3600)) ;;
+		*m) total=$((total + 10#${part%m} * 60)) ;;
+		*s) total=$((total + 10#${part%s})) ;;
+		esac
+	done
+	echo "${total}"
+}
+bench_time_s=$(seconds_of "${BENCH_TIME}") || die "BENCH_TIME ${BENCH_TIME} is not a duration in h, m and s"
+bench_timeout_s=
+if [[ -n "${BENCH_TIMEOUT:-}" ]]; then
+	bench_timeout_s=$(seconds_of "${BENCH_TIMEOUT}") || die "BENCH_TIMEOUT ${BENCH_TIMEOUT} is not a duration in h, m and s"
+fi
+floor_timeout_s=
+if [[ -n "${BENCH_FLOOR_TIMEOUT:-}" ]]; then
+	floor_timeout_s=$(seconds_of "${BENCH_FLOOR_TIMEOUT}") ||
+		die "BENCH_FLOOR_TIMEOUT ${BENCH_FLOOR_TIMEOUT} is not a duration in h, m and s"
+fi
+readonly bench_time_s bench_timeout_s floor_timeout_s
+# A stopped benchmark process gets watchdog_grace seconds between SIGTERM and
+# SIGKILL; every planned duration gets watchdog_margin seconds more.
+readonly watchdog_grace=30 watchdog_margin=300
 # Bounds no cell reaches, which leave submission to the objecter throttle.
 readonly no_limit=(-inflight-ops=1048576 -inflight-bytes=1099511627776)
 
@@ -117,6 +168,61 @@ sampler=$!
 bench_pid=
 bench_ns=
 declare -A floor_ns=()
+# watchdog_pid is the watchdog guarding what runs now, a benchmark process or
+# a floor run. floor_pid is the floor's running podman client, cleared once
+# reaped, and floor_container its container's name, cleared once the run has
+# succeeded, so that the exit trap can kill a container left behind.
+watchdog_pid=
+floor_pid=
+floor_container=
+floor_runs=0
+
+# watchdog waits limit seconds, then reports what it guards as stuck and runs
+# the rest of its arguments to stop it. It runs in the background, and
+# SIGTERM ends it and its sleep early.
+watchdog() { # limit what command...
+	local limit=$1 what=$2 sleeper
+	shift 2
+	trap 'kill "${sleeper}" 2>/dev/null; exit 0' TERM
+	sleep "${limit}" &
+	sleeper=$!
+	wait "${sleeper}"
+	say "${what}: past its ${limit} s limit, stopping it"
+	"$@"
+}
+
+# stop_watchdog ends the running watchdog, once what it guarded has ended.
+stop_watchdog() {
+	[[ -n "${watchdog_pid}" ]] || return 0
+	kill "${watchdog_pid}" 2>/dev/null || true
+	wait "${watchdog_pid}" 2>/dev/null || true
+	watchdog_pid=
+}
+
+# stop_pid sends a benchmark process SIGTERM, and SIGKILL if it is still there
+# watchdog_grace seconds later.
+stop_pid() { # pid
+	local i
+	kill -TERM "$1" 2>/dev/null || return 0
+	for ((i = 0; i < watchdog_grace; i++)); do
+		sleep 1
+		kill -0 "$1" 2>/dev/null || return 0
+	done
+	kill -KILL "$1" 2>/dev/null || true
+}
+
+# stop_floor kills a floor run's container by name, and SIGKILLs its podman
+# client if the client is still there watchdog_grace seconds later: a client
+# that stalls before the container runs leaves the kill nothing to kill.
+stop_floor() { # container client
+	local i
+	"${engine}" kill "$1" >/dev/null 2>&1 || true
+	for ((i = 0; i < watchdog_grace; i++)); do
+		kill -0 "$2" 2>/dev/null || return 0
+		sleep 1
+	done
+	kill -KILL "$2" 2>/dev/null || true
+}
 
 # purge removes every object in namespace ns of the pool: rados bench's data
 # objects with one concurrent cleanup, then whatever is left, a run's
@@ -166,10 +272,17 @@ on_exit() {
 	local status=$?
 	trap - EXIT
 	kill "${sampler}" 2>/dev/null || true
+	stop_watchdog
 	if ((status != 0)); then
 		if [[ -n "${bench_pid}" ]]; then
-			kill "${bench_pid}" 2>/dev/null || true
+			stop_pid "${bench_pid}"
 			wait "${bench_pid}" 2>/dev/null || true
+		fi
+		if [[ -n "${floor_pid}" ]]; then
+			stop_floor "${floor_container}" "${floor_pid}"
+			wait "${floor_pid}" 2>/dev/null || true
+		elif [[ -n "${floor_container}" ]]; then
+			"${engine}" kill "${floor_container}" >/dev/null 2>&1 || true
 		fi
 		say "the sweep failed with status ${status}; removing what it left in ${pool}"
 		if (clean_up_after_failure "${bench_ns}"); then
@@ -202,35 +315,81 @@ wait_avail() {
 	say "the pool has ${avail} bytes available"
 }
 
+# bench_limit prints a benchmark process's limit in seconds: BENCH_TIMEOUT
+# when set, else its one cell's planned duration and watchdog_margin. A cell
+# bounded by time plans ten times BENCH_TIME: testing.B's calibration calls,
+# the prepare and the cleanup took up to 6.3 times it in the preliminary
+# sweeps. A cell bounded by a count, -test.benchtime=<n>x, plans 0.1 s an
+# iteration, about eight times the slowest 4 MiB write rate they saw.
+bench_limit() { # benchmark arguments...
+	local arg planned=$((10 * bench_time_s))
+	if [[ -n "${bench_timeout_s}" ]]; then
+		echo "${bench_timeout_s}"
+		return
+	fi
+	for arg in "$@"; do
+		if [[ "${arg}" =~ ^-test\.benchtime=([0-9]+)x$ ]]; then
+			planned=$((BASH_REMATCH[1] / 10))
+		fi
+	done
+	echo $((planned + watchdog_margin))
+}
+
 # bench runs one benchmark process in mode, appending its cells to results
 # when one is given; the arguments after it are the test binary's.
 bench() {
-	local mode=$1 results=$2
+	local mode=$1 results=$2 limit
 	shift 2
-	local args=(-test.run '^$' -test.bench BenchmarkSeam -test.timeout "${BENCH_TIMEOUT}"
+	limit=$(bench_limit "$@")
+	# A finite -test.timeout, never 0, beyond the watchdog's limit and grace
+	# so that the watchdog stays the bound: go1.27.1 stops the timeout's alarm
+	# before it runs benchmarks, and a Go that did apply it would fire last.
+	local args=(-test.run '^$' -test.bench BenchmarkSeam -test.timeout "$((limit + watchdog_grace + 60))s"
 		-test.benchtime "${BENCH_TIME}" -mode="${mode}")
 	[[ -z "${results}" ]] || args+=(-results="${results}")
-	say "bench ${mode}: $* (load $(cut -d' ' -f1-3 /proc/loadavg))"
-	# In the background so that the exit trap knows its pid, and with it the
-	# namespace of the objects it writes.
+	say "bench ${mode}: $* (limit ${limit} s, load $(cut -d' ' -f1-3 /proc/loadavg))"
+	# In the background so that the exit trap and the watchdog know its pid,
+	# and with it the namespace of the objects it writes.
 	RGW_GO_TEST_CEPH_CONF="${conf}" "${bin}" "${args[@]}" "$@" > >(tee -a "${dir}/bench-${mode}.log") 2>&1 &
 	bench_pid=$!
 	bench_ns=bench-${bench_pid}
+	watchdog "${limit}" "bench ${mode} $*" stop_pid "${bench_pid}" &
+	watchdog_pid=$!
 	local status=0
 	wait "${bench_pid}" || status=$?
 	bench_pid=
+	stop_watchdog
 	((status == 0)) || exit "${status}"
 	bench_ns=
 	say "bench ${mode} done (load $(cut -d' ' -f1-3 /proc/loadavg))"
 }
 
-rados_cmd() { # image args...
-	local image=$1
-	shift
+# rados_cmd runs rados from image against the pool, bounded twice: librados
+# fails an OSD or monitor operation that takes over two minutes, and a
+# watchdog stops the run once window seconds, the run's own length, and
+# watchdog_margin have passed, or BENCH_FLOOR_TIMEOUT. It kills the container
+# by name, since rados is PID 1 there, which ignores SIGTERM, and stopping the
+# client leaves the container running; then the client, should it outlive the
+# container.
+rados_cmd() { # image window args...
+	local image=$1 window=$2 name status=0
+	shift 2
+	floor_runs=$((floor_runs + 1))
+	name=rgw-go-bench-floor-$$-${floor_runs}
 	# rados bench names its objects after the host name, so every run takes
 	# the same one: rand and cleanup find what an earlier write wrote.
-	"${engine}" run --rm --network host --hostname rgw-go-bench-floor -v "${out}:/etc/ceph:ro" "${image}" \
-		rados -c /etc/ceph/ceph.conf -k /etc/ceph/ceph.client.admin.keyring -p "${pool}" "$@"
+	"${engine}" run --rm --name "${name}" --network host --hostname rgw-go-bench-floor -v "${out}:/etc/ceph:ro" "${image}" \
+		rados -c /etc/ceph/ceph.conf -k /etc/ceph/ceph.client.admin.keyring \
+		--rados-osd-op-timeout=120 --rados-mon-op-timeout=120 -p "${pool}" "$@" &
+	floor_pid=$!
+	floor_container=${name}
+	watchdog "${floor_timeout_s:-$((window + watchdog_margin))}" "rados $*" stop_floor "${name}" "${floor_pid}" &
+	watchdog_pid=$!
+	wait "${floor_pid}" || status=$?
+	floor_pid=
+	stop_watchdog
+	((status != 0)) || floor_container=
+	return "${status}"
 }
 
 # rados_bench runs rados bench from image in namespace bench-floor-<size>
@@ -250,7 +409,7 @@ rados_bench() {
 	fi
 	raw=${dir}/${run}.txt
 	say "rados from ${image}: ${args[*]} (load $(cut -d' ' -f1-3 /proc/loadavg))"
-	rados_cmd "${image}" "${args[@]}" >"${raw}" 2>&1 || die "rados bench failed: $(tail -5 "${raw}")"
+	rados_cmd "${image}" "${seconds}" "${args[@]}" >"${raw}" 2>&1 || die "rados bench failed: $(tail -5 "${raw}")"
 	# The summary's Average IOPS is truncated to an integer, so the rate is
 	# the operations made over the time run.
 	summary=$(awk '
@@ -272,7 +431,7 @@ rados_bench() {
 }
 
 rados_cleanup() { # image size run
-	rados_cmd "$1" -N "bench-floor-$2" cleanup --run-name "$3" -t 64 >>"${log}" 2>&1 || die "rados cleanup of $3 failed"
+	rados_cmd "$1" 0 -N "bench-floor-$2" cleanup --run-name "$3" -t 64 >>"${log}" 2>&1 || die "rados cleanup of $3 failed"
 }
 
 # floor_run measures shape's floor at conc once with image's rados and
@@ -294,7 +453,7 @@ floor_run() { # image shape conc bracket
 		rados_bench "${image}" "${shape}" write "${size}" "${conc}" 600 "${BENCH_WRITE4M_OBJECTS}" 0 "${run}" "${bracket}"
 		;;
 	read4k | read4m)
-		rados_cmd "${image}" -N "bench-floor-${size}" bench 600 write -t "${conc}" -b "${size}" --max-objects "${conc}" \
+		rados_cmd "${image}" 600 -N "bench-floor-${size}" bench 600 write -t "${conc}" -b "${size}" --max-objects "${conc}" \
 			--no-cleanup --run-name "${run}" >>"${log}" 2>&1 || die "writing the rand set of ${run} failed"
 		rados_bench "${image}" "${shape}" rand "${size}" "${conc}" "${BENCH_FLOOR_SECONDS}" 0 "${conc}" "${run}" "${bracket}"
 		;;
