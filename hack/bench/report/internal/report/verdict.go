@@ -13,16 +13,17 @@ type Criterion string
 
 // The criteria. The throughput and latency criteria compare the four mirror
 // shapes with rados bench at the same size and concurrency; the threads
-// criterion covers every cell under the byte budget; the cgo criterion reads
-// the CPU profile of read4k at 256 in flight.
+// criterion covers every cell under the byte budget; Boundary, the fourth,
+// reads the CPU profile of read4k at 256 in flight. Cgo measures the same
+// profile and is not judged.
 const (
 	Throughput Criterion = "throughput>=0.8x floor"
 	Latency    Criterion = "mean latency<=1.25x floor"
 	Threads    Criterion = "threads<=gomaxprocs+8"
-	Cgo        Criterion = "cgo<=10% of CPU"
+	Cgo        Criterion = "cgo frames, share of CPU (not judged)"
 )
 
-var criteria = []Criterion{Throughput, Latency, Threads, Cgo}
+var criteria = []Criterion{Throughput, Latency, Threads, Boundary}
 
 const (
 	minThroughputRatio = 0.8
@@ -41,6 +42,9 @@ const (
 	Fail         Status = "FAIL"
 	Incomplete   Status = "INCOMPLETE"
 	Inconclusive Status = "INCONCLUSIVE"
+	// NotJudged marks a measurement reported beside the criteria and
+	// compared with no threshold.
+	NotJudged Status = "NOT JUDGED"
 )
 
 // Verdict is one criterion applied to one mode's cells. Judged is false for
@@ -61,27 +65,23 @@ type Verdict struct {
 	Informational bool
 }
 
-// Boundary reads the cgo criterion's profile for the boundary cost alone,
-// Share.Boundary, against the same threshold. It is informational: Answer
-// leaves it out, and BoundaryAnswer reads it in place of Cgo.
+// Boundary is the fourth criterion, the boundary cost, Share.Boundary: the
+// share of the profile a pure-Go client would no longer pay. Cgo, every
+// sample with a frame of the cgo boundary on its stack, is measured beside
+// it and not judged: it counts the C librados runs on the Go thread as a
+// cost of the boundary, and a more efficient Go side raises it.
 const Boundary Criterion = "boundary cost<=10% of CPU (librados's C and the Go completion handler excluded)"
 
-// SeamReport is a sweep directory rendered: its markdown, every verdict, the
-// judged modes that pass all four criteria, and those that pass them with
-// the boundary cost in place of the cgo criterion.
+// SeamReport is a sweep directory rendered: its markdown, every verdict and
+// the judged modes that pass all four criteria.
 type SeamReport struct {
-	Markdown        string
-	Verdicts        []Verdict
-	Passing         []string
-	BoundaryPassing []string
+	Markdown string
+	Verdicts []Verdict
+	Passing  []string
 }
 
 // Answer says which judged modes pass all four criteria.
 func (r SeamReport) Answer() string { return answer(r.Passing) }
-
-// BoundaryAnswer says which judged modes pass all four criteria with the
-// boundary cost in place of the cgo criterion.
-func (r SeamReport) BoundaryAnswer() string { return answer(r.BoundaryPassing) }
 
 func answer(modes []string) string {
 	switch len(modes) {
@@ -290,13 +290,21 @@ func (s *sweep) threads(mode string) Verdict {
 	return Verdict{Criterion: Threads, Status: status, Margin: margin}
 }
 
+// cgo measures the share of mode's read4k profile at 256 whose stacks hold a
+// frame of the cgo boundary, against no threshold.
 func (s *sweep) cgo(mode string) Verdict {
-	return s.profileShare(mode, Cgo, func(sh Share) time.Duration { return sh.Cgo })
+	v := Verdict{Criterion: Cgo, Status: NotJudged, Informational: true}
+	p, ok := s.profiles[mode]
+	if !ok {
+		v.Status, v.Margin = Incomplete, "missing: cpu-"+mode+"-read4k-256.pprof"
+		return v
+	}
+	v.Margin = fmt.Sprintf("%.1f%% of %s sampled", p.share.percent(p.share.Cgo), p.share.Total)
+	return v
 }
 
 func (s *sweep) boundary(mode string) Verdict {
 	v := s.profileShare(mode, Boundary, Share.Boundary)
-	v.Informational = true
 	// Pipe mode's completion is written to the pipe by a librados thread,
 	// which the profile samples under runtime._ExternalCode with no frame
 	// that tells that write from librados's other work.
@@ -307,7 +315,7 @@ func (s *sweep) boundary(mode string) Verdict {
 }
 
 // profileShare judges the part of mode's read4k profile at 256 that part
-// returns against the cgo criterion's threshold.
+// returns against the boundary cost's threshold.
 func (s *sweep) profileShare(mode string, c Criterion, part func(Share) time.Duration) Verdict {
 	p, ok := s.profiles[mode]
 	if !ok {

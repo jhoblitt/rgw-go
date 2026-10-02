@@ -328,7 +328,7 @@ var _ = Describe("Seam", func() {
 			verdict("callback", report.Threads, report.Pass, "worst +2 of 16 allowed"),
 			HaveField("Judged", true),
 		)))
-		Expect(r.Passing).To(Equal([]string{"callback"}), "sync's failure does not count against the release, and pipe fails the cgo criterion")
+		Expect(r.Passing).To(Equal([]string{"callback"}), "sync's failure does not count against the release, and pipe fails the boundary cost")
 		Expect(r.Markdown).To(ContainSubstring("callback passes all four criteria"))
 	})
 
@@ -427,13 +427,13 @@ var _ = Describe("Seam", func() {
 		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| callback \| write4m \| 64 \| derived \| .* \| 23→24 \| \+1 \| 16 \| 600 \|$`))
 	})
 
-	It("judges the cgo share of each mode's read4k profile at 256 in flight", func(ctx SpecContext) {
+	It("measures the cgo share of each mode's read4k profile at 256 in flight without judging it", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.Pass, "2.7% of 1.5s sampled, margin +7.3 points")))
-		Expect(r.Verdicts).To(ContainElement(verdict("pipe", report.Cgo, report.Fail, "84.0% of 1.5s sampled, margin -74.0 points")))
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.NotJudged, "2.7% of 1.5s sampled")))
+		Expect(r.Verdicts).To(ContainElement(verdict("pipe", report.Cgo, report.NotJudged, "84.0% of 1.5s sampled")))
 		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
-			verdict("sync", report.Cgo, report.Pass, "2.7% of 1.5s sampled"),
+			verdict("sync", report.Cgo, report.NotJudged, "2.7% of 1.5s sampled"),
 			HaveField("Judged", false),
 		)), "sync's profile is reported beside the judged modes'")
 		Expect(r.Markdown).To(ContainSubstring("\n## CPU profiles\n"))
@@ -448,17 +448,17 @@ var _ = Describe("Seam", func() {
 		}
 	})
 
-	It("reports the boundary cost beside the cgo criterion without judging by it", func(ctx SpecContext) {
+	It("judges by the boundary cost and reports every cgo frame beside it", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
 			verdict("callback", report.Boundary, report.Pass, "0.7% of 1.5s sampled, margin +9.3 points"),
-			HaveField("Informational", true),
+			HaveField("Informational", false),
 		)))
 		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
 			verdict("pipe", report.Boundary, report.Fail,
 				"66.0% of 1.5s sampled, margin -56.0 points; leaves out pipe's write(2) per completion, unmeasured"),
-			HaveField("Informational", true),
+			HaveField("Informational", false),
 		)), "pipe's C side of a completion is sampled outside every Go frame")
 		for _, mode := range []string{"sync", "callback"} {
 			Expect(r.Verdicts).To(ContainElement(SatisfyAll(
@@ -466,17 +466,23 @@ var _ = Describe("Seam", func() {
 				HaveField("Margin", Not(ContainSubstring("write(2)"))),
 			)), mode)
 		}
-		Expect(r.Markdown).To(ContainSubstring("For pipe it leaves out the C side of each completion, one write(2) to the " +
+		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
+			verdict("callback", report.Cgo, report.NotJudged, "2.7% of 1.5s sampled"),
+			HaveField("Informational", true),
+			HaveField("Margin", Not(ContainSubstring("margin"))),
+		)), "every cgo frame is measured against no threshold")
+		Expect(r.Markdown).To(ContainSubstring("For pipe the boundary cost leaves out the C side of each completion, one write(2) to the " +
 			"pipe on a librados thread, which the profile records under runtime._ExternalCode with no frame to tell it by: " +
 			"it is unmeasured, and pipe's boundary cost is low by that much."))
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| cgo<=10% of CPU \|.*\|\n\| informational: boundary cost<=10% of CPU `+
-			`\(librados's C and the Go completion handler excluded\) \| PASS: 0\.7% `),
-			"the informational row sits directly under the cgo criterion's")
-		Expect(r.Markdown).To(ContainSubstring("**Answer:** callback passes all four criteria on tentacle.\n" +
-			"\n**Answer with the boundary cost in place of the cgo criterion:** callback passes all four criteria on tentacle.\n"))
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| boundary cost<=10% of CPU \(librados's C and the Go completion handler excluded\) `+
+			`\| PASS: 0\.7% .*\|\n\| informational: cgo frames, share of CPU \(not judged\) \| 2\.7% of 1\.5s sampled \|`),
+			"the informational row sits directly under the boundary cost's")
+		Expect(r.Markdown).To(ContainSubstring("**Answer:** callback passes all four criteria on tentacle.\n"))
+		Expect(r.Markdown).NotTo(ContainSubstring("Answer with"), "there is one answer")
+		Expect(r.Markdown).NotTo(MatchRegexp(`(?m)^\| informational: cgo frames.*(PASS|FAIL)`), "the share has no verdict")
 	})
 
-	It("answers again with the boundary cost where the cgo criterion fails on librados's C", func(ctx SpecContext) {
+	It("passes on the boundary cost where nearly every sample is librados's C under a cgo frame", func(ctx SpecContext) {
 		dir := sweep()
 		data, err := os.ReadFile("testdata/pprof/c-heavy.pprof")
 		Expect(err).NotTo(HaveOccurred())
@@ -485,13 +491,11 @@ var _ = Describe("Seam", func() {
 		}
 		r, err := report.Seam(ctx, dir)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.Fail, "98.7% of 1.49s sampled")),
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Cgo, report.NotJudged, "98.7% of 1.49s sampled")),
 			"nearly every sample is C under runtime.cgocall")
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Boundary, report.Pass, "0.0% of 1.49s sampled")))
-		Expect(r.Passing).To(BeEmpty())
-		Expect(r.BoundaryPassing).To(Equal([]string{"callback", "pipe"}))
-		Expect(r.Answer()).To(Equal("no judged mode passes all four criteria"))
-		Expect(r.BoundaryAnswer()).To(Equal("callback and pipe pass all four criteria"))
+		Expect(r.Passing).To(Equal([]string{"callback", "pipe"}))
+		Expect(r.Answer()).To(Equal("callback and pipe pass all four criteria"))
 	})
 
 	It("fails when a mode's file is missing a cell another mode has", func(ctx SpecContext) {
