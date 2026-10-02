@@ -88,6 +88,15 @@ var _ = Describe("MatchWildcards", func() {
 		Entry("an unknown class name fails the whole match", "[![:foo:]]", "a", false, false),
 		Entry("an unclosed class name is plain members", "[[:alpha]", ":", true, true),
 		Entry("a collating symbol", "[[.a.]]", "a", true, true),
+		// Once a member has matched, fnmatch skips the rest of the class. The
+		// skip resumes at the byte after a closed [:name:], [=x=] or [.x.], so
+		// a \] there is an escaped ] and the class ends at the next ].
+		Entry("the rest of a class is skipped past a class name", `[a[:alpha:]\]x]`, "a", true, true),
+		Entry("an escaped ] past a skipped class name does not end the class", `[a[:alpha:]\]x]`, "ax]", false, false),
+		Entry("the rest of a class is skipped past an equivalence class", `[a[=b=]\]x]`, "a", true, true),
+		Entry("an escaped ] past a skipped equivalence class does not end the class", `[a[=b=]\]x]`, "ax]", false, false),
+		Entry("the rest of a class is skipped past a collating symbol", `[a[.b.]\]x]`, "a", true, true),
+		Entry("an escaped ] past a skipped collating symbol does not end the class", `[a[.b.]\]x]`, "ax]", false, false),
 		Entry("a trailing backslash never matches", `a\`, `a\`, false, false),
 		Entry("an escaped backslash", `\\`, `\`, true, true),
 		Entry("? after * needs a byte", "*?", "", false, false),
