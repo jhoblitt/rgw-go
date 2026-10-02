@@ -20,7 +20,9 @@ const (
 	// the pool has room; with it the OSD runs the op, which fails with EDQUOT
 	// or ENOSPC only when it would add bytes or objects, so a delete succeeds.
 	// It is the op-scoped form of the full-try radosgw sets through
-	// set_pool_full_try on every I/O context, and so on every op.
+	// set_pool_full_try on every I/O context. Every op through a Pool already
+	// runs with full-try, so on a goceph Pool the flag is redundant; it
+	// remains for op-scoped use, and fakerados accepts it.
 	OpFlagFullTry   OpFlags = 1 << 6
 	OpFlagReturnVec OpFlags = 1 << 10 // LIBRADOS_OPERATION_RETURNVEC
 )

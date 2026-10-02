@@ -171,6 +171,22 @@ finds a new limit, and update the status when one is fixed or measured.
   private I/O context per write. Async completions carry their own version.
 - **Measure:** included in sync-mode per-operation cost.
 
+### The C API cannot read back an I/O context's full-try
+
+- **Evidence:** goceph sets full-try on every I/O context it opens, as
+  radosgw's `rgw_init_ioctx` does (`rgw_tools.cc:97-98` at v19.2.6, `:98-99`
+  at v20.2.4), through `rados_set_pool_full_try`. The C API has only that
+  setter and `rados_unset_pool_full_try` (librados.h:3782-3784 at v19.2.6,
+  :3783-3785 at v20.2.4), and go-ceph binds no more. Only the C++ API reads
+  the flag back, with `IoCtx::get_pool_full_try()` (librados.hpp:1356 at
+  v19.2.6, :1377 at v20.2.4). Reaching it from Go takes a C++ cgo shim over
+  `IOContext.Pointer()`, and a connected cluster to open the context.
+- **Status:** accepted; found in W Task 1's review. No spec asserts that
+  goceph's contexts carry full-try. Its only observable effect is how an op
+  on a full pool, or one at its quota, is answered.
+- **Note:** a pure-Go client would set the flag on each op it encodes, where
+  a unit spec can read it.
+
 ### Payload copies across the boundary
 
 - **Evidence:** librados copies write payloads into its own buffers when the

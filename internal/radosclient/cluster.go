@@ -42,6 +42,12 @@ type StatsReporter interface {
 //counterfeiter:generate . Pool
 
 // Pool is an I/O context: one pool and one namespace, with an optional object locator.
+//
+// Every operation through a Pool runs with full-try, as radosgw's
+// rgw_init_ioctx sets it on every I/O context, and an implementation owes
+// that: at a full pool or one at its quota, an op that adds data fails at
+// once with ENOSPC or EDQUOT instead of waiting for space, and a delete
+// proceeds.
 type Pool interface {
 	// Name returns the pool name.
 	Name() string
