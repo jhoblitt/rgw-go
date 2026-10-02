@@ -1336,18 +1336,50 @@ v20.2.4 tags, rgw-go does the following.
   decrypts it. Every refusal before that is radosgw's.
 - **An empty header reads as no header.** rgw-go takes `Range`,
   `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
-  and the three `x-amz-server-side-encryption-customer-*` headers as absent
-  when they are sent with an empty value. radosgw reads the empty value: an
-  empty `Range` on an empty object is 416 InvalidRange
-  (`rgw_op.cc:2396-2401` at v19.2.6, `:2629-2634` at v20.2.4), an empty
-  `If-Match` is 412 PreconditionFailed, as no ETag starts the empty string,
-  an empty date is 400 InvalidArgument, and an empty customer algorithm is
-  400 InvalidEncryptionAlgorithmError rather than InvalidArgument.
-- **X-Rgw-Auth.** radosgw answers a GET carrying an `X-Rgw-Auth` header
-  with the status and headers alone, as for HEAD, for its cache server's
-  authentication check (`rgw_op.cc:2179` and `:2271-2274` at v19.2.6,
-  `:2414` and `:2507-2510` at v20.2.4). rgw-go ignores the header and serves
-  the body.
+  and `x-amz-server-side-encryption-customer-algorithm` as absent when they
+  are sent with an empty value. radosgw takes each of them as present: an
+  empty `Range` turns the head's prefetch off, and on an empty object is 416
+  InvalidRange (`rgw_op.cc:2176-2191` and `:2396-2401` at v19.2.6,
+  `:2411-2426` and `:2629-2634` at v20.2.4); an empty `If-Match` is 412
+  PreconditionFailed, as no ETag starts the empty string, and turns
+  `If-Unmodified-Since` off; an empty `If-None-Match` turns
+  `If-Modified-Since` off; an empty date is 400 InvalidArgument; and an
+  empty algorithm is 400 InvalidEncryptionAlgorithmError rather than
+  InvalidArgument. radosgw reads the customer key and key-MD5 headers with
+  an empty default (`rgw_crypt.cc:1341` and `:1359` at v19.2.6, `:1360` and
+  `:1379` at v20.2.4), so for those two an empty value is an absent one on
+  both gateways.
+- **X-Rgw-Auth.** radosgw answers a GET or HEAD carrying an `X-Rgw-Auth`
+  header, for its cache server's authentication check, with the status and
+  headers alone and a Content-Length of 0, and makes none of the torrent,
+  compression, cloud-tier, Swift large object, range and SSE checks that
+  follow the conditionals; a GET carrying it does not prefetch
+  (`rgw_op.cc:2179` and `:2271-2274` at v19.2.6, `:2414` and `:2507-2510`
+  at v20.2.4). rgw-go ignores the header: it makes those checks, which can
+  refuse the request, and serves a GET's body.
+- **A refused response-* parameter.** rgw-go answers 400 InvalidRequest to
+  a request whose `response-*` parameter radosgw refuses, because the
+  request is anonymous or the value holds a control character. radosgw
+  makes that check while it writes the response headers
+  (`rgw_rest_s3.cc:513-533` at v19.2.6, `:630-650` at v20.2.4). For a HEAD,
+  and for a GET with nothing to read, it ignores the refusal
+  (`rgw_op.cc:2436-2439` at v19.2.6, `:2668-2671` at v20.2.4) and, by code
+  reading, sends no response at all; for any other GET it sends its
+  success status line, 200, or 206 for a Range GET (`rgw_rest_s3.cc:398` at
+  v19.2.6, `:409` at v20.2.4), and then the 400 response
+  (`docs/ceph-upstream-bugs.md`,
+  "[radosgw sends no response, or two status lines, when it refuses a
+  response-* parameter](ceph-upstream-bugs.md#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter)").
+- **Conditionals use the object's mtime alone.** Tentacle compares
+  `If-Modified-Since` and `If-Unmodified-Since` with the later of the
+  object's mtime and its `user.rgw.rgw-internal-mtime` attr
+  (`obj_time_weight::init`, `driver/rados/rgw_rados.cc:4211-4227` at
+  v20.2.4), which a cloud transition writes and a restore rewrites
+  (`driver/rados/rgw_sal_rados.cc:3487` and `:3567`, and
+  `driver/rados/rgw_rados.cc:5642`, at v20.2.4). rgw-go compares the mtime
+  alone, so where that attr is later, it answers 304 Not Modified where
+  Tentacle serves the object, and serves it where Tentacle answers 412
+  PreconditionFailed. Squid has no such attr.
 
 ## Pending
 
