@@ -36,8 +36,15 @@ var (
 	cellTimeout = flag.Duration("cell-timeout", 5*time.Minute, "the deadline of each call of a cell, its Prepare and iterations, and of each cell's cleanup. Past it a callback- or pipe-mode operation and a submission parked on the in-flight limiter give up, but a sync-mode call blocked in librados and an object listing blocked in its iterator's Next return only when librados does, which only go test's -timeout bounds")
 )
 
+// process identifies this benchmark process among every process of a sweep:
+// a pid alone can be reused within one.
+var process = strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+
 // Cell is one JSON result line.
 type Cell struct {
+	// Process is the benchmark process the cell ran in: a cell's idle
+	// thread count includes whatever earlier cells of its process grew.
+	Process string `json:"process"`
 	Time    string `json:"time"`
 	Release string `json:"release"`
 	Mode    string `json:"mode"`
@@ -221,6 +228,7 @@ func runCell(b *testing.B, ctx context.Context, t target, sh seam.Shape, conc, i
 	b.ReportMetric(opsPerSec, "ops/s")
 	if *resultsFlag != "" {
 		err = appendCell(*resultsFlag, Cell{
+			Process:     process,
 			Time:        time.Now().UTC().Format(time.RFC3339),
 			Release:     t.label,
 			Mode:        *modeFlag,

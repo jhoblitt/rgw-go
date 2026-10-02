@@ -236,6 +236,54 @@ var _ = Describe("Seam", func() {
 		Expect(r.Markdown).To(ContainSubstring("callback passes all four criteria"))
 	})
 
+	It("judges each cell's thread growth within its own process and shows each process's high-water mark", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Threads, report.Pass, "worst +2 of 16 allowed (read4k at 16), margin +14")),
+			"every cell ran in a process of its own, so its idle count is its process's first")
+		Expect(r.Markdown).To(ContainSubstring("| mode | benchmark processes | largest growth in one process | highest count |"))
+		Expect(r.Markdown).To(ContainSubstring("| sync | 12 | 22→92 (+70) | 92 |"))
+		Expect(r.Markdown).To(ContainSubstring("| callback | 12 | 23→25 (+2) | 25 |"))
+	})
+
+	It("judges thread growth against both baselines where a mode's cells shared a process", func(ctx SpecContext) {
+		// Without process ids, as before seam.sh gave each cell a process:
+		// callback's twelve measured cells ran in one process, each starting
+		// where the last one peaked.
+		i := 0
+		dir := sweep(func(file string, line map[string]any) bool {
+			delete(line, "process")
+			if n, ok := line["n"].(float64); file == "seam-callback.jsonl" && ok && n > 100 {
+				line["threads_idle"] = float64(23 + 2*i)
+				line["threads_peak"] = float64(25 + 2*i)
+				i++
+			}
+			return true
+		})
+		r, err := report.Seam(ctx, dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Threads, report.Inconclusive,
+			"against each cell's own idle count, worst +2 of 16 allowed (read4k at 16), margin +14; "+
+				"against its process's first, worst +24 of 16 allowed (write4m at 16), margin -8")),
+			"the cell's own idle count bounds its growth from below, its process's first from above")
+		Expect(r.Verdicts).To(ContainElement(verdict("pipe", report.Threads, report.Pass, "worst +3 of 16 allowed")),
+			"pipe's cells each start below the last one's peak, so each ran in a process of its own")
+		Expect(r.Passing).To(BeEmpty(), "an inconclusive criterion does not pass")
+		Expect(r.Markdown).To(ContainSubstring("| callback | 2 | 23→47 (+24) | 47 |"))
+		Expect(r.Markdown).To(ContainSubstring("These cells carry no process id"))
+	})
+
+	It("refuses cells that mix process ids with none", func(ctx SpecContext) {
+		dir := sweep(func(file string, line map[string]any) bool {
+			if file == "seam-pipe.jsonl" {
+				delete(line, "process")
+			}
+			return true
+		})
+		_, err := report.Seam(ctx, dir)
+		Expect(err).To(MatchError(ContainSubstring("some cells carry a process id and some do not")))
+	})
+
 	It("judges the 4 MiB shapes at 1, 4 and 16 in flight, and is incomplete without one", func(ctx SpecContext) {
 		dir := sweep(func(file string, line map[string]any) bool {
 			return file != "floor.jsonl" || !is(line, "", "write4m", 4)

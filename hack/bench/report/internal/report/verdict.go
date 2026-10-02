@@ -33,11 +33,13 @@ const (
 type Status string
 
 // The outcomes. A criterion is Incomplete when a cell it needs is missing
-// and none it has fails.
+// and none it has fails, and Inconclusive when the data bound the measure
+// on both sides of its threshold.
 const (
-	Pass       Status = "PASS"
-	Fail       Status = "FAIL"
-	Incomplete Status = "INCOMPLETE"
+	Pass         Status = "PASS"
+	Fail         Status = "FAIL"
+	Incomplete   Status = "INCOMPLETE"
+	Inconclusive Status = "INCONCLUSIVE"
 )
 
 // Verdict is one criterion applied to one mode's cells. Judged is false for
@@ -200,30 +202,59 @@ func (s *sweep) latency(mode string) Verdict {
 	return v
 }
 
+// growthAt is a cell's thread growth against one baseline.
+type growthAt struct {
+	cell   *Cell
+	growth int
+}
+
+func (g growthAt) over() int { return g.growth - g.cell.allowance() }
+
+func (g growthAt) String() string {
+	return fmt.Sprintf("worst %+d of %d allowed (%s at %d), margin %+d",
+		g.growth, g.cell.allowance(), g.cell.Shape, g.cell.Conc, -g.over())
+}
+
 // threads judges every cell of mode, all of which ran under the byte
-// budget, by its growth against its own allowance.
+// budget, by its growth against its own allowance, measured from two
+// baselines: the cell's own idle count, which leaves out what earlier cells
+// of its process grew and so bounds its growth from below, and its
+// process's first idle count, which bounds it from above. A cell in a
+// process of its own has one baseline. Where only the upper bound fails,
+// the criterion cannot be decided.
 func (s *sweep) threads(mode string) Verdict {
-	var worst *Cell
+	var own, proc *growthAt
+	same := true
 	for _, shape := range s.shapes {
 		for _, c := range s.cellsOf(mode, shape) {
-			if worst == nil || c.growth()-c.allowance() > worst.growth()-worst.allowance() {
-				worst = c
+			o := growthAt{c, c.growth()}
+			p := growthAt{c, c.ThreadsPeak - s.processStart(key{mode, c.Shape, c.Conc})}
+			same = same && o.growth == p.growth
+			if own == nil || o.over() > own.over() {
+				own = &o
+			}
+			if proc == nil || p.over() > proc.over() {
+				proc = &p
 			}
 		}
 	}
-	if worst == nil {
+	if own == nil {
 		return Verdict{Criterion: Threads, Status: Incomplete, Margin: "missing: every cell"}
 	}
-	status := Pass
-	if worst.growth() > worst.allowance() {
+	var status Status
+	switch {
+	case own.over() > 0:
 		status = Fail
+	case proc.over() > 0:
+		status = Inconclusive
+	default:
+		status = Pass
 	}
-	return Verdict{
-		Criterion: Threads,
-		Status:    status,
-		Margin: fmt.Sprintf("worst %+d of %d allowed (%s at %d), margin %+d",
-			worst.growth(), worst.allowance(), worst.Shape, worst.Conc, worst.allowance()-worst.growth()),
+	margin := own.String()
+	if !same {
+		margin = "against each cell's own idle count, " + own.String() + "; against its process's first, " + proc.String()
 	}
+	return Verdict{Criterion: Threads, Status: status, Margin: margin}
 }
 
 func (s *sweep) cgo(mode string) Verdict {

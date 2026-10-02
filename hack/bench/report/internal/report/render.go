@@ -88,6 +88,24 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 	}
 	fmt.Fprintf(b, "\n**Answer:** %s on %s.\n", r.Answer(), s.releaseName())
 	s.renderLimits(b)
+	s.renderProcesses(b)
+}
+
+// renderProcesses gives each mode's thread high-water mark per benchmark
+// process, against which the threads criterion reads each cell.
+func (s *sweep) renderProcesses(b *strings.Builder) {
+	b.WriteString("\nThread counts per benchmark process, the count before its first cell to its highest:\n\n")
+	b.WriteString("| mode | benchmark processes | largest growth in one process | highest count |\n|---|---|---|---|\n")
+	for _, m := range s.modes {
+		largest, highest, n := s.highWater(m)
+		fmt.Fprintf(b, "| %s | %d | %s | %d |\n", m, n, largest, highest)
+	}
+	if s.inferred {
+		b.WriteString("\nThese cells carry no process id, so a mode's cells may have shared a benchmark process; the " +
+			"processes above are inferred, a cell that starts below its predecessor's process's peak starting a new one. " +
+			"Each cell's growth is judged against its own idle count, which leaves out what earlier cells of its process " +
+			"grew, and against its process's first idle count, which does not.\n")
+	}
 }
 
 // renderLimits states the in-flight limits the cells ran under and any

@@ -31,5 +31,7 @@
 // threads earlier cells and their cleanups left, so its growth understates
 // what it would grow from a cold start: in sync mode, which parks a thread
 // per operation in flight, only a cell with more in flight than any earlier
-// cell or cleanup had shows growth of its own.
+// cell or cleanup had shows growth of its own. Every line names its process,
+// so that a cell's growth can be read against its process's first idle count
+// as well as its own; run with one cell per process, the two coincide.
 package seam

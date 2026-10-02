@@ -25,6 +25,9 @@ import (
 // calibrates b.N, so a cell has several lines, and the one with the largest n
 // is its measurement.
 type Cell struct {
+	// Process identifies the benchmark process the cell ran in; files
+	// written before seam.sh gave each cell a process carry none.
+	Process     string  `json:"process"`
 	Time        string  `json:"time"`
 	Release     string  `json:"release"`
 	Mode        string  `json:"mode"`
@@ -204,12 +207,17 @@ type sweep struct {
 	// release of the librados the benchmark links, and clusterImage the
 	// image the cluster runs.
 	floorImage, floorVersion, clusterImage string
-	cells                                  map[key]Cell
-	modes                                  []string
-	shapes                                 []string
-	over                                   []Cell
-	floors                                 map[floorKey]Floor
-	profiles                               map[string]profile
+	// procs are the benchmark processes, inferred when the cells carry no
+	// process id, and cellProc the process each kept cell line ran in.
+	procs    []*benchProcess
+	inferred bool
+	cellProc map[key]int
+	cells    map[key]Cell
+	modes    []string
+	shapes   []string
+	over     []Cell
+	floors   map[floorKey]Floor
+	profiles map[string]profile
 }
 
 // profile is a mode's read4k CPU profile at 256 in flight.
@@ -237,21 +245,39 @@ func readSweep(ctx context.Context, dir string) (*sweep, error) {
 	if err := checkArtifacts(dir); err != nil {
 		return nil, err
 	}
-	s := &sweep{dir: dir, cells: map[key]Cell{}, floors: map[floorKey]Floor{}, profiles: map[string]profile{}}
+	s := &sweep{dir: dir, cells: map[key]Cell{}, cellProc: map[key]int{}, floors: map[floorKey]Floor{}, profiles: map[string]profile{}}
 	files, err := filepath.Glob(filepath.Join(dir, "seam-*.jsonl"))
 	if err != nil {
 		return nil, err
 	}
+	decided := false
 	for _, f := range files {
 		mode := fileMode(f, "seam-")
+		var lines []Cell
 		err := readLines(f, func(c Cell) error {
 			if err := sameMode(c, mode); err != nil {
 				return err
 			}
-			return s.addCell(c)
+			if err := validCell(c); err != nil {
+				return err
+			}
+			lines = append(lines, c)
+			return nil
 		})
 		if err != nil {
 			return nil, err
+		}
+		if !decided && len(lines) > 0 {
+			s.inferred, decided = lines[0].Process == "", true
+		}
+		procs, err := s.assignProcesses(mode, lines)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		for j := range lines {
+			if err := s.addCell(lines[j], procs[j]); err != nil {
+				return nil, fmt.Errorf("%s: %w", f, err)
+			}
 		}
 	}
 	if len(s.cells) == 0 {
@@ -322,12 +348,10 @@ func validCell(c Cell) error {
 	return nil
 }
 
-// addCell keeps c when it is the first line of its cell or has a larger n
-// than the line kept; of two lines with the same n, the later one.
-func (s *sweep) addCell(c Cell) error {
-	if err := validCell(c); err != nil {
-		return err
-	}
+// addCell keeps c, which ran in process proc, when it is the first line of
+// its cell or has a larger n than the line kept; of two lines with the same
+// n, the later one.
+func (s *sweep) addCell(c Cell, proc int) error {
 	k := key{c.Mode, c.Shape, c.Conc}
 	if kept, ok := s.cells[k]; ok {
 		if kept.MaxInflightOps != c.MaxInflightOps || kept.MaxInflightBytes != c.MaxInflightBytes {
@@ -338,7 +362,14 @@ func (s *sweep) addCell(c Cell) error {
 		}
 	}
 	s.cells[k] = c
+	s.cellProc[k] = proc
 	return nil
+}
+
+// processStart is the thread count before the first cell of the process the
+// kept line of k ran in.
+func (s *sweep) processStart(k key) int {
+	return s.procs[s.cellProc[k]].firstIdle
 }
 
 // checkEven fails when one mode, of those the cells name and those every

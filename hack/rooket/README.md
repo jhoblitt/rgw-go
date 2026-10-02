@@ -195,8 +195,9 @@ under `make integration`, over TLS too, and stops it with SIGTERM.
 ## The seam microbenchmark
 
 `make bench-seam RELEASE=squid` runs `hack/bench/seam.sh`, which sweeps the
-seam microbenchmark in `test/bench/seam` over the `rgw-go-test` pool, never
-two completion modes in one process, measures its floor with `rados bench`,
+seam microbenchmark in `test/bench/seam` over the `rgw-go-test` pool, each
+cell in each completion mode in a benchmark process of its own, so that a
+cell's thread growth is its own, measures its floor with `rados bench`,
 run on the host through `ROOKET_ENGINE` (podman by default), and renders
 `hack/bench/out/<release>/seam-<UTC time>/REPORT.md` with
 `hack/bench/report`. Each cell the throughput and latency criteria compare

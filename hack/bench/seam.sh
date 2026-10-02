@@ -13,19 +13,19 @@
 #
 # Usage: seam.sh squid|tentacle
 #
-# Each benchmark process runs one completion mode, since the runtime keeps
-# the OS threads one mode grows and go-ceph's completion notifier is
-# process-wide. Per mode, one process sweeps the head and index shapes at
-# CONC and one read4k and write4k at the concurrencies of CONC the
-# throughput and latency criteria do not compare; each of those floors runs
-# once after them. Each cell the criteria compare, read4k and write4k at 64
-# and 256 and read4m and write4m at BENCH_LARGE_CONC, runs alone: its floor,
-# then the cell in each mode, each in a process of its own, then its floor
-# again, so that the floor brackets the cell rather than running long after
-# it. Then, per asynchronous mode, write4m runs at 64 in flight past the byte
-# budget, once with the in-flight limiter's bounds above what the cell
-# reaches and once with them derived from the objecter throttle; and, per
-# mode, read4k runs at 256 under a CPU profile.
+# Each cell runs in each mode in a benchmark process of its own: the runtime
+# keeps the OS threads a process grows, so a later cell of the same process
+# would start from an earlier one's threads, and go-ceph's completion
+# notifier is process-wide. The head and index shapes run at CONC, and read4k
+# and write4k at the concurrencies of CONC the throughput and latency
+# criteria do not compare, each followed by one floor run. Each cell the
+# criteria compare, read4k and write4k at 64 and 256 and read4m and write4m
+# at BENCH_LARGE_CONC, runs between two floor runs, one just before its three
+# modes and one just after, so that the floor brackets the cell rather than
+# running long after it. Then, per asynchronous mode, write4m runs at 64 in
+# flight past the byte budget, once with the in-flight limiter's bounds above
+# what the cell reaches and once with them derived from the objecter
+# throttle; and, per mode, read4k runs at 256 under a CPU profile.
 #
 # A 4 MiB write cell or floor run writes BENCH_WRITE4M_OBJECTS objects, not
 # a time window, so that both sides write the same bytes, and starts only
@@ -231,6 +231,16 @@ judged_cell() { # shape conc
 	fi
 }
 
+# cell_modes runs a cell in each mode, each in a benchmark process of its
+# own, so that the cell's thread growth is its own and not what an earlier
+# cell of its process left.
+cell_modes() { # shape conc
+	local shape=$1 conc=$2 mode
+	for mode in sync callback pipe; do
+		bench "${mode}" "${dir}/seam-${mode}.jsonl" -shapes="${shape}" -conc="${conc}"
+	done
+}
+
 conc_words() {
 	echo "${1//,/ }"
 }
@@ -245,10 +255,6 @@ for c in $(conc_words "${CONC}"); do
 	*) other_small+=("${c}") ;;
 	esac
 done
-other_small_list=$(
-	IFS=,
-	echo "${other_small[*]}"
-)
 
 # The report pairs the 4 MiB cells with their floor runs only at 1, 4 and 16
 # in flight, so a cell elsewhere would get floor runs it shows as no floor.
@@ -327,16 +333,16 @@ jq -n --arg release "${release}" --arg ceph_version "$(pinned_version)" --arg cl
 	--argjson pool_max_avail "$(pool_avail)" --arg load "$(cut -d' ' -f1-3 /proc/loadavg)" \
 	'$ARGS.named' >"${dir}/env.json"
 
-for mode in sync callback pipe; do
-	results=${dir}/seam-${mode}.jsonl
-	bench "${mode}" "${results}" -shapes=headread4k,headwrite4k,indexrtt -conc="${CONC}"
-	if ((${#other_small[@]} > 0)); then
-		bench "${mode}" "${results}" -shapes=read4k,write4k -conc="${other_small_list}"
-	fi
+for shape in headread4k headwrite4k indexrtt; do
+	for c in $(conc_words "${CONC}"); do
+		cell_modes "${shape}" "${c}"
+	done
 done
-for c in "${other_small[@]}"; do
-	floor_run "${floor_image}" read4k "${c}" ""
-	floor_run "${floor_image}" write4k "${c}" ""
+for shape in read4k write4k; do
+	for c in "${other_small[@]}"; do
+		cell_modes "${shape}" "${c}"
+		floor_run "${floor_image}" "${shape}" "${c}" ""
+	done
 done
 
 for shape in read4k write4k; do
