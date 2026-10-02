@@ -593,6 +593,103 @@ review and verified against the tree.
   The stored ACL is the same either way; only the rendered document
   differs, and only for an ID, display name or email address holding `&`,
   `<`, `>`, `'`, `"` or a control byte.
+- **A manifest walk that stops moving, or runs past its stripe bound,
+  fails.** rgw-go walks a manifest's stripes from its start in two places:
+  `meta.Manifest.Stripes`, the whole layout, which it builds in memory, and
+  `meta.Manifest.PartBounds`, the part lookup behind GET and HEAD with
+  `partNumber` and GetObjectAttributes's ObjectParts. Each fails with
+  `denc.ErrMalformed` at the first step that does not move past the
+  previous offset, and with `meta.ErrTooManyStripes` past its bound,
+  `meta.MaxStripes` (2^21 stripes) for `Stripes` and `meta.MaxWalkStripes`
+  (2^26) for `PartBounds`; each refuses at once a tail that needs more
+  stripes than its bound. The operation that needs the walk fails instead
+  of hanging. radosgw's walks check neither
+  (`docs/ceph-upstream-bugs.md`, "[radosgw hangs or faults walking a
+  manifest whose rule has a stripe size of
+  0](ceph-upstream-bugs.md#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0)").
+  - `operator++` stops moving on a rule whose stripe size is 0, adding that
+    size to the stripe offset without ever reaching the part's end, and on
+    a manifest without rules that is not explicit
+    (`rgw_obj_manifest.cc:34-36` and `:55-91` at v19.2.6 and v20.2.4).
+  - radosgw's part lookup then loops forever in `obj_find_part` before part
+    n (`driver/rados/rgw_obj_manifest.cc:210-217`). For a part whose first
+    stripe is on such a rule, `get_part_obj_state` divides by its stripe
+    size of 0, which on x86-64 raises SIGFPE and ends the process; AArch64's
+    UDIV yields 0 instead, and the lookup would loop (not exercised).
+  - For a part that starts in the head, the object itself holds its first
+    stripe and carries the manifest, so radosgw's lookup returns at once
+    with the whole object's manifest (`driver/rados/rgw_rados.cc:6810-6813`
+    at v19.2.6, `:7646-7649` at v20.2.4). A HEAD with that `partNumber` then
+    answers 200, as `RGWGetObj` returns after the read's `prepare` for a stat
+    (`rgw_op.cc:2267-2269` at v19.2.6, `:2503-2506` at v20.2.4); a GET never
+    ends in `iterate_obj`, whose step stays put on a stripe of size 0
+    (`driver/rados/rgw_rados.cc:7497-7519` at v19.2.6, `:8352-8374` at
+    v20.2.4); and at v20.2.4 ObjectParts never ends in `list_parts`' own walk
+    (`driver/rados/rgw_sal_rados.cc:2880-2886`). rgw-go refuses all three, so
+    for that HEAD it fails where radosgw answers.
+  - A manifest without rules never reaches the part lookup, as its end part
+    id is 0. radosgw's whole-manifest walk in `update_gc_chain`, which an
+    overwrite or delete runs on the replaced object's manifest unless it
+    keeps the tail (`driver/rados/rgw_rados.cc:5414` at v19.2.6, `:6137` at
+    v20.2.4), loops forever on such a rule once the object passes its head,
+    and without rules whenever the object is not empty. Each pass whose
+    stripe is not the head appends that stripe's object to the chain
+    (`cls/rgw/cls_rgw_types.h:1161-1172` at v19.2.6, `:1200-1209` at
+    v20.2.4), so the stuck walk also grows memory without bound. `Stripes`
+    instead lays a manifest without rules whose head holds the whole object
+    out as the head alone.
+  - The progress check also refuses a step that goes backward, which only
+    an offset wrapping past 2^64 produces and which radosgw follows.
+  - No manifest radosgw writes trips the progress check, so it costs
+    nothing on data radosgw or rgw-go wrote. `generator::create_begin`
+    refuses a manifest without a rule
+    (`driver/rados/rgw_obj_manifest.cc:250-254`). A rule's stripe size of 0
+    comes from an `rgw_obj_stripe_size` of 0, and then `create_next` divides
+    by it at the first offset at or past the head's end (`:22-28`), so no
+    such manifest with data past its head is stored
+    (`docs/ceph-upstream-bugs.md`, "[radosgw divides by zero writing with an
+    rgw_obj_stripe_size of
+    0](ceph-upstream-bugs.md#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0)").
+    A PUT smaller than the inline head stores one, whose walk ends in the
+    head. Only a corrupted manifest, or one planted by a writer with access
+    to the data pool, trips the check.
+  - radosgw does not cap an object at S3's 5 TiB. CompleteMultipartUpload
+    checks only the part count against `rgw_multipart_part_upload_limit`
+    (`rgw_op.cc:6410-6414` at v19.2.6, `:7205-7209` at v20.2.4), and
+    `rgw_max_put_size` caps each part (`RGWPutObj_ObjStore::verify_params`,
+    `rgw_rest.cc:1049-1059` at v19.2.6, `:1054-1064` at v20.2.4). Their
+    defaults, 10,000 and 5 GiB (`common/options/rgw.yaml.in:2367-2373` and
+    `:127-137` at v19.2.6, `:2467-2473` and `:130-140` at v20.2.4, where the
+    option text names the product), allow a multipart object of about
+    48.8 TiB, 12,800,000 stripes of the default 4 MiB. An appendable object
+    has no total cap: `rgw_max_put_size` bounds each append's request
+    (`RGWPutObj_ObjStore::get_data`, `rgw_rest.cc:1096` at v19.2.6, `:1101`
+    at v20.2.4), each non-empty append adds a part of at least one stripe
+    (`AppendObjectProcessor::prepare`,
+    `driver/rados/rgw_putobj_processor.cc:662-667` at v19.2.6, `:701-706` at
+    v20.2.4), and no option caps their number at either tag.
+    `rgw_obj_stripe_size` has no lower limit
+    (`common/options/rgw.yaml.in:1860-1872` at v19.2.6, `:1948-1960` at
+    v20.2.4), and radosgw at most rounds it to the data pool's required
+    alignment (`get_max_aligned_size`, `driver/rados/rgw_rados.cc:695-708`
+    at v19.2.6, `:730-743` at v20.2.4, called at
+    `driver/rados/rgw_putobj_processor.cc:317` and `:453` at v19.2.6, `:345`
+    and `:487` at v20.2.4).
+  - `PartBounds`' bound, which keeps nothing per stripe and caps a walk at
+    about 6 s, covers that largest multipart object five times over. It
+    refuses data radosgw wrote past 2^26 stripes:
+    - a multipart object of 10,000 parts of 5 GiB in stripes of at most
+      800,105 bytes, the size at which its walk to the last part passes the
+      bound, or in stripes under 800,000 bytes (about 781 KiB), which the
+      up-front check refuses outright;
+    - an appendable object past 2^26 stripes, which takes far fewer appends
+      than that: about 52,429 of 5 GiB in the default 4 MiB stripes, some
+      256 TiB.
+  - `Stripes`' bound keeps the list it builds to a few hundred MB, and
+    refuses data radosgw writes at its defaults: an object over about 8 TiB
+    in the default 4 MiB stripes, or one appended to more than 2^21 times at
+    any stripe size. A caller that walks whole objects that large iterates
+    instead, under `PartBounds`' bound.
 
 ### Command-line differences
 
@@ -1216,3 +1313,11 @@ operator and the Ceph dashboard call.
   by rgw-go; `radosgw-admin objects expire` does it on demand.
 - A go-ceph fork item beyond the planned bindings: an exec step that
   returns data from a modifying class method.
+- Part lookups in an object whose manifest lays out more than 2^26
+  stripes are refused past that bound, or outright when its tail alone
+  needs more. radosgw writes such a multipart object at its default size
+  limits only with an `rgw_obj_stripe_size` of about 800,000 bytes or less,
+  and such an appendable object with enough appends, about 52,429 of 5 GiB
+  at the default stripe size. `Stripes` lays out no object over 2^21
+  stripes, about 8 TiB at the default stripe size, so whole-object walks of
+  larger objects iterate.
