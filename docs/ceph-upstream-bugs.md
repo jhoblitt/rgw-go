@@ -89,6 +89,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | none | none | ✓ |
 | [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | none | none | ✓ |
 | [radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32](#radosgws-tail-stripe-names-go-negative-at-stripe-231-and-repeat-at-232) | pending | pending |  |
+| [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3351,3 +3352,62 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 3, 2026-10-01, writing the plain-PUT
   manifest generator; derived from the source, not reproduced.
+
+## radosgw's user removal reports success over a lost version race, leaving the user without its indexes
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - `RGWSI_User_RADOS::remove_user_info` first removes the user's active
+    access-key index objects, its Swift-key index objects, its email index
+    object and, for a user outside an account, its bucket list, the
+    `<uid>.buckets` object (`services/svc_user_rados.cc:559-600`,
+    `:533-574`). It then unlinks the user from its account and its groups
+    (`:601-622`, `:575-596`). Only after that does it remove the user's
+    `users.uid` object, through `remove_uid_index` under the caller's version
+    tracker (`:624-627`, `:598-601`).
+  - `remove_uid_index` returns 0 when that removal fails with ENOENT or with
+    ECANCELED (`:639`, `:614-616`; v20.2.4 comments the return "success but
+    no mdlog entry"), and `remove_user_info` then returns 0.
+  - The tracker carries the version the user was loaded at:
+    `RadosUser::remove_user` passes the `objv_tracker` that `load_user`
+    filled (`driver/rados/rgw_sal_rados.cc:264-267` and `:278-282`,
+    `:281-284` and `:295-299`). The removal therefore runs cls_version's
+    `check_conds` on the user object, which fails with ECANCELED once
+    another writer has changed the user (`cls/version/cls_version.cc:177-197`
+    at both tags).
+  - `RGWUser::init` loads the user, and with it the version tracker, before
+    the removal starts (`driver/rados/rgw_user.cc:1418` and `:1442`, `:1423`
+    and `:1447`). `RGWUser::execute_remove` then lists the user's buckets
+    through its bucket list and, with purge-data, removes them, and only then
+    calls `remove_user` on the user `init` loaded (`:1945-1985`,
+    `:1951-1991`). The window between the load and the removal spans the
+    bucket purge.
+- **Impact:** a `radosgw-admin user rm`, or an admin API user removal, that
+  races a change to the same user, such as a key added or the user
+  suspended, reports success. The user object survives at its new version.
+  - The index objects of the access keys, Swift keys and email of the user as
+    `init` loaded it are gone, so the user cannot authenticate with those
+    keys and is not found by that email. A key or email that the racing
+    change added keeps the index object that change wrote
+    (`services/svc_user_rados.cc:315-351`, `:295-331`), so the user can
+    still authenticate with such a key.
+  - Its bucket list is gone too, so a bucket it created after the removal
+    listed its buckets is missing from its ListBuckets. `user info --uid`
+    still shows the user.
+  - Running the removal again deletes the user but not such a bucket. With
+    the bucket list gone, the listing finds no buckets
+    (`driver/rados/buckets.cc:108-111` at both tags), so the re-run neither
+    refuses without purge-data nor purges with it
+    (`driver/rados/rgw_user.cc:1956-1983`, `:1962-1989`). The bucket is left
+    owned by a deleted user.
+- **Releases:** checked at v19.2.6 and v20.2.4; older releases not checked.
+- **rgw-go:** keeps radosgw's order, so a lost race leaves the same state.
+  `RemoveUser` (`internal/driver/user.go`) reports the race instead of
+  success: ConcurrentModification when the user changed, NoSuchUser when it
+  is gone. Whether the admin API's user removal passes either error on to
+  the client is decided with that op.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 metadata plane (unit M, Task 4), 2026-10-01,
+  implementing the RADOS driver's RemoveUser; derived from the source, not
+  reproduced.
