@@ -238,24 +238,6 @@ var _ = Describe("the driver", func() {
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
 			},
-			Entry("GetUser", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetUser(ctx, meta.UserID{ID: "alice"})
-				return err
-			}),
-			Entry("GetUserByAccessKey", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetUserByAccessKey(ctx, "AK")
-				return err
-			}),
-			Entry("GetUserByEmail", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetUserByEmail(ctx, "alice@example.com")
-				return err
-			}),
-			Entry("PutUser", func(ctx context.Context, s *driver.Store) error {
-				return s.PutUser(ctx, &op.UserRecord{Info: meta.UserInfo{UserID: meta.UserID{ID: "alice"}}}, op.PutUserOptions{Exclusive: true})
-			}),
-			Entry("RemoveUser", func(ctx context.Context, s *driver.Store) error {
-				return s.RemoveUser(ctx, &op.UserRecord{Info: meta.UserInfo{UserID: meta.UserID{ID: "alice"}}})
-			}),
 			Entry("ListUserBuckets", func(ctx context.Context, s *driver.Store) error {
 				_, _, _, err := s.ListUserBuckets(ctx, meta.UserOwner(meta.UserID{ID: "alice"}), "", 1000)
 				return err

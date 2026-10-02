@@ -7,11 +7,13 @@ const XattrName = "ceph.objclass.version"
 
 // ObjVersion is obj_version; an object without one reads as the zero
 // ObjVersion. Set stores whatever the caller sends, never initializing it.
-// Inc on an unversioned object first writes Ver 1 with a random 24-character
-// base64 tag, then increments, leaving 2. radosgw's metadata objects start at
-// Ver 1 with a 24-character alphanumeric tag because
-// RGWObjVersionTracker::generate_new_write_ver makes that version and sends it
-// with set.
+// Inc on an unversioned object first writes Ver 1 with a tag of 24 random
+// base64 characters (init_version's cls_gen_rand_base64, cls_version.cc:37-52
+// at v19.2.6 and v20.2.4), then increments, leaving 2. radosgw's metadata
+// objects start at Ver 1 because RGWObjVersionTracker::generate_new_write_ver
+// makes that version and sends it with set, its tag an underscore followed by
+// 23 characters of gen_rand_alphanumeric (rgw_common.cc:3204-3211,
+// rgw_common.h:1621-1628 at v19.2.6; :3266-3273, :1623-1630 at v20.2.4).
 type ObjVersion struct {
 	Ver uint64 `json:"ver"`
 	Tag string `json:"tag"`

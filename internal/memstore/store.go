@@ -245,9 +245,12 @@ func (s *Store) nextEpoch() uint64 {
 	return s.epoch
 }
 
-// newTag is RGWObjVersionTracker::generate_new_write_ver's tag: 24
-// characters of gen_rand_alphanumeric.
-func (s *Store) newTag() string { return randomAlphanumeric(24) }
+// newTag is RGWObjVersionTracker::generate_new_write_ver's tag:
+// append_rand_alpha with TAG_LEN 24 writes an underscore, then the 23
+// characters gen_rand_alphanumeric fills a 24-byte buffer with before its
+// terminator (rgw_common.cc:3204-3211, rgw_common.h:1621-1628 at v19.2.6;
+// :3266-3273, :1623-1630 at v20.2.4).
+func (s *Store) newTag() string { return "_" + randomAlphanumeric(23) }
 
 // alphanumeric is gen_rand_alphanumeric's table (src/common/random_string.cc),
 // a URL-safe base64 alphabet despite the name.

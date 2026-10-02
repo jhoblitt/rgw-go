@@ -160,31 +160,6 @@ func (s *Store) Period() meta.Period { return s.zone.Period }
 // is not in the period.
 func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
 
-// GetUser implements op.UserStore.
-func (s *Store) GetUser(context.Context, meta.UserID) (*op.UserRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// GetUserByAccessKey implements op.UserStore.
-func (s *Store) GetUserByAccessKey(context.Context, string) (*op.UserRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// GetUserByEmail implements op.UserStore.
-func (s *Store) GetUserByEmail(context.Context, string) (*op.UserRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// PutUser implements op.UserStore.
-func (s *Store) PutUser(context.Context, *op.UserRecord, op.PutUserOptions) error {
-	return op.ErrNotImplemented
-}
-
-// RemoveUser implements op.UserStore.
-func (s *Store) RemoveUser(context.Context, *op.UserRecord) error {
-	return op.ErrNotImplemented
-}
-
 // ListUserBuckets implements op.UserStore.
 func (s *Store) ListUserBuckets(context.Context, meta.Owner, string, int) (ents []meta.BucketEnt, next string, more bool, err error) {
 	return nil, "", false, op.ErrNotImplemented

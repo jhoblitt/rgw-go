@@ -62,6 +62,7 @@ type store struct {
 	failWatch  map[string]*failure
 	failNotify map[string]*failure
 	notifies   map[string][][]byte
+	reads      map[string]int
 }
 
 // failure is an injected error with the number of calls it still fails.
@@ -180,6 +181,7 @@ func (c *Cluster) store(pool, ns string) *store {
 		failWatch:  map[string]*failure{},
 		failNotify: map[string]*failure{},
 		notifies:   map[string][][]byte{},
+		reads:      map[string]int{},
 	}
 	c.stores[k] = s
 	return s
@@ -248,6 +250,14 @@ func (c *Cluster) Notifies(pool, ns, oid string) [][]byte {
 		out = append(out, slices.Clone(p))
 	}
 	return out
+}
+
+// Reads returns the number of read ops run on the object, failed ones
+// included.
+func (c *Cluster) Reads(pool, ns, oid string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.store(pool, ns).reads[oid]
 }
 
 // Pool opens a handle on pool and namespace. Each call returns a new handle,

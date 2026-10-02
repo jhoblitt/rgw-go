@@ -31,9 +31,9 @@ func newStore() (*memstore.Store, *clock) {
 
 func owner(id string) meta.Owner { return meta.UserOwner(meta.UserID{ID: id}) }
 
-// tagPattern is RGWObjVersionTracker::generate_new_write_ver's tag: 24
-// characters of gen_rand_alphanumeric's table.
-const tagPattern = `^[A-Za-z0-9_-]{24}$`
+// tagPattern is RGWObjVersionTracker::generate_new_write_ver's tag: an
+// underscore and 23 characters of gen_rand_alphanumeric's table.
+const tagPattern = `^_[A-Za-z0-9_-]{23}$`
 
 func mustCreate(ctx context.Context, s *memstore.Store, tenant, name string, o meta.Owner) *op.BucketRecord {
 	GinkgoHelper()

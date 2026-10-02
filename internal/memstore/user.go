@@ -67,8 +67,10 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 // a user (svc_user_rados.cc:229-351 at v19.2.6). An active access key that
 // another user's index holds, and that the stored record (read unless
 // Exclusive) did not already hold active, is ErrKeyExists before anything is
-// written (:257-270). The version written is IfVersion's plus one under its
-// tag, and a fresh one without it (:234-241).
+// written (:257-270). IfVersion is checked unless its Ver is 0, and the
+// version written is IfVersion's plus one under its tag, or a fresh one
+// without IfVersion or its tag (:234-241; rgw_common.h:950-955). The mtime
+// stored is opts.Mtime, or the clock's time when that is zero.
 func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,7 +95,7 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 	if exists {
 		cur = old.Version
 	}
-	if opts.IfVersion != nil && *opts.IfVersion != cur {
+	if opts.IfVersion != nil && opts.IfVersion.Ver != 0 && *opts.IfVersion != cur {
 		return fmt.Errorf("user %s: %w", id, op.ErrConcurrentModification)
 	}
 	next := meta.ObjVersion{Ver: 1, Tag: s.newTag()}
@@ -101,18 +103,27 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 		next = meta.ObjVersion{Ver: opts.IfVersion.Ver + 1, Tag: opts.IfVersion.Tag}
 	}
 	rec.Version = next
-	rec.Mtime = s.now()
+	rec.Mtime = opts.Mtime
+	if rec.Mtime.IsZero() {
+		rec.Mtime = s.now()
+	}
 	s.storeUser(copyUser(rec))
 	return nil
 }
 
-// RemoveUser implements op.UserStore.
+// RemoveUser implements op.UserStore. It checks rec.Version unless its Ver
+// is 0, and removes nothing when the user is missing or changed; the
+// contract allows a partial removal, which radosgw's order leaves.
 func (s *Store) RemoveUser(_ context.Context, rec *op.UserRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := rec.Info.UserID.String()
-	if _, ok := s.users[id]; !ok {
+	cur, ok := s.users[id]
+	if !ok {
 		return fmt.Errorf("user %s: %w", id, op.ErrNoSuchUser)
+	}
+	if rec.Version.Ver != 0 && rec.Version != cur.Version {
+		return fmt.Errorf("user %s: %w", id, op.ErrConcurrentModification)
 	}
 	s.unindexUser(id)
 	delete(s.users, id)

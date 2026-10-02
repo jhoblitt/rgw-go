@@ -97,6 +97,7 @@ func (p *Pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	if err := p.usable(name); err != nil {
 		return 0, err
 	}
+	p.store.reads[oid]++
 	return p.run(name, oid, steps, false, flags, time.Time{})
 }
 
