@@ -4,3 +4,4 @@ coverage.out
 /hack/rooket/out/
 /hack/image/out/
 /hack/s3tests/out/
+/hack/bench/out/

@@ -15,10 +15,12 @@
 // completion notifier is process-wide. It works in the namespace bench-<pid>
 // of the pool rgw-go-test and runs a sub-benchmark per shape and
 // concurrency. It skips a cell whose concurrency times its shape's Size, the
-// data extent an iteration writes or asks to read, passes -inflight-bytes,
-// set under librados's objecter byte throttle: past the throttle,
-// submission blocks an OS thread inside C in every mode, and goceph's
-// in-flight limiter, which stays below it, parks the excess in Go instead.
+// data extent an iteration writes or asks to read, passes -budget-bytes,
+// which defaults to the bytes goceph's in-flight limiter admits under
+// librados's default objecter byte throttle. The limiter parks a
+// submission past its bounds in Go; -inflight-ops and -inflight-bytes set
+// them, and bounds above what a cell reaches leave the submission to the
+// objecter throttle, which blocks an OS thread inside C in every mode.
 //
 // testing.B calls a sub-benchmark more than once while it calibrates b.N, and
 // every call prepares its objects and appends its own JSON line to -results.
@@ -29,5 +31,7 @@
 // threads earlier cells and their cleanups left, so its growth understates
 // what it would grow from a cold start: in sync mode, which parks a thread
 // per operation in flight, only a cell with more in flight than any earlier
-// cell or cleanup had shows growth of its own.
+// cell or cleanup had shows growth of its own. Every line names its process,
+// so that a cell's growth can be read against its process's first idle count
+// as well as its own; run with one cell per process, the two coincide.
 package seam

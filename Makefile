@@ -147,6 +147,10 @@ parity-record: ## Record a baseline from RUN-FILES: make parity-record SUITE=s3t
 parity-check: ## Compare a candidate result with a baseline: make parity-check BASELINE=... CANDIDATE=...
 	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CANDIDATE)
 
+.PHONY: bench-seam
+bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
+	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) hack/bench/seam.sh $(RELEASE)
+
 .PHONY: cluster-down
 cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output
 	ROOKET=$(ROOKET_BIN) hack/rooket/down.sh $(RELEASE)

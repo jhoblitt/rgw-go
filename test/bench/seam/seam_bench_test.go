@@ -30,18 +30,27 @@ var (
 	concFlag    = flag.String("conc", "1,16,64,256,512", "operations in flight per cell, comma separated")
 	shapesFlag  = flag.String("shapes", "", "shapes to run, comma separated; every shape when empty")
 	resultsFlag = flag.String("results", "", "append one JSON line per call of a cell to this file; a cell's measurement is its line with the largest n")
-	budgetFlag  = flag.Int64("inflight-bytes", 96<<20, "skip a cell whose conc times budget_bytes, the data extent one iteration writes or asks to read, exceeds this. librados's objecter throttles in-flight bytes at 100 MiB, past which submission blocks an OS thread inside C in every mode; goceph's in-flight limiter parks submissions in Go from 15/16 of that. 0 disables the cap.")
-	cellTimeout = flag.Duration("cell-timeout", 5*time.Minute, "fail a call of a cell, its Prepare and iterations, or a cell's cleanup, that has not finished by then")
+	budgetFlag  = flag.Int64("budget-bytes", 15*(100<<20)/16, "skip a cell whose conc times budget_bytes, the data extent one iteration writes or asks to read, exceeds this. The default is the in-flight limiter's byte bound under librados's default objecter_inflight_op_bytes of 100 MiB, so the limiter parks no cell the default runs for its bytes. 0 disables the cap.")
+	opsLimit    = flag.Int("inflight-ops", 0, "the in-flight limiter's operation bound, goceph's MaxInflightOps; 0 derives it from objecter_inflight_ops, as rgw-go runs")
+	bytesLimit  = flag.Int64("inflight-bytes", 0, "the in-flight limiter's byte bound, goceph's MaxInflightBytes; 0 derives it from objecter_inflight_op_bytes, as rgw-go runs. Bounds above what a cell can reach leave submission to librados's objecter throttle, which blocks the submitting OS thread inside C in every mode")
+	cellTimeout = flag.Duration("cell-timeout", 5*time.Minute, "the deadline of each call of a cell, its Prepare and iterations, and of each cell's cleanup. Past it a callback- or pipe-mode operation and a submission parked on the in-flight limiter give up, but a sync-mode call blocked in librados and an object listing blocked in its iterator's Next return only when librados does. go test's -timeout does not apply to benchmarks, so only something outside the process bounds those: hack/bench/seam.sh's watchdog stops each benchmark process past its limit")
 )
+
+// process identifies this benchmark process among every process of a sweep:
+// a pid alone can be reused within one.
+var process = strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
 // Cell is one JSON result line.
 type Cell struct {
+	// Process is the benchmark process the cell ran in: a cell's idle
+	// thread count includes whatever earlier cells of its process grew.
+	Process string `json:"process"`
 	Time    string `json:"time"`
 	Release string `json:"release"`
 	Mode    string `json:"mode"`
 	Shape   string `json:"shape"`
 	// BudgetBytes is the shape's Size, the data extent one iteration writes
-	// or asks to read, which -inflight-bytes counts. It is not what an
+	// or asks to read, which -budget-bytes counts. It is not what an
 	// iteration transfers: headread4k asks for 4 MiB of a 4 KiB object.
 	BudgetBytes int     `json:"budget_bytes"`
 	Ops         int     `json:"ops_per_iter"`
@@ -58,6 +67,13 @@ type Cell struct {
 	ThreadsPeak int     `json:"threads_peak"`
 	GOMAXPROCS  int     `json:"gomaxprocs"`
 	Errors      int     `json:"errors"`
+	// MaxInflightOps and MaxInflightBytes are -inflight-ops and
+	// -inflight-bytes, 0 where the limiter derives the bound.
+	MaxInflightOps   int   `json:"max_inflight_ops"`
+	MaxInflightBytes int64 `json:"max_inflight_bytes"`
+	// ThrottleWaits counts the call's iterations' submissions that parked on
+	// the in-flight limiter.
+	ThrottleWaits uint64 `json:"throttle_waits"`
 }
 
 func BenchmarkSeam(b *testing.B) {
@@ -76,9 +92,18 @@ func BenchmarkSeam(b *testing.B) {
 		}
 	}
 	ctx := b.Context()
-	cluster, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Mode: goceph.Mode(*modeFlag)})
+	cluster, err := goceph.Connect(ctx, goceph.Config{
+		ConfigFile:       conf,
+		Mode:             goceph.Mode(*modeFlag),
+		MaxInflightOps:   *opsLimit,
+		MaxInflightBytes: *bytesLimit,
+	})
 	if err != nil {
 		b.Fatal(err)
+	}
+	stats, ok := cluster.(radosclient.StatsReporter)
+	if !ok {
+		b.Fatalf("the %T cluster reports no limiter waits", cluster)
 	}
 	b.Cleanup(func() {
 		if closeErr := cluster.Close(); closeErr != nil {
@@ -98,11 +123,11 @@ func BenchmarkSeam(b *testing.B) {
 			b.Error(closeErr)
 		}
 	})
-	label := filepath.Base(filepath.Dir(conf))
+	t := target{pool: pool, release: release, stats: stats, label: filepath.Base(filepath.Dir(conf))}
 	for _, sh := range shapes {
 		for _, c := range concs {
 			if *budgetFlag > 0 && int64(c)*int64(sh.Size()) > *budgetFlag {
-				b.Logf("skipping %s at %d: %d budgeted bytes in flight exceeds -inflight-bytes", sh.Name(), c, c*sh.Size())
+				b.Logf("skipping %s at %d: %d budgeted bytes in flight exceeds -budget-bytes", sh.Name(), c, c*sh.Size())
 				continue
 			}
 			// The Go runtime keeps an idle OS thread rather than destroying
@@ -116,7 +141,7 @@ func BenchmarkSeam(b *testing.B) {
 				b.Fatal(idleErr)
 			}
 			b.Run(fmt.Sprintf("shape=%s/conc=%d", sh.Name(), c), func(b *testing.B) {
-				runCell(b, ctx, pool, release, sh, c, idle, label)
+				runCell(b, ctx, t, sh, c, idle)
 			})
 			cleanupCtx, cancel := context.WithTimeout(ctx, *cellTimeout)
 			cleanupErr := sh.Cleanup(cleanupCtx, pool)
@@ -128,15 +153,24 @@ func BenchmarkSeam(b *testing.B) {
 	}
 }
 
+// target is what every cell runs against: the pool, the cluster's release,
+// the cluster's limiter counters and the release label of the results.
+type target struct {
+	pool    radosclient.Pool
+	release denc.Release
+	stats   radosclient.StatsReporter
+	label   string
+}
+
 // runCell issues b.N iterations of sh from conc workers and reports them
 // against idle, the thread count before the cell's first call.
-func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Release, sh seam.Shape, conc, idle int, label string) {
+func runCell(b *testing.B, ctx context.Context, t target, sh seam.Shape, conc, idle int) {
 	// The deadline fails a stuck call rather than hanging the sweep: past it
 	// Prepare and every iteration fail at once, and in the asynchronous
 	// modes an operation still waiting gives up.
 	cctx, cancel := context.WithTimeout(ctx, *cellTimeout)
 	defer cancel()
-	if err := sh.Prepare(cctx, pool, r, conc); err != nil {
+	if err := sh.Prepare(cctx, t.pool, t.release, conc); err != nil {
 		b.Fatalf("preparing %s: %v", sh.Name(), err)
 	}
 	lat := make([]time.Duration, b.N)
@@ -150,6 +184,7 @@ func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Re
 	if err != nil {
 		b.Fatal(err)
 	}
+	waits0 := t.stats.Stats().ThrottleWaits
 	sampler := seam.NewSampler(10 * time.Millisecond)
 	b.ResetTimer()
 	for w := range conc {
@@ -160,7 +195,7 @@ func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Re
 					return
 				}
 				start := time.Now()
-				runErr := sh.Run(cctx, pool, w, i)
+				runErr := sh.Run(cctx, t.pool, w, i)
 				lat[i] = time.Since(start)
 				if runErr != nil {
 					failed.Add(1)
@@ -175,6 +210,7 @@ func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Re
 	}
 	wg.Wait()
 	b.StopTimer()
+	waits := t.stats.Stats().ThrottleWaits - waits0
 	peak := sampler.Stop()
 	cpu1, err := seam.CPUTime()
 	if err != nil {
@@ -192,8 +228,9 @@ func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Re
 	b.ReportMetric(opsPerSec, "ops/s")
 	if *resultsFlag != "" {
 		err = appendCell(*resultsFlag, Cell{
+			Process:     process,
 			Time:        time.Now().UTC().Format(time.RFC3339),
-			Release:     label,
+			Release:     t.label,
 			Mode:        *modeFlag,
 			Shape:       sh.Name(),
 			BudgetBytes: sh.Size(),
@@ -211,6 +248,10 @@ func runCell(b *testing.B, ctx context.Context, pool radosclient.Pool, r denc.Re
 			ThreadsPeak: peak,
 			GOMAXPROCS:  runtime.GOMAXPROCS(0),
 			Errors:      int(failed.Load()),
+
+			MaxInflightOps:   *opsLimit,
+			MaxInflightBytes: *bytesLimit,
+			ThrottleWaits:    waits,
 		})
 		if err != nil {
 			b.Fatal(err)
