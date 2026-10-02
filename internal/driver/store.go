@@ -39,15 +39,18 @@ type Store struct {
 }
 
 var (
-	_ op.ZoneInfo       = (*Store)(nil)
-	_ op.UserStore      = (*Store)(nil)
-	_ op.AccountStore   = (*Store)(nil)
-	_ op.BucketStore    = (*Store)(nil)
-	_ op.ObjectStore    = (*Store)(nil)
-	_ op.MultipartStore = (*Store)(nil)
-	_ op.StatsStore     = (*Store)(nil)
-	_ op.UsageLogger    = (*Store)(nil)
-	_ op.MetadataStore  = (*Store)(nil)
+	_ op.ZoneInfo         = (*Store)(nil)
+	_ op.UserStore        = (*Store)(nil)
+	_ op.AccountStore     = (*Store)(nil)
+	_ op.BucketStore      = (*Store)(nil)
+	_ op.ObjectStore      = (*Store)(nil)
+	_ op.MultipartStore   = (*Store)(nil)
+	_ op.StatsStore       = (*Store)(nil)
+	_ op.UsageLogger      = (*Store)(nil)
+	_ op.MetadataStore    = (*Store)(nil)
+	_ op.UsageReader      = (*Store)(nil)
+	_ op.BucketAdminStore = (*Store)(nil)
+	_ op.RealmStore       = (*Store)(nil)
 )
 
 // Open connects the driver to cluster: it detects the release, resolves the
@@ -118,16 +121,19 @@ func detectRelease(ctx context.Context, cluster radosclient.Cluster, override *d
 // caller.
 func (s *Store) Env() *op.Env {
 	return &op.Env{
-		Zone:      s,
-		Users:     s,
-		Accounts:  s,
-		Buckets:   s,
-		Objects:   s,
-		Multipart: s,
-		Stats:     s,
-		Usage:     s,
-		Metadata:  s,
-		Conf:      s.conf,
+		Zone:        s,
+		Users:       s,
+		Accounts:    s,
+		UsageReader: s,
+		BucketAdmin: s,
+		Realms:      s,
+		Buckets:     s,
+		Objects:     s,
+		Multipart:   s,
+		Stats:       s,
+		Usage:       s,
+		Metadata:    s,
+		Conf:        s.conf,
 	}
 }
 
@@ -192,6 +198,121 @@ func (s *Store) GetAccount(context.Context, string) (*op.AccountRecord, error) {
 // AccountName implements op.AccountStore.
 func (s *Store) AccountName(context.Context, string) (string, error) {
 	return "", op.ErrNotImplemented
+}
+
+// GetAccountByName implements op.AccountStore.
+func (s *Store) GetAccountByName(context.Context, string, string) (*op.AccountRecord, error) {
+	return nil, op.ErrNotImplemented
+}
+
+// GetAccountByEmail implements op.AccountStore.
+func (s *Store) GetAccountByEmail(context.Context, string) (*op.AccountRecord, error) {
+	return nil, op.ErrNotImplemented
+}
+
+// PutAccount implements op.AccountStore.
+func (s *Store) PutAccount(context.Context, *op.AccountRecord, *meta.AccountInfo, op.PutAccountOptions) error {
+	return op.ErrNotImplemented
+}
+
+// RemoveAccount implements op.AccountStore.
+func (s *Store) RemoveAccount(context.Context, *op.AccountRecord) error {
+	return op.ErrNotImplemented
+}
+
+// AddAccountUser implements op.AccountStore.
+func (s *Store) AddAccountUser(context.Context, string, meta.UserInfo) error {
+	return op.ErrNotImplemented
+}
+
+// RemoveAccountUser implements op.AccountStore.
+func (s *Store) RemoveAccountUser(context.Context, string, string) error {
+	return op.ErrNotImplemented
+}
+
+// ListAccountUsers implements op.AccountStore.
+func (s *Store) ListAccountUsers(context.Context, string, string, uint32) (ids []string, next string, err error) {
+	return nil, "", op.ErrNotImplemented
+}
+
+// ReadUsage implements op.UsageReader.
+func (s *Store) ReadUsage(context.Context, string, string, uint64, uint64, uint32, *op.UsageIter) (recs []op.UsageRecord, truncated bool, err error) {
+	return nil, false, op.ErrNotImplemented
+}
+
+// TrimUsage implements op.UsageReader.
+func (s *Store) TrimUsage(context.Context, string, string, uint64, uint64) error {
+	return op.ErrNotImplemented
+}
+
+// IndexStats implements op.BucketAdminStore.
+func (s *Store) IndexStats(context.Context, *op.BucketRecord) (op.BucketIndexStats, error) {
+	return op.BucketIndexStats{}, op.ErrNotImplemented
+}
+
+// ChangeBucketOwner implements op.BucketAdminStore.
+func (s *Store) ChangeBucketOwner(context.Context, *op.BucketRecord, meta.Owner, string, *meta.BucketID) error {
+	return op.ErrNotImplemented
+}
+
+// UnlinkBucketOwner implements op.BucketAdminStore.
+func (s *Store) UnlinkBucketOwner(context.Context, *op.BucketRecord, meta.Owner) error {
+	return op.ErrNotImplemented
+}
+
+// CheckIndex implements op.BucketAdminStore.
+func (s *Store) CheckIndex(context.Context, *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
+	return nil, nil, op.ErrNotImplemented
+}
+
+// RebuildIndex implements op.BucketAdminStore.
+func (s *Store) RebuildIndex(context.Context, *op.BucketRecord) error {
+	return op.ErrNotImplemented
+}
+
+// RemoveIndexEntries implements op.BucketAdminStore.
+func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.ObjKey) error {
+	return op.ErrNotImplemented
+}
+
+// ChownBucket implements op.BucketAdminStore.
+func (s *Store) ChownBucket(context.Context, *op.BucketRecord, meta.Owner, string) error {
+	return op.ErrNotImplemented
+}
+
+// SyncOwnerStats implements op.BucketAdminStore.
+func (s *Store) SyncOwnerStats(context.Context, meta.Owner) error {
+	return op.ErrNotImplemented
+}
+
+// PurgeBypassGC implements op.BucketAdminStore.
+func (s *Store) PurgeBypassGC(context.Context, *op.BucketRecord) error {
+	return op.ErrNotImplemented
+}
+
+// GetRealm implements op.RealmStore.
+func (s *Store) GetRealm(context.Context, string, string) (meta.Realm, error) {
+	return meta.Realm{}, op.ErrNotImplemented
+}
+
+// ListRealms implements op.RealmStore.
+func (s *Store) ListRealms(context.Context) (defaultID string, names []string, err error) {
+	return "", nil, op.ErrNotImplemented
+}
+
+// GetPeriod implements op.RealmStore.
+func (s *Store) GetPeriod(context.Context, string, string, uint32) (meta.Period, error) {
+	return meta.Period{}, op.ErrNotImplemented
+}
+
+// GetPeriodConfig implements op.RealmStore.
+func (s *Store) GetPeriodConfig(context.Context, string) (meta.PeriodConfig, error) {
+	return meta.PeriodConfig{}, op.ErrNotImplemented
+}
+
+// PutPeriodConfig implements op.RealmStore.
+func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) error {
+	return op.ErrNotImplemented
 }
 
 // GetBucket implements op.BucketStore.

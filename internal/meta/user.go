@@ -165,7 +165,7 @@ func maskString(table []flagName, mask uint32) string {
 
 // Caps is RGWUserCaps: admin capability type to RGW_CAP_* bits. Its JSON form
 // is the list RGWUserCaps::dump(f, name) writes.
-type Caps map[string]uint32
+type Caps map[string]uint32 //nolint:recvcheck // AddString allocates a nil map, which a value receiver cannot; the rest only read or delete, safe on nil
 
 // capNames is cap_names in rgw_common.cc.
 var capNames = []flagName{
