@@ -1,0 +1,22 @@
+{
+  "name": "presigned-empty-security-token",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "example.amazonaws.com",
+  "headers": {},
+  "presigned": true,
+  "query_extra": "X-Amz-Security-Token=",
+  "signed_headers": "host",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:37:40Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "",
+    "date": "20150830T123600Z",
+    "access_key": "AKIDEXAMPLE",
+    "error": "AccessDenied",
+    "message": ""
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "presigned-payload-header-honoured",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "X-Amz-Content-Sha256": [
+      "UNSIGNED-PAYLOAD"
+    ]
+  },
+  "presigned": true,
+  "signed_headers": "host;x-amz-content-sha256",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:37:40Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "GET\n/b/k\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host%3Bx-amz-content-sha256\nhost:example.amazonaws.com\nx-amz-content-sha256:UNSIGNED-PAYLOAD\n\nhost;x-amz-content-sha256\nUNSIGNED-PAYLOAD",
+    "date": "20150830T123600Z",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

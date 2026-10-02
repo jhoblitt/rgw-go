@@ -49,7 +49,15 @@ type v4Vector struct {
 		Error string `json:"error"`
 		// VerifyFalse expects the request to parse and verify to refuse it.
 		VerifyFalse bool `json:"verify_false"`
+		// Message, when present, is that op.Error's message.
+		Message *string `json:"message"`
 	} `json:"expect"`
+	// A presigned vector sends Expect.Date as X-Amz-Date and Expect.AccessKey
+	// in X-Amz-Credential. Expires is its X-Amz-Expires, "300" when empty,
+	// and QueryExtra what its query carries after X-Amz-SignedHeaders and
+	// before X-Amz-Signature.
+	Expires    string `json:"expires"`
+	QueryExtra string `json:"query_extra"`
 }
 
 func (v *v4Vector) authorization() string {
@@ -62,6 +70,33 @@ func (v *v4Vector) authorization() string {
 	}
 	return aws4Algorithm + " Credential=" + v.Expect.AccessKey + "/" + v.Scope +
 		", SignedHeaders=" + v.SignedHeaders + ", Signature=" + sig
+}
+
+// target is Target, to which a presigned vector appends its credentials as
+// query parameters, signed as authorization signs a header vector.
+func (v *v4Vector) target() string {
+	if !v.Presigned {
+		return v.Target
+	}
+	sep, expires, sig := "?", v.Expires, v.Signature
+	if strings.Contains(v.Target, "?") {
+		sep = "&"
+	}
+	if expires == "" {
+		expires = "300"
+	}
+	if sig == "" {
+		sig = signatureV4(signingKeyV4(v.Secret, v.Scope), stringToSignV4(v.Expect.Date, v.Scope, v.Expect.CanonicalRequest))
+	}
+	q := sep + "X-Amz-Algorithm=" + aws4Algorithm +
+		"&X-Amz-Credential=" + v.Expect.AccessKey + "%2F" + strings.ReplaceAll(v.Scope, "/", "%2F") +
+		"&X-Amz-Date=" + v.Expect.Date +
+		"&X-Amz-Expires=" + expires +
+		"&X-Amz-SignedHeaders=" + v.SignedHeaders
+	if v.QueryExtra != "" {
+		q += "&" + v.QueryExtra
+	}
+	return v.Target + q + "&X-Amz-Signature=" + sig
 }
 
 func loadV4Vector(path string) *v4Vector {
@@ -77,7 +112,7 @@ func loadV4Vector(path string) *v4Vector {
 
 func runV4Vector(ctx SpecContext, path string) {
 	v := loadV4Vector(path)
-	req := httptest.NewRequestWithContext(ctx, v.Method, "http://"+v.Host+v.Target, strings.NewReader(v.Body))
+	req := httptest.NewRequestWithContext(ctx, v.Method, "http://"+v.Host+v.target(), strings.NewReader(v.Body))
 	for name, values := range v.Headers {
 		for _, value := range values {
 			req.Header.Add(name, value)
@@ -93,6 +128,9 @@ func runV4Vector(ctx SpecContext, path string) {
 	if v.Expect.Error != "" {
 		opErr, _ := errors.AsType[*op.Error](err)
 		Expect(opErr).To(HaveField("Code", v.Expect.Error), "error %v", err)
+		if v.Expect.Message != nil {
+			Expect(opErr).To(HaveField("Message", *v.Expect.Message), "error %v", err)
+		}
 		return
 	}
 	Expect(err).NotTo(HaveOccurred())

@@ -106,6 +106,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | pending | pending |  |
 | [Squid's negated condition operators hold when any pair differs, and its Null ignores its values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values) | [#73146](https://tracker.ceph.com/issues/73146), [#74736](https://tracker.ceph.com/issues/74736) | [ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606), [ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188), [ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214), [ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444) |  |
 | [radosgw's date conditions wrap past 2554 and before 1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970) | pending | pending |  |
+| [radosgw never expires a presigned SigV4 URL dated before 1970](#radosgw-never-expires-a-presigned-sigv4-url-dated-before-1970) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4259,3 +4260,44 @@ Every new entry adds its row to this table, in document order.
   `internal_timegm`, compiled with GCC 15.3, agrees with rgw-go on 43 date
   inputs, and its double-to-integer arithmetic gives the same answers under
   GCC 11.5 and 13.5; not reproduced on a running radosgw.
+
+## radosgw never expires a presigned SigV4 URL dated before 1970
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's, and a single line is the same at both.
+  - `parse_v4_query_string` reads X-Amz-Date with `parse_iso8601`, whose
+    strptime `%Y` takes any year up to 9999 and which checks no range
+    (`rgw_common.cc:599-659`, `:612-672`). It then computes
+    `uint64_t req_sec = (uint64_t)internal_timegm(&date_t)` and refuses the
+    URL as expired when `now >= req_sec + exp`, all in `uint64_t`
+    (`rgw_auth_s3.cc:314-316`, `:317-319`).
+  - `internal_timegm` returns a signed `time_t`, negative for a date before
+    1970 (`include/timegm.h:54-76`). The cast wraps it to just under 2^64.
+    For a date more than X-Amz-Expires seconds before
+    1970-01-01T00:00:00Z the sum stays above every clock, so the URL never
+    expires; for a date less than that before it, the sum wraps below
+    X-Amz-Expires, so the URL is already expired. `19691231T000000Z` with an
+    X-Amz-Expires of 300 is therefore valid whenever it is used.
+  - `now` is `ceph_clock_now()` converted to `uint64_t` through utime_t's
+    `operator double` (`include/utime.h:230-232`), which adds the
+    nanoseconds in a double before the truncation to seconds. So a time a
+    fraction of a microsecond short of the next second counts as that
+    second, and an expiry lands up to about 120 ns early, which no client
+    can observe.
+- **Impact:** a presigned URL dated before 1970 by more than its expiry is
+  accepted at any time, though its date and expiry say it has expired. The
+  date is signed, so only the holder of the secret can make such a URL, and
+  radosgw applies no skew check to a presigned URL, so that holder can
+  equally sign one dated in the future that is valid now and stays valid
+  until then. The wrap therefore grants nothing a signer cannot already
+  mint; it is not security-relevant.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw_auth_s3.cc:318-320`).
+- **rgw-go:** `parseV4Query` (`internal/auth/sigv4.go`) mirrors it, the
+  clock's rounding included, so a presigned URL expires when radosgw's
+  does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 4, 2026-10-02, transcribing
+  `parse_v4_query_string`; derived from the source, not reproduced.

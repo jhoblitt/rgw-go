@@ -24,6 +24,9 @@ const (
 	// unsignedPayload is AWS4_UNSIGNED_PAYLOAD_HASH (rgw_auth_s3.h:527 at
 	// v19.2.6, :530 at v20.2.4).
 	unsignedPayload = "UNSIGNED-PAYLOAD"
+	// maxPresignExpires is the longest X-Amz-Expires, seven days in seconds
+	// (rgw_auth_s3.cc:309 at v19.2.6, :312 at v20.2.4).
+	maxPresignExpires = 7 * 24 * 60 * 60
 )
 
 // v4Credentials is what parse_v4_credentials yields (rgw_auth_s3.cc:538-584
@@ -147,10 +150,78 @@ func (c *v4Credentials) splitCredential(cred string) error {
 	return nil
 }
 
-// parseV4Query is the query route of parse_v4_credentials, which is not
-// implemented yet.
-func parseV4Query(_ *requestView, _ time.Time) (*v4Credentials, error) {
-	return nil, op.ErrNotImplemented
+// parseV4Query is parse_v4_query_string (rgw_auth_s3.cc:280-339 at v19.2.6,
+// :283-342 at v20.2.4) and the credential split of parse_v4_credentials. A
+// missing or empty parameter, a malformed date (EACCES on the header route)
+// and an X-Amz-Expires that atoll reads outside [1, 604800] are all EPERM,
+// as is an X-Amz-Security-Token present but empty. There is no skew check,
+// so a URL dated in the future is valid from now. radosgw adds the date and
+// the expiry in uint64_t, so a date more than the expiry before 1970 wraps
+// past every clock and never expires. An expired URL is refused with the
+// message Strategy::apply gives ERR_PRESIGNED_URL_EXPIRED (rgw_auth.cc:500-504
+// at v19.2.6, :515-519 at v20.2.4).
+func parseV4Query(rv *requestView, now time.Time) (*v4Credentials, error) {
+	denied := func(what string) error { return fmt.Errorf("%w: presigned url %s", op.ErrAccessDenied, what) }
+	cred, _ := rv.param("x-amz-credential")
+	if cred == "" {
+		return nil, denied("without a credential")
+	}
+	c := &v4Credentials{}
+	c.date, _ = rv.param("x-amz-date")
+	t, ok := parseISO8601Basic(c.date)
+	if !ok {
+		return nil, denied("without a valid date")
+	}
+	expires, _ := rv.param("x-amz-expires")
+	if expires == "" {
+		return nil, denied("without an expiry")
+	}
+	exp := atoll(expires)
+	if exp < 1 || exp > maxPresignExpires {
+		return nil, denied("with an expiry out of range")
+	}
+	reqSec := uint64(t.Unix()) //nolint:gosec // radosgw casts the time_t to uint64_t
+	if presignClock(now) >= reqSec+uint64(exp) {
+		return nil, op.ErrAccessDenied.WithMessage("The pre-signed URL has expired")
+	}
+	if c.signedHeaders, _ = rv.param("x-amz-signedheaders"); c.signedHeaders == "" {
+		return nil, denied("without signed headers")
+	}
+	if c.signature, _ = rv.param("x-amz-signature"); c.signature == "" {
+		return nil, denied("without a signature")
+	}
+	if tok, present := rv.param("x-amz-security-token"); present {
+		if tok == "" {
+			return nil, denied("with an empty security token")
+		}
+		c.sessionToken = tok
+	}
+	if err := c.splitCredential(cred); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// presignClock is now as parse_v4_query_string reads ceph_clock_now() into a
+// uint64_t: through utime_t, which keeps 32 bits of seconds, and its operator
+// double (include/utime.h:51, :230-232 at v19.2.6 and v20.2.4), so the
+// nanoseconds are added in a double before the truncation to seconds, and a
+// time a fraction of a microsecond short of the next second rounds up to it.
+func presignClock(now time.Time) uint64 {
+	sec := uint32(now.Unix()) //nolint:gosec // utime_t keeps 32 bits of seconds
+	return uint64(float64(sec) + float64(now.Nanosecond())/1e9)
+}
+
+// boto2HostPort is the port the boto2 engine appends to a signed host
+// (rgw_auth_s3.cc:770-783 at v19.2.6, :747-760 at v20.2.4): on a TLS listener
+// SERVER_PORT_SECURE unless it is 443, otherwise SERVER_PORT unless it is 80;
+// "" when nothing is appended.
+func boto2HostPort(rv *requestView) string {
+	port, secure := rv.localPort()
+	if port == "" || secure && port == "443" || !secure && port == "80" {
+		return ""
+	}
+	return port
 }
 
 // canonicalURIV4 is get_v4_canonical_uri (rgw_auth_s3.h:598-612 at v19.2.6,
@@ -353,13 +424,33 @@ func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*a
 	if err != nil {
 		return nil, err
 	}
-	creq := canonicalRequestV4(rv.req.Method, canonicalURIV4(rv.rawPath), canonicalQueryV4(rv.rawQuery, presigned),
-		hdrs, c.signedHeaders, payloadHash)
+	uri, qs := canonicalURIV4(rv.rawPath), canonicalQueryV4(rv.rawQuery, presigned)
+	creq := canonicalRequestV4(rv.req.Method, uri, qs, hdrs, c.signedHeaders, payloadHash)
 	sts := stringToSignV4(c.date, c.scope, creq)
 	d := &authData{
 		accessKey: c.accessKey, signature: c.signature, canonicalRequest: creq, stringToSign: sts,
 		v4: c, presigned: presigned, payloadHash: payloadHash, payload: pc,
 	}
 	d.sign = func(secret string) (string, error) { return signatureV4(signingKeyV4(secret, c.scope), sts), nil }
+	// When the first engine of radosgw's S3 strategy denies a request, it
+	// tries a boto2 engine whose only difference is that a presigned
+	// request's signed host has the listener's port appended
+	// (rgw_auth_registry.h:28-49 at v19.2.6 and v20.2.4; rgw_rest_s3.cc:6022-6030
+	// at v19.2.6, :6593-6601 at v20.2.4). The local engine denies a signature
+	// mismatch (rgw_rest_s3.cc:6374 at v19.2.6, :6945 at v20.2.4). A rejection
+	// ends the strategy instead (rgw_auth.cc:367-369 at v19.2.6, :382-384 at
+	// v20.2.4), and the STS engine rejects a request carrying a session token
+	// whose signature does not match (rgw_rest_s3.cc:6530 at v19.2.6, :7138 at
+	// v20.2.4), so such a request never reaches the fallback. verify tries
+	// altSign for every caller, so an STS engine must not inherit it. When
+	// the boto2 engine is denied too, radosgw reports the first engine's
+	// result (rgw_auth.cc:396-397 at v19.2.6, :411-412 at v20.2.4), which a
+	// refusal here leaves standing.
+	if port := boto2HostPort(rv); presigned && port != "" && slices.Contains(strings.Split(c.signedHeaders, ";"), "host") {
+		if altHdrs, err := canonicalHeadersV4(rv, c.signedHeaders, cfg.Insecure, port); err == nil {
+			altSts := stringToSignV4(c.date, c.scope, canonicalRequestV4(rv.req.Method, uri, qs, altHdrs, c.signedHeaders, payloadHash))
+			d.altSign = func(secret string) (string, error) { return signatureV4(signingKeyV4(secret, c.scope), altSts), nil }
+		}
+	}
 	return d, nil
 }
