@@ -83,6 +83,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read back](#compressor_zlib_winsize-8-writes-zlib-blocks-radosgw-cannot-read-back) | pending | pending |  |
 | [radosgw's zstd decompress reports success on a frame that fails or decodes short](#radosgws-zstd-decompress-reports-success-on-a-frame-that-fails-or-decodes-short) | pending | pending |  |
 | [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | pending | pending |  |
+| [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2840,3 +2841,75 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
   zlib decompressor; derived from the source, not reproduced.
+
+## radosgw lets a user take an account's email and deletes it with the account
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `account.cc` is the same at v19.2.6 and v20.2.4 except one
+  line after these, so each of its lines below holds at both; main
+  (06adccc, 2026-10-01) has the same code 17 lines lower.
+  - An account's email index object is the user's: `get_email_obj` names it
+    by the lowercased email in `user_email_pool`, under the comment "account
+    email oids conflict with user email oids. this ensures that all emails
+    are globally unique" (`account.cc:103-114`, main `:120-131`).
+  - The account side keeps that promise: `account::write` refuses a new
+    email whose object exists, whoever it names, with `-EEXIST`
+    (`account.cc:312-322`, main `:329-339`).
+  - The user side does not. User create and modify look for a duplicate
+    with `get_user_by_email`: `RGWUser::init` under `rgw_user_unique_email`,
+    which defaults to true (`driver/rados/rgw_user.cc:1421-1425` at v19.2.6,
+    `:1426-1430` at v20.2.4, main `:1366-1370`; `rgw.yaml.in:2441-2448` at
+    v19.2.6), and `execute_modify` (`driver/rados/rgw_user.cc:2052-2060` at
+    v19.2.6, `:2058-2066` at v20.2.4, main `:2031-2039`). That lookup goes
+    through `get_user_info_from_index`, which answers ENOENT when the index
+    names an account (`svc_user_rados.cc:700-703` at v19.2.6, `:675-678` at
+    v20.2.4, main `:691-694`), so neither check sees the account's email.
+  - The user is stored with `exclusive=false` (`driver/rados/rgw_user.cc:1500`
+    at v19.2.6, `:1505` at v20.2.4, main `:1445`), and `PutOperation::complete`
+    writes the email object with that flag (`svc_user_rados.cc:315-325` at
+    v19.2.6, `:295-305` at v20.2.4, main `:302-312`), so the object now names
+    the user. The account keeps the email in its info, but `read_by_email`
+    answers ENOENT for it (`account.cc:233-236`, main `:250-253`), and an ACL
+    grant by that email resolves to the user through `load_owner_by_email`
+    (`rgw_sal_rados.cc:1296-1309` at v19.2.6, `:1835-1848` at v20.2.4, main
+    `:2067-2080`; `rgw_acl_s3.cc:504-507` at all three).
+  - Removing the account then deletes the email object without reading it
+    (`account::remove`, `account.cc:418-426`, main `:435-443`), although the
+    user now holds it. `account::write`'s rename path, by contrast, deletes
+    an old entry only when it names the account (`account.cc:277` and
+    `:290`, main `:294` and `:307`).
+  - Metadata put repoints another user's email the same way, since it stores
+    the user with `exclusive=false` and runs no email duplicate check at all
+    (`driver/rados/rgw_user.cc:2831-2833` at v19.2.6, `:2844-2845` at
+    v20.2.4), and `PUT /admin/metadata/user` with the `metadata=write` cap
+    (`rgw_rest_metadata.cc:263`, `rgw_rest_metadata.h:61-62`),
+    `radosgw-admin metadata put` (`rgw_admin.cc:9259` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:9777` at v20.2.4) and multisite metadata
+    sync (`driver/rados/rgw_sync.cc:1118`) all reach it.
+- **Impact:** an admin who gives a user an account's email silently takes
+  it from the account: the account is no longer found by its email, and a
+  grant by that email given after the takeover reaches the user. Once the
+  account is removed, the user is not found by its own email either, and
+  another user can be given the same email, since the duplicate check finds
+  nothing. A grant by that email then fails. An AccessControlPolicy body's
+  grant answers 400 UnresolvableGrantByEmailAddress (`rgw_acl_s3.cc:504-507`
+  at all three; `rgw_common.cc:70` at v19.2.6, `:71` at v20.2.4, main `:65`).
+  An `x-amz-grant-*: emailAddress=` header's grant returns the raw ENOENT
+  (`rgw_acl_s3.cc:356-360` at all three), which radosgw sends as 404
+  NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:93`).
+- **Releases:** every release with accounts, from v19.1.0; checked at
+  v19.2.6, v20.2.4 and main 06adccc.
+- **rgw-go:** mirrors it on purpose, so that both gateways answer alike on a
+  shared zone. The memstore keeps one email index for users and accounts; a
+  user's write repoints an account's entry, and `RemoveAccount` deletes the
+  entry whoever holds it. The spec "lets a user take an account's email,
+  which the account's removal then drops, as radosgw does"
+  (`internal/memstore/admin_test.go`) pins it. The RADOS driver's account
+  and user stores are not written yet and are to follow radosgw too.
+  Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
+  for it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
+  building the memstore's shared user and account email index; derived from
+  the source, not reproduced.
