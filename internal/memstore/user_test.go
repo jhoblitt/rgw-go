@@ -81,6 +81,20 @@ var _ = Describe("users", func() {
 		other := meta.ObjVersion{Ver: rec.Version.Ver, Tag: "other"}
 		Expect(store.PutUser(ctx, rec, op.PutUserOptions{IfVersion: &other})).To(MatchError(op.ErrConcurrentModification), "same count, other tag")
 	})
+	It("overwrites without a check under a zero IfVersion and writes a fresh version, as version_for_check skips ver 0", func(ctx SpecContext) {
+		first := store.AddUser(aliceInfo()).Version
+		zero := meta.ObjVersion{}
+		rec := &op.UserRecord{Info: aliceInfo()}
+		Expect(store.PutUser(ctx, rec, op.PutUserOptions{IfVersion: &zero})).To(Succeed())
+		Expect(rec.Version.Ver).To(BeEquivalentTo(1), "a fresh count")
+		Expect(rec.Version.Tag).To(MatchRegexp(tagPattern), "a fresh tag")
+		Expect(rec.Version.Tag).NotTo(Equal(first.Tag), "not the stored tag")
+	})
+	It("refuses a version with a count and no tag, since a stored version always carries one", func(ctx SpecContext) {
+		store.AddUser(aliceInfo())
+		v := meta.ObjVersion{Ver: 5}
+		Expect(store.PutUser(ctx, &op.UserRecord{Info: aliceInfo()}, op.PutUserOptions{IfVersion: &v})).To(MatchError(op.ErrConcurrentModification))
+	})
 	It("writes a fresh version without IfVersion, as PutOperation::prepare generates one", func(ctx SpecContext) {
 		first := store.AddUser(aliceInfo()).Version
 		rec := &op.UserRecord{Info: aliceInfo()}
@@ -160,6 +174,39 @@ var _ = Describe("users", func() {
 		_, err = store.GetUserByEmail(ctx, "alice@example.com")
 		Expect(err).To(MatchError(op.ErrNoSuchUser), "by email")
 		Expect(store.RemoveUser(ctx, rec)).To(MatchError(op.ErrNoSuchUser), "again")
+	})
+	It("refuses to remove a user changed since it was read", func(ctx SpecContext) {
+		rec := store.AddUser(aliceInfo())
+		stale := *rec
+		Expect(store.PutUser(ctx, rec, op.PutUserOptions{})).To(Succeed())
+		Expect(store.RemoveUser(ctx, &stale)).To(MatchError(op.ErrConcurrentModification))
+		_, err := store.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred(), "the user stays")
+	})
+	It("removes a user unchecked under a zero version, and a missing one is NoSuchUser", func(ctx SpecContext) {
+		rec := store.AddUser(aliceInfo())
+		rec.Version = meta.ObjVersion{}
+		Expect(store.RemoveUser(ctx, rec)).To(Succeed(), "unchecked")
+		Expect(store.RemoveUser(ctx, rec)).To(MatchError(op.ErrNoSuchUser), "missing")
+	})
+	It("stores the clock's time over a record's old mtime, rec.Mtime being output only", func(ctx SpecContext) {
+		rec := store.AddUser(aliceInfo())
+		clk.t = start.Add(time.Hour)
+		rec.Info.DisplayName = "Alice Two"
+		Expect(store.PutUser(ctx, rec, op.PutUserOptions{})).To(Succeed())
+		Expect(rec.Mtime).To(Equal(clk.t), "the record")
+		got, err := store.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Mtime).To(Equal(clk.t), "stored")
+	})
+	It("stores an explicit opts.Mtime, as store_user_info's mtime argument", func(ctx SpecContext) {
+		mtime := start.Add(-24 * time.Hour)
+		rec := &op.UserRecord{Info: aliceInfo()}
+		Expect(store.PutUser(ctx, rec, op.PutUserOptions{Exclusive: true, Mtime: mtime})).To(Succeed())
+		Expect(rec.Mtime).To(Equal(mtime), "the record")
+		got, err := store.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Mtime).To(Equal(mtime), "stored")
 	})
 	It("lists the owner's buckets sorted by name, paged after a marker", func(ctx SpecContext) {
 		for _, name := range []string{"c", "a", "b"} {
