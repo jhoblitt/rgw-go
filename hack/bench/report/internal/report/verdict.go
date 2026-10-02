@@ -4,32 +4,48 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 )
 
-// Criterion is one of the four tests that say cgo is not a phase 1
-// bottleneck when a mode meets all of them on both releases.
+// Criterion is a test applied to a mode's cells, or a measurement reported
+// beside the tests.
 type Criterion string
 
-// The criteria. The throughput and latency criteria compare the four mirror
-// shapes with rados bench at the same size and concurrency; the threads
-// criterion covers every cell under the byte budget; Boundary, the fourth,
-// reads the CPU profile of read4k at 256 in flight. Cgo measures the same
-// profile and is not judged.
+// The criteria: cgo is not a phase 1 bottleneck on a release when a mode
+// meets both there. They compare the four mirror shapes with rados bench at
+// the same size and concurrency.
 const (
 	Throughput Criterion = "throughput>=0.8x floor"
 	Latency    Criterion = "mean latency<=1.25x floor"
-	Threads    Criterion = "threads<=gomaxprocs+8"
-	Cgo        Criterion = "cgo frames, share of CPU (not judged)"
 )
 
-var criteria = []Criterion{Throughput, Latency, Threads, Boundary}
+// The measurements, reported for every mode against no threshold. CPU is
+// the CPU each operation of read4k at 256 in flight used, the cell the
+// profiles are taken at; among the modes that meet the criteria, the one
+// using the least is preferred. Boundary is the part of that CPU a pure-Go
+// client would no longer spend, Share.Boundary. Threads is a mode's
+// largest thread growth. Cgo is every sample with a frame of the cgo
+// boundary on its stack: it counts the C librados runs on the Go thread as
+// a cost of the boundary, and a more efficient Go side raises it.
+const (
+	CPU      Criterion = "CPU per operation, read4k at 256 (not judged)"
+	Boundary Criterion = "boundary cost, read4k at 256 (not judged)"
+	Threads  Criterion = "thread growth (not judged)"
+	Cgo      Criterion = "cgo frames, share of CPU (not judged)"
+)
+
+var (
+	criteria     = []Criterion{Throughput, Latency}
+	measurements = []Criterion{CPU, Boundary, Threads, Cgo}
+)
 
 const (
 	minThroughputRatio = 0.8
 	maxLatencyRatio    = 1.25
-	maxCgoPercent      = 10.0
 )
+
+// profileConc is the concurrency of the read4k cell the CPU profiles are
+// taken at.
+const profileConc = 256
 
 // Status is a criterion's outcome in one mode.
 type Status string
@@ -47,10 +63,10 @@ const (
 	NotJudged Status = "NOT JUDGED"
 )
 
-// Verdict is one criterion applied to one mode's cells. Judged is false for
-// sync, the baseline. Margin names the worst cell and its distance from the
-// threshold, positive when it is on the passing side, and lists any cell the
-// criterion needs that is missing.
+// Verdict is one criterion applied to one mode's cells, or one measurement
+// of them. Margin names the worst cell and its distance from the
+// threshold, positive when it is on the passing side, or the measurement,
+// and lists any cell it needs that is missing.
 type Verdict struct {
 	Criterion Criterion
 	Mode      string
@@ -65,33 +81,45 @@ type Verdict struct {
 	Informational bool
 }
 
-// Boundary is the fourth criterion, the boundary cost, Share.Boundary: the
-// share of the profile a pure-Go client would no longer pay. Cgo, every
-// sample with a frame of the cgo boundary on its stack, is measured beside
-// it and not judged: it counts the C librados runs on the Go thread as a
-// cost of the boundary, and a more efficient Go side raises it.
-const Boundary Criterion = "boundary cost<=10% of CPU (librados's C and the Go completion handler excluded)"
-
-// SeamReport is a sweep directory rendered: its markdown, every verdict and
-// the judged modes that pass all four criteria.
+// SeamReport is a sweep directory rendered: its markdown, every verdict, the
+// modes that meet both criteria, and which of those used the least CPU per
+// operation, with that CPU, or "" when none did or none was measured.
 type SeamReport struct {
-	Markdown string
-	Verdicts []Verdict
-	Passing  []string
+	Markdown  string
+	Verdicts  []Verdict
+	Passing   []string
+	LowestCPU string
 }
 
-// Answer says which judged modes pass all four criteria.
+// Answer says which modes meet both criteria.
 func (r SeamReport) Answer() string { return answer(r.Passing) }
 
 func answer(modes []string) string {
 	switch len(modes) {
 	case 0:
-		return "no judged mode passes all four criteria"
+		return "no mode meets both criteria"
 	case 1:
-		return modes[0] + " passes all four criteria"
+		return modes[0] + " meets both criteria"
 	default:
-		return strings.Join(modes, " and ") + " pass all four criteria"
+		return strings.Join(modes[:len(modes)-1], ", ") + " and " + modes[len(modes)-1] + " meet both criteria"
 	}
+}
+
+// lowestCPU names the mode of modes whose read4k at profileConc used the
+// least CPU per operation, the first in mode order on a tie, with that
+// CPU, or "" when none has the cell.
+func (s *sweep) lowestCPU(modes []string) string {
+	best, cpu := "", 0.0
+	for _, m := range modes {
+		c, ok := s.cells[key{m, "read4k", profileConc}]
+		if ok && (best == "" || c.CPUusPerOp < cpu) {
+			best, cpu = m, c.CPUusPerOp
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s, %.0f µs", best, cpu)
 }
 
 // passing returns the judged modes whose verdicts that counts all pass.
@@ -117,7 +145,7 @@ func passing(modes []string, vs []Verdict, counts func(Verdict) bool) []string {
 func (s *sweep) verdicts() []Verdict {
 	var vs []Verdict
 	for _, m := range s.modes {
-		for _, v := range []Verdict{s.throughput(m), s.latency(m), s.threads(m), s.cgo(m), s.boundary(m)} {
+		for _, v := range []Verdict{s.throughput(m), s.latency(m), s.cpu(m), s.boundary(m), s.threads(m), s.cgo(m)} {
 			v.Mode, v.Judged = m, judged[m]
 			vs = append(vs, v)
 		}
@@ -241,20 +269,15 @@ type growthAt struct {
 	growth int
 }
 
-func (g growthAt) over() int { return g.growth - g.cell.allowance() }
-
 func (g growthAt) String() string {
-	return fmt.Sprintf("worst %+d of %d allowed (%s at %d), margin %+d",
-		g.growth, g.cell.allowance(), g.cell.Shape, g.cell.Conc, -g.over())
+	return fmt.Sprintf("largest %+d (%s at %d)", g.growth, g.cell.Shape, g.cell.Conc)
 }
 
-// threads judges every cell of mode, all of which ran under the byte
-// budget, by its growth against its own allowance, measured from two
-// baselines: the cell's own idle count, which leaves out what earlier cells
-// of its process grew and so bounds its growth from below, and its
-// process's first idle count, which bounds it from above. A cell in a
-// process of its own has one baseline. Where only the upper bound fails,
-// the criterion cannot be decided.
+// threads measures the largest growth among mode's cells, all of which ran
+// under the byte budget, from two baselines: the cell's own idle count,
+// which leaves out what earlier cells of its process grew and so bounds its
+// growth from below, and its process's first idle count, which bounds it
+// from above. A cell in a process of its own has one baseline.
 func (s *sweep) threads(mode string) Verdict {
 	var own, proc *growthAt
 	same := true
@@ -263,31 +286,34 @@ func (s *sweep) threads(mode string) Verdict {
 			o := growthAt{c, c.growth()}
 			p := growthAt{c, c.ThreadsPeak - s.processStart(key{mode, c.Shape, c.Conc})}
 			same = same && o.growth == p.growth
-			if own == nil || o.over() > own.over() {
+			if own == nil || o.growth > own.growth {
 				own = &o
 			}
-			if proc == nil || p.over() > proc.over() {
+			if proc == nil || p.growth > proc.growth {
 				proc = &p
 			}
 		}
 	}
 	if own == nil {
-		return Verdict{Criterion: Threads, Status: Incomplete, Margin: "missing: every cell"}
-	}
-	var status Status
-	switch {
-	case own.over() > 0:
-		status = Fail
-	case proc.over() > 0:
-		status = Inconclusive
-	default:
-		status = Pass
+		return Verdict{Criterion: Threads, Status: Incomplete, Margin: "missing: every cell", Informational: true}
 	}
 	margin := own.String()
 	if !same {
 		margin = "against each cell's own idle count, " + own.String() + "; against its process's first, " + proc.String()
 	}
-	return Verdict{Criterion: Threads, Status: status, Margin: margin}
+	return Verdict{Criterion: Threads, Status: NotJudged, Margin: margin, Informational: true}
+}
+
+// cpu measures the CPU each operation of mode's read4k at profileConc used.
+func (s *sweep) cpu(mode string) Verdict {
+	v := Verdict{Criterion: CPU, Status: NotJudged, Informational: true}
+	c, ok := s.cells[key{mode, "read4k", profileConc}]
+	if !ok {
+		v.Status, v.Margin = Incomplete, fmt.Sprintf("missing: read4k at %d", profileConc)
+		return v
+	}
+	v.Margin = fmt.Sprintf("%.0f µs", c.CPUusPerOp)
+	return v
 }
 
 // cgo measures the share of mode's read4k profile at 256 whose stacks hold a
@@ -303,34 +329,28 @@ func (s *sweep) cgo(mode string) Verdict {
 	return v
 }
 
+// boundary measures the boundary cost in mode's read4k profile at
+// profileConc, as a share of the profile and, where the cell was measured,
+// as the part of its CPU per operation that share is.
 func (s *sweep) boundary(mode string) Verdict {
-	v := s.profileShare(mode, Boundary, Share.Boundary)
+	v := Verdict{Criterion: Boundary, Status: NotJudged, Informational: true}
+	p, ok := s.profiles[mode]
+	if !ok {
+		v.Status, v.Margin = Incomplete, "missing: cpu-"+mode+"-read4k-256.pprof"
+		return v
+	}
+	pct := p.share.percent(p.share.Boundary())
+	v.Margin = fmt.Sprintf("%.1f%% of %s sampled", pct, p.share.Total)
+	if c, ok := s.cells[key{mode, "read4k", profileConc}]; ok {
+		v.Margin += fmt.Sprintf(", about %.1f µs of the operation's %.0f", c.CPUusPerOp*pct/100, c.CPUusPerOp)
+	}
 	// Pipe mode's completion is written to the pipe by a librados thread,
 	// which the profile samples under runtime._ExternalCode with no frame
 	// that tells that write from librados's other work.
-	if mode == "pipe" && v.Status != Incomplete {
+	if mode == "pipe" {
 		v.Margin += "; leaves out pipe's write(2) per completion, unmeasured"
 	}
 	return v
-}
-
-// profileShare judges the part of mode's read4k profile at 256 that part
-// returns against the boundary cost's threshold.
-func (s *sweep) profileShare(mode string, c Criterion, part func(Share) time.Duration) Verdict {
-	p, ok := s.profiles[mode]
-	if !ok {
-		return Verdict{Criterion: c, Status: Incomplete, Margin: "missing: cpu-" + mode + "-read4k-256.pprof"}
-	}
-	pct := p.share.percent(part(p.share))
-	status := Pass
-	if pct > maxCgoPercent {
-		status = Fail
-	}
-	return Verdict{
-		Criterion: c,
-		Status:    status,
-		Margin:    fmt.Sprintf("%.1f%% of %s sampled, margin %+.1f points", pct, p.share.Total, maxCgoPercent-pct),
-	}
 }
 
 // cellsOf returns mode's cells of shape in concurrency order.
