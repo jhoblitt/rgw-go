@@ -466,18 +466,24 @@ review and verified against the tree.
   short. radosgw's zstd decompressor ignores `ZSTD_decompressStream`'s
   result, so a frame that fails, or that decodes to another length than
   the block's length header, yields whatever it decoded up to that
-  length (`ZstdCompressor.h:69-102` at v19.2.6 and v20.2.4). Its zlib
+  length (`ZstdCompressor.h:69-102` at v19.2.6 and v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "radosgw's zstd decompress reports
+  success on a frame that fails or decodes short"). Its zlib
   decompressor returns what a truncated deflate, zlib or gzip stream
   decoded, without error (`ZlibCompressor.cc:214-278` at v19.2.6,
-  `:230-298` at v20.2.4). rgw-go also fails a read whose blocks decode
-  to fewer bytes than the block map gives the range. radosgw's
-  compressors write none of these blocks, so only a damaged object reads
-  differently: where radosgw sends fewer or wrong bytes, rgw-go fails
-  the GET. The other way round, rgw-go's inflater keeps a 32 KiB window
-  whatever the stored window bits say, so it may accept a back-reference
-  that radosgw's inflate refuses. radosgw writes none of those either,
-  because it stores the window bits it deflates with; where zlib widens
-  8 bits to 9, the stream's header says 9, which both gateways refuse.
+  `:230-298` at v20.2.4; `docs/ceph-upstream-bugs.md`, "radosgw's zlib
+  decompress reports success on a truncated stream"). rgw-go also fails
+  a read whose blocks decode to fewer bytes than the block map gives the
+  range. radosgw's compressors write none of these blocks, so only a
+  damaged object reads differently: where radosgw sends fewer or wrong
+  bytes, rgw-go fails the GET. The other way round, rgw-go's inflater
+  keeps a 32 KiB window whatever the stored window bits say, so it may
+  accept a back-reference that radosgw's inflate refuses. radosgw writes
+  none of those either, because it stores the window bits it deflates
+  with; where zlib widens 8 bits to 9, the stream's header says 9, which
+  both gateways refuse (`docs/ceph-upstream-bugs.md`,
+  "compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read
+  back").
 - **User stats and quota bookkeeping stay exact.** The user-class calls
   that set bucket stats and synchronize user stats keep radosgw's
   semantics, or `radosgw-admin user stats` and quota enforcement drift
