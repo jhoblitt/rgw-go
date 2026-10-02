@@ -97,6 +97,7 @@ var artifacts = []string{
 	"env.json", "floor.jsonl",
 	"seam-sync.jsonl", "seam-callback.jsonl", "seam-pipe.jsonl",
 	"cpu-sync-read4k-256.pprof", "cpu-callback-read4k-256.pprof", "cpu-pipe-read4k-256.pprof",
+	"overbudget-callback.jsonl", "overbudget-pipe.jsonl",
 }
 
 func verdict(mode string, c report.Criterion, s report.Status, margin string) types.GomegaMatcher {
@@ -325,6 +326,59 @@ var _ = Describe("Seam", func() {
 		Entry("a mode's cells", "seam-pipe.jsonl"),
 		Entry("the baseline's profile", "cpu-sync-read4k-256.pprof"),
 		Entry("a judged mode's profile", "cpu-callback-read4k-256.pprof"),
+		Entry("callback's cells over the byte budget", "overbudget-callback.jsonl"),
+		Entry("pipe's cells over the byte budget", "overbudget-pipe.jsonl"),
+	)
+
+	DescribeTable("refuses an over-budget file without both of its cells",
+		func(ctx SpecContext, derived bool, want string) {
+			dir := sweep(func(file string, line map[string]any) bool {
+				return file != "overbudget-pipe.jsonl" || (line["max_inflight_ops"] == 0.0) != derived
+			})
+			_, err := report.Seam(ctx, dir)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+		},
+		Entry("the cell with the derived limits", true, "overbudget-pipe.jsonl has no cell with the in-flight limits derived"),
+		Entry("the cell with the limits lifted", false, "overbudget-pipe.jsonl has no cell with the in-flight limits lifted"),
+	)
+
+	DescribeTable("refuses a line that does not belong to its file",
+		func(ctx SpecContext, e edit, want string) {
+			_, err := report.Seam(ctx, sweep(e))
+			Expect(err).To(MatchError(ContainSubstring(want)))
+		},
+		Entry("a cell of another mode",
+			edit(func(file string, line map[string]any) bool {
+				if file == "seam-sync.jsonl" && is(line, "sync", "read4k", 64) {
+					line["mode"] = "callback"
+				}
+				return true
+			}),
+			"seam-sync.jsonl line 3: a callback cell"),
+		Entry("an over-budget cell of another mode",
+			edit(func(file string, line map[string]any) bool {
+				if file == "overbudget-pipe.jsonl" {
+					line["mode"] = "callback"
+				}
+				return true
+			}),
+			"overbudget-pipe.jsonl line 1: a callback cell"),
+		Entry("a floor line whose op is not its shape's",
+			edit(func(file string, line map[string]any) bool {
+				if file == "floor.jsonl" && is(line, "", "read4k", 64) {
+					line["op"] = "write"
+				}
+				return true
+			}),
+			"read4k's floor is a rand, not a write"),
+		Entry("a floor line whose size is not its shape's",
+			edit(func(file string, line map[string]any) bool {
+				if file == "floor.jsonl" && is(line, "", "write4m", 4) {
+					line["size"] = 4096.0
+				}
+				return true
+			}),
+			"write4m's floor writes 4194304 bytes, not 4096"),
 	)
 
 	It("names every artifact an empty directory lacks", func(ctx SpecContext) {

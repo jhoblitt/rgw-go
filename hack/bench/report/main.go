@@ -19,8 +19,11 @@
 //     be on PATH.
 //
 // It renders nothing, and names what is missing, unless the directory holds
-// env.json, floor.jsonl, and seam-<mode>.jsonl and
-// cpu-<mode>-read4k-256.pprof for each of sync, callback and pipe.
+// env.json, floor.jsonl, seam-<mode>.jsonl and cpu-<mode>-read4k-256.pprof
+// for each of sync, callback and pipe, and overbudget-<mode>.jsonl for
+// callback and pipe with one cell whose in-flight limits were lifted and one
+// whose were derived. A cell in a file named for another mode, or a floor
+// line whose op or size is not its shape's, is refused.
 //
 // --dir can also come from REPORT_DIR, and every flag but --config from the
 // config file --config names. The root's --log-level (debug, info, warn or

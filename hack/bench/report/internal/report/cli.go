@@ -112,7 +112,7 @@ func newSeamCmd(v *viper.Viper) *cobra.Command {
 			}
 			path := filepath.Join(dir, "REPORT.md")
 			if err := os.WriteFile(path, []byte(r.Markdown), 0o600); err != nil {
-				return err
+				return fmt.Errorf("writing the report: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", path, r.Answer())
 			return nil

@@ -105,15 +105,19 @@ type Floor struct {
 type mirror struct {
 	shape string
 	concs []int
+	// op and size are the rados bench mode and object size that mirror the
+	// shape.
+	op   string
+	size int64
 }
 
 // mirrors compares a 4 MiB shape only where its bytes in flight stay under
 // the byte budget.
 var mirrors = []mirror{
-	{"read4k", []int{64, 256}},
-	{"write4k", []int{64, 256}},
-	{"read4m", []int{1, 4, 16}},
-	{"write4m", []int{1, 4, 16}},
+	{"read4k", []int{64, 256}, "rand", 4096},
+	{"write4k", []int{64, 256}, "write", 4096},
+	{"read4m", []int{1, 4, 16}, "rand", 4 << 20},
+	{"write4m", []int{1, 4, 16}, "write", 4 << 20},
 }
 
 // shapeOrder and modeOrder are the sweep's orders; anything else sorts after.
@@ -132,6 +136,11 @@ func artifacts() []string {
 	}
 	for _, m := range modeOrder {
 		names = append(names, "cpu-"+m+"-read4k-256.pprof")
+	}
+	for _, m := range modeOrder {
+		if judged[m] {
+			names = append(names, "overbudget-"+m+".jsonl")
+		}
 	}
 	return names
 }
@@ -229,12 +238,19 @@ func readSweep(ctx context.Context, dir string) (*sweep, error) {
 		return nil, err
 	}
 	s := &sweep{dir: dir, cells: map[key]Cell{}, floors: map[floorKey]Floor{}, profiles: map[string]profile{}}
-	files, err := filepath.Glob(filepath.Join(dir, "seam*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(dir, "seam-*.jsonl"))
 	if err != nil {
 		return nil, err
 	}
 	for _, f := range files {
-		if err := readLines(f, func(c Cell) error { return s.addCell(c) }); err != nil {
+		mode := fileMode(f, "seam-")
+		err := readLines(f, func(c Cell) error {
+			if err := sameMode(c, mode); err != nil {
+				return err
+			}
+			return s.addCell(c)
+		})
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -280,7 +296,23 @@ func readLines[T any](path string, add func(T) error) error {
 			return fmt.Errorf("%s line %d: %w", path, n, err)
 		}
 	}
-	return sc.Err()
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	return nil
+}
+
+// fileMode is the mode a results file is named for: seam-pipe.jsonl's is pipe.
+func fileMode(path, prefix string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), prefix), ".jsonl")
+}
+
+// sameMode refuses a cell whose mode is not its file's.
+func sameMode(c Cell, mode string) error {
+	if c.Mode != mode {
+		return fmt.Errorf("a %s cell in the %s mode's file", c.Mode, mode)
+	}
+	return nil
 }
 
 func validCell(c Cell) error {
@@ -357,17 +389,29 @@ func ordered(set map[string]bool, known []string) []string {
 }
 
 // readOver reads the cells run past the byte budget, keeping the largest-n
-// line of each cell and in-flight limit.
+// line of each cell and in-flight limit. Each file must hold a cell with the
+// limiter's bounds lifted, which shows what the objecter throttle does, and
+// one with them derived, which shows what the limiter does instead.
 func (s *sweep) readOver() error {
-	files, err := filepath.Glob(filepath.Join(s.dir, "overbudget*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(s.dir, "overbudget-*.jsonl"))
 	if err != nil {
 		return err
 	}
 	kept := map[overKey]Cell{}
 	for _, f := range files {
+		mode := fileMode(f, "overbudget-")
+		var derived, lifted bool
 		err := readLines(f, func(c Cell) error {
+			if err := sameMode(c, mode); err != nil {
+				return err
+			}
 			if err := validCell(c); err != nil {
 				return err
+			}
+			if c.MaxInflightOps == 0 && c.MaxInflightBytes == 0 {
+				derived = true
+			} else {
+				lifted = true
 			}
 			k := overKey{key{c.Mode, c.Shape, c.Conc}, c.MaxInflightOps, c.MaxInflightBytes}
 			if prev, ok := kept[k]; !ok || c.N >= prev.N {
@@ -377,6 +421,14 @@ func (s *sweep) readOver() error {
 		})
 		if err != nil {
 			return err
+		}
+		for _, need := range []struct {
+			ok   bool
+			what string
+		}{{derived, "derived"}, {lifted, "lifted"}} {
+			if !need.ok {
+				return fmt.Errorf("%s has no cell with the in-flight limits %s", filepath.Base(f), need.what)
+			}
 		}
 	}
 	s.over = slices.SortedFunc(maps.Values(kept), func(a, b Cell) int {
@@ -404,8 +456,18 @@ func (s *sweep) readFloors() error {
 		if f.Kind != "floor" {
 			return fmt.Errorf("kind %q is not floor", f.Kind)
 		}
-		if !slices.ContainsFunc(mirrors, func(m mirror) bool { return m.shape == f.Shape }) {
+		i := slices.IndexFunc(mirrors, func(m mirror) bool { return m.shape == f.Shape })
+		if i < 0 {
 			return fmt.Errorf("shape %q has no rados bench floor", f.Shape)
+		}
+		if m := mirrors[i]; f.Op != m.op {
+			return fmt.Errorf("%s's floor is a %s, not a %s", f.Shape, m.op, f.Op)
+		} else if f.Size != m.size {
+			verb := "reads"
+			if m.op == "write" {
+				verb = "writes"
+			}
+			return fmt.Errorf("%s's floor %s %d bytes, not %d", f.Shape, verb, m.size, f.Size)
 		}
 		if !slices.Contains(brackets, f.Bracket) {
 			return fmt.Errorf("bracket %q is not before, after or empty", f.Bracket)
