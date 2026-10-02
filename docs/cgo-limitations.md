@@ -16,6 +16,124 @@ Each entry also records how it was found, its status, and what the phase 1
 benchmark should measure. Add an entry whenever a task, review or benchmark
 finds a new limit, and update the status when one is fixed or measured.
 
+## Phase 1 measurement
+
+**Preliminary, measured on a busy host.** A re-run of the same
+`make bench-seam` on a quiet host follows and replaces these numbers.
+Preliminary: the gateway-level profile of Task 15 completes this.
+
+The seam microbenchmark and its `rados bench` floor ran on 2026-10-01 with
+`make bench-seam` at rgw-go fcd09fb, Squid from 22:00:41 to 23:01:35 UTC and
+Tentacle from 23:02:38 to 00:00:15 UTC; each release's sync CPU profile was
+taken after its sweep, at 00:01:38 and 00:00:54 UTC. The run directories are
+[2026-10-01-seam-squid](benchmarks/2026-10-01-seam-squid/REPORT.md) and
+[2026-10-01-seam-tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md).
+
+The host was not quiet. Besides the two clusters, a desktop session
+(Firefox, Thunderbird, gnome-shell) and other sessions' Go builds, test
+binaries and golangci-lint ran during the sweeps. The 1-minute load, sampled
+every 15 s, had a median of 4.05 and a maximum of 7.30 during Squid's sweep,
+and a median of 5.30 and a maximum of 43.22 during Tentacle's, when a build,
+its test binaries and golangci-lint ran from 23:14:36 to 23:17:55 UTC (sync
+mode's headwrite4k and indexrtt cells) and golangci-lint took up to 12 CPUs
+at 23:25:49 UTC (callback write4k at 512).
+
+| Conditions | Squid | Tentacle |
+|---|---|---|
+| Ceph, the cluster's and rados bench's image | 19.2.6, `quay.io/ceph/ceph:v19.2.6` | 20.2.4, `quay.io/ceph/ceph:v20.2.4` |
+| librados the benchmark links | the host's 19.2.6-1.fc43 | the host's 19.2.6-1.fc43 |
+
+Common to both: one rooket kind worker (rooket 3d8551957e08) with one 10 GiB
+BlueStore OSD, which the kernel reports as rotational, on a file the host
+serves over iSCSI, and the pool `rgw-go-test` (32 PGs, one replica); an AMD
+Ryzen 9 7950X3D, 32 threads, 62 GiB, kernel 7.2.6-100.fc43; go1.27.1 with
+the default GOMAXPROCS, 32;
+`objecter_inflight_ops` 1024 and `objecter_inflight_op_bytes` 100 MiB, so the
+in-flight limiter's derived bounds were 1008 operations and 98304000 bytes.
+Each cell ran for testing.B's 20 s, each 4 MiB write cell and floor run wrote
+1000 objects, and each other floor run lasted 20 s.
+
+The criteria are judged in the callback and pipe modes; sync is the
+baseline:
+
+| Criterion | Squid callback | Squid pipe | Tentacle callback | Tentacle pipe |
+|---|---|---|---|---|
+| (a) throughput >= 0.8x floor | FAIL 0.58x (write4m at 16), -0.22 | FAIL 0.34x (write4k at 256), -0.46 | FAIL 0.66x (read4k at 64), -0.14 | PASS 0.85x (read4k at 256), +0.05 |
+| (b) mean latency <= 1.25x floor | FAIL 1.71x (write4m at 16), -0.46 | FAIL 2.93x (write4k at 256), -1.68 | FAIL 1.53x (read4k at 64), -0.28 | PASS 1.18x (read4k at 256), +0.07 |
+| (c) thread growth <= GOMAXPROCS + 8 = 40 | PASS +21 (headwrite4k at 512), +19 | PASS +36 (indexrtt at 512), +4 | PASS +38 (headwrite4k at 512), +2 | PASS +29 (read4k at 512), +11 |
+| (d) cgo frames <= 10% of CPU | FAIL 25.2%, -15.2 points | FAIL 18.1%, -8.1 points | FAIL 25.9%, -15.9 points | FAIL 19.1%, -9.1 points |
+
+No judged mode passes all four criteria on either release. What the numbers
+show:
+
+- **The cgo share is steady across releases and above 10% in every mode:**
+  25.2% and 25.9% in callback, 18.1% and 19.1% in pipe, 36.6% and 40.6% in
+  sync (Squid, Tentacle), in the CPU profile of read4k at 256 in flight. Most
+  of it is C that the calls into librados run on the Go thread: the runtime
+  records a sample taken in C under the Go stack of the call, ending in
+  `runtime.cgocall`
+  ([proc.go:5844-5860](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L5844-L5860)),
+  and samples whose leaf is `runtime.cgocall` are 16.3% and 17.1% in
+  callback, 14.3% and 15.6% in pipe, 34.2% and 37.1% in sync. The rest, Go
+  frames under a cgo frame (the crossing, the pinner and the Go code a
+  completion callback runs), is 8.9% and 8.8% in callback, 3.8% and 3.5% in
+  pipe. librados's own threads, which the runtime records under
+  `runtime._ExternalCode`
+  ([signal_unix.go:544-552](https://github.com/golang/go/blob/go1.27.1/src/runtime/signal_unix.go#L544-L552)),
+  took a further 39.7% to 51.6% of the sampled CPU in every mode.
+- **Callback and pipe held thread growth within the allowance on both
+  releases**, the closest at +38 (Tentacle, callback, headwrite4k at 512).
+  Sync grew with the operations in flight: read4k +52 and +49 at 64, +202 and
+  +198 at 256, +260 and +266 at 512, where callback grew +4 and +3, +11 and +7,
+  +10 and +2, and pipe +5 and +10, +7 and +14, +6 and +29, at about the same
+  throughput (read4k at 256: 57773 and 52278 ops/s in sync, 57791 and 55578 in
+  callback, 56088 and 58763 in pipe).
+- **The in-flight limiter's evidence:** write4m at 64 in flight, 256 MiB
+  budgeted, past the objecter's 100 MiB byte throttle. With the limiter's
+  bounds above what the cell reaches, the process grew +35 and +36 threads in
+  callback and +31 and +33 in pipe; with the bounds derived from the
+  throttle, +19 and +23 in callback and +20 and +20 in pipe, while 617 of the
+  640 writes parked on the limiter each time. No cell under the byte budget
+  parked on it.
+- **Throughput and latency against the floor did not hold still long enough
+  to decide on.** 4 KiB writes at 256 and 512 in flight fell to 3600 to 5600
+  operations a second in some runs: Squid's pipe cells (5548 and 3756 ops/s
+  against a floor of 16275 and 16306), and on Tentacle the callback cells
+  (4216 and 3579), the pipe cells (4695 and 4946) and the rados bench floor
+  itself (4886 and 4228, against its own 9885 at 64), while sync ran 24172
+  and 24413 there. The C++ floor fell too, so the drop is not a property of
+  a completion mode. On Squid callback wrote 4 MiB objects at 79 to 80 a
+  second at 1, 4 and 16 in flight, against 85 to 138 for sync and pipe and
+  104 to 137 for the floor; on Tentacle callback wrote 106 to 159, 0.89x to
+  1.16x of the floor. The 4 MiB rand floor read 223 to 441 objects a second,
+  and the seam's modes 193 to 1214 on Squid and 197 to 559 on Tentacle, no
+  mode ahead on both. read4k at 64 to 512 in flight was 0.91x to 0.96x of the
+  floor in callback and pipe on Squid; on Tentacle, against a floor 13 to 15%
+  faster than Squid's, callback was 0.66x to 0.82x, pipe 0.85x to 0.89x and
+  sync 0.75x to 0.84x.
+
+How exposed each criterion is to the host's noise: the cgo share is a
+fraction of the benchmark process's own profile, and it agreed between the
+releases to within 1.0 point in callback and pipe. Thread growth is the
+process's own count, but contention can raise it: the scheduler hands the P
+of a thread that has sat in a cgo call for more than a sysmon tick to
+another thread
+([proc.go:6743-6766](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L6743-L6766)),
+so a call slowed by contention can add one. Throughput and latency are the
+most exposed: each divides a cell by a floor run measured 5 to 55 minutes
+after it, so whatever the cluster and the host did in between enters the
+ratio; the floor's 4 KiB writes at 256 in flight ran 16275 a second on Squid
+and 4886 on Tentacle.
+
+As the numbers stand: by the criterion's measure the cgo boundary holds 18%
+to 26% of the benchmark's CPU in the asynchronous modes, about 4% (pipe) to
+9% (callback) of it outside the C that librados runs on the Go thread, and
+fails (d) everywhere; callback and pipe keep the thread count within
+GOMAXPROCS + 8 where sync does not, and the limiter cuts the over-budget
+growth by 11 to 16 threads; and this run cannot say whether either
+asynchronous mode keeps up with `rados bench`, because the comparison moved
+more between runs than the criteria's margins.
+
 ## Inherent
 
 ### OS threads owned by librados
@@ -37,6 +155,13 @@ finds a new limit, and update the status when one is fixed or measured.
   ([`runtime.mstartm0`](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L1964-L1973)).
   Under Go 1.27.1 a cgo binary with no C threads reports one more
   `go_threads` than the kernel does.
+- **Measured (preliminary, busy host):** a connected seam benchmark process
+  with GOMAXPROCS 32 counted 26 or 27 threads before its first cell in every
+  mode on both releases, and librados's own threads took 39.7% to 51.6% of
+  the sampled CPU of read4k at 256 in flight
+  ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md); "Phase 1
+  measurement" above).
 
 ### A parked OS thread per synchronous operation
 
@@ -67,6 +192,11 @@ finds a new limit, and update the status when one is fixed or measured.
   threads before its first call. In the final-review measurements, 512
   concurrent reads rose sync mode by 0 to 70 threads, with 62 to 512 reads in
   flight, while callback and pipe rose by 0 with 350 to 512 in flight.
+- **Measured (preliminary, busy host):** sync read4k grew +202 and +198
+  threads at 256 in flight and +260 and +266 at 512 on Squid and Tentacle,
+  where callback and pipe grew at most +14 at 256 and +29 at 512 at about the
+  same throughput ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md)).
 
 ### The objecter throttle blocks the submitting thread
 
@@ -124,8 +254,15 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Measure:** throttle waits and thread count under the seam
   microbenchmark, `BenchmarkSeam` in `test/bench/seam`; the head read's cost
   in its `shape=headread4k` cells, whose `budget_bytes` is the 4 MiB the head
-  read asks for, so the default `-inflight-bytes` of 96 MiB skips those above
-  24 in flight.
+  read asks for, so the default `-budget-bytes`, the limiter's 98304000
+  bytes, skips those above 23 in flight.
+- **Measured (preliminary, busy host):** write4m at 64 in flight, past the
+  byte throttle, grew the process by +35 and +36 threads in callback and +31
+  and +33 in pipe with the limiter's bounds above what the cell reaches, and
+  by +19 and +23 and +20 and +20 with the derived bounds, 617 of 640 writes
+  parking on the limiter; no cell under the byte budget parked on it
+  ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md)).
 
 ### Completions cross from C back to Go
 
@@ -135,6 +272,15 @@ finds a new limit, and update the status when one is fixed or measured.
   callback-mode and pipe-mode clusters cannot coexist.
 - **Measure:** per-operation latency and CPU for callback and pipe against
   sync; this is the core of the cgo question.
+- **Measured (preliminary, busy host):** read4k with one operation in flight
+  had a median latency of 67.2 and 70.9 µs in sync, 77.8 and 79.4 in
+  callback and 83.6 and 78.4 in pipe on Squid and Tentacle, at 34.2 and 37.2,
+  47.7 and 48.3, and 56.8 and 52.0 µs of CPU per operation; at 256 in flight
+  the CPU was 26.9 and 27.5, 34.2 and 29.0, and 33.4 and 34.2 µs.
+  `runtime.cgocallback` and the frames under it held 5.4% and 5.0% of
+  callback mode's read4k profile at 256
+  ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md)).
 
 ### A write operation cannot return class-method output
 
@@ -163,6 +309,8 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Status:** pooled contexts with the locator set per operation
   (goceph/pool.go).
 - **Measure:** cost of the extra locator set and context borrow per operation.
+- **Measured:** not yet. No seam shape sets an object locator, so the
+  2026-10-01 runs do not isolate it.
 
 ### The object version is per I/O context
 
@@ -170,6 +318,11 @@ finds a new limit, and update the status when one is fixed or measured.
   between concurrent synchronous writes on it. Sync mode therefore borrows a
   private I/O context per write. Async completions carry their own version.
 - **Measure:** included in sync-mode per-operation cost.
+- **Measured (preliminary, busy host):** sync write4k at 64 in flight took
+  39.1 and 35.1 µs of CPU per operation on Squid and Tentacle, against 40.5
+  and 36.6 in callback and 40.3 and 37.7 in pipe
+  ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md)).
 
 ### Payload copies across the boundary
 
@@ -178,6 +331,13 @@ finds a new limit, and update the status when one is fixed or measured.
   it into Go. Reads land in pinned Go memory.
 - **Measure:** allocation and copy cost on large objects; CPU profile with the
   cgo boundary attributed, as the spec's phase 1 section asks.
+- **Measured (preliminary, busy host):** CPU per operation was 685 to 979 µs
+  for read4m and 924 to 2729 µs for write4m, against 22 to 122 µs for read4k
+  and write4k, across modes and concurrencies on both releases; the read4k
+  profile at 256 is attributed in "Phase 1 measurement" above. Allocation is
+  not measured
+  ([Squid](benchmarks/2026-10-01-seam-squid/REPORT.md),
+  [Tentacle](benchmarks/2026-10-01-seam-tentacle/REPORT.md)).
 
 ### A read needs its buffer sized up front
 
@@ -194,6 +354,8 @@ finds a new limit, and update the status when one is fixed or measured.
 - **Status:** accepted for the few reads at startup; a path that reads
   small objects often needs a size it knows, a stat, or a pooled buffer.
 - **Measure:** allocation per read against the object's size.
+- **Measured:** not yet. The seam's read shapes reuse one buffer per worker,
+  so the 2026-10-01 runs measure no allocation.
 
 ### Cancellation stops only the client
 
