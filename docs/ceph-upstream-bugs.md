@@ -80,6 +80,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ARN conditions compare each ARN component with the text after it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it) | none | none | ✓ |
 | [radosgw takes any policy Action starting with a wildcard for every action](#radosgw-takes-any-policy-action-starting-with-a-wildcard-for-every-action) | [#81229](https://tracker.ceph.com/issues/81229) | [ceph/ceph#72262](https://github.com/ceph/ceph/pull/72262) | ✓ |
 | [radosgw reads a tagging body whose root is not Tagging as an empty tag set](#radosgw-reads-a-tagging-body-whose-root-is-not-tagging-as-an-empty-tag-set) | none | none | ✓ |
+| [compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read back](#compressor_zlib_winsize-8-writes-zlib-blocks-radosgw-cannot-read-back) | pending | pending |  |
+| [radosgw's zstd decompress reports success on a frame that fails or decodes short](#radosgws-zstd-decompress-reports-success-on-a-frame-that-fails-or-decodes-short) | pending | pending |  |
+| [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2705,3 +2708,135 @@ Every new entry adds its row to this table, in document order.
   #44967 did not describe.
 - **Found:** phase 1 authorization work (unit Z, Task 8), 2026-10-01,
   transcribing the Tagging parse; derived from the source, not reproduced.
+
+## compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read back
+
+- **Kind:** defect, unfixed through main. Reproduced at the zlib library
+  level, not on a cluster.
+- **Evidence:** paths are under `src/`; each triple of lines is v19.2.6's,
+  v20.2.4's and main's (06adccc25d6, 2026-10-01).
+  - `compressor_zlib_winsize` is a `type: int` option with `min: -15` and
+    `max: 32` (`common/options/global.yaml.in:775-782`, `:775-782`,
+    `:828-835`), so 8 is accepted.
+  - `ZlibCompressor::zlib_compress` deflates with the option's value and
+    stores that same value as the block's `compressor_message`
+    (`compressor/zlib/ZlibCompressor.cc:94-100`, `:106-112`, `:109-115`).
+  - zlib's `deflateInit2` takes 8 for the zlib wrapper but deflates with a
+    9-bit window, and says 9 in the stream's header. zlib.h's
+    `deflateInit2` documentation states it: "providing 8 to inflateInit2()
+    will result in an error when the zlib header with 9 is checked against
+    the initialization of inflate()".
+  - `ZlibCompressor::decompress` calls `inflateInit2` with the stored 8
+    (`:240`, `:260`, `:263`). inflate refuses the header as "invalid window
+    size" (Z_DATA_ERROR), and decompress returns -1 (`:261-266`,
+    `:281-286`, `:284-289`). `RGWGetObj_Decompress::handle_data` returns
+    that error, so the read fails (`rgw/rgw_compression.cc:148-152` at
+    v19.2.6 and v20.2.4).
+  - The zlib library check, run with Python's `zlib` module on zlib
+    1.3.1.zlib-ng (zlib-ng 2.3.3), was as follows. `compressobj(5,
+    DEFLATED, 8)` wrote a stream whose header byte is 0x18, a 9-bit window.
+    `decompressobj(8)` and `decompressobj(40)` refused it with "Error -3
+    while decompressing data: invalid window size". `decompressobj(9)`,
+    `(15)` and `(0)` decoded it. The same run showed which values
+    `deflateInit2` takes from the option's range: -15 to -9, 8 to 15 and 25
+    to 31. Only 8 is widened. A value it refuses fails the compression, and
+    radosgw then stores the object uncompressed
+    (`RGWPutObj_Compress::process`, `rgw/rgw_compression.cc:44-88` at both).
+  - BlueStore also stores the message with each compressed blob and
+    decompresses with it (`os/bluestore/BlueStore.cc:16872-16885` and
+    `:12908` at v19.2.6, `:17106-17119` and `:13152` at v20.2.4). That path
+    was not traced further.
+- **Impact:** with the option at 8 and zlib compressing on its default,
+  non-accelerated path, radosgw writes zlib-compressed objects without
+  complaint, and every read of them fails. Each accelerator takes over the
+  compression when it is enabled and available. All three are off by
+  default (`common/options/global.yaml.in:761-766` and `:790-795` at both
+  tags, `:806-811` at v20.2.4), and none of them stores the option:
+  - ISA-L (`compressor_zlib_isal`, in x86_64 builds with NASM AVX2 and in
+    aarch64 builds) stores -15 (`compressor/zlib/ZlibCompressor.cc:155` at
+    v19.2.6, `:167` at v20.2.4).
+  - QAT (`qat_compressor_enabled`) stores 31 (`compressor/QatAccel.cc:147`
+    with `:158` at v19.2.6, `:159` at v20.2.4).
+  - UADK (`uadk_compressor_enabled`, at v20.2.4) stores no message
+    (`ZlibCompressor.cc:216-219`).
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01); older
+  releases not checked.
+- **rgw-go:** refuses the block as radosgw does. `inflateMode` takes 8 as
+  the zlib wrapper with an 8-bit window, and `openMember` refuses a header
+  window wider than that (`internal/compression/zlib.go`). The spec "zlib,
+  the header radosgw writes for message 8"
+  (`internal/compression/codec_test.go`) pins it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
+  zlib decompressor. Reproduced at the zlib library level, not through
+  radosgw.
+
+## radosgw's zstd decompress reports success on a frame that fails or decodes short
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; `compressor/zstd/ZstdCompressor.h`
+  is the same at v19.2.6 and v20.2.4, and main (06adccc25d6, 2026-10-01)
+  changed its compressor and includes but not `decompress`. Each pair of
+  lines below is the tags', then main's.
+  - `ZstdCompressor::decompress` (`:69-102`, `:88-121`) reads the block's
+    little-endian length header and allocates that many bytes (`:80`,
+    `:99`).
+  - It calls `ZSTD_decompressStream` once per input segment without reading
+    its result (`:95`, `:114`), and counts the whole segment as consumed
+    (`:96`, `:115`).
+  - It returns 0 with however many bytes the stream wrote (`:100-101`,
+    `:119-120`). So a frame that fails to decode, or that decodes to fewer
+    bytes than the header says, yields its partial output as success. A
+    frame that decodes to more is cut at the header's length.
+  - `RGWGetObj_Decompress::handle_data` delivers whatever decompress
+    appended (`rgw/rgw_compression.cc:107-181` at v19.2.6 and v20.2.4).
+    The response therefore comes up short, or later blocks' bytes move up
+    into the gap.
+- **Impact:** a damaged zstd block is served as short or wrong data instead
+  of failing the read. radosgw's own compressor writes the header and frame
+  consistently, so only a block damaged after it was written meets this.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01); older
+  releases not checked.
+- **rgw-go:** refuses such a block with `ErrCorrupt`. The zstd decoder
+  bounds the frame by the header's length and refuses any other length
+  (`internal/compression/zstd.go`). `docs/exclusions.md` records the
+  difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
+  zstd decompressor; derived from the source, not reproduced.
+
+## radosgw's zlib decompress reports success on a truncated stream
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each triple of lines is v19.2.6's,
+  v20.2.4's and main's (06adccc25d6, 2026-10-01).
+  - `ZlibCompressor::decompress` (`compressor/zlib/ZlibCompressor.cc:214-278`,
+    `:230-298`, `:233-301`) inflates until its input runs out
+    (`while(remaining)`, `:249`, `:269`, `:272`).
+  - It takes `Z_BUF_ERROR` as no error (`:261`, `:281`, `:284`).
+  - It returns 0 (`:277`, `:297`, `:300`) whether or not the stream reached
+    `Z_STREAM_END`. So a raw deflate, zlib or gzip stream cut short yields
+    what it decoded as success, and so does a stream whose trailer is
+    missing.
+  - zlib's inflate stops without an error when a stream runs short. With
+    Python's `zlib` module on zlib 1.3.1.zlib-ng, half of a raw deflate
+    stream gave 4152 bytes, no error, and `eof` false. radosgw itself was
+    not run.
+  - `RGWGetObj_Decompress::handle_data` delivers whatever decompress
+    appended (`rgw/rgw_compression.cc:107-181` at v19.2.6 and v20.2.4).
+    The response therefore comes up short, or later blocks' bytes move up
+    into the gap.
+- **Impact:** a truncated zlib block is served as short or wrong data
+  instead of failing the read. radosgw's own compressor always finishes the
+  stream (`Z_FINISH`), so only a block damaged after it was written meets
+  this.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01); older
+  releases not checked.
+- **rgw-go:** refuses such a block with `ErrCorrupt`. Go's inflaters report
+  the truncation (`internal/compression/zlib.go`). `docs/exclusions.md`
+  records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
+  zlib decompressor; derived from the source, not reproduced.
