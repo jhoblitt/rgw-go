@@ -1450,6 +1450,35 @@ v20.2.4 tags, rgw-go does the following.
   Tentacle serves the object, and serves it where Tentacle answers 412
   PreconditionFailed. Squid has no such attr.
 
+### Bucket index differences
+
+rgw-go reads a bucket's index and its owner's bucket list as radosgw's
+RADOS driver does at the v19.2.6 and v20.2.4 tags. Where the two differ,
+rgw-go does the following.
+
+- **A missing index pool is not created.** rgw-go opens a bucket's index
+  pool and the pool of its owner's bucket list without creating either, and
+  a request that needs one found missing fails, naming it. radosgw creates
+  the index pool when it opens it (`open_pool`, which calls
+  `rgw_init_ioctx` with create set, `services/svc_bi_rados.cc:35-41` at
+  v19.2.6, `:43-49` at v20.2.4), and the bucket list's pool through
+  `rgw_get_rados_ref` (`driver/rados/rgw_tools.cc:107-108` at v19.2.6,
+  `:108-109` at v20.2.4), as "No bootstrap" describes for the other pools.
+- **Index shard headers are read as Squid reads them.** On both releases
+  rgw-go reads each index shard's header through cls_rgw's `bucket_list` of
+  no entries, as Squid's radosgw does (`cls_bucket_head`,
+  `services/svc_bi_rados.cc:323-352` at v19.2.6). A missing shard fails the
+  read with ENOENT, and a shard object without a header reads as an empty
+  header (`read_bucket_header`, `cls/rgw/cls_rgw.cc:464-485` at v19.2.6,
+  `:514-535` at v20.2.4). Tentacle's radosgw reads the omap headers
+  directly and answers -EIO for both (`services/svc_bi_rados.cc:331-409`
+  at v20.2.4; `docs/ceph-upstream-bugs.md`, "[Tentacle's radosgw answers
+  EIO for an index shard its header read means to
+  skip](ceph-upstream-bugs.md#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip)").
+  On a Tentacle cluster, a read of such a bucket's index stats therefore
+  fails with ENOENT in rgw-go where radosgw fails with -EIO, or succeeds in
+  rgw-go, counting the header-less shard as empty, where radosgw fails.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

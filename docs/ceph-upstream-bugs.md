@@ -102,6 +102,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | pending | pending |  |
 | [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | pending | pending |  |
 | [radosgw terminates on a stored lz4 block too short for its pair table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table) | pending | pending |  |
+| [Tentacle's radosgw answers EIO for an index shard its header read means to skip](#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip) | pending | pending |  |
+| [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4011,3 +4013,113 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit R, Task 4, 2026-10-02, checking whether radosgw
   refuses the short lz4 blocks rgw-go's decoder specs refuse; derived from
   the source, not reproduced.
+
+## Tentacle's radosgw answers EIO for an index shard its header read means to skip
+
+- **Kind:** defect, new in Tentacle. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - Tentacle's `cls_bucket_head` reads each shard's omap header with
+    `omap_get_header` into a buffer that `IndexHeadReader::prepare_read`
+    creates for the shard, and `IndexHeadReader::on_complete` takes ENOENT
+    for success under the comment "ignore ENOENT"
+    (`rgw/services/svc_bi_rados.cc:331-355` at v20.2.4).
+  - It then decodes every buffer as an `rgw_bucket_dir_header` and answers
+    -EIO when one does not decode (`:396-407`). A missing shard leaves its
+    buffer empty, and so does a shard object without an omap header. An
+    empty buffer does not decode, so both answer -EIO, and the ENOENT the
+    reader means to skip never reaches a caller.
+  - Squid's `cls_bucket_head` reads the headers through cls_rgw's
+    `bucket_list` of no entries (`rgw/services/svc_bi_rados.cc:323-352` at
+    v19.2.6; `CLSRGWIssueGetDirHeader`, `cls/rgw/cls_rgw_client.cc:720-728`).
+    The OSD answers a read op on a missing object with ENOENT, and the
+    class reads a header-less shard as the empty header
+    (`read_bucket_header`, `cls/rgw/cls_rgw.cc:464-485` at v19.2.6,
+    `:514-535` at v20.2.4).
+  - Every bucket stats read goes through `cls_bucket_head` (`read_stats`,
+    `rgw/services/svc_bi_rados.cc:395-427` at v19.2.6, `:560-592` at
+    v20.2.4). The stats of an owner's bucket listing skip an ENOENT from it
+    (`rgw/driver/rados/rgw_sal_rados.cc:149-155` at v19.2.6, `:158-164` at
+    v20.2.4).
+- **Impact:** on Tentacle, a bucket with a missing index shard fails every
+  stats read with -EIO instead of ENOENT, and a Swift account listing with
+  stats, which Squid completes past such a bucket, fails. A shard object
+  without a header, which radosgw never writes since `bucket_init_index`
+  gives every shard one, fails the same way where Squid reads it as empty.
+- **Releases:** v20.2.4; v19.2.6 reads through `bucket_list`.
+- **rgw-go:** the driver's `readShardHeaders` (`internal/driver/index.go`)
+  reads the headers through `bucket_list`, as Squid does, on both releases
+  (`docs/exclusions.md`, "Index shard headers are read as Squid reads
+  them").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 metadata plane (unit M, Task 6), 2026-10-02,
+  implementing the RADOS driver's index stats; derived from the source, not
+  reproduced.
+
+## cls_user reset_user_stats2 drops the stats of every page but the last
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; the lines are the same at v19.2.6
+  and v20.2.4. On ceph main at 06adccc25d6 (2026-10-01) the defect is
+  unchanged: the class body, `acc_stats` and `update_call` are as at
+  v20.2.4. Since v20.2.4, main has changed in `cls/user/cls_user.cc`,
+  `cls/user/cls_user_ops.h`, `cls/user/cls_user_types.h` and
+  `rgw/driver/rados/buckets.cc` only their modelines, every
+  `generate_test_instances` signature in the two headers, and how the
+  class's methods are named: new `cls::user::method` constants at the end
+  of `cls_user_ops.h`, which the class's registration and
+  `buckets::reset_stats` now use. It also adds an include at
+  `cls/user/cls_user_ops.h:8`, so the `:187-199` cited below is
+  `:188-200` on main; the other lines cited in these four files are the
+  same there.
+  - `cls_user_reset_stats2` sums one page of at most 1000 bucket entries
+    after the request's marker into a `cls_user_reset_stats2_ret` it
+    constructs for the call, whose `acc_stats` start at zero (`:459`,
+    `:482`), and on the last page writes a fresh header holding that sum
+    (`cls/user/cls_user.cc:444-506`). It never reads the request's
+    `acc_stats`.
+  - radosgw's `buckets::reset_stats` sends each page's marker and summed
+    stats on in the next request through `update_call`
+    (`rgw/driver/rados/buckets.cc:223-259`;
+    `cls/user/cls_user_ops.h:187-199`). The commit that introduced the
+    method, 25a82ed3795 (2020-04-30, for tracker #41080), states the
+    intent: it "sets new stats via progressive calls with an accumulator".
+  - For an owner with more than 1000 bucket entries the header therefore
+    ends holding the stats of the last page alone.
+- **Impact:**
+  - `radosgw-admin user stats --reset-stats` (`rgw/rgw_admin.cc:9050-9067`
+    at v19.2.6, `rgw/radosgw-admin/radosgw-admin.cc:9579` at v20.2.4) and
+    `radosgw-admin account stats --reset-stats` (`rgw/rgw_admin.cc:11579`
+    at v19.2.6, `rgw/radosgw-admin/radosgw-admin.cc:12256` at v20.2.4,
+    reaching `rgw/rgw_account.cc:538-543`) leave an owner of more than 1000
+    buckets with a header short by the earlier pages' stats as they stood
+    at the reset. No S3, IAM or admin API request reaches the reset.
+  - The header is what radosgw's owner stats and owner quota read
+    (`RadosStore::load_stats`, `rgw/driver/rados/rgw_sal_rados.cc:1256-1266`
+    at v19.2.6, `:1795` at v20.2.4; `rgw/rgw_quota.cc:569` and `:630` at
+    v19.2.6, `:590` and `:651` at v20.2.4).
+  - Every later update moves the header by a difference and keeps the
+    shortfall: a `--sync-stats`, the quota thread's own owner sync
+    (`RGWOwnerStatsCache::sync_owner` calls `rgw_sync_all_stats`,
+    `rgw/rgw_quota.cc:656` at v19.2.6, `:677` at v20.2.4;
+    `rgw/rgw_user.cc:16-58` at v19.2.6), `set_buckets_info` and
+    `remove_bucket`. Unlinking a bucket from an earlier page subtracts
+    stats the header never held.
+  - The counters are `uint64_t` (`cls/user/cls_user_types.h:161-164`).
+    Once the owner's usage falls below the shortfall they wrap to near
+    2^64, and an owner with a size quota is then refused every write
+    smaller than the remaining shortfall: the quota adds the write to the
+    wrapped size, and only a write at least that large wraps the sum back
+    below the limit (`rgw/rgw_quota.cc:780-787` at v19.2.6, `:804` at
+    v20.2.4). The object-count quota wraps the same way.
+  - The shortfall stays until a reset of an owner of at most 1000 buckets.
+    A user under the default `rgw_user_max_buckets` of 1000
+    (`common/options/rgw.yaml.in:2394-2401` at v19.2.6, `:2494-2501` at
+    v20.2.4) cannot reach the threshold.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** the driver does not reset an owner's stats in this phase.
+  fakerados's user class emulator (`internal/testutil/fakerados/cls_user.go`)
+  sums each page from zero as the class does, so specs see radosgw's
+  result.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 metadata plane (unit M, Task 6), 2026-10-02, writing
+  the cls_user emulator; derived from the source, not reproduced.
