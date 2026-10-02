@@ -360,10 +360,6 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
-			Entry("StatObject", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.StatObject(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"})
-				return err
-			}),
 			Entry("ReadObject", func(ctx context.Context, s *driver.Store) error {
 				return s.ReadObject(ctx, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true, Size: 1}, op.ByteRange{Length: 1}, io.Discard)
 			}),

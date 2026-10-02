@@ -42,6 +42,21 @@ type FakeObjectStore struct {
 	deleteObjectReturnsOnCall map[int]struct {
 		result1 error
 	}
+	PrefetchObjectStub        func(context.Context, *op.BucketRecord, meta.ObjKey) (*op.ObjectState, error)
+	prefetchObjectMutex       sync.RWMutex
+	prefetchObjectArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.ObjKey
+	}
+	prefetchObjectReturns struct {
+		result1 *op.ObjectState
+		result2 error
+	}
+	prefetchObjectReturnsOnCall map[int]struct {
+		result1 *op.ObjectState
+		result2 error
+	}
 	PutObjectStub        func(context.Context, *op.BucketRecord, meta.ObjKey, io.Reader, op.PutParams) (*op.PutResult, error)
 	putObjectMutex       sync.RWMutex
 	putObjectArgsForCall []struct {
@@ -236,6 +251,72 @@ func (fake *FakeObjectStore) DeleteObjectReturnsOnCall(i int, result1 error) {
 	fake.deleteObjectReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *FakeObjectStore) PrefetchObject(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey) (*op.ObjectState, error) {
+	fake.prefetchObjectMutex.Lock()
+	ret, specificReturn := fake.prefetchObjectReturnsOnCall[len(fake.prefetchObjectArgsForCall)]
+	fake.prefetchObjectArgsForCall = append(fake.prefetchObjectArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.ObjKey
+	}{arg1, arg2, arg3})
+	stub := fake.PrefetchObjectStub
+	fakeReturns := fake.prefetchObjectReturns
+	fake.recordInvocation("PrefetchObject", []interface{}{arg1, arg2, arg3})
+	fake.prefetchObjectMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeObjectStore) PrefetchObjectCallCount() int {
+	fake.prefetchObjectMutex.RLock()
+	defer fake.prefetchObjectMutex.RUnlock()
+	return len(fake.prefetchObjectArgsForCall)
+}
+
+func (fake *FakeObjectStore) PrefetchObjectCalls(stub func(context.Context, *op.BucketRecord, meta.ObjKey) (*op.ObjectState, error)) {
+	fake.prefetchObjectMutex.Lock()
+	defer fake.prefetchObjectMutex.Unlock()
+	fake.PrefetchObjectStub = stub
+}
+
+func (fake *FakeObjectStore) PrefetchObjectArgsForCall(i int) (context.Context, *op.BucketRecord, meta.ObjKey) {
+	fake.prefetchObjectMutex.RLock()
+	defer fake.prefetchObjectMutex.RUnlock()
+	argsForCall := fake.prefetchObjectArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeObjectStore) PrefetchObjectReturns(result1 *op.ObjectState, result2 error) {
+	fake.prefetchObjectMutex.Lock()
+	defer fake.prefetchObjectMutex.Unlock()
+	fake.PrefetchObjectStub = nil
+	fake.prefetchObjectReturns = struct {
+		result1 *op.ObjectState
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeObjectStore) PrefetchObjectReturnsOnCall(i int, result1 *op.ObjectState, result2 error) {
+	fake.prefetchObjectMutex.Lock()
+	defer fake.prefetchObjectMutex.Unlock()
+	fake.PrefetchObjectStub = nil
+	if fake.prefetchObjectReturnsOnCall == nil {
+		fake.prefetchObjectReturnsOnCall = make(map[int]struct {
+			result1 *op.ObjectState
+			result2 error
+		})
+	}
+	fake.prefetchObjectReturnsOnCall[i] = struct {
+		result1 *op.ObjectState
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeObjectStore) PutObject(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey, arg4 io.Reader, arg5 op.PutParams) (*op.PutResult, error) {

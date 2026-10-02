@@ -26,6 +26,15 @@ type ObjectState struct {
 	WriteTag     string
 	StorageClass string
 	ContentType  string
+	// Head is the first bytes of the head object, rgw_max_chunk_size or the
+	// whole head when shorter, filled by PrefetchObject; nil after StatObject.
+	Head []byte
+	// Version is the head's cls_version, read in the same op as the stat, as
+	// RGWObjVersionTracker::prepare_op_for_read composes cls_version_read
+	// into every raw_obj_stat (rgw_rados.cc:158-167 and :8843-8845 at v19.2.6,
+	// :166-175 and :9787-9789 at v20.2.4); zero for an object that carries
+	// none.
+	Version meta.ObjVersion
 }
 
 // ByteRange is a resolved range: Length bytes from Offset.
@@ -81,10 +90,15 @@ type CopyParams struct {
 
 // ObjectStore reads and writes objects.
 type ObjectStore interface {
-	// StatObject reads the head: stat, xattrs and the first stripe's worth of
-	// data in one op. A missing object returns a state with Exists false and
-	// no error.
+	// StatObject reads the head's version, xattrs and stat in one op, without
+	// its data. A missing object returns a state with Exists false and no
+	// error.
 	StatObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error)
+	// PrefetchObject is StatObject plus the head's first rgw_max_chunk_size
+	// bytes in the same RADOS op, as RGWRados::raw_obj_stat reads them when
+	// radosgw's prefetch_data asks for a first chunk. A missing object
+	// returns a state with Exists false and no error.
+	PrefetchObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error)
 	// ReadObject streams rng of st to sink, in order.
 	ReadObject(ctx context.Context, st *ObjectState, rng ByteRange, sink io.Writer) error
 	PutObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, body io.Reader, p PutParams) (*PutResult, error)

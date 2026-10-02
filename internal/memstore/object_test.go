@@ -105,6 +105,31 @@ var _ = Describe("objects", func() {
 		_, err := store.PutObject(ctx, rec, key, strings.NewReader("hello"), op.PutParams{Size: 6})
 		Expect(err).To(MatchError(op.ErrRequestTimeout))
 	})
+	It("prefetches the first 4 MiB of the head, which StatObject leaves out", func(ctx SpecContext) {
+		data := bytes.Repeat([]byte("0123456789abcdef"), (5<<20)/16)
+		_, err := store.PutObject(ctx, rec, key, bytes.NewReader(data), op.PutParams{Size: int64(len(data))})
+		Expect(err).NotTo(HaveOccurred())
+		st, err := store.PrefetchObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Size).To(BeEquivalentTo(5<<20), "the state is StatObject's")
+		Expect(st.Head).To(Equal(data[:4<<20]))
+		st.Head[0] = 'x'
+		st, err = store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Head).To(BeNil())
+		var buf bytes.Buffer
+		Expect(store.ReadObject(ctx, st, op.ByteRange{Length: 1}, &buf)).To(Succeed())
+		Expect(buf.String()).To(Equal("0"), "the prefetched head is a copy")
+	})
+	It("prefetches a head shorter than 4 MiB whole, and a missing key as not existing", func(ctx SpecContext) {
+		mustPut(ctx, store, rec, "k", "hello")
+		st, err := store.PrefetchObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Head).To(Equal([]byte("hello")))
+		st, err = store.PrefetchObject(ctx, rec, meta.ObjKey{Name: "missing"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st).To(Equal(&op.ObjectState{Bucket: rec, Key: meta.ObjKey{Name: "missing"}}))
+	})
 	It("gives each write a fresh epoch", func(ctx SpecContext) {
 		first := mustPut(ctx, store, rec, "k", "a")
 		second := mustPut(ctx, store, rec, "k", "b")
