@@ -453,7 +453,7 @@ var _ = Describe("Manifest.Stripes", func() {
 			Expect(err).To(MatchError(meta.ErrTooManyStripes))
 		})
 
-		It("fits a 5 TiB object of 4 MiB stripes in 10,000 parts", func() {
+		It("holds 5 TiB in 10,000 equal parts of 4 MiB stripes within MaxStripes", func() {
 			const parts, partSize = 10000, 5 << 40 / 10000
 			stripesPerPart := (partSize + (4<<20 - 1)) / (4 << 20)
 			Expect(parts * stripesPerPart).To(BeNumerically("<=", meta.MaxStripes))
