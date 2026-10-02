@@ -17,15 +17,19 @@ const (
 	NSMultipart = "multipart"
 )
 
-// MaxStripes bounds the stripes Stripes returns. A 5 TiB object, S3's limit,
-// in radosgw's default 4 MiB stripes spans 1,310,720 of them, and each of up
-// to 10,000 parts may end in one short stripe more; the bound leaves room
-// above that. Stripes builds every stripe eagerly, so this still allows a
-// few hundred MB; the ranged iterator phase 1's GET needs replaces it.
+// MaxStripes bounds the stripes Stripes returns, which it builds in memory,
+// a few hundred MB at the bound. It covers less than radosgw stores: radosgw
+// caps a multipart object at rgw_max_put_size ×
+// rgw_multipart_part_upload_limit, about 48.8 TiB at its defaults, not at
+// S3's 5 TiB, and an appendable object at nothing. Stripes therefore refuses
+// any object over about 8 TiB in the default 4 MiB stripes, and one appended
+// to more than 2^21 times at any stripe size. A caller that walks whole
+// objects that large iterates with Seek and Next instead, bounded by
+// MaxWalkStripes as PartBounds is.
 const MaxStripes = 1 << 21
 
-// ErrTooManyStripes is Stripes's refusal of a manifest laying out more than
-// MaxStripes stripes, which a corrupt or hostile manifest can claim.
+// ErrTooManyStripes is the refusal of a manifest that lays out more stripes
+// than a walk's bound: MaxStripes for Stripes, MaxWalkStripes for PartBounds.
 var ErrTooManyStripes = errors.New("meta: manifest lays out too many stripes")
 
 // Stripe describes one RADOS object of an object's data as the manifest lays
@@ -69,10 +73,13 @@ func (s Stripe) Locator() string {
 // size the iterator reports to the end of the object.
 //
 // A manifest without rules whose head holds the whole object is its head
-// alone: operator++ cannot leave the head without a rule, but radosgw never
-// asks it to, as RGWRados::iterate_obj stops at the end of the object and
-// delete checks has_tail first. It fails with denc.ErrMalformed where the C++
-// iterator would read past the end of a map or never reach ObjSize, and with
+// alone. operator++ cannot leave the head without a rule:
+// RGWRados::iterate_obj never asks it to, as it stops at the end of the
+// object, but update_gc_chain, which an overwrite or delete runs unless it
+// keeps the tail, asks and never ends, since nothing there checks has_tail.
+// radosgw writes no such manifest, as its generator refuses one without a
+// rule. Stripes fails with denc.ErrMalformed where the C++ iterator would
+// read past the end of a map or never reach ObjSize, and with
 // ErrTooManyStripes past MaxStripes stripes.
 func (m Manifest) Stripes() ([]Stripe, error) { return m.stripes(MaxStripes) }
 

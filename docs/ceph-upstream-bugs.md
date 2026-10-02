@@ -85,6 +85,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | pending | pending |  |
 | [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | pending | pending |  |
 | [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | pending | pending |  |
+| [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | pending | pending |  |
+| [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2957,3 +2959,179 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's lz4
   decompressor; derived from the source, not reproduced.
+
+## radosgw hangs or faults walking a manifest whose rule has a stripe size of 0
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `rgw_obj_manifest.cc` is the same blob at v19.2.6 and
+  v20.2.4, and `driver/rados/rgw_obj_manifest.cc` and
+  `driver/rados/rgw_obj_manifest.h` differ between them only outside the
+  lines below, so each of their lines holds at both.
+  - `operator++` on a rule whose `stripe_max_size` is 0 does not move: it
+    adds that size to `stripe_ofs` (`rgw_obj_manifest.cc:55`), so it never
+    reaches the part's end (`:64`), and sets `ofs` back to `stripe_ofs`
+    (`:91`). On a manifest without rules that is not explicit it returns at
+    once (`:34-36`).
+  - `RGWRados::iterate_obj`, which serves every GET, reads each stripe from
+    its offset up to its size and then steps (`driver/rados/rgw_rados.cc:7497-7519`
+    at v19.2.6, `:8352-8374` at v20.2.4). A stripe on such a rule has size 0
+    (`seek`, `rgw_obj_manifest.cc:162-168`; `operator++`, `:45` and `:86`),
+    so the read takes nothing from it, the step stays put, and a GET whose
+    range reaches the rule never ends.
+  - `obj_find_part` steps from `obj_begin` until it meets part n or a later
+    part (`driver/rados/rgw_obj_manifest.cc:210-217`). Once the walk stands
+    on such a rule below part n, it never ends.
+  - Once part n is found, `get_part_obj_state` reads the state of the object
+    holding part n's first stripe and, when that object has a manifest,
+    returns at once with it (`driver/rados/rgw_rados.cc:6810-6813` at
+    v19.2.6, `:7646-7649` at v20.2.4). Otherwise it gives the part's own
+    manifest the found stripe's size as its stripe size (`:6818` at v19.2.6,
+    `:7654` at v20.2.4) and fills it in a do-while that steps until the part
+    id changes (`:6835-6838` at v19.2.6, `:7671-7674` at v20.2.4).
+    - When part n's first stripe is on such a rule, that size is 0, and the
+      loop's first `generator::create_next` divides by it
+      (`driver/rados/rgw_obj_manifest.cc:28`, reached because
+      `set_multipart_part_rule` leaves `max_head_size` at 0,
+      `driver/rados/rgw_obj_manifest.h:265-270`); a part head that carries a
+      manifest of its own takes the early return instead. On x86-64 that
+      integer division raises SIGFPE, whose handler re-raises it with the
+      default action, which ends the process (`global/signal_handler.cc:377`,
+      `:367` and `:84-102` at v19.2.6 and v20.2.4). AArch64's UDIV yields 0
+      for a zero divisor without trapping, so there the do-while would loop
+      forever instead (architecture semantics, not exercised).
+    - When part n starts in the head, the object holding its first stripe is
+      the object itself: `get_obj_state_impl` sets every decoded manifest's
+      head to the object read (`set_head`, `driver/rados/rgw_rados.cc:6220` at
+      v19.2.6, `:6974` at v20.2.4), and a stripe in the head is located at
+      the manifest's object (`rgw_obj_manifest.cc:118-127` and `:200-204`).
+      That object's state carries the manifest, so `get_part_obj_state`
+      returns at once with the whole object's manifest and state, and the
+      do-while never runs. A HEAD then answers 200, because `RGWGetObj`
+      returns right after the read's `prepare` for a stat (`rgw_op.cc:2267-2269`
+      at v19.2.6, `:2503-2506` at v20.2.4), and a GET goes on to
+      `iterate_obj` and never ends there.
+  - The part lookup serves GET and HEAD with `partNumber`
+    (`RGWRados::Object::Read::prepare`, `driver/rados/rgw_rados.cc:6890` at
+    v19.2.6, `:7738` at v20.2.4) and, at v20.2.4, GetObjectAttributes's
+    ObjectParts, whose `RadosObject::list_parts` calls both functions
+    (`driver/rados/rgw_sal_rados.cc:2866` and `:2898`, from
+    `rgw_rest_s3.cc:4082`). `list_parts` also walks the manifest itself,
+    stepping past every stripe of a part it has listed (`:2880-2886`), so
+    after a part that starts in the head it never ends either. A manifest
+    without rules never reaches the part lookup, because its end part id is
+    0 and both functions return at once.
+  - `update_gc_chain` walks the whole manifest from `obj_begin` to `obj_end`
+    (`driver/rados/rgw_rados.cc:5414` at v19.2.6, `:6137` at v20.2.4), and
+    `complete_atomic_modification` runs it, unless the tail is kept, on the
+    manifest of the object that a write replaces or a delete removes
+    (`:5382-5388`, called from `_do_write_meta` at `:3314` and
+    `Delete::delete_obj` at `:5963`, at v19.2.6; `:6102-6111`, `:3467` and
+    `:6717` at v20.2.4). That walk never ends on such a rule once the
+    object passes its head, and on a manifest without rules that is not
+    explicit whenever the object is not empty. Each pass whose stripe is not
+    the head appends that stripe's object to the chain
+    (`cls/rgw/cls_rgw_types.h:1161-1172` at v19.2.6, `:1200-1209` at
+    v20.2.4), so the stuck walk also grows memory without bound.
+  - radosgw's writers take a rule's stripe size from `rgw_obj_stripe_size`,
+    and `generator::create_begin` refuses a manifest without a rule
+    (`driver/rados/rgw_obj_manifest.cc:250-254`). With a stripe size of 0,
+    `create_next` divides by it at the first offset at or past the head's end
+    (`:22-28`), so no such manifest with data past its head is stored ("[radosgw
+    divides by zero writing with an rgw_obj_stripe_size of
+    0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0)").
+    A PUT smaller than the inline head stores one, whose walk ends in the
+    head (`rgw_obj_manifest.cc:39-51`) and which is not multipart.
+- **Impact:** a manifest that a corrupting or hostile writer with write
+  access to the bucket's data pool plants with such a rule past its head:
+  - spins a radosgw thread forever on a GET that reads that far, with or
+    without `partNumber`;
+  - spins one on a GET or HEAD with a `partNumber` past the rule's first
+    part, in `obj_find_part`;
+  - on x86-64 ends the radosgw process on a GET or HEAD for a part whose
+    first stripe is on the rule, unless that part starts in the head, where
+    a HEAD answers 200;
+  - at v20.2.4 does the same to a GetObjectAttributes request for
+    ObjectParts, which also spins in `list_parts`' own walk after a part
+    that starts in the head;
+  - and spins one on an overwrite or delete of the object, in
+    `update_gc_chain`, whose chain grows until memory runs out.
+- **Releases:** every release since v19.0.0 for the part lookup, where
+  `obj_find_part` and its caller arrived (8ae61ca5064 and 01d8b4c38bd,
+  2023-11-21), and v19.2.6 and v20.2.4 for the other walks, the releases
+  checked; also checked at main (7ed73efc1be, 2026-09-25, where
+  `create_next`'s division, `obj_find_part`'s loop, `get_part_obj_state`'s
+  early return and do-while are unchanged).
+- **rgw-go:** refuses the walk. `meta.Manifest.PartBounds` and
+  `meta.Manifest.Stripes` fail with `denc.ErrMalformed` at the first step
+  that does not move past the previous offset, so for a part that starts in
+  the head rgw-go refuses a HEAD that radosgw answers; `docs/exclusions.md`
+  records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
+  review of rgw-go's part lookup; derived from the source, not reproduced.
+
+## radosgw divides by zero writing with an rgw_obj_stripe_size of 0
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `rgw_putobj.cc` and the `driver/rados/rgw_obj_manifest.*`
+  lines below are the same at v19.2.6 and v20.2.4.
+  - `rgw_obj_stripe_size` is a size option with a default of 4 MiB and no
+    minimum (`common/options/rgw.yaml.in:1860-1872` at v19.2.6,
+    `:1948-1960` at v20.2.4). radosgw reads it unvalidated.
+  - The atomic and multipart writers round it to the data pool's required
+    alignment (`get_max_aligned_size`, `driver/rados/rgw_rados.cc:695-708`
+    at v19.2.6, `:730-743` at v20.2.4, called at
+    `driver/rados/rgw_putobj_processor.cc:317` and `:453` at v19.2.6, `:345`
+    and `:487` at v20.2.4), which leaves it unchanged when the alignment is
+    0. It is 0 unless the pool is erasure-coded without overwrites
+    (`get_required_alignment`, `driver/rados/rgw_rados.cc:659` at v19.2.6,
+    `:694` at v20.2.4; `pg_pool_t::requires_aligned_append`,
+    `osd/osd_types.h:1754-1756` at v19.2.6, `:1791-1793` at v20.2.4). The
+    append writer takes the option raw (`:685` at v19.2.6, `:724` at
+    v20.2.4), whatever the pool.
+  - With a stripe size of 0, `generator::create_next` divides by it at every
+    offset at or past `max_head_size` (`driver/rados/rgw_obj_manifest.cc:22-28`):
+    - An atomic PUT sets the rule with `set_trivial_rule(head_max_size, 0)`
+      (`driver/rados/rgw_obj_manifest.h:259-263`). The first byte past the
+      inline head makes `StripeProcessor::process` ask for the next stripe
+      (`rgw_putobj.cc:61-81`), through `ManifestObjectProcessor::next` to
+      `create_next` (`driver/rados/rgw_putobj_processor.cc:233-236` at
+      v19.2.6, `:261-264` at v20.2.4). A PUT of exactly the head's size
+      divides in `complete`'s `create_next` (`:362` at v19.2.6, `:392` at
+      v20.2.4). A smaller PUT succeeds and stores a manifest with a
+      stripe-0 rule.
+    - When the placement keeps no data in the head, or its tail pool
+      differs from the head's, `head_max_size` is 0 (`:285-312` at v19.2.6,
+      `:313-340` at v20.2.4), and every PUT divides, an empty one included.
+    - Every UploadPart divides: `set_multipart_part_rule` leaves
+      `max_head_size` at 0 (`driver/rados/rgw_obj_manifest.h:265-270`), so
+      the part's first stripe or `complete`'s `create_next` (`:510` at
+      v19.2.6, `:546` at v20.2.4) reaches the division.
+    - Every append divides the same way (`complete`, `:725` at v19.2.6,
+      `:769` at v20.2.4), on any pool.
+  - On x86-64 the division raises SIGFPE, whose handler re-raises it with
+    the default action, which ends the process (`global/signal_handler.cc:377`,
+    `:367` and `:84-102` at v19.2.6 and v20.2.4). This entry does not cover
+    other architectures.
+- **Impact:** with `rgw_obj_stripe_size` set to 0, radosgw on x86-64 ends
+  at the first append on any zone, since append takes the option raw.
+  Where the data pool needs no alignment, it also ends at the first PUT
+  that reaches the inline head's end, at the first PUT of any size where
+  the placement keeps no data in the head, and at the first UploadPart. On
+  an erasure-coded pool without overwrites, PUT and UploadPart round the
+  stripe size up to the pool's alignment and are unaffected. A PUT smaller
+  than the head succeeds and leaves a stripe-0 rule in its manifest, which
+  is harmless to read because its walk ends in the head.
+- **Releases:** checked at v19.2.6, v20.2.4 and main (7ed73efc1be,
+  2026-09-25, where the option still has no minimum and `create_next`'s
+  division is unchanged).
+- **rgw-go:** does not read `rgw_obj_stripe_size`; it writes no object
+  manifests yet. Its manifest walks refuse a stripe-0 rule past the head ("radosgw
+  hangs or faults walking a manifest whose rule has a stripe size of 0",
+  above).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
+  review of rgw-go's manifest walks; derived from the source, not
+  reproduced.
