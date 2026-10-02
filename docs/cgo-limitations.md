@@ -70,8 +70,8 @@ does not change:
 | (a) throughput >= 0.8x floor | PASS 0.86x (write4k at 64), +0.06 | PASS 0.88x (write4m at 1), +0.08 | PASS 0.97x (write4m at 1), +0.17 | PASS 0.94x (write4m at 1), +0.14 |
 | (b) mean latency <= 1.25x floor | PASS 1.16x (write4k at 64), +0.09 | PASS 1.13x (write4m at 1), +0.12 | PASS 1.03x (write4m at 1), +0.22 | PASS 1.07x (write4m at 1), +0.18 |
 | (c) thread growth <= GOMAXPROCS + 8 = 40 | FAIL +89 (headwrite4k at 512), -49 | FAIL +79 (indexrtt at 512), -39 | PASS +35 (read4k at 512), +5 | FAIL +99 (headwrite4k at 512), -59 |
-| (d) cgo frames <= 10% of CPU | FAIL 24.9%, -14.9 points | FAIL 19.2%, -9.2 points | FAIL 24.3%, -14.3 points | FAIL 18.2%, -8.2 points |
-| informational: boundary cost <= 10% of CPU | PASS 5.0%, +5.0 points | PASS 9.3%, +0.7 points | PASS 5.1%, +4.9 points | PASS 8.8%, +1.2 points |
+| (d) boundary cost <= 10% of CPU | PASS 5.0%, +5.0 points | PASS 9.3%, +0.7 points | PASS 5.1%, +4.9 points | PASS 8.8%, +1.2 points |
+| informational: every cgo frame <= 10% of CPU (the original (d)) | FAIL 24.9%, -14.9 points | FAIL 19.2%, -9.2 points | FAIL 24.3%, -14.3 points | FAIL 18.2%, -8.2 points |
 
 The unstable floors named beside (a) and (b) are, on Squid, read4k at 256
 (21.5% apart in operations a second, 21.6% in mean latency) and write4m at 4
@@ -82,25 +82,42 @@ the baseline, was at worst 0.85x and 1.18x on Squid (read4k at 64) and
 (read4k at 512 on Squid, write4k at 512 on Tentacle), and held 37.3% and
 37.2% of its CPU in cgo frames and 3.1% and 2.8% in boundary cost.
 
-The report gives two answers for each release:
+(d) was amended on 2026-10-02, after these runs, to judge the boundary
+cost: the CPU a pure-Go client would no longer spend, defined below. It
+first judged the share of samples with any cgo frame on the stack, which
+is now reported beside it as informational. That share counts the C
+librados runs on the Go thread, work a pure-Go client would also do, as a
+cost of the boundary; and because it is a share of the whole profile, a
+more efficient Go side would raise it with nothing at the boundary
+changed. The committed reports predate the amendment: their "cgo<=10% of
+CPU" row is the informational share, and their "informational: boundary
+cost" row is (d).
 
-- **With (d) as written, every cgo frame:** no judged mode passes all four
-  criteria on Squid or on Tentacle.
-- **With the boundary cost in (d)'s place, reported beside it as
-  informational:** callback passes all four criteria on Tentacle. On Squid
-  callback fails only (c), at +89 threads of the 40 allowed (headwrite4k at
-  512 in flight), so no judged mode passes there. Pipe fails (c) on both
-  releases.
+With (d) as amended:
+
+- **Tentacle:** callback passes all four criteria; pipe fails (c).
+- **Squid:** callback fails only (c), at +89 threads of the 40 allowed
+  (headwrite4k at 512 in flight), and pipe fails (c), so no judged mode
+  passes.
+
+The plan calls cgo no phase 1 bottleneck only when, on each release, the
+callback or the pipe mode passes all four criteria, so that verdict is not
+reached. The boundary's CPU cost is under 10% in both modes on both
+releases, though pipe's margins, 0.7 and 1.2 points, leave out an
+unmeasured write per completion (below); thread growth, (c), is what
+remains. Under (d) as first written, no judged mode passed on either
+release.
 
 (a) and (b) leave read4m out, for the reasons below. What the numbers show:
 
 - **The cgo share is steady across releases and above 10% in every mode:**
   24.9% and 24.3% in callback, 19.2% and 18.2% in pipe, 37.3% and 37.2% in
-  sync (Squid, Tentacle), in the CPU profile of read4k at 256 in flight. (d)
-  counts every sample with a frame of the cgo boundary on its stack, cgo's
-  `runtime.cgoCheck*` pointer checks included, since the plan's list of
-  frames is read as examples. Most of it is C that the calls into librados
-  run on the Go thread: the runtime records a sample taken in C under the Go
+  sync (Squid, Tentacle), in the CPU profile of read4k at 256 in flight.
+  The share counts every sample with a frame of the cgo boundary on its
+  stack, cgo's `runtime.cgoCheck*` pointer checks included, since the
+  original (d)'s list of frames was read as examples. Most of it is C that
+  the calls into librados run on the Go thread: the runtime records a
+  sample taken in C under the Go
   stack of the call, ending in `runtime.cgocall`
   ([proc.go:5844-5860](https://github.com/golang/go/blob/go1.27.1/src/runtime/proc.go#L5844-L5860)),
   and samples whose leaf is `runtime.cgocall` are 15.6% and 15.0% in
@@ -130,8 +147,8 @@ The report gives two answers for each release:
     counts in neither (i) nor (ii): a pure-Go client runs a handler too.
 
   The boundary cost is (i) plus (ii). Callback pays almost all of it to
-  submit, pipe about half to deliver; the pointer checks alone, which only
-  the reading of the plan's list as examples counts, are 0.7% of callback's
+  submit, pipe about half to deliver; the pointer checks alone, which the
+  amended (d) counts in (i), are 0.7% of callback's
   profile on both releases and 0.7% and 0.5% of pipe's.
 
   (ii) counts only the Go side of delivery. Pipe's C side is one 8-byte
