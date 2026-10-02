@@ -33,6 +33,36 @@ func newCluster(ctx context.Context) (*fakerados.Cluster, radosclient.Pool) {
 	return c, p
 }
 
+// usersUID is a users.uid namespace in the order RADOS lists it, which
+// neither the names nor their unreversed hashes follow: by the bit-reversed
+// placement hash ceph_str_hash_rjenkins gives each name, then by name.
+//
+//	dave 0x0694dfdd, alice 0x06a04cf5, alice.buckets 0x1f5ca3c3,
+//	user-318489 and user-326802 0x259305f8, bob 0x954708d3,
+//	carol 0xbcfb659a, user-155108 and user-327421 0xc4707780,
+//	erin 0xf72c4da3.
+var usersUID = []string{
+	"dave", "alice", "alice.buckets", "user-318489", "user-326802",
+	"bob", "carol", "user-155108", "user-327421", "erin",
+}
+
+// putUsersUID stores usersUID's objects in poolName's users.uid namespace,
+// and an object in the default namespace that no listing of it may show.
+func putUsersUID(c *fakerados.Cluster) {
+	for _, oid := range usersUID {
+		c.Put(poolName, "users.uid", oid, []byte("x"))
+	}
+	c.Put(poolName, "", "elsewhere", nil)
+}
+
+// collect is a listing callback that appends each name to oids.
+func collect(oids *[]string) func(oid, locator string) error {
+	return func(oid, _ string) error {
+		*oids = append(*oids, oid)
+		return nil
+	}
+}
+
 // write runs the write op build composes on oid.
 func write(ctx context.Context, p radosclient.Pool, oid string, build func(op *radosclient.WriteOp)) (uint64, error) {
 	op := radosclient.NewWriteOp()
@@ -931,19 +961,104 @@ var _ = Describe("the cluster", func() {
 		Expect(a.WithLocator("loc").ID()).To(Equal(a.ID()))
 	})
 
-	It("lists a namespace's objects in name order", func(ctx SpecContext) {
-		for _, oid := range []string{"c", "a", "b"} {
-			c.Put("pool", "ns", oid, nil)
-		}
-		c.Put("pool", "", "other", nil)
-		p, err := c.Pool(ctx, "pool", "ns")
+	It("lists a namespace's objects in hobject order, by bit-reversed placement hash, without locators", func(ctx SpecContext) {
+		putUsersUID(c)
+		p, err := c.Pool(ctx, poolName, "users.uid")
 		Expect(err).NotTo(HaveOccurred())
-		var oids []string
-		Expect(p.ListObjects(ctx, func(oid, _ string) error {
+		var oids, locators []string
+		Expect(p.ListObjects(ctx, func(oid, locator string) error {
 			oids = append(oids, oid)
+			locators = append(locators, locator)
 			return nil
 		})).To(Succeed())
-		Expect(oids).To(Equal([]string{"a", "b", "c"}))
+		Expect(oids).To(Equal(usersUID))
+		Expect(locators).To(HaveEach(BeEmpty()))
+	})
+
+	It("answers a fixed fsid until it closes", func() {
+		Expect(c.FSID()).To(Equal(fakerados.FakeFSID))
+		Expect(c.Close()).To(Succeed())
+		_, err := c.FSID()
+		Expect(err).To(MatchError(radosclient.ErrClosed))
+	})
+
+	DescribeTable("pages a namespace in its listing order with opaque tokens",
+		func(ctx SpecContext, limit, pages int) {
+			putUsersUID(c)
+			p, err := c.Pool(ctx, poolName, "users.uid")
+			Expect(err).NotTo(HaveOccurred())
+			var paged []string
+			token := ""
+			for page := 1; ; page++ {
+				Expect(page).To(BeNumerically("<=", pages), "the listing ends after %d pages", pages)
+				before := len(paged)
+				next, more, err := p.ListObjectsFrom(ctx, token, limit, collect(&paged))
+				Expect(err).NotTo(HaveOccurred())
+				if !more {
+					Expect(next).To(BeEmpty())
+					Expect(page).To(Equal(pages))
+					break
+				}
+				Expect(len(paged)-before).To(Equal(limit), "a page before the last is full")
+				Expect(next).NotTo(BeEmpty())
+				token = next
+			}
+			Expect(paged).To(Equal(usersUID))
+		},
+		Entry("one at a time", 1, 10),
+		Entry("two at a time", 2, 5),
+		Entry("four at a time, a page boundary inside each same-hash pair", 4, 3),
+		Entry("in a page the listing fills exactly, which says nothing follows", 10, 1),
+		Entry("in a page larger than the listing", 11, 1),
+		Entry("in one page when limit is 0", 0, 1),
+	)
+
+	It("resumes after a removed last object at the object that followed it", func(ctx SpecContext) {
+		putUsersUID(c)
+		p, err := c.Pool(ctx, poolName, "users.uid")
+		Expect(err).NotTo(HaveOccurred())
+		var first []string
+		next, more, err := p.ListObjectsFrom(ctx, "", 2, collect(&first))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(more).To(BeTrue())
+		Expect(first).To(Equal(usersUID[:2]))
+		Expect(writeErr(ctx, p, first[1], func(op *radosclient.WriteOp) { op.Remove() })).To(Succeed())
+		var rest []string
+		next, more, err = p.ListObjectsFrom(ctx, next, 0, collect(&rest))
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]any{next, more}).To(Equal([]any{"", false}))
+		Expect(rest).To(Equal(usersUID[2:]))
+	})
+
+	It("refuses a token it did not make with ErrBadOp before listing", func(ctx SpecContext) {
+		putUsersUID(c)
+		p, err := c.Pool(ctx, poolName, "users.uid")
+		Expect(err).NotTo(HaveOccurred())
+		var listed []string
+		_, _, err = p.ListObjectsFrom(ctx, "3:b55a9110:root::bu_9:head", 10, collect(&listed))
+		Expect(err).To(MatchError(radosclient.ErrBadOp))
+		Expect(listed).To(BeEmpty())
+	})
+
+	It("stops at the callback's error, the context's or a closed handle's", func(ctx SpecContext) {
+		putUsersUID(c)
+		p, err := c.Pool(ctx, poolName, "users.uid")
+		Expect(err).NotTo(HaveOccurred())
+		stop := errors.New("stop")
+		n := 0
+		_, _, err = p.ListObjectsFrom(ctx, "", 0, func(string, string) error {
+			n++
+			return stop
+		})
+		Expect(err).To(MatchError(stop))
+		Expect(n).To(Equal(1))
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, _, err = p.ListObjectsFrom(canceled, "", 0, func(string, string) error { return nil })
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(p.Close()).To(Succeed())
+		_, _, err = p.ListObjectsFrom(ctx, "", 0, func(string, string) error { return nil })
+		Expect(err).To(MatchError(radosclient.ErrClosed))
 	})
 
 	It("seeds an object at version 1 with Put and hands out the stored object, nil when absent", func() {

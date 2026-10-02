@@ -92,6 +92,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | none | none | ✓ |
 | [radosgw's object stat ignores a data pool it cannot resolve](#radosgws-object-stat-ignores-a-data-pool-it-cannot-resolve) | none | none | ✓ |
 | [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | none | none | ✓ |
+| [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | pending | pending |  |
+| [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3493,3 +3495,99 @@ Every new entry adds its row to this table, in document order.
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 3, 2026-10-01, in review of the driver's
   read options; derived from the source, not reproduced.
+
+## rados_nobjects_list_seek reports the position it was given, not the one it lands at
+
+- **Kind:** quirk, with a small mismatch between librados.h and the
+  implementation. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - librados.h documents `rados_nobjects_list_seek` as returning the "actual
+    (rounded) position we moved to" (`include/rados/librados.h:1098`,
+    `:1099`), and `rados_nobjects_list_get_pg_hash_position` as returning the
+    hash position "rounded to the current pg" (`:1089`, `:1090`).
+  - `Objecter::list_nobjects_seek(NListContext*, uint32_t)` sets the position
+    to `hobject_t(hash=pos)` and `current_pg` to the hash's placement group,
+    and returns `pos` unchanged (`osdc/Objecter.cc:3761-3773`,
+    `:3934-3946`). `get_pg_hash_position` returns `pos.get_hash()`, also
+    unrounded (`osdc/Objecter.h:2247-2249`, `:2214-2216`).
+  - Where the listing then resumes depends on whether it has fetched. A
+    fresh listing (`rados_nobjects_list_open`,
+    `librados/librados_c.cc:2364-2379` at both tags) has `sort_bitwise`
+    false (`osdc/Objecter.h:2223`, `:2190`). The integer seek leaves it so,
+    unlike the cursor seek, which sets it (`osdc/Objecter.cc:3784`, `:3957`).
+    The first fetch then takes the cluster's SORTBITWISE flag, which every
+    active OSD requires (`osd/OSD.cc:8939-8942`, `:9135-9138`), as a change
+    of sort order, and restarts at `hobject_t(hash=current_pg)`, the first
+    position of the placement group (`osdc/Objecter.cc:3828-3835`,
+    `:4001-4008`).
+  - Once a listing has fetched, `sort_bitwise` is true, `IoCtxImpl::nlist_seek`
+    leaves it so (`librados/IoCtxImpl.cc:538-543`, `:545-550`), and a seek
+    lands on the hash itself.
+- **Impact:** a caller that seeks a fresh listing to a hash gets that hash
+  back, but the listing resumes at the start of its placement group and
+  first returns objects that come before the hash in the listing's order. A
+  caller that seeks a listing that has fetched resumes at the hash. Neither
+  the return value nor `rados_nobjects_list_get_pg_hash_position` tells the
+  caller which happened. The rounding to a placement group is what
+  librados.h promises.
+- **Releases:** checked at v19.2.6 and v20.2.4; older releases not checked.
+- **rgw-go:** unaffected by where the seek lands. `radosclient.ListPage`
+  (`internal/radosclient/listpage.go`) skips every entry hobject order puts
+  at or before the resume point and ignores the seek's return value, so a
+  seek that lands at the group's start costs a replay, recorded in
+  `docs/cgo-limitations.md`, and repeats nothing.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 2, 2026-10-01, implementing
+  `Pool.ListObjectsFrom`; derived from the source, not reproduced.
+
+## librados aborts the process on a listing seek after its pool is deleted
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - Both `Objecter::list_nobjects_seek` overloads map the position to a
+    placement group with `osdmap->raw_pg_to_pg` (`osdc/Objecter.cc:3769`
+    and `:3782`, `:3942` and `:3955`) without checking that the listing's
+    pool is still in the client's OSD map, and `OSDMap::raw_pg_to_pg`
+    `ceph_assert`s that it is (`osd/OSDMap.h:1432-1436`, `:1464-1468`).
+  - Opening a listing checks nothing either: `rados_nobjects_list_open`
+    copies the I/O context's pool id, snap seq and namespace into a new
+    listing context and asks the cluster nothing
+    (`librados/librados_c.cc:2364-2379` at both tags).
+  - A listing that does not seek meets the deletion in
+    `Objecter::list_nobjects`, which answers ENOENT
+    (`osdc/Objecter.cc:3813-3819`, `:3986-3992`).
+    `rados_nobjects_list_next2` passes that on, and returns the same ENOENT
+    at a listing's end (`librados/librados_c.cc:2473-2481` at both tags).
+  - radosgw's `rgw_list_pool` seeks every listing it makes with a cursor. It
+    parses its marker, an empty one as `hobject_t()`, and opens the listing
+    with `nobjects_begin(cursor)` (`rgw/driver/rados/rgw_tools.cc:354-361`,
+    `:370-377`; `librados/librados_cxx.cc:3066-3073`, `:3073-3080`), which
+    seeks through `rados_nobjects_list_seek_cursor`
+    (`librados/librados_cxx.cc:1897-1908`, `:1904-1915`, and `:822-827` at
+    both tags). It serves radosgw's system-object pool listing
+    (`rgw/services/svc_sys_obj_core.cc:594` and `:637` at both tags).
+    radosgw's other listings open with the argument-less `nobjects_begin()`,
+    which does not seek (`librados/librados_cxx.cc:1871-1882`,
+    `:1878-1889`). Those are the log pool listing
+    (`rgw/driver/rados/rgw_rados.cc:1491`, `:1594`), the cursor-less
+    `pool_iterate_begin` (`:9101`, `:10046`) and the orphan search
+    (`rgw/rgw_orphan.cc:306` at v19.2.6, `rgw/radosgw-admin/orphan.cc:310`
+    at v20.2.4).
+- **When it happens:** a seek on an I/O context opened before its pool was
+  deleted, once the client has the OSD map without the pool.
+- **Impact:** the client process aborts instead of getting an error. For
+  radosgw that is any `rgw_list_pool` call on such a context; for rgw-go, a
+  resumed `Pool.ListObjectsFrom` page.
+- **Releases:** checked at v19.2.6 and v20.2.4; older releases not checked.
+- **rgw-go:** affected. goceph's `ListObjectsFrom` seeks before its first
+  fetch whenever a token is set, and goceph pools and reuses its I/O
+  contexts (`internal/radosclient/goceph/pool.go`), so a context can predate
+  the deletion. A pre-check would race the deletion, so goceph has none.
+  A first page does not seek, and reads the deletion as an empty listing
+  because go-ceph's `Iter.Err` takes ENOENT for the end.
+  `docs/cgo-limitations.md` records both.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 2 review, 2026-10-01; derived from the
+  source, not reproduced.

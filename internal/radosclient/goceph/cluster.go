@@ -320,6 +320,17 @@ func (c *cluster) ConfigGet(name string) (string, error) {
 // its lifetime; it stays readable after Close.
 func (c *cluster) InstanceID() uint64 { return c.instanceID }
 
+// FSID returns the fsid of the monitor map the connection holds
+// (RadosClient::get_fsid).
+func (c *cluster) FSID() (string, error) {
+	if err := c.begin("fsid"); err != nil {
+		return "", err
+	}
+	defer c.end()
+	fsid, err := c.conn.GetFSID()
+	return fsid, toSeamError("fsid", err)
+}
+
 // Stats reports the operations Read and Write submitted on every Pool of the
 // Cluster, and what its in-flight limiter holds.
 func (c *cluster) Stats() radosclient.Stats {

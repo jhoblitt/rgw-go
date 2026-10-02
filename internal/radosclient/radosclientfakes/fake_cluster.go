@@ -32,6 +32,18 @@ type FakeCluster struct {
 		result1 string
 		result2 error
 	}
+	FSIDStub        func() (string, error)
+	fSIDMutex       sync.RWMutex
+	fSIDArgsForCall []struct {
+	}
+	fSIDReturns struct {
+		result1 string
+		result2 error
+	}
+	fSIDReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	InstanceIDStub        func() uint64
 	instanceIDMutex       sync.RWMutex
 	instanceIDArgsForCall []struct {
@@ -202,6 +214,62 @@ func (fake *FakeCluster) ConfigGetReturnsOnCall(i int, result1 string, result2 e
 		})
 	}
 	fake.configGetReturnsOnCall[i] = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeCluster) FSID() (string, error) {
+	fake.fSIDMutex.Lock()
+	ret, specificReturn := fake.fSIDReturnsOnCall[len(fake.fSIDArgsForCall)]
+	fake.fSIDArgsForCall = append(fake.fSIDArgsForCall, struct {
+	}{})
+	stub := fake.FSIDStub
+	fakeReturns := fake.fSIDReturns
+	fake.recordInvocation("FSID", []interface{}{})
+	fake.fSIDMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeCluster) FSIDCallCount() int {
+	fake.fSIDMutex.RLock()
+	defer fake.fSIDMutex.RUnlock()
+	return len(fake.fSIDArgsForCall)
+}
+
+func (fake *FakeCluster) FSIDCalls(stub func() (string, error)) {
+	fake.fSIDMutex.Lock()
+	defer fake.fSIDMutex.Unlock()
+	fake.FSIDStub = stub
+}
+
+func (fake *FakeCluster) FSIDReturns(result1 string, result2 error) {
+	fake.fSIDMutex.Lock()
+	defer fake.fSIDMutex.Unlock()
+	fake.FSIDStub = nil
+	fake.fSIDReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeCluster) FSIDReturnsOnCall(i int, result1 string, result2 error) {
+	fake.fSIDMutex.Lock()
+	defer fake.fSIDMutex.Unlock()
+	fake.FSIDStub = nil
+	if fake.fSIDReturnsOnCall == nil {
+		fake.fSIDReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.fSIDReturnsOnCall[i] = struct {
 		result1 string
 		result2 error
 	}{result1, result2}

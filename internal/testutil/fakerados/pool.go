@@ -127,27 +127,64 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	return p.run(name, oid, steps, true, flags, mtime)
 }
 
-// ListObjects calls fn for every object in the namespace in name order, with
-// an empty locator.
-func (p *Pool) ListObjects(ctx context.Context, fn func(oid, locator string) error) error {
+// listing returns the namespace's objects in the order RADOS lists them,
+// hobject order: the fake keeps no locators, so that is by bit-reversed
+// placement hash, then by name.
+func (p *Pool) listing() ([]string, error) {
 	c := p.cluster
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := p.usable("list objects"); err != nil {
-		c.mu.Unlock()
-		return err
+		return nil, err
 	}
-	oids := slices.Sorted(maps.Keys(p.store.objects))
-	c.mu.Unlock()
-	for _, oid := range oids {
-		if err := ctx.Err(); err != nil {
-			return err
+	oids := slices.Collect(maps.Keys(p.store.objects))
+	slices.SortFunc(oids, func(a, b string) int {
+		ha, hb := radosclient.PlacementHash(p.ns, a), radosclient.PlacementHash(p.ns, b)
+		switch {
+		case radosclient.ListAfter(ha, a, hb, b):
+			return 1
+		case radosclient.ListAfter(hb, b, ha, a):
+			return -1
 		}
-		if err := fn(oid, ""); err != nil {
-			return err
-		}
-	}
-	return nil
+		return 0
+	})
+	return oids, nil
 }
+
+// ListObjects calls fn for every object in the namespace in RADOS's listing
+// order, with an empty locator: the one page of an unlimited
+// ListObjectsFrom from the start.
+func (p *Pool) ListObjects(ctx context.Context, fn func(oid, locator string) error) error {
+	_, _, err := p.ListObjectsFrom(ctx, "", 0, fn)
+	return err
+}
+
+// ListObjectsFrom pages ListObjects' listing with radosclient.ListPage, as
+// goceph pages a librados listing.
+func (p *Pool) ListObjectsFrom(ctx context.Context, token string, limit int, fn func(oid, locator string) error) (next string, more bool, err error) {
+	oids, err := p.listing()
+	if err != nil {
+		return "", false, err
+	}
+	return radosclient.ListPage(ctx, &listSource{oids: oids}, p.ns, token, limit, fn)
+}
+
+// listSource is a snapshot of a listing as a radosclient.ListSource. Its
+// seek stays at the start, as in a pool of one placement group, so
+// ListPage skips the whole listing before the resume point.
+type listSource struct{ oids []string }
+
+func (*listSource) Seek(uint32) {}
+
+func (s *listSource) Next() (oid, locator string, ok bool) {
+	if len(s.oids) == 0 {
+		return "", "", false
+	}
+	oid, s.oids = s.oids[0], s.oids[1:]
+	return oid, "", true
+}
+
+func (*listSource) Err() error { return nil }
 
 // watch is a registered watch on one object.
 type watch struct {

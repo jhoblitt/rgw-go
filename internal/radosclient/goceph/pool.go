@@ -446,27 +446,11 @@ func timespec(t time.Time) rados.Timespec {
 }
 
 // ListObjects calls fn for every object in the namespace with its locator,
-// "" for an object without one.
+// "" for an object without one: the one page of an unlimited
+// ListObjectsFrom from the start.
 func (p *pool) ListObjects(ctx context.Context, fn func(oid, locator string) error) error {
-	h, err := p.state.acquire("list objects", "")
-	if err != nil {
-		return err
-	}
-	defer p.state.release(h)
-	iter, err := h.ioctx.Iter()
-	if err != nil {
-		return toSeamError("list objects", err)
-	}
-	defer iter.Close()
-	for iter.Next() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := fn(iter.Value(), iter.Locator()); err != nil {
-			return err
-		}
-	}
-	return toSeamError("list objects", iter.Err())
+	_, _, err := p.ListObjectsFrom(ctx, "", 0, fn)
+	return err
 }
 
 // watch is a registered go-ceph watcher, the I/O context it holds for its
