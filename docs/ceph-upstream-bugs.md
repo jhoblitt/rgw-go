@@ -88,10 +88,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | none | none | ✓ |
 | [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | none | none | ✓ |
 | [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | none | none | ✓ |
-| [radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32](#radosgws-tail-stripe-names-go-negative-at-stripe-231-and-repeat-at-232) | pending | pending |  |
-| [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | pending | pending |  |
-| [radosgw's object stat ignores a data pool it cannot resolve](#radosgws-object-stat-ignores-a-data-pool-it-cannot-resolve) | pending | pending |  |
-| [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | pending | pending |  |
+| [radosgw's tail stripe names go negative at stripe 2^31 and repeat at 2^32](#radosgws-tail-stripe-names-go-negative-at-stripe-231-and-repeat-at-232) | none | none | ✓ |
+| [radosgw's user removal reports success over a lost version race, leaving the user without its indexes](#radosgws-user-removal-reports-success-over-a-lost-version-race-leaving-the-user-without-its-indexes) | none | none | ✓ |
+| [radosgw's object stat ignores a data pool it cannot resolve](#radosgws-object-stat-ignores-a-data-pool-it-cannot-resolve) | none | none | ✓ |
+| [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3351,7 +3351,10 @@ Every new entry adds its row to this table, in document order.
   computes the stripe's start as the C++ does. Go's int32 arithmetic wraps
   where the C++ increment is undefined. Because rgw-go behaves as radosgw
   does, `docs/exclusions.md` has no entry for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused. The stripe
+  counters are themselves `int` in both the iterator and the generator, so a
+  fix widens them, not only the name's format.
 - **Found:** phase 1 unit W, Task 3, 2026-10-01, writing the plain-PUT
   manifest generator; derived from the source, not reproduced.
 
@@ -3409,7 +3412,8 @@ Every new entry adds its row to this table, in document order.
   success: ConcurrentModification when the user changed, NoSuchUser when it
   is gone. Whether the admin API's user removal passes either error on to
   the client is decided with that op.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 metadata plane (unit M, Task 4), 2026-10-01,
   implementing the RADOS driver's RemoveUser; derived from the source, not
   reproduced.
@@ -3446,7 +3450,8 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** the driver's pool resolution answers 500 UnknownError, naming
   the placement, as radosgw's head-object helpers do;
   `docs/exclusions.md` records the difference from radosgw's stat.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 3, 2026-10-01, transcribing radosgw's
   object stat for the driver; derived from the source, not reproduced.
 
@@ -3469,13 +3474,22 @@ Every new entry adds its row to this table, in document order.
     returns at once (`:7408-7421`, `:8259-8272`); any other sends a RADOS
     read (`:7425-7441`, `:8276-8292`).
 - **Impact:** with the option at 0, a GET of a non-empty object never
-  finishes. HEAD does not iterate.
+  finishes, and it does not merely stall: each pass of the loop sends
+  another RADOS read for a piece the prefetched head does not cover, and
+  the read throttle never holds one back. A read's cost is its length
+  (`rgw_rados.cc:7436`, `:8287`), and both throttles wait only once
+  `pending_size` passes the window (`rgw_aio_throttle.cc:45-49` and
+  `:136-143`, `rgw_aio_throttle.h:34`, at both tags), so a zero-cost read
+  never waits. The worker pegs a CPU and issues RADOS reads without bound;
+  whether the objecter's own in-flight limits bound the reads outstanding
+  at the OSDs is not checked. HEAD does not iterate.
 - **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
   the option still has no minimum, `rgw.yaml.in:2268-2277`, and
   `iterate_obj` caps the piece the same way, `rgw_rados.cc:9022` and
   `:9038`).
 - **rgw-go:** refuses to start on a zero `rgw_get_obj_max_req_size`, naming
   the value; `docs/exclusions.md` records the difference.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 3, 2026-10-01, in review of the driver's
   read options; derived from the source, not reproduced.
