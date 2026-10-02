@@ -97,6 +97,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
 | [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), pending (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), pending (Service) |  |
 | [radosgw cannot load a bucket whose entry point is from before version 8](#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8) | pending | pending |  |
+| [radosgw takes any prefix of bytes for a Range's unit](#radosgw-takes-any-prefix-of-bytes-for-a-ranges-unit) | pending | pending |  |
+| [radosgw's parse_time drops a numeric zone offset](#radosgws-parse_time-drops-a-numeric-zone-offset) | pending | pending |  |
+| [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | pending | pending |  |
+| [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3797,3 +3801,148 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 metadata plane (unit M, Task 5), 2026-10-01,
   implementing the RADOS driver's GetBucket; derived from the source, not
   reproduced.
+
+## radosgw takes any prefix of bytes for a Range's unit
+
+- **Kind:** defect, unfixed through main. Unreproduced on a cluster: derived
+  from the source and checked by running the function.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RGWGetObj::parse_range` takes a Range value without "bytes=" in it by
+    skipping whitespace to the unit, then comparing
+    `strncasecmp(rs.c_str(), "bytes", end - pos)`: the unit's length of
+    bytes, but from the value's first byte rather than the unit's
+    (`rgw_op.cc:170-184`, `:213-227`). A unit that the compare passes is
+    read as bytes up to the "=".
+  - So a unit that is a prefix of "bytes" in any case, such as "b" or
+    "byt", and an empty unit, as in "=0-1", are taken for bytes, and the
+    range is served as 206. A unit after leading whitespace is compared
+    against the whitespace and the value is served whole, though HTTP
+    parsers strip leading whitespace from a field value, so that case
+    rarely arrives.
+  - parse_range, copied from v19.2.6 and run on glibc 2.42, gives 0-1 with
+    partial content for "b=0-1", "byt=0-1" and "=0-1", and the whole object
+    without partial content for "  bytes = 0-1".
+  - RFC 9110, section 14.2, says a server must ignore a Range header field
+    whose range unit it does not understand.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
+  the compare is unchanged at `rgw_op.cc:260`).
+- **rgw-go:** `op.ParseRange` mirrors it, so a GET answers as radosgw's
+  does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 5's preflight, 2026-10-01, transcribing
+  parse_range for the GetObject op; derived from the source, not reproduced
+  on a cluster.
+
+## radosgw's parse_time drops a numeric zone offset
+
+- **Kind:** defect, unfixed through main. Unreproduced on a cluster: derived
+  from the source and checked by running the function.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `parse_time`, which reads If-Modified-Since and If-Unmodified-Since,
+    tries RFC 1123 with a numeric zone among its formats
+    (`parse_rfc1123_alt`, `"%a, %d %b %Y %H:%M:%S %z"`,
+    `rgw_common.cc:587-592`, `:600-605`). glibc's strptime parses the zone
+    into `tm_gmtoff`.
+  - `parse_time` then converts the fields with `internal_timegm`
+    (`rgw_common.cc:711`, `:724`), which reads the year, month, day, hour,
+    minute and second alone (`include/timegm.h:54-77` at both), so the
+    offset is dropped: "Sat, 29 Oct 2100 19:43:31 +0100" reads as 19:43:31
+    UTC, an hour after the instant it names.
+  - radosgw's SigV2 date check, which parses with the same formats, does
+    apply the offset: `*header_time -= t.tm_gmtoff` (`rgw_auth_s3.cc:242`,
+    `:244`).
+  - parse_time, copied from v19.2.6 and run on glibc 2.42, gives
+    2100-10-29T19:43:31Z for "+0100", "-0800" and "+01:30" alike.
+- **Impact:** If-Modified-Since and If-Unmodified-Since on GET and HEAD
+  (`rgw_op.cc:2475` and `:2481`, `:2707` and `:2713`) and CopyObject's
+  x-amz-copy-source-if-modified-since and -if-unmodified-since (`:5504` and
+  `:5512`, `:6070` and `:6078`) compare against an instant off by the
+  offset. RFC 9110's HTTP-date is always GMT, so only a client that sends a
+  numeric zone meets it.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw_common.cc:605` and `:725`).
+- **rgw-go:** `op.ParseHTTPTime` mirrors it, so a conditional answers as
+  radosgw's does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 5's preflight, 2026-10-01, transcribing
+  parse_time for the GetObject op; derived from the source, not reproduced
+  on a cluster.
+
+## radosgw's parse_time wraps a date outside 1970 to 2106
+
+- **Kind:** defect, unfixed through main. Unreproduced on a cluster: derived
+  from the source and checked by running the function.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `parse_time` returns `utime_t(sec, ns).to_real_time()`
+    (`rgw_common.cc:712`, `:725`), and utime_t keeps its seconds in a
+    `__u32` (`include/utime.h:51` and `:72` at both), so the time_t
+    `internal_timegm` computed is taken modulo 2^32. A date before
+    1970-01-01 or after 2106-02-07T06:28:15Z wraps.
+  - parse_time, copied from v19.2.6 and run on glibc 2.42, reads
+    "Thu, 01 Jan 1960 00:00:00 GMT" as 2096-02-06T06:28:16Z and
+    "Sun, 07 Feb 2106 06:28:16 GMT" as 1970-01-01T00:00:00Z. asctime's and
+    ISO 8601's years are read as written, up to four digits, so
+    "Sat Oct 29 19:43:31 94" is the year 94, which reads as
+    2000-04-04T14:19:15Z.
+  - radosgw's SigV2 date check refuses a year before 1970 for the same
+    parse (`rgw_auth_s3.cc:237-240`, `:239-242`); parse_time does not.
+- **Impact:** an If-Modified-Since before 1970 reads as a date in the
+  2090s, so radosgw answers 304 Not Modified for every object written
+  before then, where the client asked for any object modified since; an
+  If-Unmodified-Since before 1970 lets the read through where it should
+  fail with 412. CopyObject's source conditionals go the same way.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw_common.cc:726`, and `include/utime.h:71`).
+- **rgw-go:** `op.ParseHTTPTime` mirrors it, so a conditional answers as
+  radosgw's does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 5, 2026-10-02, testing parse_time's
+  arithmetic against a copy of it; derived from the source, not reproduced
+  on a cluster.
+
+## radosgw sends no response, or two status lines, when it refuses a response-* parameter
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's, and a single line is the same at both.
+  - `RGWGetObj_ObjStore_S3::send_response_data` refuses a `response-*`
+    parameter on an anonymous request, or one whose value holds a control
+    character, with -ERR_INVALID_REQUEST (`rgw_rest_s3.cc:517-533`,
+    `:634-650`). It does so while it writes the response headers: after
+    `dump_errno` has sent the success status and `dump_content_length` the
+    length (`:400` and `:459`, `:411` and `:495`), and before `end_header`
+    and `sent_header = true` (`:617-649`, `:734-766`). The success status
+    is 200, or 206 when parse_range found a range (`partial_content`,
+    `rgw_rest_s3.cc:398`, `:409`, set at `rgw_op.cc:192`, `:235`).
+  - For a HEAD, and for a GET of an empty object, `RGWGetObj::execute`
+    calls `send_response_data(bl, 0, 0)` and drops its return
+    (`rgw_op.cc:2436-2439`, `:2668-2671`), so the refusal goes nowhere.
+    beast's client writes the status line and the length into its send
+    buffer (`ClientIO::send_status` and `send_content_length`,
+    `rgw_asio_client.cc:109-118` and `:183-192`), the reordering filter
+    holds the other headers until `complete_header`
+    (`rgw_client_io_filters.h:376-445`), and the buffer is flushed only by
+    `complete_header` (`rgw_asio_client.cc:143-164`). Nothing calls it:
+    the buffering filter's `complete_request` does only when no length was
+    sent (`rgw_client_io_filters.h:222-253`), and `ClientIO::complete_request`
+    flushes nothing (`rgw_asio_client.cc:97-102`). The `StreamIO` and its
+    buffer belong to the one request (`rgw_asio_frontend.cc:317-318`), so
+    by code reading the client gets no response: it waits for one that does
+    not come, and one that pipelines takes the next response for this one.
+  - For any other GET the refusal comes in the first data callback
+    (`RGWGetObj::get_data_cb`, `rgw_op.cc:2155-2159`, `:2390-2395`), fails
+    the read, and execute's error path calls `send_response_data_error`
+    (`:2461`, `:2693`). That runs `send_response_data` again with
+    `sent_header` still false, so it sends a second status line, the 400,
+    behind the 200 or 206 status line and length already in the buffer.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
+  execute still drops the return at `rgw_op.cc:3035-3042`).
+- **rgw-go:** answers 400 InvalidRequest in every case;
+  `docs/exclusions.md` records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** review of phase 1 unit R, Task 5, 2026-10-02; derived from the
+  source, not reproduced.
