@@ -1,0 +1,24 @@
+{
+  "name": "path-with-space-and-unicode",
+  "method": "GET",
+  "target": "/b/my%20k%c3%bcy",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "X-Amz-Date": [
+      "20150830T123600Z"
+    ]
+  },
+  "presigned": false,
+  "signed_headers": "host;x-amz-date",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "GET\n/b/my%20k%C3%BCy\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\n\nhost;x-amz-date\nUNSIGNED-PAYLOAD",
+    "date": "20150830T123600Z",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

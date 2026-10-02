@@ -1,0 +1,24 @@
+{
+  "name": "date-header-basic-iso",
+  "method": "GET",
+  "target": "/",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "Date": [
+      "20150830T123600Z"
+    ]
+  },
+  "presigned": false,
+  "signed_headers": "date;host",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "GET\n/\n\ndate:20150830T123600Z\nhost:example.amazonaws.com\n\ndate;host\nUNSIGNED-PAYLOAD",
+    "date": "20150830T123600Z",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

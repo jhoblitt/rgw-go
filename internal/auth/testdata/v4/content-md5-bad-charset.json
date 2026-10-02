@@ -1,0 +1,27 @@
+{
+  "name": "content-md5-bad-charset",
+  "method": "GET",
+  "target": "/",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "X-Amz-Date": [
+      "20150830T123600Z"
+    ],
+    "Content-MD5": [
+      "!!!"
+    ]
+  },
+  "presigned": false,
+  "signed_headers": "content-md5;host;x-amz-date",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "",
+    "date": "",
+    "access_key": "AKIDEXAMPLE",
+    "error": "AccessDenied"
+  }
+}

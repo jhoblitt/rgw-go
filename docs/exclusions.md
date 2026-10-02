@@ -1241,6 +1241,16 @@ does the following.
   For radosgw a signed `host` on such a request is present and empty, and
   passes its check that `host` is signed (`rgw_auth_s3.cc:793` at v19.2.6,
   `:770` at v20.2.4); for rgw-go it is absent.
+- **A secret key signs with its own bytes.** radosgw builds the SigV4
+  signing key through `transform_secret_key`, which re-encodes each byte of
+  the secret as a UTF-8 code point (`rgw_auth_s3.cc:984-1004` at v19.2.6,
+  `:961-981` at v20.2.4). That leaves ASCII as it is, and radosgw generates
+  ASCII secrets, but it accepts any non-empty secret an administrator
+  supplies, and for a byte above 0x7f the conversion is undefined behaviour
+  (`docs/ceph-upstream-bugs.md`, "radosgw's SigV4 signing key is undefined
+  for a secret byte above 0x7f"). rgw-go keys the HMAC with the secret's
+  bytes, as AWS clients do, so a request signed with such a secret verifies
+  where radosgw's outcome is undefined.
 
 ### Authorization differences
 

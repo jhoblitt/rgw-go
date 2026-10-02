@@ -1,0 +1,25 @@
+{
+  "name": "region-and-service-unchecked",
+  "method": "GET",
+  "target": "/",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "X-Amz-Date": [
+      "20150830T123600Z"
+    ]
+  },
+  "presigned": false,
+  "signed_headers": "host;x-amz-date",
+  "scope": "19700101/nowhere/sqs/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "b47475c8d0a101bfe0738c9fb979854b9c10b251a6251ec1146ba80eec0690b4",
+  "note": "signature computed outside rgw-go with Python's hmac and hashlib: HMAC-SHA256 keyed with \"AWS4\" + secret over the scope's date, then region, then service, then \"aws4_request\", applied to \"AWS4-HMAC-SHA256\\n\" + expect.date + \"\\n\" + scope + \"\\n\" + hex(sha256(expect.canonical_request))",
+  "expect": {
+    "canonical_request": "GET\n/\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\n\nhost;x-amz-date\nUNSIGNED-PAYLOAD",
+    "date": "20150830T123600Z",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}
