@@ -237,11 +237,6 @@ var _ = Describe("the driver", func() {
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
 			},
-			Entry("ListUserBuckets", func(ctx context.Context, s *driver.Store) error {
-				_, _, _, err := s.ListUserBuckets(ctx, meta.UserOwner(meta.UserID{ID: "alice"}), "", 1000)
-				return err
-			}),
-
 			Entry("GetAccount", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetAccount(ctx, "RGW00000000000000001")
 				return err

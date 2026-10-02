@@ -173,11 +173,6 @@ func (s *Store) Period() meta.Period { return s.zone.Period }
 // is not in the period.
 func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
 
-// ListUserBuckets implements op.UserStore.
-func (s *Store) ListUserBuckets(context.Context, meta.Owner, string, int) (ents []meta.BucketEnt, next string, more bool, err error) {
-	return nil, "", false, op.ErrNotImplemented
-}
-
 // GetAccount implements op.AccountStore.
 func (s *Store) GetAccount(context.Context, string) (*op.AccountRecord, error) {
 	return nil, op.ErrNotImplemented

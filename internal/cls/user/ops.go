@@ -88,12 +88,16 @@ type ResetResult struct {
 }
 
 // ResetStats2 mirrors one round of rgwrados::buckets::reset_stats: it sums
-// up to 1000 entries after marker onto acc and, on the last page, writes a
-// fresh header holding the sum and t: its LastStatsSync is zero until the next
-// CompleteStatsSync. An entry that does not decode fails the op with EIO.
-// The method writes, and its reply only comes back when the op runs with
-// OpFlagReturnVec, so it takes a ReadOp; loop, passing the returned marker
-// and stats on, while the result is truncated.
+// up to 1000 entries after marker from zero and, on the last page, writes a
+// fresh header holding that page's sum and t: its LastStatsSync is zero
+// until the next CompleteStatsSync. The class ignores acc, the running total
+// radosgw sends, so the header holds the last page's sum alone
+// (cls_user.cc:459 and :482 at v19.2.6 and v20.2.4; docs/ceph-upstream-bugs.md,
+// "cls_user reset_user_stats2 drops the stats of every page but the last").
+// An entry that does not decode fails the op with EIO. The method writes,
+// and its reply only comes back when the op runs with OpFlagReturnVec, so it
+// takes a ReadOp; loop, passing the returned marker and stats on, while the
+// result is truncated.
 func ResetStats2(op *radosclient.ReadOp, t time.Time, marker string, acc Stats, r denc.Release) *ResetResult {
 	in := clsutil.Encode(ResetStats2Op{Time: t, Marker: marker, AccStats: acc}, r)
 	return &ResetResult{res: op.Exec(class, methodResetUserStats2, in)}
