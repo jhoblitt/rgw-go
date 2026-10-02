@@ -68,6 +68,21 @@ func is(line map[string]any, mode, shape string, conc int) bool {
 	return (mode == "" || line["mode"] == mode) && line["shape"] == shape && line["conc"] == float64(conc)
 }
 
+// editEnv rewrites a sweep directory's env.json through change.
+func editEnv(dir string, change func(env map[string]any)) string {
+	GinkgoHelper()
+	path := filepath.Join(dir, "env.json")
+	data, err := os.ReadFile(path)
+	Expect(err).NotTo(HaveOccurred())
+	var env map[string]any
+	Expect(json.Unmarshal(data, &env)).To(Succeed())
+	change(env)
+	data, err = json.Marshal(env)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(path, data, 0o600)).To(Succeed())
+	return dir
+}
+
 // remove deletes the named files from a sweep directory.
 func remove(dir string, names ...string) string {
 	GinkgoHelper()
@@ -100,13 +115,13 @@ var _ = Describe("Seam", func() {
 		for _, shape := range []string{"read4k", "write4k", "read4m", "write4m"} {
 			Expect(r.Markdown).To(ContainSubstring("\n## "+shape+"\n"), "shape %s", shape)
 		}
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 / 58140 \| 1131 / 1109 \| 0\.95x \| 1\.05x \| ops 4\.0%, mean 2\.0% \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 / 58140 \| 1131 / 1109 \| 0\.95x \| 1\.05x \| ops 4\.0%, mean 2\.0% \| 114000, 560 \|$`),
 			"read4k at 64: 54000 ops/s against the mean of the floor before and after, 57000, and a mean of 1180 µs against 1120")
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 520 \| .* \| 549 / 571 \| 7171 / 7029 \| 0\.93x \| 1\.08x \| ops 4\.0%, mean 2\.0% \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 520 \| .* \| 549 / 571 \| 7171 / 7029 \| 0\.93x \| 1\.08x \| ops 4\.0%, mean 2\.0% \| 1120, 3550 \|$`),
 			"read4m at 4, a concurrency only the 4 MiB shapes run")
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 9000 \| .* \| 9500 \| 1700 \| 0\.95x \| 1\.04x \| single run \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 9000 \| .* \| 9500 \| 1700 \| 0\.95x \| 1\.04x \| single run \| — \|$`),
 			"write4k at 16, which no criterion compares, has one floor run")
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 30000 \| .* \| — \| — \| — \| — \| — \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 16 \| callback \| \d+ \| 30000 \| .* \| — \| — \| — \| — \| — \| — \|$`),
 			"read4k at 16 has no floor")
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Pass, "worst 0.92x (read4k at 256), margin +0.12")))
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Pass, "worst 1.09x (read4k at 256), margin +0.16")))
@@ -115,7 +130,7 @@ var _ = Describe("Seam", func() {
 	It("flags a judged cell whose two floor runs differ by more than 10% as unstable", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 256 \| callback \| \d+ \| 55000 \| .* \| 55800 / 64200 \| 4303 / 4217 \| 0\.92x \| 1\.09x \| unstable: ops 14\.0%, mean 2\.0% \|$`),
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 256 \| callback \| \d+ \| 55000 \| .* \| 55800 / 64200 \| 4303 / 4217 \| 0\.92x \| 1\.09x \| unstable: ops 14\.0%, mean 2\.0% \| 120000, 2130 \|$`),
 			"the floor's ops before and after read4k at 256 differ by 14% of their mean")
 		Expect(r.Verdicts).To(ContainElement(SatisfyAll(
 			verdict("callback", report.Throughput, report.Pass, "; unstable floor: read4k at 256 (14.0%)"),
@@ -133,15 +148,66 @@ var _ = Describe("Seam", func() {
 		r, err := report.Seam(ctx, dir)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Incomplete, "missing: write4m at 4 (one floor run)")))
-		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 110 \| .* \| 116 / — \| 34239 / — \| — \| — \| one floor run \|$`))
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 110 \| .* \| 116 / — \| 34239 / — \| — \| — \| one floor run \| 236, 16950 \|$`))
 	})
 
 	It("renders the run's environment", func(ctx SpecContext) {
 		r, err := report.Seam(ctx, "testdata")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Markdown).To(HavePrefix("# Seam microbenchmark: squid\n"))
-		Expect(r.Markdown).To(ContainSubstring("| ceph_version | 19.2.6 |"))
+		Expect(r.Markdown).To(HavePrefix("# Seam microbenchmark: tentacle\n"))
+		Expect(r.Markdown).To(ContainSubstring("| ceph_version | 20.2.4 |"))
 		Expect(r.Markdown).To(ContainSubstring("| nproc | 32 |"))
+	})
+
+	It("names the floor's image and the cluster's", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring("The judged floor is rados bench from quay.io/ceph/ceph:v19.2.6, Ceph 19.2.6, " +
+			"the release of the librados the benchmark links."))
+		Expect(r.Markdown).To(ContainSubstring("The cluster runs quay.io/ceph/ceph:v20.2.4; its own rados bench ran once " +
+			"more at each judged cell, shown beside the judged floor and not judged."))
+	})
+
+	It("judges by the floor image's runs and shows the cluster image's beside them", func(ctx SpecContext) {
+		r, err := report.Seam(ctx, "testdata")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).To(ContainSubstring(" floor runs | cluster image floor ops/s, mean µs |"))
+		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Throughput, report.Pass, "worst 0.92x (read4k at 256)")),
+			"against the cluster image's runs, twice as fast, every ratio would fail")
+		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| read4k \| rand \| 4096 \| 64 \| single \| quay\.io/ceph/ceph:v20\.2\.4 \| `),
+			"the floor table names each run's image")
+	})
+
+	It("leaves the cluster image's column out when the cluster runs the floor's image", func(ctx SpecContext) {
+		dir := editEnv(sweep(func(file string, line map[string]any) bool {
+			return file != "floor.jsonl" || line["image"] == "quay.io/ceph/ceph:v19.2.6"
+		}), func(env map[string]any) { env["cluster_image"] = "quay.io/ceph/ceph:v19.2.6" })
+		r, err := report.Seam(ctx, dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.Markdown).NotTo(ContainSubstring("cluster image floor"))
+		Expect(r.Markdown).To(ContainSubstring("The cluster runs the same image."))
+	})
+
+	DescribeTable("refuses a sweep whose floor image does not match the librados it links",
+		func(ctx SpecContext, change func(env map[string]any), want string) {
+			_, err := report.Seam(ctx, editEnv(sweep(), change))
+			Expect(err).To(MatchError(ContainSubstring(want)))
+		},
+		Entry("no floor image", func(env map[string]any) { delete(env, "floor_image") }, "env.json names no floor_image"),
+		Entry("no linked librados", func(env map[string]any) { delete(env, "librados_version") }, "env.json names no librados_version"),
+		Entry("a floor image of another release", func(env map[string]any) { env["floor_image_version"] = "20.2.4" },
+			"the floor image quay.io/ceph/ceph:v19.2.6 runs Ceph 20.2.4, but the benchmark links librados 19.2.6"),
+	)
+
+	It("refuses a floor run from an image that is neither the floor's nor the cluster's", func(ctx SpecContext) {
+		dir := sweep(func(file string, line map[string]any) bool {
+			if file == "floor.jsonl" && is(line, "", "read4k", 64) && line["bracket"] == "after" {
+				line["image"] = "quay.io/ceph/ceph:v18.2.7"
+			}
+			return true
+		})
+		_, err := report.Seam(ctx, dir)
+		Expect(err).To(MatchError(ContainSubstring("a floor run from quay.io/ceph/ceph:v18.2.7, neither the floor image nor the cluster's")))
 	})
 
 	It("keeps the largest-n line of a cell that testing.B called more than once", func(ctx SpecContext) {
@@ -286,7 +352,7 @@ var _ = Describe("Seam", func() {
 				}
 				return true
 			}),
-			"two floor lines for read4k at conc=64 (before)"),
+			"two floor lines for read4k at conc=64 (before, quay.io/ceph/ceph:v19.2.6)"),
 		Entry("a run neither before nor after its cell",
 			edit(func(file string, line map[string]any) bool {
 				if file == "floor.jsonl" && is(line, "", "read4k", 64) && line["bracket"] == "after" {

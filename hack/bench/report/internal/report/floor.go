@@ -13,20 +13,39 @@ const maxFloorDrift = 0.10
 
 // cellFloor is what the floor measured at one mirror cell. A cell the
 // throughput and latency criteria compare has a run before its modes and one
-// after them; any other cell has a single run.
+// after them; any other cell has a single run. cluster is the run of the
+// cluster's own image, where it differs from the floor image, which the
+// criteria do not judge by.
 type cellFloor struct {
-	judged                bool
-	before, after, single *Floor
+	judged                         bool
+	before, after, single, cluster *Floor
 }
 
 func (s *sweep) floorAt(shape string, conc int) cellFloor {
-	run := func(bracket string) *Floor {
-		if f, ok := s.floors[floorKey{cellKey{shape, conc}, bracket}]; ok {
+	run := func(bracket, image string) *Floor {
+		if f, ok := s.floors[floorKey{cellKey{shape, conc}, bracket, image}]; ok {
 			return &f
 		}
 		return nil
 	}
-	return cellFloor{judged: judgedCell(shape, conc), before: run("before"), after: run("after"), single: run("")}
+	cf := cellFloor{
+		judged: judgedCell(shape, conc),
+		before: run("before", s.floorImage),
+		after:  run("after", s.floorImage),
+		single: run("", s.floorImage),
+	}
+	if s.clusterImage != s.floorImage {
+		cf.cluster = run("", s.clusterImage)
+	}
+	return cf
+}
+
+// clusterRun renders the cluster image's run as its ops/s and mean latency.
+func (cf cellFloor) clusterRun() string {
+	if cf.cluster == nil {
+		return "—"
+	}
+	return num(cf.cluster.OpsPerSec) + ", " + num(cf.cluster.MeanUs)
 }
 
 // judgedCell reports whether the throughput and latency criteria compare

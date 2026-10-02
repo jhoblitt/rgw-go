@@ -33,6 +33,14 @@ func (s *sweep) renderEnv(b *strings.Builder) {
 	for _, k := range s.envKeys {
 		fmt.Fprintf(b, "| %s | %s |\n", k, envValue(s.env[k]))
 	}
+	fmt.Fprintf(b, "\nThe judged floor is rados bench from %s, Ceph %s, the release of the librados the benchmark links.",
+		s.floorImage, s.floorVersion)
+	if s.clusterImage == s.floorImage {
+		b.WriteString(" The cluster runs the same image.\n")
+		return
+	}
+	fmt.Fprintf(b, " The cluster runs %s; its own rados bench ran once more at each judged cell, "+
+		"shown beside the judged floor and not judged.\n", s.clusterImage)
 }
 
 func envValue(v any) string {
@@ -109,13 +117,20 @@ func (s *sweep) renderLimits(b *strings.Builder) {
 func (s *sweep) renderShape(b *strings.Builder, shape string) {
 	mirrored := slices.ContainsFunc(mirrors, func(m mirror) bool { return m.shape == shape })
 	fmt.Fprintf(b, "\n## %s\n\n", shape)
+	cluster := mirrored && s.clusterImage != s.floorImage
 	b.WriteString("| conc | mode | n | ops/s | p50 µs | p99 µs | p999 µs | mean µs | CPU µs/op | threads | errors |")
 	if mirrored {
 		b.WriteString(" floor ops/s | floor mean µs | ops ÷ floor | mean ÷ floor | floor runs |")
 	}
+	if cluster {
+		b.WriteString(" cluster image floor ops/s, mean µs |")
+	}
 	b.WriteString("\n|" + strings.Repeat("---|", 11))
 	if mirrored {
 		b.WriteString(strings.Repeat("---|", 5))
+	}
+	if cluster {
+		b.WriteString("---|")
 	}
 	b.WriteString("\n")
 	var concs []int
@@ -136,6 +151,9 @@ func (s *sweep) renderShape(b *strings.Builder, shape string) {
 				fmt.Fprintf(b, " %s | %s | %s | %s | %s |", cf.runs(floorOps), cf.runs(floorMean),
 					cf.ratio(c.OpsPerSec, floorOps), cf.ratio(c.MeanUs, floorMean), cf.note())
 			}
+			if cluster {
+				fmt.Fprintf(b, " %s |", cf.clusterRun())
+			}
 			b.WriteString("\n")
 		}
 	}
@@ -146,20 +164,25 @@ func (s *sweep) renderFloors(b *strings.Builder) {
 		return
 	}
 	b.WriteString("\n## rados bench floor\n\n")
-	b.WriteString("| shape | op | size | conc | run | seconds | max objects | objects read | ops | elapsed s | ops/s | mean µs | MB/s |\n")
-	b.WriteString("|" + strings.Repeat("---|", 13) + "\n")
+	b.WriteString("| shape | op | size | conc | run | image | seconds | max objects | objects read | ops | elapsed s | ops/s | mean µs | MB/s |\n")
+	b.WriteString("|" + strings.Repeat("---|", 14) + "\n")
 	keys := make([]floorKey, 0, len(s.floors))
 	for k := range s.floors {
 		keys = append(keys, k)
 	}
+	images := []string{s.floorImage, s.clusterImage}
 	slices.SortFunc(keys, func(a, b floorKey) int {
-		return cmp.Or(s.compareCells(a.cellKey, b.cellKey), cmp.Compare(rank(a.bracket, brackets), rank(b.bracket, brackets)))
+		return cmp.Or(
+			s.compareCells(a.cellKey, b.cellKey),
+			cmp.Compare(rank(a.image, images), rank(b.image, images)),
+			cmp.Compare(rank(a.bracket, brackets), rank(b.bracket, brackets)),
+		)
 	})
 	for _, k := range keys {
 		f := s.floors[k]
-		fmt.Fprintf(b, "| %s | %s | %d | %d | %s | %d | %s | %s | %d | %.2f | %s | %s | %.2f |\n",
-			f.Shape, f.Op, f.Size, f.Conc, runName(f.Bracket), f.Seconds, count(f.MaxObjects), count(f.Objects), f.TotalOps,
-			f.ElapsedS, num(f.OpsPerSec), num(f.MeanUs), f.BandwidthMBps)
+		fmt.Fprintf(b, "| %s | %s | %d | %d | %s | %s | %d | %s | %s | %d | %.2f | %s | %s | %.2f |\n",
+			f.Shape, f.Op, f.Size, f.Conc, runName(f.Bracket), f.Image, f.Seconds, count(f.MaxObjects), count(f.Objects),
+			f.TotalOps, f.ElapsedS, num(f.OpsPerSec), num(f.MeanUs), f.BandwidthMBps)
 	}
 }
 

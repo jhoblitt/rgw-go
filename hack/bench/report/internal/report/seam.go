@@ -84,6 +84,9 @@ type Floor struct {
 	// latency criteria compare, run just before or just after the cell's
 	// modes, and empty for the single run of any other cell.
 	Bracket string `json:"bracket"`
+	// Image is the image whose rados ran: the floor image, of the release of
+	// the librados the benchmark links, or the cluster's own.
+	Image string `json:"image"`
 	// Seconds and MaxObjects are what the run was given: it stops at
 	// whichever it reaches first, and MaxObjects 0 is no limit.
 	Seconds    int `json:"seconds"`
@@ -176,6 +179,7 @@ type cellKey struct {
 type floorKey struct {
 	cellKey
 	bracket string
+	image   string
 }
 
 // brackets are the floor runs of a cell in the order they ran.
@@ -183,16 +187,20 @@ var brackets = []string{"before", "", "after"}
 
 // sweep is a sweep directory read.
 type sweep struct {
-	dir      string
-	release  string
-	env      map[string]any
-	envKeys  []string
-	cells    map[key]Cell
-	modes    []string
-	shapes   []string
-	over     []Cell
-	floors   map[floorKey]Floor
-	profiles map[string]profile
+	dir     string
+	release string
+	env     map[string]any
+	envKeys []string
+	// floorImage is the image whose rados runs the judged floor, of the
+	// release of the librados the benchmark links, and clusterImage the
+	// image the cluster runs.
+	floorImage, floorVersion, clusterImage string
+	cells                                  map[key]Cell
+	modes                                  []string
+	shapes                                 []string
+	over                                   []Cell
+	floors                                 map[floorKey]Floor
+	profiles                               map[string]profile
 }
 
 // profile is a mode's read4k CPU profile at 256 in flight.
@@ -239,10 +247,10 @@ func readSweep(ctx context.Context, dir string) (*sweep, error) {
 	if err := s.readOver(); err != nil {
 		return nil, err
 	}
-	if err := s.readFloors(); err != nil {
+	if err := s.readEnv(); err != nil {
 		return nil, err
 	}
-	if err := s.readEnv(); err != nil {
+	if err := s.readFloors(); err != nil {
 		return nil, err
 	}
 	if err := s.readProfiles(ctx); err != nil {
@@ -402,9 +410,12 @@ func (s *sweep) readFloors() error {
 		if !slices.Contains(brackets, f.Bracket) {
 			return fmt.Errorf("bracket %q is not before, after or empty", f.Bracket)
 		}
-		k := floorKey{cellKey{f.Shape, f.Conc}, f.Bracket}
+		if f.Image != s.floorImage && f.Image != s.clusterImage {
+			return fmt.Errorf("a floor run from %s, neither the floor image nor the cluster's", f.Image)
+		}
+		k := floorKey{cellKey{f.Shape, f.Conc}, f.Bracket, f.Image}
 		if _, dup := s.floors[k]; dup {
-			return fmt.Errorf("two floor lines for %s at conc=%d (%s)", f.Shape, f.Conc, runName(f.Bracket))
+			return fmt.Errorf("two floor lines for %s at conc=%d (%s, %s)", f.Shape, f.Conc, runName(f.Bracket), f.Image)
 		}
 		s.floors[k] = f
 		return nil
@@ -434,6 +445,35 @@ func (s *sweep) readEnv() error {
 	s.envKeys = slices.Sorted(maps.Keys(s.env))
 	if r, ok := s.env["release"].(string); ok {
 		s.release = r
+	}
+	return s.checkFloorImage()
+}
+
+// checkFloorImage reads the floor's and the cluster's images from env.json
+// and refuses a floor image whose Ceph release is not the release of the
+// librados the benchmark links: a floor from another client release does not
+// measure what the seam's own client could do.
+func (s *sweep) checkFloorImage() error {
+	field := func(name string) (string, error) {
+		if v, ok := s.env[name].(string); ok && v != "" {
+			return v, nil
+		}
+		return "", fmt.Errorf("env.json names no %s", name)
+	}
+	var errs []error
+	librados, err := field("librados_version")
+	errs = append(errs, err)
+	s.floorImage, err = field("floor_image")
+	errs = append(errs, err)
+	s.floorVersion, err = field("floor_image_version")
+	errs = append(errs, err)
+	s.clusterImage, err = field("cluster_image")
+	errs = append(errs, err)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	if s.floorVersion != librados {
+		return fmt.Errorf("the floor image %s runs Ceph %s, but the benchmark links librados %s", s.floorImage, s.floorVersion, librados)
 	}
 	return nil
 }

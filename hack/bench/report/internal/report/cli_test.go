@@ -27,7 +27,7 @@ var _ = Describe("Run", func() {
 		Expect(run(ctx, "seam", "--dir", dir)).To(Succeed())
 		md, err := os.ReadFile(filepath.Join(dir, "REPORT.md"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(md)).To(HavePrefix("# Seam microbenchmark: squid\n"))
+		Expect(string(md)).To(HavePrefix("# Seam microbenchmark: tentacle\n"))
 		Expect(stdout.String()).To(Equal(filepath.Join(dir, "REPORT.md") + ": callback passes all four criteria\n"))
 	})
 
