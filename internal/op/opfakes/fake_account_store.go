@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
@@ -23,6 +24,19 @@ type FakeAccountStore struct {
 		result1 string
 		result2 error
 	}
+	AddAccountUserStub        func(context.Context, string, meta.UserInfo) error
+	addAccountUserMutex       sync.RWMutex
+	addAccountUserArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 meta.UserInfo
+	}
+	addAccountUserReturns struct {
+		result1 error
+	}
+	addAccountUserReturnsOnCall map[int]struct {
+		result1 error
+	}
 	GetAccountStub        func(context.Context, string) (*op.AccountRecord, error)
 	getAccountMutex       sync.RWMutex
 	getAccountArgsForCall []struct {
@@ -36,6 +50,92 @@ type FakeAccountStore struct {
 	getAccountReturnsOnCall map[int]struct {
 		result1 *op.AccountRecord
 		result2 error
+	}
+	GetAccountByEmailStub        func(context.Context, string) (*op.AccountRecord, error)
+	getAccountByEmailMutex       sync.RWMutex
+	getAccountByEmailArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	getAccountByEmailReturns struct {
+		result1 *op.AccountRecord
+		result2 error
+	}
+	getAccountByEmailReturnsOnCall map[int]struct {
+		result1 *op.AccountRecord
+		result2 error
+	}
+	GetAccountByNameStub        func(context.Context, string, string) (*op.AccountRecord, error)
+	getAccountByNameMutex       sync.RWMutex
+	getAccountByNameArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	getAccountByNameReturns struct {
+		result1 *op.AccountRecord
+		result2 error
+	}
+	getAccountByNameReturnsOnCall map[int]struct {
+		result1 *op.AccountRecord
+		result2 error
+	}
+	ListAccountUsersStub        func(context.Context, string, string, uint32) ([]string, string, error)
+	listAccountUsersMutex       sync.RWMutex
+	listAccountUsersArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 uint32
+	}
+	listAccountUsersReturns struct {
+		result1 []string
+		result2 string
+		result3 error
+	}
+	listAccountUsersReturnsOnCall map[int]struct {
+		result1 []string
+		result2 string
+		result3 error
+	}
+	PutAccountStub        func(context.Context, *op.AccountRecord, *meta.AccountInfo, op.PutAccountOptions) error
+	putAccountMutex       sync.RWMutex
+	putAccountArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.AccountRecord
+		arg3 *meta.AccountInfo
+		arg4 op.PutAccountOptions
+	}
+	putAccountReturns struct {
+		result1 error
+	}
+	putAccountReturnsOnCall map[int]struct {
+		result1 error
+	}
+	RemoveAccountStub        func(context.Context, *op.AccountRecord) error
+	removeAccountMutex       sync.RWMutex
+	removeAccountArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.AccountRecord
+	}
+	removeAccountReturns struct {
+		result1 error
+	}
+	removeAccountReturnsOnCall map[int]struct {
+		result1 error
+	}
+	RemoveAccountUserStub        func(context.Context, string, string) error
+	removeAccountUserMutex       sync.RWMutex
+	removeAccountUserArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	removeAccountUserReturns struct {
+		result1 error
+	}
+	removeAccountUserReturnsOnCall map[int]struct {
+		result1 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
@@ -106,6 +206,69 @@ func (fake *FakeAccountStore) AccountNameReturnsOnCall(i int, result1 string, re
 	}{result1, result2}
 }
 
+func (fake *FakeAccountStore) AddAccountUser(arg1 context.Context, arg2 string, arg3 meta.UserInfo) error {
+	fake.addAccountUserMutex.Lock()
+	ret, specificReturn := fake.addAccountUserReturnsOnCall[len(fake.addAccountUserArgsForCall)]
+	fake.addAccountUserArgsForCall = append(fake.addAccountUserArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 meta.UserInfo
+	}{arg1, arg2, arg3})
+	stub := fake.AddAccountUserStub
+	fakeReturns := fake.addAccountUserReturns
+	fake.recordInvocation("AddAccountUser", []interface{}{arg1, arg2, arg3})
+	fake.addAccountUserMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAccountStore) AddAccountUserCallCount() int {
+	fake.addAccountUserMutex.RLock()
+	defer fake.addAccountUserMutex.RUnlock()
+	return len(fake.addAccountUserArgsForCall)
+}
+
+func (fake *FakeAccountStore) AddAccountUserCalls(stub func(context.Context, string, meta.UserInfo) error) {
+	fake.addAccountUserMutex.Lock()
+	defer fake.addAccountUserMutex.Unlock()
+	fake.AddAccountUserStub = stub
+}
+
+func (fake *FakeAccountStore) AddAccountUserArgsForCall(i int) (context.Context, string, meta.UserInfo) {
+	fake.addAccountUserMutex.RLock()
+	defer fake.addAccountUserMutex.RUnlock()
+	argsForCall := fake.addAccountUserArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeAccountStore) AddAccountUserReturns(result1 error) {
+	fake.addAccountUserMutex.Lock()
+	defer fake.addAccountUserMutex.Unlock()
+	fake.AddAccountUserStub = nil
+	fake.addAccountUserReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) AddAccountUserReturnsOnCall(i int, result1 error) {
+	fake.addAccountUserMutex.Lock()
+	defer fake.addAccountUserMutex.Unlock()
+	fake.AddAccountUserStub = nil
+	if fake.addAccountUserReturnsOnCall == nil {
+		fake.addAccountUserReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.addAccountUserReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *FakeAccountStore) GetAccount(arg1 context.Context, arg2 string) (*op.AccountRecord, error) {
 	fake.getAccountMutex.Lock()
 	ret, specificReturn := fake.getAccountReturnsOnCall[len(fake.getAccountArgsForCall)]
@@ -169,6 +332,396 @@ func (fake *FakeAccountStore) GetAccountReturnsOnCall(i int, result1 *op.Account
 		result1 *op.AccountRecord
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *FakeAccountStore) GetAccountByEmail(arg1 context.Context, arg2 string) (*op.AccountRecord, error) {
+	fake.getAccountByEmailMutex.Lock()
+	ret, specificReturn := fake.getAccountByEmailReturnsOnCall[len(fake.getAccountByEmailArgsForCall)]
+	fake.getAccountByEmailArgsForCall = append(fake.getAccountByEmailArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.GetAccountByEmailStub
+	fakeReturns := fake.getAccountByEmailReturns
+	fake.recordInvocation("GetAccountByEmail", []interface{}{arg1, arg2})
+	fake.getAccountByEmailMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeAccountStore) GetAccountByEmailCallCount() int {
+	fake.getAccountByEmailMutex.RLock()
+	defer fake.getAccountByEmailMutex.RUnlock()
+	return len(fake.getAccountByEmailArgsForCall)
+}
+
+func (fake *FakeAccountStore) GetAccountByEmailCalls(stub func(context.Context, string) (*op.AccountRecord, error)) {
+	fake.getAccountByEmailMutex.Lock()
+	defer fake.getAccountByEmailMutex.Unlock()
+	fake.GetAccountByEmailStub = stub
+}
+
+func (fake *FakeAccountStore) GetAccountByEmailArgsForCall(i int) (context.Context, string) {
+	fake.getAccountByEmailMutex.RLock()
+	defer fake.getAccountByEmailMutex.RUnlock()
+	argsForCall := fake.getAccountByEmailArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeAccountStore) GetAccountByEmailReturns(result1 *op.AccountRecord, result2 error) {
+	fake.getAccountByEmailMutex.Lock()
+	defer fake.getAccountByEmailMutex.Unlock()
+	fake.GetAccountByEmailStub = nil
+	fake.getAccountByEmailReturns = struct {
+		result1 *op.AccountRecord
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeAccountStore) GetAccountByEmailReturnsOnCall(i int, result1 *op.AccountRecord, result2 error) {
+	fake.getAccountByEmailMutex.Lock()
+	defer fake.getAccountByEmailMutex.Unlock()
+	fake.GetAccountByEmailStub = nil
+	if fake.getAccountByEmailReturnsOnCall == nil {
+		fake.getAccountByEmailReturnsOnCall = make(map[int]struct {
+			result1 *op.AccountRecord
+			result2 error
+		})
+	}
+	fake.getAccountByEmailReturnsOnCall[i] = struct {
+		result1 *op.AccountRecord
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeAccountStore) GetAccountByName(arg1 context.Context, arg2 string, arg3 string) (*op.AccountRecord, error) {
+	fake.getAccountByNameMutex.Lock()
+	ret, specificReturn := fake.getAccountByNameReturnsOnCall[len(fake.getAccountByNameArgsForCall)]
+	fake.getAccountByNameArgsForCall = append(fake.getAccountByNameArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.GetAccountByNameStub
+	fakeReturns := fake.getAccountByNameReturns
+	fake.recordInvocation("GetAccountByName", []interface{}{arg1, arg2, arg3})
+	fake.getAccountByNameMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeAccountStore) GetAccountByNameCallCount() int {
+	fake.getAccountByNameMutex.RLock()
+	defer fake.getAccountByNameMutex.RUnlock()
+	return len(fake.getAccountByNameArgsForCall)
+}
+
+func (fake *FakeAccountStore) GetAccountByNameCalls(stub func(context.Context, string, string) (*op.AccountRecord, error)) {
+	fake.getAccountByNameMutex.Lock()
+	defer fake.getAccountByNameMutex.Unlock()
+	fake.GetAccountByNameStub = stub
+}
+
+func (fake *FakeAccountStore) GetAccountByNameArgsForCall(i int) (context.Context, string, string) {
+	fake.getAccountByNameMutex.RLock()
+	defer fake.getAccountByNameMutex.RUnlock()
+	argsForCall := fake.getAccountByNameArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeAccountStore) GetAccountByNameReturns(result1 *op.AccountRecord, result2 error) {
+	fake.getAccountByNameMutex.Lock()
+	defer fake.getAccountByNameMutex.Unlock()
+	fake.GetAccountByNameStub = nil
+	fake.getAccountByNameReturns = struct {
+		result1 *op.AccountRecord
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeAccountStore) GetAccountByNameReturnsOnCall(i int, result1 *op.AccountRecord, result2 error) {
+	fake.getAccountByNameMutex.Lock()
+	defer fake.getAccountByNameMutex.Unlock()
+	fake.GetAccountByNameStub = nil
+	if fake.getAccountByNameReturnsOnCall == nil {
+		fake.getAccountByNameReturnsOnCall = make(map[int]struct {
+			result1 *op.AccountRecord
+			result2 error
+		})
+	}
+	fake.getAccountByNameReturnsOnCall[i] = struct {
+		result1 *op.AccountRecord
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeAccountStore) ListAccountUsers(arg1 context.Context, arg2 string, arg3 string, arg4 uint32) ([]string, string, error) {
+	fake.listAccountUsersMutex.Lock()
+	ret, specificReturn := fake.listAccountUsersReturnsOnCall[len(fake.listAccountUsersArgsForCall)]
+	fake.listAccountUsersArgsForCall = append(fake.listAccountUsersArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 uint32
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.ListAccountUsersStub
+	fakeReturns := fake.listAccountUsersReturns
+	fake.recordInvocation("ListAccountUsers", []interface{}{arg1, arg2, arg3, arg4})
+	fake.listAccountUsersMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *FakeAccountStore) ListAccountUsersCallCount() int {
+	fake.listAccountUsersMutex.RLock()
+	defer fake.listAccountUsersMutex.RUnlock()
+	return len(fake.listAccountUsersArgsForCall)
+}
+
+func (fake *FakeAccountStore) ListAccountUsersCalls(stub func(context.Context, string, string, uint32) ([]string, string, error)) {
+	fake.listAccountUsersMutex.Lock()
+	defer fake.listAccountUsersMutex.Unlock()
+	fake.ListAccountUsersStub = stub
+}
+
+func (fake *FakeAccountStore) ListAccountUsersArgsForCall(i int) (context.Context, string, string, uint32) {
+	fake.listAccountUsersMutex.RLock()
+	defer fake.listAccountUsersMutex.RUnlock()
+	argsForCall := fake.listAccountUsersArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakeAccountStore) ListAccountUsersReturns(result1 []string, result2 string, result3 error) {
+	fake.listAccountUsersMutex.Lock()
+	defer fake.listAccountUsersMutex.Unlock()
+	fake.ListAccountUsersStub = nil
+	fake.listAccountUsersReturns = struct {
+		result1 []string
+		result2 string
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeAccountStore) ListAccountUsersReturnsOnCall(i int, result1 []string, result2 string, result3 error) {
+	fake.listAccountUsersMutex.Lock()
+	defer fake.listAccountUsersMutex.Unlock()
+	fake.ListAccountUsersStub = nil
+	if fake.listAccountUsersReturnsOnCall == nil {
+		fake.listAccountUsersReturnsOnCall = make(map[int]struct {
+			result1 []string
+			result2 string
+			result3 error
+		})
+	}
+	fake.listAccountUsersReturnsOnCall[i] = struct {
+		result1 []string
+		result2 string
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeAccountStore) PutAccount(arg1 context.Context, arg2 *op.AccountRecord, arg3 *meta.AccountInfo, arg4 op.PutAccountOptions) error {
+	fake.putAccountMutex.Lock()
+	ret, specificReturn := fake.putAccountReturnsOnCall[len(fake.putAccountArgsForCall)]
+	fake.putAccountArgsForCall = append(fake.putAccountArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.AccountRecord
+		arg3 *meta.AccountInfo
+		arg4 op.PutAccountOptions
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.PutAccountStub
+	fakeReturns := fake.putAccountReturns
+	fake.recordInvocation("PutAccount", []interface{}{arg1, arg2, arg3, arg4})
+	fake.putAccountMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAccountStore) PutAccountCallCount() int {
+	fake.putAccountMutex.RLock()
+	defer fake.putAccountMutex.RUnlock()
+	return len(fake.putAccountArgsForCall)
+}
+
+func (fake *FakeAccountStore) PutAccountCalls(stub func(context.Context, *op.AccountRecord, *meta.AccountInfo, op.PutAccountOptions) error) {
+	fake.putAccountMutex.Lock()
+	defer fake.putAccountMutex.Unlock()
+	fake.PutAccountStub = stub
+}
+
+func (fake *FakeAccountStore) PutAccountArgsForCall(i int) (context.Context, *op.AccountRecord, *meta.AccountInfo, op.PutAccountOptions) {
+	fake.putAccountMutex.RLock()
+	defer fake.putAccountMutex.RUnlock()
+	argsForCall := fake.putAccountArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakeAccountStore) PutAccountReturns(result1 error) {
+	fake.putAccountMutex.Lock()
+	defer fake.putAccountMutex.Unlock()
+	fake.PutAccountStub = nil
+	fake.putAccountReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) PutAccountReturnsOnCall(i int, result1 error) {
+	fake.putAccountMutex.Lock()
+	defer fake.putAccountMutex.Unlock()
+	fake.PutAccountStub = nil
+	if fake.putAccountReturnsOnCall == nil {
+		fake.putAccountReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.putAccountReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) RemoveAccount(arg1 context.Context, arg2 *op.AccountRecord) error {
+	fake.removeAccountMutex.Lock()
+	ret, specificReturn := fake.removeAccountReturnsOnCall[len(fake.removeAccountArgsForCall)]
+	fake.removeAccountArgsForCall = append(fake.removeAccountArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.AccountRecord
+	}{arg1, arg2})
+	stub := fake.RemoveAccountStub
+	fakeReturns := fake.removeAccountReturns
+	fake.recordInvocation("RemoveAccount", []interface{}{arg1, arg2})
+	fake.removeAccountMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAccountStore) RemoveAccountCallCount() int {
+	fake.removeAccountMutex.RLock()
+	defer fake.removeAccountMutex.RUnlock()
+	return len(fake.removeAccountArgsForCall)
+}
+
+func (fake *FakeAccountStore) RemoveAccountCalls(stub func(context.Context, *op.AccountRecord) error) {
+	fake.removeAccountMutex.Lock()
+	defer fake.removeAccountMutex.Unlock()
+	fake.RemoveAccountStub = stub
+}
+
+func (fake *FakeAccountStore) RemoveAccountArgsForCall(i int) (context.Context, *op.AccountRecord) {
+	fake.removeAccountMutex.RLock()
+	defer fake.removeAccountMutex.RUnlock()
+	argsForCall := fake.removeAccountArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeAccountStore) RemoveAccountReturns(result1 error) {
+	fake.removeAccountMutex.Lock()
+	defer fake.removeAccountMutex.Unlock()
+	fake.RemoveAccountStub = nil
+	fake.removeAccountReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) RemoveAccountReturnsOnCall(i int, result1 error) {
+	fake.removeAccountMutex.Lock()
+	defer fake.removeAccountMutex.Unlock()
+	fake.RemoveAccountStub = nil
+	if fake.removeAccountReturnsOnCall == nil {
+		fake.removeAccountReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.removeAccountReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) RemoveAccountUser(arg1 context.Context, arg2 string, arg3 string) error {
+	fake.removeAccountUserMutex.Lock()
+	ret, specificReturn := fake.removeAccountUserReturnsOnCall[len(fake.removeAccountUserArgsForCall)]
+	fake.removeAccountUserArgsForCall = append(fake.removeAccountUserArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RemoveAccountUserStub
+	fakeReturns := fake.removeAccountUserReturns
+	fake.recordInvocation("RemoveAccountUser", []interface{}{arg1, arg2, arg3})
+	fake.removeAccountUserMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAccountStore) RemoveAccountUserCallCount() int {
+	fake.removeAccountUserMutex.RLock()
+	defer fake.removeAccountUserMutex.RUnlock()
+	return len(fake.removeAccountUserArgsForCall)
+}
+
+func (fake *FakeAccountStore) RemoveAccountUserCalls(stub func(context.Context, string, string) error) {
+	fake.removeAccountUserMutex.Lock()
+	defer fake.removeAccountUserMutex.Unlock()
+	fake.RemoveAccountUserStub = stub
+}
+
+func (fake *FakeAccountStore) RemoveAccountUserArgsForCall(i int) (context.Context, string, string) {
+	fake.removeAccountUserMutex.RLock()
+	defer fake.removeAccountUserMutex.RUnlock()
+	argsForCall := fake.removeAccountUserArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeAccountStore) RemoveAccountUserReturns(result1 error) {
+	fake.removeAccountUserMutex.Lock()
+	defer fake.removeAccountUserMutex.Unlock()
+	fake.RemoveAccountUserStub = nil
+	fake.removeAccountUserReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAccountStore) RemoveAccountUserReturnsOnCall(i int, result1 error) {
+	fake.removeAccountUserMutex.Lock()
+	defer fake.removeAccountUserMutex.Unlock()
+	fake.RemoveAccountUserStub = nil
+	if fake.removeAccountUserReturnsOnCall == nil {
+		fake.removeAccountUserReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.removeAccountUserReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *FakeAccountStore) Invocations() map[string][][]interface{} {

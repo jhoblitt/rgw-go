@@ -38,13 +38,22 @@ type Store struct {
 	bucketSeq uint64                    // the last bucket instance number handed out
 	users     map[string]*op.UserRecord // by meta.UserID.String()
 	keys      map[string]string         // access key -> user id string
-	emails    map[string]string         // lowercased email -> user id string
-	buckets   map[string]*bucket        // "tenant/name" -> bucket
-	instances map[string]*bucket        // bucket id -> bucket
-	uploads   map[string]*upload        // uploadKey -> upload
-	accounts  map[string]*op.AccountRecord
-	usage     []op.UsageEntry
-	metadata  map[string]map[string]op.MetadataEntry // section -> key -> entry
+	// emails maps a lowercased email to the user id string or account id
+	// holding it: radosgw keeps both in one object per email, so an email is
+	// unique across users and accounts (account.cc:102-114 at v19.2.6).
+	emails         map[string]string
+	buckets        map[string]*bucket // "tenant/name" -> bucket
+	instances      map[string]*bucket // bucket id -> bucket
+	uploads        map[string]*upload // uploadKey -> upload
+	accounts       map[string]*op.AccountRecord
+	accountsByName map[string]string            // "tenant$name" -> account id
+	accountUsers   map[string]map[string]string // account id -> lowercased display name -> user id
+	usage          []op.UsageEntry
+	usageRecords   []op.UsageRecord                       // the usage log ReadUsage reads, seeded by AddUsage
+	metadata       map[string]map[string]op.MetadataEntry // section -> key -> entry
+	realms         map[string]meta.Realm                  // by id
+	periods        map[string]meta.Period                 // "id.epoch" -> period
+	periodConfigs  map[string]meta.PeriodConfig           // realm id -> config
 }
 
 type bucket struct {
@@ -71,15 +80,18 @@ type part struct {
 }
 
 var (
-	_ op.ZoneInfo       = (*Store)(nil)
-	_ op.UserStore      = (*Store)(nil)
-	_ op.AccountStore   = (*Store)(nil)
-	_ op.BucketStore    = (*Store)(nil)
-	_ op.ObjectStore    = (*Store)(nil)
-	_ op.MultipartStore = (*Store)(nil)
-	_ op.StatsStore     = (*Store)(nil)
-	_ op.UsageLogger    = (*Store)(nil)
-	_ op.MetadataStore  = (*Store)(nil)
+	_ op.ZoneInfo         = (*Store)(nil)
+	_ op.UserStore        = (*Store)(nil)
+	_ op.AccountStore     = (*Store)(nil)
+	_ op.BucketStore      = (*Store)(nil)
+	_ op.ObjectStore      = (*Store)(nil)
+	_ op.MultipartStore   = (*Store)(nil)
+	_ op.StatsStore       = (*Store)(nil)
+	_ op.UsageLogger      = (*Store)(nil)
+	_ op.MetadataStore    = (*Store)(nil)
+	_ op.UsageReader      = (*Store)(nil)
+	_ op.BucketAdminStore = (*Store)(nil)
+	_ op.RealmStore       = (*Store)(nil)
 )
 
 // defaultPlacement is the placement target radosgw creates a zonegroup with.
@@ -128,17 +140,29 @@ func New(cfg Config) *Store {
 		pools.StorageClasses = meta.ZoneStorageClasses{meta.StorageClassStandard: {DataPool: &meta.Pool{Name: prefix + "data"}}}
 		cfg.Params.PlacementPools = map[string]meta.ZonePlacementInfo{target: pools}
 	}
-	return &Store{
-		cfg:       cfg,
-		users:     map[string]*op.UserRecord{},
-		accounts:  map[string]*op.AccountRecord{},
-		keys:      map[string]string{},
-		emails:    map[string]string{},
-		buckets:   map[string]*bucket{},
-		instances: map[string]*bucket{},
-		uploads:   map[string]*upload{},
-		metadata:  map[string]map[string]op.MetadataEntry{},
+	s := &Store{
+		cfg:            cfg,
+		users:          map[string]*op.UserRecord{},
+		accounts:       map[string]*op.AccountRecord{},
+		accountsByName: map[string]string{},
+		accountUsers:   map[string]map[string]string{},
+		keys:           map[string]string{},
+		emails:         map[string]string{},
+		buckets:        map[string]*bucket{},
+		instances:      map[string]*bucket{},
+		uploads:        map[string]*upload{},
+		metadata:       map[string]map[string]op.MetadataEntry{},
+		realms:         map[string]meta.Realm{},
+		periods:        map[string]meta.Period{},
+		periodConfigs:  map[string]meta.PeriodConfig{},
 	}
+	if cfg.Realm.ID != "" {
+		s.realms[cfg.Realm.ID] = cfg.Realm
+	}
+	if cfg.Period.ID != "" {
+		s.periods[periodKey(cfg.Period.ID, cfg.Period.Epoch)] = cfg.Period
+	}
+	return s
 }
 
 // Release implements op.ZoneInfo.

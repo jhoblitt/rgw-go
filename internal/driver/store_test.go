@@ -269,6 +269,88 @@ var _ = Describe("the driver", func() {
 				_, err := s.AccountName(ctx, "RGW00000000000000001")
 				return err
 			}),
+			Entry("GetAccountByName", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetAccountByName(ctx, "", "acme")
+				return err
+			}),
+			Entry("GetAccountByEmail", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetAccountByEmail(ctx, "ops@acme.example")
+				return err
+			}),
+			Entry("PutAccount", func(ctx context.Context, s *driver.Store) error {
+				return s.PutAccount(ctx, &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001", Name: "acme"}}, nil, op.PutAccountOptions{Exclusive: true})
+			}),
+			Entry("RemoveAccount", func(ctx context.Context, s *driver.Store) error {
+				return s.RemoveAccount(ctx, &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001"}})
+			}),
+			Entry("AddAccountUser", func(ctx context.Context, s *driver.Store) error {
+				return s.AddAccountUser(ctx, "RGW00000000000000001", meta.UserInfo{UserID: meta.UserID{ID: "alice"}, DisplayName: "Alice"})
+			}),
+			Entry("RemoveAccountUser", func(ctx context.Context, s *driver.Store) error {
+				return s.RemoveAccountUser(ctx, "RGW00000000000000001", "Alice")
+			}),
+			Entry("ListAccountUsers", func(ctx context.Context, s *driver.Store) error {
+				_, _, err := s.ListAccountUsers(ctx, "RGW00000000000000001", "", 1000)
+				return err
+			}),
+
+			Entry("ReadUsage", func(ctx context.Context, s *driver.Store) error {
+				_, _, err := s.ReadUsage(ctx, "alice", "", 0, ^uint64(0), 1000, &op.UsageIter{})
+				return err
+			}),
+			Entry("TrimUsage", func(ctx context.Context, s *driver.Store) error {
+				return s.TrimUsage(ctx, "alice", "", 0, ^uint64(0))
+			}),
+
+			Entry("IndexStats", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.IndexStats(ctx, &op.BucketRecord{})
+				return err
+			}),
+			Entry("ChangeBucketOwner", func(ctx context.Context, s *driver.Store) error {
+				return s.ChangeBucketOwner(ctx, &op.BucketRecord{}, meta.UserOwner(meta.UserID{ID: "alice"}), "Alice", nil)
+			}),
+			Entry("UnlinkBucketOwner", func(ctx context.Context, s *driver.Store) error {
+				return s.UnlinkBucketOwner(ctx, &op.BucketRecord{}, meta.UserOwner(meta.UserID{ID: "alice"}))
+			}),
+			Entry("CheckIndex", func(ctx context.Context, s *driver.Store) error {
+				_, _, err := s.CheckIndex(ctx, &op.BucketRecord{})
+				return err
+			}),
+			Entry("RebuildIndex", func(ctx context.Context, s *driver.Store) error {
+				return s.RebuildIndex(ctx, &op.BucketRecord{})
+			}),
+			Entry("RemoveIndexEntries", func(ctx context.Context, s *driver.Store) error {
+				return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
+			}),
+			Entry("ChownBucket", func(ctx context.Context, s *driver.Store) error {
+				return s.ChownBucket(ctx, &op.BucketRecord{}, meta.AccountOwner("RGW00000000000000001"), "acme")
+			}),
+			Entry("SyncOwnerStats", func(ctx context.Context, s *driver.Store) error {
+				return s.SyncOwnerStats(ctx, meta.UserOwner(meta.UserID{ID: "alice"}))
+			}),
+			Entry("PurgeBypassGC", func(ctx context.Context, s *driver.Store) error {
+				return s.PurgeBypassGC(ctx, &op.BucketRecord{})
+			}),
+
+			Entry("GetRealm", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetRealm(ctx, "", "")
+				return err
+			}),
+			Entry("ListRealms", func(ctx context.Context, s *driver.Store) error {
+				_, _, err := s.ListRealms(ctx)
+				return err
+			}),
+			Entry("GetPeriod", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetPeriod(ctx, "", "", 0)
+				return err
+			}),
+			Entry("GetPeriodConfig", func(ctx context.Context, s *driver.Store) error {
+				_, err := s.GetPeriodConfig(ctx, "")
+				return err
+			}),
+			Entry("PutPeriodConfig", func(ctx context.Context, s *driver.Store) error {
+				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
+			}),
 
 			Entry("GetBucket", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetBucket(ctx, "", "plain")
@@ -386,8 +468,10 @@ var _ = Describe("the driver", func() {
 
 		It("gives an Env whose every store is itself and whose options are Open's", func() {
 			env := s.Env()
-			Expect([]any{env.Zone, env.Users, env.Accounts, env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata}).
-				To(HaveEach(BeIdenticalTo(s)))
+			Expect([]any{
+				env.Zone, env.Users, env.Accounts, env.UsageReader, env.BucketAdmin, env.Realms,
+				env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata,
+			}).To(HaveEach(BeIdenticalTo(s)))
 			Expect(env.Conf).To(BeIdenticalTo(opts))
 			Expect(env.Authz).To(BeNil(), "authz is the caller's")
 			Expect(env.Metrics).To(BeNil(), "metrics are the caller's")

@@ -9,18 +9,21 @@ import (
 // Env is the process-wide environment a request runs in: the stores, the
 // authorizer, configuration and clocks. It is radosgw's RGWProcessEnv.
 type Env struct {
-	Zone      ZoneInfo
-	Users     UserStore
-	Accounts  AccountStore
-	Buckets   BucketStore
-	Objects   ObjectStore
-	Multipart MultipartStore
-	Stats     StatsStore
-	Usage     UsageLogger
-	Metadata  MetadataStore
-	Authz     Authorizer
-	Conf      *cephconf.Options
-	Metrics   Metrics
+	Zone        ZoneInfo
+	Users       UserStore
+	Accounts    AccountStore
+	UsageReader UsageReader
+	BucketAdmin BucketAdminStore
+	Realms      RealmStore
+	Buckets     BucketStore
+	Objects     ObjectStore
+	Multipart   MultipartStore
+	Stats       StatsStore
+	Usage       UsageLogger
+	Metadata    MetadataStore
+	Authz       Authorizer
+	Conf        *cephconf.Options
+	Metrics     Metrics
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// HostID is radosgw's host_id, rendered in error documents.
