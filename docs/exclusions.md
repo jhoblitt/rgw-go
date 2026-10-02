@@ -1024,10 +1024,12 @@ does the following.
   20.2.4 packages most such bytes decode as the digit 0 (`hex_to_num`,
   `rgw_common.cc:1690-1692` at v19.2.6, `:1753-1755` at v20.2.4; the
   entry on `url_decode`'s hex table in `docs/ceph-upstream-bugs.md`).
-  rgw-go takes such a byte as no hex
-  digit, so the decode is empty, as for any other bad digit. It reaches
-  the query, which net/http does not check; net/http refuses such an
-  escape in the path.
+  rgw-go takes such a byte as no hex digit, so the decode is empty, as for
+  any other bad digit. It reaches three places: the query, which net/http
+  does not check; the `x-amz-tagging` header (`tags.ParseHeader`, radosgw's
+  `set_from_string`); and a stored tag set in the legacy URL-encoded text
+  form, which `tags.Decode` reads when the binary form does not decode, as
+  `RGWObjTags::decode` does. net/http refuses such an escape in the path.
 - **The Host of an absolute-form request is the target's authority.** For
   a request line such as `GET http://b.example.com/k HTTP/1.1`, net/http
   takes the target's authority as the request's host and drops the Host
