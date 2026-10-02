@@ -2,6 +2,7 @@ package compression
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -28,14 +29,20 @@ func newZstdDecoder() (Decoder, error) {
 	return zstdDecoder{d: d}, nil
 }
 
-// Decode refuses a frame that decodes to any length but the header's, where
-// radosgw, which ignores ZSTD_decompressStream's result, returns what the
-// frame yielded up to that length.
-func (z zstdDecoder) Decode(dst, block []byte, _ *int32) ([]byte, error) {
+// Decode refuses a frame that fails or decodes to any length but the
+// header's, where radosgw, which ignores ZSTD_decompressStream's result,
+// returns what the frame yielded up to that length; only a block shorter
+// than its header is refused by both (ZstdCompressor.h:73-75 at v19.2.6 and
+// v20.2.4).
+func (z zstdDecoder) Decode(dst, block []byte, limit int, _ *int32) ([]byte, error) {
 	if len(block) < 4 {
-		return nil, fmt.Errorf("%w: zstd block shorter than its length header", ErrCorrupt)
+		return nil, failed("zstd", -1, errors.New("block shorter than its length header"))
 	}
-	want := int(binary.LittleEndian.Uint32(block))
+	header := binary.LittleEndian.Uint32(block)
+	if uint64(header) > uint64(max(limit, 0)) {
+		return nil, overLimit("zstd", uint64(header), limit)
+	}
+	want := int(header)
 	out, err := z.d.DecodeAll(block[4:], grow(dst, want)[:0:want])
 	if err != nil {
 		return nil, corrupt("zstd", err)

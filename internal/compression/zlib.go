@@ -54,34 +54,48 @@ func inflateMode(windowBits int32) (w wrapper, wbits int, ok bool) {
 // writes one gzip member per input buffer.
 type zlibDecoder struct{}
 
-func (zlibDecoder) Decode(dst, block []byte, message *int32) ([]byte, error) {
-	if len(block) < 1 {
-		return nil, fmt.Errorf("%w: zlib block shorter than its prefix byte", ErrCorrupt)
-	}
+func (zlibDecoder) Decode(dst, block []byte, limit int, message *int32) ([]byte, error) {
 	windowBits := int32(zlibDefaultWinSize)
 	if message != nil {
 		windowBits = *message
 	}
 	w, wbits, ok := inflateMode(windowBits)
 	if !ok {
-		return nil, fmt.Errorf("%w: zlib window bits %d", ErrCorrupt, windowBits)
+		return nil, failed("zlib", -1, fmt.Errorf("window bits %d", windowBits))
 	}
 	// The prefix byte marks zlib (0) or ISA-L (1) as the compressor; both
-	// write the same streams, and decompress never reads it.
-	in := block[1:]
-	out := grow(dst, 4*len(in))
+	// write the same streams, and decompress never reads it. A block without
+	// one decodes to nothing there too, as decompress inflates no input.
+	in := block[min(1, len(block)):]
+	limit = max(limit, 0)
+	out := grow(dst, min(4*len(in), limit))
 	for len(in) > 0 {
 		r := bytes.NewReader(in)
 		m, err := openMember(r, in, w, wbits)
 		if err != nil {
-			return nil, corrupt("zlib", err)
+			return nil, zlibFailure(err)
 		}
-		if out, err = readAll(out, m); err != nil {
-			return nil, corrupt("zlib", err)
+		if out, err = readAll(out, m, limit); err != nil {
+			return nil, zlibFailure(err)
 		}
 		in = in[len(in)-r.Len():]
 	}
 	return out, nil
+}
+
+// errPastLimit is a block that inflates past the limit.
+var errPastLimit = errors.New("decodes past the limit")
+
+// zlibFailure classifies an inflate failure. inflate takes a stream that
+// ends early for one awaiting more input, so radosgw's decompress returns
+// what it inflated as success (ZlibCompressor.cc:249-277 at v19.2.6,
+// :269-297 at v20.2.4), and it has no limit; every other failure is its -1
+// (:261-266 at v19.2.6, :281-286 at v20.2.4).
+func zlibFailure(err error) error {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, errPastLimit) {
+		return corrupt("zlib", err)
+	}
+	return failed("zlib", -1, err)
 }
 
 // openMember starts the stream at the head of in, which r reads. Go's readers
@@ -119,19 +133,43 @@ func openMember(r *bytes.Reader, in []byte, w wrapper, wbits int) (io.Reader, er
 }
 
 // readAll appends what r yields to b until io.EOF, filling b's spare capacity
-// first.
-func readAll(b []byte, r io.Reader) ([]byte, error) {
+// first and never holding more than limit bytes: it fails when r yields a
+// byte past limit.
+func readAll(b []byte, r io.Reader, limit int) ([]byte, error) {
 	for {
-		if len(b) == cap(b) {
-			b = append(b, 0)[:len(b)]
+		if len(b) >= limit {
+			return b, atEOF(r, limit)
 		}
-		n, err := r.Read(b[len(b):cap(b)])
+		if len(b) == cap(b) {
+			// Grow by doubling, but never past limit, which append's
+			// growth would overshoot.
+			nb := make([]byte, len(b), len(b)+min(max(cap(b), 512), limit-len(b)))
+			copy(nb, b)
+			b = nb
+		}
+		n, err := r.Read(b[len(b):min(cap(b), limit)])
 		b = b[:len(b)+n]
 		if errors.Is(err, io.EOF) {
 			return b, nil
 		}
 		if err != nil {
 			return b, err
+		}
+	}
+}
+
+// atEOF reports whether r, having yielded limit bytes, ends there.
+func atEOF(r io.Reader, limit int) error {
+	var probe [1]byte
+	for {
+		n, err := r.Read(probe[:])
+		switch {
+		case n > 0:
+			return fmt.Errorf("%w of %d bytes", errPastLimit, limit)
+		case errors.Is(err, io.EOF):
+			return nil
+		case err != nil:
+			return err
 		}
 	}
 }
