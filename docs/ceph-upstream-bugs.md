@@ -80,11 +80,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ARN conditions compare each ARN component with the text after it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it) | none | none | ✓ |
 | [radosgw takes any policy Action starting with a wildcard for every action](#radosgw-takes-any-policy-action-starting-with-a-wildcard-for-every-action) | [#81229](https://tracker.ceph.com/issues/81229) | [ceph/ceph#72262](https://github.com/ceph/ceph/pull/72262) | ✓ |
 | [radosgw reads a tagging body whose root is not Tagging as an empty tag set](#radosgw-reads-a-tagging-body-whose-root-is-not-tagging-as-an-empty-tag-set) | none | none | ✓ |
-| [compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read back](#compressor_zlib_winsize-8-writes-zlib-blocks-radosgw-cannot-read-back) | pending | pending |  |
-| [radosgw's zstd decompress reports success on a frame that fails or decodes short](#radosgws-zstd-decompress-reports-success-on-a-frame-that-fails-or-decodes-short) | pending | pending |  |
-| [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | pending | pending |  |
-| [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | pending | pending |  |
-| [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | pending | pending |  |
+| [compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read back](#compressor_zlib_winsize-8-writes-zlib-blocks-radosgw-cannot-read-back) | none | none | ✓ |
+| [radosgw's zstd decompress reports success on a frame that fails or decodes short](#radosgws-zstd-decompress-reports-success-on-a-frame-that-fails-or-decodes-short) | [#77334](https://tracker.ceph.com/issues/77334) | [ceph/ceph#69733](https://github.com/ceph/ceph/pull/69733) |  |
+| [radosgw's zlib decompress reports success on a truncated stream](#radosgws-zlib-decompress-reports-success-on-a-truncated-stream) | none | none | ✓ |
+| [radosgw lets a user take an account's email and deletes it with the account](#radosgw-lets-a-user-take-an-accounts-email-and-deletes-it-with-the-account) | none | none | ✓ |
+| [radosgw's LZ4 decompress trusts its block's pair table](#radosgws-lz4-decompress-trusts-its-blocks-pair-table) | none | none | ✓ |
 | [radosgw hangs or faults walking a manifest whose rule has a stripe size of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0) | pending | pending |  |
 | [radosgw divides by zero writing with an rgw_obj_stripe_size of 0](#radosgw-divides-by-zero-writing-with-an-rgw_obj_stripe_size-of-0) | pending | pending |  |
 | [cls_rgw's omap gc log loses an entry due in the same nanosecond as another](#cls_rgws-omap-gc-log-loses-an-entry-due-in-the-same-nanosecond-as-another) | pending | pending |  |
@@ -2771,7 +2771,8 @@ Every new entry adds its row to this table, in document order.
   window wider than that (`internal/compression/zlib.go`). The spec "zlib,
   the header radosgw writes for message 8"
   (`internal/compression/codec_test.go`) pins it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
   zlib decompressor. Reproduced at the zlib library level, not through
   radosgw.
@@ -2807,7 +2808,11 @@ Every new entry adds its row to this table, in document order.
   bounds the frame by the header's length and refuses any other length
   (`internal/compression/zstd.go`). `docs/exclusions.md` records the
   difference.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** [#77334](https://tracker.ceph.com/issues/77334)
+  (2026-06-11), with an open fix,
+  [ceph/ceph#69733](https://github.com/ceph/ceph/pull/69733), which checks
+  `ZSTD_decompressStream`'s result and requires the decoded length to match
+  the block's length header. Not ours to file.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
   zstd decompressor; derived from the source, not reproduced.
 
@@ -2842,7 +2847,8 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** refuses such a block with `ErrCorrupt`. Go's inflaters report
   the truncation (`internal/compression/zlib.go`). `docs/exclusions.md`
   records the difference.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
   zlib decompressor; derived from the source, not reproduced.
 
@@ -2850,7 +2856,7 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, unfixed through main. Unreproduced: derived from the
   source.
-- **Evidence:** `account.cc` is the same at v19.2.6 and v20.2.4 except one
+- **Evidence:** `src/rgw/driver/rados/account.cc` is the same at v19.2.6 and v20.2.4 except one
   line after these, so each of its lines below holds at both; main
   (06adccc, 2026-10-01) has the same code 17 lines lower.
   - An account's email index object is the user's: `get_email_obj` names it
@@ -2913,7 +2919,8 @@ Every new entry adds its row to this table, in document order.
   and user stores are not written yet and are to follow radosgw too.
   Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
   for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
   building the memstore's shared user and account email index; derived from
   the source, not reproduced.
@@ -2946,9 +2953,14 @@ Every new entry adds its row to this table, in document order.
 - **Reachability:** radosgw's own compressor never writes such a block:
   `LZ4Compressor::compress` (`:36-85` at v19.2.6) records each block's true
   lengths, so their sum is the block's real size. An S3 or Swift client
-  cannot supply a stored block's bytes. Reaching the defect needs control of
-  the stored data: a direct RADOS write, or replicated data that arrives in
-  compressed form, which this analysis has not traced end to end.
+  cannot supply a stored block's bytes. Multisite does not carry one either:
+  a fetched object that is not encrypted has its source compression attr
+  dropped and is compressed again locally, and only an encrypted and
+  compressed object keeps its transferred form, whose blocks the source
+  gateway's own compressor wrote (`RGWRadosPutObj::process_attrs`,
+  `driver/rados/rgw_rados.cc:3505-3512` at v19.2.6). Reaching the
+  defect needs a privileged writer: direct RADOS access to the data pool, or
+  a rogue peer zone.
 - **Impact:** a crafted stored block corrupts radosgw's heap, or makes it
   read out of bounds, when the object is read.
 - **Releases:** checked at v19.2.6, v20.2.4 and main 06adccc25d6.
@@ -2957,7 +2969,10 @@ Every new entry adds its row to this table, in document order.
   original lengths in 64 bits and refuses a total above `math.MaxInt32`,
   sizes its output from that exact sum so every pair fits it, and checks
   each pair's compressed length against the input that remains.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
+  no issue or fix PR; it is unfiled while filing is paused. Being a
+  memory-safety defect, it waits on the owner's choice of disclosure
+  channel.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's lz4
   decompressor; derived from the source, not reproduced.
 
