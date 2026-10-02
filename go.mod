@@ -3,6 +3,7 @@ module github.com/jhoblitt/rgw-go
 go 1.27
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/ceph/go-ceph v0.39.0
 	github.com/klauspost/compress v1.19.1
 	github.com/onsi/ginkgo/v2 v2.33.0
@@ -16,6 +17,7 @@ require (
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

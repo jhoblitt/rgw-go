@@ -39,6 +39,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
+| [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | pending | pending |  |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
 | [radosgw checks a CopyObject source against its bucket's ACL, not the object's](#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects) | none | none | ✓ |
@@ -701,9 +702,14 @@ Every new entry adds its row to this table, in document order.
   since (checked 2026-09-30). The first tag that carries it is v21.1.1
   (2026-09-10), an umbrella release candidate; no umbrella tag ever carried
   the check.
-- **rgw-go:** not decided yet: its SigV4 signature check is not written.
-  `auth.Config.Insecure`, which reads `rgw_sigv4_insecure`, lists the
-  Content-Type check among those the option skips.
+- **rgw-go:** reproduces it, as both floor releases carry it.
+  `canonicalHeadersV4` (`internal/auth/sigv4.go`) answers AccessDenied to a
+  request with a Content-Type its SignedHeaders do not list, as it does to
+  an unsigned `host` or `x-amz-*` header, unless `rgw_sigv4_insecure`
+  (`auth.Config.Insecure`) is set. The vector
+  `internal/auth/testdata/v4/unsigned-content-type-rejected.json` pins it.
+  Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
+  for it.
 - **Upstream:** [#79674](https://tracker.ceph.com/issues/79674), resolved,
   with its duplicate [#79708](https://tracker.ceph.com/issues/79708) and its
   backports [#79723](https://tracker.ceph.com/issues/79723) (squid),
@@ -716,6 +722,56 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 authentication work (unit A), 2026-09-30, in the
   prior-art search for url_decode; verified in the source at both tags. Not
   reproduced by rgw-go; the reporter of #79674 met it on a v20.2.4 cluster.
+
+## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`. The code is the same at v19.2.6,
+  v20.2.4 and main (06adccc25d6, 2026-10-01); lines are given per tag.
+  - `get_v4_signing_key` keys its first HMAC with `transform_secret_key`,
+    which appends to "AWS4", for each `char` of the secret, the `n` bytes
+    `encode_utf8(c, buf)` reports writing into a six-byte buffer
+    (`rgw/rgw_auth_s3.cc:984-1004` at v19.2.6, `:961-981` at v20.2.4,
+    `:1002-1022` on main).
+  - Ceph compiles with `-fsigned-char` (`CMakeLists.txt:92-95` at
+    v19.2.6, `:99-102` at v20.2.4 and main), so a byte above 0x7f reaches
+    `encode_utf8(unsigned long, unsigned char *)` sign-extended, above
+    0x7fffffff, and it returns -1 (`common/utf8.c:62-102` at both tags,
+    `:63-103` on main). `n` is a `size_t`, so it becomes SIZE_MAX, and
+    `std::begin(buf) + n` points outside the buffer: the behaviour is
+    undefined.
+  - Were the byte read as the code point the function intends, it would
+    still become two bytes, so the key would differ from the one an AWS
+    client derives from the secret's bytes.
+  - radosgw accepts any non-empty secret an administrator supplies
+    (`rgw/driver/rados/rgw_user.cc:587-597` at v19.2.6, `:592-602` at
+    v20.2.4). Only the secrets it generates are known to be ASCII:
+    `rgw_generate_secret_key` makes them alphanumeric (`:500-506`,
+    `:505-511`).
+- **Impact:** radosgw derives the signing key from the stored secret before
+  it compares signatures (`rgw/rgw_rest_s3.cc:6362-6364` at v19.2.6,
+  `:6933-6935` at v20.2.4). So any SigV4 request that names the access key
+  ID of a secret holding a byte above 0x7f reaches the undefined behaviour,
+  whoever sends it and whatever its signature.
+  - Unreproduced, by code reading: libstdc++'s range insert would see a
+    distance of SIZE_MAX and throw `std::length_error`, which
+    `Strategy::apply` catches as a `std::exception` and turns into -EPERM, a
+    403 (`rgw/rgw_auth.cc:490-555` at v19.2.6, `:505-570` at v20.2.4). A
+    build whose standard library checks iterator ranges would abort the
+    process instead.
+  - That makes it relevant to denial of service wherever an administrator
+    has set such a secret, though it is no authentication bypass: the throw
+    yields no key, so no other secret can sign as this one.
+- **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6; older releases not
+  checked.
+- **rgw-go:** derives the signing key from the secret's own bytes
+  (`signingKeyV4`, `internal/auth/sigv4.go`), as AWS clients do, so such a
+  secret signs and verifies. `docs/exclusions.md` records the difference
+  ("A secret key signs with its own bytes").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 3, 2026-10-01, transcribing
+  `get_v4_signing_key`; derived from the source, not reproduced.
 
 ## radosgw checks a copy source with inputs from the destination bucket
 

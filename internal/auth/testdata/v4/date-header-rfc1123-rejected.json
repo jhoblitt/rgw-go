@@ -1,0 +1,24 @@
+{
+  "name": "date-header-rfc1123-rejected",
+  "method": "GET",
+  "target": "/",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "signed_headers": "date;host",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "",
+    "date": "",
+    "access_key": "AKIDEXAMPLE",
+    "error": "AccessDenied"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "authorization-token-without-equals",
+  "method": "GET",
+  "target": "/",
+  "host": "example.amazonaws.com",
+  "headers": {
+    "X-Amz-Date": [
+      "20150830T123600Z"
+    ]
+  },
+  "presigned": false,
+  "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, junk, Signature=abc",
+  "signed_headers": "host;x-amz-date",
+  "scope": "20150830/us-east-1/s3/aws4_request",
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "insecure": false,
+  "signature": "",
+  "expect": {
+    "canonical_request": "",
+    "date": "",
+    "access_key": "AKIDEXAMPLE",
+    "error": "InvalidArgument"
+  }
+}
