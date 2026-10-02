@@ -96,11 +96,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | none | none | ✓ |
 | [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
 | [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), pending (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), pending (Service) |  |
-| [radosgw cannot load a bucket whose entry point is from before version 8](#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8) | pending | pending |  |
-| [radosgw takes any prefix of bytes for a Range's unit](#radosgw-takes-any-prefix-of-bytes-for-a-ranges-unit) | pending | pending |  |
-| [radosgw's parse_time drops a numeric zone offset](#radosgws-parse_time-drops-a-numeric-zone-offset) | pending | pending |  |
-| [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | pending | pending |  |
-| [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | pending | pending |  |
+| [radosgw cannot load a bucket whose entry point is from before version 8](#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8) | none | none | ✓ |
+| [radosgw takes any prefix of bytes for a Range's unit](#radosgw-takes-any-prefix-of-bytes-for-a-ranges-unit) | none | [ceph/ceph#71300](https://github.com/ceph/ceph/pull/71300) |  |
+| [radosgw's parse_time drops a numeric zone offset](#radosgws-parse_time-drops-a-numeric-zone-offset) | none | [ceph/ceph#20453](https://github.com/ceph/ceph/pull/20453), [ceph/ceph#34083](https://github.com/ceph/ceph/pull/34083) |  |
+| [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | none | none | ✓ |
+| [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | none | none | ✓ |
 | [radosgw terminates on a stored lz4 block too short for its pair table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table) | pending | pending |  |
 | [Tentacle's radosgw answers EIO for an index shard its header read means to skip](#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip) | pending | pending |  |
 | [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | pending | pending |  |
@@ -1328,6 +1328,7 @@ Every new entry adds its row to this table, in document order.
   NO_ID when the id wraps, adds no test, and is in review.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-003); verified 2026-09-27;
   reproduced 2026-09-29 on disposable Squid and Tentacle clusters.
+
 ## radosgw's notification queue listing never pages past 1024 queues
 
 - **Kind:** defect, fixed in v20.2.3 and v21.0.0, not on squid.
@@ -3807,7 +3808,10 @@ Every new entry adds its row to this table, in document order.
   reads the entry point where `set_bucket_instance_attrs` does, and refuses
   a bucket that needs the conversion (`docs/exclusions.md`, "An entry point
   from before version 8 is not converted").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-02 found no issue or fix
+  PR; it is unfiled while filing is paused. The regression came with
+  a46cf9ea2d7 ("rgw: ctl.bucket: add read_bucket_info()", 2019), which is in
+  v15.1.0 and not in v14.2.22.
 - **Found:** phase 1 metadata plane (unit M, Task 5), 2026-10-01,
   implementing the RADOS driver's GetBucket; derived from the source, not
   reproduced.
@@ -3839,7 +3843,13 @@ Every new entry adds its row to this table, in document order.
   the compare is unchanged at `rgw_op.cc:260`).
 - **rgw-go:** `op.ParseRange` mirrors it, so a GET answers as radosgw's
   does.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** an open fix PR that predates this entry,
+  [ceph/ceph#71300](https://github.com/ceph/ceph/pull/71300) ("rgw: parse
+  the Range header field per RFC 9110", opened 2026-08-24, in review),
+  replaces this unit comparison. A prior-art search on 2026-10-02 found no
+  tracker issue. The comparison dates from b8a3baffddb (2018). Related:
+  [#13412](https://tracker.ceph.com/issues/13412), multi-range GET support.
+  Not filed: a report would duplicate the PR.
 - **Found:** phase 1 unit R, Task 5's preflight, 2026-10-01, transcribing
   parse_range for the GetObject op; derived from the source, not reproduced
   on a cluster.
@@ -3875,7 +3885,13 @@ Every new entry adds its row to this table, in document order.
   `rgw_common.cc:605` and `:725`).
 - **rgw-go:** `op.ParseHTTPTime` mirrors it, so a conditional answers as
   radosgw's does.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** two fix PRs for this drop of the parsed offset, both closed
+  unmerged: [ceph/ceph#20453](https://github.com/ceph/ceph/pull/20453)
+  (2018, "Use gmtoff when converting struct tm to internal time format") and
+  [ceph/ceph#34083](https://github.com/ceph/ceph/pull/34083) (2020,
+  "common/utime : create tv to get gmtoff"). A prior-art search on
+  2026-10-02 found no tracker issue. It is unfiled while filing is paused; a
+  report would cite both PRs.
 - **Found:** phase 1 unit R, Task 5's preflight, 2026-10-01, transcribing
   parse_time for the GetObject op; derived from the source, not reproduced
   on a cluster.
@@ -3908,7 +3924,14 @@ Every new entry adds its row to this table, in document order.
   `rgw_common.cc:726`, and `include/utime.h:71`).
 - **rgw-go:** `op.ParseHTTPTime` mirrors it, so a conditional answers as
   radosgw's does.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none for this site. A prior-art search on 2026-10-02 found
+  no issue or fix PR; it is unfiled while filing is paused. The wrap is
+  `utime_t`'s 32-bit seconds, a known limit of Ceph's wire time:
+  [ceph/ceph#20965](https://github.com/ceph/ceph/pull/20965), closed
+  unmerged, proposed widening them, and
+  [ceph/ceph#21113](https://github.com/ceph/ceph/pull/21113) is a related
+  merged fix in `utime_t`. A report would ask `parse_time` to refuse a date
+  it cannot represent rather than wrap it.
 - **Found:** phase 1 unit R, Task 5, 2026-10-02, testing parse_time's
   arithmetic against a copy of it; derived from the source, not reproduced
   on a cluster.
@@ -3953,7 +3976,9 @@ Every new entry adds its row to this table, in document order.
   execute still drops the return at `rgw_op.cc:3035-3042`).
 - **rgw-go:** answers 400 InvalidRequest in every case;
   `docs/exclusions.md` records the difference.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-02 found no issue or fix
+  PR; it is unfiled while filing is paused. A fix would run the anonymous
+  and control-character checks before `dump_errno` sends the status.
 - **Found:** review of phase 1 unit R, Task 5, 2026-10-02; derived from the
   source, not reproduced.
 
