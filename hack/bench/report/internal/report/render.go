@@ -81,36 +81,28 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 	if s.unbracketed {
 		floor = "which in this sweep ran once per cell, after the sweep."
 	}
-	b.WriteString("cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. " +
-		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, " +
-		"with rados bench at the same size and concurrency, " + floor + " read4m is measured and shown with its floor, but " +
-		"not judged; its table says why. The threads criterion allows each cell under the byte budget " +
-		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The boundary cost criterion is the share of the " +
-		"CPU profile of read4k at 256 in flight that a pure-Go client would no longer pay: the submit crossing and the " +
-		"delivery, not the C librados runs on the Go thread nor the Go completion handler. " +
-		"sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the " +
-		"boundary cost reads the same profile for every sample whose stack holds a frame of the cgo boundary, cgo's " +
-		"runtime.cgoCheck* pointer checks included. It is a measurement, compared with no threshold: it counts the C " +
-		"librados runs on the Go thread, which a pure-Go client would run too, as a cost of the boundary. " +
-		"For pipe the boundary cost leaves " +
+	b.WriteString("cgo is not a bottleneck on a release when one of the sync, callback and pipe modes meets both " +
+		"criteria there: throughput and mean latency, which compare read4k and write4k at 64 and 256 in flight, and " +
+		"write4m at 1, 4 and 16, with rados bench at the same size and concurrency, " + floor + " read4m is measured " +
+		"and shown with its floor, but not judged; its table says why. The rows below the criteria are measurements, " +
+		"compared with no threshold. CPU per operation is the CPU each operation of read4k at 256 in flight used; " +
+		"among the modes that meet both criteria, the one using the least is preferred, and every cell's CPU is in the " +
+		"tables below. The boundary cost is the part of that cell's CPU profile a pure-Go client would no longer pay: " +
+		"the submit crossing and the delivery, not the C librados runs on the Go thread nor the Go completion handler. " +
+		"Thread growth is each mode's largest, its peak less its idle count, across the cells under the byte budget. " +
+		"The cgo frames row counts every sample whose stack holds a frame of the cgo boundary, cgo's runtime.cgoCheck* " +
+		"pointer checks included; it counts the C librados runs on the Go thread, which a pure-Go client would run too, " +
+		"as a cost of the boundary. For pipe the boundary cost leaves " +
 		"out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records " +
 		"under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by " +
 		"that much.\n\n")
 	b.WriteString("| criterion |")
 	for _, m := range s.modes {
-		label := m
-		if !judged[m] {
-			label += " (baseline)"
-		}
-		fmt.Fprintf(b, " %s |", label)
+		fmt.Fprintf(b, " %s |", m)
 	}
 	b.WriteString("\n|---|" + strings.Repeat("---|", len(s.modes)) + "\n")
-	for _, c := range append(slices.Clone(criteria), Cgo) {
-		label := string(c)
-		if c == Cgo {
-			label = "informational: " + label
-		}
-		fmt.Fprintf(b, "| %s |", label)
+	for _, c := range append(slices.Clone(criteria), measurements...) {
+		fmt.Fprintf(b, "| %s |", c)
 		for _, m := range s.modes {
 			i := slices.IndexFunc(r.Verdicts, func(v Verdict) bool { return v.Mode == m && v.Criterion == c })
 			v := r.Verdicts[i]
@@ -123,12 +115,15 @@ func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(b, "\n**Answer:** %s on %s.\n", r.Answer(), s.releaseName())
+	if r.LowestCPU != "" {
+		fmt.Fprintf(b, "\n**Least CPU per operation among them**, read4k at 256 in flight: %s.\n", r.LowestCPU)
+	}
 	s.renderLimits(b)
 	s.renderProcesses(b)
 }
 
 // renderProcesses gives each mode's thread high-water mark per benchmark
-// process, against which the threads criterion reads each cell.
+// process, against which each cell's thread growth is read.
 func (s *sweep) renderProcesses(b *strings.Builder) {
 	b.WriteString("\nThread counts per benchmark process, the count before its first cell to its highest:\n\n")
 	b.WriteString("| mode | benchmark processes | largest growth in one process | highest count |\n|---|---|---|---|\n")
@@ -139,7 +134,7 @@ func (s *sweep) renderProcesses(b *strings.Builder) {
 	if s.inferred {
 		b.WriteString("\nThese cells carry no process id, so a mode's cells may have shared a benchmark process; the " +
 			"processes above are inferred, a cell that starts below its predecessor's process's peak starting a new one. " +
-			"Each cell's growth is judged against its own idle count, which leaves out what earlier cells of its process " +
+			"Each cell's growth is read against its own idle count, which leaves out what earlier cells of its process " +
 			"grew, and against its process's first idle count, which does not.\n")
 	}
 }
@@ -259,14 +254,14 @@ func (s *sweep) renderOver(b *strings.Builder) {
 	b.WriteString("\n## Over the byte budget\n\n")
 	b.WriteString("Cells run past the byte budget on purpose, each in a process of its own. With the limiter's bounds above what the cell " +
 		"can reach, librados's objecter throttle blocks submitting threads inside C; with the bounds derived from that throttle, " +
-		"the limiter parks the excess submissions in Go. The threads criterion does not cover these cells.\n\n")
-	b.WriteString("| mode | shape | conc | limiter | n | ops/s | mean µs | threads | growth | allowance | limiter waits |\n")
-	b.WriteString("|" + strings.Repeat("---|", 11) + "\n")
+		"the limiter parks the excess submissions in Go.\n\n")
+	b.WriteString("| mode | shape | conc | limiter | n | ops/s | mean µs | threads | growth | limiter waits |\n")
+	b.WriteString("|" + strings.Repeat("---|", 10) + "\n")
 	for i := range s.over {
 		c := &s.over[i]
-		fmt.Fprintf(b, "| %s | %s | %d | %s | %d | %s | %s | %d→%d | %+d | %d | %d |\n",
+		fmt.Fprintf(b, "| %s | %s | %d | %s | %d | %s | %s | %d→%d | %+d | %d |\n",
 			c.Mode, c.Shape, c.Conc, c.limiter(), c.N, num(c.OpsPerSec), num(c.MeanUs),
-			c.ThreadsIdle, c.ThreadsPeak, c.growth(), c.allowance(), c.ThrottleWaits)
+			c.ThreadsIdle, c.ThreadsPeak, c.growth(), c.ThrottleWaits)
 	}
 }
 

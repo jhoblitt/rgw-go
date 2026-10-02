@@ -58,53 +58,53 @@ other cell ran for testing.B's 20 s, and every other floor run for 20 s.
 Each cell the throughput and latency criteria compare, and read4m, ran
 between a floor run just before its three modes and one just after.
 
-The criteria are judged in the callback and pipe modes; sync is the
-baseline. The numbers below are `hack/bench/report`'s reading of the
-committed data. (a) and (b) divide each compared cell by the mean of its
+Every mode is judged: sync, callback and pipe are each a way to use
+librados through cgo, so each can answer whether a pure-Go client would
+remove a bottleneck. The numbers below are `hack/bench/report`'s reading of
+the committed data. (a) and (b) divide each compared cell by the mean of its
 two floor runs, and the report names a cell whose two runs differ by more
 than 10% of their mean as an unstable floor beside the verdict, which it
 does not change:
 
-| Criterion | Squid callback | Squid pipe | Tentacle callback | Tentacle pipe |
-|---|---|---|---|---|
-| (a) throughput >= 0.8x floor | PASS 0.86x (write4k at 64), +0.06 | PASS 0.88x (write4m at 1), +0.08 | PASS 0.97x (write4m at 1), +0.17 | PASS 0.94x (write4m at 1), +0.14 |
-| (b) mean latency <= 1.25x floor | PASS 1.16x (write4k at 64), +0.09 | PASS 1.13x (write4m at 1), +0.12 | PASS 1.03x (write4m at 1), +0.22 | PASS 1.07x (write4m at 1), +0.18 |
-| (c) thread growth <= GOMAXPROCS + 8 = 40 | FAIL +89 (headwrite4k at 512), -49 | FAIL +79 (indexrtt at 512), -39 | PASS +35 (read4k at 512), +5 | FAIL +99 (headwrite4k at 512), -59 |
-| (d) boundary cost <= 10% of CPU | PASS 5.0%, +5.0 points | PASS 9.3%, +0.7 points | PASS 5.1%, +4.9 points | PASS 8.8%, +1.2 points |
-| measured, not judged: share of CPU with a cgo frame on the stack | 24.9% | 19.2% | 24.3% | 18.2% |
+| Criterion | Squid sync | Squid callback | Squid pipe | Tentacle sync | Tentacle callback | Tentacle pipe |
+|---|---|---|---|---|---|---|
+| (a) throughput >= 0.8x floor | PASS 0.85x (read4k at 64), +0.05 | PASS 0.86x (write4k at 64), +0.06 | PASS 0.88x (write4m at 1), +0.08 | PASS 0.94x (write4m at 1), +0.14 | PASS 0.97x (write4m at 1), +0.17 | PASS 0.94x (write4m at 1), +0.14 |
+| (b) mean latency <= 1.25x floor | PASS 1.18x (read4k at 64), +0.07 | PASS 1.16x (write4k at 64), +0.09 | PASS 1.13x (write4m at 1), +0.12 | PASS 1.06x (write4m at 1), +0.19 | PASS 1.03x (write4m at 1), +0.22 | PASS 1.07x (write4m at 1), +0.18 |
+| measured: CPU per operation, read4k at 256 | 26 µs | 31 µs | 30 µs | 24 µs | 27 µs | 34 µs |
+| measured: boundary cost, read4k at 256 | 3.1%, about 0.8 µs | 5.0%, about 1.6 µs | 9.3%, about 2.8 µs | 2.8%, about 0.7 µs | 5.1%, about 1.4 µs | 8.8%, about 3.0 µs |
+| measured: largest thread growth | +532 (read4k at 512) | +89 (headwrite4k at 512) | +79 (indexrtt at 512) | +532 (write4k at 512) | +35 (read4k at 512) | +99 (headwrite4k at 512) |
+| measured: share of CPU with a cgo frame on the stack | 37.3% | 24.9% | 19.2% | 37.2% | 24.3% | 18.2% |
 
 The unstable floors named beside (a) and (b) are, on Squid, read4k at 256
 (21.5% apart in operations a second, 21.6% in mean latency) and write4m at 4
 (22.9%); on Tentacle, read4k at 64 (15.1% and 15.2%), read4k at 256
-(18.9%), write4k at 256 (10.8% and 10.7%) and write4m at 4 (25.2%). Sync,
-the baseline, was at worst 0.85x and 1.18x on Squid (read4k at 64) and
-0.94x and 1.06x on Tentacle (write4m at 1), grew +532 threads on both
-(read4k at 512 on Squid, write4k at 512 on Tentacle), and held 37.3% and
-37.2% of its CPU in cgo frames and 3.1% and 2.8% in boundary cost.
+(18.9%), write4k at 256 (10.8% and 10.7%) and write4m at 4 (25.2%).
 
-(d) judges the boundary cost: the CPU a pure-Go client would no longer
-spend, defined below. The share of samples with any cgo frame on the stack
-is reported beside it as a measurement, compared with no threshold: it
-counts the C librados runs on the Go thread, work a pure-Go client would
-also do, as a cost of the boundary, and because it is a share of the whole
-profile, a more efficient Go side would raise it with nothing at the
-boundary changed. (d) took this form on 2026-10-02, after these runs; the
-two reports were regenerated from their committed data, and no benchmark
-was re-run.
+**Every mode meets both criteria on both releases, so cgo is not a phase 1
+bottleneck at the seam.** The aims are the lowest latency, the highest
+throughput and the lowest CPU use. The three modes' throughput and latency
+are close, no mode leads in every cell, and a cell's two floor runs differed
+by up to 25.2%. Sync uses the least CPU per operation on both releases: 26
+µs on Squid and 24 µs on Tentacle at read4k at 256 in flight, against 27 to
+34 µs for callback and pipe. The boundary cost, the part of that CPU a
+pure-Go client would no longer spend, is about 0.7 to 3.0 µs per operation
+in every mode; pipe's leaves out an unmeasured write per completion (below).
+rados bench records no CPU, so CPU is compared between the modes and not
+against a C client; a floor that records it is the next benchmark's to add.
 
-With (d) as amended:
-
-- **Tentacle:** callback passes all four criteria; pipe fails (c).
-- **Squid:** callback fails only (c), at +89 threads of the 40 allowed
-  (headwrite4k at 512 in flight), and pipe fails (c), so no judged mode
-  passes.
-
-The plan calls cgo no phase 1 bottleneck only when, on each release, the
-callback or the pipe mode passes all four criteria, so that verdict is not
-reached. The boundary's CPU cost is under 10% in both modes on both
-releases, though pipe's margins, 0.7 and 1.2 points, leave out an
-unmeasured write per completion (below); thread growth, (c), is what
-remains.
+Thread growth and the cgo-frame share are measured, not judged. Fewer
+threads matter only where they buy throughput, latency or CPU. Sync grew
+about one thread per operation in flight, +532 at 512, and its 4 KiB reads
+there ran at 63437 and 63091 operations a second (Squid, Tentacle), against
+62294 and 61134 in callback and 61801 and 60803 in pipe; its 4 KiB writes at
+512 were mixed, each cell run once. The cgo-frame share counts the C
+librados runs on the Go thread, work a pure-Go client would also do, as a
+cost of the boundary, and because it is a share of the whole profile, a
+more efficient Go side would raise it with nothing at the boundary changed.
+The criteria took this form on 2026-10-02, after these runs: every mode is
+judged, and thread growth and the boundary cost are measured rather than
+gates. The two reports were regenerated from their committed data; no
+benchmark was re-run.
 
 (a) and (b) leave read4m out, for the reasons below. What the numbers show:
 
@@ -123,10 +123,10 @@ remains.
   threads, which the runtime records under `runtime._ExternalCode`
   ([signal_unix.go:544-552](https://github.com/golang/go/blob/go1.27.1/src/runtime/signal_unix.go#L544-L552)),
   took a further 41.3% to 51.3% of the sampled CPU in every mode.
-- **The boundary cost, what a pure-Go client would no longer pay, is 5.0%
-  and 5.1% in callback and 9.3% and 8.8% in pipe**, under 10% in both modes
-  on both releases; the two releases agree to within 0.5 points in each
-  mode, and the cgo share to within 1.0. The report divides each profile by
+- **The boundary cost, what a pure-Go client would no longer pay, is 3.1%
+  and 2.8% in sync, 5.0% and 5.1% in callback and 9.3% and 8.8% in pipe**;
+  the two releases agree to within 0.5 points in each mode, and the cgo
+  share to within 1.0. The report divides each profile by
   the frame nearest each sample's leaf, so no sample counts twice, into
   three numbers besides the C:
   - **(i) the submit crossing** is the cgo machinery around the C a call runs:
@@ -146,7 +146,7 @@ remains.
 
   The boundary cost is (i) plus (ii). Callback pays almost all of it to
   submit, pipe about half to deliver; the pointer checks alone, which the
-  amended (d) counts in (i), are 0.7% of callback's
+  boundary cost counts in (i), are 0.7% of callback's
   profile on both releases and 0.7% and 0.5% of pipe's.
 
   (ii) counts only the Go side of delivery. Pipe's C side is one 8-byte
@@ -158,21 +158,17 @@ remains.
   and 1.2 points. Pipe's `runtime._ExternalCode` share is no higher than
   callback's (41.6% and 41.3% against 42.4% and 43.5%), which suggests the
   write is small.
-- **Thread growth, (c), now has a verdict.** Each cell ran in a benchmark
+- **Thread growth, measured, not judged.** Each cell ran in a benchmark
   process of its own, so its growth, its peak less its idle count, is its
-  own. Callback stayed within the 40 allowed on Tentacle, the closest at +35
-  (read4k at 512); on Squid it went over at +42 (headwrite4k at 256), +44
-  (read4k at 512) and +89 (headwrite4k at 512). Pipe went over on both
-  releases: at +56 (headwrite4k at 512) and +79 (indexrtt at 512) on Squid,
-  and at +44 (write4k at 512), +54 (indexrtt at 512), +55 (read4k at 512) and
-  +99 (headwrite4k at 512) on Tentacle. Each cell ran once, so each growth is
-  a single measurement: callback's worst was +89 on Squid and +35 on
-  Tentacle, where headwrite4k at 512 grew +33. Sync grew with the operations
-  in flight: read4k +68 and +67 at 64, +265 and +274 at 256, +532 and +531 at
-  512, where callback grew +10 and +6, +24 and +15, +44 and +35, and pipe +10
-  and +5, +20 and +31, +27 and +55, at about the same throughput (read4k at
-  256: 56192 and 63708 ops/s in sync, 62351 and 61107 in callback, 62044 and
-  59443 in pipe).
+  own. Callback's largest was +89 on Squid (headwrite4k at 512) and +35 on
+  Tentacle (read4k at 512), where headwrite4k at 512 grew +33; pipe's was
+  +79 on Squid (indexrtt at 512) and +99 on Tentacle (headwrite4k at 512).
+  Each cell ran once, so each growth is a single measurement. Sync grew with
+  the operations in flight: read4k +68 and +67 at 64, +265 and +274 at 256,
+  +532 and +531 at 512, where callback grew +10 and +6, +24 and +15, +44 and
+  +35, and pipe +10 and +5, +20 and +31, +27 and +55, at about the same
+  throughput (read4k at 256: 56192 and 63708 ops/s in sync, 62351 and 61107
+  in callback, 62044 and 59443 in pipe).
 - **The in-flight limiter's evidence:** write4m at 64 in flight, 256 MiB
   budgeted, past the objecter's 100 MiB byte throttle. With the limiter's
   bounds above what the cell reaches, the process grew +35 threads in

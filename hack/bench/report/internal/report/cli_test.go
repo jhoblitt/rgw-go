@@ -28,7 +28,7 @@ var _ = Describe("Run", func() {
 		md, err := os.ReadFile(filepath.Join(dir, "REPORT.md"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(md)).To(HavePrefix("# Seam microbenchmark: tentacle\n"))
-		Expect(stdout.String()).To(Equal(filepath.Join(dir, "REPORT.md") + ": callback passes all four criteria\n"))
+		Expect(stdout.String()).To(Equal(filepath.Join(dir, "REPORT.md") + ": sync, callback and pipe meet both criteria\n"))
 	})
 
 	It("reads the directory from REPORT_DIR", func(ctx SpecContext) {

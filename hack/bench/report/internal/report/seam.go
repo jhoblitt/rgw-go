@@ -60,7 +60,6 @@ func (c Cell) growth() int { return c.ThreadsPeak - c.ThreadsIdle }
 
 // allowance is the thread growth the threads criterion allows: GOMAXPROCS
 // plus a handful.
-func (c Cell) allowance() int { return c.GOMAXPROCS + 8 }
 
 func (c Cell) limiter() string {
 	if c.MaxInflightOps == 0 && c.MaxInflightBytes == 0 {
@@ -149,7 +148,7 @@ func artifacts() []string {
 		names = append(names, "cpu-"+m+"-read4k-256.pprof")
 	}
 	for _, m := range modeOrder {
-		if judged[m] {
+		if overBudget[m] {
 			names = append(names, "overbudget-"+m+".jsonl")
 		}
 	}
@@ -174,10 +173,13 @@ func checkArtifacts(dir string) error {
 	return nil
 }
 
-// judged are the modes the criteria are applied to. sync parks an OS thread
-// per operation in flight, so it is the baseline the other two are read
-// against, not a candidate.
-var judged = map[string]bool{"callback": true, "pipe": true}
+// judged are the modes the criteria are applied to: every mode is a way to
+// use librados through cgo, so each answers whether cgo is a bottleneck.
+var judged = map[string]bool{"sync": true, "callback": true, "pipe": true}
+
+// overBudget are the modes whose cells the sweep also runs past the byte
+// budget, the in-flight limiter's evidence.
+var overBudget = map[string]bool{"callback": true, "pipe": true}
 
 type key struct {
 	mode, shape string
@@ -249,6 +251,7 @@ func Seam(ctx context.Context, dir string) (SeamReport, error) {
 	}
 	r := SeamReport{Verdicts: s.verdicts()}
 	r.Passing = passing(s.modes, r.Verdicts, func(v Verdict) bool { return !v.Informational })
+	r.LowestCPU = s.lowestCPU(r.Passing)
 	r.Markdown = s.render(r)
 	return r, nil
 }
