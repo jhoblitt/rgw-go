@@ -96,3 +96,4 @@ cls_rgw_gc_queue_init_op internal/cls/gc
 cls_rgw_gc_urgent_data internal/cls/gc
 cls_rgw_gc_list_op internal/cls/gc
 cls_rgw_gc_list_ret internal/cls/gc
+RGWObjTags internal/tags
