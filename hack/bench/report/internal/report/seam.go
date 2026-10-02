@@ -126,11 +126,10 @@ var mirrors = []mirror{
 	{"write4m", []int{1, 4, 16}, "write", 4 << 20, ""},
 }
 
-const read4mUnjudged = "rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate, flat across " +
-	"concurrency, and differs from them where it matters: rand picks its objects at random with replacement, its " +
-	"fixed object names land on fixed placement groups, its objects carried allocation hints before the floor passed " +
-	"--no-hints, and its client library is another build. Its ratios are shown, but the throughput and latency " +
-	"criteria leave read4m out until the floor reads as the Go cell does."
+const read4mUnjudged = "rados bench's 4 MiB rand does not read as the Go cell does: rand picks each object at random " +
+	"with replacement among the objects written for it, where each Go worker reads its own, and its fixed object " +
+	"names land on fixed placement groups. Its ratios are shown, but the throughput and latency criteria leave " +
+	"read4m out until the floor reads as the Go cell does."
 
 // shapeOrder and modeOrder are the sweep's orders; anything else sorts after.
 // modeOrder is also every mode a sweep runs.

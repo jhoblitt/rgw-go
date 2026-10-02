@@ -1,0 +1,886 @@
+== 04:29:32 load 1.14 2.18 2.99
+== 04:29:48 load 1.04 2.10 2.95
+74.8% ceph-osd
+50.5% seam.test
+== 04:30:03 load 1.03 2.05 2.92
+66.7% ceph-osd
+60.8% seam.test
+== 04:30:18 load 1.09 2.01 2.89
+67.0% ceph-osd
+60.2% seam.test
+5.8% claude
+== 04:30:34 load 1.54 2.06 2.89
+67.6% ceph-osd
+63.7% seam.test
+== 04:30:49 load 1.43 2.01 2.86
+165.0% seam.test
+117.5% ceph-osd
+== 04:31:04 load 1.56 2.01 2.85
+168.6% seam.test
+118.6% ceph-osd
+== 04:31:19 load 2.18 2.12 2.87
+207.8% seam.test
+121.6% ceph-osd
+== 04:31:35 load 2.38 2.17 2.88
+215.5% seam.test
+158.3% ceph-osd
+== 04:31:50 load 2.74 2.26 2.89
+222.3% seam.test
+167.0% ceph-osd
+== 04:32:05 load 3.00 2.34 2.91
+15.5% ceph-osd
+5.8% claude
+== 04:32:21 load 2.85 2.34 2.90
+15.7% ceph-osd
+5.9% claude
+== 04:32:36 load 2.74 2.34 2.89
+12.6% ceph-osd
+5.8% claude
+== 04:32:51 load 2.68 2.35 2.89
+8.8% ceph-osd
+5.9% claude
+== 04:33:06 load 2.67 2.37 2.88
+9.8% ceph-osd
+== 04:33:22 load 2.52 2.35 2.87
+6.9% ceph-osd
+== 04:33:37 load 2.42 2.33 2.86
+41.2% ceph-osd
+20.6% seam.test
+5.9% iscsi_trx
+== 04:33:52 load 2.88 2.45 2.88
+34.0% ceph-osd
+18.4% seam.test
+5.8% kubelet
+== 04:34:07 load 2.90 2.47 2.89
+74.5% ceph-osd
+42.2% seam.test
+== 04:34:23 load 2.91 2.50 2.89
+43.1% ceph-osd
+23.5% seam.test
+== 04:34:38 load 2.87 2.51 2.89
+37.3% ceph-osd
+23.5% seam.test
+5.9% iscsi_trx
+== 04:34:53 load 2.90 2.53 2.89
+53.9% ceph-osd
+32.4% seam.test
+7.8% ceph
+7.8% iscsi_trx
+== 04:35:09 load 3.20 2.62 2.91
+56.9% ceph-osd
+32.4% seam.test
+7.8% iscsi_trx
+5.9% kubelet
+== 04:35:24 load 3.39 2.69 2.93
+104.9% ceph-osd
+59.8% seam.test
+15.7% iscsi_trx
+5.9% claude
+5.9% claude
+== 04:35:39 load 4.21 2.90 3.00
+131.1% ceph-osd
+36.9% seam.test
+33.0% kswapd0
+20.4% iscsi_trx
+19.4% kcompactd0
+== 04:35:54 load 4.07 2.94 3.01
+111.8% ceph-osd
+60.8% seam.test
+5.9% claude
+== 04:36:10 load 4.18 3.02 3.03
+146.6% ceph-osd
+84.5% seam.test
+13.6% iscsi_trx
+6.8% kworker/u130:8-iscsi_q_13
+6.8% iscsi_ttx
+== 04:36:25 load 4.56 3.17 3.08
+97.1% ceph-osd
+52.0% seam.test
+11.8% iscsi_trx
+== 04:36:40 load 4.07 3.12 3.07
+114.6% ceph-osd
+39.8% seam.test
+17.5% ceph
+5.8% iscsi_trx
+== 04:36:55 load 4.49 3.27 3.12
+139.2% ceph-osd
+33.3% seam.test
+12.7% iscsi_trx
+10.8% kswapd0
+5.9% kcompactd0
+5.9% iscsi_ttx
+== 04:37:11 load 4.30 3.29 3.12
+108.8% ceph-osd
+55.9% seam.test
+== 04:37:26 load 4.40 3.35 3.15
+137.9% ceph-osd
+35.0% seam.test
+11.7% iscsi_trx
+== 04:37:41 load 5.24 3.61 3.24
+55.9% ceph-osd
+28.4% seam.test
+7.8% iscsi_trx
+== 04:37:57 load 6.00 3.86 3.33
+51.0% ceph-osd
+24.5% seam.test
+7.8% iscsi_trx
+== 04:38:12 load 6.45 4.06 3.40
+54.9% ceph-osd
+29.4% seam.test
+28.4% claude
+8.8% iscsi_trx
+== 04:38:27 load 6.93 4.29 3.49
+28.2% ceph-osd
+13.6% seam.test
+== 04:38:42 load 7.39 4.52 3.58
+51.0% ceph-osd
+25.5% seam.test
+7.8% iscsi_trx
+5.9% claude
+== 04:38:58 load 7.60 4.71 3.65
+110.7% ceph-osd
+58.3% seam.test
+== 04:39:13 load 6.96 4.70 3.67
+111.7% ceph-osd
+58.3% seam.test
+== 04:39:28 load 7.27 4.88 3.74
+42.2% ceph-osd
+12.7% seam.test
+== 04:39:44 load 7.83 5.12 3.84
+38.8% ceph-osd
+23.3% seam.test
+5.8% iscsi_trx
+== 04:39:59 load 7.68 5.21 3.89
+49.0% ceph-osd
+24.5% seam.test
+6.9% iscsi_trx
+5.9% claude
+== 04:40:14 load 6.70 5.12 3.88
+73.5% ceph-osd
+37.3% seam.test
+5.9% claude
+== 04:40:29 load 7.52 5.37 3.99
+57.8% ceph-osd
+56.9% kube-apiserver
+37.3% seam.test
+8.8% iscsi_trx
+== 04:40:45 load 7.93 5.57 4.07
+98.0% ceph-osd
+48.0% seam.test
+10.8% kcompactd0
+== 04:41:00 load 7.45 5.57 4.10
+58.3% ceph-osd
+31.1% seam.test
+7.8% iscsi_trx
+== 04:41:15 load 7.55 5.69 4.16
+55.9% ceph-osd
+30.4% seam.test
+7.8% iscsi_trx
+5.9% claude
+== 04:41:30 load 6.89 5.64 4.17
+54.4% ceph-osd
+29.1% seam.test
+8.7% claude
+7.8% iscsi_trx
+5.8% kubelet
+== 04:41:46 load 7.06 5.74 4.23
+73.5% ceph-osd
+23.5% seam.test
+7.8% iscsi_trx
+5.9% containerd
+== 04:42:01 load 6.80 5.75 4.26
+38.8% ceph-osd
+20.4% seam.test
+== 04:42:16 load 6.76 5.82 4.31
+54.9% ceph-osd
+34.3% seam.test
+7.8% iscsi_trx
+5.9% claude
+== 04:42:32 load 6.43 5.79 4.33
+106.8% ceph-osd
+53.4% seam.test
+7.8% claude
+== 04:42:47 load 6.04 5.74 4.33
+54.9% ceph-osd
+33.3% seam.test
+7.8% iscsi_trx
+== 04:43:02 load 6.57 5.87 4.40
+50.5% ceph-osd
+33.0% seam.test
+8.7% iscsi_trx
+== 04:43:17 load 6.41 5.87 4.42
+110.8% ceph-osd
+60.8% seam.test
+== 04:43:33 load 5.64 5.73 4.40
+12.6% ceph-osd
+== 04:43:48 load 5.05 5.60 4.38
+8.8% ceph-osd
+== 04:44:03 load 4.44 5.43 4.34
+12.7% ceph-osd
+5.9% seam.test
+== 04:44:18 load 4.04 5.30 4.32
+14.7% ceph-osd
+6.9% seam.test
+== 04:44:34 load 3.52 5.12 4.27
+13.6% ceph-osd
+== 04:44:49 load 3.26 4.98 4.24
+11.8% ceph-osd
+== 04:45:04 load 3.13 4.87 4.22
+53.9% ceph-osd
+25.5% seam.test
+5.9% claude
+5.9% kubelet
+== 04:45:20 load 3.12 4.78 4.20
+58.3% ceph-osd
+25.2% seam.test
+5.8% claude
+== 04:45:35 load 3.60 4.80 4.21
+55.9% ceph-osd
+26.5% seam.test
+== 04:45:50 load 3.46 4.72 4.19
+57.3% ceph-osd
+26.2% seam.test
+== 04:46:05 load 3.87 4.75 4.21
+58.8% ceph-osd
+29.4% seam.test
+== 04:46:21 load 3.52 4.63 4.18
+149.5% ceph-osd
+68.9% seam.test
+== 04:46:36 load 3.77 4.63 4.19
+146.1% ceph-osd
+68.6% seam.test
+== 04:46:51 load 4.13 4.65 4.20
+127.2% ceph-osd
+64.1% seam.test
+== 04:47:06 load 4.46 4.70 4.23
+145.1% ceph-osd
+80.4% seam.test
+== 04:47:22 load 4.58 4.72 4.24
+137.9% ceph-osd
+87.4% seam.test
+== 04:47:37 load 4.99 4.81 4.28
+283.3% ceph-osd
+130.4% seam.test
+== 04:47:52 load 4.81 4.77 4.27
+276.5% ceph-osd
+126.5% seam.test
+== 04:48:08 load 4.84 4.78 4.29
+279.6% ceph-osd
+148.5% seam.test
+5.8% iscsi_trx
+== 04:48:23 load 5.51 4.93 4.34
+254.9% ceph-osd
+149.0% seam.test
+5.9% kcompactd0
+== 04:48:38 load 5.29 4.91 4.35
+259.8% ceph-osd
+172.5% seam.test
+== 04:48:53 load 5.33 4.93 4.36
+106.9% ceph-osd
+5.9% claude
+== 04:49:09 load 5.25 4.94 4.37
+275.7% ceph-osd
+134.0% seam.test
+5.8% iscsi_trx
+== 04:49:24 load 5.10 4.92 4.38
+234.3% ceph-osd
+127.5% seam.test
+== 04:49:39 load 5.21 4.96 4.40
+268.0% ceph-osd
+151.5% seam.test
+7.8% claude
+5.8% iscsi_trx
+== 04:49:54 load 5.08 4.94 4.40
+270.6% ceph-osd
+172.5% seam.test
+7.8% claude
+5.9% iscsi_trx
+== 04:50:10 load 5.38 5.01 4.43
+78.6% ceph-osd
+50.5% seam.test
+6.8% claude
+== 04:50:25 load 4.70 4.88 4.40
+74.5% ceph-osd
+52.9% seam.test
+== 04:50:40 load 4.30 4.79 4.37
+76.5% ceph-osd
+58.8% seam.test
+== 04:50:56 load 3.64 4.62 4.33
+75.5% ceph-osd
+57.8% seam.test
+5.9% containerd
+5.9% kubelet
+== 04:51:11 load 2.98 4.42 4.27
+72.5% ceph-osd
+63.7% seam.test
+== 04:51:26 load 2.61 4.27 4.22
+92.2% ceph-osd
+44.1% rados
+== 04:51:41 load 2.35 4.11 4.16
+90.2% ceph-osd
+49.0% rados
+5.9% claude
+== 04:51:57 load 2.66 4.08 4.16
+140.8% ceph-osd
+119.4% seam.test
+== 04:52:12 load 2.72 4.03 4.14
+165.7% seam.test
+158.8% ceph-osd
+6.9% 2.1.286
+== 04:52:27 load 3.44 4.13 4.17
+168.6% seam.test
+158.8% ceph-osd
+== 04:52:43 load 3.35 4.07 4.15
+167.6% seam.test
+157.8% ceph-osd
+6.9% slack
+== 04:52:58 load 3.55 4.08 4.15
+184.3% seam.test
+141.2% ceph-osd
+== 04:53:13 load 3.35 4.01 4.13
+155.9% ceph-osd
+128.4% rados
+== 04:53:28 load 3.12 3.93 4.10
+154.4% ceph-osd
+128.2% rados
+== 04:53:44 load 3.45 3.97 4.11
+165.0% ceph-osd
+158.3% seam.test
+== 04:53:59 load 3.61 3.98 4.11
+163.1% ceph-osd
+159.2% seam.test
+6.8% claude
+== 04:54:14 load 3.32 3.90 4.08
+166.7% seam.test
+157.8% ceph-osd
+== 04:54:29 load 3.02 3.81 4.05
+166.0% seam.test
+156.3% ceph-osd
+21.4% kube-apiserver
+== 04:54:45 load 3.39 3.85 4.06
+165.0% seam.test
+155.3% ceph-osd
+5.8% claude
+== 04:55:00 load 3.61 3.87 4.06
+201.9% seam.test
+155.3% ceph-osd
+== 04:55:15 load 4.26 4.01 4.10
+213.7% seam.test
+158.8% ceph-osd
+== 04:55:31 load 4.22 4.01 4.10
+201.9% seam.test
+157.3% ceph-osd
+7.8% claude
+== 04:55:46 load 4.62 4.11 4.13
+158.3% ceph-osd
+135.9% rados
+== 04:56:01 load 4.17 4.04 4.11
+14.7% ceph-osd
+== 04:56:16 load 3.70 3.94 4.07
+14.7% ceph-osd
+5.9% claude
+5.9% kubelet
+== 04:56:32 load 3.78 3.94 4.07
+10.8% ceph-osd
+7.8% claude
+== 04:56:47 load 3.54 3.88 4.05
+15.7% ceph-osd
+== 04:57:02 load 3.33 3.82 4.02
+12.7% ceph-osd
+== 04:57:17 load 3.32 3.80 4.01
+19.6% kube-apiserver
+14.7% ceph-osd
+== 04:57:33 load 3.31 3.77 4.00
+9.8% ceph-osd
+== 04:57:48 load 3.02 3.69 3.97
+11.7% ceph-osd
+== 04:58:03 load 3.10 3.67 3.96
+14.7% ceph-osd
+== 04:58:19 load 3.20 3.67 3.95
+14.7% ceph-osd
+== 04:58:34 load 3.39 3.68 3.95
+54.4% ceph-osd
+16.5% seam.test
+6.8% iscsi_trx
+== 04:58:49 load 3.73 3.75 3.97
+41.2% ceph-osd
+14.7% seam.test
+6.9% iscsi_trx
+== 04:59:04 load 3.58 3.71 3.96
+37.9% ceph-osd
+13.6% seam.test
+5.8% iscsi_trx
+== 04:59:20 load 3.58 3.71 3.95
+37.3% ceph-osd
+12.7% seam.test
+== 04:59:35 load 4.23 3.84 3.99
+46.6% ceph-osd
+18.4% seam.test
+6.8% iscsi_trx
+== 04:59:50 load 4.25 3.86 4.00
+47.1% ceph-osd
+14.7% seam.test
+6.9% iscsi_trx
+== 05:00:05 load 4.44 3.92 4.01
+47.1% ceph-osd
+12.7% rados
+6.9% iscsi_trx
+== 05:00:21 load 4.56 3.97 4.03
+50.5% ceph-osd
+9.7% rados
+6.8% iscsi_trx
+== 05:00:36 load 4.14 3.91 4.01
+79.4% ceph-osd
+19.6% seam.test
+8.8% iscsi_trx
+== 05:00:51 load 5.07 4.13 4.08
+41.7% ceph-osd
+13.6% seam.test
+6.8% iscsi_trx
+== 05:01:07 load 5.95 4.39 4.17
+61.8% ceph-osd
+28.4% seam.test
+== 05:01:22 load 5.66 4.41 4.17
+48.0% ceph-osd
+14.7% seam.test
+6.9% iscsi_trx
+== 05:01:37 load 6.87 4.73 4.28
+46.1% ceph-osd
+18.6% seam.test
+7.8% iscsi_trx
+== 05:01:52 load 6.88 4.84 4.33
+51.0% ceph-osd
+21.6% seam.test
+8.8% iscsi_trx
+== 05:02:08 load 6.98 4.96 4.38
+45.1% ceph-osd
+15.7% seam.test
+7.8% iscsi_trx
+5.9% claude
+== 05:02:23 load 6.97 5.06 4.42
+35.3% ceph-osd
+12.7% seam.test
+5.9% iscsi_trx
+== 05:02:38 load 6.83 5.13 4.45
+38.2% ceph-osd
+7.8% rados
+6.9% iscsi_trx
+5.9% kubelet
+== 05:02:54 load 6.78 5.20 4.49
+62.1% ceph-osd
+9.7% rados
+8.7% iscsi_trx
+== 05:03:09 load 6.51 5.22 4.51
+148.0% rados
+135.3% ceph-osd
+== 05:03:24 load 5.51 5.06 4.46
+158.3% ceph-osd
+128.2% rados
+6.8% claude
+== 05:03:39 load 5.02 4.98 4.45
+159.2% ceph-osd
+126.2% seam.test
+== 05:03:55 load 4.88 4.95 4.44
+160.8% ceph-osd
+127.5% seam.test
+== 05:04:10 load 4.60 4.88 4.43
+163.7% seam.test
+160.8% ceph-osd
+== 05:04:25 load 4.27 4.79 4.41
+163.7% seam.test
+155.9% ceph-osd
+== 05:04:40 load 4.19 4.75 4.40
+165.7% seam.test
+156.9% ceph-osd
+5.9% claude
+== 05:04:56 load 4.09 4.70 4.39
+183.5% seam.test
+156.3% ceph-osd
+20.4% ceph
+== 05:05:11 load 3.93 4.63 4.37
+186.4% seam.test
+155.3% ceph-osd
+== 05:05:26 load 4.18 4.65 4.38
+188.2% seam.test
+155.9% ceph-osd
+9.8% kubelet
+== 05:05:42 load 3.98 4.58 4.36
+157.8% ceph-osd
+134.3% rados
+== 05:05:57 load 3.56 4.45 4.32
+163.1% ceph-osd
+120.4% rados
+== 05:06:12 load 3.14 4.31 4.28
+== 05:06:27 load 3.04 4.23 4.25
+151.5% rados
+141.7% ceph-osd
+== 05:06:43 load 2.87 4.14 4.22
+162.7% ceph-osd
+150.0% seam.test
+== 05:06:58 load 2.76 4.05 4.19
+162.7% ceph-osd
+155.9% seam.test
+== 05:07:13 load 2.73 3.98 4.17
+160.2% ceph-osd
+152.4% seam.test
+5.8% claude
+== 05:07:28 load 2.88 3.95 4.15
+169.6% seam.test
+151.0% ceph-osd
+== 05:07:44 load 3.21 3.97 4.15
+162.7% seam.test
+154.9% ceph-osd
+== 05:07:59 load 3.33 3.95 4.15
+212.7% seam.test
+151.0% ceph-osd
+7.8% claude
+== 05:08:14 load 3.41 3.94 4.14
+212.6% seam.test
+148.5% ceph-osd
+== 05:08:30 load 3.42 3.91 4.13
+195.1% seam.test
+153.4% ceph-osd
+== 05:08:45 load 3.38 3.88 4.11
+161.8% ceph-osd
+135.3% rados
+== 05:09:00 load 3.68 3.92 4.12
+== 05:09:15 load 3.69 3.91 4.11
+151.0% rados
+150.0% ceph-osd
+== 05:09:31 load 3.53 3.86 4.09
+88.3% ceph-osd
+28.2% rados
+14.6% iscsi_trx
+== 05:09:46 load 3.50 3.84 4.08
+107.8% ceph-osd
+27.2% rados
+== 05:10:01 load 3.58 3.85 4.08
+94.1% ceph-osd
+34.3% seam.test
+14.7% iscsi_trx
+== 05:10:17 load 3.72 3.86 4.08
+94.2% ceph-osd
+33.0% seam.test
+14.6% iscsi_trx
+6.8% kworker/u130:4-iscsi_q_13
+5.8% claude
+== 05:10:32 load 3.54 3.81 4.06
+102.9% ceph-osd
+58.8% seam.test
+== 05:10:47 load 3.92 3.89 4.08
+93.1% ceph-osd
+34.3% seam.test
+14.7% iscsi_trx
+5.9% kworker/u130:17-iscsi_q_13
+== 05:11:02 load 4.03 3.91 4.09
+89.2% ceph-osd
+46.1% seam.test
+== 05:11:18 load 4.14 3.95 4.10
+93.1% ceph-osd
+38.2% seam.test
+14.7% iscsi_trx
+5.9% kworker/u130:9-iscsi_q_13
+== 05:11:33 load 3.83 3.88 4.07
+98.1% ceph-osd
+42.7% seam.test
+14.6% iscsi_trx
+== 05:11:48 load 3.67 3.84 4.06
+108.8% ceph-osd
+58.8% seam.test
+== 05:12:03 load 4.16 3.95 4.09
+85.3% ceph-osd
+19.6% rados
+14.7% iscsi_trx
+== 05:12:19 load 3.84 3.88 4.06
+20.6% ceph
+7.8% ceph-osd
+== 05:12:34 load 3.50 3.81 4.04
+87.3% ceph-osd
+24.5% rados
+13.7% iscsi_trx
+== 05:12:49 load 3.94 3.90 4.06
+86.4% ceph-osd
+26.2% rados
+13.6% iscsi_trx
+== 05:13:05 load 3.44 3.79 4.02
+44.1% ceph-osd
+7.8% rados
+5.9% iscsi_trx
+== 05:13:20 load 4.17 3.93 4.07
+52.0% ceph-osd
+7.8% rados
+5.9% iscsi_trx
+== 05:13:35 load 4.58 4.03 4.10
+43.1% ceph-osd
+13.7% seam.test
+7.8% iscsi_trx
+== 05:13:50 load 5.34 4.23 4.16
+48.0% ceph-osd
+11.8% seam.test
+6.9% iscsi_trx
+== 05:14:06 load 5.58 4.33 4.20
+82.4% ceph-osd
+28.4% seam.test
+11.8% iscsi_trx
+5.9% kworker/u130:17-kcryptd-252:0-1
+== 05:14:21 load 6.02 4.48 4.25
+44.1% ceph-osd
+16.7% seam.test
+7.8% iscsi_trx
+== 05:14:36 load 5.53 4.45 4.24
+72.8% ceph-osd
+27.2% seam.test
+10.7% iscsi_trx
+5.8% kworker/u130:1-events_unbound
+5.8% kubelet
+== 05:14:51 load 5.79 4.56 4.28
+== 05:15:07 load 5.52 4.58 4.29
+45.1% ceph-osd
+16.7% seam.test
+7.8% iscsi_trx
+== 05:15:22 load 5.75 4.68 4.33
+61.8% ceph-osd
+16.7% rados
+8.8% iscsi_trx
+== 05:15:37 load 6.02 4.79 4.37
+39.2% ceph-osd
+10.8% rados
+6.9% iscsi_trx
+== 05:15:53 load 6.17 4.89 4.41
+32.0% ceph-osd
+8.7% rados
+5.8% iscsi_trx
+== 05:16:08 load 6.73 5.07 4.48
+6.9% ceph-osd
+5.9% claude
+== 05:16:23 load 6.06 5.00 4.47
+21.6% iscsi_ttx
+21.6% ceph-osd
+14.7% rados
+5.9% iscsi_trx
+== 05:16:38 load 5.00 4.82 4.42
+22.5% ceph-osd
+21.6% iscsi_ttx
+16.7% seam.test
+5.9% iscsi_trx
+== 05:16:54 load 4.56 4.73 4.39
+23.5% iscsi_ttx
+21.6% ceph-osd
+17.6% seam.test
+5.9% iscsi_trx
+== 05:17:09 load 4.14 4.63 4.36
+23.5% iscsi_ttx
+20.6% ceph-osd
+16.7% seam.test
+5.9% iscsi_trx
+== 05:17:24 load 4.09 4.60 4.36
+24.3% iscsi_ttx
+22.3% ceph-osd
+19.4% seam.test
+5.8% iscsi_trx
+== 05:17:40 load 3.63 4.47 4.32
+26.5% iscsi_ttx
+24.5% ceph-osd
+20.6% seam.test
+5.9% claude
+5.9% iscsi_trx
+== 05:17:55 load 3.27 4.35 4.28
+25.2% iscsi_ttx
+24.3% ceph-osd
+19.4% rados
+5.8% iscsi_trx
+== 05:18:10 load 3.12 4.27 4.25
+6.9% ceph-osd
+5.9% podman
+== 05:18:25 load 2.74 4.12 4.21
+24.5% iscsi_ttx
+24.5% ceph-osd
+22.5% rados
+== 05:18:41 load 2.75 4.05 4.18
+37.3% iscsi_ttx
+34.3% ceph-osd
+24.5% rados
+9.8% iscsi_trx
+== 05:18:56 load 2.51 3.93 4.14
+40.2% ceph-osd
+36.3% seam.test
+35.3% iscsi_ttx
+10.8% iscsi_trx
+7.8% claude
+6.9% kworker/u130:1-iscsi_q_13
+5.9% claude
+== 05:19:11 load 2.67 3.90 4.13
+43.1% ceph-osd
+39.2% iscsi_ttx
+36.3% seam.test
+9.8% iscsi_trx
+== 05:19:26 load 2.66 3.84 4.10
+43.7% ceph-osd
+38.8% iscsi_ttx
+36.9% seam.test
+9.7% iscsi_trx
+7.8% kworker/u130:13-iscsi_q_13
+5.8% containerd
+== 05:19:42 load 2.66 3.77 4.07
+38.8% iscsi_ttx
+35.9% ceph-osd
+32.0% seam.test
+8.7% iscsi_trx
+== 05:19:57 load 2.57 3.70 4.05
+39.2% iscsi_ttx
+38.2% ceph-osd
+33.3% seam.test
+8.8% iscsi_trx
+7.8% claude
+== 05:20:12 load 2.88 3.71 4.04
+39.8% iscsi_ttx
+33.0% ceph-osd
+28.2% seam.test
+10.7% iscsi_trx
+== 05:20:28 load 2.52 3.59 4.00
+37.3% iscsi_ttx
+31.4% ceph-osd
+22.5% rados
+8.8% iscsi_trx
+5.9% containerd
+== 05:20:43 load 2.60 3.56 3.98
+39.2% iscsi_ttx
+30.4% ceph-osd
+23.5% rados
+9.8% iscsi_trx
+== 05:20:58 load 2.68 3.54 3.97
+37.9% iscsi_ttx
+34.0% ceph-osd
+20.4% rados
+8.7% iscsi_trx
+== 05:21:13 load 2.53 3.46 3.94
+37.9% iscsi_ttx
+35.0% ceph-osd
+20.4% rados
+10.7% iscsi_trx
+5.8% kworker/u130:8-kcryptd-252:0-1
+== 05:21:29 load 2.34 3.37 3.90
+38.2% iscsi_ttx
+36.3% ceph-osd
+27.5% rados
+12.7% iscsi_trx
+5.9% claude
+== 05:21:44 load 2.12 3.27 3.86
+38.8% ceph-osd
+37.9% iscsi_ttx
+24.3% seam.test
+9.7% iscsi_trx
+== 05:21:59 load 2.24 3.24 3.84
+38.2% iscsi_ttx
+31.4% ceph-osd
+21.6% seam.test
+10.8% iscsi_trx
+== 05:22:14 load 2.11 3.16 3.80
+39.2% ceph-osd
+38.2% iscsi_ttx
+25.5% seam.test
+10.8% iscsi_trx
+== 05:22:30 load 2.19 3.12 3.78
+37.9% iscsi_ttx
+37.9% ceph-osd
+24.3% seam.test
+20.4% kube-apiserver
+9.7% iscsi_trx
+== 05:22:45 load 2.37 3.12 3.77
+51.0% ceph-osd
+38.2% iscsi_ttx
+35.3% seam.test
+9.8% iscsi_trx
+5.9% claude
+== 05:23:00 load 2.22 3.05 3.73
+54.4% ceph-osd
+39.8% seam.test
+35.0% iscsi_ttx
+7.8% iscsi_trx
+== 05:23:16 load 2.68 3.11 3.74
+62.1% ceph-osd
+43.7% seam.test
+35.0% iscsi_ttx
+9.7% iscsi_trx
+6.8% kworker/u130:2-iscsi_q_13
+== 05:23:31 load 2.87 3.14 3.74
+46.1% ceph-osd
+38.2% iscsi_ttx
+29.4% rados
+10.8% iscsi_trx
+== 05:23:46 load 3.41 3.24 3.76
+41.2% ceph-osd
+39.2% iscsi_ttx
+25.5% rados
+9.8% iscsi_trx
+== 05:24:01 load 3.02 3.16 3.73
+5.8% claude
+== 05:24:17 load 2.75 3.09 3.69
+23.5% iscsi_trx
+22.5% ceph-osd
+12.7% seam.test
+== 05:24:32 load 2.58 3.04 3.66
+11.8% ceph-osd
+9.8% iscsi_trx
+8.8% seam.test
+== 05:24:47 load 2.46 2.98 3.64
+22.3% iscsi_trx
+19.4% ceph-osd
+8.7% rados
+== 05:25:02 load 2.36 2.94 3.61
+== 05:25:18 load 2.00 2.82 3.56
+55.3% kube-apiserver
+26.2% ceph-osd
+25.2% iscsi_trx
+10.7% rados
+10.7% ceph
+5.8% kubelet
+== 05:25:33 load 1.76 2.73 3.52
+30.4% ceph-osd
+29.4% iscsi_trx
+16.7% seam.test
+== 05:25:48 load 1.73 2.68 3.49
+== 05:26:04 load 1.75 2.63 3.46
+17.6% ceph-osd
+15.7% iscsi_trx
+8.8% rados
+== 05:26:19 load 1.80 2.60 3.44
+22.5% ceph-osd
+== 05:26:34 load 1.61 2.52 3.40
+== 05:26:49 load 1.80 2.51 3.38
+43.7% seam.test
+35.9% ceph-osd
+33.0% iscsi_trx
+== 05:27:05 load 2.50 2.64 3.41
+32.4% ceph-osd
+31.4% iscsi_trx
+12.7% rados
+5.9% claude
+== 05:27:20 load 2.15 2.55 3.37
+32.4% iscsi_trx
+29.4% ceph-osd
+11.8% rados
+== 05:27:35 load 1.96 2.49 3.33
+== 05:27:51 load 1.83 2.44 3.30
+47.1% seam.test
+41.2% ceph-osd
+32.4% iscsi_trx
+== 05:28:06 load 1.78 2.40 3.27
+183.5% ceph-osd
+104.9% seam.test
+13.6% claude
+== 05:28:21 load 2.21 2.46 3.28
+185.3% ceph-osd
+107.8% seam.test
+== 05:28:36 load 2.70 2.55 3.30
+184.5% ceph-osd
+104.9% seam.test
+== 05:28:52 load 2.70 2.56 3.28
+185.3% ceph-osd
+139.2% seam.test
+== 05:29:07 load 3.30 2.70 3.32
+183.3% ceph-osd
+163.7% seam.test
+== 05:29:22 load 3.37 2.75 3.32
+183.3% ceph-osd
+156.9% seam.test

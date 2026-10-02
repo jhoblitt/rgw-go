@@ -170,7 +170,14 @@ var _ = Describe("Seam", func() {
 		}
 		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 4 \| callback \| \d+ \| 1\.00 \| .* \| 549 / 571 \| 7171 / 7029 \| 0\.00x \| \d+\.\d+x \| ops 4\.0%, mean 2\.0% \| 1120, 3550 \|$`),
 			"read4m's cells keep their floor and ratios")
-		Expect(r.Markdown).To(ContainSubstring("\n## read4m\n\nNot judged: rados bench's 4 MiB rand floor ran at about a quarter of the Go cells' rate"))
+		Expect(r.Markdown).To(ContainSubstring("\n## read4m\n\nNot judged: rados bench's 4 MiB rand does not read as the Go cell does: " +
+			"rand picks each object at random with replacement among the objects written for it, where each Go worker " +
+			"reads its own, and its fixed object names land on fixed placement groups. Its ratios are shown, but the " +
+			"throughput and latency criteria leave read4m out until the floor reads as the Go cell does.\n"))
+		_, rest, _ := strings.Cut(r.Markdown, "\nNot judged: ")
+		reason, _, _ := strings.Cut(rest, "\n")
+		Expect(strings.ReplaceAll(reason, "4 MiB", "")).NotTo(MatchRegexp(`\b\d|\b(rate|quarter)\b`),
+			"the reason is how rand reads, not a figure fixed text cannot know")
 		Expect(r.Markdown).To(ContainSubstring("Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16,"))
 		Expect(r.Markdown).To(ContainSubstring("read4m is measured and shown with its floor, but not judged; its table says why."))
 	})
