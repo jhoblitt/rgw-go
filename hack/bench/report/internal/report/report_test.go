@@ -235,6 +235,9 @@ var _ = Describe("Seam", func() {
 			"read4m at 4's single run is the old before run, 548.8 ops/s")
 		Expect(r.Verdicts).To(ContainElement(verdict("callback", report.Latency, report.Inconclusive, "unbracketed floor, one run after the sweep; worst ")))
 		Expect(r.Markdown).To(MatchRegexp(`(?m)^\| 64 \| callback \| \d+ \| 54000 \| .* \| 55860 \| 1131 \| 0\.97x \| 1\.04x \| single run after the sweep \|$`))
+		Expect(r.Markdown).To(ContainSubstring("with rados bench at the same size and concurrency, which in this sweep ran "+
+			"once per cell, after the sweep. The threads criterion"), "the verdict's prose describes the floor this sweep has")
+		Expect(r.Markdown).NotTo(ContainSubstring("run just before and just after the cell's three modes"))
 	})
 
 	It("refuses a floor line naming a bracket or image in a sweep that predates them", func(ctx SpecContext) {

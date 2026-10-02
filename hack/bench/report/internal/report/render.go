@@ -70,11 +70,14 @@ func envValue(v any) string {
 
 func (s *sweep) renderVerdict(b *strings.Builder, r SeamReport) {
 	b.WriteString("\n## Verdict\n\n")
+	floor := "run just before and just after the cell's three modes: a ratio divides by the mean of the two runs, and a " +
+		"cell whose runs differ by more than 10% of that mean is flagged unstable beside the verdict it feeds."
+	if s.unbracketed {
+		floor = "which in this sweep ran once per cell, after the sweep."
+	}
 	b.WriteString("cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. " +
 		"Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and read4m and write4m at 1, 4 and 16, " +
-		"with rados bench at the same size and concurrency, run just before and just after the cell's three modes: a ratio " +
-		"divides by the mean of the two runs, and a cell whose runs differ by more than 10% of that mean is flagged unstable " +
-		"beside the verdict it feeds. The threads criterion allows each cell under the byte budget " +
+		"with rados bench at the same size and concurrency, " + floor + " The threads criterion allows each cell under the byte budget " +
 		"GOMAXPROCS + 8 threads of growth, its peak less its idle count. The cgo criterion is the share of the CPU profile " +
 		"of read4k at 256 in flight whose stacks hold a frame of the cgo boundary. The plan names runtime.cgocall, " +
 		"runtime.cgocallback*, the _Cfunc_ stubs and runtime.(*Pinner); its list is read as examples, so cgo's " +
