@@ -20,6 +20,8 @@ type Cluster interface {
 	// InstanceID is the client's global id, rados_get_instance_id, which
 	// radosgw puts in transaction ids and the host id.
 	InstanceID() uint64
+	// FSID is the cluster fsid in its canonical string form (rados_cluster_fsid).
+	FSID() (string, error)
 	// Close shuts the connection down.
 	Close() error
 }
@@ -75,6 +77,24 @@ type Pool interface {
 	Write(ctx context.Context, oid string, op *WriteOp, flags OpFlags) (version uint64, err error)
 	// ListObjects calls fn for every object in the namespace until fn returns an error.
 	ListObjects(ctx context.Context, fn func(oid, locator string) error) error
+	// ListObjectsFrom lists the namespace's objects after token ("" starts at
+	// the beginning), at most limit of them when limit > 0, calling fn for
+	// each in the pool's listing order. next continues the listing and more
+	// says whether anything follows; both are zero at the end. A token this
+	// package did not produce is ErrBadOp. Tokens are opaque to callers and
+	// round-trip only through rgw-go. A token resumes only the namespace
+	// that issued it: it names an object, which another namespace places
+	// elsewhere, so there it resumes at an unrelated position rather than
+	// failing.
+	//
+	// A token resumes after the last object delivered, placed by
+	// PlacementHash of its name and compared in ListAfter's order. Both
+	// match RADOS only for objects without a locator, as in the users.uid
+	// namespace and the domain root: pg_pool_t::hash_key hashes a locator
+	// when one is set, and hobject order compares it before the name. A
+	// namespace with locators would need the token to carry the last
+	// object's locator, hashed in place of its name and compared before it.
+	ListObjectsFrom(ctx context.Context, token string, limit int, fn func(oid, locator string) error) (next string, more bool, err error)
 	// Watch registers fn for notifications on oid until the returned Watch is closed.
 	Watch(ctx context.Context, oid string, fn func(notifyID, notifierID uint64, payload []byte)) (Watch, error)
 	// Notify sends payload to oid's watchers and returns their acknowledgements.

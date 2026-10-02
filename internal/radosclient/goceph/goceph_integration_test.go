@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/bits"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1051,3 +1053,205 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 		})
 	}
 })
+
+// listAll returns every object ListObjects reports, in its order.
+func listAll(ctx context.Context, p radosclient.Pool) []string {
+	GinkgoHelper()
+	var oids []string
+	Expect(p.ListObjects(ctx, func(oid, _ string) error {
+		oids = append(oids, oid)
+		return nil
+	})).To(Succeed())
+	return oids
+}
+
+// pageFrom pages p from token in pages of limit until the listing ends and
+// returns what the pages delivered, failing once they deliver more than
+// bound objects.
+func pageFrom(ctx context.Context, p radosclient.Pool, token string, limit, bound int) []string {
+	GinkgoHelper()
+	var paged []string
+	for {
+		page := 0
+		next, more, err := p.ListObjectsFrom(ctx, token, limit, func(oid, _ string) error {
+			paged = append(paged, oid)
+			page++
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(paged)).To(BeNumerically("<=", bound), "the pages deliver no object twice")
+		if !more {
+			Expect(next).To(BeEmpty())
+			return paged
+		}
+		Expect(page).To(Equal(limit), "a page that is not the last is full")
+		token = next
+	}
+}
+
+// hobjectOrder compares two names of one namespace without locators as
+// RADOS lists them.
+func hobjectOrder(ns string) func(a, b string) int {
+	return func(a, b string) int {
+		ha, hb := radosclient.PlacementHash(ns, a), radosclient.PlacementHash(ns, b)
+		switch {
+		case radosclient.ListAfter(ha, a, hb, b):
+			return 1
+		case radosclient.ListAfter(hb, b, ha, a):
+			return -1
+		}
+		return 0
+	}
+}
+
+var _ = Describe("goceph listing pages and the fsid against the populated zone", Label("integration"), func() {
+	var (
+		cluster  radosclient.Cluster
+		metaPool string
+	)
+
+	BeforeEach(func(ctx SpecContext) {
+		conf := cephtest.Conf()
+		var m struct {
+			Pools struct {
+				Meta string `json:"meta"`
+			} `json:"pools"`
+		}
+		cephtest.ReadManifest(conf, &m)
+		Expect(m.Pools.Meta).NotTo(BeEmpty(), "manifest.json names the zone's meta pool")
+		metaPool = m.Pools.Meta
+		var err error
+		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
+	})
+
+	It("reports the fsid the monitors answer ceph fsid with", func(ctx SpecContext) {
+		out, status, err := cluster.MonCommand(ctx, []byte(`{"prefix": "fsid", "format": "json"}`))
+		Expect(err).NotTo(HaveOccurred(), "mon command fsid: %s", status)
+		var mon struct {
+			FSID string `json:"fsid"`
+		}
+		Expect(json.Unmarshal(out, &mon)).To(Succeed())
+		Expect(mon.FSID).To(MatchRegexp(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`))
+		Expect(cluster.FSID()).To(Equal(mon.FSID))
+	})
+
+	DescribeTable("pages the users.uid namespace into its full listing",
+		func(ctx SpecContext, limit int) {
+			pool, err := cluster.Pool(ctx, metaPool, "users.uid")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
+			all := listAll(ctx, pool)
+			Expect(all).NotTo(BeEmpty(), "the populated zone has users")
+			Expect(pageFrom(ctx, pool, "", limit, len(all))).To(Equal(all))
+		},
+		Entry("one at a time", 1),
+		Entry("two at a time", 2),
+		Entry("seven at a time", 7),
+	)
+
+	It("lists a namespace in hobject order and resumes inside placement groups and same-hash pairs", func(ctx SpecContext) {
+		// The pairs share a placement hash only in this namespace, so the
+		// scratch listing takes its name, in the scratch pool.
+		const ns = "users.uid"
+		pairs := [][2]string{{"user-155108", "user-327421"}, {"user-318489", "user-326802"}}
+		pool, err := cluster.Pool(ctx, cephtest.TestPool, ns)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
+		removeAll := func(ctx context.Context) {
+			for _, oid := range listAll(ctx, pool) {
+				removeObject(pool, oid)
+			}
+		}
+		removeAll(ctx) // what a killed run left
+		DeferCleanup(func(ctx SpecContext) { removeAll(ctx) })
+		var names []string
+		for _, pair := range pairs {
+			Expect(radosclient.PlacementHash(ns, pair[0])).To(Equal(radosclient.PlacementHash(ns, pair[1])))
+			names = append(names, pair[0], pair[1])
+		}
+		for i := range 50 {
+			names = append(names, fmt.Sprintf("nlist-%02d", i))
+		}
+		for _, oid := range names {
+			w := radosclient.NewWriteOp()
+			w.Create(false)
+			_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		all := listAll(ctx, pool)
+		Expect(all).To(ConsistOf(names))
+		Expect(slices.IsSortedFunc(all, hobjectOrder(ns))).To(BeTrue(), "RADOS lists by bit-reversed placement hash, then by name")
+
+		// Pages end at cuts, indexes into all: the first object whose
+		// placement group lists an object of another hash before it, so
+		// that resuming after it replays that object, and the first name of
+		// each pair.
+		pgNum := poolPGNum(ctx, cluster, cephtest.TestPool)
+		group := func(oid string) uint32 { return stableMod(radosclient.PlacementHash(ns, oid), pgNum) }
+		replay := -1
+		for i := 1; i < len(all) && replay < 0; i++ {
+			prev := all[i-1]
+			if group(prev) == group(all[i]) && radosclient.PlacementHash(ns, prev) != radosclient.PlacementHash(ns, all[i]) {
+				replay = i
+			}
+		}
+		Expect(replay).To(BeNumerically(">", 0), "a placement group of the %d holds two hashes", pgNum)
+		cuts := []int{replay}
+		for _, pair := range pairs {
+			i := slices.Index(all, pair[0])
+			Expect(all[i+1]).To(Equal(pair[1]), "a same-hash pair lists together, by name")
+			cuts = append(cuts, i)
+		}
+		slices.Sort(cuts)
+		cuts = slices.Compact(cuts)
+		Expect(cuts[len(cuts)-1]).To(BeNumerically("<", len(all)-1), "every cut leaves objects to resume to")
+
+		// The replay cut's last object is removed before the resume after it.
+		token, start := "", 0
+		for _, cut := range cuts {
+			var page []string
+			next, more, err := pool.ListObjectsFrom(ctx, token, cut+1-start, func(oid, _ string) error {
+				page = append(page, oid)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(more).To(BeTrue())
+			Expect(page).To(Equal(all[start : cut+1]))
+			if cut == replay {
+				removeObject(pool, all[cut])
+			}
+			token, start = next, cut+1
+		}
+		Expect(pageFrom(ctx, pool, token, 3, len(all))).To(Equal(all[start:]))
+	})
+})
+
+// poolPGNum reads a pool's pg_num through the osd pool get mon command.
+func poolPGNum(ctx context.Context, c radosclient.Cluster, pool string) uint32 {
+	GinkgoHelper()
+	cmd, err := json.Marshal(map[string]string{"prefix": "osd pool get", "pool": pool, "var": "pg_num", "format": "json"})
+	Expect(err).NotTo(HaveOccurred())
+	out, status, err := c.MonCommand(ctx, cmd)
+	Expect(err).NotTo(HaveOccurred(), "osd pool get: %s", status)
+	var got struct {
+		PGNum uint32 `json:"pg_num"`
+	}
+	Expect(json.Unmarshal(out, &got)).To(Succeed())
+	Expect(got.PGNum).To(BeNumerically(">", 0))
+	return got.PGNum
+}
+
+// stableMod is the placement group of hash h in a pool of pgNum groups:
+// pg_pool_t::raw_hash_to_pg, ceph_stable_mod over pg_num_mask
+// (include/rados.h:96-102; osd_types.cc:1662-1665 and :1798-1801 at
+// v19.2.6, :1671-1673 and :1807-1810 at v20.2.4).
+func stableMod(h, pgNum uint32) uint32 {
+	mask := uint32(1)<<bits.Len32(pgNum-1) - 1
+	if h&mask < pgNum {
+		return h & mask
+	}
+	return h & (mask >> 1)
+}

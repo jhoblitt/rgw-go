@@ -72,6 +72,24 @@ type FakePool struct {
 	listObjectsReturnsOnCall map[int]struct {
 		result1 error
 	}
+	ListObjectsFromStub        func(context.Context, string, int, func(oid string, locator string) error) (string, bool, error)
+	listObjectsFromMutex       sync.RWMutex
+	listObjectsFromArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 int
+		arg4 func(oid string, locator string) error
+	}
+	listObjectsFromReturns struct {
+		result1 string
+		result2 bool
+		result3 error
+	}
+	listObjectsFromReturnsOnCall map[int]struct {
+		result1 string
+		result2 bool
+		result3 error
+	}
 	LockExclusiveStub        func(context.Context, string, string, string, string, time.Duration, radosclient.LockFlags) error
 	lockExclusiveMutex       sync.RWMutex
 	lockExclusiveArgsForCall []struct {
@@ -529,6 +547,76 @@ func (fake *FakePool) ListObjectsReturnsOnCall(i int, result1 error) {
 	fake.listObjectsReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *FakePool) ListObjectsFrom(arg1 context.Context, arg2 string, arg3 int, arg4 func(oid string, locator string) error) (string, bool, error) {
+	fake.listObjectsFromMutex.Lock()
+	ret, specificReturn := fake.listObjectsFromReturnsOnCall[len(fake.listObjectsFromArgsForCall)]
+	fake.listObjectsFromArgsForCall = append(fake.listObjectsFromArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 int
+		arg4 func(oid string, locator string) error
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.ListObjectsFromStub
+	fakeReturns := fake.listObjectsFromReturns
+	fake.recordInvocation("ListObjectsFrom", []interface{}{arg1, arg2, arg3, arg4})
+	fake.listObjectsFromMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *FakePool) ListObjectsFromCallCount() int {
+	fake.listObjectsFromMutex.RLock()
+	defer fake.listObjectsFromMutex.RUnlock()
+	return len(fake.listObjectsFromArgsForCall)
+}
+
+func (fake *FakePool) ListObjectsFromCalls(stub func(context.Context, string, int, func(oid string, locator string) error) (string, bool, error)) {
+	fake.listObjectsFromMutex.Lock()
+	defer fake.listObjectsFromMutex.Unlock()
+	fake.ListObjectsFromStub = stub
+}
+
+func (fake *FakePool) ListObjectsFromArgsForCall(i int) (context.Context, string, int, func(oid string, locator string) error) {
+	fake.listObjectsFromMutex.RLock()
+	defer fake.listObjectsFromMutex.RUnlock()
+	argsForCall := fake.listObjectsFromArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakePool) ListObjectsFromReturns(result1 string, result2 bool, result3 error) {
+	fake.listObjectsFromMutex.Lock()
+	defer fake.listObjectsFromMutex.Unlock()
+	fake.ListObjectsFromStub = nil
+	fake.listObjectsFromReturns = struct {
+		result1 string
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakePool) ListObjectsFromReturnsOnCall(i int, result1 string, result2 bool, result3 error) {
+	fake.listObjectsFromMutex.Lock()
+	defer fake.listObjectsFromMutex.Unlock()
+	fake.ListObjectsFromStub = nil
+	if fake.listObjectsFromReturnsOnCall == nil {
+		fake.listObjectsFromReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 bool
+			result3 error
+		})
+	}
+	fake.listObjectsFromReturnsOnCall[i] = struct {
+		result1 string
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *FakePool) LockExclusive(arg1 context.Context, arg2 string, arg3 string, arg4 string, arg5 string, arg6 time.Duration, arg7 radosclient.LockFlags) error {

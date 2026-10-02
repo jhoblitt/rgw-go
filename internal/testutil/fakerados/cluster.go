@@ -20,6 +20,9 @@ const instanceID = 4155
 // defaultMaxWriteOpReplyLen is the OSD's default osd_max_write_op_reply_len.
 const defaultMaxWriteOpReplyLen = 64
 
+// FakeFSID is the fake cluster's fsid, which FSID answers.
+const FakeFSID = "00000000-0000-4000-8000-00000000f51d"
+
 // Cluster is an in-memory radosclient.Cluster. Every pool exists; a spec that
 // needs a missing one names it with FailPool. The zero value is not usable;
 // call New.
@@ -318,6 +321,17 @@ func (c *Cluster) RequiredOSDRelease(ctx context.Context) (string, error) {
 
 // InstanceID returns the fake client's global id, 4155.
 func (c *Cluster) InstanceID() uint64 { return instanceID }
+
+// FSID returns FakeFSID, and refuses once the cluster is closed, as goceph
+// refuses a call on a closed connection.
+func (c *Cluster) FSID() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return "", closedError("fsid", "cluster")
+	}
+	return FakeFSID, nil
+}
 
 // Close refuses every later call and closes every watch, as closing a
 // connection closes its pools and their watches.
