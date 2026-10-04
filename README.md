@@ -34,6 +34,22 @@ stands up on kind. The `integration` workflow runs them nightly and on demand wi
 `gh workflow run integration.yml`. It does not gate pull requests; locally, the same
 steps are in [hack/rooket/README.md](hack/rooket/README.md).
 
+A `v*` tag runs the `release` workflow. goreleaser builds rgw-go with cgo once per Ceph
+release, in a builder made from that release's Ceph image (`hack/image/cgo-build.sh`).
+For each release it publishes a `linux/amd64` archive and the derived Ceph image
+`ghcr.io/jhoblitt/rgw-go`, tagged `<version>-ceph-<Ceph tag>` and `<version>-<release>`.
+The floating `<release>` tag follows final releases only, and a tag such as
+`v0.1.0-rc.1` publishes a GitHub prerelease. Each release carries checksums, the
+archives' SBOMs and keyless cosign signatures over the checksums and the images.
+
+`.goreleaser.yaml` repeats each release's Ceph image and the build tags, and
+`make release-pins-check`, part of `make check` and of CI, fails until they match the
+chart values in `hack/rooket/<release>/values/` and `GO_TAGS` in the `Makefile`.
+`goreleaser release --snapshot --clean --skip=publish,sign,sbom` builds everything
+locally without publishing; its image tags end in `-amd64`, such as
+`ghcr.io/jhoblitt/rgw-go:squid-amd64`. The workflow sets `RGW_GO_ENGINE=docker`, so
+the binaries build with the engine goreleaser builds the images with.
+
 ## License
 
 [LGPL-2.1-or-later](LICENSE)

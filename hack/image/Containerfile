@@ -1,13 +1,17 @@
 # rgw-go in the target Ceph image as radosgw. Ceph's radosgw stays beside it
 # as radosgw.ceph, and every other Ceph binary is untouched: under Rook this
 # image is every daemon's and the toolbox's.
-# CEPH_IMAGE has no default: a release's Ceph image is pinned only in
-# hack/rooket/<release>/values/, so a build that omits it must fail.
+# CEPH_IMAGE has no default: a release's Ceph image has its home in
+# hack/rooket/<release>/values/, which .goreleaser.yaml repeats under make
+# release-pins-check, so a build that omits it must fail.
 ARG CEPH_IMAGE
 FROM ${CEPH_IMAGE}
 # An ARG declared before FROM is out of scope after it until declared again.
 ARG CEPH_IMAGE
-COPY rgw-go /usr/bin/rgw-go
+# The binary's path in the build context: build.sh's context holds it alone,
+# goreleaser's holds it under the target platform, linux/amd64/rgw-go.
+ARG BINARY=rgw-go
+COPY ${BINARY} /usr/bin/rgw-go
 RUN mv /usr/bin/radosgw /usr/bin/radosgw.ceph && ln -s rgw-go /usr/bin/radosgw
 # authors and documentation replace the Ceph image's, which name Ceph's
 # release team and documentation.

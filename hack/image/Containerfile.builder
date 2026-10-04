@@ -4,8 +4,9 @@
 # the Ceph image (packages.txt in ceph.git's container/Containerfile). The
 # install adds librados-devel, git-core and less; the git package would add
 # perl and some sixty other packages go does not need.
-# CEPH_IMAGE has no default: a release's Ceph image is pinned only in
-# hack/rooket/<release>/values/, so a build that omits it must fail.
+# CEPH_IMAGE has no default: a release's Ceph image has its home in
+# hack/rooket/<release>/values/, which .goreleaser.yaml repeats under make
+# release-pins-check, so a build that omits it must fail.
 ARG CEPH_IMAGE
 FROM docker.io/library/golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go
 FROM ${CEPH_IMAGE}
