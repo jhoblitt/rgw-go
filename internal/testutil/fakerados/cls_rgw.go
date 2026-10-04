@@ -7,20 +7,26 @@ import (
 
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698 and :4752 at v19.2.6,
-// :5107-5115 and :5171 at v20.2.4), which RegisterClass takes with RGWClass.
-var RGWWriteMethods = []string{"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding"}
+// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4743 and :4752 at
+// v19.2.6, :5107-5115, :5162 and :5171 at v20.2.4), which RegisterClass
+// takes with RGWClass.
+var RGWWriteMethods = []string{
+	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
+	"mp_upload_part_info_update",
+}
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
 // v20.2.4) over a bucket index shard's omap: one entry per index key, and
 // the rgw_bucket_dir_header in the omap header. It runs bucket_init_index;
 // bucket_list asking for no entries, which is how radosgw reads a shard's
 // header; the index transaction, bucket_prepare_op and bucket_complete_op;
-// and guard_bucket_resharding, get_bucket_resharding and
-// set_bucket_resharding, with which a spec stages a reshard. Every other
+// guard_bucket_resharding, get_bucket_resharding and
+// set_bucket_resharding, with which a spec stages a reshard; and
+// mp_upload_part_info_update on a multipart meta object. Every other
 // method, and a bucket_list asking for entries, is EOPNOTSUPP. It reads the
 // header and entries from the stored object, as cls_cxx_map_read_header and
 // cls_cxx_map_get_val do, and encodes what it stores and replies at the
@@ -49,6 +55,8 @@ func RGWClass() ClassFunc {
 			return rgwGetBucketResharding(call)
 		case "set_bucket_resharding":
 			return nil, rgwSetBucketResharding(call)
+		case "mp_upload_part_info_update":
+			return nil, rgwMPUploadPartInfoUpdate(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
@@ -385,4 +393,58 @@ func (c *Cluster) Header(pool, ns, oid string) rgwcls.DirHeader {
 		panic(fmt.Sprintf("fakerados: index header of %s/%s/%s does not decode: %v", pool, ns, oid, err))
 	}
 	return h
+}
+
+// rgwMPUploadPartInfoUpdate is rgw_mp_upload_part_info_update (cls_rgw.cc:4360-4400
+// at v19.2.6, :4762-4802 at v20.2.4). A request that does not decode is
+// EINVAL. The part info stored under the request's key, read as
+// read_omap_entry does (:915-932 at v19.2.6, :1045-1062 at v20.2.4), is EIO
+// when it does not decode and a default one when the key or the object is
+// missing. Its manifest's prefix, when the manifest is not empty, and its
+// past prefixes join the new info's past prefixes; a new prefix among them
+// is EEXIST; otherwise the merged info is stored under the key, creating the
+// object as cls_cxx_map_set_val does. radosgw sends assert_exists ahead of
+// the call, which fails first on a missing meta object. The info is stored
+// at the Squid release, as a Squid OSD re-encodes it, dropping a Tentacle
+// checksum.
+func rgwMPUploadPartInfoUpdate(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeMPUploadPartInfoUpdateOp)
+	if rval < 0 {
+		return rval
+	}
+	info, rval := decodeRequest(op.Info, meta.DecodeUploadPartInfo)
+	if rval < 0 {
+		return rval
+	}
+	var stored meta.UploadPartInfo
+	if call.Stored != nil {
+		if b, ok := call.Stored.Omap[op.PartKey]; ok {
+			d := denc.NewDecoder(b)
+			stored = meta.DecodeUploadPartInfo(d)
+			if d.Err() != nil {
+				return -int32(syscall.EIO)
+			}
+		}
+	}
+	past := info.PastPrefixes
+	if !manifestEmpty(stored.Manifest) {
+		past = append(past, stored.Manifest.Prefix)
+	}
+	past = append(past, stored.PastPrefixes...)
+	slices.Sort(past)
+	info.PastPrefixes = slices.Compact(past)
+	if _, found := slices.BinarySearch(info.PastPrefixes, info.Manifest.Prefix); found {
+		return -int32(syscall.EEXIST)
+	}
+	call.Create().Omap[op.PartKey] = encodeSquid(info)
+	return 0
+}
+
+// manifestEmpty is RGWObjManifest::empty: no pieces when explicit, no rules
+// otherwise.
+func manifestEmpty(m meta.Manifest) bool {
+	if m.ExplicitObjs {
+		return len(m.Objs) == 0
+	}
+	return len(m.Rules) == 0
 }

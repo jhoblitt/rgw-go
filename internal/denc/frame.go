@@ -88,6 +88,22 @@ func (d *Decoder) EndStruct(h Header) {
 	d.off = h.end
 }
 
+// RestOfStruct reads the rest of the struct h describes, from the offset to
+// the struct end, and returns it as a copy, so a decoder can carry as bytes
+// what it does not decode. It is nil when nothing remains, and when h
+// carried no length, which leaves the offset alone. It fails with
+// ErrOverread when the decoder already read past the struct end.
+func (d *Decoder) RestOfStruct(h Header) []byte {
+	if d.err != nil || h.end == 0 {
+		return nil
+	}
+	if d.off > h.end {
+		d.err = fmt.Errorf("%w: offset %d, struct ends at %d", ErrOverread, d.off, h.end)
+		return nil
+	}
+	return d.Raw(h.end - d.off)
+}
+
 func (d *Decoder) checkCompat(maxVersion uint8, h Header) {
 	if d.err == nil && h.Compat > maxVersion {
 		d.err = fmt.Errorf("%w: struct_v %d compat %d, decoder %d", ErrIncompatible, h.Version, h.Compat, maxVersion)

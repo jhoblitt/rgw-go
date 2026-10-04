@@ -388,3 +388,42 @@ var _ = Describe("the omap-era gc methods", func() {
 		Expect(err).To(MatchError(ContainSubstring("rgw: decoding gc_list reply")))
 	})
 })
+
+var _ = Describe("mp_upload_part_info_update", func() {
+	It("encodes the omap key and the part info as given", func() {
+		info := []byte{5, 2, 4, 0, 0, 0, 1, 0, 0, 0} // a stand-in RGWUploadPartInfo frame
+		want := build(func(e *denc.Encoder) {
+			f := e.BeginStruct(1, 1)
+			e.String("part.00000001")
+			e.Raw(info)
+			e.EndStruct(f)
+		})
+		Expect(want[:10]).To(Equal([]byte{1, 1, 27, 0, 0, 0, 13, 0, 0, 0}))
+		for _, r := range releases {
+			op := radosclient.NewWriteOp()
+			rgw.MPUploadPartInfoUpdate(op, "part.00000001", info, r)
+			Expect(soleExec(op.Steps(), "mp_upload_part_info_update").In).To(Equal(want), "%v", r)
+		}
+		Expect(decodeWhole(want, rgw.DecodeMPUploadPartInfoUpdateOp)).
+			To(Equal(rgw.MPUploadPartInfoUpdateOp{PartKey: "part.00000001", Info: info}))
+	})
+	It("sends every corpus request byte for byte", func() {
+		for _, c := range loadRaw("cls_rgw_mp_upload_part_info_update_op") {
+			v := decodeWhole(c.bin, rgw.DecodeMPUploadPartInfoUpdateOp)
+			op := radosclient.NewWriteOp()
+			rgw.MPUploadPartInfoUpdate(op, v.PartKey, v.Info, denc.Squid)
+			Expect(soleExec(op.Steps(), "mp_upload_part_info_update").In).To(Equal(c.bin), c.id)
+		}
+	})
+	It("fails a request whose part info is cut short", func() {
+		b := build(func(e *denc.Encoder) {
+			f := e.BeginStruct(1, 1)
+			e.String("part.00000001")
+			e.Raw([]byte{5, 2, 9, 0, 0, 0, 1})
+			e.EndStruct(f)
+		})
+		d := denc.NewDecoder(b)
+		rgw.DecodeMPUploadPartInfoUpdateOp(d)
+		Expect(d.Err()).To(MatchError(denc.ErrShortBuffer))
+	})
+})

@@ -30,6 +30,10 @@ const (
 	methodGetBucketResharding   = "get_bucket_resharding"
 )
 
+// methodMPUploadPartInfoUpdate is RGW_MP_UPLOAD_PART_INFO_UPDATE
+// (cls_rgw_const.h:68 at v19.2.6, :71 at v20.2.4).
+const methodMPUploadPartInfoUpdate = "mp_upload_part_info_update"
+
 // ErrBusyResharding is CLS_RGW_ERR_BUSY_RESHARDING as a positive errno.
 // GuardBucketResharding sends its negation, -2300, as radosgw does, and the
 // seam maps the failure to radosclient.ErrBusyResharding.
