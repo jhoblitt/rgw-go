@@ -638,6 +638,65 @@ review and verified against the tree.
     InvalidArgument. rgw-go also refuses with 400 InvalidArgument a
     malformed final chunk line and a signed chunk header in any form but
     `<size>;chunk-signature=<64 bytes>`, the key included.
+- **aws-chunked trailer sections are read line by line.** For a payload
+  that expects a trailer signature, rgw-go reads the trailer section as
+  lines that end in CRLF, in any order, each split at its first colon into
+  a name and an untrimmed value. The declared signature is the value of
+  the first line named `x-amz-trailer-signature`, and the signature rgw-go
+  computes covers, for each name `x-amz-trailer` lists, the first line
+  bearing exactly that name; a declared signature that is missing or
+  differs is 403 SignatureDoesNotMatch. radosgw instead searches the up to
+  255 bytes it reads after the chunk at the decoded length for
+  `x-amz-trailer-signature:` and for each listed name anywhere, takes the
+  text from the first match of each to the next CRLF as its line, and
+  splits that line at every colon (`extract_helper`, `split_header`,
+  `extract_trailing_headers` and `complete()`, `rgw_auth_s3.cc:1436-1510`
+  and `:1583-1690` at v19.2.6, `:1413-1487` and `:1560-1667` at v20.2.4).
+  A section as the AWS SDKs write it, one line per listed trailer and the
+  signature line last, with `x-amz-trailer` naming each trailer once, gets
+  the same answer from both when it fits radosgw's buffer. They differ as
+  follows.
+  - A signature whose first occurrence is not on a line of its own but in
+    another line's value, at the end of a longer name, or in a following
+    chunk's data when the chunks run past `x-amz-decoded-content-length`:
+    radosgw takes that occurrence as the declared signature, even when a
+    line of its own follows, and accepts the payload when it matches.
+    rgw-go takes the declared signature only from a line of its own, and
+    answers 403 SignatureDoesNotMatch to a payload whose chunks run past
+    the length.
+  - A listed name whose first occurrence is inside another line, in its
+    value or as the start or the end of a longer name: radosgw's trailer
+    signature covers the text from that occurrence to the line's CRLF,
+    split at its colons, even when the name also has a line of its own
+    further on. rgw-go's covers the first line that bears exactly the
+    name, or no line for it.
+  - The bytes radosgw drops before it looks for the signature: it drops
+    from the start of the section the summed length of the lines it found,
+    CRLFs included, counting a line once for each listed name that finds
+    it, and looks for the signature only in what is left
+    (`rgw_auth_s3.cc:1505-1509` at v19.2.6, `:1482-1486` at v20.2.4). When
+    the drop reaches into the signature line, radosgw answers 403
+    SignatureDoesNotMatch to a payload that expects a trailer signature.
+    That happens when the signature line comes before a listed trailer's
+    line with fewer bytes before it than the drop, and when `x-amz-trailer`
+    lists a name the section holds twice, or lists overlapping names such
+    as `x-amz-checksum-crc32c,crc32c`, even with the trailers first and the
+    signature line last. When the drop exceeds the section, as it does once
+    a name is listed often enough for the section's length, radosgw's
+    behaviour is undefined, on any aws-chunked upload that carries
+    `x-amz-trailer`
+    (`docs/ceph-upstream-bugs.md`, "radosgw cuts an aws-chunked trailer
+    section by its trailers' length, not their position"). rgw-go answers
+    each such section as any other, and accepts the payload when the
+    declared signature matches.
+  - A line whose value holds a second colon, or is empty: radosgw takes
+    only the text between the first two colons as the value, skipping
+    empty fields, and leaves a trailer line with an empty value out of its
+    trailer signature; rgw-go takes the whole value after the first colon,
+    an empty one included, both for the declared signature and for the
+    trailers its signature covers (`docs/ceph-upstream-bugs.md`, "radosgw
+    reads an aws-chunked trailer line's value only up to a second colon,
+    and drops an empty one").
 - **Some bucket sub-records are carried opaque in phase 0.**
   RGWBucketInfo's website configuration, object-lock configuration and
   sync policy are kept as the encoded bytes radosgw wrote and written back
