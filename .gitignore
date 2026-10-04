@@ -5,3 +5,4 @@ coverage.out
 /hack/image/out/
 /hack/s3tests/out/
 /hack/bench/out/
+/hack/admin/_out/

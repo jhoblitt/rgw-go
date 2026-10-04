@@ -13,6 +13,7 @@ make populate RELEASE=squid
 make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
 make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
+make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw, after the gate
 make cluster-down RELEASE=squid
 
 make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.20.7
@@ -20,6 +21,7 @@ make populate RELEASE=tentacle
 make integration RELEASE=tentacle
 make gate RELEASE=tentacle
 make s3tests RELEASE=tentacle
+make admin-suite RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
 
@@ -44,6 +46,8 @@ writes the same data and manifest again.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
 - `git`, `curl` and `python3` with `venv`, with access to GitHub and PyPI,
   for `hack/s3tests/run.sh`.
+- `git`, `curl`, `jq` and Go with cgo and the librados headers below, with
+  access to GitHub and the Go module proxy, for `hack/admin/run.sh`.
 - librados 19.2.6 or later with its headers: both releases' admin keys are
   AES256KRB5, which older librados cannot parse.
 
@@ -349,3 +353,102 @@ or changing a deselect list, re-records both releases' baselines in the same
 change. `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
 `.freeze` file beside the last run, a record of the venv rather than a key
 the comparison checks.
+
+## go-ceph's rgw/admin suite
+
+```sh
+make gate RELEASE=squid                                       # first: the gate counts the zone's users
+make admin-suite RELEASE=squid GATEWAY=radosgw RUN=try1       # GATEWAY=rgw-go runs it against rgw-go
+```
+
+`hack/admin/run.sh` runs [go-ceph](https://github.com/ceph/go-ceph)'s admin
+ops suite, `TestRadosGWTestSuite` in `rgw/admin`, at the tag it pins
+(`GO_CEPH_TAG`), against the release's radosgw or against the rgw-go whose URL
+`out/<release>/rgw-go.endpoint` holds. It fetches the tag into
+`hack/admin/_out/.go-ceph`, which git ignores; `golangci-lint fmt` walks a
+directory whose name starts with `_`, unlike go's `./...`, but skips one
+that starts with `.`, so `make check` never formats the checkout. Before
+each run it resets the checkout to the tag and applies two patches:
+
+- `hack/admin/endpoint.patch`: upstream hard-codes the suite's endpoint, and
+  the patch makes `SetupConnection` read `RGW_GO_ADMIN_ENDPOINT`.
+- `hack/admin/subtest-t.patch`: upstream's subtests assert on their method's
+  test, `suite.T()`, so a subtest passes whatever it checks and a failure
+  shows only on its method. The patch makes every subtest assert on its own
+  `t`, so `hack/parity` compares each subtest.
+
+Bumping the tag regenerates both patches with `git diff` in a checkout of the
+new tag and re-records both baselines.
+
+`go test` runs the suite with `-tags ceph_preview`, which the account tests
+need, and with `CEPH_CONF` naming `out/<release>/ceph.conf`, since
+`TestGetInfo` connects through librados and compares the cluster's fsid with
+the one the gateway reports; `run.sh` refuses to run without that conf.
+go-ceph picks its expectations for a release from `CEPH_VERSION`, as its CI
+sets it. At this tag the only ones that differ between `squid`, `tentacle`
+and `main` are `TestAccount`'s skips of GET and DELETE on `/admin/account`,
+which it takes for every release up to `tentacle`:
+
+- Squid runs as `squid` and keeps the skips: v19.2.6's radosgw checks a cap
+  named `account` for both calls, which no caps command grants, so they
+  answer 403 to the `admin` user.
+- Tentacle runs as `main`: v20.2.4's radosgw checks `accounts`, which the
+  `admin` user holds, so both calls run and are compared.
+
+The suite's packages are cgo, so `CGO_CFLAGS` and `CGO_LDFLAGS` come from the
+caller's environment where the librados headers are not installed.
+
+The suite signs as the user `admin`, with the example keys go-ceph's CI gives
+it (access key `AKIAIOSFODNN7EXAMPLE`) and the caps
+`buckets=*;users=*;usage=read;metadata=read;info=read;accounts=*`. `run.sh`
+creates it, or adds the caps when it exists, and stops when it exists without
+the key. Before and after each run it removes what the suite creates and
+removes again, which a run that stops partway leaves behind: the users
+`leseb`, `test`, `test-user1`, `test-user2` and `test-user-bucket-rename`, the
+buckets `test`, `bucket-object-lock`, `initial-name` and `renamed-name`, the
+account `RGW12345678901234567`, and every key of `admin` but its own. The
+`admin` user stays, like the s3-tests users, so `make gate` runs before
+`make admin-suite`, never after.
+
+For `GATEWAY=radosgw` the script sets, on the radosgw's own config entity, the
+usage-log options go-ceph's CI sets and `TestUsage` needs:
+
+| Option | Set to | Default |
+|---|---|---|
+| `rgw_enable_usage_log` | `true` | `false`, but Rook already sets `true` |
+| `rgw_usage_log_tick_interval` | `1` | `30` |
+| `rgw_usage_log_flush_threshold` | `1` | `1024` |
+
+The entity is `client.rgw.` and the radosgw's id in the service map,
+`client.rgw.ceph.objectstore.a` on these clusters: Rook names it after the
+radosgw's deployment, `rook-ceph-rgw-ceph-objectstore-a`, with the dashes
+after `rook-ceph-rgw` mapped to dots. The script stops unless `ceph config
+show` reports that entity running with the frontends the radosgw reports, so
+the options cannot land in a section no daemon reads. They persist in the
+monitors' config store. When the script changes one, it restarts the
+radosgw's deployment, which interrupts any other client of the radosgw, and
+it then checks that the running radosgw reports all three. For
+`GATEWAY=rgw-go`, whoever starts rgw-go sets them.
+
+Each run leaves `hack/admin/_out/<release>-<gateway>-<run>.jsonl`, the
+`go test -json` stream `hack/parity` reads, with `.log`, go test's stderr,
+beside it. `run.sh` exits 0 when the suite ran to its end, whatever the tests'
+outcomes, and nonzero when it did not: the package failed to build, the test
+binary panicked, or the gateway could not be reached.
+
+`test/admin/baseline/<release>.json` is radosgw's outcome for each test,
+recorded from two runs in a row:
+
+```sh
+make admin-suite RELEASE=squid GATEWAY=radosgw RUN=base1
+make admin-suite RELEASE=squid GATEWAY=radosgw RUN=base2
+make parity-record SUITE=admin FORMAT=gotest OUT=test/admin/baseline/squid.json \
+	META="release=squid ceph_version=$(jq -r .ceph_version hack/rooket/out/squid/manifest.json) gateway=radosgw go_ceph_tag=v0.39.0" \
+	FILES="hack/admin/_out/squid-radosgw-base1.jsonl hack/admin/_out/squid-radosgw-base2.jsonl"
+```
+
+A test whose outcome differed between the runs is listed as `unstable`, and a
+comparison skips it. `make parity-check` refuses to compare results whose
+go-ceph tag, release or Ceph version differ, so bumping `GO_CEPH_TAG` or a
+Ceph pin re-records both releases' baselines in the same change.
+

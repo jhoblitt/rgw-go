@@ -1,0 +1,945 @@
+diff --git a/rgw/admin/account_test.go b/rgw/admin/account_test.go
+index 5655159..0910084 100644
+--- a/rgw/admin/account_test.go
++++ b/rgw/admin/account_test.go
+@@ -16,21 +16,21 @@ func (suite *RadosGWTestSuite) TestAccount() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("successfully create account", func(_ *testing.T) {
++	suite.T().Run("successfully create account", func(t *testing.T) {
+ 		account, err := co.CreateAccount(context.Background(), Account{ID: "RGW12345678901234567", Name: "test-account"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "RGW12345678901234567", account.ID)
+-		assert.Equal(suite.T(), "test-account", account.Name)
++		assert.NoError(t, err)
++		assert.Equal(t, "RGW12345678901234567", account.ID)
++		assert.Equal(t, "test-account", account.Name)
+ 	})
+ 
+-	suite.T().Run("try to create account that already exists", func(_ *testing.T) {
++	suite.T().Run("try to create account that already exists", func(t *testing.T) {
+ 		_, err := co.CreateAccount(context.Background(), Account{ID: "RGW12345678901234567", Name: "test-account"})
+-		assert.ErrorIs(suite.T(), err, ErrAccountAlreadyExists)
++		assert.ErrorIs(t, err, ErrAccountAlreadyExists)
+ 	})
+ 
+-	suite.T().Run("fail to get account since no ID provided", func(_ *testing.T) {
++	suite.T().Run("fail to get account since no ID provided", func(t *testing.T) {
+ 		_, err := co.GetAccount(context.Background(), "")
+-		assert.ErrorIs(suite.T(), err, ErrInvalidArgument)
++		assert.ErrorIs(t, err, ErrInvalidArgument)
+ 	})
+ 
+ 	suite.T().Run("successfully get account", func(t *testing.T) {
+@@ -43,21 +43,21 @@ func (suite *RadosGWTestSuite) TestAccount() {
+ 		assert.Equal(t, "test-account", account.Name)
+ 	})
+ 
+-	suite.T().Run("fail to modify account since no ID provided", func(_ *testing.T) {
++	suite.T().Run("fail to modify account since no ID provided", func(t *testing.T) {
+ 		_, err := co.ModifyAccount(context.Background(), Account{Name: "modified-account"})
+-		assert.ErrorIs(suite.T(), err, ErrInvalidArgument)
++		assert.ErrorIs(t, err, ErrInvalidArgument)
+ 	})
+ 
+-	suite.T().Run("successfully modify account", func(_ *testing.T) {
++	suite.T().Run("successfully modify account", func(t *testing.T) {
+ 		account, err := co.ModifyAccount(context.Background(), Account{ID: "RGW12345678901234567", Name: "modified-account"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "RGW12345678901234567", account.ID)
+-		assert.Equal(suite.T(), "modified-account", account.Name)
++		assert.NoError(t, err)
++		assert.Equal(t, "RGW12345678901234567", account.ID)
++		assert.Equal(t, "modified-account", account.Name)
+ 	})
+ 
+-	suite.T().Run("fail to delete account since no ID provided", func(_ *testing.T) {
++	suite.T().Run("fail to delete account since no ID provided", func(t *testing.T) {
+ 		err := co.DeleteAccount(context.Background(), "")
+-		assert.ErrorIs(suite.T(), err, ErrInvalidArgument)
++		assert.ErrorIs(t, err, ErrInvalidArgument)
+ 	})
+ 
+ 	suite.T().Run("successfully delete account", func(t *testing.T) {
+diff --git a/rgw/admin/bucket_quota_test.go b/rgw/admin/bucket_quota_test.go
+index b3e02e3..2ca85d2 100644
+--- a/rgw/admin/bucket_quota_test.go
++++ b/rgw/admin/bucket_quota_test.go
+@@ -21,25 +21,25 @@ func (suite *RadosGWTestSuite) TestBucketQuota() {
+ 	err = s3.createBucket(suite.bucketTestName)
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("set bucket quota but no user is specified", func(_ *testing.T) {
++	suite.T().Run("set bucket quota but no user is specified", func(t *testing.T) {
+ 		err := co.SetIndividualBucketQuota(context.Background(), QuotaSpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("set bucket quota but no bucket is specified", func(_ *testing.T) {
++	suite.T().Run("set bucket quota but no bucket is specified", func(t *testing.T) {
+ 		err := co.SetIndividualBucketQuota(context.Background(), QuotaSpec{UID: "admin"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserBucket.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserBucket.Error())
+ 	})
+ 
+-	suite.T().Run("set bucket quota", func(_ *testing.T) {
++	suite.T().Run("set bucket quota", func(t *testing.T) {
+ 		err := co.SetIndividualBucketQuota(context.Background(), QuotaSpec{UID: "admin", Bucket: suite.bucketTestName, MaxSizeKb: &testBucketQuota})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		bucketInfo, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+-		assert.Equal(suite.T(), &testBucketQuota, bucketInfo.BucketQuota.MaxSizeKb)
++		assert.Equal(t, &testBucketQuota, bucketInfo.BucketQuota.MaxSizeKb)
+ 	})
+ }
+diff --git a/rgw/admin/bucket_test.go b/rgw/admin/bucket_test.go
+index 7ee1a02..44432cd 100644
+--- a/rgw/admin/bucket_test.go
++++ b/rgw/admin/bucket_test.go
+@@ -26,36 +26,36 @@ func (suite *RadosGWTestSuite) TestBucket() {
+ 	err = s3Agent.createBucket(suite.bucketTestName)
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("list buckets", func(_ *testing.T) {
++	suite.T().Run("list buckets", func(t *testing.T) {
+ 		buckets, err := co.ListBuckets(context.Background())
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 1, len(buckets))
++		assert.NoError(t, err)
++		assert.Equal(t, 1, len(buckets))
+ 	})
+ 
+-	suite.T().Run("info non-existing bucket", func(_ *testing.T) {
++	suite.T().Run("info non-existing bucket", func(t *testing.T) {
+ 		_, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: "foo"})
+-		assert.Error(suite.T(), err)
+-		assert.True(suite.T(), errors.Is(err, ErrNoSuchBucket), err)
++		assert.Error(t, err)
++		assert.True(t, errors.Is(err, ErrNoSuchBucket), err)
+ 	})
+ 
+-	suite.T().Run("info existing bucket", func(_ *testing.T) {
++	suite.T().Run("info existing bucket", func(t *testing.T) {
+ 		bucketInfo, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		// check if versioning is disabled
+ 		switch {
+ 		case util.CurrentCephVersion() < util.CephQuincy:
+ 			// No action needed for versions below CephQuincy
+ 		case util.CurrentCephVersion() == util.CephReef:
+-			assert.False(suite.T(), *bucketInfo.VersioningEnabled)
+-			assert.False(suite.T(), *bucketInfo.Versioned)
++			assert.False(t, *bucketInfo.VersioningEnabled)
++			assert.False(t, *bucketInfo.Versioned)
+ 		default:
+-			assert.Equal(suite.T(), "off", *bucketInfo.Versioning)
++			assert.Equal(t, "off", *bucketInfo.Versioning)
+ 		}
+ 
+ 		// check if object lock is disabled
+ 		if util.CurrentCephVersion() >= util.CephQuincy {
+-			assert.False(suite.T(), bucketInfo.ObjectLockEnabled)
++			assert.False(t, bucketInfo.ObjectLockEnabled)
+ 		}
+ 	})
+ 
+@@ -68,16 +68,16 @@ func (suite *RadosGWTestSuite) TestBucket() {
+ 			Bucket:                  &suite.bucketTestName,
+ 			VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled},
+ 		})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		// check if versioning is enabled
+ 		bucketInfo, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 		if util.CurrentCephVersion() == util.CephReef {
+-			assert.True(suite.T(), *bucketInfo.VersioningEnabled)
+-			assert.True(suite.T(), *bucketInfo.Versioned)
++			assert.True(t, *bucketInfo.VersioningEnabled)
++			assert.True(t, *bucketInfo.Versioned)
+ 		} else {
+-			assert.Equal(suite.T(), "enabled", *bucketInfo.Versioning)
++			assert.Equal(t, "enabled", *bucketInfo.Versioning)
+ 		}
+ 	})
+ 
+@@ -93,54 +93,54 @@ func (suite *RadosGWTestSuite) TestBucket() {
+ 			Bucket:                     aws.String(bucketName),
+ 			ObjectLockEnabledForBucket: aws.Bool(true),
+ 		})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		// check if object lock is enabled
+ 		bucketInfo, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: bucketName})
+-		assert.NoError(suite.T(), err)
+-		assert.True(suite.T(), bucketInfo.ObjectLockEnabled)
++		assert.NoError(t, err)
++		assert.True(t, bucketInfo.ObjectLockEnabled)
+ 
+ 		// remove bucket
+ 		err = co.RemoveBucket(context.Background(), Bucket{Bucket: bucketName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("existing bucket has valid creation date", func(_ *testing.T) {
++	suite.T().Run("existing bucket has valid creation date", func(t *testing.T) {
+ 		b, err := co.GetBucketInfo(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
+-		assert.NotNil(suite.T(), b.CreationTime)
+-		assert.WithinDuration(suite.T(), beforeCreate, *b.CreationTime, time.Minute)
++		assert.NoError(t, err)
++		assert.NotNil(t, b.CreationTime)
++		assert.WithinDuration(t, beforeCreate, *b.CreationTime, time.Minute)
+ 	})
+ 
+-	suite.T().Run("get policy non-existing bucket", func(_ *testing.T) {
++	suite.T().Run("get policy non-existing bucket", func(t *testing.T) {
+ 		_, err := co.GetBucketPolicy(context.Background(), Bucket{Bucket: "foo"})
+-		assert.Error(suite.T(), err)
+-		assert.True(suite.T(), errors.Is(err, ErrNoSuchKey), err)
++		assert.Error(t, err)
++		assert.True(t, errors.Is(err, ErrNoSuchKey), err)
+ 	})
+ 
+-	suite.T().Run("get policy existing bucket", func(_ *testing.T) {
++	suite.T().Run("get policy existing bucket", func(t *testing.T) {
+ 		_, err := co.GetBucketPolicy(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("remove bucket", func(_ *testing.T) {
++	suite.T().Run("remove bucket", func(t *testing.T) {
+ 		err := co.RemoveBucket(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("list bucket is now zero", func(_ *testing.T) {
++	suite.T().Run("list bucket is now zero", func(t *testing.T) {
+ 		buckets, err := co.ListBuckets(context.Background())
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 0, len(buckets))
++		assert.NoError(t, err)
++		assert.Equal(t, 0, len(buckets))
+ 	})
+ 
+-	suite.T().Run("remove non-existing bucket", func(_ *testing.T) {
++	suite.T().Run("remove non-existing bucket", func(t *testing.T) {
+ 		err := co.RemoveBucket(context.Background(), Bucket{Bucket: "foo"})
+-		assert.Error(suite.T(), err)
++		assert.Error(t, err)
+ 		if util.CurrentCephVersion() <= util.CephOctopus {
+-			assert.True(suite.T(), errors.Is(err, ErrNoSuchKey))
++			assert.True(t, errors.Is(err, ErrNoSuchKey))
+ 		} else {
+-			assert.True(suite.T(), errors.Is(err, ErrNoSuchBucket))
++			assert.True(t, errors.Is(err, ErrNoSuchBucket))
+ 		}
+ 	})
+ }
+diff --git a/rgw/admin/caps_test.go b/rgw/admin/caps_test.go
+index 80b4490..fa092c9 100644
+--- a/rgw/admin/caps_test.go
++++ b/rgw/admin/caps_test.go
+@@ -13,55 +13,55 @@ func (suite *RadosGWTestSuite) TestCaps() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 
+ 	assert.NoError(suite.T(), err)
+-	suite.T().Run("create test user", func(_ *testing.T) {
++	suite.T().Run("create test user", func(t *testing.T) {
+ 		user, err := co.CreateUser(context.Background(), User{ID: "test", DisplayName: "test-user", Email: "test@example.com"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "test", user.ID)
+-		assert.Zero(suite.T(), len(user.Caps))
++		assert.NoError(t, err)
++		assert.Equal(t, "test", user.ID)
++		assert.Zero(t, len(user.Caps))
+ 	})
+ 
+-	suite.T().Run("add caps to the user but user ID is empty", func(_ *testing.T) {
++	suite.T().Run("add caps to the user but user ID is empty", func(t *testing.T) {
+ 		_, err := co.AddUserCap(context.Background(), "", "users=read")
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("add caps to the user but no cap is specified", func(_ *testing.T) {
++	suite.T().Run("add caps to the user but no cap is specified", func(t *testing.T) {
+ 		_, err := co.AddUserCap(context.Background(), "test", "")
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserCap.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserCap.Error())
+ 
+ 	})
+ 
+-	suite.T().Run("add caps to the user, returns success", func(_ *testing.T) {
++	suite.T().Run("add caps to the user, returns success", func(t *testing.T) {
+ 		usercap, err := co.AddUserCap(context.Background(), "test", "users=read")
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "users", usercap[0].Type)
+-		assert.Equal(suite.T(), "read", usercap[0].Perm)
++		assert.NoError(t, err)
++		assert.Equal(t, "users", usercap[0].Type)
++		assert.Equal(t, "read", usercap[0].Perm)
+ 
+ 	})
+ 
+-	suite.T().Run("remove caps from the user but user ID is empty", func(_ *testing.T) {
++	suite.T().Run("remove caps from the user but user ID is empty", func(t *testing.T) {
+ 		_, err := co.RemoveUserCap(context.Background(), "", "users=read")
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("remove caps from the user but no cap is specified", func(_ *testing.T) {
++	suite.T().Run("remove caps from the user but no cap is specified", func(t *testing.T) {
+ 		_, err := co.RemoveUserCap(context.Background(), "test", "")
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserCap.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserCap.Error())
+ 
+ 	})
+ 
+-	suite.T().Run("remove caps from the user returns success", func(_ *testing.T) {
++	suite.T().Run("remove caps from the user returns success", func(t *testing.T) {
+ 		usercap, err := co.RemoveUserCap(context.Background(), "test", "users=read")
+-		assert.NoError(suite.T(), err)
+-		assert.Zero(suite.T(), len(usercap))
++		assert.NoError(t, err)
++		assert.Zero(t, len(usercap))
+ 	})
+ 
+-	suite.T().Run("delete test user", func(_ *testing.T) {
++	suite.T().Run("delete test user", func(t *testing.T) {
+ 		err := co.RemoveUser(context.Background(), User{ID: "test"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ }
+diff --git a/rgw/admin/check_bucket_index_test.go b/rgw/admin/check_bucket_index_test.go
+index d9da685..4eed547 100644
+--- a/rgw/admin/check_bucket_index_test.go
++++ b/rgw/admin/check_bucket_index_test.go
+@@ -21,8 +21,8 @@ func (suite *RadosGWTestSuite) TestCheckBucketIndex() {
+ 	err = s3.createBucket(suite.bucketTestName)
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("check bucket index", func(_ *testing.T) {
++	suite.T().Run("check bucket index", func(t *testing.T) {
+ 		_, err := co.CheckBucketIndex(context.Background(), CheckBucketIndexRequest{Bucket: suite.bucketTestName, CheckObjects: true, Fix: true})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ }
+diff --git a/rgw/admin/info_test.go b/rgw/admin/info_test.go
+index 148d799..2cfa688 100644
+--- a/rgw/admin/info_test.go
++++ b/rgw/admin/info_test.go
+@@ -44,14 +44,14 @@ func (suite *RadosGWTestSuite) TestGetInfo() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("test get rgw cluster/endpoint information", func(_ *testing.T) {
++	suite.T().Run("test get rgw cluster/endpoint information", func(t *testing.T) {
+ 		info, err := co.GetInfo(context.Background())
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "rados", info.InfoSpec.StorageBackends[0].Name)
+-		conn := radosConnect(suite.T())
++		assert.NoError(t, err)
++		assert.Equal(t, "rados", info.InfoSpec.StorageBackends[0].Name)
++		conn := radosConnect(t)
+ 		fsid, err := conn.GetFSID()
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), fsid, info.InfoSpec.StorageBackends[0].ClusterID)
++		assert.NoError(t, err)
++		assert.Equal(t, fsid, info.InfoSpec.StorageBackends[0].ClusterID)
+ 		conn.Shutdown()
+ 	})
+ }
+diff --git a/rgw/admin/keys_test.go b/rgw/admin/keys_test.go
+index 6bc3e9e..3077909 100644
+--- a/rgw/admin/keys_test.go
++++ b/rgw/admin/keys_test.go
+@@ -19,53 +19,53 @@ func (suite *RadosGWTestSuite) TestKeys() {
+ 
+ 	var keys *[]UserKeySpec
+ 
+-	suite.T().Run("create keys but user ID and SubUser is empty", func(_ *testing.T) {
++	suite.T().Run("create keys but user ID and SubUser is empty", func(t *testing.T) {
+ 		_, err := co.CreateKey(context.Background(), UserKeySpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("create swift keys but SubUser is empty", func(_ *testing.T) {
++	suite.T().Run("create swift keys but SubUser is empty", func(t *testing.T) {
+ 		_, err := co.CreateKey(context.Background(), UserKeySpec{KeyType: "swift"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingSubuserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingSubuserID.Error())
+ 	})
+ 
+-	suite.T().Run("create some unknown key type", func(_ *testing.T) {
++	suite.T().Run("create some unknown key type", func(t *testing.T) {
+ 		_, err := co.CreateKey(context.Background(), UserKeySpec{KeyType: "some-key-type"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errUnsupportedKeyType.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errUnsupportedKeyType.Error())
+ 	})
+ 
+-	suite.T().Run("create keys without ak or sk provided", func(_ *testing.T) {
++	suite.T().Run("create keys without ak or sk provided", func(t *testing.T) {
+ 		keys, err = co.CreateKey(context.Background(), UserKeySpec{UID: "admin"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 2, len(*keys))
++		assert.NoError(t, err)
++		assert.Equal(t, 2, len(*keys))
+ 	})
+ 
+-	suite.T().Run("create keys with ak provided", func(_ *testing.T) {
++	suite.T().Run("create keys with ak provided", func(t *testing.T) {
+ 		keys, err = co.CreateKey(context.Background(), UserKeySpec{UID: "admin", AccessKey: testAk})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 3, len(*keys))
++		assert.NoError(t, err)
++		assert.Equal(t, 3, len(*keys))
+ 	})
+ 
+-	suite.T().Run("remove keys but user ID and SubUser is empty", func(_ *testing.T) {
++	suite.T().Run("remove keys but user ID and SubUser is empty", func(t *testing.T) {
+ 		err := co.RemoveKey(context.Background(), UserKeySpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("remove s3 keys but ak is empty", func(_ *testing.T) {
++	suite.T().Run("remove s3 keys but ak is empty", func(t *testing.T) {
+ 		err := co.RemoveKey(context.Background(), UserKeySpec{UID: "admin"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserAccessKey.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserAccessKey.Error())
+ 	})
+ 
+-	suite.T().Run("remove s3 key", func(_ *testing.T) {
++	suite.T().Run("remove s3 key", func(t *testing.T) {
+ 		for _, key := range *keys {
+ 			if key.AccessKey != suite.accessKey {
+ 				err := co.RemoveKey(context.Background(), UserKeySpec{UID: "admin", AccessKey: key.AccessKey})
+-				assert.NoError(suite.T(), err)
++				assert.NoError(t, err)
+ 			}
+ 		}
+ 	})
+diff --git a/rgw/admin/link_test.go b/rgw/admin/link_test.go
+index eb10e92..38162c1 100644
+--- a/rgw/admin/link_test.go
++++ b/rgw/admin/link_test.go
+@@ -13,11 +13,11 @@ func (suite *RadosGWTestSuite) TestLink() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("create test user1", func(_ *testing.T) {
++	suite.T().Run("create test user1", func(t *testing.T) {
+ 		user, err := co.CreateUser(context.Background(), User{ID: "test-user1", DisplayName: "test-user1", Email: "test1@example.com"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "test-user1", user.ID)
+-		assert.Zero(suite.T(), len(user.Caps))
++		assert.NoError(t, err)
++		assert.Equal(t, "test-user1", user.ID)
++		assert.Zero(t, len(user.Caps))
+ 	})
+ 
+ 	suite.T().Run("create test bucket", func(t *testing.T) {
+@@ -28,11 +28,11 @@ func (suite *RadosGWTestSuite) TestLink() {
+ 		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("create test user2", func(_ *testing.T) {
++	suite.T().Run("create test user2", func(t *testing.T) {
+ 		user, err := co.CreateUser(context.Background(), User{ID: "test-user2", DisplayName: "test-user2", Email: "test2@example.com"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "test-user2", user.ID)
+-		assert.Zero(suite.T(), len(user.Caps))
++		assert.NoError(t, err)
++		assert.Equal(t, "test-user2", user.ID)
++		assert.Zero(t, len(user.Caps))
+ 	})
+ 
+ 	suite.T().Run("link test-user2", func(t *testing.T) {
+@@ -62,19 +62,19 @@ func (suite *RadosGWTestSuite) TestLink() {
+ 		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("remove bucket", func(_ *testing.T) {
++	suite.T().Run("remove bucket", func(t *testing.T) {
+ 		err := co.RemoveBucket(context.Background(), Bucket{Bucket: suite.bucketTestName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("delete test user1", func(_ *testing.T) {
++	suite.T().Run("delete test user1", func(t *testing.T) {
+ 		err := co.RemoveUser(context.Background(), User{ID: "test-user1"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("delete test user2", func(_ *testing.T) {
++	suite.T().Run("delete test user2", func(t *testing.T) {
+ 		err := co.RemoveUser(context.Background(), User{ID: "test-user2"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+ }
+@@ -90,11 +90,11 @@ func (suite *RadosGWTestSuite) TestLinkRename() {
+ 		renamedBucketName = "renamed-name"
+ 	)
+ 
+-	suite.T().Run("create test user for bucket rename", func(_ *testing.T) {
++	suite.T().Run("create test user for bucket rename", func(t *testing.T) {
+ 		user, err := co.CreateUser(context.Background(), User{ID: userName, DisplayName: userName, Email: "test-user-bucket-rename@example.com"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), userName, user.ID)
+-		assert.Zero(suite.T(), len(user.Caps))
++		assert.NoError(t, err)
++		assert.Equal(t, userName, user.ID)
++		assert.Zero(t, len(user.Caps))
+ 	})
+ 
+ 	suite.T().Run("create test bucket for rename", func(t *testing.T) {
+@@ -111,7 +111,7 @@ func (suite *RadosGWTestSuite) TestLinkRename() {
+ 			Bucket:        initialBucketName,
+ 			NewBucketName: renamedBucketName,
+ 		})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		_, err = co.GetBucketInfo(context.Background(), Bucket{Bucket: initialBucketName})
+ 		assert.ErrorIs(t, err, ErrNoSuchBucket)
+@@ -120,13 +120,13 @@ func (suite *RadosGWTestSuite) TestLinkRename() {
+ 		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("remove bucket", func(_ *testing.T) {
++	suite.T().Run("remove bucket", func(t *testing.T) {
+ 		err := co.RemoveBucket(context.Background(), Bucket{Bucket: renamedBucketName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("delete test user for bucket rename", func(_ *testing.T) {
++	suite.T().Run("delete test user for bucket rename", func(t *testing.T) {
+ 		err := co.RemoveUser(context.Background(), User{ID: userName})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ }
+diff --git a/rgw/admin/list_bucket_with_stats_test.go b/rgw/admin/list_bucket_with_stats_test.go
+index a054f7e..344f063 100644
+--- a/rgw/admin/list_bucket_with_stats_test.go
++++ b/rgw/admin/list_bucket_with_stats_test.go
+@@ -19,15 +19,15 @@ func (suite *RadosGWTestSuite) TestListBucketsWithStat() {
+ 	err = s3.createBucket(suite.bucketTestName)
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("list buckets with stat", func(_ *testing.T) {
++	suite.T().Run("list buckets with stat", func(t *testing.T) {
+ 		buckets, err := co.ListBucketsWithStat(context.Background())
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 1, len(buckets))
++		assert.NoError(t, err)
++		assert.Equal(t, 1, len(buckets))
+ 		b := buckets[0]
+-		assert.NotNil(suite.T(), b)
+-		assert.Equal(suite.T(), suite.bucketTestName, b.Bucket)
+-		assert.Equal(suite.T(), "admin", b.Owner)
+-		assert.NotNil(suite.T(), b.BucketQuota.MaxSize)
++		assert.NotNil(t, b)
++		assert.Equal(t, suite.bucketTestName, b.Bucket)
++		assert.Equal(t, "admin", b.Owner)
++		assert.NotNil(t, b.BucketQuota.MaxSize)
+ 	})
+ 
+ }
+diff --git a/rgw/admin/quota_test.go b/rgw/admin/quota_test.go
+index b7d6a2a..a2fedba 100644
+--- a/rgw/admin/quota_test.go
++++ b/rgw/admin/quota_test.go
+@@ -13,16 +13,16 @@ func (suite *RadosGWTestSuite) TestQuota() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("set quota to user but user ID is empty", func(_ *testing.T) {
++	suite.T().Run("set quota to user but user ID is empty", func(t *testing.T) {
+ 		err := co.SetUserQuota(context.Background(), QuotaSpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("get user quota but no user is specified", func(_ *testing.T) {
++	suite.T().Run("get user quota but no user is specified", func(t *testing.T) {
+ 		_, err := co.GetUserQuota(context.Background(), QuotaSpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 
+ 	})
+ }
+diff --git a/rgw/admin/usage_test.go b/rgw/admin/usage_test.go
+index 2152dab..ee2306d 100644
+--- a/rgw/admin/usage_test.go
++++ b/rgw/admin/usage_test.go
+@@ -16,13 +16,13 @@ func (suite *RadosGWTestSuite) TestUsage() {
+ 	suite.T().Run("get usage", func(t *testing.T) {
+ 		pTrue := true
+ 		usage, err := co.GetUsage(context.Background(), Usage{ShowSummary: &pTrue})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 		assert.NotEmpty(t, usage)
+ 	})
+ 
+-	suite.T().Run("trim usage", func(_ *testing.T) {
++	suite.T().Run("trim usage", func(t *testing.T) {
+ 		pFalse := false
+ 		_, err := co.GetUsage(context.Background(), Usage{RemoveAll: &pFalse})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ }
+diff --git a/rgw/admin/user_bucket_quota_test.go b/rgw/admin/user_bucket_quota_test.go
+index c5aeafc..46c365c 100644
+--- a/rgw/admin/user_bucket_quota_test.go
++++ b/rgw/admin/user_bucket_quota_test.go
+@@ -21,28 +21,28 @@ func (suite *RadosGWTestSuite) TestUserBucketQuota() {
+ 		assert.NoError(suite.T(), err)
+ 	}()
+ 
+-	suite.T().Run("set bucket quota without uid", func(_ *testing.T) {
++	suite.T().Run("set bucket quota without uid", func(t *testing.T) {
+ 		err := co.SetBucketQuota(context.Background(), QuotaSpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("set bucket quota", func(_ *testing.T) {
++	suite.T().Run("set bucket quota", func(t *testing.T) {
+ 		maxObjects := int64(101)
+ 		err := co.SetBucketQuota(context.Background(), QuotaSpec{UID: "leseb", MaxObjects: &maxObjects})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("get bucket quota without uid", func(_ *testing.T) {
++	suite.T().Run("get bucket quota without uid", func(t *testing.T) {
+ 		_, err := co.GetBucketQuota(context.Background(), QuotaSpec{})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("get bucket quota", func(_ *testing.T) {
++	suite.T().Run("get bucket quota", func(t *testing.T) {
+ 		q, err := co.GetBucketQuota(context.Background(), QuotaSpec{UID: "leseb"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), int64(101), *q.MaxObjects)
+-		assert.Equal(suite.T(), false, *q.Enabled)
++		assert.NoError(t, err)
++		assert.Equal(t, int64(101), *q.MaxObjects)
++		assert.Equal(t, false, *q.Enabled)
+ 	})
+ }
+diff --git a/rgw/admin/user_bucket_test.go b/rgw/admin/user_bucket_test.go
+index b9dd58e..7698568 100644
+--- a/rgw/admin/user_bucket_test.go
++++ b/rgw/admin/user_bucket_test.go
+@@ -20,32 +20,32 @@ func (suite *RadosGWTestSuite) TestUserBucket() {
+ 	err = s3.createBucket(suite.bucketTestName)
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("list empty user's buckets", func(_ *testing.T) {
++	suite.T().Run("list empty user's buckets", func(t *testing.T) {
+ 		_, err := co.ListUsersBuckets(context.Background(), "")
+-		assert.Error(suite.T(), err)
+-		assert.True(suite.T(), errors.Is(err, errMissingUserID), err)
++		assert.Error(t, err)
++		assert.True(t, errors.Is(err, errMissingUserID), err)
+ 	})
+ 
+-	suite.T().Run("list user's buckets", func(_ *testing.T) {
++	suite.T().Run("list user's buckets", func(t *testing.T) {
+ 		buckets, err := co.ListUsersBuckets(context.Background(), "admin")
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 1, len(buckets))
++		assert.NoError(t, err)
++		assert.Equal(t, 1, len(buckets))
+ 	})
+ 
+-	suite.T().Run("list empty user's buckets with stat", func(_ *testing.T) {
++	suite.T().Run("list empty user's buckets with stat", func(t *testing.T) {
+ 		_, err := co.ListUsersBucketsWithStat(context.Background(), "")
+-		assert.Error(suite.T(), err)
+-		assert.True(suite.T(), errors.Is(err, errMissingUserID), err)
++		assert.Error(t, err)
++		assert.True(t, errors.Is(err, errMissingUserID), err)
+ 	})
+ 
+-	suite.T().Run("list user's buckets with stat", func(_ *testing.T) {
++	suite.T().Run("list user's buckets with stat", func(t *testing.T) {
+ 		buckets, err := co.ListUsersBucketsWithStat(context.Background(), "admin")
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 1, len(buckets))
++		assert.NoError(t, err)
++		assert.Equal(t, 1, len(buckets))
+ 		b := buckets[0]
+-		assert.NotNil(suite.T(), b)
+-		assert.Equal(suite.T(), suite.bucketTestName, b.Bucket)
+-		assert.Equal(suite.T(), "admin", b.Owner)
+-		assert.NotNil(suite.T(), b.BucketQuota.MaxSize)
++		assert.NotNil(t, b)
++		assert.Equal(t, suite.bucketTestName, b.Bucket)
++		assert.Equal(t, "admin", b.Owner)
++		assert.NotNil(t, b.BucketQuota.MaxSize)
+ 	})
+ }
+diff --git a/rgw/admin/user_test.go b/rgw/admin/user_test.go
+index 37097d2..8e0b028 100644
+--- a/rgw/admin/user_test.go
++++ b/rgw/admin/user_test.go
+@@ -94,90 +94,90 @@ func (suite *RadosGWTestSuite) TestUser() {
+ 	co, err := New(suite.endpoint, suite.accessKey, suite.secretKey, newDebugHTTPClient(http.DefaultClient))
+ 	assert.NoError(suite.T(), err)
+ 
+-	suite.T().Run("fail to create user since no UID provided", func(_ *testing.T) {
++	suite.T().Run("fail to create user since no UID provided", func(t *testing.T) {
+ 		_, err = co.CreateUser(context.Background(), User{Email: "leseb@example.com"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserID.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserID.Error())
+ 	})
+ 
+-	suite.T().Run("fail to create user since no no display name provided", func(_ *testing.T) {
++	suite.T().Run("fail to create user since no no display name provided", func(t *testing.T) {
+ 		_, err = co.CreateUser(context.Background(), User{ID: "leseb", Email: "leseb@example.com"})
+-		assert.Error(suite.T(), err)
+-		assert.EqualError(suite.T(), err, errMissingUserDisplayName.Error())
++		assert.Error(t, err)
++		assert.EqualError(t, err, errMissingUserDisplayName.Error())
+ 	})
+ 
+-	suite.T().Run("user creation success", func(_ *testing.T) {
++	suite.T().Run("user creation success", func(t *testing.T) {
+ 		usercaps := "users=read"
+ 		user, err := co.CreateUser(context.Background(), User{ID: "leseb", DisplayName: "This is leseb", Email: "leseb@example.com", UserCaps: usercaps, OpMask: "delete", DefaultPlacement: "default-placement"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "leseb@example.com", user.Email)
++		assert.NoError(t, err)
++		assert.Equal(t, "leseb@example.com", user.Email)
+ 	})
+ 
+-	suite.T().Run("get user leseb by uid", func(_ *testing.T) {
++	suite.T().Run("get user leseb by uid", func(t *testing.T) {
+ 		user, err := co.GetUser(context.Background(), User{ID: "leseb"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "leseb@example.com", user.Email)
+-		assert.Equal(suite.T(), "users", user.Caps[0].Type)
+-		assert.Equal(suite.T(), "read", user.Caps[0].Perm)
+-		assert.Equal(suite.T(), "delete", user.OpMask)
+-		assert.Equal(suite.T(), "default-placement", user.DefaultPlacement)
++		assert.NoError(t, err)
++		assert.Equal(t, "leseb@example.com", user.Email)
++		assert.Equal(t, "users", user.Caps[0].Type)
++		assert.Equal(t, "read", user.Caps[0].Perm)
++		assert.Equal(t, "delete", user.OpMask)
++		assert.Equal(t, "default-placement", user.DefaultPlacement)
+ 		os.Setenv("LESEB_ACCESS_KEY", user.Keys[0].AccessKey)
+ 	})
+ 
+-	suite.T().Run("get user leseb by key", func(_ *testing.T) {
++	suite.T().Run("get user leseb by key", func(t *testing.T) {
+ 		user, err := co.GetUser(context.Background(), User{Keys: []UserKeySpec{{AccessKey: os.Getenv("LESEB_ACCESS_KEY")}}})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "leseb@example.com", user.Email)
++		assert.NoError(t, err)
++		assert.Equal(t, "leseb@example.com", user.Email)
+ 		os.Unsetenv("LESEB_ACCESS_KEY")
+ 	})
+ 
+-	suite.T().Run("modify user email", func(_ *testing.T) {
++	suite.T().Run("modify user email", func(t *testing.T) {
+ 		user, err := co.ModifyUser(context.Background(), User{ID: "leseb", Email: "leseb@leseb.com"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "leseb@leseb.com", user.Email)
++		assert.NoError(t, err)
++		assert.Equal(t, "leseb@leseb.com", user.Email)
+ 	})
+ 
+-	suite.T().Run("modify user max bucket", func(_ *testing.T) {
++	suite.T().Run("modify user max bucket", func(t *testing.T) {
+ 		maxBuckets := -1
+ 		user, err := co.ModifyUser(context.Background(), User{ID: "leseb", MaxBuckets: &maxBuckets})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), "leseb@leseb.com", user.Email)
+-		assert.Equal(suite.T(), -1, *user.MaxBuckets)
++		assert.NoError(t, err)
++		assert.Equal(t, "leseb@leseb.com", user.Email)
++		assert.Equal(t, -1, *user.MaxBuckets)
+ 	})
+ 
+-	suite.T().Run("user already exists", func(_ *testing.T) {
++	suite.T().Run("user already exists", func(t *testing.T) {
+ 		_, err := co.CreateUser(context.Background(), User{ID: "admin", DisplayName: "Admin user"})
+-		assert.Error(suite.T(), err)
+-		assert.True(suite.T(), errors.Is(err, ErrUserExists), fmt.Sprintf("%+v", err))
++		assert.Error(t, err)
++		assert.True(t, errors.Is(err, ErrUserExists), fmt.Sprintf("%+v", err))
+ 	})
+ 
+-	suite.T().Run("get users", func(_ *testing.T) {
++	suite.T().Run("get users", func(t *testing.T) {
+ 		users, err := co.GetUsers(context.Background())
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), 2, len(*users))
++		assert.NoError(t, err)
++		assert.Equal(t, 2, len(*users))
+ 	})
+ 
+-	suite.T().Run("set user quota", func(_ *testing.T) {
++	suite.T().Run("set user quota", func(t *testing.T) {
+ 		quotaEnable := true
+ 		maxObjects := int64(100)
+ 		err := co.SetUserQuota(context.Background(), QuotaSpec{QuotaType: "user", UID: "leseb", MaxObjects: &maxObjects, Enabled: &quotaEnable})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ 
+-	suite.T().Run("get user quota", func(_ *testing.T) {
++	suite.T().Run("get user quota", func(t *testing.T) {
+ 		q, err := co.GetUserQuota(context.Background(), QuotaSpec{QuotaType: "user", UID: "leseb"})
+-		assert.NoError(suite.T(), err)
+-		assert.Equal(suite.T(), int64(100), *q.MaxObjects)
++		assert.NoError(t, err)
++		assert.Equal(t, int64(100), *q.MaxObjects)
+ 	})
+ 
+-	suite.T().Run("get user stat", func(_ *testing.T) {
++	suite.T().Run("get user stat", func(t *testing.T) {
+ 		statEnable := true
+ 		user, err := co.GetUser(context.Background(), User{ID: "leseb", GenerateStat: &statEnable})
+-		assert.NoError(suite.T(), err)
+-		assert.NotNil(suite.T(), user.Stat.Size)
++		assert.NoError(t, err)
++		assert.NotNil(t, user.Stat.Size)
+ 	})
+ 
+-	suite.T().Run("create a subuser", func(_ *testing.T) {
++	suite.T().Run("create a subuser", func(t *testing.T) {
+ 		var (
+ 			accessKey = "SUBUSER_ACCESS_KEY"
+ 			secretKey = "SUBUSER_SECRET_KEY"
+@@ -191,51 +191,51 @@ func (suite *RadosGWTestSuite) TestUser() {
+ 			GenerateKey:       &[]bool{false}[0],
+ 			GenerateAccessKey: &[]bool{false}[0],
+ 		})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		user, err := co.GetUser(context.Background(), User{ID: "leseb"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 		if err == nil {
+-			assert.Equal(suite.T(), user.Subusers[0].Name, "leseb:foo")
++			assert.Equal(t, user.Subusers[0].Name, "leseb:foo")
+ 			// Note: the returned values are not equal to the input values ...
+-			assert.Equal(suite.T(), user.Subusers[0].Access, SubuserAccess("read-write"))
++			assert.Equal(t, user.Subusers[0].Access, SubuserAccess("read-write"))
+ 
+ 			// Check Keys
+-			assert.Len(suite.T(), user.SwiftKeys, 0)
++			assert.Len(t, user.SwiftKeys, 0)
+ 
+ 			found := slices.ContainsFunc(user.Keys, func(key UserKeySpec) bool {
+ 				return key.User == "leseb:foo" && key.AccessKey == accessKey && key.SecretKey == secretKey
+ 			})
+-			assert.True(suite.T(), found)
++			assert.True(t, found)
+ 		}
+ 	})
+ 
+-	suite.T().Run("modify a subuser", func(_ *testing.T) {
++	suite.T().Run("modify a subuser", func(t *testing.T) {
+ 		err := co.ModifySubuser(context.Background(), User{ID: "leseb"}, SubuserSpec{Name: "foo", Access: SubuserAccessRead})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		user, err := co.GetUser(context.Background(), User{ID: "leseb"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 		if err == nil {
+-			assert.Equal(suite.T(), user.Subusers[0].Name, "leseb:foo")
+-			assert.Equal(suite.T(), user.Subusers[0].Access, SubuserAccess("read"))
++			assert.Equal(t, user.Subusers[0].Name, "leseb:foo")
++			assert.Equal(t, user.Subusers[0].Access, SubuserAccess("read"))
+ 		}
+ 	})
+ 
+-	suite.T().Run("remove a subuser", func(_ *testing.T) {
++	suite.T().Run("remove a subuser", func(t *testing.T) {
+ 		err := co.RemoveSubuser(context.Background(), User{ID: "leseb"}, SubuserSpec{Name: "foo"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 
+ 		user, err := co.GetUser(context.Background(), User{ID: "leseb"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 		if err == nil {
+-			assert.Equal(suite.T(), len(user.Subusers), 0)
++			assert.Equal(t, len(user.Subusers), 0)
+ 		}
+ 	})
+ 
+-	suite.T().Run("remove user", func(_ *testing.T) {
++	suite.T().Run("remove user", func(t *testing.T) {
+ 		err = co.RemoveUser(context.Background(), User{ID: "leseb"})
+-		assert.NoError(suite.T(), err)
++		assert.NoError(t, err)
+ 	})
+ }
+ 

@@ -130,13 +130,18 @@ gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
 	RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v
 
-# The gateway s3tests runs against, and the run id that names its reports.
+# The gateway s3tests and admin-suite run against, and the run id that names
+# their reports.
 GATEWAY ?= radosgw
 RUN ?= local
 
 .PHONY: s3tests
 s3tests: need-release ## Run the phase 1 s3-tests set against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
 	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN)
+
+.PHONY: admin-suite
+admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster; go test -json under hack/admin/_out/
+	ROOKET=$(ROOKET_BIN) hack/admin/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
 # hack/parity's package doc owns the result file and the comparison rules.
 .PHONY: parity-record
