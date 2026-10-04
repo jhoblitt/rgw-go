@@ -143,6 +143,10 @@ func conf(kv map[string]string) *cephconf.Options {
 		"rgw_dynamic_resharding": "true", "rgw_list_buckets_max_chunk": "1000", "rgw_relaxed_s3_bucket_names": "false", "rgw_max_put_param_size": "1048576",
 		"rgw_acl_grants_max_num": "100", "rgw_run_sync_thread": "true", "rgw_max_chunk_size": "4194304",
 		"rgw_get_obj_max_req_size": "4194304", "rgw_get_obj_window_size": "16777216",
+		"rgw_put_obj_min_window_size": "16777216", "rgw_obj_stripe_size": "4194304", "rgw_max_put_size": "5368709120",
+		"rgw_gc_max_objs": "32", "rgw_gc_obj_min_wait": "7200", "rgw_gc_processor_max_time": "3600", "rgw_gc_processor_period": "3600",
+		"rgw_gc_max_concurrent_io": "10", "rgw_gc_max_trim_chunk": "16", "rgw_gc_max_queue_size": "134213632", "rgw_gc_max_deferred": "50",
+		"rgw_enable_gc_threads": "true", "rgw_multi_obj_del_max_aio": "16", "rgw_max_copy_obj_concurrent_io": "10",
 	}
 	maps.Copy(m, kv)
 	return cephconf.NewOptions(m)

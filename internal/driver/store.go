@@ -34,6 +34,7 @@ type Store struct {
 	pools   *poolCache
 	sysobj  *sysobjs
 	readCfg readConfig
+	w       *writer
 	// headBufs holds the *[]byte buffers prefetches read the head into.
 	headBufs sync.Pool
 	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
@@ -67,7 +68,8 @@ var (
 // the control objects in the zone's control pool, and logs the zone and the
 // options that ask for a worker it does not run. The control watches, which
 // keep the metadata cache coherent with every other gateway, run as Run's
-// control-watch worker.
+// control-watch worker, and the retries of bucket index completions a
+// reshard refused as its index-completions worker.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
@@ -90,6 +92,10 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	wopts, err := readWriteOptions(conf)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	sys, err := openSysObj(ctx, pools, zc.Params, opts, release)
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
@@ -97,7 +103,9 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
 	s := &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg}
+	s.w = newWriter(ctx, s, wopts)
 	s.AddWorker("control-watch", sys.notify.run)
+	s.AddWorker("index-completions", s.w.completions.run)
 	return s, nil
 }
 

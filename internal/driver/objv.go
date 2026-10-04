@@ -1,8 +1,6 @@
 package driver
 
 import (
-	"crypto/rand"
-
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -22,13 +20,7 @@ const alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 // newWriteVersion is generate_new_write_ver: version 1 with a random tag, so
 // that any other writer's version check of the object fails.
 func newWriteVersion() meta.ObjVersion {
-	b := make([]byte, writeTagLen)
-	_, _ = rand.Read(b[1:]) // crypto/rand.Read never fails
-	b[0] = '_'
-	for i, c := range b[1:] {
-		b[i+1] = alphanumeric[int(c)%len(alphanumeric)]
-	}
-	return meta.ObjVersion{Ver: 1, Tag: string(b)}
+	return meta.ObjVersion{Ver: 1, Tag: "_" + randAlnum(writeTagLen-1)}
 }
 
 // objv is RGWObjVersionTracker (rgw_common.h:924, driver/rados/rgw_rados.cc:158-197
