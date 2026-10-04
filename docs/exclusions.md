@@ -1596,6 +1596,32 @@ rgw-go does the following.
   x86-64 build computes, on whatever architecture rgw-go runs; only the
   casts could make a radosgw built for another architecture answer
   otherwise.
+- **A policy whose Statement is a string is refused on Tentacle too.**
+  v20.2.4's policy parser asserts that a statement exists before it reads
+  any string but a Version or Id, and a string under the top-level
+  Statement key, as in `{"Statement": "x"}` or `{"Statement": ["x"]}`,
+  comes before any statement, so radosgw aborts (`rgw_iam_policy.cc:608-609`
+  at v20.2.4; `docs/ceph-upstream-bugs.md`, "Tentacle's radosgw aborts on a
+  policy whose Statement is a string"). rgw-go refuses the document on both
+  releases as v19.2.6 does, "At character offset N, `x` is not valid in the
+  context of `Statement`." (`policy.Parse`), so a bucket, IAM or session
+  policy carrying it fails as any policy that does not parse fails.
+  Otherwise the parser accepts what radosgw's accepts, its defects
+  included, such as a statement that names both Resource and NotResource,
+  whose NotResource evaluation then ignores (`docs/ceph-upstream-bugs.md`,
+  "radosgw ignores NotResource in a statement that also names Resource").
+- **A stored IAM policy attr with bytes past its encoding fails the
+  request.** radosgw decodes a user's or group's inline and managed policy
+  attrs with the full-bufferlist decode, which aborts the process unless the
+  decode consumed every byte (`include/encoding.h:632-637` at v19.2.6,
+  `:633-638` at v20.2.4; `rgw_auth.cc:91` and `:102` at both;
+  `docs/ceph-upstream-bugs.md`, "radosgw aborts on a stored IAM policy attr
+  with bytes past its encoding"). rgw-go's `policy.DecodeUserPolicies` and
+  `policy.DecodeManagedPolicies` fail on such an attr, so the request is
+  refused as for an attr that does not decode, which radosgw's
+  authentication answers with -EPERM (`rgw_auth.cc:548-554` at v19.2.6,
+  `:563-569` at v20.2.4). radosgw writes these attrs cleanly; only
+  corruption or another writer leaves such bytes.
 
 ### Bucket metadata differences
 
