@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // Config is what the handler needs from Ceph configuration.
@@ -35,11 +35,9 @@ type Parsed struct {
 	ExplicitTenant bool
 }
 
-// The name limits of RGWHandler_REST (rgw_rest.h:555-556 at v19.2.6).
-const (
-	maxBucketNameLen = 255
-	maxObjectNameLen = 1024
-)
+// maxObjectNameLen is RGWHandler_REST's MAX_OBJ_NAME_LEN (rgw_rest.h:556 at
+// v19.2.6, :568 at v20.2.4).
+const maxObjectNameLen = 1024
 
 // ParseRequest parses Host, path and query once, in RGWREST::preprocess and
 // RGWHandler_REST_S3::init_from_header's order. Errors are op.Error values,
@@ -50,7 +48,7 @@ const (
 // Req.Bucket, unsplit, so the request keeps the scope radosgw dispatches it
 // at, and PostAuthInit rejects it.
 func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) {
-	host := hostName(req.Host)
+	host := vhost.Hostname(req.Host)
 	rawPath := req.URL.EscapedPath()
 	uri := DecodedURI(req, cfg)
 	if strings.IndexByte(uri, 0) >= 0 {
@@ -101,7 +99,7 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 // (rgw_rest.cc:2154-2161 and :2182 at v19.2.6, :2171-2177 and :2204 at
 // v20.2.4); otherwise it is the decoded path.
 func DecodedURI(req *http.Request, cfg Config) string {
-	b := hostBucket(hostName(req.Host), cfg.DNSNames)
+	b := vhost.Bucket(vhost.Hostname(req.Host), cfg.DNSNames)
 	if b == "" {
 		return req.URL.Path
 	}
@@ -240,145 +238,11 @@ func isASCIIAlnum(c byte) bool {
 	return '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
-// hostName is the Host header as RGWREST::preprocess leaves it. req_info
-// first drops a trailing ":<digits>"; preprocess then takes the literal
-// inside a leading "[" or drops everything from the first ":". radosgw keeps
-// the case the client sent.
-func hostName(h string) string {
-	if i := strings.LastIndexByte(h, ':'); i >= 0 && isDigits(h[i+1:]) {
-		h = h[:i]
-	}
-	if strings.HasPrefix(h, "[") {
-		if i := strings.IndexByte(h, ']'); i > 0 {
-			return h[1:i]
-		}
-		return h
-	}
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		return h[:i]
-	}
-	return h
-}
-
-func isDigits(s string) bool {
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// hostBucket is the bucket RGWREST::preprocess reads from host
-// (rgw_rest.cc:2048-2143 at v19.2.6): the subdomain of a configured name, or,
-// when names are configured, the whole host if it is not a configured name,
-// looks like no IP address and passes validate_bucket_name (the CNAME case).
-// rgw_resolve_cname's DNS lookup has no counterpart.
-func hostBucket(host string, names []string) string {
-	if host == "" {
-		return ""
-	}
-	domain, subdomain := findHostInDomains(host, names)
-	if subdomain == "" && domain != host && hasName(names) &&
-		!looksLikeIPAddress(host) && validBucketName(host) {
-		return host
-	}
-	return subdomain
-}
-
-// findHostInDomains is rgw_find_host_in_domains. radosgw walks its hostname
-// set in sorted order and stops at the first name host equals or ends in
-// after a ".", comparing without regard to ASCII case; that first match is
-// the least matching name. The domain and subdomain are cut from host, so
-// they keep the client's case.
-func findHostInDomains(host string, names []string) (domain, subdomain string) {
-	found := ""
-	for _, name := range names {
-		if name == "" || found != "" && name >= found {
-			continue
-		}
-		if pos := len(host) - len(name); pos >= 0 && equalFoldASCII(host[pos:], name) &&
-			(pos == 0 || host[pos-1] == '.') {
-			found = name
-		}
-	}
-	if found == "" {
-		return "", ""
-	}
-	pos := len(host) - len(found)
-	if pos == 0 {
-		return host, ""
-	}
-	return host[pos:], host[:pos-1]
-}
-
-// hasName reports whether radosgw's hostname set would be non-empty; it drops
-// empty names.
-func hasName(names []string) bool {
-	for _, name := range names {
-		if name != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func equalFoldASCII(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range len(a) {
-		if lowerASCII(a[i]) != lowerASCII(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func lowerASCII(c byte) byte {
 	if 'A' <= c && c <= 'Z' {
 		return c + 'a' - 'A'
 	}
 	return c
-}
-
-// looksLikeIPAddress is looks_like_ip_address (rgw_rest_s3.h:801-826 at
-// v19.2.6): an address inet_pton(AF_INET6) accepts, or digits split by
-// exactly three dots with none leading or doubled, whatever the digits' values.
-func looksLikeIPAddress(s string) bool {
-	if strings.IndexByte(s, ':') >= 0 && net.ParseIP(s) != nil {
-		return true
-	}
-	periods := 0
-	expectPeriod := false
-	for i := range len(s) {
-		switch c := s[i]; {
-		case c == '.':
-			if !expectPeriod {
-				return false
-			}
-			periods++
-			if periods > 3 {
-				return false
-			}
-			expectPeriod = false
-		case '0' <= c && c <= '9':
-			expectPeriod = true
-		default:
-			return false
-		}
-	}
-	return periods == 3
-}
-
-// validBucketName is RGWHandler_REST::validate_bucket_name, which radosgw
-// applies only to a Host it might take as a bucket; a bucket in the path is
-// left to the bucket lookup and to CreateBucket's own check.
-func validBucketName(name string) bool {
-	if len(name) < 3 || len(name) > maxBucketNameLen {
-		return false
-	}
-	return strings.IndexByte(name, '/') < 0 && strings.IndexByte(name, 0xff) < 0
 }
 
 // parseArgs is RGWHTTPArgs::parse. Each "&"-separated pair is decoded whole

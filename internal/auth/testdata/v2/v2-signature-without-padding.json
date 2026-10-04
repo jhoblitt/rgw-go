@@ -1,0 +1,25 @@
+{
+  "name": "v2-signature-without-padding",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "QHNAz/86fg7gLICL1N1vp0vTwH8",
+  "note": "base64(HMAC-SHA1) of the string to sign under the secret, its trailing '=' removed",
+  "expect": {
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": "",
+    "verify_false": true
+  }
+}

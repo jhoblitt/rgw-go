@@ -1,0 +1,26 @@
+{
+  "name": "v2-bad-md5-charset",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "Content-MD5": [
+      "!!!"
+    ],
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "",
+    "access_key": "AKIDEXAMPLE",
+    "error": "AccessDenied"
+  }
+}

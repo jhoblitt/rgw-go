@@ -98,40 +98,19 @@ var _ = Describe("ParseRequest", func() {
 		Entry("only the exact X-Amz- spelling is lowercased", "X-AMZ-Date=d&Foo-X-Amz-Bar=e", url.Values{"X-AMZ-Date": {"d"}, "foo-x-amz-bar": {"e"}}),
 	)
 	Describe("Host", func() {
-		DescribeTable("names the bucket only inside a configured domain",
+		DescribeTable("puts the bucket vhost reads from the Host in front of the path",
 			func(ctx SpecContext, host, target, bucket, object string) {
 				p, err := parse(ctx, "GET", target, map[string]string{"Host": host}, virtualHosted())
 				Expect(err).NotTo(HaveOccurred())
 				Expect(p.Req.Bucket).To(Equal(bucket), "bucket")
 				Expect(p.Req.Object.Name).To(Equal(object), "object")
 			},
-			Entry("subdomain is the bucket", "plain.s3.example.com", "/k", "plain", "k"),
-			Entry("port is stripped first", "plain.s3.example.com:7480", "/k", "plain", "k"),
+			Entry("subdomain is the bucket, its port stripped first", "plain.s3.example.com:7480", "/k", "plain", "k"),
 			Entry("the bare domain is path style", "s3.example.com", "/plain/k", "plain", "k"),
-			Entry("the bare domain with a port is path style", "s3.example.com:443", "/plain/k", "plain", "k"),
-			Entry("an IPv4 literal is path style", "10.0.0.7:7480", "/plain/k", "plain", "k"),
-			Entry("an IPv6 literal is path style", "[fd00::7]:7480", "/plain/k", "plain", "k"),
-			Entry("dotted digits are an IPv4 literal whatever their values", "999.1.2.3", "/plain/k", "plain", "k"),
-			Entry("an unknown host that is a valid bucket name is the bucket (CNAME)", "photos.example.org", "/k", "photos.example.org", "k"),
-			Entry("an unknown host that is not a valid bucket name is path style", "ab", "/plain/k", "plain", "k"),
-			Entry("a name matched without a dot before it is a CNAME", "photos3.example.com", "/k", "photos3.example.com", "k"),
-			Entry("the domain matches in any case and the bucket keeps its case", "MyBucket.S3.Example.COM", "/k", "MyBucket", "k"),
 			Entry("a virtual-hosted root is the bucket", "plain.s3.example.com", "/", "plain", ""),
 			Entry("a virtual-hosted key decodes once", "plain.s3.example.com", "/a%2Fb", "plain", "a/b"),
 			Entry("the Host's bucket is decoded along with the path", "my%2Dbucket.s3.example.com", "/k", "my-bucket", "k"),
 		)
-		It("tries the configured names in the sorted order of radosgw's hostname set", func(ctx SpecContext) {
-			cfg := s3.Config{DNSNames: []string{"s3.example.com", "", "example.com", "x.s3.example.com"}}
-			p, err := parse(ctx, "GET", "/k", map[string]string{"Host": "a.x.s3.example.com"}, cfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(p.Req.Bucket).To(Equal("a.x.s3"), "example.com sorts first of the three names the host ends in")
-		})
-		It("never takes the Host as a bucket when no names are configured", func(ctx SpecContext) {
-			p, err := parse(ctx, "GET", "/plain/k", map[string]string{"Host": "photos.example.org"}, s3.Config{})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(p.Req.Bucket).To(Equal("plain"))
-			Expect(p.Req.Host).To(Equal("photos.example.org"))
-		})
 		DescribeTable("records the Host without its port, lowercased",
 			func(ctx SpecContext, header, want string) {
 				p, err := parse(ctx, "GET", "/plain/k", map[string]string{"Host": header}, s3.Config{})
@@ -140,9 +119,6 @@ var _ = Describe("ParseRequest", func() {
 			},
 			Entry("a name with a port", "S3.Example.com:7480", "s3.example.com"),
 			Entry("an IPv6 literal with a port", "[FD00::7]:7480", "fd00::7"),
-			Entry("an IPv6 literal without a port", "[fd00::7]", "fd00::7"),
-			Entry("an unclosed bracket still loses a trailing :<digits>", "[fd00::7", "[fd00:"),
-			Entry("no Host at all", "", ""),
 		)
 		DescribeTable("keeps the path the client sent for SigV4",
 			func(ctx SpecContext, host, target, path, rawPath string) {

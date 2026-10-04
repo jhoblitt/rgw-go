@@ -113,6 +113,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Squid's account admin API checks a cap type that does not exist for get and delete](#squids-account-admin-api-checks-a-cap-type-that-does-not-exist-for-get-and-delete) | [#72527](https://tracker.ceph.com/issues/72527) | [ceph/ceph#65480](https://github.com/ceph/ceph/pull/65480), [ceph/ceph#66905](https://github.com/ceph/ceph/pull/66905), [ceph/ceph#66919](https://github.com/ceph/ceph/pull/66919) |  |
 | [radosgw's eval_principal skips NotPrincipal for a role that Principal names, but not for a user](#radosgws-eval_principal-skips-notprincipal-for-a-role-that-principal-names-but-not-for-a-user) | none | none | ✓ |
 | [radosgw's is_public judges a wildcard-principal statement against a fixed three-key environment](#radosgws-is_public-judges-a-wildcard-principal-statement-against-a-fixed-three-key-environment) | none | none | ✓ |
+| [radosgw's SigV2 date check wraps the request time to 32 bits](#radosgws-sigv2-date-check-wraps-the-request-time-to-32-bits) | pending | pending |  |
+| [radosgw signs only the last value of a repeated x-amz- header](#radosgw-signs-only-the-last-value-of-a-repeated-x-amz--header) | pending | pending |  |
+| [radosgw's SigV2 resource lists encryption and object-lock but never signs them](#radosgws-sigv2-resource-lists-encryption-and-object-lock-but-never-signs-them) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4708,3 +4711,96 @@ Every new entry adds its row to this table, in document order.
   cluster reproduction.
 - **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing `is_public`;
   derived from the source, not reproduced.
+
+## radosgw's SigV2 date check wraps the request time to 32 bits
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's, and a single line is the same at both.
+  - `rgw_create_s3_canonical_header` keeps a header-signed request's date
+    as `utime_t(internal_timegm(&t), 0)` less `tm_gmtoff`
+    (`rgw_auth_s3.cc:241-242`, `:243-244`). utime_t keeps its seconds in a
+    `__u32` (`include/utime.h:51`); its `(time_t, int)` constructor stores
+    the time_t there (`:72`) and `operator-=(utime_t&, double)` subtracts in
+    it (`:551-554`), so the time is taken modulo 2^32.
+  - `get_auth_data_v2` hands it to `is_time_skew_ok(time_t)` through
+    `operator double` (`include/utime.h:230`; `rgw_rest_s3.cc:6101`,
+    `:6672`).
+  - A Date at or after 2106-02-07T06:28:16Z therefore wraps, and one a
+    multiple of 2^32 seconds ahead of the clock, within the 15-minute grace,
+    passes the skew check: at 2015-08-30T12:36:00Z,
+    `Wed, 06 Oct 2151 19:04:16 GMT` reads as the current time. A 1970 date
+    that its zone offset moves before the epoch passes the year check
+    (`rgw_auth_s3.cc:237-240`, `:239-242`) and wraps to 2106.
+- **Impact:** a header-signed SigV2 request dated a multiple of about 136
+  years ahead is accepted as current. The date is signed, so only a client
+  that holds the secret and signed such a date meets it.
+- **Releases:** v19.2.6 and v20.2.4; main not checked.
+- **rgw-go:** differs: it compares the full time and answers such a request
+  with 403 RequestTimeTooSkewed (`docs/exclusions.md`).
+- **Upstream:** pending: sent to rgw-bug-reproduction. The wrap is
+  `utime_t`'s 32-bit seconds, as in "radosgw's parse_time wraps a date
+  outside 1970 to 2106".
+- **Found:** phase 1 unit A, Task 8, 2026-10-04, transcribing SigV2's
+  header time; derived from the source, not reproduced.
+
+## radosgw signs only the last value of a repeated x-amz- header
+
+- **Kind:** defect: radosgw signs a repeated header otherwise than AWS's
+  clients do. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's, and a single line is the same at both.
+  - beast files each request header with `RGWEnv::set`
+    (`rgw_asio_client.cc:36-66`), which overwrites (`rgw_env.cc:22-25`), so
+    of a repeated header only the last value is kept. SigV2's amz headers
+    come from that environment (`req_info::init_meta_info`,
+    `rgw_common.cc:422-464`, `:435-477`), and SigV4's canonical headers
+    look each signed header up in it (`get_v4_canonical_headers`,
+    `rgw_auth_s3.cc:734-834`, `:711-811`).
+  - botocore's SigV2 signer joins all of a repeated `x-amz-` header's values
+    with commas (`HmacV1Auth.canonical_custom_headers`,
+    `botocore/auth.py:934-947` at 1.43.90 and 1.43.106).
+- **Impact:** a request that repeats an `x-amz-` header, such as two values
+  of one `x-amz-meta-` header, signed as botocore signs it, fails with 403
+  SignatureDoesNotMatch.
+- **Releases:** v19.2.6 and v20.2.4; main not checked.
+- **rgw-go:** reproduces it, in SigV2 (`amzHeadersV2`) and in SigV4
+  (`requestView.header`), both in `internal/auth`, so such a request fails
+  alike.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A's plan, which mirrors it (D-A7); registered in
+  Task 8, 2026-10-04, transcribing SigV2's amz headers; derived from the
+  source, not reproduced.
+
+## radosgw's SigV2 resource lists encryption and object-lock but never signs them
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.6 and v20.2.4; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `signed_subresources`, the sub-resources SigV2's canonical resource
+    appends when the request carries them, names `encryption` and
+    `object-lock` (`rgw_auth_s3.cc:35` and `:59`, `:36` and `:60`).
+  - `get_canon_resource` looks each name up among the request's
+    sub-resources (`rgw_auth_s3.cc:91-124`, `:92-125`), which only
+    `RGWHTTPArgs::append` files (`rgw_common.cc:951`, `:959` and `:972`;
+    `:964`, `:972` and `:985`), and it files neither name
+    (`rgw_common.cc:925-975`, `:938-988`). So neither is ever signed.
+  - botocore's SigV2 signer signs `object-lock` (`HmacV1Auth.QSAOfInterest`,
+    `botocore/auth.py:868-905`, the name at `:904`, at 1.43.90 and
+    1.43.106), so for `?object-lock` it signs `/<bucket>?object-lock` where
+    radosgw computes `/<bucket>`. It does not sign `encryption`.
+  - The two lists differ elsewhere too: botocore signs `accelerate`,
+    `restore` and `replication`, which radosgw neither lists nor files, and
+    does not sign `policyStatus` and `publicAccessBlock`, which radosgw
+    signs.
+- **Impact:** a SigV2 request on a bucket's `?object-lock` configuration,
+  signed as botocore signs it, fails with 403 SignatureDoesNotMatch.
+  radosgw's `encryption` entry has no effect.
+- **Releases:** v19.2.6 and v20.2.4; main not checked.
+- **rgw-go:** reproduces it: `signedSubresourcesV2`
+  (`internal/auth/sigv2.go`) lists both names, and the request parser files
+  neither as a sub-resource, so neither is signed.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 8's review, 2026-10-04, checking
+  `signed_subresources` against `RGWHTTPArgs::append`; derived from the
+  source, not reproduced.

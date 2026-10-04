@@ -57,7 +57,6 @@ var _ = Describe("requestView", func() {
 		rv = newRequestView(abs)
 		Expect(rv.rawPath).To(Equal("/k%20v"))
 		Expect(rv.rawQuery).To(Equal("y"))
-		Expect(rv.hostNoPort()).To(Equal("bkt.example.com"))
 	})
 
 	It("reduces an absolute-form target before splitting off the query, as req_info does", func(ctx SpecContext) {
@@ -105,7 +104,6 @@ var _ = Describe("requestView", func() {
 		Expect(ok).To(BeFalse(), "x-amz-missing was not sent")
 		Expect(rv.hasHeader("content-type")).To(BeTrue(), "Content-Type was sent")
 		Expect(rv.hasHeader("content-md5")).To(BeFalse(), "Content-MD5 was not sent")
-		Expect(rv.hostNoPort()).To(Equal("example.com"))
 		Expect(rv.chunkedTE()).To(BeFalse(), "no Transfer-Encoding was sent")
 	})
 
@@ -130,22 +128,6 @@ var _ = Describe("requestView", func() {
 		_, ok = newRequestView(req).header("host")
 		Expect(ok).To(BeFalse(), "HTTP/1.0 needs no Host header, and net/http leaves an empty one and none alike")
 	})
-
-	DescribeTable("hostNoPort is req_info.host after RGWREST::preprocess",
-		func(ctx SpecContext, host, want string) {
-			req := rawRequest(ctx, http.MethodGet, "/", nil)
-			req.Host = host
-			Expect(newRequestView(req).hostNoPort()).To(Equal(want), "%q", host)
-		},
-		Entry("a bare name", "example.com", "example.com"),
-		Entry("a port", "example.com:8080", "example.com"),
-		Entry("a bracketed IPv6 literal with a port", "[::1]:8080", "::1"),
-		Entry("a bracketed IPv6 literal", "[::1]", "::1"),
-		Entry("a trailing colon", "example.com:", "example.com"),
-		Entry("a non-numeric port, cut at the first colon", "example.com:http", "example.com"),
-		Entry("an unclosed bracket, which first loses its trailing :digits", "[::1", "[:"),
-		Entry("empty", "", ""),
-	)
 
 	It("reports SERVER_PORT and SERVER_PORT_SECURE from the listener", func(ctx SpecContext) {
 		req := rawRequest(ctx, http.MethodGet, "/", nil)
