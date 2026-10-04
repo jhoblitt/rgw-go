@@ -1,0 +1,17 @@
+
+{
+  "Version": "2012-10-17",
+  "Id": "S3SimpleIPPolicyTest",
+  "Statement": [{
+    "Sid": "1",
+    "Effect": "Allow",
+    "Principal": {"AWS": ["arn:aws:iam::ACCOUNT-ID-WITHOUT-HYPHENS:root"]},
+    "Action": "s3:ListBucket",
+    "Resource": [
+      "arn:aws:s3:::example_bucket"
+    ],
+    "Condition": {
+      "IpAddress": {"aws:SourceIp": "192.168.1.0/24"}
+    }
+  }]
+}

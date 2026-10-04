@@ -1,0 +1,18 @@
+
+{
+  "Version": "2012-10-17",
+  "Id": "S3IPPolicyTest",
+  "Statement": {
+    "Effect": "Deny",
+    "Sid": "IPDeny",
+    "Action": "s3:ListBucket",
+    "Principal": {"AWS": ["arn:aws:iam::ACCOUNT-ID-WITHOUT-HYPHENS:root"]},
+    "Resource": [
+      "arn:aws:s3:::example_bucket",
+      "arn:aws:s3:::example_bucket/*"
+    ],
+    "Condition": {
+      "NotIpAddress": {"aws:SourceIp": ["192.168.1.1/32", "2001:0db8:85a3:0000:0000:8a2e:0370:7334"]}
+    }
+  }
+}
