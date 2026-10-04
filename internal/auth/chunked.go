@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -17,8 +19,10 @@ import (
 
 const (
 	// payloadChunkAlgorithm is AWS4_HMAC_SHA256_PAYLOAD_STR.
-	payloadChunkAlgorithm = "AWS4-HMAC-SHA256-PAYLOAD"
-	chunkSigPrefix        = ";chunk-signature="
+	payloadChunkAlgorithm  = "AWS4-HMAC-SHA256-PAYLOAD"
+	trailerAlgorithm       = "AWS4-HMAC-SHA256-TRAILER"
+	trailerSignatureHeader = "x-amz-trailer-signature"
+	chunkSigPrefix         = ";chunk-signature="
 	// chunkSigLen is ChunkMeta::SIG_SIZE.
 	chunkSigLen = 64
 	// maxChunkSizeDigits holds 2^64-1.
@@ -68,8 +72,9 @@ type chunkedParams struct {
 // v20.2.4). That Read then reads what follows, as complete describes, and
 // reports the verdict in place of io.EOF.
 // Every error is sticky. Memory is O(1): a fixed bufio buffer, chunk headers
-// sliced from it and one SHA-256 state; chunk sizes and the decoded length
-// are counters, never allocation sizes.
+// sliced from it, one SHA-256 state and, once the final chunk line is read, a
+// maxTrailerSection+1-byte array for the trailer section; chunk sizes and the
+// decoded length are counters, never allocation sizes.
 type chunkedReader struct {
 	br      *bufio.Reader
 	p       chunkedParams
@@ -323,22 +328,107 @@ func parseChunkSize(s []byte) (uint64, bool) {
 }
 
 // finish reads the trailer section, the rest of the body, after the final
-// chunk line. radosgw reads the section into a 256-byte buffer but asks for
-// at most 256-pos-1 bytes per read, so its size check never fires and a
-// longer section is cut short: a signed one then fails its trailer signature
-// (rgw_auth_s3.cc:1583-1614 at v19.2.6, :1560-1591 at v20.2.4; tracker
-// #81122). The bound here is maxTrailerSection bytes counted the same way,
-// from the CRLF that ends the last data chunk, so the consumed bytes of that
-// CRLF and the final chunk line count against it; a longer section is the
-// LimitExceeded that radosgw's dead check names.
+// chunk line, and checks it. radosgw reads the section into a 256-byte buffer
+// but asks for at most 256-pos-1 bytes per read, so its size check never
+// fires and a longer section is cut short: a signed one then fails its
+// trailer signature (rgw_auth_s3.cc:1583-1614 at v19.2.6, :1560-1591 at
+// v20.2.4; tracker #81122). The bound here is maxTrailerSection bytes counted
+// the same way, from the CRLF that ends the last data chunk, so the consumed
+// bytes of that CRLF and the final chunk line count against it; a longer
+// section is the LimitExceeded that radosgw's dead check names. The trailer
+// signature chains from the final chunk signature computed from prevSig, the
+// last verified chunk's or the seed, as complete() computes it (:1565-1575,
+// :1542-1552).
 func (r *chunkedReader) finish(consumed int) error {
-	budget := int64(maxTrailerSection - consumed)
-	n, err := io.CopyN(io.Discard, r.br, budget+1)
+	budget := maxTrailerSection - consumed
+	var buf [maxTrailerSection + 1]byte
+	n, err := readToEnd(r.br, buf[:budget+1])
 	switch {
 	case n > budget:
 		return fmt.Errorf("%w: aws-chunked trailer section exceeds %d bytes", op.ErrLimitExceeded, maxTrailerSection)
-	case err != nil && !errors.Is(err, io.EOF):
+	case err != nil:
 		return err
+	}
+	return r.trailers(buf[:n], r.chunkSignature(emptyPayloadHash))
+}
+
+// readToEnd reads into buf until it is full or src ends. Unlike io.ReadFull
+// it answers the end of src with nil, so an io.ErrUnexpectedEOF it returns is
+// the body's own, a body cut short.
+func readToEnd(src io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		m, err := src.Read(buf[n:])
+		n += m
+		switch {
+		case errors.Is(err, io.EOF):
+			return n, nil
+		case err != nil:
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// trailerStringToSign is calc_v4_trailer_signature's string to sign
+// (rgw_auth_s3.cc:1391-1418 at v19.2.6, :1368-1395 at v20.2.4): the final
+// chunk signature and the hex SHA-256 of the canonical trailer headers, which
+// are "name:value\n" for each signed trailer in name order
+// (get_canon_amz_hdrs, :66-86, :67-87).
+func trailerStringToSign(date, scope, finalChunkSig, canonicalTrailers string) string {
+	return strings.Join([]string{trailerAlgorithm, date, scope, finalChunkSig, sha256Hex(canonicalTrailers)}, "\n")
+}
+
+// trailers checks the trailer section of a payload that expects a trailer
+// signature; radosgw requires nothing of any other payload's section
+// (complete(), rgw_auth_s3.cc:1686-1690 at v19.2.6, :1663-1667 at v20.2.4).
+// The section is read as lines that end in CRLF, each split at its first
+// colon into a name and an untrimmed value. The first line named
+// x-amz-trailer-signature declares the signature, and the first line bearing
+// each name x-amz-trailer lists is a signed trailer; every other line, and
+// any bytes after the last CRLF, are ignored. radosgw instead finds the
+// signature and each listed name anywhere in the section
+// (docs/exclusions.md, "aws-chunked trailer sections are read line by
+// line"). A declared signature that is missing or differs from the one
+// computed over the signed trailers is SignatureDoesNotMatch. The checksum
+// values are neither validated nor kept.
+func (r *chunkedReader) trailers(section []byte, finalChunkSig string) error {
+	if !r.p.class.trailerSignature {
+		return nil
+	}
+	var declared string
+	haveDeclared := false
+	signed := map[string]string{}
+	rest := string(section)
+	for {
+		line, after, ok := strings.Cut(rest, "\r\n")
+		if !ok {
+			break
+		}
+		rest = after
+		name, value, ok := strings.Cut(line, ":")
+		switch {
+		case !ok:
+		case name == trailerSignatureHeader:
+			if !haveDeclared {
+				declared, haveDeclared = value, true
+			}
+		// trailerNames holds an empty name for each empty part of
+		// x-amz-trailer, which ceph::split drops (common/split.h at both
+		// tags).
+		case name != "" && slices.Contains(r.p.trailerNames, name):
+			if _, seen := signed[name]; !seen {
+				signed[name] = value
+			}
+		}
+	}
+	var canonical strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(signed)) {
+		canonical.WriteString(name + ":" + signed[name] + "\n")
+	}
+	want := signatureV4(r.p.signingKey, trailerStringToSign(r.p.date, r.p.scope, finalChunkSig, canonical.String()))
+	if !sigEqual(declared, want) {
+		return fmt.Errorf("%w: aws-chunked trailer signature mismatch", op.ErrSignatureDoesNotMatch)
 	}
 	return nil
 }
