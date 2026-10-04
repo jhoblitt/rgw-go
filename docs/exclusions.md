@@ -271,6 +271,24 @@ by up to `rgw_reshard_progress_judge_ratio`
 at v20.2.4); rgw-go does not, so such a bucket's writes go on until its
 reshard log reaches `rgw_reshardlog_threshold` and then wait as above.
 
+An index write that a reshard keeps refusing is bounded in rgw-go: it sends
+the bucket-index prepare or completion at most ten times while the shard
+refuses it as resharding, and starts that count over only when the bucket,
+read again after a wait, names another shard object. When one shard refuses
+the operation ten times although its reshard status reads as finished after
+each refusal, rgw-go answers 500 UnknownError. A Squid radosgw starts the
+count over after each such wait and re-sends with no bound
+(`docs/ceph-upstream-bugs.md`, "Squid's cls_rgw reshard guard and Squid's
+radosgw reshard wait disagree, so guard_reshard spins without waiting").
+
+After a reshard wait rgw-go reads the bucket instance again by its id, where
+radosgw reads the bucket again by tenant and name. A bucket removed while the
+write waits is 404 NoSuchKey from both. When a bucket of the same name is
+created in that time, rgw-go answers 404 NoSuchKey, since the old instance is
+gone, and radosgw writes into the new bucket's index
+(`docs/ceph-upstream-bugs.md`, "radosgw re-reads a resharding bucket by name,
+so a write can land in a bucket recreated under that name").
+
 Cost accepted: buckets that grow past the per-shard threshold list more
 slowly until an operator reshards them.
 
@@ -634,10 +652,30 @@ review and verified against the tree.
     reports an unexpected EOF. rgw-go also reports an unexpected EOF for a
     body that ends inside the final chunk line.
   - A stream without the CRLF that ends a chunk's data, or with other
-    blanks in its place: radosgw accepts it, and rgw-go refuses it with 400
-    InvalidArgument. rgw-go also refuses with 400 InvalidArgument a
-    malformed final chunk line and a signed chunk header in any form but
-    `<size>;chunk-signature=<64 bytes>`, the key included.
+    blanks in its place: radosgw accepts it, its size parse skipping the
+    CRLF as leading whitespace (`docs/ceph-upstream-bugs.md`, "radosgw
+    accepts a negative or overflowing aws-chunked chunk size"), and rgw-go
+    refuses it with 400 InvalidArgument. rgw-go also refuses with 400
+    InvalidArgument a malformed final chunk line and a signed chunk header
+    in any form but `<size>;chunk-signature=<64 bytes>`, the key included.
+  - A signed chunk header with a key other than `chunk-signature`: radosgw
+    never checks the key's name, so with a 15-byte key it frames the chunk
+    and verifies it, and with a key of another length it answers a signature
+    error (403 SignatureDoesNotMatch, or 400 XAmzContentSHA256Mismatch for
+    the chunk at the decoded length) (`create_next`,
+    `rgw_auth_s3.cc:1140-1183` at v19.2.6, `:1117-1160` at v20.2.4;
+    `docs/ceph-upstream-bugs.md`, "radosgw's signed aws-chunked header parse
+    ignores the key and misframes one not 15 bytes long"). rgw-go refuses
+    both with 400 InvalidArgument.
+  - The final chunk once the decoded length is delivered: radosgw accepts a
+    malformed final chunk line, or a body that ends inside it, and does not
+    compare the final chunk's declared signature (`rgw_auth_s3.cc:1557-1575`
+    and `:1624-1655` at v19.2.6, `:1534-1552` and `:1601-1632` at v20.2.4;
+    `docs/ceph-upstream-bugs.md`, "radosgw never compares the final
+    aws-chunked chunk's signature and parses its line loosely"). rgw-go
+    refuses a malformed line with 400 InvalidArgument, reports an unexpected
+    EOF for a body that ends inside it, and does not compare the signature
+    either.
 - **aws-chunked trailer sections are read line by line.** For a payload
   that expects a trailer signature, rgw-go reads the trailer section as
   lines that end in CRLF, in any order, each split at its first colon into
@@ -1533,6 +1571,18 @@ rgw-go does the following.
   can skip a Deny that radosgw applies (`rgw_iam_policy.cc:1001` at
   v19.2.6, `:1005` at v20.2.4). Action names have one colon and match
   alike. `docs/ceph-upstream-bugs.md` records the defect.
+- **A runtime condition whose last value is shorter than three bytes reads
+  no values.** radosgw takes a runtime condition's key from its last value
+  by erasing that value's first two bytes and its last, and for a value
+  shorter than three bytes the second erase throws `std::out_of_range`,
+  which ends the radosgw process (`rgw_iam_policy.cc:871-879` at v19.2.6,
+  `:891-899` at v20.2.4; `docs/ceph-upstream-bugs.md`, "radosgw reads a
+  runtime condition's key from its last value, and terminates when that
+  value is short"). rgw-go reads the empty key instead, which no request
+  sets, so the condition's string and ARN operators compare the key's
+  values with none: the positive and `ForAllValues` operators do not hold,
+  and a negated one holds on Tentacle and not on Squid, each release's rule
+  for no values. A request that stops radosgw gets an answer from rgw-go.
 - **Out-of-range epoch seconds in a date condition convert as on x86-64.**
   `as_date` casts a count's whole seconds and its fraction to `uint64_t`
   and sums them in signed int64 nanoseconds. The seconds cast (a count of
@@ -1611,6 +1661,22 @@ does the following.
   because it reads no data, and answers the attributes
   (`RGWGetObjAttrs_ObjStore_S3::get_decrypt_filter`, `rgw_rest_s3.cc:3985-3997`
   at v20.2.4). Every refusal before that is radosgw's.
+- **SSE-C key headers that are all '='.** rgw-go decodes the SSE-C customer
+  key and its MD5 from base64 with a reader that returns an empty result for
+  an input of only '=' (`internal/op/readconds.go`, `fromBase64`), so such a
+  key or key-MD5 is 400 InvalidArgument, its length being neither the key
+  nor the digest size. radosgw's `rgw::from_base64` reads before the start
+  of such an input, which ends the gateway (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's from_base64 reads before an all-'=' input](ceph-upstream-bugs.md#radosgws-from_base64-reads-before-an-all--input)").
+- **A ranged GET of a compressed object does not spin.** rgw-go writes the
+  part of each decoded block that lies in the range and stops, whatever
+  `rgw_max_chunk_size` is (`internal/compression`, `Stream`). radosgw loops
+  forever on a Range that ends at least `rgw_max_chunk_size` bytes before
+  the end of a block larger than the serving gateway's `rgw_max_chunk_size`
+  (`docs/ceph-upstream-bugs.md`, "[radosgw spins on a ranged GET of a
+  compressed block larger than rgw_max_chunk_size](ceph-upstream-bugs.md#radosgw-spins-on-a-ranged-get-of-a-compressed-block-larger-than-rgw_max_chunk_size)").
+  When rgw-go writes compressed objects, blocks larger than a coexisting
+  radosgw's `rgw_max_chunk_size` would expose that radosgw to the loop.
 - **GetObjectTagging of a tag set that does not decode.** rgw-go answers 500
   UnknownError when an object's `user.rgw.x-amz-tagging` decodes neither as
   a tag set nor as the URL-encoded text older objects store. radosgw, by
@@ -1618,6 +1684,15 @@ does the following.
   v19.2.6, `:829-856` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw
   answers GetObjectTagging with 200 and no body when the tags do not
   decode](ceph-upstream-bugs.md#radosgw-answers-getobjecttagging-with-200-and-no-body-when-the-tags-do-not-decode)").
+- **NextPartNumberMarker when max-parts is below 1.** For a
+  GetObjectAttributes request for ObjectParts whose `x-amz-max-parts` is 0
+  or negative, rgw-go answers IsTruncated true and the request's
+  `x-amz-part-number-marker`, 0 when absent, as NextPartNumberMarker.
+  radosgw answers IsTruncated true with a NextPartNumberMarker it never sets
+  (`rgw_rest_s3.cc:4077` and `:4111-4113` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw renders GetObjectAttributes's
+  NextPartNumberMarker from an unset variable when max-parts is below
+  1](ceph-upstream-bugs.md#radosgw-renders-getobjectattributess-nextpartnumbermarker-from-an-unset-variable-when-max-parts-is-below-1)").
 - **An empty header reads as no header.** rgw-go takes `Range`,
   `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
   and `x-amz-server-side-encryption-customer-algorithm` as absent when they
