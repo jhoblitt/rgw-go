@@ -291,6 +291,32 @@ var _ = Describe("reply decoding", func() {
 		}
 	})
 
+	It("encodes get_bucket_resharding as an empty struct and decodes the entry", func() {
+		for _, r := range releases {
+			op := radosclient.NewReadOp()
+			res := rgw.GetBucketResharding(op, r)
+			step := soleExec(op.Steps(), "get_bucket_resharding")
+			Expect(step.In).To(Equal([]byte{1, 1, 0, 0, 0, 0}), "ENCODE_START(1, 1) with an empty body at %v", r)
+			step.Result.Set(build(func(e *denc.Encoder) {
+				f := e.BeginStruct(1, 1)
+				rgw.InstanceEntry{ReshardStatus: rgw.ReshardInProgress}.Encode(e, r)
+				e.EndStruct(f)
+			}), 0)
+			got, err := res.Result()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(rgw.InstanceEntry{ReshardStatus: rgw.ReshardInProgress}), "%v", r)
+		}
+	})
+
+	It("names get_bucket_resharding in a reply that fails to decode", func() {
+		op := radosclient.NewReadOp()
+		res := rgw.GetBucketResharding(op, denc.Squid)
+		execResult(op).Set([]byte{1, 1, 100, 0, 0, 0}, 0)
+		_, err := res.Result()
+		Expect(err).To(MatchError(denc.ErrShortBuffer))
+		Expect(err).To(MatchError(ContainSubstring("rgw: decoding get_bucket_resharding reply")))
+	})
+
 	It("reports an op that has not run", func() {
 		op := radosclient.NewReadOp()
 		_, err := rgw.GetDirHeader(op, denc.Squid).Result()

@@ -254,6 +254,23 @@ class lacks the newer index methods that main's radosgw probes for
 never calls the other three on Squid. rgw-go logs a warning at startup
 when dynamic resharding is enabled in config.
 
+When an interrupted reshard has left a bucket index flagged as resharding,
+radosgw's write path takes the bucket's reshard lock and, finding no
+reshard running, clears the flag itself. rgw-go does not take that lock:
+its writes wait and retry, and answer 500 once their retries run out,
+until an operator runs `radosgw-admin reshard cancel`. While it waits,
+radosgw also reads the bucket again after each failed attempt on that lock
+and polls the shard the bucket then names; rgw-go polls the shard that
+refused the write until that shard is gone or no longer reads as
+resharding. A Tentacle radosgw also runs that recovery from a guarded
+index write while a reshard is in its log-record phase, once the bucket
+layout's `judge_reshard_lock_time` is older than
+`rgw_reshard_progress_judge_interval`, an interval it stretches at random
+by up to `rgw_reshard_progress_judge_ratio`
+(`check_reshard_logrecord_status`, `driver/rados/rgw_rados.cc:8631-8655`
+at v20.2.4); rgw-go does not, so such a bucket's writes go on until its
+reshard log reaches `rgw_reshardlog_threshold` and then wait as above.
+
 Cost accepted: buckets that grow past the per-shard threshold list more
 slowly until an operator reshards them.
 
@@ -1209,8 +1226,9 @@ does the following.
   (`init_default_bucket_layout`, `driver/rados/rgw_bucket.cc:2790-2796` at
   v19.2.6, `:2908-2910` at v20.2.4).
 - **Shard counts and the bucket-index AIO limit that are not positive.** A
-  zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards` or
-  `rgw_lc_max_objs`, and a zero `rgw_bucket_index_max_aio`, is used as 1,
+  zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
+  `rgw_lc_max_objs` or `rgw_gc_max_objs`, and a zero
+  `rgw_bucket_index_max_aio`, is used as 1,
   and rgw-go logs an error naming the option and the value it read. With
   `rgw_usage_max_shards` at 1, rgw-go names every usage object `usage.0`.
   Ceph's config refuses an `rgw_usage_max_user_shards` below its minimum of
@@ -1219,7 +1237,7 @@ does the following.
   AIO limit radosgw skips or never finishes every batch of bucket-index
   operations ("radosgw skips or never finishes every bucket-index batch on
   a zero rgw_bucket_index_max_aio"). radosgw accepts a zero or negative
-  `rgw_usage_max_shards` or `rgw_lc_max_objs`:
+  `rgw_usage_max_shards`, `rgw_lc_max_objs` or `rgw_gc_max_objs`:
   - A zero faults on the first request that shards by it
     (`docs/ceph-upstream-bugs.md`, "radosgw faults on a zero
     rgw_gc_max_objs, rgw_lc_max_objs or rgw_usage_max_shards").
@@ -1232,6 +1250,10 @@ does the following.
     array of that many shard names (`rgw_lc.cc:237-241` at v19.2.6 and
     v20.2.4), which throws at radosgw's startup
     (`driver/rados/rgw_rados.cc:1326-1327` at v19.2.6, `:1310-1311` at
+    v20.2.4). A negative `rgw_gc_max_objs` does the same in
+    `RGWGC::initialize` (`driver/rados/rgw_gc.cc:35-37` at v19.2.6 and
+    v20.2.4), which radosgw runs at startup
+    (`driver/rados/rgw_rados.cc:1223-1225` at v19.2.6, `:1285-1287` at
     v20.2.4).
 - **Read sizes that cannot read.** rgw-go refuses to start on a zero
   `rgw_max_chunk_size` or `rgw_get_obj_max_req_size`, or on an
@@ -1246,12 +1268,28 @@ does the following.
   prefetched head serves alone still succeeds. With a zero request size, a
   GET of a non-empty object never finishes (`docs/ceph-upstream-bugs.md`,
   "radosgw never finishes a GET on a zero rgw_get_obj_max_req_size").
+- **Write sizes that cannot write.** rgw-go also refuses to start on a zero
+  `rgw_obj_stripe_size`, or on an `rgw_put_obj_min_window_size` below
+  `rgw_max_chunk_size`, naming the three values. Ceph's config sets no
+  minimum on either (`common/options/rgw.yaml.in:99-113` and `:1860-1873`
+  at v19.2.6, `:102-116` and `:1948-1961` at v20.2.4), and radosgw starts
+  with them. A zero stripe size divides by zero at radosgw's first write
+  that passes the head (`docs/ceph-upstream-bugs.md`, "radosgw divides by
+  zero writing with an rgw_obj_stripe_size of 0"). The atomic, append and
+  multipart writers take their throttle from the window
+  (`driver/rados/rgw_sal_rados.cc:2265`, `:2284` and `:3730` at v19.2.6,
+  `:2751`, `:2770` and `:4593` at v20.2.4), so with a window below the
+  chunk size radosgw fails every write of a chunk longer than the window
+  with EDEADLK (`rgw_aio_throttle.cc:40-42` and `:131-132` at v19.2.6 and
+  v20.2.4), and every PUT whose body is longer than the window fails.
 - **Counts too large for radosgw's integers.** rgw-go holds a shard count in
   32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
   63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.
   radosgw caps it at 7877 too, but only after narrowing it to a 32-bit
   `int` (`rgw_lc.cc:237-239` at v19.2.6 and v20.2.4): 2^31 becomes INT_MIN
-  and throws at startup, as a negative value does, and 2^32 becomes 0.
+  and throws at startup, as a negative value does, and 2^32 becomes 0. The
+  same holds for `rgw_gc_max_objs`, which rgw-go and radosgw cap at 65521
+  (`rgw_shards_max`; `driver/rados/rgw_gc.cc:35` at v19.2.6 and v20.2.4).
   radosgw narrows a shard count above 2^32-1 into a 32-bit integer
   elsewhere too: the usage-log shard counts in `usage_log_hash`, as above,
   and a new bucket's index shard count (`rgw_bucket_layout.h:55` at v19.2.6

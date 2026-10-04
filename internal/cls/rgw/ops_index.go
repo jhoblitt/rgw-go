@@ -68,6 +68,39 @@ func SetBucketResharding(op radosclient.Execer, entry InstanceEntry, r denc.Rele
 	op.Exec(Class, methodSetBucketResharding, clsutil.Encode(SetReshardingOp{Entry: entry}, r))
 }
 
+// getBucketReshardingOp is cls_rgw_get_bucket_resharding_op, the input of
+// get_bucket_resharding: ENCODE_START(1, 1) around no fields.
+type getBucketReshardingOp struct{}
+
+func (getBucketReshardingOp) Encode(e *denc.Encoder, _ denc.Release) {
+	e.EndStruct(e.BeginStruct(1, 1))
+}
+
+// GetBucketReshardingResult is the pending output of a get_bucket_resharding
+// call.
+type GetBucketReshardingResult struct {
+	res *radosclient.ExecResult
+}
+
+// Result decodes cls_rgw_get_bucket_resharding_ret, ENCODE_START(1, 1)
+// around the shard header's cls_rgw_bucket_instance_entry, once the op has
+// run.
+func (r *GetBucketReshardingResult) Result() (InstanceEntry, error) {
+	return clsutil.DecodeReply(r.res, Class, methodGetBucketResharding, func(d *denc.Decoder) InstanceEntry {
+		h := d.BeginStruct(1)
+		i := DecodeInstanceEntry(d)
+		d.EndStruct(h)
+		return i
+	})
+}
+
+// GetBucketResharding adds get_bucket_resharding, which answers the shard
+// header's reshard status. radosgw polls it while it waits out a reshard
+// (block_while_resharding), on a read op at every release.
+func GetBucketResharding(op *radosclient.ReadOp, r denc.Release) *GetBucketReshardingResult {
+	return &GetBucketReshardingResult{res: op.Exec(Class, methodGetBucketResharding, clsutil.Encode(getBucketReshardingOp{}, r))}
+}
+
 // BucketInitIndex adds bucket_init_index, which writes an empty header to a
 // new shard. Its input is empty; radosgw precedes it with an exclusive create.
 func BucketInitIndex(op radosclient.Execer) {
