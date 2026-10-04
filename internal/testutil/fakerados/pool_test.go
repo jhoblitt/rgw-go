@@ -573,6 +573,57 @@ var _ = Describe("a read op", func() {
 		Expect(c.Reads(poolName, ns, "never")).To(BeZero(), "never")
 	})
 
+	It("counts the write ops run on each object with Writes, a failed one too, and keeps the last with its mtime and flags", func(ctx SpecContext) {
+		mtime := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+		wop := radosclient.NewWriteOp()
+		wop.WriteFull([]byte("x"))
+		wop.SetMtime(mtime)
+		_, err := p.Write(ctx, "obj", wop, radosclient.OpFlagFullTry)
+		Expect(err).NotTo(HaveOccurred())
+		wop = radosclient.NewWriteOp()
+		wop.AssertExists()
+		_, err = p.Write(ctx, "absent", wop, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		op := radosclient.NewReadOp()
+		op.Stat()
+		_, err = p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(c.Writes(poolName, ns, "obj")).To(Equal(1), "obj")
+		Expect(c.Writes(poolName, ns, "absent")).To(Equal(1), "absent")
+		Expect(c.Writes(poolName, ns, "never")).To(BeZero(), "never")
+		last := c.LastWrite(poolName, ns, "obj")
+		Expect(last.Steps()).To(HaveExactElements(BeAssignableToTypeOf(&radosclient.WriteFullStep{})))
+		mt, stamped := last.Mtime()
+		Expect([]any{mt, stamped}).To(Equal([]any{mtime, true}))
+		Expect(last.Flags()).To(Equal(radosclient.OpFlagFullTry))
+		failed := c.LastWrite(poolName, ns, "absent")
+		Expect(failed.Steps()).To(HaveExactElements(BeAssignableToTypeOf(&radosclient.AssertExistsStep{})))
+		_, stamped = failed.Mtime()
+		Expect(stamped).To(BeFalse(), "an op without SetMtime carries none")
+		Expect(c.LastWrite(poolName, ns, "never").Steps()).To(BeEmpty())
+	})
+
+	It("lists the write ops run on an object, oldest first, with WritesTo", func(ctx SpecContext) {
+		for _, data := range []string{"a", "b"} {
+			wop := radosclient.NewWriteOp()
+			wop.WriteFull([]byte(data))
+			_, err := p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		writes := c.WritesTo(poolName, ns, "obj")
+		Expect(writes).To(HaveLen(2))
+		data := func(w fakerados.RecordedWrite) []byte {
+			full, ok := w.Steps()[0].(*radosclient.WriteFullStep)
+			Expect(ok).To(BeTrue(), "%T", w.Steps()[0])
+			return full.Data
+		}
+		Expect(data(writes[0])).To(Equal([]byte("a")))
+		Expect(data(writes[1])).To(Equal([]byte("b")))
+		Expect(writes[1].Steps()).To(Equal(c.LastWrite(poolName, ns, "obj").Steps()))
+		Expect(c.WritesTo(poolName, ns, "never")).To(BeEmpty())
+	})
+
 	It("reads a range, a short tail and nothing past the end", func(ctx SpecContext) {
 		c.Put(poolName, ns, "obj", []byte("abcdef"))
 		op := radosclient.NewReadOp()

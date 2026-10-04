@@ -66,7 +66,27 @@ type store struct {
 	failNotify map[string]*failure
 	notifies   map[string][][]byte
 	reads      map[string]int
+	writes     map[string][]RecordedWrite
 }
+
+// RecordedWrite is one write op a pool ran on an object, as Write received
+// it.
+type RecordedWrite struct {
+	steps    []radosclient.Step
+	mtime    time.Time
+	hasMtime bool
+	flags    radosclient.OpFlags
+}
+
+// Steps returns the op's steps in call order, their results filled as the op
+// left them.
+func (w RecordedWrite) Steps() []radosclient.Step { return slices.Clone(w.steps) }
+
+// Mtime returns the mtime the op carried, and whether it carried one.
+func (w RecordedWrite) Mtime() (time.Time, bool) { return w.mtime, w.hasMtime }
+
+// Flags returns the op flags Write was given.
+func (w RecordedWrite) Flags() radosclient.OpFlags { return w.flags }
 
 // failure is an injected error with the number of calls it still fails.
 type failure struct {
@@ -185,6 +205,7 @@ func (c *Cluster) store(pool, ns string) *store {
 		failNotify: map[string]*failure{},
 		notifies:   map[string][][]byte{},
 		reads:      map[string]int{},
+		writes:     map[string][]RecordedWrite{},
 	}
 	c.stores[k] = s
 	return s
@@ -270,6 +291,34 @@ func (c *Cluster) Reads(pool, ns, oid string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.store(pool, ns).reads[oid]
+}
+
+// Writes returns the number of write ops run on the object, failed ones
+// included.
+func (c *Cluster) Writes(pool, ns, oid string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.store(pool, ns).writes[oid])
+}
+
+// LastWrite returns the last write op run on the object, failed or not, and
+// the zero RecordedWrite when none has run.
+func (c *Cluster) LastWrite(pool, ns, oid string) RecordedWrite {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ws := c.store(pool, ns).writes[oid]
+	if len(ws) == 0 {
+		return RecordedWrite{}
+	}
+	return ws[len(ws)-1]
+}
+
+// WritesTo returns the write ops run on the object, failed ones included,
+// oldest first, and nil when none has run.
+func (c *Cluster) WritesTo(pool, ns, oid string) []RecordedWrite {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.store(pool, ns).writes[oid])
 }
 
 // Pool opens a handle on pool and namespace. Each call returns a new handle,

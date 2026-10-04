@@ -119,8 +119,9 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	if err := p.usable(name); err != nil {
 		return 0, err
 	}
-	// librados stamps a write op without an mtime with the client's clock.
 	mtime, ok := op.Mtime()
+	p.store.writes[oid] = append(p.store.writes[oid], RecordedWrite{steps: steps, mtime: mtime, hasMtime: ok, flags: flags})
+	// librados stamps a write op without an mtime with the client's clock.
 	if !ok {
 		mtime = c.now()
 	}
