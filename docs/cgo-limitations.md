@@ -501,10 +501,12 @@ benchmark was re-run.
 ### Build and deployment cost
 
 - **Evidence:** every build needs librados headers and the shared library.
-  `CGO_ENABLED=0` and cross-compilation are impossible, so the goreleaser
-  config must change once `cmd/rgw-go` imports the client. CI installs
-  librados-dev. Local sandboxed builds need `CCACHE_DISABLE=1`. Building the
-  derived image adds two more costs:
+  `CGO_ENABLED=0` and cross-compilation are impossible, so a release builds
+  rgw-go once per Ceph release, in that release's builder (below), for
+  linux/amd64 alone: no darwin or windows archive, and each archive names the
+  Ceph release whose librados it links. CI installs librados-dev. Local
+  sandboxed builds need `CCACHE_DISABLE=1`. Building the derived image adds
+  two more costs:
   - A builder image per Ceph release (`hack/image/Containerfile.builder`),
     because the binary must link against the librados and glibc of the Ceph
     image it runs in: that image plus the `librados-devel` build matching the

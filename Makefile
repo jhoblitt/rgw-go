@@ -87,8 +87,12 @@ test: ## Run every suite with the race detector
 goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podman)
 	hack/goldens/gen.sh
 
+.PHONY: release-pins-check
+release-pins-check: ## Fail when .goreleaser.yaml's Ceph images or build tags differ from their homes
+	@hack/image/release-pins-check.sh
+
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is

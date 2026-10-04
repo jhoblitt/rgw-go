@@ -25,7 +25,7 @@ use_release "${1:-}"
 
 tag=$(pinned_tag)
 version=$(pinned_version)
-base=quay.io/ceph/ceph:${tag}
+base=$(pinned_image)
 image_tag=${2:-local-${tag}}
 [[ "${image_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "${image_tag} is not an image tag"
 image=ghcr.io/jhoblitt/rgw-go:${image_tag}

@@ -18,13 +18,20 @@ concurrency:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Two cgo builds, each in a builder made from its release's Ceph image, and
+    # two images derived from those Ceph images pushed to ghcr.io.
+    timeout-minutes: 60
     # Forks must not publish under the upstream name.
     if: github.repository == 'jhoblitt/rgw-go'
     permissions:
       contents: write
       packages: write
       id-token: write
+    # cgo-build.sh prefers podman when it is installed; with docker, which
+    # goreleaser builds the images with, each Ceph image is pulled into one
+    # image store.
+    env:
+      RGW_GO_ENGINE: docker
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,19 +39,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The stamp assertion's build links go-ceph, so it needs librados's
+      # headers and library; it never connects to a cluster.
+      - name: Install librados headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends librados-dev
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
 
+      - name: Assert .goreleaser.yaml's Ceph images and build tags match their homes
+        run: make release-pins-check
+
       # The binary carries no -X ldflags: go build stamps the module version
       # from the tag. Prove the checkout produces that stamp before releasing.
       - name: Assert the tag is the version the binary reports
         env:
           TAG: ${{ github.ref_name }}
+          CGO_ENABLED: "1"
         run: |
-          go build -o "$RUNNER_TEMP/rgw-go" ./cmd/rgw-go
+          go build "-tags=$(make -s print-go-tags)" -o "$RUNNER_TEMP/rgw-go" ./cmd/rgw-go
           stamped=$(go version -m "$RUNNER_TEMP/rgw-go" | awk '$1 == "mod" { print $3 }')
           [ "$stamped" = "$TAG" ] || { echo "binary stamped '$stamped', want '$TAG'"; exit 1; }
 
@@ -61,6 +79,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Without GORELEASER_CURRENT_TAG goreleaser releases the highest-sorting
+      # tag on the commit, and v0.1.0-rc.1 sorts above v0.1.0, so a final tag
+      # pushed to a release candidate's commit would release as the candidate.
+      # This binds it to the tag the stamp assertion checked.
       - name: goreleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -69,3 +91,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}

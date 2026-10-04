@@ -246,13 +246,14 @@ RGW_GO_IMAGE_TEST=1 make -s image RELEASE=tentacle   # and check what it built
 rgw-go is built with cgo in a builder made from the same Ceph image
 (`hack/image/Containerfile.builder`), so it links against the librados and
 glibc it runs with. `hack/image/cgo-build.sh` runs any `go` command in that
-builder for the Ceph tag in `RGW_GO_CEPH_TAG`, taking `GOOS`, `GOARCH`,
+builder for the Ceph tag in `RGW_GO_CEPH_TAG`, which a release's chart values
+must pin, since they name the image's repository too; it takes `GOOS`, `GOARCH`,
 `GOAMD64`, `CGO_ENABLED` and `GOFLAGS` from its environment as a goreleaser
 build's `tool` must. The first build of a release's builder pulls from
 quay.io and docker.io and installs `librados-devel` from download.ceph.com;
-the builder is then reused until `Containerfile.builder` changes.
-`RGW_GO_ENGINE` picks the container engine, podman when installed, else
-docker; rootless Docker is not supported.
+the builder is then reused until `Containerfile.builder` or the release's Ceph
+image changes. `RGW_GO_ENGINE` picks the container engine, podman when
+installed, else docker; rootless Docker is not supported.
 
 `RGW_GO_IMAGE_TEST=1` checks that rgw-go carries the checkout's version stamp,
 that `/usr/bin/radosgw` resolves to it, that every library it links is in the

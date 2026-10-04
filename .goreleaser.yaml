@@ -1,59 +1,107 @@
-# Managed by go-conventions (references/release.md owns the release contract).
+# go-conventions' release contract (references/release.md), with the departures
+# cgo forces, each explained where it is made: one cgo build per Ceph release,
+# linux/amd64 only, and a derived Ceph image built by dockers_v2 instead of ko,
+# without an SBOM attestation.
 version: 2
 
+# The Ceph image of each release: its build links against the image's librados
+# and its image derives from it. Each release's chart values,
+# hack/rooket/<release>/values/rook-ceph-cluster.yaml (cephImage), are the one
+# home of its image; make release-pins-check fails until these follow them.
+env:
+  - CEPH_REPOSITORY=quay.io/ceph/ceph
+  - SQUID_CEPH_TAG=v19.2.6
+  - TENTACLE_CEPH_TAG=v20.2.4
+
+# Every build is cgo inside a builder made from the release's Ceph image
+# (hack/image/cgo-build.sh), so a binary links against that release's librados
+# and glibc: hence one build per release, and linux/amd64 only.
 builds:
-  - id: rgw-go
+  - id: rgw-go-squid
     main: ./cmd/rgw-go
     binary: rgw-go
-    # TODO: when cmd/rgw-go imports internal/radosclient/goceph, the build
-    # needs cgo and librados, so CGO_ENABLED=0 and the darwin and windows
-    # targets below must change.
+    tool: hack/image/cgo-build.sh
     env:
-      - CGO_ENABLED=0
-    flags:
+      - CGO_ENABLED=1
+      - RGW_GO_CEPH_TAG={{ .Env.SQUID_CEPH_TAG }}
+    flags: &flags
       - -trimpath
-      # Keep in step with GO_TAGS in the Makefile.
+      # The Makefile's GO_TAGS; make release-pins-check fails when they differ.
       - -tags=ceph_preview
     # No -X: the version comes from debug.ReadBuildInfo, stamped by go build
     # from the git tag. goreleaser's default ldflags would add harmless -X
     # values for symbols that do not exist; they are replaced, not extended.
-    ldflags:
+    ldflags: &ldflags
       - -s -w
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
+    goos: [linux]
+    goarch: [amd64]
+  - id: rgw-go-tentacle
+    main: ./cmd/rgw-go
+    binary: rgw-go
+    tool: hack/image/cgo-build.sh
+    env:
+      - CGO_ENABLED=1
+      - RGW_GO_CEPH_TAG={{ .Env.TENTACLE_CEPH_TAG }}
+    flags: *flags
+    ldflags: *ldflags
+    goos: [linux]
+    goarch: [amd64]
 
 archives:
-  - formats:
-      - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
+  - id: squid
+    ids: [rgw-go-squid]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_ceph-{{ .Env.SQUID_CEPH_TAG }}_{{ .Os }}_{{ .Arch }}"
+  - id: tentacle
+    ids: [rgw-go-tentacle]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_ceph-{{ .Env.TENTACLE_CEPH_TAG }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
 
-# ko rebuilds the binary from this checkout with the same build options, so
-# the image's binary carries the same VCS stamp as the archives.
-kos:
-  - id: rgw-go
-    build: rgw-go
-    repositories:
-      - ghcr.io/jhoblitt/rgw-go
-    bare: true
-    base_image: gcr.io/distroless/static:nonroot
-    platforms:
-      - linux/amd64
-      - linux/arm64
+# The image is the release's Ceph image with rgw-go as its radosgw
+# (hack/image/Containerfile). ko cannot make it: it builds the binary on the
+# host, not in the release's builder, and only adds layers, so it cannot move
+# Ceph's radosgw aside. The image takes the binary its release's build made, so
+# it carries the same version stamp as the archive.
+dockers_v2:
+  - id: squid
+    ids: [rgw-go-squid]
+    dockerfile: hack/image/Containerfile
+    images: [ghcr.io/jhoblitt/rgw-go]
     tags:
-      - "{{ .Version }}"
-      - latest
-    sbom: spdx
+      - "{{ .Version }}-ceph-{{ .Env.SQUID_CEPH_TAG }}"
+      - "{{ .Version }}-squid"
+      # Only a final release moves the floating tag: for a prerelease, such as
+      # v0.1.0-rc.1, it templates to empty, and dockers_v2 drops an empty tag.
+      - "{{ if not .Prerelease }}squid{{ end }}"
+    platforms: [linux/amd64]
+    build_args:
+      CEPH_IMAGE: "{{ .Env.CEPH_REPOSITORY }}:{{ .Env.SQUID_CEPH_TAG }}"
+      BINARY: linux/amd64/rgw-go
+    labels: &labels
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+    # buildx refuses an SBOM attestation on the runner's default builder, the
+    # docker driver, unless its daemon uses the containerd image store; the
+    # archives carry the binary's SBOM.
+    sbom: false
+  - id: tentacle
+    ids: [rgw-go-tentacle]
+    dockerfile: hack/image/Containerfile
+    images: [ghcr.io/jhoblitt/rgw-go]
+    tags:
+      - "{{ .Version }}-ceph-{{ .Env.TENTACLE_CEPH_TAG }}"
+      - "{{ .Version }}-tentacle"
+      - "{{ if not .Prerelease }}tentacle{{ end }}"
+    platforms: [linux/amd64]
+    build_args:
+      CEPH_IMAGE: "{{ .Env.CEPH_REPOSITORY }}:{{ .Env.TENTACLE_CEPH_TAG }}"
+      BINARY: linux/amd64/rgw-go
+    labels: *labels
+    sbom: false
 
 sboms:
   - artifacts: archive
@@ -74,7 +122,12 @@ docker_signs:
       - sign
       - "${artifact}"
       - "--yes"
-    artifacts: manifests
+    artifacts: all
+
+# A tag with a prerelease part, such as v0.1.0-rc.1, publishes a GitHub
+# prerelease.
+release:
+  prerelease: auto
 
 changelog:
   use: github

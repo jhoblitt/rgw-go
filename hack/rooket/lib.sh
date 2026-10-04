@@ -23,14 +23,30 @@ use_release() {
 	export ROOKET_NAME=rgw-go-${release}
 }
 
-# pinned_tag prints the Ceph image tag the release's chart values pin under
-# cephImage, the one place a release's Ceph version is set.
-pinned_tag() {
-	local values=${here}/${release}/values/rook-ceph-cluster.yaml tag
-	tag=$(awk '/^cephImage:/ { in_image = 1; next } /^[^ #]/ { in_image = 0 } in_image && $1 == "tag:" { print $2 }' \
+# pinned_field prints the field $1 of cephImage in the release's chart values,
+# the one place a release's Ceph image is set.
+pinned_field() {
+	local values=${here}/${release}/values/rook-ceph-cluster.yaml value
+	value=$(awk -v field="$1:" '/^cephImage:/ { in_image = 1; next } /^[^ #]/ { in_image = 0 } in_image && $1 == field { print $2 }' \
 		"${values}")
-	[[ -n "${tag}" ]] || die "no cephImage.tag in ${values}"
-	echo "${tag}"
+	[[ -n "${value}" ]] || die "no cephImage.$1 in ${values}"
+	echo "${value}"
+}
+
+# pinned_tag prints the Ceph image tag the release's chart values pin.
+pinned_tag() {
+	pinned_field tag
+}
+
+# pinned_image prints the Ceph image the release's chart values pin, the one
+# the cluster runs and the one an image deriving from it must be built from.
+pinned_image() {
+	local repository tag
+	# Callers run this in a command substitution, where errexit is off, so a
+	# failed read must end it explicitly.
+	repository=$(pinned_field repository) || exit
+	tag=$(pinned_tag) || exit
+	echo "${repository}:${tag}"
 }
 
 # pinned_version prints the Ceph version the pinned tag names, as the daemons
