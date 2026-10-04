@@ -1,0 +1,56 @@
+# rapidjson fcb23c2d's events and results for each input, as radosgw's
+# reader produces them; rj.cc in this directory regenerates the third
+# field. Fields: refused event index (-1 for none), Go-quoted input,
+# events and result.
+0	"{\"Version\": \"2012-10-17\"}"	O | Terminate parsing due to Handler error. @1
+1	"{\"Version\": \"2012-10-17\"}"	O K56657273696f6e | Terminate parsing due to Handler error. @10
+2	"{\"Version\": \"2012-10-17\"}"	O K56657273696f6e S323031322d31302d3137 | Terminate parsing due to Handler error. @24
+3	"{\"Version\": \"2012-10-17\"}"	O K56657273696f6e S323031322d31302d3137 o | Terminate parsing due to Handler error. @25
+0	"[1, -2.5e3, \"x\", true, null, {}, []]"	A | Terminate parsing due to Handler error. @1
+1	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 | Terminate parsing due to Handler error. @1
+2	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 | Terminate parsing due to Handler error. @4
+3	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 | Terminate parsing due to Handler error. @15
+4	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L | Terminate parsing due to Handler error. @21
+5	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L | Terminate parsing due to Handler error. @27
+6	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L O | Terminate parsing due to Handler error. @30
+7	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L O o | Terminate parsing due to Handler error. @31
+8	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L O o A | Terminate parsing due to Handler error. @34
+9	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L O o A a | Terminate parsing due to Handler error. @35
+10	"[1, -2.5e3, \"x\", true, null, {}, []]"	A N31 N2d322e356533 S78 L L O o A a a | Terminate parsing due to Handler error. @36
+2	"/* c */ {\"k\": /* d */ 12 // e\x0a}"	O K6b N3132 | Terminate parsing due to Handler error. @22
+1	"{\"a\\u00e9\\\"\": \"\\ud83d\\ude00\\n\"}"	O K61c3a922 | Terminate parsing due to Handler error. @12
+2	"{\"a\\u00e9\\\"\": \"\\ud83d\\ude00\\n\"}"	O K61c3a922 Sf09f98800a | Terminate parsing due to Handler error. @30
+3	"{\"k\": \"v\"}\x00 not JSON"	O K6b S76 o | Terminate parsing due to Handler error. @10
+6	"{\"k\": [{\"x\": [1e308, 0.5]}]}"	O K6b A O K78 A N3165333038 | Terminate parsing due to Handler error. @14
+-1	"{\"k\": \"v\"}\x00 not JSON"	O K6b S76 o | OK
+-1	"{\"\xff\": \"\xfe\x80\\u0000\"}"	O Kff Sfe8000 o | OK
+-1	"[0, -0, 4294967295, 4294967296, -2147483648, -2147483649, 18446744073709551615, 18446744073709551616, -9223372036854775808, -9223372036854775809]"	A N30 N2d30 N34323934393637323935 N34323934393637323936 N2d32313437343833363438 N2d32313437343833363439 N3138343436373434303733373039353531363135 N3138343436373434303733373039353531363136 N2d39323233333732303336383534373735383038 N2d39323233333732303336383534373735383039 a | OK
+-1	"[123456789012345678901234567890.5e290, 1.5e309, 0.00001e313, 1e-99999, -1.50E+3, 9007199254740993.5e300, 12345678901234567.8e292]"	A N3132333435363738393031323334353637383930313233343536373839302e3565323930 N312e3565333039 N302e303030303165333133 N31652d3939393939 N2d312e3530452b33 N393030373139393235343734303939332e3565333030 N31323334353637383930313233343536372e3865323932 a | OK
+-1	"// leading\x0a{\x0a  /* a */ \"Version\": \"2012-10-17\", // trailing\x0a  \"Statement\": []\x0a} /* after */\x0a"	O K56657273696f6e S323031322d31302d3137 K53746174656d656e74 A a o | OK
+-1	"{\"Statement\": {\"Condition\": {\"Bool\": {\"aws:SecureTransport\": false}}}}"	O K53746174656d656e74 O K436f6e646974696f6e O K426f6f6c O K6177733a5365637572655472616e73706f7274 L o o o o | OK
+-1	""	| The document is empty. @0
+-1	" /* c */\x0a"	| The document is empty. @9
+-1	"{} x"	O o | The document root must not be followed by other values. @3
+-1	"{\"Version\": \"2012-10-17\",}"	O K56657273696f6e S323031322d31302d3137 | Missing a name for object member. @25
+-1	"{\"Version\" \"2012-10-17\"}"	O K56657273696f6e | Missing a colon after a name of object member. @11
+-1	"{\"Version\": \"2012-10-17\" \"Id\": \"x\"}"	O K56657273696f6e S323031322d31302d3137 | Missing a comma or '}' after an object member. @25
+-1	"[\"s3:GetObject\" \"s3:PutObject\"]"	A S73333a4765744f626a656374 | Missing a comma or ']' after an array element. @16
+-1	"{\"Version\": x}"	O K56657273696f6e | Invalid value. @12
+-1	"{\"Id\": tru}"	O K4964 | Invalid value. @10
+-1	"{\"Id\": -}"	O K4964 | Invalid value. @8
+-1	"{\"Id\": \"abc"	O K4964 | Missing a closing quotation mark in string. @11
+-1	"{\"Id\": \"a\\qb\"}"	O K4964 | Invalid escape character in string. @9
+-1	"{\"Id\": \"\\u12G4\"}"	O K4964 | Incorrect hex digit after \u escape in string. @8
+-1	"{\"Id\": \"\\uDC00\"}"	O K4964 | The surrogate pair in string is invalid. @8
+-1	"{\"Id\": \"x\\uD800\\u0041\"}"	O K4964 | The surrogate pair in string is invalid. @9
+-1	"{\"Id\": \"a\x09b\"}"	O K4964 | Invalid encoding in string. @9
+-1	"[1.]"	A | Miss fraction part in number. @3
+-1	"[1e+]"	A | Miss exponent in number. @4
+-1	"[1e309]"	A | Number too big to be stored in double. @1
+-1	"[1.5e310]"	A | Number too big to be stored in double. @1
+-1	"[0.00001e314]"	A | Number too big to be stored in double. @1
+-1	"[01]"	A N30 | Missing a comma or ']' after an array element. @2
+-1	"{} /* x"	O o | Unspecific syntax error. @7
+-1	"{} / x"	O o | Unspecific syntax error. @4
+-1	"[NaN]"	A | Invalid value. @1
+-1	"[Infinity]"	A | Invalid value. @1
