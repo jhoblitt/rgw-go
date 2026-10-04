@@ -933,6 +933,11 @@ following.
   rgw-go matches the Host itself, never its CNAME, and takes it as the
   bucket only when `rgw_dns_name` or the zonegroup's hostnames name one,
   so with s3website hostnames alone the Host never names the bucket.
+  SigV2 signs that bucket in front of the path, as radosgw signs the URI
+  `RGWREST::preprocess` rewrote (`rgw_auth_s3.cc:249-254` at v19.2.6,
+  `:251-256` at v20.2.4), so a SigV2 request on a Host the two read
+  differently is signed over another resource in rgw-go and fails there
+  with 403 SignatureDoesNotMatch.
 - **On Squid, `?attributes` is GetObjectAttributes.** The object
   `op_get` of Squid's radosgw has no attributes branch
   (`rgw_rest_s3.cc:4805-4821` at v19.2.6), so `GET /b/k?attributes` is
@@ -1438,6 +1443,13 @@ does the following.
   for a secret byte above 0x7f"). rgw-go keys the HMAC with the secret's
   bytes, as AWS clients do, so a request signed with such a secret verifies
   where radosgw's outcome is undefined.
+- **A SigV2 Date header far in the future is skewed.** radosgw keeps the
+  request time of a header-signed SigV2 request in `utime_t`'s 32-bit
+  seconds (`rgw_auth_s3.cc:241-242` at v19.2.6, `:243-244` at v20.2.4), so
+  a Date a multiple of 2^32 seconds, about 136 years, ahead of its clock
+  passes its 15-minute skew check (`docs/ceph-upstream-bugs.md`, "radosgw's
+  SigV2 date check wraps the request time to 32 bits"). rgw-go compares the
+  full time and answers such a request with 403 RequestTimeTooSkewed.
 
 ### Authorization differences
 
