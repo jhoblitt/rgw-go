@@ -105,3 +105,5 @@ cls_lock_break_op internal/cls/lock
 cls_lock_assert_op internal/cls/lock
 cls_lock_get_info_reply internal/cls/lock
 entity_name_t internal/cls/lock
+RGWUploadPartInfo internal/meta
+multipart_upload_info internal/meta

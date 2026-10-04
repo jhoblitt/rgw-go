@@ -2,6 +2,7 @@ package fakerados_test
 
 import (
 	"context"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,6 +10,7 @@ import (
 
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
@@ -74,8 +76,9 @@ var _ = Describe("RGWClass's index transaction", func() {
 	header := func() rgwcls.DirHeader { return c.Header(index, "", shard) }
 
 	It("names the emulated methods the class registers as writes", func() {
-		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding"),
-			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698 and :4752-4753 at v19.2.6")
+		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
+			"mp_upload_part_info_update"),
+			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4743 and :4752-4753 at v19.2.6")
 	})
 
 	It("reads the reshard status without the WR flag: a read op calling it on a missing shard is ENOENT", func(ctx SpecContext) {
@@ -272,5 +275,119 @@ var _ = Describe("RGWClass's index transaction", func() {
 		_, ok := c.Entry(index, "", "absent", "k")
 		Expect(ok).To(BeFalse())
 		Expect(c.Header(index, "", "absent")).To(Equal(rgwcls.DirHeader{}))
+	})
+})
+
+var _ = Describe("RGWClass's mp_upload_part_info_update", func() {
+	const (
+		extra   = "zone.rgw.buckets.non-ec"
+		metaOID = "zone.4155.1__multipart_k.2~id.meta"
+		key     = "part.00000001"
+	)
+	var (
+		c *fakerados.Cluster
+		p radosclient.Pool
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = fakerados.New()
+		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		var err error
+		p, err = c.Pool(ctx, extra, "")
+		Expect(err).NotTo(HaveOccurred())
+		c.Put(extra, "", metaOID, nil)
+	})
+	part := func(prefix string, past ...string) meta.UploadPartInfo {
+		target := meta.Obj{Bucket: meta.BucketID{Name: "b", Marker: "zone.4155.1", ID: "zone.4155.1"}, Key: meta.ObjKey{Name: "k"}}
+		m := meta.NewPartManifest(target, meta.PlacementRule{}, meta.PlacementRule{Name: "default-placement"}, prefix, 1, 4<<20)
+		m.SetObjSize(5)
+		return meta.UploadPartInfo{
+			Num: 1, Size: 5, ETag: "e", Modified: time.Date(2026, 10, 4, 1, 2, 3, 0, time.UTC),
+			Manifest: m, Compression: meta.NewCompressionInfo(), AccountedSize: 5, PastPrefixes: past,
+		}
+	}
+	encodeAt := func(info meta.UploadPartInfo, r denc.Release) []byte {
+		e := denc.NewEncoder()
+		info.Encode(e, r)
+		return e.Bytes()
+	}
+	update := func(ctx context.Context, info meta.UploadPartInfo, r denc.Release) error {
+		return writeErr(ctx, p, metaOID, func(op *radosclient.WriteOp) {
+			op.AssertExists()
+			rgwcls.MPUploadPartInfoUpdate(op, key, encodeAt(info, r), r)
+		})
+	}
+	stored := func() meta.UploadPartInfo {
+		GinkgoHelper()
+		b, ok := c.Object(extra, "", metaOID).Omap[key]
+		Expect(ok).To(BeTrue(), "no part info under %s", key)
+		d := denc.NewDecoder(b)
+		info := meta.DecodeUploadPartInfo(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		return info
+	}
+
+	It("stores the part under its key, re-encoded at Squid as the emulated class's OSD does", func(ctx SpecContext) {
+		info := part("k.2~id")
+		Expect(update(ctx, info, denc.Tentacle)).To(Succeed())
+		Expect(c.Object(extra, "", metaOID).Omap[key]).To(Equal(encodeAt(info, denc.Squid)))
+	})
+
+	It("carries the stored part's prefix and past prefixes into the new part's, as a set", func(ctx SpecContext) {
+		Expect(update(ctx, part("k.2~id"), denc.Squid)).To(Succeed())
+		Expect(update(ctx, part("k.RAND1"), denc.Squid)).To(Succeed())
+		Expect(stored().PastPrefixes).To(Equal([]string{"k.2~id"}), "cls_rgw.cc:4379-4383 at v19.2.6")
+		Expect(update(ctx, part("k.RAND2", "k.2~id", "k.other"), denc.Squid)).To(Succeed())
+		Expect(stored().PastPrefixes).To(Equal([]string{"k.2~id", "k.RAND1", "k.other"}))
+		Expect(stored().Manifest.Prefix).To(Equal("k.RAND2"))
+	})
+
+	It("refuses with EEXIST a part whose prefix is a past one, storing nothing", func(ctx SpecContext) {
+		Expect(update(ctx, part("k.2~id"), denc.Squid)).To(Succeed())
+		Expect(update(ctx, part("k.RAND1"), denc.Squid)).To(Succeed())
+		before := c.Object(extra, "", metaOID).Omap[key]
+		Expect(update(ctx, part("k.2~id"), denc.Squid)).To(MatchError(radosclient.ErrExists), "cls_rgw.cc:4385-4394 at v19.2.6")
+		Expect(c.Object(extra, "", metaOID).Omap[key]).To(Equal(before))
+	})
+
+	It("refuses a part whose own past prefixes hold its prefix, with nothing stored", func(ctx SpecContext) {
+		Expect(update(ctx, part("k.2~id", "k.2~id"), denc.Squid)).To(MatchError(radosclient.ErrExists))
+		Expect(c.Object(extra, "", metaOID).Omap).NotTo(HaveKey(key))
+	})
+
+	It("adds no prefix for a stored part whose manifest is empty, and adds an empty one for a manifest with rules", func(ctx SpecContext) {
+		e := denc.NewEncoder()
+		f := e.BeginStruct(2, 2)
+		e.U32(1)
+		e.U64(5)
+		e.String("e")
+		e.Time(time.Time{})
+		e.EndStruct(f)
+		c.Object(extra, "", metaOID).Omap[key] = e.Bytes()
+		Expect(update(ctx, part(""), denc.Squid)).To(Succeed(), "an empty manifest's prefix is not carried")
+		Expect(stored().PastPrefixes).To(BeEmpty())
+		Expect(update(ctx, part(""), denc.Squid)).To(MatchError(radosclient.ErrExists), "a manifest with rules carries its prefix, empty or not")
+	})
+
+	It("answers EINVAL for a request that does not decode and EIO for a stored part that does not", func(ctx SpecContext) {
+		err := writeErr(ctx, p, metaOID, func(op *radosclient.WriteOp) {
+			op.Exec("rgw", "mp_upload_part_info_update", []byte{1, 1, 9, 0, 0, 0})
+		})
+		Expect(err).To(MatchError(radosclient.ErrInvalid))
+		c.Object(extra, "", metaOID).Omap[key] = []byte{5}
+		Expect(update(ctx, part("k.2~id"), denc.Squid)).To(haveErrno(syscall.EIO), "read_omap_entry, cls_rgw.cc:924-930 at v19.2.6")
+	})
+
+	It("creates a missing meta object as cls_cxx_map_set_val does, which radosgw's assert_exists prevents", func(ctx SpecContext) {
+		const gone = "zone.4155.1__multipart_k.2~gone.meta"
+		err := writeErr(ctx, p, gone, func(op *radosclient.WriteOp) {
+			op.AssertExists()
+			rgwcls.MPUploadPartInfoUpdate(op, key, encodeAt(part("k.2~gone"), denc.Squid), denc.Squid)
+		})
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(c.Object(extra, "", gone)).To(BeNil())
+		Expect(writeErr(ctx, p, gone, func(op *radosclient.WriteOp) {
+			rgwcls.MPUploadPartInfoUpdate(op, key, encodeAt(part("k.2~gone"), denc.Squid), denc.Squid)
+		})).To(Succeed())
+		Expect(c.Object(extra, "", gone).Omap).To(HaveKey(key))
 	})
 })

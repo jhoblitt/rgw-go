@@ -142,4 +142,37 @@ var _ = Describe("struct framing", func() {
 			Expect(d.Err()).NotTo(HaveOccurred())
 		})
 	})
+
+	Describe("the rest of a struct", func() {
+		It("reads the fields a decoder does not know, to the struct end", func() {
+			d := denc.NewDecoder([]byte{2, 1, 5, 0, 0, 0, 0x42, 0x43, 0x44, 0x45, 0x46, 0x99})
+			h := d.BeginStruct(2)
+			Expect(d.U8()).To(Equal(uint8(0x42)))
+			Expect(d.RestOfStruct(h)).To(Equal([]byte{0x43, 0x44, 0x45, 0x46}))
+			d.EndStruct(h)
+			Expect(d.U8()).To(Equal(uint8(0x99)), "the bytes after the struct stay unread")
+			Expect(d.Err()).NotTo(HaveOccurred())
+		})
+		It("is nil for an exhausted struct", func() {
+			d := denc.NewDecoder([]byte{1, 1, 1, 0, 0, 0, 0x42})
+			h := d.BeginStruct(1)
+			d.U8()
+			Expect(d.RestOfStruct(h)).To(BeNil())
+			Expect(d.Err()).NotTo(HaveOccurred())
+		})
+		It("is nil for a legacy struct that carried no length, leaving the offset alone", func() {
+			d := denc.NewDecoder([]byte{2, 0x42, 0x43})
+			h := d.BeginStructLegacy(10, 3, 3, 0)
+			Expect(d.RestOfStruct(h)).To(BeNil())
+			Expect(d.Offset()).To(Equal(1))
+			Expect(d.Err()).NotTo(HaveOccurred())
+		})
+		It("fails when the decoder already read past the struct end", func() {
+			d := denc.NewDecoder([]byte{1, 1, 1, 0, 0, 0, 0xFF, 0xEE})
+			h := d.BeginStruct(1)
+			d.U16()
+			Expect(d.RestOfStruct(h)).To(BeNil())
+			Expect(d.Err()).To(MatchError(denc.ErrOverread))
+		})
+	})
 })

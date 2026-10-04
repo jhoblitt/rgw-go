@@ -939,6 +939,23 @@ review and verified against the tree.
   anything when the blocks the range needs reach past the object's stored
   bytes; radosgw reads what there is and ends the response short. Only a
   damaged object reads differently.
+- **An explicit part manifest is not appended.** radosgw's
+  `RGWObjManifest::append`, which completing a multipart upload runs for
+  each part, converts both manifests to explicit ones when either is
+  explicit and appends the part's pieces (`append_explicit`,
+  `driver/rados/rgw_obj_manifest.cc:47-49` and `:165-182` at v19.2.6 and
+  v20.2.4). rgw-go's `meta.Manifest.Append` refuses such a part, and a
+  later part without rules, with `meta.ErrExplicitManifest`, leaving the
+  object's manifest unchanged. radosgw refuses a part without rules before
+  it appends, as InvalidPart (`obj_part.manifest.empty()`,
+  `driver/rados/rgw_sal_rados.cc:3516-3520` at v19.2.6, `:4364-4368` at
+  v20.2.4), and writes every part manifest with a part rule
+  (`set_multipart_part_rule`, `driver/rados/rgw_putobj_processor.cc:455`
+  at v19.2.6, `:489` at v20.2.4). Only a part whose manifest an older
+  radosgw stored below manifest version 3, which decodes as explicit
+  (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs. No
+  request reaches the refusal yet: the driver's multipart completion,
+  which will append the parts, still answers NotImplemented.
 
 ### Command-line differences
 

@@ -1,7 +1,11 @@
 package rgw_test
 
 import (
+	"os"
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -119,5 +123,42 @@ var _ = Describe("corpus goldens", func() {
 	})
 	It("cls_rgw_gc_defer_entry_op", func() {
 		goldentest.RoundTrip(dir, "cls_rgw_gc_defer_entry_op", skipJSON, rgw.DecodeGCDeferEntryOp, enc[rgw.GCDeferEntryOp])
+	})
+})
+
+// rawCase is a corpus object of a type ceph-dencoder does not register.
+type rawCase struct {
+	id  string
+	bin []byte
+}
+
+// loadRaw reads testdata/corpus/<typ>/<archive>/<object>, copied verbatim
+// from the ceph-object-corpus. No dencoder re-encoding exists for these
+// types, so a (1,1) struct's corpus bytes are themselves the expected
+// encoding.
+func loadRaw(typ string) []rawCase {
+	GinkgoHelper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "corpus", typ, "*", "*"))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(paths).NotTo(BeEmpty(), "no corpus objects for %s", typ)
+	cs := make([]rawCase, 0, len(paths))
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		Expect(err).NotTo(HaveOccurred())
+		cs = append(cs, rawCase{id: p, bin: b})
+	}
+	return cs
+}
+
+var _ = Describe("corpus objects ceph-dencoder does not register", func() {
+	It("cls_rgw_mp_upload_part_info_update_op round-trips byte for byte, its part info carried whole", func() {
+		for _, c := range loadRaw("cls_rgw_mp_upload_part_info_update_op") {
+			v := decodeWhole(c.bin, rgw.DecodeMPUploadPartInfoUpdateOp)
+			Expect(v.PartKey).To(HavePrefix("part."), c.id)
+			Expect(v.Info[:2]).To(Equal([]byte{5, 2}), "%s: an RGWUploadPartInfo v5 frame", c.id)
+			for _, r := range releases {
+				Expect(encodeAt(v, r)).To(Equal(c.bin), c.id)
+			}
+		}
 	})
 })
