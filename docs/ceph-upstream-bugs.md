@@ -518,14 +518,32 @@ Every new entry adds its row to this table, in document order.
   - The same call also reads past the bytes received. `parsing_buf`, a
     `boost::container::static_vector` of `META_MAX_SIZE` (101) bytes
     (`rgw_auth_s3.h:354` at v19.2.6, `:356` at v20.2.4), is not
-    NUL-terminated, so when the bytes received end in hex digits or
-    blanks, strtoull runs on into the vector's unused storage. The run
-    stays inside the object: it stops at the vector's size field, whose
-    high bytes are zero because the size is at most 101 (measured with
-    GCC 15 and Boost's layout). The value it yields is never used: the
-    parse then fails the checks for `;` and the CRLF, which are bounded
-    by the size, and is refused with 400. It is not security-relevant,
-    and #72309's bounded `std::from_chars` parse removes it too.
+    NUL-terminated. Each refill resizes it to its capacity, which zeroes
+    the bytes the read does not fill (`rgw_auth_s3.cc:1295-1325` at
+    v19.2.6, `:1272-1302` at v20.2.4), so a run of blanks and hex digits
+    that ends inside the bytes received stops at a zero byte. Only a full
+    buffer of blanks, an optional sign or `0x`, and hex digits running to
+    its last byte takes strtoull past its 101 bytes. It reads on into the
+    three padding bytes after them, which are indeterminate, and then the
+    vector's size field, whose low byte is 101, an `e`, and whose next
+    byte is zero, where it stops at the latest. That is the layout of the
+    Boost 1.82 and 1.87 headers v19.2.6 and v20.2.4 build against, and a
+    GCC 15 build measured it. The over-read cannot reach unmapped memory.
+    A signed header in such a buffer has no `;` and is refused with 400
+    (`rgw_auth_s3.cc:1140-1145` at v19.2.6, `:1117-1122` at v20.2.4). An
+    unsigned header ends at the first CRLF that starts after the buffer's
+    first byte (`:1190-1201`, `:1167-1178`), so such a buffer is accepted
+    when its blanks hold one, as in `\r\n\r\n`, blanks, then the digits.
+    The padding bytes enter `data_length` as its lowest digits for as long
+    as each is a hex digit, followed by the `e` when all three are, and
+    the chunk is framed with that length; with more than sixteen
+    significant digits in all the size saturates instead, as above. The
+    effect stays inside the requester's own upload: the length moves only
+    where its own stream's chunks are framed, so in unsigned mode it can
+    corrupt the object that request stores, as the lenient sizes above
+    do, and the bytes read feed the length and are never stored or
+    returned to the client. It is not security-relevant, and #72309's
+    bounded `std::from_chars` parse removes the over-read entirely.
 - **Releases:** every release since v12.1.0; checked at v19.2.6, v20.2.4 and
   main.
 - **rgw-go:** phase 1 (unit A) accepts a chunk size only as strict hex, 1 to
