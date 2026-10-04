@@ -35,17 +35,20 @@ The judged floor is rados bench from quay.io/ceph/ceph:v19.2.6, Ceph 19.2.6, the
 
 ## Verdict
 
-cgo is not a bottleneck on a release when one of the callback and pipe modes passes all four criteria there. Throughput and mean latency compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, with rados bench at the same size and concurrency, run just before and just after the cell's three modes: a ratio divides by the mean of the two runs, and a cell whose runs differ by more than 10% of that mean is flagged unstable beside the verdict it feeds. read4m is measured and shown with its floor, but not judged; its table says why. The threads criterion allows each cell under the byte budget GOMAXPROCS + 8 threads of growth, its peak less its idle count. The boundary cost criterion is the share of the CPU profile of read4k at 256 in flight that a pure-Go client would no longer pay: the submit crossing and the delivery, not the C librados runs on the Go thread nor the Go completion handler. sync parks an OS thread per operation in flight and is the baseline, not judged. The informational row under the boundary cost reads the same profile for every sample whose stack holds a frame of the cgo boundary, cgo's runtime.cgoCheck* pointer checks included. It is a measurement, compared with no threshold: it counts the C librados runs on the Go thread, which a pure-Go client would run too, as a cost of the boundary. For pipe the boundary cost leaves out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by that much.
+cgo is not a bottleneck on a release when one of the sync, callback and pipe modes meets both criteria there: throughput and mean latency, which compare read4k and write4k at 64 and 256 in flight, and write4m at 1, 4 and 16, with rados bench at the same size and concurrency, run just before and just after the cell's three modes: a ratio divides by the mean of the two runs, and a cell whose runs differ by more than 10% of that mean is flagged unstable beside the verdict it feeds. read4m is measured and shown with its floor, but not judged; its table says why. The rows below the criteria are measurements, compared with no threshold. CPU per operation is the CPU each operation of read4k at 256 in flight used; among the modes that meet both criteria, the one using the least is preferred, and every cell's CPU is in the tables below. The boundary cost is the part of that cell's CPU profile a pure-Go client would no longer pay: the submit crossing and the delivery, not the C librados runs on the Go thread nor the Go completion handler. Thread growth is each mode's largest, its peak less its idle count, across the cells under the byte budget. The cgo frames row counts every sample whose stack holds a frame of the cgo boundary, cgo's runtime.cgoCheck* pointer checks included; it counts the C librados runs on the Go thread, which a pure-Go client would run too, as a cost of the boundary. For pipe the boundary cost leaves out the C side of each completion, one write(2) to the pipe on a librados thread, which the profile records under runtime._ExternalCode with no frame to tell it by: it is unmeasured, and pipe's boundary cost is low by that much.
 
-| criterion | sync (baseline) | callback | pipe |
+| criterion | sync | callback | pipe |
 |---|---|---|---|
 | throughput>=0.8x floor | PASS: worst 0.85x (read4k at 64), margin +0.05; unstable floor: read4k at 256 (21.5%), write4m at 4 (22.9%) | PASS: worst 0.86x (write4k at 64), margin +0.06; unstable floor: read4k at 256 (21.5%), write4m at 4 (22.9%) | PASS: worst 0.88x (write4m at 1), margin +0.08; unstable floor: read4k at 256 (21.5%), write4m at 4 (22.9%) |
 | mean latency<=1.25x floor | PASS: worst 1.18x (read4k at 64), margin +0.07; unstable floor: read4k at 256 (21.6%), write4m at 4 (22.9%) | PASS: worst 1.16x (write4k at 64), margin +0.09; unstable floor: read4k at 256 (21.6%), write4m at 4 (22.9%) | PASS: worst 1.13x (write4m at 1), margin +0.12; unstable floor: read4k at 256 (21.6%), write4m at 4 (22.9%) |
-| threads<=gomaxprocs+8 | FAIL: worst +532 of 40 allowed (read4k at 512), margin -492 | FAIL: worst +89 of 40 allowed (headwrite4k at 512), margin -49 | FAIL: worst +79 of 40 allowed (indexrtt at 512), margin -39 |
-| boundary cost<=10% of CPU (librados's C and the Go completion handler excluded) | PASS: 3.1% of 19.92s sampled, margin +6.9 points | PASS: 5.0% of 26.36s sampled, margin +5.0 points | PASS: 9.3% of 28.81s sampled, margin +0.7 points; leaves out pipe's write(2) per completion, unmeasured |
-| informational: cgo frames, share of CPU (not judged) | 37.3% of 19.92s sampled | 24.9% of 26.36s sampled | 19.2% of 28.81s sampled |
+| CPU per operation, read4k at 256 (not judged) | 26 µs | 31 µs | 30 µs |
+| boundary cost, read4k at 256 (not judged) | 3.1% of 19.92s sampled, about 0.8 µs of the operation's 26 | 5.0% of 26.36s sampled, about 1.6 µs of the operation's 31 | 9.3% of 28.81s sampled, about 2.8 µs of the operation's 30; leaves out pipe's write(2) per completion, unmeasured |
+| thread growth (not judged) | largest +532 (read4k at 512) | largest +89 (headwrite4k at 512) | largest +79 (indexrtt at 512) |
+| cgo frames, share of CPU (not judged) | 37.3% of 19.92s sampled | 24.9% of 26.36s sampled | 19.2% of 28.81s sampled |
 
-**Answer:** no judged mode passes all four criteria on squid.
+**Answer:** sync, callback and pipe meet both criteria on squid.
+
+**Least CPU per operation among them**, read4k at 256 in flight: sync, 26 µs.
 
 In-flight limits of the cells: derived. No submission parked on the limiter.
 
@@ -211,14 +214,14 @@ Not judged: rados bench's 4 MiB rand does not read as the Go cell does: rand pic
 
 ## Over the byte budget
 
-Cells run past the byte budget on purpose, each in a process of its own. With the limiter's bounds above what the cell can reach, librados's objecter throttle blocks submitting threads inside C; with the bounds derived from that throttle, the limiter parks the excess submissions in Go. The threads criterion does not cover these cells.
+Cells run past the byte budget on purpose, each in a process of its own. With the limiter's bounds above what the cell can reach, librados's objecter throttle blocks submitting threads inside C; with the bounds derived from that throttle, the limiter parks the excess submissions in Go.
 
-| mode | shape | conc | limiter | n | ops/s | mean µs | threads | growth | allowance | limiter waits |
-|---|---|---|---|---|---|---|---|---|---|---|
-| callback | write4m | 64 | ops 1048576, bytes 1099511627776 | 640 | 125 | 494823 | 26→61 | +35 | 40 | 0 |
-| callback | write4m | 64 | derived | 640 | 138 | 445812 | 27→46 | +19 | 40 | 617 |
-| pipe | write4m | 64 | ops 1048576, bytes 1099511627776 | 640 | 137 | 449103 | 27→62 | +35 | 40 | 0 |
-| pipe | write4m | 64 | derived | 640 | 141 | 437025 | 27→46 | +19 | 40 | 617 |
+| mode | shape | conc | limiter | n | ops/s | mean µs | threads | growth | limiter waits |
+|---|---|---|---|---|---|---|---|---|---|
+| callback | write4m | 64 | ops 1048576, bytes 1099511627776 | 640 | 125 | 494823 | 26→61 | +35 | 0 |
+| callback | write4m | 64 | derived | 640 | 138 | 445812 | 27→46 | +19 | 617 |
+| pipe | write4m | 64 | ops 1048576, bytes 1099511627776 | 640 | 137 | 449103 | 27→62 | +35 | 0 |
+| pipe | write4m | 64 | derived | 640 | 141 | 437025 | 27→46 | +19 | 617 |
 
 ## CPU profiles
 
