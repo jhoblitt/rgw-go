@@ -1,0 +1,21 @@
+diff --git a/rgw/admin/radosgw_test.go b/rgw/admin/radosgw_test.go
+index d37eb99..992ee07 100644
+--- a/rgw/admin/radosgw_test.go
++++ b/rgw/admin/radosgw_test.go
+@@ -134,12 +134,11 @@ func (s *S3Agent) createBucket(name string) error {
+ func (suite *RadosGWTestSuite) SetupConnection() {
+ 	suite.accessKey = "AKIAIOSFODNN7EXAMPLE"
+ 	suite.secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+-	hostname := os.Getenv("HOSTNAME")
+-	endpoint := hostname
+-	if hostname != "test_ceph_aio" {
+-		endpoint = "test_ceph_a"
++	endpoint := os.Getenv("RGW_GO_ADMIN_ENDPOINT")
++	if endpoint == "" {
++		suite.T().Fatal("RGW_GO_ADMIN_ENDPOINT is not set")
+ 	}
+-	suite.endpoint = "http://" + endpoint
++	suite.endpoint = endpoint
+ 	suite.bucketTestName = "test"
+ }
+ 
