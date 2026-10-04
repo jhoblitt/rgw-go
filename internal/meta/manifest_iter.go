@@ -29,7 +29,8 @@ const (
 const MaxStripes = 1 << 21
 
 // ErrTooManyStripes is the refusal of a manifest that lays out more stripes
-// than a walk's bound: MaxStripes for Stripes, MaxWalkStripes for PartBounds.
+// than a walk's bound: MaxStripes for Stripes, MaxWalkStripes for PartBounds
+// and WalkParts.
 var ErrTooManyStripes = errors.New("meta: manifest lays out too many stripes")
 
 // Stripe describes one RADOS object of an object's data as the manifest lays
