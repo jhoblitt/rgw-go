@@ -102,11 +102,17 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's parse_time wraps a date outside 1970 to 2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106) | none | none | ✓ |
 | [radosgw sends no response, or two status lines, when it refuses a response-* parameter](#radosgw-sends-no-response-or-two-status-lines-when-it-refuses-a-response--parameter) | none | none | ✓ |
 | [radosgw terminates on a stored lz4 block too short for its pair table](#radosgw-terminates-on-a-stored-lz4-block-too-short-for-its-pair-table) | pending | pending |  |
-| [Tentacle's radosgw answers EIO for an index shard its header read means to skip](#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip) | pending | pending |  |
-| [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | pending | pending |  |
-| [Squid's negated condition operators hold when any pair differs, and its Null ignores its values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values) | [#73146](https://tracker.ceph.com/issues/73146), [#74736](https://tracker.ceph.com/issues/74736) | [ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606), [ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188), [ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214), [ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444) |  |
-| [radosgw's date conditions wrap past 2554 and before 1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970) | pending | pending |  |
-| [radosgw never expires a presigned SigV4 URL dated before 1970](#radosgw-never-expires-a-presigned-sigv4-url-dated-before-1970) | pending | pending |  |
+| [Tentacle's radosgw answers EIO for an index shard its header read means to skip](#tentacles-radosgw-answers-eio-for-an-index-shard-its-header-read-means-to-skip) | none | none | ✓ |
+| [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | none | none | ✓ |
+| [Squid's negated condition operators hold when any pair differs, and its Null ignores its values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values) | [#73146](https://tracker.ceph.com/issues/73146), [#74736](https://tracker.ceph.com/issues/74736) | [ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606), [ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188), [ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214), [ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444), [ceph/ceph#67213](https://github.com/ceph/ceph/pull/67213), [ceph/ceph#68445](https://github.com/ceph/ceph/pull/68445) |  |
+| [radosgw's date conditions wrap past 2554 and before 1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970) | none | none | ✓ |
+| [radosgw never expires a presigned SigV4 URL dated before 1970](#radosgw-never-expires-a-presigned-sigv4-url-dated-before-1970) | none | none | ✓ |
+| [radosgw does not check aws-chunked framing against x-amz-decoded-content-length](#radosgw-does-not-check-aws-chunked-framing-against-x-amz-decoded-content-length) | none | none | ✓ |
+| [radosgw answers GetObjectTagging with 200 and no body when the tags do not decode](#radosgw-answers-getobjecttagging-with-200-and-no-body-when-the-tags-do-not-decode) | none | none | ✓ |
+| [radosgw counts and pages a multipart object's parts as if their numbers had no gaps](#radosgw-counts-and-pages-a-multipart-objects-parts-as-if-their-numbers-had-no-gaps) | none | none | ✓ |
+| [Squid's account admin API checks a cap type that does not exist for get and delete](#squids-account-admin-api-checks-a-cap-type-that-does-not-exist-for-get-and-delete) | [#72527](https://tracker.ceph.com/issues/72527) | [ceph/ceph#65480](https://github.com/ceph/ceph/pull/65480), [ceph/ceph#66905](https://github.com/ceph/ceph/pull/66905), [ceph/ceph#66919](https://github.com/ceph/ceph/pull/66919) |  |
+| [radosgw's eval_principal skips NotPrincipal for a role that Principal names, but not for a user](#radosgws-eval_principal-skips-notprincipal-for-a-role-that-principal-names-but-not-for-a-user) | none | none | ✓ |
+| [radosgw's is_public judges a wildcard-principal statement against a fixed three-key environment](#radosgws-is_public-judges-a-wildcard-principal-statement-against-a-fixed-three-key-environment) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4107,7 +4113,15 @@ Every new entry adds its row to this table, in document order.
   reads the headers through `bucket_list`, as Squid does, on both releases
   (`docs/exclusions.md`, "Index shard headers are read as Squid reads
   them").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no tracker
+  issue, and no fix: `IndexHeadReader`'s history holds only the commit that
+  introduced it. That commit, e4fd504e3ff ("rgw/rados: index operations use
+  async_reads/writes()", 2024-11-07), merged with
+  [ceph/ceph#60670](https://github.com/ceph/ceph/pull/60670), brought the
+  regression. It is first in v20.1.0, and no v19 release carries it, so
+  v19.2.6 is not affected. It is unfiled while filing is paused, and a
+  report of the Tentacle defect waits on a reproduction on a running
+  cluster.
 - **Found:** phase 1 metadata plane (unit M, Task 6), 2026-10-02,
   implementing the RADOS driver's index stats; derived from the source, not
   reproduced.
@@ -4177,7 +4191,19 @@ Every new entry adds its row to this table, in document order.
   fakerados's user class emulator (`internal/testutil/fakerados/cls_user.go`)
   sums each page from zero as the class does, so specs see radosgw's
   result.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no report and
+  no fix. The defect dates from 25a82ed3795 (2020), which introduced the
+  method for [#41080](https://tracker.ceph.com/issues/41080), the Feature
+  issue behind its design, not a report of this defect.
+  [#46400](https://tracker.ceph.com/issues/46400) concerns `--sync-stats`
+  alone and was fixed by
+  [ceph/ceph#36542](https://github.com/ceph/ceph/pull/36542), and
+  [#48327](https://tracker.ceph.com/issues/48327) and
+  [#51786](https://tracker.ceph.com/issues/51786) are distinct. The open
+  feature PR [ceph/ceph#66501](https://github.com/ceph/ceph/pull/66501)
+  touches the code in part: it reads the request's `acc_stats` on the final
+  page only. It is unfiled while filing is paused; a report waits on a
+  cluster reproduction and must first check main against ceph/ceph#66501.
 - **Found:** phase 1 metadata plane (unit M, Task 6), 2026-10-02, writing
   the cls_user emulator; derived from the source, not reproduced.
 
@@ -4283,7 +4309,17 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it, the undefined cast as radosgw's x86-64 build
   computes it (`policy.AsDate`); `docs/exclusions.md` records that a build
   for another architecture may answer otherwise.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no tracker
+  issue; the nearest, [#56993](https://tracker.ceph.com/issues/56993), an
+  overflow in object lock's retention date,
+  [#74398](https://tracker.ceph.com/issues/74398),
+  [#18828](https://tracker.ceph.com/issues/18828),
+  [#18829](https://tracker.ceph.com/issues/18829) and
+  [#12863](https://tracker.ceph.com/issues/12863), are distinct. No fix has
+  merged: `as_date` is as 69a5eebd8a4 ("rgw: Add basic support for IAM
+  policies", 2016) introduced it but for 268f75bb8d3's switch to
+  `std::string_view` (2020). It is unfiled while filing is paused, and a
+  report waits on a cluster reproduction.
 - **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing `as_date`. A
   verbatim transcription of `as_date`, `from_iso_8601` and
   `internal_timegm`, compiled with GCC 15.3, agrees with rgw-go on 43 date
@@ -4327,6 +4363,348 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** `parseV4Query` (`internal/auth/sigv4.go`) mirrors it, the
   clock's rounding included, so a presigned URL expires when radosgw's
   does.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no tracker
+  issue; the nearest, [#76615](https://tracker.ceph.com/issues/76615),
+  [#68300](https://tracker.ceph.com/issues/68300),
+  [#18828](https://tracker.ceph.com/issues/18828),
+  [#18829](https://tracker.ceph.com/issues/18829) and
+  [#12863](https://tracker.ceph.com/issues/12863), are distinct. The code's
+  history shows no fix; GitHub's pull-request search proved unreliable, so
+  the history stood in for it. It is unfiled while filing is paused, and a
+  report waits on a reproduction on a running radosgw.
 - **Found:** phase 1 unit A, Task 4, 2026-10-02, transcribing
   `parse_v4_query_string`; derived from the source, not reproduced.
+
+## radosgw does not check aws-chunked framing against x-amz-decoded-content-length
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; the code is the same at v19.2.6
+  and v20.2.4, and each pair of lines is v19.2.6's, then v20.2.4's.
+  - PutObject and UploadPart ask the aws-chunked decoder for
+    `x-amz-decoded-content-length` bytes, in reads of at most
+    `rgw_max_chunk_size` (`RGWPutObj_ObjStore::get_data`,
+    `rgw_rest.cc:1068-1101`, `:1073-1106`), the completer having put that
+    header in `s->length` (`rgw_auth_s3.cc:1532-1548`, `:1509-1525`). A
+    read that returns nothing calls `complete()`
+    (`RGWPutObj_ObjStore_S3::get_data`, `rgw_rest_s3.cc:2706-2717`,
+    `:2867-2878`), and so does the read for the 0 bytes left once the
+    length is delivered.
+  - The decoder knows no length. It parses chunks for as long as it is
+    asked for data, takes a zero-size chunk for an empty one, and verifies
+    a chunk's signature when a read begins past it
+    (`AWSv4ComplMulti::recv_chunk`, `rgw_auth_s3.cc:1275-1389`,
+    `:1252-1366`). `complete()` verifies the chunk in progress and takes
+    whatever follows it for the trailer section, from which it uses only a
+    `chunk-signature=` value, the announced trailers and the trailer
+    signature (`:1555-1694`, `:1532-1671`).
+  - Chunks that carry more data than the length: the chunk in progress is
+    verified over the bytes delivered, so a length inside a signed chunk
+    fails with 400 XAmzContentSHA256Mismatch. A length at a chunk boundary,
+    or any length on an unsigned payload, passes: the rest of the stream,
+    data chunks included, is read as the trailer section, up to 255 bytes
+    ("radosgw truncates a long aws-chunked trailer section instead of
+    rejecting it"), and dropped, and the upload is stored at the length
+    with 200. A signed trailer then fails with 403, because `complete()`
+    chains the final chunk signature from the last chunk it verified
+    rather than the client's last. PutObject then compares a supplied
+    Content-MD5 with the shorter object and answers 400 BadDigest
+    (`rgw_op.cc:4483-4486`, `:4715-4718`), and on v20.2.4 a trailing
+    checksum found in those 255 bytes the same way (`rgw_op.cc:4757-4790`
+    at v20.2.4).
+  - Chunks that carry less: the final chunk is parsed as an empty one.
+    When the op's read goes on, the decoder verifies that chunk's signature
+    (403 SignatureDoesNotMatch on a mismatch) and fails to parse what
+    follows as a chunk header (400 InvalidArgument). When the read that
+    parsed it returns nothing, which needs either no data or data that
+    ends where a read of `rgw_max_chunk_size` bytes ends, and a rest of the
+    stream that fits the 101-byte header buffer, `complete()` verifies the
+    final chunk instead (400 XAmzContentSHA256Mismatch on a mismatch), and
+    PutObject's length check answers 400 RequestTimeout
+    (`rgw_op.cc:4430-4433`, `:4662-4665`).
+  - An empty chunk followed by more data is read past, so an upload whose
+    chunks around it carry the length is stored.
+- **Impact:** an upload whose `x-amz-decoded-content-length` falls short of
+  its chunks is stored at that length with 200 when the length falls on a
+  chunk boundary or the payload is unsigned, and no trailer, Content-MD5
+  or checksum check fails; the chunks past it are dropped unread or
+  unverified. One whose length exceeds its chunks is answered by where
+  radosgw's reads fall.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** the aws-chunked reader (`internal/auth/chunked.go`) reads the
+  same length and verifies the chunk in progress there as `complete()`
+  does. When more data or the end of the body follows that chunk, it
+  refuses a payload that expects a trailer signature with 403
+  SignatureDoesNotMatch, and ends any other there, as radosgw's
+  `complete()` does, leaving the rest of the body unread. A Content-MD5 is
+  the op's to compare, and phase 1 compares no trailing checksum. A
+  payload short of its length is answered as radosgw answers it when the
+  op's read goes on (`docs/exclusions.md`, "aws-chunked framing is read
+  strictly").
+- **Upstream:** none. A prior-art search on 2026-10-04 found no report or
+  fix PR. Related: [#81122](https://tracker.ceph.com/issues/81122) and
+  [#81123](https://tracker.ceph.com/issues/81123), the narrower trailer and
+  chunk-size defects recorded above, which a report of this one would
+  cross-link. It is unfiled while filing is paused, and a report waits on a
+  cluster reproduction.
+- **Found:** phase 1 authentication (unit A, Task 6), 2026-10-02,
+  implementing the aws-chunked reader; derived from the source, not
+  reproduced.
+
+## radosgw answers GetObjectTagging with 200 and no body when the tags do not decode
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single one holds at both.
+  - `RGWGetObjTags::execute` reads the object's attrs and hands its
+    `user.rgw.x-amz-tagging` attr to `send_response_data`
+    (`rgw_op.cc:1057-1074`, `:1256-1273`).
+    `RGWGetObjTags_ObjStore_S3::send_response_data` calls `dump_errno`, which
+    sends the success status, and `end_header` before it decodes the tag set
+    (`rgw_rest_s3.cc:746-773`, `:829-856`). When the decode throws, because
+    the attr is neither an `RGWObjTags` nor the URL-encoded text
+    `RGWObjTags::decode` falls back to, it sets `op_ret = -EIO` and returns
+    (`:760-766`, `:843-849`).
+  - `end_header` sends no Content-Length by default (`NO_CONTENT_LENGTH`,
+    `rgw_rest.h:699`, `:711`), calls `complete_header` and flushes the
+    formatter, which holds nothing yet (`rgw_rest.cc:589-655`, `:594-660`).
+    `dump_start` then puts the XML declaration in the formatter
+    (`:571-577`, `:576-582`), and the open `Tagging` and `TagSet` sections
+    follow it there. Nothing flushes them: the op has no `send_response` of
+    its own (`rgw_op.h:498`, `:559`), so `complete` calls `RGWOp`'s empty one
+    (`:292-295`, `:306-309`), and `process_request` goes on to
+    `complete_request` (`rgw_process.cc:260` and `:454`, `:263` and `:461`).
+  - With no Content-Length sent, the buffering filter holds the response,
+    and `complete_request` sends the length of what it holds, 0
+    (`BufferingFilter`, `rgw_client_io_filters.h:208-252`).
+  - So by code reading the client gets 200, a Content-Type of
+    `application/xml`, a Content-Length of 0 and no body.
+  - `RGWGetBucketTags_ObjStore_S3::send_response_data` renders a bucket's
+    tag set the same way and fails the same way (`rgw_rest_s3.cc:839-866`,
+    `:921-948`).
+- **Impact:** a client reading the tags of an object, or of a bucket, whose
+  tag attr does not decode gets an empty 200, which an S3 SDK cannot parse
+  as a Tagging document, instead of an error. radosgw's own writes store a
+  tag set that decodes, so only a corrupted attr, or one set by a writer
+  with access to the data pool, meets it.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw_rest_s3.cc:863` and `:955`, the -EIO at `:881` and `:973`).
+- **rgw-go:** `op.GetObjectTagging` answers 500 UnknownError, the status
+  radosgw's -EIO maps to; `docs/exclusions.md` records the difference.
+- **Upstream:** none for this defect. A prior-art search on 2026-10-04
+  found no report or fix of the response ordering. Its symptom was reported
+  as [#74917](https://tracker.ceph.com/issues/74917), now resolved, for
+  multipart objects whose tags radosgw had stored as URL-encoded text, and
+  fixed as a decoder too strict:
+  [ceph/ceph#67336](https://github.com/ceph/ceph/pull/67336) (main), with
+  [ceph/ceph#67926](https://github.com/ceph/ceph/pull/67926) (squid, in
+  v19.2.5) and [ceph/ceph#67927](https://github.com/ceph/ceph/pull/67927)
+  (tentacle, in v20.2.2), added the fallback to that text and changed only
+  `rgw_tag.h`. An attr that decodes neither way still gets the empty 200
+  at v19.2.6 and v20.2.4. A report must distinguish this defect from
+  #74917 and ceph/ceph#67336. It is unfiled while filing is paused.
+- **Found:** phase 1 unit R, Task 6, 2026-10-02, implementing
+  GetObjectTagging; derived from the source, not reproduced.
+
+## radosgw counts and pages a multipart object's parts as if their numbers had no gaps
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of lines
+  is v19.2.6's, then v20.2.4's, and a single one holds at both or, where
+  marked, at v20.2.4 alone.
+  - A multipart upload's part numbers may have gaps. CompleteMultipartUpload
+    must name every part uploaded, in order, but not every number
+    (`RadosMultipartUpload::complete`, `rgw_sal_rados.cc:3471` and `:3488`,
+    `:4319` and `:4336`). Each part's manifest carries its number as its
+    rule's `start_part_num` (`MultipartObjectProcessor::prepare_head`,
+    `rgw_putobj_processor.cc:455`, `:489`), and `RGWObjManifest::append`
+    starts a new rule wherever the next part's number is not the one it
+    expects (`rgw_obj_manifest.cc:106-114`). Parts 1 and 3 therefore keep
+    rules for parts 1 and 3, and the iterator steps from part 1 to part 3.
+  - The parts count is `obj_end`'s part id less one (`get_part_obj_state`,
+    `rgw_rados.cc:6778`, `:7614`; `Read::prepare`, `:7714` at v20.2.4).
+    `obj_end` lies one past the last part's number, so the count is the
+    last part's number: 3 for parts 1 and 3. GET and HEAD send it as
+    `x-amz-mp-parts-count`, with `partNumber` at v19.2.6 and for every
+    multipart object at v20.2.4 (`rgw_rest_s3.cc:496`, `:531`), and
+    GetObjectAttributes as PartsCount and TotalPartsCount
+    (`rgw_rest_s3.cc:4105-4106` at v20.2.4).
+  - GetObjectAttributes's ObjectParts, at v20.2.4 alone, pages through
+    `RadosObject::list_parts` (`rgw_sal_rados.cc:2834-2933`). A marker other
+    than 0 resumes at `obj_find_part(marker + 1)`, which finds that part
+    number exactly or nothing (`rgw_obj_manifest.cc:200-219`), and finding
+    nothing lists nothing (`rgw_sal_rados.cc:2861-2874`). Each part listed
+    moves the next marker on by one from the marker, not to the part's
+    number (`:2928`).
+  - So, paging with max-parts 1, parts 1 and 3 list as part 1 with
+    NextPartNumberMarker 1, then nothing for marker 1, and part 3 is never
+    listed; parts 2 and 3 list as part 2 with marker 1, part 2 again with
+    marker 2, then part 3.
+- **Impact:** for a multipart object whose part numbers have gaps, every
+  client reads a parts count above the number of parts, and a client paging
+  GetObjectAttributes's ObjectParts on Tentacle misses parts or sees one
+  twice. An object whose parts are numbered from 1 without gaps, which S3
+  SDKs' uploaders write, is unaffected.
+- **Releases:** v19.2.6 and v20.2.4 for the count, v20.2.4 for the paging,
+  and main for both (06adccc25d6, 2026-10-01, `rgw_rados.cc:8226` and
+  `:8326`, `rgw_sal_rados.cc:3046` and `:3108`).
+- **rgw-go:** reproduces both. `meta.Manifest.PartsCount` is radosgw's
+  count, and `op.GetObjectAttributes` resumes and counts its pages as
+  `list_parts` does, so rgw-go answers as radosgw does.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no report or
+  fix PR. The nearest report,
+  [#68427](https://tracker.ceph.com/issues/68427), is a different defect,
+  and [ceph/ceph#66764](https://github.com/ceph/ceph/pull/66764), closed
+  unmerged, is no fix: it changes only when `x-amz-mp-parts-count`
+  appears. The count came with partNumber support,
+  [ceph/ceph#50148](https://github.com/ceph/ceph/pull/50148), and the
+  paging with GetObjectAttributes,
+  [ceph/ceph#55259](https://github.com/ceph/ceph/pull/55259). It is
+  unfiled while filing is paused.
+- **Found:** phase 1 unit R, Task 6, 2026-10-02, implementing
+  GetObjectAttributes's part listing; derived from the source, not
+  reproduced.
+
+## Squid's account admin API checks a cap type that does not exist for get and delete
+
+- **Kind:** defect, fixed in Tentacle from v20.2.2; the squid backport is
+  open. Unreproduced: derived from the source; go-ceph v0.39.0's rgw/admin
+  suite skips both calls for every release up to tentacle.
+- **Evidence:** paths are under `src/rgw/`; lines are v19.2.6's unless a
+  tag is named.
+  - `RGWOp_Account_Get` and `RGWOp_Account_Delete`, which serve GET and
+    DELETE on the admin resource `account` (`rgw_rest_account.cc:233-241`;
+    `rgw_appmain.cc:358`), check the cap `account`
+    (`rgw_rest_account.cc:174`, `:196`). Create and modify check `accounts`
+    (`:23`, `:107`).
+  - No caps command can grant `account`: `RGWUserCaps::get_cap` refuses a
+    type `is_valid_cap_type` rejects (`rgw_common.cc:1907-1914`), and that
+    list holds `accounts`, not `account` (`:2083-2110`).
+    `RGWUserCaps::decode_json` does not check the type (`:2059-2069`), so
+    `radosgw-admin metadata put` can store one.
+  - `check_cap` answers EPERM for a type the user lacks (`:2071-2081`).
+    `RGWRESTOp::verify_permission` is that check (`rgw_rest.cc:1687-1690`),
+    and only a system request or an admin user overrides its refusal
+    (`rgw_process.cc:228-234`).
+  - v20.2.0 and v20.2.1 still check `account` at `:174` and `:196`. From
+    v20.2.2 every account op checks `accounts`; at v20.2.4 that is `:23`,
+    `:107`, `:174`, `:196` and `:226`. origin/squid at a742f50616e still
+    checks `account` and has no commit citing the fix.
+- **Impact:** on Squid, GET and DELETE on `/admin/account` answer 403 to
+  every user that is neither an admin nor a system user and holds no
+  `account` cap stored through `metadata put`, one holding `accounts=*`
+  included. Through `/admin/account` such a user can create and modify an
+  account but not read or remove it. `radosgw-admin account get` and `rm`
+  are unaffected.
+- **Releases:** v19.2.6, v20.2.0, v20.2.1 and origin/squid (a742f50616e);
+  fixed in v20.2.2 and main.
+- **rgw-go:** its `/admin/account` handlers are phase 1 work not yet
+  written; the task that writes them reproduces Squid's refusal or records
+  the difference in `docs/exclusions.md`.
+  `test/admin/baseline/squid.json` holds both calls' subtests as skipped,
+  and `tentacle.json` as passed.
+- **Upstream:** fixed upstream before this entry; not found by us.
+  - Fixed on main by [ceph/ceph#65480](https://github.com/ceph/ceph/pull/65480)
+    (187573e9e7d, merged 2025-10-22), the admin API's account-quota work,
+    whose fix commit cites [#72527](https://tracker.ceph.com/issues/72527).
+  - Fixed on tentacle by [ceph/ceph#66905](https://github.com/ceph/ceph/pull/66905)
+    (c6b80a3b67e, merged 2026-05-04), first released in v20.2.2.
+  - The squid backport,
+    [ceph/ceph#66919](https://github.com/ceph/ceph/pull/66919), is open.
+- **Found:** phase 1 unit T, Task 6, 2026-10-02, deciding which release the
+  go-ceph rgw/admin suite runs as; derived from the source, not reproduced.
+
+## radosgw's eval_principal skips NotPrincipal for a role that Principal names, but not for a user
+
+- **Kind:** defect on the squid and tentacle branches; main lost it to a
+  refactor. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `Statement::eval_principal` checks a non-role identity against a
+    non-empty Principal, then a role identity (TYPE_ROLE) against it, and
+    the NotPrincipal check is the `else if` of the role branch
+    (`rgw_iam_policy.cc:1253-1273`, `:1257-1277`). A role that a non-empty
+    Principal names is never checked against NotPrincipal; a user in the
+    same position is.
+  - The parser accepts Principal and NotPrincipal in one statement: its
+    duplicate-key check covers only a repeated key (`dex`, `test` and `set`
+    at `rgw_iam_policy.cc:277-329`, `:287-339`; the `!pp->test(k->id)` at
+    `:504`, `:514`). v20.2.4 refuses Allow with NotPrincipal (`:771-776`),
+    not Deny with both.
+  - On main, f7c44ac833e ("rgw/iam: Policy::eval() returns Principal, not
+    just type", 2026-01-20) checks NotPrincipal first for every identity;
+    the squid (a742f50616e) and tentacle (7411a080411) branch heads keep
+    the `else if`.
+- **Impact:** the rule matters only for a statement that names the role in
+  both Principal and NotPrincipal, which AWS does not allow. A Deny
+  statement whose Principal matches a role session and whose NotPrincipal
+  names that role still applies to the role, where the same exemption
+  works for a user. On v19.2.6 an Allow statement naming a role in both
+  lists grants it; v20.2.4 refuses that Allow when it parses the policy,
+  so only a Deny reaches the rule there.
+- **Releases:** v19.2.6, v20.2.4 and both branch heads above; not main.
+- **rgw-go:** reproduces it in `policy.Statement.EvalPrincipal`
+  (`internal/policy/statement.go`). In phase 1 no identity is a role, so
+  the role rule is unreached until STS.
+- **Upstream:** none. A prior-art search on 2026-10-04 found no report or
+  fix PR. Main lost the rule incidentally: f7c44ac833e came with
+  [ceph/ceph#66999](https://github.com/ceph/ceph/pull/66999), merged
+  2026-09-25, whose issue,
+  [#74471](https://tracker.ceph.com/issues/74471), concerns a resource
+  policy's grant to an account principal, not this defect. It is unfiled
+  while filing is paused, and a report waits on a cluster reproduction.
+- **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing
+  `eval_principal`; derived from the source, not reproduced.
+
+## radosgw's is_public judges a wildcard-principal statement against a fixed three-key environment
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `is_public` evaluates an Allow statement whose Principal holds the
+    wildcard with `eval_conditions(iam_all_env)`
+    (`rgw_iam_policy.cc:1904-1907`, `:1939-1942`). `iam_all_env` holds
+    only aws:SourceIp `1.1.1.1`, aws:UserId `anonymous` and
+    s3:x-amz-server-side-encryption-aws-kms-key-id `secret`
+    (`:1894-1898`, `:1929-1933`), as it has since ff972d69567 ("rgw:
+    initial implementation of a public policy tester", 2019).
+  - Apart from `Null`, a condition on any other key fails unless it uses
+    IfExists or a ForAllValues operator (`Condition::eval`,
+    `rgw_iam_policy.cc:857-869`, `:875-889`). So a statement granting every
+    principal under, say, `Bool aws:SecureTransport true`,
+    `StringLike aws:Referer …` or `StringEquals s3:prefix …` is judged not
+    public, although every requester meeting the condition is granted. A
+    condition 1.1.1.1 meets, such as `IpAddress aws:SourceIp 1.1.1.1/32`,
+    makes a statement public that admits one address.
+  - The verdict decides PutBucketPolicy's BlockPublicPolicy refusal
+    (`rgw_op.cc:8103-8108`, `:9029-9034`), GetBucketPolicyStatus's IsPublic
+    (`:8597`, `:9578`) and, on v20.2.4 only, RestrictPublicBuckets for
+    buckets and for objects (`rgw_common.cc:1377` and `:1544`, both
+    v20.2.4).
+- **Impact:** a bucket policy that opens a bucket to everyone behind a
+  condition on any other key passes BlockPublicPolicy, is reported not
+  public, and on Tentacle escapes RestrictPublicBuckets. The guardrails
+  meant to catch a public policy let it through, and the data is open to
+  anyone who meets the condition. The severity is moderate; it is not a
+  privilege escalation, because the bucket owner writes the policy.
+- **Releases:** v19.2.6, v20.2.4, and main (06adccc25d6, 2026-10-01), whose
+  `IsPublicStatement` still evaluates `iam_all_env`
+  (`rgw_iam_policy.cc:2174-2178` and `:2193`).
+- **rgw-go:** reproduces it: `Policy.IsPublic` evaluates the statement's
+  conditions through `Statement.EvalConditions` in the same three-key
+  environment (`internal/policy/policy.go`).
+- **Upstream:** none. A prior-art search on 2026-10-04 found no report or
+  fix PR. Related, in the opposite direction: Squid's false positive for
+  an Allow statement whose NotPrincipal holds no wildcard, reported as
+  [#67047](https://tracker.ceph.com/issues/67047) and again as its
+  duplicate [#67048](https://tracker.ceph.com/issues/67048). Its fix,
+  019aaa4d101 with
+  [ceph/ceph#58686](https://github.com/ceph/ceph/pull/58686), is first
+  tagged in v20.0.0 and released in v20.2.0; the squid backport tracker,
+  [#67176](https://tracker.ceph.com/issues/67176), has no PR yet. This
+  defect is unfiled while filing is paused, and a report waits on a
+  cluster reproduction.
+- **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing `is_public`;
+  derived from the source, not reproduced.

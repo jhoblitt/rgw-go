@@ -1544,7 +1544,9 @@ does the following.
   UnknownError when an object's `user.rgw.x-amz-tagging` decodes neither as
   a tag set nor as the URL-encoded text older objects store. radosgw, by
   code reading, answers 200 with no body (`rgw_rest_s3.cc:746-773` at
-  v19.2.6, `:829-856` at v20.2.4).
+  v19.2.6, `:829-856` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw
+  answers GetObjectTagging with 200 and no body when the tags do not
+  decode](ceph-upstream-bugs.md#radosgw-answers-getobjecttagging-with-200-and-no-body-when-the-tags-do-not-decode)").
 - **An empty header reads as no header.** rgw-go takes `Range`,
   `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
   and `x-amz-server-side-encryption-customer-algorithm` as absent when they
