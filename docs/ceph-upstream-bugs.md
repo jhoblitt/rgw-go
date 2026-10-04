@@ -135,6 +135,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw ignores NotResource in a statement that also names Resource](#radosgw-ignores-notresource-in-a-statement-that-also-names-resource) | none | none | ✓ |
 | [radosgw's princ_type after Policy::eval reflects the last statement evaluated, not the one that matched](#radosgws-princ_type-after-policyeval-reflects-the-last-statement-evaluated-not-the-one-that-matched) | none | none | ✓ |
 | [radosgw accepts a policy statement with no Effect and evaluates it as Deny](#radosgw-accepts-a-policy-statement-with-no-effect-and-evaluates-it-as-deny) | none | none | ✓ |
+| [Tentacle's radosgw aborts on a policy whose Statement is a string](#tentacles-radosgw-aborts-on-a-policy-whose-statement-is-a-string) | pending | pending |  |
+| [radosgw aborts on a stored IAM policy attr with bytes past its encoding](#radosgw-aborts-on-a-stored-iam-policy-attr-with-bytes-past-its-encoding) | pending | pending |  |
+| [radosgw's ARN ordering is not a strict weak ordering](#radosgws-arn-ordering-is-not-a-strict-weak-ordering) | pending | pending |  |
+| [radosgw's policy parser forgets a statement's keys when an object in an array closes](#radosgws-policy-parser-forgets-a-statements-keys-when-an-object-in-an-array-closes) | pending | pending |  |
+| [radosgw refuses a JSON true, false or null in a policy with "No error?"](#radosgw-refuses-a-json-true-false-or-null-in-a-policy-with-no-error) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2780,9 +2785,9 @@ Every new entry adds its row to this table, in document order.
   everyone.
 - **Releases:** v19.2.6, v20.2.4 and main (7f50f7a552c, 2026-09-30,
   `rgw_iam_policy.cc:784`, `:786` and `:791`); older releases not checked.
-- **rgw-go:** not decided yet: its policy parser is not written.
-  `policy.MatchAction` notes that radosgw's parser takes such a pattern for
-  `*` before any matching.
+- **rgw-go:** reproduces it: `policy.Parse` takes any Action, NotAction,
+  Principal or NotPrincipal string starting with `*` as radosgw does, since
+  a stored policy must parse as the zone's radosgw parses it.
 - **Upstream:** [#81229](https://tracker.ceph.com/issues/81229), which we
   filed. Its fix, [ceph/ceph#72262](https://github.com/ceph/ceph/pull/72262),
   a draft, compares the full token, `std::string_view{s, l} == "*"`, at the
@@ -3803,10 +3808,11 @@ Every new entry adds its row to this table, in document order.
   checked. On main (06adccc25d6, 2026-10-01) `==` and `<` also compare
   `idp_url`, so OIDC providers no longer collapse, but not `service_id`
   (`rgw_basic_types.h:247-255`).
-- **rgw-go:** `policy.Principal` keeps the URL and the service name, and
-  Go's `==` compares them (`internal/policy/principal.go`). rgw-go parses
-  policies from phase 1 unit Z's Task 5, which decides whether its
-  principal sets mirror the collapse.
+- **rgw-go:** reproduces it: `policy.Parse` keeps a statement's principals
+  once each by kind, account and id, as the flat set does, so of two OIDC
+  providers, or two services on Tentacle, it keeps the first
+  (`internal/policy/parse.go`). `policy.Principal` itself keeps the URL and
+  the service name, and Go's `==` compares them.
 - **Upstream:**
   - The OIDC half is fixed on ceph main by 1a780f21758, "rgw/oidc: enforce
     trust policy principal scope for OIDC providers", which adds `idp_url` to
@@ -5587,9 +5593,10 @@ Every new entry adds its row to this table, in document order.
   denies the excepted objects as well. AWS refuses a statement with both
   keys; radosgw stores it and drops the exception.
 - **Releases:** v19.2.6, v20.2.4 and main.
-- **rgw-go:** reproduces it in `policy.Statement.Eval`
-  (`internal/policy/statement.go`); whether the parser refuses the pair is
-  phase 1 unit Z Task 5's.
+- **rgw-go:** reproduces it: `policy.Parse` accepts a statement with both
+  keys, as radosgw's parser does, and `policy.Statement.Eval`
+  (`internal/policy/statement.go`) consults NotResource only when Resource
+  is empty.
 - **Upstream:** none. A prior-art search found no report
   ([#58929](https://tracker.ceph.com/issues/58929) is adjacent,
   [#68029](https://tracker.ceph.com/issues/68029) unrelated) and no fix. The
@@ -5666,10 +5673,9 @@ Every new entry adds its row to this table, in document order.
   here).
 - **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
   `rgw_iam_policy.h:703`).
-- **rgw-go:** numbers Deny as `Effect`'s zero value
-  (`internal/policy/statement.go`), so a `Statement` built with no Effect
-  denies, as radosgw's default does; the parser that accepts such a document
-  is phase 1 unit Z Task 5.
+- **rgw-go:** reproduces it: `policy.Parse` accepts a statement with no
+  Effect and leaves it at Deny, `Effect`'s zero value
+  (`internal/policy/statement.go`), as radosgw's default does.
 - **Upstream:** none. A prior-art search found no report
   ([#73983](https://tracker.ceph.com/issues/73983) and
   [#68029](https://tracker.ceph.com/issues/68029) are adjacent or unrelated)
@@ -5677,3 +5683,179 @@ Every new entry adds its row to this table, in document order.
   cluster reproduction.
 - **Found:** phase 1 unit Z, Task 4 review, 2026-10-04, transcribing the
   statement's default effect; derived from the source, not reproduced.
+
+## Tentacle's radosgw aborts on a policy whose Statement is a string
+
+- **Kind:** defect, security-relevant: a regression from v19.2.6, unfixed
+  through main. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `ParseState::do_string` takes the current statement as `t`, null until
+    the first statement object opens, and at v20.2.4 asserts
+    `ceph_assert(t || w->id == TokenID::Version || w->id == TokenID::Id)`
+    (`rgw_iam_policy.cc:608-609`; main `:754-755` at 6cafff02b39,
+    2026-10-04). `ceph_assert` is compiled into release builds and aborts
+    the process.
+  - A string under the top-level Statement key reaches it with `w` the
+    Statement keyword and no statement yet: `{"Statement": "x"}` or
+    `{"Statement": ["x"]}`. `key` pushes the Statement state for the key
+    (`rgw_iam_policy.cc:504-517`), and only `obj_start` appends a statement
+    (`:803-811`).
+  - v19.2.6 has no assertion: the same string falls to the final `else`,
+    which refuses it with "`x` is not valid in the context of `Statement`."
+    without touching `t` (`rgw_iam_policy.cc:596`, `:742-746`).
+  - The assertion came with 04f26b29e0c, "Checking for dereference of a null
+    pointer (loaded from variable 't')" (2024-09-11), whose message names
+    tracker #68029.
+  - Every caller of `Policy`'s constructor reaches it: PutBucketPolicy
+    parses the request body (`rgw_op.cc:9024-9027`), and so do the IAM user,
+    group and role policy APIs (`rgw_rest_user_policy.cc:167`,
+    `rgw_rest_iam_group.cc:1284`, `rgw_rest_role.cc:189` and `:593`), SNS
+    topic policies (`rgw_rest_pubsub.cc:155`) and STS session policies
+    (`rgw_rest_sts.cc:966` and `:1027`).
+- **Impact:** a user allowed PutBucketPolicy on any bucket, as every bucket
+  owner is, ends the radosgw process with the 18-byte body
+  `{"Statement": "x"}`. The parse comes after the permission check, so the
+  other entry points need their own permissions.
+- **Releases:** v20.2.4 and main; v19.2.6 refuses the document instead.
+- **rgw-go:** differs on Tentacle: `policy.Parse` refuses the document with
+  v19.2.6's annotation on both releases (`docs/exclusions.md`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 5, 2026-10-04, transcribing `do_string`;
+  derived from the source, not reproduced.
+
+## radosgw aborts on a stored IAM policy attr with bytes past its encoding
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single line is the same at both.
+  - `load_inline_policy` and `load_managed_policy` decode a user's or
+    group's inline policies, a `std::map<string, string>`, and its managed
+    policies, `ManagedPolicies`, with `decode(x, bl)` on the attr's whole
+    bufferlist (`rgw/rgw_auth.cc:91` and `:102`).
+  - That overload is the full-bufferlist decoder, which asserts that the
+    decode consumed every byte: `ceph_assert(p.end())`
+    (`include/encoding.h:632-637`, `:633-638`; main `:1486-1491` at
+    6cafff02b39). `ceph_assert` aborts in release builds. A decode that runs
+    short throws `buffer::error`, which authentication turns into -EPERM
+    (`rgw/rgw_auth.cc:548-554`, `:563-569`); bytes left over are not an
+    exception.
+  - `load_account_and_policies` loads a user's attrs this way for every
+    request it authenticates (`rgw/rgw_auth.cc:163-168`), and each of the
+    user's groups' attrs (`:126-131`).
+- **Impact:** a user or group whose `user.rgw.user-policy`,
+  `user.rgw.managed-policy` or group policy attr carries a trailing byte
+  ends the radosgw process at that user's next request, and at each request
+  after a restart. radosgw writes these attrs cleanly, so the trigger is
+  corruption or another writer sharing the pools.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** differs: `policy.DecodeUserPolicies` and
+  `policy.DecodeManagedPolicies` fail on bytes past the encoding, so the
+  request is refused as for an attr that does not decode
+  (`docs/exclusions.md`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 5, 2026-10-04, transcribing
+  `load_inline_policy`; derived from the source, not reproduced.
+
+## radosgw's ARN ordering is not a strict weak ordering
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single line is the same at both.
+  - `operator<(const ARN&, const ARN&)` is the disjunction of the fields'
+    own `<`: partition, service, region, account or resource
+    (`rgw_arn.cc:309-315`; main `:311-317` at 6cafff02b39). Two ARNs that
+    differ in two fields in opposite directions each compare less than the
+    other, as `arn:aws:sns:zg:tenant-b:topic-a` and
+    `arn:aws:sns:zg:tenant-a:topic-b` do, so the ordering is not the strict
+    weak ordering the standard containers require. Neither is less than the
+    other only when every field is equal.
+  - A statement keeps its Resource and NotResource ARNs in
+    `boost::container::flat_set<ARN>` (`rgw_iam_policy.h:546-547`,
+    `:599-600`). Its binary search may miss an equal ARN, so a repeated ARN
+    can be kept twice; a distinct one is never dropped.
+  - CreateBucketNotification keeps the topics it loads in
+    `std::map<rgw::ARN, rgw_pubsub_topic>` (`rgw_rest_pubsub.cc:1135`,
+    `:1146`), filled by `emplace` in `init_processing` (`:1242-1253`,
+    `:1254-1265`) and read back by `find` for each notification, which skips
+    the notification when the topic is not found (`:1315-1318` and
+    `:1383-1386`, `:1327-1330` and `:1395-1398`). With the two ARNs above,
+    the second is inserted to the left of the first, and `find` for it goes
+    right from the first and ends at `end()`.
+- **Impact:** policy evaluation asks only whether some resource matches, so
+  a repeated ARN changes nothing there. A bucket notification configuration
+  naming two topics whose ARNs order inconsistently, as topics of two
+  tenants or accounts can, loses a notification while the request succeeds.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** keeps a statement's resources in document order, each once
+  (`policy.Parse`); evaluation is unaffected. Its bucket notifications are
+  not written yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 5, 2026-10-04, choosing the order of
+  parsed resources; derived from the source, not reproduced.
+
+## radosgw's policy parser forgets a statement's keys when an object in an array closes
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single line is the same at both.
+  - The parser refuses a key a statement gives twice through its `seen`
+    bits; `set` also records a statement's keys and principal types in `v`
+    (`rgw_iam_policy.cc:318-329`, `:328-339`), and `reset` clears them from
+    `seen` (`:370-373`, `:380-383`).
+  - `ParseState::obj_end` calls `reset` whenever an object closes inside an
+    array (`rgw_iam_policy.cc:448-462`, `:458-472`; main `:669-683` at
+    6cafff02b39), which is meant for the Statement array. Condition,
+    NotPrincipal and every condition operator are also arrayable and
+    objectable (`rgw_iam_policy_keywords.gperf:28`, `:33` and `:38-77`).
+  - So after `"Condition": [{...}]`, `"NotPrincipal": [{...}]` or
+    `"StringEquals": [{...}]`, the statement may give again any key it gave
+    before. A second Effect or Sid replaces the first
+    (`rgw_iam_policy.cc:615-619`, `:628-632`); a second Action, Resource or
+    Principal adds to it. The same reset lets Principal and NotPrincipal both
+    name the AWS type, which `dex`'s shared bits otherwise refuse.
+- **Impact:** a statement such as `"Effect": "Deny", "Condition": [{...}],
+  "Effect": "Allow"` parses and allows. The policy's author writes it, so
+  nothing is escalated, but a reader of the policy sees the Deny, and the
+  parser's own duplicate-key check, which refuses the same keys without the
+  array, does not hold.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** reproduces it (`policy.Parse`), since a stored policy must
+  parse as the zone's radosgw parses it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 5, 2026-10-04, transcribing `obj_end`;
+  derived from the source, not reproduced.
+
+## radosgw refuses a JSON true, false or null in a policy with "No error?"
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - rapidjson's `BaseReaderHandler` hands `Null` and `Bool` to the
+    handler's `Default` (`s3select/rapidjson/include/rapidjson/reader.h:203-205`
+    at rapidjson fcb23c2d, the submodule both tags build).
+    `PolicyParser::Default` returns false without setting an annotation
+    (`rgw/rgw_iam_policy.cc:436-438`, `:446-448`; main `:657-659` at
+    6cafff02b39), so the parse fails with kParseErrorTermination.
+  - `PolicyParseException` then reports the parser's annotation, which still
+    holds its initial value, "No error?" (`rgw/rgw_iam_policy.cc:275`,
+    `:285`; main `:496`), as "At character offset N, No error?"
+    (`rgw/rgw_iam_policy.h:563-579`, `:616-632`). PutBucketPolicy returns
+    that message to the client (`rgw/rgw_op.cc:8116-8120`, `:9047-9051`).
+  - So every unquoted `true`, `false` or `null`, wherever it appears, fails
+    the parse. AWS's policy grammar makes the quotation marks around
+    Boolean and numeric values optional, so
+    `"Bool": {"aws:SecureTransport": false}` is a valid AWS policy.
+- **Impact:** radosgw refuses a valid AWS policy that writes a Boolean
+  condition value without quotation marks, and tells the client there was
+  "No error?". The quoted form, `"false"`, parses.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** reproduces it: `policy.Parse` refuses a literal with the same
+  message and offset (`internal/policy/parse.go`), since a policy rgw-go
+  stores must parse in the zone's radosgw.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 5 review, 2026-10-04, transcribing
+  `PolicyParser::Default`; derived from the source, not reproduced.
