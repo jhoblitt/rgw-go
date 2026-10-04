@@ -452,3 +452,19 @@ comparison skips it. `make parity-check` refuses to compare results whose
 go-ceph tag, release or Ceph version differ, so bumping `GO_CEPH_TAG` or a
 Ceph pin re-records both releases' baselines in the same change.
 
+Each baseline holds the suite's 82 subtests. On both releases radosgw fails
+four of them, each because it lists the whole zone and expects only the
+suite's own buckets and users, while the populated zone also holds `plain`,
+`t1/tenanted`, `alice` and `t1$bob`:
+
+- `TestBucket/list_buckets` expects 1 bucket and `TestBucket/list_bucket_is_now_zero`
+  0; the zone lists 3, then 2.
+- `TestListBucketsWithStat/list_buckets_with_stat` expects 1 bucket, `test`
+  owned by `admin`; the zone lists 3, the first `tenanted` owned by `t1$bob`.
+- `TestUser/get_users` expects 2 users; a populated zone lists 4 with the
+  suite's `leseb`, and more once other harnesses have added theirs, such as
+  the six s3-tests users.
+
+rgw-go must fail them alike. A method whose subtests fail is left to them;
+the other methods pass. Squid skips `TestAccount`'s get and delete subtests,
+as above, and Tentacle passes them.
