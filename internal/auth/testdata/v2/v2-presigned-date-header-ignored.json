@@ -1,0 +1,23 @@
+{
+  "name": "v2-presigned-date-header-ignored",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "Date": [
+      "Thu, 01 Jan 1960 00:00:00 GMT"
+    ]
+  },
+  "presigned": true,
+  "expires": "1441000000",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-31T05:46:39Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\n1441000000\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

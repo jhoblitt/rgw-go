@@ -174,15 +174,23 @@ func checkGMTEnd(rest string) bool {
 // stringtoul accepts, and 'Z'. The fraction is dropped: radosgw's auth paths
 // pass no pns, or build the header time from whole seconds.
 func parseISO8601Basic(s string) (time.Time, bool) {
-	t, rest, ok := strptime(cString(s), "%Y%m%dT%H%M%S")
+	t, _, ok := iso8601BasicDate(s)
+	return t, ok
+}
+
+// iso8601BasicDate is parseISO8601Basic that also returns the year as
+// strptime read it, before internal_timegm carries a second 60 into the next
+// year.
+func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
+	fields, rest, ok := strptime(cString(s), "%Y%m%dT%H%M%S")
 	if !ok {
-		return time.Time{}, false
+		return time.Time{}, 0, false
 	}
 	rest = trimSpace(rest)
 	if rest != "" && rest != "Z" && (rest[0] != '.' || rest[len(rest)-1] != 'Z' || !stringToULOK(rest[1:len(rest)-1])) {
-		return time.Time{}, false
+		return time.Time{}, 0, false
 	}
-	return t.timegm(), true
+	return fields.timegm(), fields.year, true
 }
 
 // rfc2616Forms are parse_rfc2616's attempts in its order, each with the
@@ -203,11 +211,18 @@ var rfc2616Forms = []struct {
 // rgw_create_s3_canonical_header subtracts tm_gmtoff from the header time
 // (rgw_auth_s3.cc:241-242 at v19.2.6).
 func parseRFC2616(s string) (time.Time, bool) {
+	t, _, ok := rfc2616Date(s)
+	return t, ok
+}
+
+// rfc2616Date is parseRFC2616 that also returns the year as strptime read it,
+// before internal_timegm's carries and the zone offset move the instant.
+func rfc2616Date(s string) (t time.Time, year int, ok bool) {
 	s = cString(s)
 	for _, form := range rfc2616Forms {
-		if t, rest, ok := strptime(s, form.format); ok && form.end(rest) {
-			return t.timegm().Add(-time.Duration(t.gmtoff) * time.Second), true
+		if fields, rest, parsed := strptime(s, form.format); parsed && form.end(rest) {
+			return fields.timegm().Add(-time.Duration(fields.gmtoff) * time.Second), fields.year, true
 		}
 	}
-	return time.Time{}, false
+	return time.Time{}, 0, false
 }

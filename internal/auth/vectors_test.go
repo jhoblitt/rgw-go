@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,102 @@ func runV4Vector(ctx SpecContext, path string) {
 	Expect(ok).To(Equal(!v.Expect.VerifyFalse), "verify")
 }
 
+// v2Vector is one testdata/v2 file: a request, how it is signed, and what
+// authDataV2 must make of it.
+type v2Vector struct {
+	Name    string              `json:"name"`
+	Method  string              `json:"method"`
+	Target  string              `json:"target"`
+	Host    string              `json:"host"`
+	Headers map[string][]string `json:"headers"`
+	// Presigned selects the query route: Target gets QueryExtra, then
+	// AWSAccessKeyId, Expires unless it is empty, and Signature. A header
+	// vector gets "Authorization: AWS <access key>:<signature>".
+	Presigned  bool     `json:"presigned"`
+	Expires    string   `json:"expires"`
+	QueryExtra string   `json:"query_extra"`
+	DNSNames   []string `json:"dns_names"`
+	Secret     string   `json:"secret"`
+	// Signature is the client's; empty means the one Expect's string to sign
+	// yields.
+	Signature string `json:"signature"`
+	// Note says where a given Signature came from; the runner ignores it.
+	Note   string    `json:"note"`
+	Now    time.Time `json:"now"`
+	Expect struct {
+		StringToSign string `json:"string_to_sign"`
+		AccessKey    string `json:"access_key"`
+		// Error is the op.Error code authDataV2 fails with.
+		Error string `json:"error"`
+		// Message, when present, is that op.Error's message.
+		Message *string `json:"message"`
+		// VerifyFalse expects the request to parse and verify to refuse it.
+		VerifyFalse bool `json:"verify_false"`
+	} `json:"expect"`
+}
+
+func loadV2Vector(path string) *v2Vector {
+	raw, err := os.ReadFile(path)
+	Expect(err).NotTo(HaveOccurred())
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	v := &v2Vector{}
+	Expect(dec.Decode(v)).To(Succeed(), "decoding %s", path)
+	Expect(v.Name).To(Equal(strings.TrimSuffix(filepath.Base(path), ".json")), "a vector is named after its file")
+	return v
+}
+
+func runV2Vector(ctx SpecContext, path string) {
+	v := loadV2Vector(path)
+	sig := v.Signature
+	if sig == "" {
+		sig = v2Sign(v.Secret, v.Expect.StringToSign)
+	}
+	target := v.Target
+	if v.Presigned {
+		sep := "?"
+		if strings.Contains(target, "?") {
+			sep = "&"
+		}
+		if v.QueryExtra != "" {
+			target += sep + v.QueryExtra
+			sep = "&"
+		}
+		target += sep + "AWSAccessKeyId=" + url.QueryEscape(v.Expect.AccessKey)
+		if v.Expires != "" {
+			target += "&Expires=" + v.Expires
+		}
+		target += "&Signature=" + url.QueryEscape(sig)
+	}
+	req := httptest.NewRequestWithContext(ctx, v.Method, "http://"+v.Host+target, nil)
+	for name, values := range v.Headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	if !v.Presigned {
+		req.Header.Set("Authorization", "AWS "+v.Expect.AccessKey+":"+sig)
+	}
+	cfg := DefaultConfig()
+	cfg.DNSNames = v.DNSNames
+
+	d, err := authDataV2(newRequestView(req), &cfg, v.Now)
+	if v.Expect.Error != "" {
+		opErr, _ := errors.AsType[*op.Error](err)
+		Expect(opErr).To(HaveField("Code", v.Expect.Error), "error %v", err)
+		if v.Expect.Message != nil {
+			Expect(opErr).To(HaveField("Message", *v.Expect.Message), "error %v", err)
+		}
+		return
+	}
+	Expect(err).NotTo(HaveOccurred())
+	Expect(d.stringToSign).To(Equal(v.Expect.StringToSign))
+	Expect(d.accessKey).To(Equal(v.Expect.AccessKey))
+	ok, err := d.verify(v.Secret)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(ok).To(Equal(!v.Expect.VerifyFalse), "verify")
+}
+
 // vectorFiles lists testdata/<dir>/*.json. Glob fails only on a malformed
 // pattern, which a constant one is not.
 func vectorFiles(dir string) []string {
@@ -166,6 +263,12 @@ var _ = Describe("signature vectors", func() {
 	})
 
 	DescribeTable("testdata/v4", runV4Vector, vectorEntries("v4"))
+
+	It("finds the SigV2 vectors", func() {
+		Expect(vectorFiles("v2")).NotTo(BeEmpty())
+	})
+
+	DescribeTable("testdata/v2", runV2Vector, vectorEntries("v2"))
 })
 
 // chunkedVector is one testdata/chunked file: an aws-chunked payload, its

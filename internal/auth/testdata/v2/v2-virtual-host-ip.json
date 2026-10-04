@@ -1,0 +1,25 @@
+{
+  "name": "v2-virtual-host-ip",
+  "method": "GET",
+  "target": "/k",
+  "host": "10.0.0.1",
+  "headers": {
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [
+    "s3.example.com"
+  ],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\n/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

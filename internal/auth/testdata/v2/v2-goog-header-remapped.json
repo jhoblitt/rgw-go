@@ -1,0 +1,26 @@
+{
+  "name": "v2-goog-header-remapped",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "X-Goog-Meta-Q": [
+      "1"
+    ],
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\nx-amz-meta-q:1\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

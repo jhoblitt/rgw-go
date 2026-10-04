@@ -1,0 +1,19 @@
+{
+  "name": "v2-presigned-expires-nul",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {},
+  "presigned": true,
+  "expires": "1441000000%00junk",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-31T05:46:39Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\n1441000000\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

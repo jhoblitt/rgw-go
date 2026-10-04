@@ -1,0 +1,27 @@
+{
+  "name": "v2-duplicate-amz-header-last",
+  "method": "GET",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "X-Amz-Meta-A": [
+      "first",
+      "second"
+    ],
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\nx-amz-meta-a:second\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

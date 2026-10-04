@@ -1,0 +1,20 @@
+{
+  "name": "v2-presigned-expired",
+  "method": "GET",
+  "target": "/b/k?x-amz-meta-x=1",
+  "host": "s3.example.com",
+  "headers": {},
+  "presigned": true,
+  "expires": "1441000000",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-31T05:46:40Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "",
+    "access_key": "AKIDEXAMPLE",
+    "error": "AccessDenied",
+    "message": ""
+  }
+}

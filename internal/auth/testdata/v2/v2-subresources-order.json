@@ -1,0 +1,23 @@
+{
+  "name": "v2-subresources-order",
+  "method": "GET",
+  "target": "/b/k?versionId=v1&acl&uploadId=u&partNumber=3&response-content-type=text%2Fplain&foo=bar&encryption",
+  "host": "s3.example.com",
+  "headers": {
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\n/b/k?acl&partNumber=3&response-content-type=text/plain&uploadId=u&versionId=v1",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

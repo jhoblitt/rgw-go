@@ -1,0 +1,19 @@
+{
+  "name": "v2-presigned",
+  "method": "GET",
+  "target": "/b/k?x-amz-meta-x=1",
+  "host": "s3.example.com",
+  "headers": {},
+  "presigned": true,
+  "expires": "1441000000",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-31T05:46:39Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "GET\n\n\n1441000000\nx-amz-meta-x:1\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "v2-put-md5-type-amz",
+  "method": "PUT",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "Content-MD5": [
+      "rL0Y20zC+Fzt72VPzMSk2A=="
+    ],
+    "Content-Type": [
+      "text/plain"
+    ],
+    "X-Amz-Meta-B": [
+      "2"
+    ],
+    "X-Amz-Meta-A": [
+      "1"
+    ],
+    "X-Amz-Date": [
+      "20150830T123600Z"
+    ],
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "",
+  "expect": {
+    "string_to_sign": "PUT\nrL0Y20zC+Fzt72VPzMSk2A==\ntext/plain\n\nx-amz-date:20150830T123600Z\nx-amz-meta-a:1\nx-amz-meta-b:2\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": ""
+  }
+}
