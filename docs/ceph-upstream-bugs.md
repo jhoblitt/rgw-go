@@ -95,7 +95,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw never finishes a GET on a zero rgw_get_obj_max_req_size](#radosgw-never-finishes-a-get-on-a-zero-rgw_get_obj_max_req_size) | none | none | ✓ |
 | [rados_nobjects_list_seek reports the position it was given, not the one it lands at](#rados_nobjects_list_seek-reports-the-position-it-was-given-not-the-one-it-lands-at) | none | none | ✓ |
 | [librados aborts the process on a listing seek after its pool is deleted](#librados-aborts-the-process-on-a-listing-seek-after-its-pool-is-deleted) | none | none | ✓ |
-| [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), pending (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), pending (Service) |  |
+| [radosgw drops all but the first OIDC provider or Service principal in a statement](#radosgw-drops-all-but-the-first-oidc-provider-or-service-principal-in-a-statement) | [#76069](https://tracker.ceph.com/issues/76069) (OIDC), none (Service) | [ceph/ceph#68850](https://github.com/ceph/ceph/pull/68850) (OIDC), none (Service) |  |
 | [radosgw cannot load a bucket whose entry point is from before version 8](#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8) | none | none | ✓ |
 | [radosgw takes any prefix of bytes for a Range's unit](#radosgw-takes-any-prefix-of-bytes-for-a-ranges-unit) | none | [ceph/ceph#71300](https://github.com/ceph/ceph/pull/71300) |  |
 | [radosgw's parse_time drops a numeric zone offset](#radosgws-parse_time-drops-a-numeric-zone-offset) | none | [ceph/ceph#20453](https://github.com/ceph/ceph/pull/20453), [ceph/ceph#34083](https://github.com/ceph/ceph/pull/34083) |  |
@@ -118,6 +118,23 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's SigV2 resource lists encryption and object-lock but never signs them](#radosgws-sigv2-resource-lists-encryption-and-object-lock-but-never-signs-them) | pending | pending |  |
 | [radosgw cuts an aws-chunked trailer section by its trailers' length, not their position](#radosgw-cuts-an-aws-chunked-trailer-section-by-its-trailers-length-not-their-position) | pending | pending |  |
 | [radosgw reads an aws-chunked trailer line's value only up to a second colon, and drops an empty one](#radosgw-reads-an-aws-chunked-trailer-lines-value-only-up-to-a-second-colon-and-drops-an-empty-one) | pending | pending |  |
+| [radosgw's from_base64 reads before an all-'=' input](#radosgws-from_base64-reads-before-an-all--input) | none | none | ✓ |
+| [radosgw reads a runtime condition's key from its last value, and terminates when that value is short](#radosgw-reads-a-runtime-conditions-key-from-its-last-value-and-terminates-when-that-value-is-short) | none | none | ✓ |
+| [radosgw spins on a ranged GET of a compressed block larger than rgw_max_chunk_size](#radosgw-spins-on-a-ranged-get-of-a-compressed-block-larger-than-rgw_max_chunk_size) | none | none | ✓ |
+| [radosgw renders GetObjectAttributes's NextPartNumberMarker from an unset variable when max-parts is below 1](#radosgw-renders-getobjectattributess-nextpartnumbermarker-from-an-unset-variable-when-max-parts-is-below-1) | pending | pending |  |
+| [radosgw's ObjectParts gives a part without a checksum the checksum of the part before it](#radosgws-objectparts-gives-a-part-without-a-checksum-the-checksum-of-the-part-before-it) | pending | pending |  |
+| [radosgw starts an aws-chunked trailer section from a stale leftover count](#radosgw-starts-an-aws-chunked-trailer-section-from-a-stale-leftover-count) | pending | pending |  |
+| [radosgw's signed aws-chunked header parse ignores the key and misframes one not 15 bytes long](#radosgws-signed-aws-chunked-header-parse-ignores-the-key-and-misframes-one-not-15-bytes-long) | none | none | ✓ |
+| [radosgw never compares the final aws-chunked chunk's signature and parses its line loosely](#radosgw-never-compares-the-final-aws-chunked-chunks-signature-and-parses-its-line-loosely) | [#72253](https://tracker.ceph.com/issues/72253), [#45790](https://tracker.ceph.com/issues/45790) | [ceph/ceph#64934](https://github.com/ceph/ceph/pull/64934) |  |
+| [radosgw finds the aws-chunked trailer signature and trailers by substring search anywhere in its window](#radosgw-finds-the-aws-chunked-trailer-signature-and-trailers-by-substring-search-anywhere-in-its-window) | none | none | ✓ |
+| [Squid's cls_rgw reshard guard and Squid's radosgw reshard wait disagree, so guard_reshard spins without waiting](#squids-cls_rgw-reshard-guard-and-squids-radosgw-reshard-wait-disagree-so-guard_reshard-spins-without-waiting) | pending | pending |  |
+| [radosgw's garbage collector runs one more concurrent IO than rgw_gc_max_concurrent_io](#radosgws-garbage-collector-runs-one-more-concurrent-io-than-rgw_gc_max_concurrent_io) | pending | pending |  |
+| [radosgw re-reads a resharding bucket by name, so a write can land in a bucket recreated under that name](#radosgw-re-reads-a-resharding-bucket-by-name-so-a-write-can-land-in-a-bucket-recreated-under-that-name) | pending | pending |  |
+| [radosgw turns a negative rgw_gc_max_concurrent_io or rgw_gc_max_trim_chunk into a huge unsigned limit](#radosgw-turns-a-negative-rgw_gc_max_concurrent_io-or-rgw_gc_max_trim_chunk-into-a-huge-unsigned-limit) | pending | pending |  |
+| [Squid's is_public counts every Allow statement whose NotPrincipal is not the wildcard](#squids-is_public-counts-every-allow-statement-whose-notprincipal-is-not-the-wildcard) | [#67047](https://tracker.ceph.com/issues/67047), [#67048](https://tracker.ceph.com/issues/67048), [#67176](https://tracker.ceph.com/issues/67176), [#67177](https://tracker.ceph.com/issues/67177) | [ceph/ceph#58686](https://github.com/ceph/ceph/pull/58686) |  |
+| [radosgw ignores NotResource in a statement that also names Resource](#radosgw-ignores-notresource-in-a-statement-that-also-names-resource) | none | none | ✓ |
+| [radosgw's princ_type after Policy::eval reflects the last statement evaluated, not the one that matched](#radosgws-princ_type-after-policyeval-reflects-the-last-statement-evaluated-not-the-one-that-matched) | none | none | ✓ |
+| [radosgw accepts a policy statement with no Effect and evaluates it as Deny](#radosgw-accepts-a-policy-statement-with-no-effect-and-evaluates-it-as-deny) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -509,6 +526,10 @@ Every new entry adds its row to this table, in document order.
   `offset + data_length`, then wraps (`:1095-1108`), and the rest of the
   current read is taken as this chunk's data, the next chunk's framing
   included. The same code is at v20.2.4 (`:1104-1109`, `:1072-1085`).
+  `strtoull` also skips the CRLF that ends the previous chunk's data as
+  leading whitespace, so a chunk whose data is not followed by that CRLF,
+  or is followed by other blanks, frames correctly and the terminator is
+  never validated; the code is identical at v19.2.6, v20.2.4 and main.
   - Measured on v19.2.6 and v20.2.4, with identical results. An unsigned
     upload (`STREAMING-UNSIGNED-PAYLOAD-TRAILER`) of two 48-byte chunks
     whose first size is "-1" or `1ffffffffffffffff` is answered 200 and
@@ -558,8 +579,8 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** every release since v12.1.0; checked at v19.2.6, v20.2.4 and
   main.
 - **rgw-go:** phase 1 (unit A) accepts a chunk size only as strict hex, 1 to
-  16 digits. That is a difference from radosgw, which unit A records in
-  `docs/exclusions.md`.
+  16 digits, and requires the CRLF that ends each chunk's data. Both are
+  differences from radosgw, which unit A records in `docs/exclusions.md`.
 - **Upstream:** [#81123](https://tracker.ceph.com/issues/81123). The parse
   came with def8f6412a5, in
   [ceph/ceph#14885](https://github.com/ceph/ceph/pull/14885), and
@@ -573,7 +594,10 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#72309](https://github.com/ceph/ceph/pull/72309) (draft). It
   parses the size strictly: one to sixteen hex digits, ending at `;` or the
   line's CRLF, and anything else is refused with 400 before any data is
-  stored. On main, that restores the check #63326 dropped.
+  stored. On main, that restores the check #63326 dropped. It keeps the
+  leading CRLF that ends the previous chunk's data optional, so it does not
+  reject a chunk whose data is not followed by that CRLF; requiring it, as
+  rgw-go does, is a design extension of this work, not a separate defect.
 - **Found:** phase 1 planning of unit A, 2026-09-29; reproduced 2026-09-29
   on disposable Squid and Tentacle clusters.
 
@@ -3792,8 +3816,13 @@ Every new entry adds its row to this table, in document order.
     That pull request adds global OIDC providers; it is a feature, not a fix
     for this defect, and is not backported: no v19 or v20 tag contains
     1a780f21758, nor do the squid and tentacle branch heads above.
-  - The Service half: pending: sent to rgw-bug-reproduction; filing waits on
-    the owner's choice of disclosure channel.
+  - The Service half: none. A prior-art search (2026-10-02) found no report
+    or fix; it is found by us and latent, since v20.2.4's only service
+    identity is bucket logging's. Severity estimate from triage: an
+    authorization bypass a tenant can set through its own bucket, role-trust
+    or session policy, with the OIDC half around CVSS 6.5 to 7.1 (triage
+    estimate). It is unfiled while filing is paused, and a report waits on a
+    cluster reproduction.
 - **Found:** phase 1 unit Z, Task 2, 2026-10-01, transcribing
   `rgw::auth::Principal`; derived from the source, not reproduced.
 
@@ -4915,3 +4944,736 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `split_header` to
   implement rgw-go's trailer parse; derived from the source, not
   reproduced.
+
+## radosgw's from_base64 reads before an all-'=' input
+
+- **Kind:** defect, a denial of service: any request that reaches
+  `rgw::from_base64` with an input of only '=' ends the gateway. Unfixed
+  through main. Unreproduced: derived from the source, with the throwing
+  call compiled and run.
+- **Evidence:** paths are under `src/rgw/`; `rgw_b64.h` is the same at
+  v19.2.6, v20.2.4 and main.
+  - `from_base64` returns an empty string for an empty view
+    (`rgw_b64.h:64-65`), then strips trailing '=' with
+    `while (sview.back() == '=') sview.remove_suffix(1)` and no further
+    empty check (`:76-77`). An all-'=' input such as "====" is not empty,
+    so `back()` is called; once the last '=' is dropped the view is empty
+    and the next `back()` reads before the start of the buffer.
+  - Under `-D_GLIBCXX_ASSERTIONS` that `back()` aborts; without it, it is a
+    heap out-of-bounds read. el9 RPMs compile with the flag: `ceph.spec.in`
+    exports `CXXFLAGS=$RPM_OPT_FLAGS` (`:1360-1361` at v19.2.6, `:1401-1402`
+    at v20.2.4) and redhat-rpm-config's optflags carry
+    `-Wp,-D_GLIBCXX_ASSERTIONS` (verified on this fc43 host; el9 not
+    verified here). Neither outcome is a C++ exception, so a caller's
+    try/catch does not catch it, and the multi-threaded gateway ends.
+  - The callers decode base64 from client input: the SSE-C customer key and
+    its MD5, with the copy-source variants (`rgw_crypt.cc:1058` and `:1081`,
+    `:1341` and `:1362` at v19.2.6; `:1073` and `:1096`, `:1360` and `:1382`
+    at v20.2.4), the SSE-KMS encryption context (`:241`), a PutBucketLifecycle
+    Content-MD5 (`rgw_op.cc:5947` at v19.2.6, `:6616` at v20.2.4), the admin
+    metadata `?marker` (`rgw_rest_metadata.cc:86`), the LDAP S3 access-key id
+    (`rgw_rest_s3.cc:6271` at v19.2.6, `:6842` at v20.2.4) and the STS session
+    token (`:6406`, `:7014`).
+  - STS and LDAP S3 auth decode before the request is authenticated, when
+    `rgw_s3_auth_use_sts` or `rgw_s3_auth_use_ldap` is set (both default
+    false; `rgw_auth_s3.h:91` and `rgw_rest_s3.cc:6200`); the others decode
+    after authentication.
+- **Impact:** with STS or LDAP S3 auth enabled, an unauthenticated request
+  naming such a token ends the gateway and every request it is serving.
+  Otherwise any authenticated tenant ends it with one SSE-C or lifecycle
+  request, repeatably, until the request stops.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01;
+  6cafff02b39, 2026-10-04), where `from_base64` is unchanged.
+- **rgw-go:** not affected. `fromBase64` of an input that is empty once its
+  trailing '=' are removed returns an empty result and success
+  (`internal/op/readconds.go`), so an all-'=' SSE-C key or key-MD5 is 400
+  InvalidArgument, not a crash; `docs/exclusions.md` records the difference.
+- **Upstream:** none. A prior-art search found no report or fix; the 2016
+  LDAP non-base64 defects [#17544](https://tracker.ceph.com/issues/17544),
+  [#17663](https://tracker.ceph.com/issues/17663),
+  [#17785](https://tracker.ceph.com/issues/17785) and
+  [#17324](https://tracker.ceph.com/issues/17324) are distinct. Severity
+  estimate from triage: CVSS 7.5 unauthenticated with STS or LDAP enabled,
+  6.5 for the authenticated floor (triage estimate). It is unfiled while
+  filing is paused, and a report waits on a cluster reproduction.
+- **Found:** phase 1 unit R, Task 5, 2026-10-02, implementing the SSE-C key
+  decode; derived from the source, with the throwing `back()` compiled and
+  run under g++ 11.5, 13.5, 14.4 and 15.3, not reproduced on a running
+  radosgw.
+
+## radosgw reads a runtime condition's key from its last value, and terminates when that value is short
+
+- **Kind:** defect, a denial of service: a user who can set a bucket policy
+  can make radosgw terminate. Unfixed through main. Unreproduced: derived
+  from the source, with the throwing call compiled and run.
+- **Evidence:** paths are under `src/`; each pair of lines below is
+  v19.2.6's, then v20.2.4's.
+  - The policy parser marks a condition runtime when any of its values
+    starts with `${` and ends with `}`, and keeps every value as written,
+    numbers included (`rgw/rgw_iam_policy.cc:703-720`, `:716-732`; numbers
+    at `:762-766`, `:781-785`).
+  - `Condition::eval` takes the runtime key from the last value only,
+    whatever it is, by erasing its first two bytes and its last
+    (`rgw/rgw_iam_policy.cc:871-879`, `:891-899`). The string and ARN
+    operators then compare the key's values with that key's values in place
+    of the condition's (`:884-915` and `:996-1001`, `:904-935` and
+    `:1000-1005`), so every other value, an interpolation among them, is
+    ignored: `{"StringEquals": {"aws:username": ["${aws:username}",
+    "alice"]}}` compares the user name with the values of the key `ic`.
+  - For a last value shorter than three bytes the second erase,
+    `k.erase(k.length() - 1, 1)`, gets `npos` as its position and throws
+    `std::out_of_range`; compiled with GCC 11.5 it reports
+    "basic_string::erase: __pos (which is 18446744073709551615) >
+    this->size() (which is 0)". The erase runs whenever the condition's key
+    is present, for every operator but `Null` (`:861-869`, `:881-889`),
+    once the statement's principal, resource and action match and its
+    earlier conditions hold (`Statement::eval`, `:1226-1230`,
+    `:1230-1234`).
+  - `is_public` reaches the same `Condition::eval` through `eval_conditions`
+    against `iam_all_env`, which carries aws:SourceIp
+    (`rgw/rgw_iam_policy.cc:1906`, `:1941`), for any Allow statement whose
+    Principal holds the wildcard, with no gating on resource or action. Its
+    callers are PutBucketPolicy with BlockPublicPolicy set, where the PUT
+    itself terminates radosgw (`rgw/rgw_op.cc:8105`, `:9031`),
+    GetBucketPolicyStatus (`:8597`, `:9578`) and, at v20.2.4 only,
+    RestrictPublicBuckets on every non-owner request
+    (`rgw/rgw_common.cc:1377` and `:1544`, both v20.2.4).
+  - Nothing on the request path catches the exception. The try around the op
+    in `process_request` catches only `ceph::crypto::DigestException`
+    (`rgw/rgw_process.cc:410`, `:417`), the frontend's connection coroutine
+    catches nothing, and its completion handler rethrows
+    (`rgw/rgw_asio_frontend.cc:1204` and `:1221`, `:1117` and `:1134`) out of
+    `io_context::run` on an `io_context_pool` thread, which has no handler
+    either (`common/async/context_pool.h:69` and `:84`, `:68` and `:83`;
+    `common/Thread.h:73-82` at both tags), so `std::terminate` ends the
+    process.
+- **Impact:** a bucket owner can store such a policy, which PutBucketPolicy
+  accepts, and radosgw then terminates on every request the statement
+  covers. A condition on a key every request carries, such as
+  `aws:SourceIp`, under `"Principal": "*"` lets anyone, anonymous included,
+  stop each gateway in turn; through the `is_public` path even the
+  PutBucketPolicy that stores it, or any non-owner request on Tentacle, can
+  do so. The same policy stores from IAM user, group and role policies, a
+  role trust policy, an STS inline session policy, a pubsub topic policy and
+  bucket logging. A condition that mixes an interpolation with other values
+  compares with the wrong values whether or not it stops the process.
+- **Releases:** v19.2.6, v20.2.4, and the squid (a742f50616e, 2026-09-03),
+  tentacle (7411a080411, 2026-09-30) and main (06adccc25d6, 2026-10-01,
+  `rgw/rgw_iam_policy.cc:1051-1059`) branch heads; older releases not
+  checked.
+- **rgw-go:** reproduces the key taken from the last value, and works
+  around the termination: for a last value shorter than three bytes it
+  reads the empty key, which no request sets, so the string and ARN
+  operators compare with no values (`policy.Condition.Eval`).
+  `docs/exclusions.md` records the difference.
+- **Upstream:** none. A prior-art search found no report or fix; it is
+  distinct from the parse-time terminations
+  [#81253](https://tracker.ceph.com/issues/81253) /
+  [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) and
+  [#81248](https://tracker.ceph.com/issues/81248) /
+  [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270). On main since
+  5d85c65ff1af (2021), first tagged v17.1.0. Severity estimate from triage:
+  CVSS 7.5 unauthenticated, 6.5 for the authenticated floor (triage
+  estimate). It is unfiled while filing is paused, and a report waits on a
+  cluster reproduction.
+- **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing
+  `Condition::eval`; derived from the source, with the throwing erase
+  compiled and run, not reproduced on a running radosgw.
+
+## radosgw spins on a ranged GET of a compressed block larger than rgw_max_chunk_size
+
+- **Kind:** defect, a client-triggered denial of service under a config
+  precondition. Unfixed through main. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single one holds at both. `rgw/rgw_compression.cc`
+  is the same blob at both tags. main (06adccc25d6, 2026-10-01) changes its
+  `fixup_range`, `generate_test_instances`, an include and its modeline, and
+  leaves `handle_data` as it is.
+  - `RGWGetObj_Decompress::handle_data` hands the decoded bytes on in a
+    loop that runs while at least `rgw_max_chunk_size` of them remain past
+    `q_ofs`, each pass handing on `min(rgw_max_chunk_size, q_len)` bytes and
+    splicing them off (`rgw/rgw_compression.cc:154-165`). `q_len` is what
+    is left of the range (`fixup_range`, `:209`).
+  - Once the range is delivered `q_len` is 0: a pass hands on 0 bytes and
+    splices nothing, so if `rgw_max_chunk_size` or more decoded bytes are
+    still there the loop never ends. They are there when the range ends at
+    least `rgw_max_chunk_size` bytes before the end of a block, so the block
+    decodes to more than `rgw_max_chunk_size`.
+  - The writer makes each block from one `get_data` read of at most
+    `rgw_max_chunk_size` (`RGWPutObj_ObjStore::get_data`,
+    `rgw/rgw_rest.cc:1071-1078`, `:1076-1083`; `RGWPutObj_Compress::process`,
+    `rgw/rgw_compression.cc:44-87`), so blocks fit the value they were
+    written under. The option has no minimum and no `startup` flag
+    (`common/options/rgw.yaml.in:84-98`, `:84-101`), and `handle_data` reads
+    it at each pass. So the blocks of objects written before it is lowered,
+    or by a gateway of the same zone configured with a larger value, are
+    larger than a reader's.
+  - Multisite sync makes blocks of its own size: it compresses what it
+    fetches through a 512 KiB `ChunkProcessor`, whatever either zone's
+    `rgw_max_chunk_size` (`RGWRadosPutObj::process_attrs`,
+    `rgw/driver/rados/rgw_rados.cc:3570-3579`, `:3738-3747`). Its blocks are
+    larger than a reader's only where that reader's `rgw_max_chunk_size` is
+    below 512 KiB.
+  - Each pass hands its 0 bytes on through `send_response_data`'s
+    `dump_body` (`rgw/rgw_rest_s3.cc:651-656`, `:768-773`) to the beast
+    frontend's `write_data`, an `async_write` of an empty buffer
+    (`rgw/rgw_asio_frontend.cc:132-136`). Boost.Asio never touches the
+    socket for an empty write and completes it as if posted:
+    `reactive_socket_service_base::async_send` marks a send whose buffers
+    are all empty a no-op (`boost/asio/detail/reactive_socket_service_base.hpp:315-318`
+    in Boost 1.82.0, `:316-319` in 1.87.0), and `do_start_op` hands a no-op
+    straight to its immediate completion instead of the reactor
+    (`boost/asio/detail/impl/reactive_socket_service_base.ipp:237-256` in
+    1.82.0, `:237-258` in 1.87.0). Over TLS, the stream answers an empty
+    write with a zero-sized read issued so that the handler runs as if
+    posted (`boost/asio/ssl/detail/io.hpp:231-247` in 1.82.0, `:228-244` in
+    1.87.0). 1.82.0 and 1.87.0 are the releases Ceph's build fetches when it
+    builds its own Boost, at v19.2.6 and v20.2.4
+    (`cmake/modules/BuildBoost.cmake:162`, `:166`). So the request's
+    coroutine yields to the worker's other connections and resumes, every
+    pass.
+- **Impact:** once that holds, a GET with a Range that ends early in such a
+  block never finishes, even after its client has gone, and keeps a worker
+  thread busy, giving it up only between passes; any client that may read
+  the object can start one. A GET without a Range is not affected, as its
+  range ends at the end of the object. It is config-gated: it needs the
+  serving gateway's `rgw_max_chunk_size` below the stored block size, which
+  defaults to 4 MiB.
+- **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6.
+- **rgw-go:** not affected: `compression.Stream` writes the part of each
+  decoded block that lies in the range and stops, whatever
+  `rgw_max_chunk_size` is (`internal/compression`, `internal/driver`). When
+  rgw-go writes compressed objects, blocks larger than a coexisting
+  radosgw's `rgw_max_chunk_size` would expose that radosgw to this loop;
+  `docs/exclusions.md` records the difference.
+- **Upstream:** none. A prior-art search found no report or fix;
+  [#74662](https://tracker.ceph.com/issues/74662) and
+  [#20098](https://tracker.ceph.com/issues/20098) are distinct, and
+  87c7c45ea6a left the loop unchanged. Severity estimate from triage: CVSS
+  5.9 (triage estimate). It is unfiled while filing is paused, and a report
+  waits on a cluster reproduction.
+- **Found:** phase 1 unit R, Task 4, 2026-10-02, transcribing radosgw's
+  decompression for the driver's object read; derived from the source, not
+  reproduced.
+
+## radosgw renders GetObjectAttributes's NextPartNumberMarker from an unset variable when max-parts is below 1
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; v20.2.4 alone, as v19.2.6 has no
+  GetObjectAttributes.
+  - `RGWGetObjAttrs_ObjStore_S3::get_params` parses x-amz-max-parts with
+    `strict_strtol` and keeps `std::min(*max_parts, 1000)`
+    (`rgw/rgw_rest_s3.cc:3952-3962`). `strict_strtol` wraps `strict_strtoll`,
+    which is `strtoll` checked only for trailing bytes and range
+    (`common/strtol.cc:42-73`, the same at v19.2.6), so 0 and negative values
+    pass.
+  - `send_response` declares `int next_marker;` with no initializer and
+    hands it, with `max_parts ? *max_parts : 1000`, to
+    `RadosObject::list_parts` (`rgw/rgw_rest_s3.cc:4076-4097`).
+  - With max_parts below 1, `list_parts` sets `*truncated = true` and breaks
+    at the first part, before listing any
+    (`rgw/driver/rados/rgw_sal_rados.cc:2888-2891`). Its only write of
+    `*next_marker` follows a listed part (`:2928`).
+  - Because `truncated` is set, `send_response` renders
+    NextPartNumberMarker from `next_marker` (`rgw/rgw_rest_s3.cc:4111-4113`),
+    whose value is undefined.
+  - A part marker that resolves to a part (`rgw_sal_rados.cc:2861-2874`)
+    reaches the same break; a marker past the count, or one that names no
+    part, returns before it and leaves `truncated` false.
+- **Impact:** a GetObjectAttributes request for ObjectParts on a multipart
+  object with x-amz-max-parts 0 or negative answers 200 with a
+  NextPartNumberMarker whose value is whatever the uninitialized `int`
+  holds. Ceph's CMake, spec and debian packaging set no
+  `-ftrivial-auto-var-init` (checked at v20.2.4), so an el9 build leaks four
+  real bytes of stack; triage leans this a genuine information disclosure
+  (partial, pending).
+- **Releases:** v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw/rgw_rest_s3.cc:4147` and `:4154` for the parse and cap, `:4270` for
+  the declaration, `:4304-4305` for the render;
+  `rgw/driver/rados/rgw_sal_rados.cc:3068-3069` and `:3108`).
+- **rgw-go:** answers the request's part marker, 0 when absent, as
+  NextPartNumberMarker; `docs/exclusions.md` records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 6, 2026-10-02, transcribing list_parts'
+  truncation for GetObjectAttributes; derived from the source, not
+  reproduced.
+
+## radosgw's ObjectParts gives a part without a checksum the checksum of the part before it
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; v20.2.4 alone, as v19.2.6 has
+  no GetObjectAttributes.
+  - `RadosObject::list_parts` declares `Object::Part obj_part{}` once,
+    before its loop (`driver/rados/rgw_sal_rados.cc:2879`). For each part it
+    sets the number and size, assigns `obj_part.cksum` only when the part
+    head carries a `user.rgw.cksum` that decodes (`:2909-2925`), and passes
+    `obj_part` to the caller (`:2927`).
+  - `RGWGetObjAttrs_ObjStore_S3::send_response` renders a part's checksum
+    whenever its type is not none (`rgw_rest_s3.cc:4091-4094`).
+  - So a part whose head has no checksum attr, or one that does not
+    decode, is reported with the checksum of the last part before it that
+    had one.
+  - A part's `user.rgw.cksum` is written only when the upload or the part
+    request names a checksum (`RGWPutObj::execute`'s
+    `RGWPutObj_Cksum::Factory`, `rgw_op.cc:4601-4607`, and the attr at
+    `:4757-4776`), so an upload whose parts mix checksum headers stores
+    parts without it.
+- **Impact:** GetObjectAttributes's ObjectParts reports a checksum for a
+  part that has none, one belonging to another part.
+- **Releases:** v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `driver/rados/rgw_sal_rados.cc:3059`, `:3097`, `:3107`;
+  `rgw_rest_s3.cc:4284`).
+- **rgw-go:** not affected yet: it renders no part checksum.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** review of phase 1 unit R, Task 6, 2026-10-04; derived from the
+  source, not reproduced.
+
+## radosgw starts an aws-chunked trailer section from a stale leftover count
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `recv_chunk` sets `lf_bytes`, the count of bytes left in `parsing_buf`
+    after a chunk's data, only when it copies data out of `parsing_buf`
+    (`rgw_auth_s3.cc:1348-1367`, `:1325-1344`; the assignment is `:1358`,
+    `:1335`).
+  - `complete()` copies `lf_bytes` bytes from `parsing_buf.begin()` into
+    the trailer buffer, whatever `parsing_buf.size()` is, and starts the
+    trailer read after them (`:1585-1594`, `:1562-1571`).
+  - A header that fills `parsing_buf` exactly, 101 bytes with the CRLF
+    before it, as a sixteen-digit size field does, leaves it empty once
+    consumed (`consumed = semicolon_pos + 83`, `:1183`, `:1160`), so that
+    chunk's data is read past `parsing_buf` and `lf_bytes` keeps the count
+    an earlier small chunk left.
+  - If that chunk is the last data chunk, `complete()` copies that many
+    stale bytes, the start of the header just parsed, which the
+    `static_vector` still holds, as the start of the trailer section, and
+    the trailer read then has that many fewer of its 255 bytes.
+- **Impact:** a signed trailer that would fit radosgw's 255-byte read can
+  be cut short and fail with 403 SignatureDoesNotMatch; the stale bytes
+  are read from inside `parsing_buf`'s storage. It is related to, and
+  distinct from, the latent write past an empty `trailer_vec` in "radosgw
+  truncates a long aws-chunked trailer section instead of rejecting it".
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected: its reader counts the trailer section from the
+  bytes it reads after the last data chunk, and keeps no leftover count
+  (`internal/auth/chunked.go`, `finish`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 6 review, 2026-10-02; derived from the
+  source, not reproduced.
+
+## radosgw's signed aws-chunked header parse ignores the key and misframes one not 15 bytes long
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's, and the code is the same at both and on main.
+  - `create_next` looks in a signed header only for a `;`, then an `=`,
+    then a CRLF, and takes the 64 bytes between them as the signature;
+    it never compares the key with `chunk-signature`
+    (`rgw_auth_s3.cc:1140-1169`, `:1117-1146`).
+  - It returns `consumed = semicolon_pos + 83`, the length of a header
+    whose key is the 15-byte `chunk-signature` (`:1183`, `:1160`), but
+    computes the chunk's data offset from the CRLF it found
+    (`:1171-1173`, `:1148-1150`). The true length is
+    `semicolon_pos + keylen + 68`.
+  - So any 15-byte key frames correctly and the chunk verifies. A key of
+    another length is misframed: `consumed` is off by the difference, so
+    bytes of the header are delivered and hashed as data, or the first
+    data bytes are skipped (`get_data_size`, `:1100-1108`, `:1077-1085`),
+    until a chunk signature check fails. The trailer section's own parse
+    does check its keys (`mut_extract_helper`); only `create_next` omits
+    the check.
+- **Impact:** a malformed header is accepted with a wrong key, or answered
+  with a signature error (403, or 400 XAmzContentSHA256Mismatch for the
+  last chunk) rather than refused as malformed. It is gated by the signer:
+  `create_next` runs only after the seed signature verifies, the delivered
+  bytes equal the hashed bytes, and each chunk signature still gates, so the
+  outcome is a rejection or the secret holder corrupting its own object.
+  Open question (unverified): `consumed` drives
+  `parsing_buf.erase(begin, begin + consumed)` (`:1334-1335`, `:1311-1312`);
+  a key shorter than 15 bytes on a chunk with little or no data past the
+  CRLF, such as the final zero-length chunk, could make `consumed` exceed
+  `parsing_buf.size()`, an out-of-range erase and a possible
+  authenticated-only crash. Not verified.
+- **Releases:** v19.2.6, v20.2.4 and main; the code is identical.
+- **rgw-go:** requires the key `chunk-signature` and refuses any other with
+  400 InvalidArgument (`docs/exclusions.md`, "aws-chunked framing is read
+  strictly").
+- **Upstream:** none. A prior-art search found no report or fix of the
+  unchecked key or the misframe. Related:
+  [#45790](https://tracker.ceph.com/issues/45790) (2020, In Progress) calls
+  this decode's checking "very limited", and its fix
+  [ceph/ceph#35350](https://github.com/ceph/ceph/pull/35350) was closed
+  unmerged in 2022; neither names the key check or the misframe, so this is
+  not a duplicate. The parse came with def8f6412a5 (2017), and
+  [ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856) (2023) reworked
+  but did not fix it. The siblings
+  [#81122](https://tracker.ceph.com/issues/81122) and
+  [#81123](https://tracker.ceph.com/issues/81123) fix adjacent framing
+  defects. It is unfiled while filing is paused, and a report waits on a
+  cluster reproduction.
+- **Found:** phase 1 unit A, Task 6, 2026-10-02; derived from the source,
+  not reproduced.
+
+## radosgw never compares the final aws-chunked chunk's signature and parses its line loosely
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each triple of lines is
+  v19.2.6's, then v20.2.4's, then main's (06adccc25d6).
+  - `complete()` says it validates "not the final zero-length chunk, but
+    the one before that" (`rgw_auth_s3.cc:1557-1559`, `:1534-1536`). It
+    computes `final_chunk_signature` under the comment "now it's time to
+    verify the signature of the last, zero-length chunk"
+    (`:1565-1575`, `:1542-1552`, `:1582-1592`), then only extracts and logs
+    the declared `chunk-signature=` value (`:1648-1653`, `:1625-1630`,
+    `:1665-1670`) and never compares the two.
+  - Its parse of the final chunk line skips an optional "\r\n", "0" and
+    ";" independently (`:1624-1637`, `:1601-1614`), so a malformed final
+    chunk line, or none, is accepted.
+  - Before the decoded length is reached the final chunk is an ordinary
+    empty chunk to `recv_chunk`, whose signature is compared
+    (`:1284-1291`, `:1261-1268`).
+- **Impact:** a conformance and defense-in-depth gap, not a bypass. Every
+  data chunk is verified in the HMAC chain, and the final chunk binds no
+  new input; where its signature matters, as the seed of the trailer
+  signature, radosgw uses its own computed value. The loose parse yields at
+  most a 403 for a legitimate client.
+- **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6.
+- **rgw-go:** reproduces the uncompared signature: once the decoded length
+  is delivered the final chunk's declared signature is parsed and not
+  compared, and before it the signature is compared, as `recv_chunk` does
+  (`internal/auth/chunked.go`, `complete` and `nextChunk`). The final chunk
+  line is parsed strictly, and a malformed one is refused with 400
+  InvalidArgument (`docs/exclusions.md`, "aws-chunked framing is read
+  strictly").
+- **Upstream:** [#72253](https://tracker.ceph.com/issues/72253), the Java
+  SDK "mcrc32" loose-parse symptom, is Fix Under Review, and
+  [#45790](https://tracker.ceph.com/issues/45790) is the loose-parse
+  umbrella. [ceph/ceph#64934](https://github.com/ceph/ceph/pull/64934) (for
+  #72253) adds exactly the missing comparison and tightens the tail; it was
+  closed unmerged by the stale bot after QA failures, its logic not
+  rejected. The code came with 5afa3fc52f0
+  ([ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856), for
+  [#63153](https://tracker.ceph.com/issues/63153)), first in v19.1.0.
+- **Found:** before this entry, not by us. Met in phase 1 unit A, Task 6,
+  2026-10-02; derived from the source, not reproduced.
+
+## radosgw finds the aws-chunked trailer signature and trailers by substring search anywhere in its window
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; the search is the same at
+  v19.2.6, v20.2.4 and main.
+  - `complete()` locates `chunk-signature=`, each announced trailer and
+    `x-amz-trailer-signature:` by unanchored substring search in the
+    trailer window, up to 255 bytes, with `std::string_view::find`
+    (`mut_extract_helper` and `extract_helper`, `rgw_auth_s3.cc:1436-1464`
+    at v19.2.6, `:1413-1441` at v20.2.4, `:1456-1484` on main 6cafff02b39).
+  - When chunks past the decoded length are read into that window, a
+    trailer signature validly chained from the chunk at the decoded length
+    (`calc_v4_trailer_signature` from `final_chunk_signature`) is accepted
+    wherever it sits in the window, a following chunk's data included,
+    rather than only on the line after the final chunk.
+- **Impact:** a payload whose `x-amz-trailer-signature:`, validly chained
+  from the chunk at the decoded length, appears anywhere in the trailer
+  window passes. It is gated by that chained HMAC, so an injected
+  signature or set of trailers fails closed for anyone without the key, and
+  a key holder getting its own trailers accepted from an unusual offset is
+  self-inflicted. The same `find`-anywhere search drives the truncation and
+  undefined behaviour in "radosgw cuts an aws-chunked trailer section by
+  its trailers' length, not their position"; the advance-by-length quirk
+  there (`mut_extract_helper` advances by the match's length, not its
+  offset plus length, `:1443-1444` at v19.2.6, `:1420-1421` at v20.2.4,
+  `:1462-1463` on main) has no effect here, since the extracted
+  `chunk-signature=` value is unused.
+- **Releases:** v19.2.6, v20.2.4 and main 6cafff02b39.
+- **rgw-go:** answers 403 SignatureDoesNotMatch for any payload that
+  expects a trailer signature once more data, or the end of the body,
+  follows the chunk at the decoded length, so it never reads a signature
+  from the window (`internal/auth/chunked.go`, `endAtLength`), and its own
+  trailer parse reads the section line by line (`docs/exclusions.md`,
+  "aws-chunked trailer sections are read line by line").
+- **Upstream:** none. A prior-art search found no report or fix; it is
+  distinct from [#81122](https://tracker.ceph.com/issues/81122) and
+  [#81123](https://tracker.ceph.com/issues/81123), the same function's
+  other framing defects, and from
+  [#45790](https://tracker.ceph.com/issues/45790), the robustness umbrella
+  that does not name it. The trailer parse came with
+  [ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856). It is unfiled
+  while filing is paused, and a report waits on a cluster reproduction.
+- **Found:** phase 1 unit A, Task 6 re-review, 2026-10-04; derived from the
+  source, not reproduced.
+
+## Squid's cls_rgw reshard guard and Squid's radosgw reshard wait disagree, so guard_reshard spins without waiting
+
+- **Kind:** defect on Squid. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - Squid's object class refuses a guarded index write whenever the shard
+    header's reshard status is not NOT_RESHARDING (`guard_bucket_resharding`
+    -> `header.resharding()`, `cls/rgw/cls_rgw.cc:4597`; `resharding()` is
+    `reshard_status != NOT_RESHARDING`, `cls/rgw/cls_rgw_types.h:779-781`).
+  - But Squid's `block_while_resharding` treats only IN_PROGRESS as busy
+    (`resharding_in_progress()`, `driver/rados/rgw_rados.cc:7837`;
+    `cls_rgw_types.h:783-785`), refreshes the bucket and returns 0
+    otherwise, and both `guard_reshard` callers then reset their retry
+    counter and re-send at once (`UpdateIndex::guard_reshard`,
+    `rgw_rados.cc:7062`; the completion retry thread's
+    `RGWRados::guard_reshard`, `:7760`).
+  - So while a shard's status is DONE, a Squid radosgw write, or its retry
+    thread, loops with no wait and no bound, each pass a refused write, a
+    status read and a bucket-info read.
+  - At v20.2.4 a Tentacle radosgw reads any non-zero status as busy
+    (`resharding()`, `:8779`) and waits, and the Tentacle class refuses only
+    IN_PROGRESS and an IN_LOGRECORD shard at `rgw_reshardlog_threshold`
+    (`cls_rgw.cc:906-921`).
+- **Impact:** a Squid radosgw spins a worker on an index write, or its
+  completion retry thread, while a shard is left at a reshard status its
+  class rejects but its wait does not treat as busy. By code reading it is
+  reachable with a Squid radosgw against Tentacle OSDs during an upgrade,
+  while a Tentacle reshard holds a shard IN_LOGRECORD past the threshold, or
+  with a Squid-class shard left at DONE. Not reproduced.
+- **Releases:** v19.2.6 (Squid); the Tentacle wait and class guard at
+  v20.2.4.
+- **rgw-go:** bounds it. `guardReshard` waits with `blockWhileResharding`
+  and re-sends at most ten times, and starts that count over only when the
+  refreshed instance moves the object to another shard object
+  (`internal/driver/indexop.go`); a shard that keeps refusing while its
+  status reads as finished uses up the ten calls and answers 500
+  UnknownError. `docs/exclusions.md` records the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 4, 2026-10-04, implementing the index
+  reshard guard; derived from the source, not reproduced.
+
+## radosgw's garbage collector runs one more concurrent IO than rgw_gc_max_concurrent_io
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** `RGWGCIOManager::schedule_io` waits only while
+  `ios.size() > max_aio`, where `max_aio` is `rgw_gc_max_concurrent_io`
+  (`src/rgw/driver/rados/rgw_gc.cc:371` and `:384` at v19.2.6, `:385` and
+  `:399` at v20.2.4, `:307` and `:321` on main 06adccc25d6). So up to
+  `max_aio + 1` operations are in flight, and a value of 0 still allows one.
+  The option is a plain int with default 10 and no minimum
+  (`src/common/options/rgw.yaml.in`).
+- **Impact:** garbage collection keeps one more RADOS operation in flight
+  than the option names; minor.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** keeps `rgw_gc_max_concurrent_io` as radosgw reads it
+  (`internal/driver`, `writer.go`); the garbage-collection task that uses
+  it is phase 1 work not yet written and reproduces radosgw's bound.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 4, 2026-10-04; derived from the source,
+  not reproduced.
+
+## radosgw re-reads a resharding bucket by name, so a write can land in a bucket recreated under that name
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `block_while_resharding`'s `fetch_new_bucket_info` re-reads the bucket
+    by tenant and name (`get_bucket_info`,
+    `driver/rados/rgw_rados.cc:7793`, `:8735`; `:9400` on main 06adccc25d6)
+    into the `UpdateIndex` target's bucket info, and `bs->init` takes the
+    shard from it (`:7802`, `:8744`).
+  - If the bucket was removed and a bucket of the same name created while
+    the write waited out the reshard, the prepare and completion go to the
+    new bucket's index, although the head object was written under the old
+    bucket's marker.
+- **Impact:** a write that waits out a reshard can index into a different
+  bucket that reused the name.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** re-reads the bucket instance by its id, not its name
+  (`refreshIndexOp`, `internal/driver/indexop.go`), so a bucket gone when
+  the write resumes is 404 NoSuchKey and a same-name bucket created in that
+  time does not receive the write's entries. `docs/exclusions.md` records
+  the difference.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 4, 2026-10-04; derived from the source,
+  not reproduced.
+
+## radosgw turns a negative rgw_gc_max_concurrent_io or rgw_gc_max_trim_chunk into a huge unsigned limit
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; both options are
+  plain ints with no minimum (`src/common/options/rgw.yaml.in`).
+  - `RGWGCIOManager` stores `rgw_gc_max_concurrent_io` in a `size_t
+    max_aio` (`rgw_gc.cc:365` and `:371` at v19.2.6, `:379` and `:385` at
+    v20.2.4), so a negative value becomes a count near 2^64 and
+    `schedule_io` never waits (`ios.size() > max_aio` is never true,
+    `:384`, `:399`).
+  - The trim flush compares `rt.size()` with
+    `(size_t)rgw_gc_max_trim_chunk` (`:462`, `:477`), so a negative chunk
+    never flushes until garbage collection drains.
+- **Impact:** a negative `rgw_gc_max_concurrent_io` lets garbage collection
+  schedule RADOS operations without bound; a negative
+  `rgw_gc_max_trim_chunk` defers every tag trim to the drain.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** keeps both options as radosgw reads them (`internal/driver`,
+  `writer.go`), so the garbage-collection task that uses them reproduces the
+  conversions.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 4 review, 2026-10-04; derived from the
+  source, not reproduced.
+
+## Squid's is_public counts every Allow statement whose NotPrincipal is not the wildcard
+
+- **Kind:** defect, fixed in Tentacle and unfixed on squid. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - At v19.2.6, `IsPublicStatement` returns the wildcard statement's
+    condition result when a Principal entry is the wildcard, and otherwise,
+    for every other Allow statement, `std::none_of` over its NotPrincipal
+    entries for the wildcard (`rgw_iam_policy.cc:1900-1916`). `none_of` over
+    an empty set is true, so an Allow statement that names a specific
+    Principal, or names none, counts as public whatever its conditions.
+  - v20.2.4 counts an Allow statement only when a Principal entry is the
+    wildcard and its conditions hold in `iam_all_env`
+    (`rgw_iam_policy.cc:1935-1947`). The change is 019aaa4d101 ("rgw: donot
+    check for NotPrincipal in IsPublicStatement", 2024-07-19), whose message
+    names the empty-NotPrincipal case.
+  - `is_public` decides PutBucketPolicy's BlockPublicPolicy refusal
+    (`rgw_op.cc:8103-8108` at v19.2.6) and GetBucketPolicyStatus's IsPublic
+    (`rgw_op.cc:8597`).
+- **Impact:** on Squid, a bucket whose public-access block sets
+  BlockPublicPolicy refuses, with 403, any bucket policy holding an Allow
+  statement for a named principal, such as a grant to one user;
+  GetBucketPolicyStatus reports such a policy public. It over-blocks and
+  fails closed.
+- **Releases:** v19.2.6 and the squid branch head (a742f50616e, 2026-09-03),
+  which still has the `none_of`. The first tag carrying the fix is v20.0.0,
+  released v20.2.0; checked at v20.2.4. Older squid releases not checked.
+- **rgw-go:** follows the zone's release: `policy.Semantics`'s
+  `PublicNeedsWildcardPrincipal` selects v19.2.6's rule on Squid and
+  v20.2.4's on Tentacle (`internal/policy/policy.go`, `Policy.IsPublic`).
+- **Upstream:** [#67047](https://tracker.ceph.com/issues/67047), with its
+  duplicate [#67048](https://tracker.ceph.com/issues/67048), reported it;
+  the fix 019aaa4d101 came with
+  [ceph/ceph#58686](https://github.com/ceph/ceph/pull/58686), first tagged
+  v20.0.0 and released v20.2.0. The squid backport tracker
+  [#67176](https://tracker.ceph.com/issues/67176) is open with no PR, and
+  the reef one [#67177](https://tracker.ceph.com/issues/67177) was rejected.
+  Not found by us; it is an over-block, not a vulnerability, so there is
+  nothing to file. The opposite direction, Squid's false negative for a
+  wildcard-principal statement behind a condition on a key outside
+  `iam_all_env`, is "radosgw's is_public judges a wildcard-principal
+  statement against a fixed three-key environment".
+- **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing `is_public`
+  at both tags; derived from the source, not reproduced.
+
+## radosgw ignores NotResource in a statement that also names Resource
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `Statement::eval` matches Resource when it is non-empty and consults
+    NotResource only in the `else if` (`rgw_iam_policy.cc:1206-1220`,
+    `:1210-1224`).
+  - The parser accepts both keys in one statement: its duplicate-key check
+    covers only a repeated key (`rgw_iam_policy.cc:277-329`, `:287-339`;
+    the `!pp->test(k->id)` at `:504`, `:514`), and it files each ARN under
+    the key that named it (`:680-702`, `:693-715`).
+  - main (06adccc25d6, 2026-10-01) keeps the `else if`
+    (`rgw_iam_policy.cc:1320`).
+- **Impact:** an Allow statement with Resource `arn:aws:s3:::b/*` and
+  NotResource `arn:aws:s3:::b/secret` grants `b/secret`. A Deny so written
+  denies the excepted objects as well. AWS refuses a statement with both
+  keys; radosgw stores it and drops the exception.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** reproduces it in `policy.Statement.Eval`
+  (`internal/policy/statement.go`); whether the parser refuses the pair is
+  phase 1 unit Z Task 5's.
+- **Upstream:** none. A prior-art search found no report
+  ([#58929](https://tracker.ceph.com/issues/58929) is adjacent,
+  [#68029](https://tracker.ceph.com/issues/68029) unrelated) and no fix. The
+  `else if` is original to 24d295237ef ("rgw: policy: fix NotPricipal,
+  NotResource does not take effect", 2018, first tagged v14.0.1), which
+  created it while fixing a different bug; cite it as the origin, not prior
+  art. It is unfiled while filing is paused, and a report waits on a cluster
+  reproduction.
+- **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing
+  `Statement::eval`; derived from the source, not reproduced.
+
+## radosgw's princ_type after Policy::eval reflects the last statement evaluated, not the one that matched
+
+- **Kind:** defect on the squid and tentacle branches; main lost it to a
+  refactor. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `Statement::eval_principal` resets `*princ_type` to Other on entry, then
+    for a role a non-empty Principal names sets it to Session or Role from
+    that statement's Principal block (`rgw_iam_policy.cc:1246-1273`,
+    `:1250-1277`).
+  - `Policy::eval` passes one `princ_type` to every statement in turn
+    (`:1828-1842`, `:1863-1877`), so after it returns the value reflects the
+    last statement evaluated, not the one that allowed. It depends only on
+    the identity and the Principal blocks, not on the requested action or
+    resource, so it is deterministic and not caller-steerable.
+  - The consumer, `evaluate_iam_policies`, reads `princ_type` only when
+    session policies are present (`rgw_common.cc:1185-1228`, `:1198-1239`).
+  - On main f7c44ac833e rewrote `Policy::eval` to return the matched
+    principal and set it only for a matching Allow (`:2080-2111` at
+    06adccc25d6); the squid (a742f50616e) and tentacle (7411a080411) branch
+    heads keep the reset-per-statement shape.
+- **Impact:** with STS session policies, the branch taken can be wrong for
+  the matched statement. Usually it is an unexpected 403; narrowly it is a
+  fail-open, where a resource policy that allows the action to the role ARN
+  and a later statement names the session or user ARN lands on the Session
+  branch and grants without the session policy. It leaks only what the
+  resource policy already grants that role or session, with no cross-account
+  or outsider gain. Low.
+- **Releases:** v19.2.6, v20.2.4 and both branch heads above; not main.
+- **rgw-go:** does not compute the principal type
+  (`policy.Statement.EvalPrincipal`, `internal/policy/statement.go`); phase
+  1 has no STS, so the type is unread until then.
+- **Upstream:** none. A prior-art search found no report
+  ([#73796](https://tracker.ceph.com/issues/73796) and
+  [#68029](https://tracker.ceph.com/issues/68029) are unrelated) and no
+  targeted fix; f7c44ac833e, which incidentally fixed it on main, came with
+  [ceph/ceph#66999](https://github.com/ceph/ceph/pull/66999) for
+  [#74471](https://tracker.ceph.com/issues/74471), a different defect. It is
+  unfiled while filing is paused, and a report waits on a cluster
+  reproduction.
+- **Found:** phase 1 unit Z, Task 4 review, 2026-10-04, transcribing
+  `eval_principal` and `Policy::eval`; derived from the source, not
+  reproduced.
+
+## radosgw accepts a policy statement with no Effect and evaluates it as Deny
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - A `Statement` initializes its effect to `Effect::Deny`, under the
+    comment "Every statement MUST provide an effect. I just initialize it to
+    deny as defensive programming" (`rgw_iam_policy.h:539-541`, `:592-594`).
+  - `ParseState::obj_start` creates each statement with `emplace_back`
+    (`rgw_iam_policy.cc:784-788`, `:803-807`), `ParseState::key` sets the
+    effect only in the Effect branch (`:617-624`, `:630-637`), and
+    `ParseState::obj_end` has only a duplicate-key guard, no required-key
+    check (`:448-462`, `:458-472`). So a statement that names no Effect
+    parses and keeps Deny.
+- **Impact:** non-security and fail-safe. A policy author who omits Effect
+  silently loses the grant they meant, with no unintended access. AWS
+  rejects a statement with no Effect (not checked against AWS documentation
+  here).
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
+  `rgw_iam_policy.h:703`).
+- **rgw-go:** numbers Deny as `Effect`'s zero value
+  (`internal/policy/statement.go`), so a `Statement` built with no Effect
+  denies, as radosgw's default does; the parser that accepts such a document
+  is phase 1 unit Z Task 5.
+- **Upstream:** none. A prior-art search found no report
+  ([#73983](https://tracker.ceph.com/issues/73983) and
+  [#68029](https://tracker.ceph.com/issues/68029) are adjacent or unrelated)
+  and no fix. It is unfiled while filing is paused, and a report waits on a
+  cluster reproduction.
+- **Found:** phase 1 unit Z, Task 4 review, 2026-10-04, transcribing the
+  statement's default effect; derived from the source, not reproduced.
