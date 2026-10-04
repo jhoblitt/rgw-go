@@ -354,15 +354,7 @@ func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error)
 		}
 		return 0, fmt.Errorf("%w: %s has no part %d", ErrInvalidPart, r.Object.Name, n)
 	}
-	rec := r.BucketRec
-	if obj.Bucket != rec.Info.Bucket {
-		// get_obj_state names the part head by the manifest's bucket, a
-		// copy's source, and places it by the request bucket's rule.
-		cp := *rec
-		cp.Info.Bucket = obj.Bucket
-		rec = &cp
-	}
-	st, err := o.readHead(ctx, r.Env.Objects, rec, obj.Key)
+	st, err := o.readHead(ctx, r.Env.Objects, partBucket(r.BucketRec, obj.Bucket), obj.Key)
 	if err != nil {
 		// radosgw answers InvalidPart whatever the read failed with, so the
 		// cause is kept for the log but not matched.
@@ -391,6 +383,18 @@ func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error)
 	o.State = &part
 	o.VersionID = part.Key.Instance
 	return count, nil
+}
+
+// partBucket is rec naming bucket instead, as get_obj_state reads a part head:
+// named by the manifest's bucket, a copy's source, and placed by the request
+// bucket's rule.
+func partBucket(rec *BucketRecord, bucket meta.BucketID) *BucketRecord {
+	if bucket == rec.Info.Bucket {
+		return rec
+	}
+	cp := *rec
+	cp.Info.Bucket = bucket
+	return &cp
 }
 
 // manifestError is a manifest the part lookups cannot walk, where radosgw's
