@@ -116,6 +116,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's SigV2 date check wraps the request time to 32 bits](#radosgws-sigv2-date-check-wraps-the-request-time-to-32-bits) | pending | pending |  |
 | [radosgw signs only the last value of a repeated x-amz- header](#radosgw-signs-only-the-last-value-of-a-repeated-x-amz--header) | pending | pending |  |
 | [radosgw's SigV2 resource lists encryption and object-lock but never signs them](#radosgws-sigv2-resource-lists-encryption-and-object-lock-but-never-signs-them) | pending | pending |  |
+| [radosgw cuts an aws-chunked trailer section by its trailers' length, not their position](#radosgw-cuts-an-aws-chunked-trailer-section-by-its-trailers-length-not-their-position) | pending | pending |  |
+| [radosgw reads an aws-chunked trailer line's value only up to a second colon, and drops an empty one](#radosgw-reads-an-aws-chunked-trailer-lines-value-only-up-to-a-second-colon-and-drops-an-empty-one) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4804,3 +4806,112 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A, Task 8's review, 2026-10-04, checking
   `signed_subresources` against `RGWHTTPArgs::append`; derived from the
   source, not reproduced.
+
+## radosgw cuts an aws-chunked trailer section by its trailers' length, not their position
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** in `src/rgw/rgw_auth_s3.cc` unless named; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `AWSv4ComplMulti::complete` reads up to 255 bytes after the chunk at
+    `x-amz-decoded-content-length` into `trailer_vec`, a
+    `static_vector<char, 256>` on its stack (`:1583-1606`, `:1560-1583`).
+    When more than three bytes arrived, it views them, past an optional
+    `\r\n`, `0` and `;`, as `mut_sv_trailer`, and cuts the final chunk's
+    `chunk-signature=` line from it (`:1624-1655`, `:1601-1632`).
+  - When the request carries `x-amz-trailer`, it calls
+    `extract_trailing_headers` (`:1659-1661`, `:1636-1638`). That function
+    looks each name of `x-amz-trailer`, split on ",", up anywhere in the
+    section with `extract_helper`, which returns the text from the name to
+    the next CRLF and that text's length plus two, but not where it lies
+    (`:1451-1464`, `:1428-1441`). It adds up those lengths and calls
+    `mut_sv_trailer.remove_prefix(consumed)` (`:1482-1510`, `:1459-1487`),
+    so it drops that many bytes from the start of the section, wherever the
+    lines it found were.
+  - The search for `x-amz-trailer-signature:` runs on what is left
+    (`:1663-1665`, `:1640-1642`). When the drop reaches into the signature
+    line, a payload that expects a trailer signature fails with 403
+    SignatureDoesNotMatch though its signature is right (`:1686-1690`,
+    `:1663-1667`). It does when the signature line precedes a listed
+    trailer's line with fewer bytes before it than the drop; a signature
+    line with at least that many bytes before it survives.
+  - The lines found can repeat or overlap: a name listed twice is found
+    twice, and a listed name that also occurs inside another found line,
+    `crc32c` beside `x-amz-checksum-crc32c` for instance, is found there.
+    Each find adds its line's length again, so the drop reaches past the
+    trailers into the signature line even with the trailers first and the
+    signature line last. The lengths add up to more than the section holds
+    once a name is listed often enough, and
+    `std::string_view::remove_prefix` with a count above `size()` is
+    undefined behaviour. libstdc++ checks the count only
+    under `_GLIBCXX_ASSERTIONS` (`string_view:299-304` in the system's GCC
+    15 headers, not Ceph's build toolchain), which Ceph defines in Debug
+    builds (`src/CMakeLists.txt:190-193`, `:208-211`), and the failed check
+    aborts the process. Without it the view's length wraps to just under
+    2^64, and the `find` for `x-amz-trailer-signature:` that follows reads
+    past the 256-byte buffer until it finds that text or faults.
+  - `get_v4_canonical_headers` requires `x-amz-trailer`, like every
+    `x-amz-` header, to be signed unless `rgw_sigv4_insecure` is set
+    (`:803-819`, `:780-796`).
+- **Impact:** a payload that expects a trailer signature fails with 403
+  SignatureDoesNotMatch, though its signature is right, when its
+  `x-amz-trailer` lists a name twice or lists overlapping names, even with
+  the trailers first and the signature line last, and when its signature
+  line comes before a listed trailer with fewer bytes before it than the
+  drop. A holder of a valid key can send an aws-chunked upload of any of
+  the three streaming forms whose `x-amz-trailer` lists one name enough
+  times, and reach the undefined behaviour in `complete()` at the end of
+  PutObject or UploadPart: an abort that ends the radosgw process and every
+  request it serves where the assertions are compiled in, a read past the
+  buffer where they are not. `mut_extract_helper`, which cuts the final
+  chunk's `chunk-signature=` line, drops by length in the same way: the
+  match's length plus two from the start of the region, not everything up
+  to the match's end (`:1442-1445`, `:1419-1422`), with no outcome beyond
+  this entry's. A section as the AWS SDKs write it, the trailers first and
+  the signature line last, each name listed once, is unaffected.
+- **Releases:** v19.2.6, v20.2.4 and main (6cafff02b39, 2026-10-04,
+  `rgw_auth_s3.cc:1501-1529`).
+- **rgw-go:** not affected. `trailers` (`internal/auth/chunked.go`) reads
+  the section line by line, takes each listed name once and reads nothing
+  past the section, and only for a payload that expects a trailer
+  signature; `docs/exclusions.md` records the difference ("aws-chunked
+  trailer sections are read line by line").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `complete()`'s
+  trailer parse to implement rgw-go's; derived from the source, not
+  reproduced.
+
+## radosgw reads an aws-chunked trailer line's value only up to a second colon, and drops an empty one
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** in `src/rgw/rgw_auth_s3.cc` unless named; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `split_header` splits a trailer line with `ceph::split(hdr, ":")`,
+    passes on its first two parts as the name and the value, and passes
+    nothing when there is no second part (`:1470-1480`, `:1447-1457`).
+    `ceph::split` skips empty parts (`spliterator::next`,
+    `common/split.h:32-38` at both tags). So the value of `name:a:b` is
+    `a`, that of `name::a` is `a`, and `name:` has none.
+  - `extract_trailing_headers` puts a listed trailer into the map the
+    trailer signature covers only when `split_header` passes it on
+    (`:1496-1504`, `:1473-1481`), and `complete()` takes the declared
+    trailer signature the same way (`:1666-1672`, `:1643-1649`).
+  - `calc_v4_trailer_signature` hashes that map as `name:value\n` per
+    entry (`:1391-1418`, `:1368-1395`; `get_canon_amz_hdrs`, `:66-86`,
+    `:67-87`).
+- **Impact:** a signed trailer whose value holds a colon or is empty fails
+  with 403 SignatureDoesNotMatch when the client signs its whole value, and
+  a signature line with a colon and more text after the signature is
+  accepted. Checksum values are base64 and hold no colon, so the AWS SDKs
+  never meet it.
+- **Releases:** v19.2.6, v20.2.4 and main (6cafff02b39, 2026-10-04,
+  `rgw_auth_s3.cc:1489-1499`).
+- **rgw-go:** differs. `trailers` (`internal/auth/chunked.go`) splits a
+  line at its first colon and takes the rest of it, untrimmed and possibly
+  empty, as the value; `docs/exclusions.md` records the difference
+  ("aws-chunked trailer sections are read line by line").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `split_header` to
+  implement rgw-go's trailer parse; derived from the source, not
+  reproduced.
