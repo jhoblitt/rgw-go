@@ -9,3 +9,6 @@ func (m Manifest) StripesUpTo(limit int) ([]Stripe, error) { return m.stripes(li
 func (m Manifest) PartBoundsUpTo(n, limit int) (ofs, size uint64, head Obj, ok bool, err error) {
 	return m.partBounds(n, limit)
 }
+
+// WalkPartsUpTo is WalkParts with limit standing for MaxWalkStripes.
+func (m Manifest) WalkPartsUpTo(limit int) (*PartWalk, error) { return m.walkParts(limit) }

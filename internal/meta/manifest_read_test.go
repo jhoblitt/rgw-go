@@ -105,6 +105,37 @@ var _ = Describe("Manifest.Seek", func() {
 			Entry("part 2", 2, uint64(8<<20), uint64(8<<20), prefix+".2"),
 			Entry("part 3", 3, uint64(16<<20), uint64(4<<20), prefix+".3"),
 		)
+		It("walks the parts in order, naming each part and its head before it steps through the part", func() {
+			w, err := load("squid-multipart").WalkParts()
+			Expect(err).NotTo(HaveOccurred())
+			type part struct {
+				n         int
+				ofs, size uint64
+				head      string
+			}
+			var got []part
+			for !w.Done() {
+				n, ofs, head := w.Part()
+				size, err := w.Skip()
+				Expect(err).NotTo(HaveOccurred())
+				got = append(got, part{n, ofs, size, meta.Stripe{Obj: head}.OID()})
+			}
+			Expect(got).To(Equal([]part{
+				{1, 0, 8 << 20, marker + "__multipart_" + prefix + ".1"},
+				{2, 8 << 20, 8 << 20, marker + "__multipart_" + prefix + ".2"},
+				{3, 16 << 20, 4 << 20, marker + "__multipart_" + prefix + ".3"},
+			}))
+		})
+		It("finds a part from where the walk stands, as obj_find_part does from obj_begin", func() {
+			w, err := load("squid-multipart").WalkParts()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(w.Find(2)).To(BeTrue())
+			n, ofs, _ := w.Part()
+			Expect([]uint64{uint64(n), ofs}).To(Equal([]uint64{2, 8 << 20})) //nolint:gosec // a part number
+			Expect(w.Find(1)).To(BeFalse(), "part 1 lies behind the walk, which meets part 2 first")
+			Expect(w.Find(4)).To(BeFalse(), "the walk ends before a part 4")
+			Expect(w.Done()).To(BeTrue())
+		})
 		It("reports no part 4 and no part 0", func() {
 			m := load("squid-multipart")
 			for _, n := range []int{0, 4} {
@@ -205,6 +236,18 @@ var _ = Describe("Manifest.Seek", func() {
 		It("refuses at once a manifest whose tail needs more stripes than the bound", func() {
 			_, _, _, _, err := ones(limit+1).PartBoundsUpTo(1, limit)
 			Expect(err).To(MatchError(ContainSubstring("at least 9, more than 8")))
+			_, err = ones(limit + 1).WalkPartsUpTo(limit)
+			Expect(err).To(MatchError(ContainSubstring("at least 9, more than 8")), "before the walk takes a step")
+		})
+		It("refuses a Skip onto the stripe past the bound, counting the stripe the walk starts on", func() {
+			w, err := build(limit - 1).WalkPartsUpTo(limit)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(w.Skip()).To(BeEquivalentTo(limit-1), "part 1's stripes")
+			Expect(w.Skip()).To(BeEquivalentTo(1), "part 2 is the bound's last stripe")
+			w, err = build(limit).WalkPartsUpTo(limit)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = w.Skip()
+			Expect(err).To(MatchError(ContainSubstring("more than 8 before offset 8")))
 		})
 		It("bounds PartBounds by MaxWalkStripes and Stripes by MaxStripes", func() {
 			hostile := ones(meta.MaxWalkStripes + 1)

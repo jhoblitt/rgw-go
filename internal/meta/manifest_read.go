@@ -103,27 +103,79 @@ func (it *StripeIter) Next() error {
 // 7950X3D core.
 const MaxWalkStripes = 1 << 26
 
-// partWalk is the walk from obj_begin that obj_find_part and
-// get_part_obj_state take, bounded where theirs is not.
-type partWalk struct {
+// PartWalk is the walk from obj_begin over a multipart manifest's parts that
+// obj_find_part, get_part_obj_state and RadosObject::list_parts take, bounded
+// where theirs are not. It stands at a part's first stripe, where Part names
+// the part and its head before Skip steps through the part's stripes, so a
+// caller can read the head first, as get_part_obj_state does.
+type PartWalk struct {
 	it *StripeIter
 	// stripes counts the stripes visited, the current one included.
 	stripes, limit int
 }
 
-func newPartWalk(m Manifest, limit int) (*partWalk, error) {
+// WalkParts starts a PartWalk at the manifest's first stripe. Before any step
+// it fails with ErrTooManyStripes where the object's tail needs more than
+// MaxWalkStripes stripes; it fails with denc.ErrMalformed where the C++
+// iterator would read past a map.
+func (m Manifest) WalkParts() (*PartWalk, error) { return m.walkParts(MaxWalkStripes) }
+
+// walkParts is WalkParts with limit standing for MaxWalkStripes.
+func (m Manifest) walkParts(limit int) (*PartWalk, error) {
+	if least := m.minStripes(); least > uint64(limit) { //nolint:gosec // limit is positive
+		return nil, fmt.Errorf("%w: at least %d, more than %d", ErrTooManyStripes, least, limit)
+	}
 	it, err := m.Seek(0)
 	if err != nil {
 		return nil, err
 	}
-	return &partWalk{it: it, stripes: 1, limit: limit}, nil
+	return &PartWalk{it: it, stripes: 1, limit: limit}, nil
+}
+
+// Done reports that the walk has reached the end of the object.
+func (w *PartWalk) Done() bool { return w.it.Done() }
+
+// Part names the part the walk stands at: its number, where it starts in the
+// object, and the object holding its first stripe, which is the part's head.
+func (w *PartWalk) Part() (n int, ofs uint64, head Obj) {
+	head, _, _ = w.it.Location()
+	return int(w.it.PartID()), w.it.Ofs(), head
+}
+
+// Find is obj_find_part from where the walk stands: it steps to the first
+// stripe of part n and reports true, or reports false where it meets a later
+// part or the end first.
+func (w *PartWalk) Find(n int) (bool, error) {
+	for !w.it.Done() && int(w.it.PartID()) != n {
+		if int(w.it.PartID()) > n {
+			return false, nil
+		}
+		if err := w.step(); err != nil {
+			return false, err
+		}
+	}
+	return !w.it.Done(), nil
+}
+
+// Skip steps past the stripes of the part the walk stands at, to the next
+// part's first stripe or the end, and returns the part's size: the distance to
+// where the part id next changes or the object ends, as get_part_obj_state's
+// generator sizes a part.
+func (w *PartWalk) Skip() (uint64, error) {
+	n, ofs := w.it.PartID(), w.it.Ofs()
+	for !w.it.Done() && w.it.PartID() == n {
+		if err := w.step(); err != nil {
+			return 0, err
+		}
+	}
+	return w.it.Ofs() - ofs, nil
 }
 
 // step is Next. It fails with denc.ErrMalformed where Next does not move past
 // the previous offset, so on a step that stays put, where the C++ walk never
 // ends, and on one that wraps backward, which the C++ follows. It fails with
 // ErrTooManyStripes on the stripe past the walk's limit.
-func (w *partWalk) step() error {
+func (w *PartWalk) step() error {
 	it := w.it
 	prev := it.Ofs()
 	if err := it.Next(); err != nil {
@@ -199,33 +251,16 @@ func (m Manifest) partBounds(n, limit int) (ofs, size uint64, head Obj, ok bool,
 	if end.PartID() == 0 {
 		return 0, 0, Obj{}, false, nil
 	}
-	if least := m.minStripes(); least > uint64(limit) { //nolint:gosec // limit is positive
-		return 0, 0, Obj{}, false, fmt.Errorf("%w: at least %d, more than %d", ErrTooManyStripes, least, limit)
-	}
-	w, err := newPartWalk(m, limit)
+	w, err := m.walkParts(limit)
 	if err != nil {
 		return 0, 0, Obj{}, false, err
 	}
-	it := w.it
-	for !it.Done() && int(it.PartID()) != n {
-		if int(it.PartID()) > n {
-			return 0, 0, Obj{}, false, nil
-		}
-		if err := w.step(); err != nil {
-			return 0, 0, Obj{}, false, err
-		}
+	if ok, err = w.Find(n); !ok || err != nil {
+		return 0, 0, Obj{}, false, err
 	}
-	if it.Done() {
-		return 0, 0, Obj{}, false, nil
+	_, ofs, head = w.Part()
+	if size, err = w.Skip(); err != nil {
+		return 0, 0, Obj{}, false, err
 	}
-	ofs = it.Ofs()
-	head, _, _ = it.Location()
-	for {
-		if err := w.step(); err != nil {
-			return 0, 0, Obj{}, false, err
-		}
-		if it.Done() || int(it.PartID()) != n {
-			return ofs, it.Ofs() - ofs, head, true, nil
-		}
-	}
+	return ofs, size, head, true, nil
 }

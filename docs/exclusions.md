@@ -625,19 +625,32 @@ review and verified against the tree.
   differs, and only for an ID, display name or email address holding `&`,
   `<`, `>`, `'`, `"` or a control byte.
 - **A manifest walk that stops moving, or runs past its stripe bound,
-  fails.** rgw-go walks a manifest's stripes from its start in two places:
+  fails.** rgw-go walks a manifest's stripes from its start in two ways:
   `meta.Manifest.Stripes`, the whole layout, which it builds in memory, and
-  `meta.Manifest.PartBounds`, the part lookup behind GET and HEAD with
-  `partNumber` and GetObjectAttributes's ObjectParts. Each fails with
+  `meta.PartWalk`, the part walk behind `meta.Manifest.PartBounds`, the
+  part lookup of GET and HEAD with `partNumber`, and behind
+  GetObjectAttributes's ObjectParts listing. Each fails with
   `denc.ErrMalformed` at the first step that does not move past the
   previous offset, and with `meta.ErrTooManyStripes` past its bound,
   `meta.MaxStripes` (2^21 stripes) for `Stripes` and `meta.MaxWalkStripes`
-  (2^26) for `PartBounds`; each refuses at once a tail that needs more
+  (2^26) for the part walk; each refuses at once a tail that needs more
   stripes than its bound. The operation that needs the walk fails instead
   of hanging. radosgw's walks check neither
   (`docs/ceph-upstream-bugs.md`, "[radosgw hangs or faults walking a
   manifest whose rule has a stripe size of
   0](ceph-upstream-bugs.md#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0)").
+  - The ObjectParts listing walks the parts once, where radosgw's
+    `get_part_obj_state` looks each one up again from the start with
+    `obj_find_part` (`driver/rados/rgw_rados.cc:7617-7618` at v20.2.4). The
+    two agree on every manifest whose part ids rise, as every manifest
+    radosgw writes does: `RadosMultipartUpload::complete` appends the
+    upload's parts in part-number order, from the `std::map` that
+    `list_parts` fills (`rgw_sal.h:1422` and
+    `driver/rados/rgw_sal_rados.cc:3463`, `:3522` at v19.2.6;
+    `rgw_sal.h:1534` and `:4311`, `:4370` at v20.2.4).
+    Where a part id recurs after another part, which no radosgw write
+    produces, radosgw sizes the repeated part by its first region and
+    rgw-go by the region it lists.
   - `operator++` stops moving on a rule whose stripe size is 0, adding that
     size to the stripe offset without ever reaching the part's end, and on
     a manifest without rules that is not explicit
@@ -1388,8 +1401,10 @@ differ, rgw-go does the following.
 
 rgw-go serves GetObject and HeadObject as radosgw's `RGWGetObj` does: its
 range and conditional parsing, the part redirect, and every refusal before
-the data is read. Where the two differ, checked against the v19.2.6 and
-v20.2.4 tags, rgw-go does the following.
+the data is read. It serves GetObjectAttributes, GetObjectTagging and
+GetObjectAcl as `RGWGetObjAttrs`, `RGWGetObjTags` and `RGWGetACLs` do.
+Where the two differ, checked against the v19.2.6 and v20.2.4 tags, rgw-go
+does the following.
 
 - **Torrents.** `?torrent` on an object with a stored torrent answers 501
   NotImplemented, where radosgw serves the torrent. When the
@@ -1399,11 +1414,11 @@ v20.2.4 tags, rgw-go does the following.
   at v19.2.6, `:3058-3092` at v20.2.4); rgw-go does not, so it answers 404
   NoSuchKey for an object whose torrent lives only there. An SSE-C object
   and an object with no torrent answer as on radosgw.
-- **Swift large objects.** An S3 GET or HEAD of an object carrying
-  `user.rgw.user_manifest` or `user.rgw.slo_manifest` answers 501
-  NotImplemented, where radosgw composes the object from its segments
-  (`rgw_op.cc:2373-2394` at v19.2.6, `:2606-2627` at v20.2.4). Only
-  radosgw's Swift API, which is excluded, writes such objects.
+- **Swift large objects.** An S3 GET, HEAD or GetObjectAttributes of an
+  object carrying `user.rgw.user_manifest` or `user.rgw.slo_manifest`
+  answers 501 NotImplemented, where radosgw composes the object from its
+  segments (`rgw_op.cc:2373-2394` at v19.2.6, `:2606-2627` at v20.2.4).
+  Only radosgw's Swift API, which is excluded, writes such objects.
 - **Cloud read-through.** On Tentacle, a GET of an object transitioned to a
   cloud tier that allows read-through answers 403 InvalidObjectState,
   "This object was transitioned to cloud-s3", and logs an error. radosgw
@@ -1415,7 +1430,16 @@ v20.2.4 tags, rgw-go does the following.
 - **SSE-C reads.** A GET or HEAD of an SSE-C object whose customer-key
   headers pass every check radosgw makes answers 501 NotImplemented until
   rgw-go decrypts SSE-C, which "Key management" above requires; radosgw
-  decrypts it. Every refusal before that is radosgw's.
+  decrypts it. GetObjectAttributes, which makes GetObject's checks, answers
+  the same 501, where radosgw makes them without setting up a decryption,
+  because it reads no data, and answers the attributes
+  (`RGWGetObjAttrs_ObjStore_S3::get_decrypt_filter`, `rgw_rest_s3.cc:3985-3997`
+  at v20.2.4). Every refusal before that is radosgw's.
+- **GetObjectTagging of a tag set that does not decode.** rgw-go answers 500
+  UnknownError when an object's `user.rgw.x-amz-tagging` decodes neither as
+  a tag set nor as the URL-encoded text older objects store. radosgw, by
+  code reading, answers 200 with no body (`rgw_rest_s3.cc:746-773` at
+  v19.2.6, `:829-856` at v20.2.4).
 - **An empty header reads as no header.** rgw-go takes `Range`,
   `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
   and `x-amz-server-side-encryption-customer-algorithm` as absent when they
