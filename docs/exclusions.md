@@ -554,6 +554,73 @@ review and verified against the tree.
   rgw/admin package, signs with the unsigned-payload hash and never sends
   the header, so it works against radosgw only because of that fallback.
   rgw-rs's spike chose AWS's behavior; rgw-go must not.
+- **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
+  one is refused with 409.** radosgw reads an aws-chunked upload's trailer
+  section, counted from the CRLF that ends the last data chunk through the
+  closing CRLF, into a 256-byte buffer whose reads stop one byte short of
+  it, so its own size check, which would answer 409 LimitExceeded, never
+  fires and a longer section is cut off silently (`rgw_auth_s3.cc:1583-1614`
+  at v19.2.6). On both floors a signed section longer than 257 bytes then
+  fails with 403 SignatureDoesNotMatch, every signed SHA512 trailer
+  (290 bytes) included, and on Tentacle an unsigned section whose checksum
+  line falls past the cut is accepted without that checksum being compared
+  (tracker #81122). rgw-go counts the section the same way, accepts up to
+  1024 bytes, which holds a signed SHA512 trailer with room to spare, and
+  answers 409 LimitExceeded above that. A signed trailer that radosgw
+  refuses with 403 therefore succeeds through rgw-go.
+- **aws-chunked chunk sizes are one to sixteen hex digits.** radosgw parses
+  a chunk size with an unchecked `strtoull` (`rgw_auth_s3.cc:1127-1132` at
+  v19.2.6), which skips blanks and accepts a sign, a `0x` prefix, trailing
+  bytes and more than sixteen digits, turning `-1` or seventeen hex digits
+  into 2^64-1. On both floors an unsigned multi-chunk upload whose first
+  chunk carries such a size is then stored corrupted with 200, because the
+  bad chunk swallows the next chunk's framing; a signed multi-chunk one
+  fails with 400 XAmzContentSHA256Mismatch and a single-chunk one is stored
+  intact (tracker #81123). rgw-go answers any other size with 400
+  InvalidArgument and stores nothing.
+- **aws-chunked framing is read strictly.** radosgw's PutObject and
+  UploadPart take an aws-chunked payload's length from
+  `x-amz-decoded-content-length` (`RGWPutObj_ObjStore::get_data`,
+  `rgw_rest.cc:1068-1101` at v19.2.6, `:1073-1106` at v20.2.4), and rgw-go
+  reads the same length. Like radosgw, rgw-go answers 400
+  XAmzContentSHA256Mismatch when the chunk in progress at that length
+  fails its signature, and ends a payload that expects no trailer
+  signature at that length when more data, or the end of the body,
+  follows the chunk there (`complete()`, `rgw_auth_s3.cc:1555-1694` at
+  v19.2.6, `:1532-1671` at v20.2.4). rgw-go refuses such a payload that
+  expects a trailer signature with 403 SignatureDoesNotMatch. They differ
+  as follows.
+  - Chunks that carry more data than the length: with a Content-MD5,
+    radosgw answers 400 BadDigest on both floors (`rgw_op.cc:4483-4486` at
+    v19.2.6, `:4715-4718` at v20.2.4), and on Tentacle it answers 400
+    BadDigest for a trailing checksum it finds after the length
+    (`rgw_op.cc:4757-4790` at v20.2.4). The Content-MD5 is rgw-go's op's to
+    compare, and phase 1 compares no trailing checksum, so rgw-go accepts
+    the payload where Tentacle answers BadDigest for a checksum.
+  - Chunks that carry less data than the length: radosgw answers 403
+    SignatureDoesNotMatch when the final chunk's signature is wrong and 400
+    InvalidArgument otherwise, as rgw-go does, except when the payload's
+    data length is a multiple of `rgw_max_chunk_size`, zero included, and
+    fewer than 101 bytes follow the data. radosgw then answers 400
+    XAmzContentSHA256Mismatch for a wrong signature and 400 RequestTimeout
+    otherwise, where rgw-go answers 403 SignatureDoesNotMatch and 400
+    InvalidArgument. A payload with an empty chunk followed by more data:
+    radosgw accepts it, and rgw-go refuses it with those answers.
+  - A stream that ends early, in a body whose Content-Length is met:
+    radosgw answers 400 XAmzContentSHA256Mismatch when it ends inside a
+    signed chunk and 400 InvalidArgument when it ends where another chunk
+    header is due, and rgw-go's reader reports an unexpected EOF, which the
+    op answers as a body cut short. Once the length is delivered, a body
+    that ends inside the CRLF after the chunk there, right after its `\r`,
+    or right after that CRLF: radosgw accepts the payload, or answers 403
+    SignatureDoesNotMatch when a signed trailer is expected, and rgw-go
+    reports an unexpected EOF. rgw-go also reports an unexpected EOF for a
+    body that ends inside the final chunk line.
+  - A stream without the CRLF that ends a chunk's data, or with other
+    blanks in its place: radosgw accepts it, and rgw-go refuses it with 400
+    InvalidArgument. rgw-go also refuses with 400 InvalidArgument a
+    malformed final chunk line and a signed chunk header in any form but
+    `<size>;chunk-signature=<64 bytes>`, the key included.
 - **Some bucket sub-records are carried opaque in phase 0.**
   RGWBucketInfo's website configuration, object-lock configuration and
   sync policy are kept as the encoded bytes radosgw wrote and written back

@@ -1,0 +1,11 @@
+{
+  "name": "aws-docs-put-object",
+  "secret": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "date": "20130524T000000Z",
+  "scope": "20130524/us-east-1/s3/aws4_request",
+  "seed_signature": "4f232c4386841ef735655705268965c44a0e4690baa4adea153f7db9fa80a0a9",
+  "payload_repeat": {"byte": "a", "count": 66560},
+  "chunk_sizes": [65536, 1024, 0],
+  "chunk_signatures": ["ad80c730a21e5b8d04586a2213dd63b9a0e99e0e2307b0ade35a65485a288648", "0055627c9e194cb4542bae2aa5492e3c1575bbb81b612b7d234b86a503ef5497", "b6c6ea8a5354eaf15b3cb7646744f4275b71ea724fed81ceb9323e279d449df9"],
+  "content_length": 66824
+}

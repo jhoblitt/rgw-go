@@ -167,3 +167,69 @@ var _ = Describe("signature vectors", func() {
 
 	DescribeTable("testdata/v4", runV4Vector, vectorEntries("v4"))
 })
+
+// chunkedVector is one testdata/chunked file: an aws-chunked payload, its
+// chunk sizes and the chunk signatures a reference signer recorded for it.
+type chunkedVector struct {
+	Name          string `json:"name"`
+	Secret        string `json:"secret"`
+	Date          string `json:"date"`
+	Scope         string `json:"scope"`
+	SeedSignature string `json:"seed_signature"`
+	PayloadRepeat struct {
+		Byte  string `json:"byte"`
+		Count int    `json:"count"`
+	} `json:"payload_repeat"`
+	ChunkSizes      []int    `json:"chunk_sizes"`
+	ChunkSignatures []string `json:"chunk_signatures"`
+	// ContentLength is the framed stream's length, the request's
+	// Content-Length.
+	ContentLength int `json:"content_length"`
+}
+
+// runChunkedVector checks each recorded signature against the chain
+// chunkStringToSign gives, independently of the reader, then frames the
+// payload with them and decodes it.
+func runChunkedVector(path string) {
+	raw, err := os.ReadFile(path)
+	Expect(err).NotTo(HaveOccurred())
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	v := &chunkedVector{}
+	Expect(dec.Decode(v)).To(Succeed(), "decoding %s", path)
+	Expect(v.Name).To(Equal(strings.TrimSuffix(filepath.Base(path), ".json")), "a vector is named after its file")
+	Expect(v.ChunkSignatures).To(HaveLen(len(v.ChunkSizes)))
+
+	payload := bytes.Repeat([]byte(v.PayloadRepeat.Byte), v.PayloadRepeat.Count)
+	key := signingKeyV4(v.Secret, v.Scope)
+	var stream bytes.Buffer
+	rest, prev := payload, v.SeedSignature
+	for i, size := range v.ChunkSizes {
+		data := rest[:size]
+		rest = rest[size:]
+		sig := signatureV4(key, chunkStringToSign(v.Date, v.Scope, prev, sha256Hex(string(data))))
+		Expect(sig).To(Equal(v.ChunkSignatures[i]), "chunk %d's signature, chained from the one before", i)
+		prev = sig
+		stream.Write(chunkFrame(data, sig))
+	}
+	Expect(rest).To(BeEmpty(), "the chunks carry the whole payload")
+	Expect(stream.Len()).To(Equal(v.ContentLength))
+
+	r := newChunkedReader(&stream, chunkedParams{
+		date: v.Date, scope: v.Scope, seedSignature: v.SeedSignature, signingKey: key,
+		class: payloadClass{kind: payloadChunked}, decoded: uint64(len(payload)),
+	})
+	var got bytes.Buffer
+	_, err = got.ReadFrom(r)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(got.Bytes()).To(Equal(payload))
+	expectEOF(r)
+}
+
+var _ = Describe("aws-chunked vectors", func() {
+	It("finds the aws-chunked vectors", func() {
+		Expect(vectorFiles("chunked")).NotTo(BeEmpty())
+	})
+
+	DescribeTable("testdata/chunked", runChunkedVector, vectorEntries("chunked"))
+})

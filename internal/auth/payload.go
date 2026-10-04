@@ -134,12 +134,13 @@ func (r *hashReader) Read(p []byte) (int, error) {
 // signature has verified, and the length the op is to take for it. A payload
 // without a completer is read as it came, with the request's length, -1 for
 // a chunked transfer encoding; a single chunk is read through a hashReader.
-// An aws-chunked payload's length is x-amz-decoded-content-length, which
-// radosgw requires and refuses with EINVAL when it is missing or
-// parse_content_length makes it negative (AWSv4ComplMulti::modify_request_state,
-// rgw_auth_s3.cc:1532-1548 at v19.2.6, :1509-1525 at v20.2.4); its decoder,
-// which checks the chunk signatures with the secret, is not implemented yet.
-func (d *authData) completer(rv *requestView, _ string) (body io.Reader, contentLength int64, err error) {
+// An aws-chunked payload is read through a chunkedReader, which checks the
+// chunk signatures with secret, and its length is
+// x-amz-decoded-content-length, which radosgw requires and refuses with
+// EINVAL when it is missing or parse_content_length makes it negative
+// (AWSv4ComplMulti::modify_request_state, rgw_auth_s3.cc:1532-1548 at
+// v19.2.6, :1509-1525 at v20.2.4).
+func (d *authData) completer(rv *requestView, secret string) (body io.Reader, contentLength int64, err error) {
 	switch d.payload.kind {
 	case payloadSingle:
 		return newHashReader(rv.req.Body, d.payloadHash), rv.contentLength(), nil
@@ -148,10 +149,19 @@ func (d *authData) completer(rv *requestView, _ string) (body io.Reader, content
 		if !ok {
 			return nil, 0, fmt.Errorf("%w: aws-chunked payload without %s", op.ErrInvalidArgument, decodedContentLengthHeader)
 		}
-		if parseContentLength(v) < 0 {
+		decoded := parseContentLength(v)
+		if decoded < 0 {
 			return nil, 0, fmt.Errorf("%w: malformed %s", op.ErrInvalidArgument, decodedContentLengthHeader)
 		}
-		return nil, 0, op.ErrNotImplemented
+		var trailerNames []string
+		if t, ok := rv.header("x-amz-trailer"); ok {
+			trailerNames = strings.Split(t, ",")
+		}
+		return newChunkedReader(rv.req.Body, chunkedParams{
+			date: d.v4.date, scope: d.v4.scope, seedSignature: d.signature,
+			signingKey: signingKeyV4(secret, d.v4.scope), class: d.payload, trailerNames: trailerNames,
+			decoded: uint64(decoded),
+		}), decoded, nil
 	default:
 		return nil, rv.contentLength(), nil
 	}
