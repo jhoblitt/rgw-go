@@ -27,6 +27,7 @@ const (
 	methodGCRemove              = "gc_remove"
 	methodGuardBucketResharding = "guard_bucket_resharding"
 	methodSetBucketResharding   = "set_bucket_resharding"
+	methodGetBucketResharding   = "get_bucket_resharding"
 )
 
 // ErrBusyResharding is CLS_RGW_ERR_BUSY_RESHARDING as a positive errno.
