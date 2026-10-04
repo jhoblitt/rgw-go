@@ -182,28 +182,6 @@ func (rv *requestView) localPort() (port string, secure bool) {
 	return port, secure
 }
 
-// hostNoPort is req_info.host after RGWREST::preprocess. The req_info
-// constructor drops a trailing ':' and the digits after it
-// (rgw_common.cc:246-261 at v19.2.6); preprocess then keeps what a leading
-// '[' and the first ']' enclose, or cuts at the first ':'
-// (rgw_rest.cc:2048-2060 at v19.2.6, :2065-2077 at v20.2.4).
-func (rv *requestView) hostNoPort() string {
-	h := rv.req.Host
-	if i := strings.LastIndexByte(h, ':'); i >= 0 && strings.TrimLeft(h[i+1:], "0123456789") == "" {
-		h = h[:i]
-	}
-	if strings.HasPrefix(h, "[") {
-		if i := strings.IndexByte(h, ']'); i >= 0 {
-			return h[1:i]
-		}
-		return h
-	}
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		return h[:i]
-	}
-	return h
-}
-
 // version and route are radosgw's AwsVersion and AwsRoute.
 type version uint8
 
