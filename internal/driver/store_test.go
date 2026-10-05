@@ -353,9 +353,6 @@ var _ = Describe("the driver", func() {
 				_, err := s.CopyObject(ctx, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true}, &op.BucketRecord{}, meta.ObjKey{Name: "k2"}, op.CopyParams{})
 				return err
 			}),
-			Entry("SetObjectAttrs", func(ctx context.Context, s *driver.Store) error {
-				return s.SetObjectAttrs(ctx, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true}, nil, []string{"user.rgw.x-amz-meta-a"})
-			}),
 
 			Entry("CreateUpload", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.CreateUpload(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, op.UploadParams{})

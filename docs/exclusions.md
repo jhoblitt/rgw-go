@@ -1934,6 +1934,13 @@ does the following.
   v19.2.6 (`docs/ceph-upstream-bugs.md`, "[Squid's write conditions fail an
   If-None-Match ETag on a missing key and skip a head without a write
   tag](ceph-upstream-bugs.md#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag)").
+- **An attribute change adds no expirer hint.** rgw-go changes an object's
+  attrs as radosgw's `RGWRados::set_attrs` does
+  (`driver/rados/rgw_rados.cc:6593-6757` at v19.2.6, `:7393-7593` at
+  v20.2.4), except that a change setting the Swift delete-at attr adds no
+  object expirer hint, where radosgw adds one (`:6643-6655` at v19.2.6,
+  `:7443-7455` at v20.2.4). rgw-go runs no expirer ("Swift API and Swift
+  authentication").
 
 ### Bucket index differences
 

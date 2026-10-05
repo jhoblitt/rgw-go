@@ -343,11 +343,6 @@ func (s *Store) CopyObject(context.Context, *op.ObjectState, *op.BucketRecord, m
 	return nil, op.ErrNotImplemented
 }
 
-// SetObjectAttrs implements op.ObjectStore.
-func (s *Store) SetObjectAttrs(context.Context, *op.ObjectState, map[string][]byte, []string) error {
-	return op.ErrNotImplemented
-}
-
 // CreateUpload implements op.MultipartStore.
 func (s *Store) CreateUpload(context.Context, *op.BucketRecord, meta.ObjKey, op.UploadParams) (*op.Upload, error) {
 	return nil, op.ErrNotImplemented
