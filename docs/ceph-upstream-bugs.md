@@ -162,6 +162,13 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle fails an UploadPart that sends If-None-Match: * for a part in the bucket placement's pool](#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool) | pending | pending |  |
 | [radosgw's UploadPartCopy can assemble a part from two versions of its source](#radosgws-uploadpartcopy-can-assemble-a-part-from-two-versions-of-its-source) | pending | pending |  |
 | [radosgw registers a part whose head write lost a race and then removes its data](#radosgw-registers-a-part-whose-head-write-lost-a-race-and-then-removes-its-data) | pending | pending |  |
+| [radosgw's gc removes queue entries by count, so a pass drops entries not yet due that precede due ones](#radosgws-gc-removes-queue-entries-by-count-so-a-pass-drops-entries-not-yet-due-that-precede-due-ones) | pending | pending |  |
+| [radosgw's gc worker runs its passes without pause on a non-positive rgw_gc_processor_period](#radosgws-gc-worker-runs-its-passes-without-pause-on-a-non-positive-rgw_gc_processor_period) | pending | pending |  |
+| [radosgw's gc processor faults on a chain object without a pool](#radosgws-gc-processor-faults-on-a-chain-object-without-a-pool) | pending | pending |  |
+| [radosgw's gc stalls a converted shard behind an entry it cannot free](#radosgws-gc-stalls-a-converted-shard-behind-an-entry-it-cannot-free) | pending | pending |  |
+| [radosgw's gc takes a failed omap listing of a converted shard for an empty one](#radosgws-gc-takes-a-failed-omap-listing-of-a-converted-shard-for-an-empty-one) | pending | pending |  |
+| [A negative or overlong rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next pass](#a-negative-or-overlong-rgw_gc_obj_min_wait-makes-radosgws-gc-free-overwritten-tails-at-its-next-pass) | pending | pending |  |
+| [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -5519,8 +5526,9 @@ Every new entry adds its row to this table, in document order.
   than the option names; minor.
 - **Releases:** v19.2.6, v20.2.4 and main.
 - **rgw-go:** keeps `rgw_gc_max_concurrent_io` as radosgw reads it
-  (`internal/driver`, `writer.go`); the garbage-collection task that uses
-  it is phase 1 work not yet written and reproduces radosgw's bound.
+  (`internal/driver`, `writer.go`), and its gc worker keeps up to one more
+  put than the option in flight, as `schedule_io` does
+  (`internal/driver/gc.go`), which a spec pins.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 4, 2026-10-04; derived from the source,
   not reproduced.
@@ -5571,8 +5579,8 @@ Every new entry adds its row to this table, in document order.
   `rgw_gc_max_trim_chunk` defers every tag trim to the drain.
 - **Releases:** checked at v19.2.6 and v20.2.4.
 - **rgw-go:** keeps both options as radosgw reads them (`internal/driver`,
-  `writer.go`), so the garbage-collection task that uses them reproduces the
-  conversions.
+  `writer.go`), and its gc worker converts them as `RGWGCIOManager` does
+  (`internal/driver/gc.go`), so a negative one bounds nothing there either.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 4 review, 2026-10-04; derived from the
   source, not reproduced.
@@ -6828,3 +6836,264 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit P, Task 4, 2026-10-05, transcribing
   `MultipartObjectProcessor::complete`; derived from the source, not
   reproduced.
+
+## radosgw's gc removes queue entries by count, so a pass drops entries not yet due that precede due ones
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWGC::process` lists a converted shard's queue for the expired
+    entries only and, once the page's refcount puts succeed, removes
+    `entries.size()` entries (`rgw/driver/rados/rgw_gc.cc:617` and `:710`,
+    `:632` and `:722`).
+  - `cls_rgw_gc_queue_list_entries` counts every entry it scans that is not
+    deferred toward the page, but returns only those already due
+    (`cls/rgw_gc/cls_rgw_gc.cc:192-201` at both tags).
+  - `cls_rgw_gc_queue_remove_entries` removes that many entries from the
+    queue's front, whatever their due time (`:261` and `:332-347` at both
+    tags).
+  - The queue keeps enqueue order, and each entry is due at the OSD's
+    `real_clock::now()` plus the request's `expiration_secs` (`:71-72`), so
+    an entry enqueued earlier is due later when the two enqueues carried
+    different `rgw_gc_obj_min_wait` values (gateways configured
+    differently, or a changed setting) or the OSD's clock stepped back
+    between them.
+  - A pass over [A, not yet due; B, due] then frees B's objects and removes
+    A. A's objects are never freed. B stays queued until a later pass lists
+    it again, whose puts answer ENOENT, which counts as done.
+- **Impact:** the tails of the dropped entry leak, with no log line; live
+  data is never freed early.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25, the
+  same code in both files).
+- **rgw-go:** meets it as radosgw does: its gc worker sends the same
+  listing and removal (`internal/driver/gc.go`), and a spec pins the
+  dropped entry. `docs/exclusions.md` has no entry for it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
+  `RGWGC::process`; derived from the source, not reproduced.
+
+## radosgw's gc worker runs its passes without pause on a non-positive rgw_gc_processor_period
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `rgw_gc_processor_period` and `rgw_gc_processor_max_time` are `int`
+    options with no `min:` (`common/options/rgw.yaml.in:1752` and `:1730`,
+    `:1840` and `:1818`).
+  - `GCWorker::entry` reads the period into an `int`, skips the wait when
+    it is not more than the whole seconds the pass took, and otherwise
+    waits the difference (`rgw/driver/rados/rgw_gc.cc:795-805`,
+    `:807-817`). A period of 0 or below therefore never waits: the worker
+    runs pass after pass, each taking the `gc_process` lock on and listing
+    every gc shard.
+  - `RGWGC::process` reads the max time into an `int` too (`:731`, `:743`).
+    Both reads narrow the 64-bit option to 32 bits, so a value of 2^31
+    seconds or more can turn negative: a max time that does refuses every
+    pass with -EAGAIN (`:564-565`, `:579-580`), and a period that does
+    stops the waits as above.
+- **Impact:** with a period of 0 or below, every gateway running the gc
+  thread loads the gc pool's OSDs without pause; values past 2^31 seconds
+  only by mistake.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  unchanged).
+- **rgw-go:** narrows both options as radosgw does, but waits a second
+  after a pass when the period is not positive and logs an error naming the
+  option (`internal/driver/gc.go`; `docs/exclusions.md`, "A gc processor
+  period that is not positive").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Related:
+  [#81226](https://tracker.ceph.com/issues/81226) reports the same class of
+  defect for the usage-log and quota intervals.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
+  `GCWorker::entry`; derived from the source, not reproduced.
+
+## radosgw's gc processor faults on a chain object without a pool
+
+- **Kind:** defect, latent, unfixed through main. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWGC::process` creates one I/O context per shard pass,
+    `IoCtx *ctx = new IoCtx`, which no pool opens
+    (`rgw/driver/rados/rgw_gc.cc:583`, `:598`; `librados::IoCtx::IoCtx`
+    sets `io_ctx_impl` to null, `librados/librados_cxx.cc:1108`, `:1115`).
+    It replaces the context only when an object's pool differs from
+    `last_pool`, and `last_pool` starts empty on every page (`:633` and
+    `:660-674`, `:648` and `:672-686`). After a failed open on an
+    unconverted shard it recreates the context unopened and empties
+    `last_pool` again (`:661-672`, `:673-684`).
+  - An object whose `pool` is empty therefore keeps whatever context the
+    pass holds. On the shard's first page before any pool opened, or right
+    after a failed open, that context is unopened: `locator_set_key` and
+    `set_pool_full_try` (`:676-677`, `:688-689`) dereference the null
+    `io_ctx_impl` (`librados/librados_cxx.cc:2262-2265` and `:2337-2340`,
+    `:2269-2272` and `:2344-2347`), and the process faults.
+  - On a later page the context is the previous page's last opened pool,
+    so the refcount put goes to that pool under the object's name. It
+    usually answers ENOENT, which counts as done (`:413-415`, `:428-430`),
+    so the entry is removed, or its tag counted down, while the object it
+    named is never freed.
+  - `update_gc_chain` records an empty pool for a stripe whose placement
+    resolves no pool (`rgw/driver/rados/rgw_rados.cc:5409-5421`, `:6132-6144`),
+    because `rgw_obj_select::get_raw_obj` ignores `obj_to_raw`'s failure
+    (`:148-156`, `:156-164`).
+- **Impact:** a process crash in the gc thread on every pass that reaches
+  such an entry on a shard's first page or after a failed open, and a
+  leaked tail when it is reached on a later page. Only an object whose
+  placement no longer resolves when it is overwritten or deleted gets such
+  an entry.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25, the
+  same `IoCtx` and `last_pool` handling).
+- **rgw-go:** opens the pool of a page's first object, and of an object
+  after a failed open, by its name, so the empty name fails as a missing
+  pool does, on every page (`internal/driver/gc.go`; `docs/exclusions.md`,
+  "The gc worker opens a chain object's pool even when it has none").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
+  `RGWGC::process`; derived from the source, not reproduced.
+
+## radosgw's gc stalls a converted shard behind an entry it cannot free
+
+- **Kind:** defect; main fixes one cause. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - On a shard moved to the rgw_gc queue, a pool that cannot be opened, a
+    put that cannot be scheduled, or a put that fails with anything but
+    ENOENT ends the shard's pass before the page's entries are removed
+    (`rgw_gc.cc:665-667`, `:690-692` and `:703-707`; `:677-679`,
+    `:702-704` and `:715-719`). The next pass lists the same page first.
+  - So one entry whose object can never be freed, as when its data pool was
+    deleted after it was queued or the gateway's key cannot write that
+    pool, stops the shard's collection for good. New entries pile up behind
+    it until the queue reaches `rgw_gc_max_queue_size`, after which the
+    enqueue fails and overwrites delete their tails inline.
+  - Two lesser cases delay collection by a pass. `schedule_io` and
+    `drain_ios` judge a completion by the shard being processed, not the
+    one the operation belongs to, so a failed put an earlier, unconverted
+    shard left in flight ends a converted shard's pass (`:384-392` and
+    `:703-707`, `:399-407` and `:715-719`). And an unlock that failed leaves
+    the gateway's own lock, which its next pass meets as EEXIST before the
+    lock expires, ending the whole pass (`:571-578` and `:739-741`,
+    `:586-593` and `:751-753`).
+  - Main skips a pool that answers ENOENT instead
+    (`if (ret != -ENOENT && transitioned_objects_cache[index])`,
+    `rgw_gc.cc` at 7ed73efc1be, 2026-09-25), which frees a shard stalled by
+    a deleted pool; a put that keeps failing still stalls it.
+- **Impact:** a gc shard that stops collecting, its tails leaking, with an
+  error logged on each pass.
+- **Releases:** v19.2.6 and v20.2.4; main for the persistent put failure.
+- **rgw-go:** meets it as the floor releases do (`internal/driver/gc.go`);
+  `docs/exclusions.md` has no entry for it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
+  `RGWGC::process` and `RGWGCIOManager`; derived from the source, not
+  reproduced.
+
+## radosgw's gc takes a failed omap listing of a converted shard for an empty one
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - On a shard it has not yet seen converted, `RGWGC::process` lists the
+    omap log, reads the shard's cls version, and on version 1 with no
+    entries lists once more for any entry at all; when that finds none it
+    marks the shard converted for the rest of the process's life
+    (`rgw_gc.cc:590-614`, `:605-629`).
+  - A listing that fails returns no entries, and neither result is checked
+    before the decision, so two failed listings, a timeout or an EIO, mark
+    a shard converted while its omap log still holds entries. From then on
+    the gateway lists only the queue and never frees those entries' objects
+    until it restarts.
+  - A shard at version 1 holds omap entries only from before
+    `RGWGC::initialize` converted it, or from enqueues the queue refused
+    with ECANCELED or EPERM (`RGWGC::send_chain`, `:120-139` at both
+    tags).
+- **Impact:** a leak, until restart, of the tails named by a converted
+  shard's leftover omap entries; it needs two failed reads in a row.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  unchanged).
+- **rgw-go:** meets it as radosgw does (`internal/driver/gc.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
+  `RGWGC::process`; derived from the source, not reproduced.
+
+## A negative or overlong rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next pass
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `rgw_gc_obj_min_wait` is an `int` option with no `min:`
+    (`common/options/rgw.yaml.in:1711`, `:1799`), the wait that lets
+    readers of an overwritten or deleted object finish before its tails go.
+    radosgw passes it to every enqueue as a `uint32_t` expiration
+    (`rgw/driver/rados/rgw_gc.cc:126` and `:137` at both tags;
+    `rgw/driver/rados/rgw_gc_log.cc:29-30` and
+    `cls/rgw_gc/cls_rgw_gc_client.cc:50` at both tags), so -1 arrives as
+    2^32-1 seconds.
+  - The class sets the entry's due time to `real_clock::now()` plus that
+    (`cls/rgw_gc/cls_rgw_gc.cc:71-72`; `cls/rgw/cls_rgw.cc:3912-3913`,
+    `:4314-4315`) and stores it in 32-bit seconds: `encode` of a
+    `real_time` keeps the low 32 bits (`include/encoding.h:346-354`,
+    `:347-355`), and the omap log's time key goes through `ceph_timespec`,
+    whose `tv_sec` is `__le32` (`cls/rgw/cls_rgw.cc:119-125`, `:135-141`;
+    `include/rados.h:42-45` at both tags).
+  - Today's time, about 1.79e9 seconds, plus anything from about 2.5e9 to
+    2^32-1 seconds wraps past 2106 to a time already gone. So a value from
+    -1 down to about -1.79e9, a positive one above about 2.5e9 (79 years),
+    or one of 2^32 or more whose low 32 bits are that large, queues the
+    tails due at once, and the next gc pass frees them; a value further
+    below -1.79e9, or one whose low 32 bits are small, wraps to a due time
+    decades away or seconds away instead.
+- **Impact:** the tails of an overwritten or deleted object can be freed
+  while a GET that started before the change still reads them, and the GET
+  fails part-way. Only a misconfigured option reaches it: a negative wait,
+  or one meant as "practically never" that is long enough to wrap.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  `include/encoding.h:396`, unchanged).
+- **rgw-go:** never sends a wait that wraps (`docs/exclusions.md`, "A
+  negative or overlong gc object wait"). `readWriteOptions`
+  (`internal/driver/writer.go`) uses the default, 7200 s, for a negative
+  value and logs an error for either case; each enqueue sends the wait
+  bounded by `gcExpiration`, which keeps the due time a day short of 2106
+  by the gateway's clock (`internal/driver/gc_enqueue.go`). Specs pin -1
+  and the most negative int64 to 7200 s, and the most positive int64 and
+  the first wait that would overflow to a due time a day short of 2106,
+  through the gc worker, which leaves those tails in place.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9, 2026-10-05, pinning a negative
+  `rgw_gc_obj_min_wait` through the gc worker; derived from the source, not
+  reproduced.
+
+## radosgw's gc can remove a queue page twice when a pass outlives its shard lock
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `RGWGC::process` takes the shard's `gc_process` lock for
+    `rgw_gc_processor_max_time` seconds (`rgw_gc.cc:567-571`, `:582-586`),
+    and only the check before each entry bounds the pass by that time
+    (`:645-648`, `:659-662`).
+  - After the last entry of a queue page it waits for every put in flight
+    (`drain_ios`, `:704`, `:716`) and then removes `entries.size()` entries
+    from the queue's front (`:710`, `:722`), with no time check and no
+    check that it still holds the lock.
+  - If the lock lapses during that wait, another gateway can take it, list
+    the same page and free its objects. Both passes then remove a page's
+    worth of entries by count (`cls/rgw_gc/cls_rgw_gc.cc:227-375` at both
+    tags), so the second removal drops the next page, whose objects nobody
+    freed.
+- **Impact:** a leak of up to a page of entries' tails, when a pass's puts
+  take longer than the lock's remaining time; it never frees live data.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  unchanged).
+- **rgw-go:** meets it as radosgw does: its gc worker takes the same lock
+  for the same time and drains and removes as radosgw does
+  (`internal/driver/gc.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 9 review, 2026-10-05, reading
+  `RGWGC::process`; derived from the source, not reproduced.

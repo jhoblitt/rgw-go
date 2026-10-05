@@ -19,12 +19,12 @@ import (
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
 // registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4716,
-// :4722, :4728, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5135,
-// :5141, :5147, :5162 and :5171 at v20.2.4), which RegisterClass takes with
-// RGWClass.
+// :4722, :4728, :4731, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123,
+// :5135, :5141, :5147, :5150, :5162 and :5171 at v20.2.4), which
+// RegisterClass takes with RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
+	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
 	"user_usage_log_add", "dir_suggest_changes",
 }
 
@@ -37,8 +37,8 @@ var RGWWriteMethods = []string{
 // set_bucket_resharding, with which a spec stages a reshard;
 // mp_upload_part_info_update on a multipart meta object; obj_remove,
 // obj_store_pg_ver and obj_check_mtime on a head object; on a gc shard the
-// omap-era enqueue,
-// gc_set_entry; and user_usage_log_add on a usage log object. Every other
+// omap-era log, gc_set_entry, gc_list and gc_remove; and user_usage_log_add
+// on a usage log object. Every other
 // method is EOPNOTSUPP. A bucket_list asking for entries and
 // dir_suggest_changes are emulated as rgwBucketListEntries and
 // rgwDirSuggestChanges say. It reads the header and entries from the stored
@@ -78,6 +78,10 @@ func RGWClass() ClassFunc {
 			return nil, rgwObjCheckMtime(call)
 		case "gc_set_entry":
 			return nil, rgwGCSetEntry(call)
+		case "gc_list":
+			return rgwGCList(call)
+		case "gc_remove":
+			return nil, rgwGCRemove(call)
 		case "user_usage_log_add":
 			return nil, rgwUserUsageLogAdd(call)
 		case "dir_suggest_changes":
@@ -181,9 +185,10 @@ const (
 )
 
 // gcTimeKey is get_time_key (cls_rgw.cc:119-125 at v19.2.6): seconds and
-// nanoseconds, zero-padded to 11 and 9 digits.
+// nanoseconds, zero-padded to 11 and 9 digits, the seconds the 32 bits
+// ceph_timespec keeps.
 func gcTimeKey(t time.Time) string {
-	return fmt.Sprintf("%011d.%09d", t.Unix(), t.Nanosecond())
+	return fmt.Sprintf("%011d.%09d", uint32(t.Unix()), t.Nanosecond()) //nolint:gosec // ceph_timespec's tv_sec is 32 bits
 }
 
 // rgwGCSetEntry is rgw_cls_gc_set_entry through gc_update_entry
@@ -212,6 +217,91 @@ func rgwGCSetEntry(call *ClassCall) int32 {
 	obj := call.Create()
 	obj.Omap[gcNameIndex+info.Tag] = encodeSquid(info)
 	obj.Omap[gcTimeIndex+gcTimeKey(info.Time)] = encodeSquid(info)
+	return 0
+}
+
+// gcListDefaultMax is GC_LIST_ENTRIES_DEFAULT, what gc_list lists for a max
+// of 0 (cls_rgw.cc:4117 at v19.2.6, :4519 at v20.2.4).
+const gcListDefaultMax = 128
+
+// rgwGCList is rgw_cls_gc_list through gc_iterate_entries
+// (cls_rgw.cc:3996-4126 at v19.2.6, :4398-4528 at v20.2.4): the time index
+// after the marker, or from its start, in key order, so earliest due first,
+// one omap read of max keys (128 for 0); a key outside the time index ends
+// the listing, as does, when only the expired are asked for, a key at or
+// past the class's clock. The next marker is the last key returned, set
+// only while the read was truncated. It reads the stored omap, as
+// cls_cxx_map_get_vals does.
+func rgwGCList(call *ClassCall) (out []byte, rval int32) {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeGCListOp)
+	if rval < 0 {
+		return nil, rval
+	}
+	if call.Stored == nil {
+		return nil, -int32(syscall.ENOENT)
+	}
+	start := op.Marker
+	if start == "" {
+		start = gcTimeIndex
+	}
+	var end string
+	if op.ExpiredOnly {
+		end = gcTimeIndex + gcTimeKey(call.Now())
+	}
+	maxEntries := uint64(op.Max)
+	if maxEntries == 0 {
+		maxEntries = gcListDefaultMax
+	}
+	vals, more := omapPage(call.Stored.Omap, start, "", maxEntries)
+	ret := rgwcls.GCListRet{Truncated: more}
+	var last string
+	for _, k := range slices.Sorted(maps.Keys(vals)) {
+		if (end != "" && k >= end) || !strings.HasPrefix(k, gcTimeIndex) {
+			ret.Truncated = false
+			break
+		}
+		d := denc.NewDecoder(vals[k])
+		info := rgwcls.DecodeGCObjInfo(d)
+		if d.Err() != nil {
+			return nil, -int32(syscall.EIO)
+		}
+		ret.Entries = append(ret.Entries, info)
+		last = k
+	}
+	if ret.Truncated {
+		ret.NextMarker = last
+	}
+	return encodeSquid(ret), 0
+}
+
+// rgwGCRemove is rgw_cls_gc_remove through gc_remove (cls_rgw.cc:4128-4173
+// at v19.2.6, :4530-4575 at v20.2.4): each tag's name-index entry, and the
+// time-index key of the due time it records, go; a tag the shard does not
+// hold is skipped. It reads each entry from the stored omap, as
+// cls_cxx_map_get_val does.
+func rgwGCRemove(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeGCRemoveOp)
+	if rval < 0 {
+		return rval
+	}
+	if call.Stored == nil {
+		return 0
+	}
+	for _, tag := range op.Tags {
+		b, ok := call.Stored.Omap[gcNameIndex+tag]
+		if !ok {
+			continue
+		}
+		d := denc.NewDecoder(b)
+		info := rgwcls.DecodeGCObjInfo(d)
+		if d.Err() != nil {
+			return -int32(syscall.EIO)
+		}
+		if obj := call.Object(); obj != nil {
+			delete(obj.Omap, gcTimeIndex+gcTimeKey(info.Time))
+			delete(obj.Omap, gcNameIndex+tag)
+		}
+	}
 	return 0
 }
 

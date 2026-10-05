@@ -156,7 +156,8 @@ var ReadIndexStats = (*Store).readIndexStats
 // WriteOptions is writeOptions with its fields exported for the specs.
 type WriteOptions struct {
 	PutWindow, StripeSize, ChunkSize, MaxPutSize uint64
-	GCMaxObjs, GCObjMinWait                      uint32
+	GCMaxObjs                                    uint32
+	GCObjMinWait                                 int64
 	GCProcessorMaxTime, GCProcessorPeriod        time.Duration
 	GCMaxConcurrentIO, GCMaxTrimChunk            int
 	GCMaxQueueSize, GCMaxDeferred                uint64
@@ -170,7 +171,7 @@ func (s *Store) WriteOptionsForTest() WriteOptions {
 	return WriteOptions{
 		PutWindow: o.putWindow, StripeSize: o.stripeSize, ChunkSize: o.chunkSize, MaxPutSize: o.maxPutSize,
 		GCMaxObjs: o.gcMaxObjs, GCObjMinWait: o.gcObjMinWait,
-		GCProcessorMaxTime: o.gcProcessorMaxTime, GCProcessorPeriod: o.gcProcessorPeriod,
+		GCProcessorMaxTime: time.Duration(o.gcProcessorMaxTime) * time.Second, GCProcessorPeriod: time.Duration(o.gcProcessorPeriod) * time.Second,
 		GCMaxConcurrentIO: o.gcMaxConcurrentIO, GCMaxTrimChunk: o.gcMaxTrimChunk,
 		GCMaxQueueSize: o.gcMaxQueueSize, GCMaxDeferred: o.gcMaxDeferred, GCThreads: o.gcThreads,
 		MultiObjDelMaxAIO: o.multiObjDelMaxAIO, CopyConcurrentIO: o.copyConcurrentIO,
@@ -218,6 +219,47 @@ func (x *IndexOp) PreparedForTest() bool { return x.prepared }
 
 // GCShardForTest is gcShard for the external specs.
 func GCShardForTest(s *Store, tag string) int { return s.w.gcShard(tag) }
+
+// GCInitializeForTest is gcInitialize for the external specs.
+func (s *Store) GCInitializeForTest(ctx context.Context) error { return s.gcInitialize(ctx) }
+
+// GCWorker is gcWorker for the external specs.
+type GCWorker = gcWorker
+
+// GCWorkerForTest is the GC worker Open registers for s.
+func (s *Store) GCWorkerForTest() *GCWorker { return newGCWorker(s) }
+
+// SetNow makes now the clock g times its passes and budgets with.
+func (g *GCWorker) SetNow(now func() time.Time) { g.now = now }
+
+// SetSleep makes sleep how g waits between passes.
+func (g *GCWorker) SetSleep(sleep func(ctx context.Context, d time.Duration) error) { g.sleep = sleep }
+
+// Run is run for the external specs.
+func (g *GCWorker) Run(ctx context.Context) error { return g.run(ctx) }
+
+// Process is process for the external specs.
+func (g *GCWorker) Process(ctx context.Context, expiredOnly bool) error {
+	return g.process(ctx, expiredOnly)
+}
+
+// ProcessShardForTest is a pass of process over shard idx alone, with the
+// budget given: processShard, then the drain unless ctx has ended.
+func (g *GCWorker) ProcessShardForTest(ctx context.Context, idx int, budget time.Duration, expiredOnly bool) error {
+	io := newGCIO(g)
+	defer io.wait()
+	if err := g.processShard(ctx, idx, budget, expiredOnly, io); err != nil {
+		return err
+	}
+	if ctx.Err() == nil {
+		io.drain(ctx)
+	}
+	return nil
+}
+
+// TransitionedForTest reports whether g has seen shard idx move to the
+// rgw_gc queue.
+func (g *GCWorker) TransitionedForTest(idx int) bool { return g.transitioned[idx] }
 
 // Layout is layout with its fields exported for the specs.
 type Layout struct {

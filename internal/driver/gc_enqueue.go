@@ -128,15 +128,16 @@ func (s *Store) sendGCChain(ctx context.Context, objs []rgw.GCObj, tag string) e
 	}
 	oid := s.w.gcShards[s.w.gcShard(tag)]
 	info := rgw.GCObjInfo{Tag: tag, Chain: objs}
+	exp := gcExpiration(s.w.opts.gcObjMinWait, s.now())
 	w := radosclient.NewWriteOp()
 	version.Check(w, version.ObjVersion{Ver: 1}, version.CondEQ, s.release)
-	gc.QueueEnqueue(w, s.w.opts.gcObjMinWait, info, s.release)
+	gc.QueueEnqueue(w, exp, info, s.release)
 	_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
 	if !errors.Is(err, radosclient.ErrCanceled) && !errors.Is(err, radosclient.ErrPermission) {
 		return err
 	}
 	w = radosclient.NewWriteOp()
-	rgw.GCSetEntry(w, s.w.opts.gcObjMinWait, info, s.release)
+	rgw.GCSetEntry(w, exp, info, s.release)
 	_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
 	return err
 }

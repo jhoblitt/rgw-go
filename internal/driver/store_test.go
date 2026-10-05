@@ -157,15 +157,27 @@ var _ = Describe("the driver", func() {
 			Entry("rgw_period_root_pool", "rgw_period_root_pool"),
 		)
 
-		It("opens the root pool once for its four options and the control pool, and closes both with Close", func(ctx SpecContext) {
+		It("opens the root pool once for its four options, the control pool and the gc pool, and closes them with Close", func(ctx SpecContext) {
 			s, err := driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cluster.opened).To(HaveLen(2))
+			Expect(cluster.opened).To(HaveLen(3))
 			Expect([]string{cluster.opened[0].Name(), cluster.opened[0].Namespace()}).To(Equal([]string{meta.RootPool, ""}))
 			Expect([]string{cluster.opened[1].Name(), cluster.opened[1].Namespace()}).To(Equal([]string{control, ""}))
+			Expect([]string{cluster.opened[2].Name(), cluster.opened[2].Namespace()}).To(Equal([]string{"ceph-objectstore.rgw.log", "gc"}))
 			Expect(s.Close()).To(Succeed())
-			Expect(cluster.opened[0].closes).To(Equal(1))
-			Expect(cluster.opened[1].closes).To(Equal(1))
+			for _, p := range cluster.opened {
+				Expect(p.closes).To(Equal(1), p.Name())
+			}
+		})
+
+		It("refuses to start on a gc pool it cannot open, closing what it opened", func(ctx SpecContext) {
+			cluster.FailPool("ceph-objectstore.rgw.log")
+			_, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+			Expect(err).To(MatchError(ContainSubstring("ceph-objectstore.rgw.log:gc")))
+			for _, p := range cluster.opened {
+				Expect(p.closes).To(Equal(1), p.Name())
+			}
 		})
 
 		It("creates the control objects in the zone's control pool", func(ctx SpecContext) {

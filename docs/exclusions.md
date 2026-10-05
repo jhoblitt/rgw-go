@@ -1352,10 +1352,16 @@ does the following.
   at v19.2.6, `:4531` at v20.2.4). Both answer the meta object's write
   with 500 UnknownError.
 - **No bootstrap.** rgw-go writes nothing at startup but the control
-  objects, which radosgw creates too. When no zone or zonegroup resolves,
-  it refuses to start with `driver.ErrNoZone`, naming the object it looked
-  for, and it refuses to start on a root pool or a control pool it cannot
-  open. A metadata pool found missing later fails the request that needs
+  objects and the gc shards' queue initialization, which radosgw writes
+  too (`RGWGC::initialize`, `driver/rados/rgw_gc.cc:31-56` at v19.2.6 and
+  v20.2.4). When no zone or zonegroup resolves, it refuses to start with
+  `driver.ErrNoZone`, naming the object it looked for, and it refuses to
+  start on a root pool, a control pool or a gc pool it cannot open. radosgw
+  creates a missing gc pool and refuses to start only when it cannot open
+  it after that (`open_gc_pool_ctx`, `driver/rados/rgw_rados.cc:1201-1203`
+  and `:1441-1443` at v19.2.6, `:1251-1253` and `:1516-1518` at v20.2.4).
+  Without its gc pool rgw-go would delete every overwritten tail inline,
+  under readers still fetching it, so it does not start. A metadata pool found missing later fails the request that needs
   it, naming the pool. A data pool found missing is not created either:
   rgw-go stats an object in it as absent, and a read or write that needs
   the pool fails, naming it. radosgw creates what is missing instead, a
@@ -1557,6 +1563,19 @@ does the following.
   every pass. A zero or negative `rgw_user_quota_sync_wait_time` gives
   every owner the pass does not skip as idle a full sync on every pass in
   both gateways.
+- **A gc processor period that is not positive.** With
+  `rgw_enable_gc_threads` set and `rgw_gc_processor_period` 0 or negative,
+  rgw-go's gc worker waits a second after each pass that took less, and
+  logs an error naming the option and the value it read. radosgw's
+  `GCWorker::entry` waits the period less the pass's whole seconds and
+  skips the wait when that is not positive (`driver/rados/rgw_gc.cc:795-805`
+  at v19.2.6, `:807-817` at v20.2.4), so it runs its passes without pause,
+  locking and listing every gc shard each time
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's gc worker runs its passes
+  without pause on a non-positive rgw_gc_processor_period](ceph-upstream-bugs.md#radosgws-gc-worker-runs-its-passes-without-pause-on-a-non-positive-rgw_gc_processor_period)").
+  A period of a second or more is waited as radosgw waits it, in whole
+  seconds, and both gateways narrow it and `rgw_gc_processor_max_time` to
+  32 bits as radosgw's `int` reads them.
 - **A quota stats TTL below about -1.79e9 seconds.** A zero or negative
   `rgw_bucket_quota_ttl` makes both gateways read a bucket's or owner's
   stats from RADOS on every quota check, and start a background refresh
@@ -2098,6 +2117,46 @@ does the following.
   entry](ceph-upstream-bugs.md#radosgws-send_split_chain-repeats-an-object-in-its-remainder-and-loops-on-an-object-too-large-for-an-entry)").
   Only an `rgw_max_chunk_size` smaller than one tail's estimate, a few
   hundred bytes, reaches it.
+- **A negative or overlong gc object wait.** Ceph's config sets no limit on
+  `rgw_gc_obj_min_wait` (`common/options/rgw.yaml.in:1711` at v19.2.6,
+  `:1799` at v20.2.4). radosgw narrows it to the `uint32_t` expiration every
+  gc enqueue takes (`driver/rados/rgw_gc_log.cc:29-30`;
+  `cls/rgw_gc/cls_rgw_gc_client.cc:50` at both tags), and the class adds
+  that to the OSD's clock and stores the due time in 32-bit seconds. So a
+  value from -1 down to about -1.79e9, or one whose narrowed value takes the
+  due time past 2106, wraps to a time already gone, and the next gc pass
+  frees the tails under any reader still fetching them
+  (`docs/ceph-upstream-bugs.md`, "[A negative or overlong
+  rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next
+  pass](ceph-upstream-bugs.md#a-negative-or-overlong-rgw_gc_obj_min_wait-makes-radosgws-gc-free-overwritten-tails-at-its-next-pass)").
+  rgw-go never sends such a wait.
+  - It uses the option's default, 7200 s, for a negative value, logging an
+    error naming the option and the value it read.
+  - It sends a positive value whole while the due time it gives stays a day
+    short of 2106 by the gateway's clock, and that bound otherwise: the
+    tails are then due shortly before 2106, never at once, whatever the
+    value, where radosgw keeps only its low 32 bits. The day covers an
+    OSD clock running ahead of the gateway's. rgw-go logs an error at
+    startup for a value past that bound.
+- **The gc worker opens a chain object's pool even when it has none.**
+  rgw-go collects the gc shards as radosgw's `RGWGC::process` does
+  (`driver/rados/rgw_gc.cc:550-727` at v19.2.6, `:565-739` at v20.2.4), but
+  it opens the pool of a page's first object, and of an object after one
+  whose pool failed to open, whatever the pool's name. radosgw opens a pool
+  only when the name differs from the last one it opened, starting each page
+  from the empty name but keeping the pass's I/O context, so an object whose
+  chain records no pool, as `update_gc_chain` records for a stripe whose
+  placement resolves none, keeps whatever context the pass holds
+  (`:633` and `:660-677` at v19.2.6, `:648` and `:672-689` at v20.2.4). On a
+  shard's first page, or after a failed open, that context was never opened
+  and the process faults; on a later page the put goes to the previous
+  page's last pool, usually answers ENOENT, and the entry is removed with
+  its tail leaked (`docs/ceph-upstream-bugs.md`, "[radosgw's gc processor
+  faults on a chain object without a
+  pool](ceph-upstream-bugs.md#radosgws-gc-processor-faults-on-a-chain-object-without-a-pool)").
+  In rgw-go the empty name fails to open on every page, as any missing pool
+  does: an omap-era entry skips the object and keeps its tag, and a
+  queue-era entry ends the shard's pass and stays queued.
 - **Inline tail deletes run in parallel on Squid too.** When the GC shard
   refuses an overwritten object's tails, rgw-go deletes them inline with
   up to `rgw_multi_obj_del_max_aio` refcount puts in flight, as

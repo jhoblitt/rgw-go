@@ -34,8 +34,12 @@ type rookZone struct{ realmID, zgID, zoneID, periodID string }
 // seedRookZone seeds the root pool with a single-zone realm in Rook's zoned
 // shape and returns the ids it chose: realm, zonegroup and zone share the
 // store's name, the zone's pools are namespaces of shared pools, and with
-// withPeriod the realm's period is committed.
+// withPeriod the realm's period is committed. It registers the rgw_gc and
+// lock classes, which every Open's gc shard initialization and the gc
+// worker's passes call.
 func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone {
+	c.RegisterClass("rgw_gc", fakerados.GCQueueClass(), fakerados.GCQueueWriteMethods...)
+	c.RegisterClass("lock", fakerados.LockClass(), fakerados.LockWriteMethods...)
 	ids := rookZone{realmID: "realm-" + store, zgID: "zg-" + store, zoneID: "zone-" + store, periodID: "period-" + store}
 	zone := meta.NewZone()
 	zone.ID, zone.Name = ids.zoneID, store
@@ -56,6 +60,7 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 		UserEmailPool: meta.ParsePool(store + ".rgw.meta:users.email"),
 		UserSwiftPool: meta.ParsePool(store + ".rgw.meta:users.swift"),
 		AccountPool:   meta.ParsePool(store + ".rgw.meta:accounts"),
+		GCPool:        meta.ParsePool(store + ".rgw.log:gc"),
 		LogPool:       meta.ParsePool(store + ".rgw.log"),
 		UsageLogPool:  meta.ParsePool(store + ".rgw.log:usage"),
 		PlacementPools: map[string]meta.ZonePlacementInfo{"default-placement": {

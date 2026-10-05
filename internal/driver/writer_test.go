@@ -66,10 +66,44 @@ var _ = Describe("the write options", func() {
 		Expect(s.WriteOptionsForTest().MultiObjDelMaxAIO).To(Equal(1), "rgw_op.cc:7011 at v19.2.6")
 	})
 
-	It("narrows rgw_gc_obj_min_wait to the u32 every gc call takes", func(ctx SpecContext) {
+	DescribeTable("uses the default for a negative rgw_gc_obj_min_wait, logging the option and the value",
+		func(ctx SpecContext, value string) {
+			var buf bytes.Buffer
+			DeferCleanup(driver.CaptureLog(&buf))
+			s, err := driver.Open(ctx, c, conf(map[string]string{"rgw_gc_obj_min_wait": value}), driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s.WriteOptionsForTest().GCObjMinWait).To(BeEquivalentTo(7200), "not a due time that wraps into the past")
+			Expect(buf.String()).To(MatchRegexp(`"level":"ERROR".*"option":"rgw_gc_obj_min_wait","value":` + value))
+		},
+		Entry("-1", "-1"),
+		Entry("the most negative int64", "-9223372036854775808"),
+	)
+
+	It("keeps a zero rgw_gc_obj_min_wait", func(ctx SpecContext) {
+		s, err := driver.Open(ctx, c, conf(map[string]string{"rgw_gc_obj_min_wait": "0"}), driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.WriteOptionsForTest().GCObjMinWait).To(BeZero())
+	})
+
+	DescribeTable("narrows the gc processor's time options to the int radosgw reads them into",
+		func(ctx SpecContext, value string, want time.Duration) {
+			s, err := driver.Open(ctx, c, conf(map[string]string{"rgw_gc_processor_max_time": value, "rgw_gc_processor_period": value}), driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			o := s.WriteOptionsForTest()
+			Expect([]time.Duration{o.GCProcessorMaxTime, o.GCProcessorPeriod}).To(Equal([]time.Duration{want, want}), "rgw_gc.cc:731 and :797 at v19.2.6")
+		},
+		Entry("2^32+1", "4294967297", time.Second),
+		Entry("past a Duration's seconds", "10000000001", 1410065409*time.Second),
+		Entry("2^31", "2147483648", -2147483648*time.Second),
+	)
+
+	It("keeps an rgw_gc_obj_min_wait reaching past 2106, logging it, for each enqueue to saturate", func(ctx SpecContext) {
+		var buf bytes.Buffer
+		DeferCleanup(driver.CaptureLog(&buf))
 		s, err := driver.Open(ctx, c, conf(map[string]string{"rgw_gc_obj_min_wait": "4294967297"}), driver.Options{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(s.WriteOptionsForTest().GCObjMinWait).To(BeEquivalentTo(1), "cls_rgw_gc_set_entry's uint32_t expiration_secs")
+		Expect(s.WriteOptionsForTest().GCObjMinWait).To(BeEquivalentTo(4294967297), "not narrowed to 1 s, as radosgw's uint32_t would")
+		Expect(buf.String()).To(MatchRegexp(`"level":"ERROR".*"option":"rgw_gc_obj_min_wait","value":4294967297`))
 	})
 
 	DescribeTable("refuses write sizes that cannot write, naming the three values",
