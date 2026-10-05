@@ -1558,7 +1558,14 @@ does the following.
   v19.2.6, `:359-366` at v20.2.4); radosgw refuses only a PUT that sends a
   tail piece longer than the window, and stores one that fits in its head,
   and only an UploadPart whose first stripe or a later piece is longer
-  than the window.
+  than the window. With an `rgw_obj_stripe_size` above the window, rgw-go
+  refuses an UploadPart once it has read one byte past the window, while
+  radosgw reads the whole first stripe before its throttle refuses it
+  (`set_head_chunk_size`, `driver/rados/rgw_putobj_processor.cc:477` at
+  v19.2.6, `:511` at v20.2.4): a body whose read fails between those two
+  points gets the read's own error from radosgw (`rgw_op.cc:4401-4404` at
+  v19.2.6, `:4633-4636` at v20.2.4) and 500 UnknownError from rgw-go. The
+  default sizes, a 4 MiB stripe and a 16 MiB window, cannot meet this.
 - **Counts too large for radosgw's integers.** rgw-go holds a shard count in
   32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
   63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.

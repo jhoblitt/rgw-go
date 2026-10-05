@@ -333,7 +333,7 @@ benchmark was re-run.
 - **Cost:** none found. cls_rgw refuses a completion whose tag is no longer
   pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at v19.2.6,
   `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
-  entry's, in the same pool, into a cancel (`:1082-1085`, `:1217-1220`). So a
+  entry's, in the same pool, into a cancel (`:1082-1086`, `:1217-1221`). So a
   late ADD after the DEL completed is refused, and one between the DEL's
   prepare and completion is undone by the completion: the entry ends removed
   in every order, and the driver's vanished-upload spec takes the shard's

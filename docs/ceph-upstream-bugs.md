@@ -6716,7 +6716,7 @@ Every new entry adds its row to this table, in document order.
     cache never held.
 - **Impact:** the trigger is any client allowed to UploadPart into the
   bucket, with a part of any size: the end of the body flushes the part's
-  first stripe through `write_exclusive` (`rgw_op.cc:4425`, `:4656`), and a
+  first stripe through `write_exclusive` (`rgw_op.cc:4425`, `:4657`), and a
   Content-MD5 the client chose to mismatch then fails the request with
   BadDigest before `processor->complete` (`:4483-4486`, `:4715-4718`), so
   even a 1-byte part lowers the cached object count of the bucket and of
