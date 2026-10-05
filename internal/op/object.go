@@ -55,6 +55,17 @@ type PutParams struct {
 	IfMatch, IfNoneMatch string
 	// ETag, when set, is stored instead of the computed MD5 (multipart completion).
 	ETag string
+	// Tag is the write tag: radosgw uses the request id (rgw_op.cc:4288 and
+	// driver/rados/rgw_putobj_processor.cc:377 at v19.2.6, :4501 and :407 at
+	// v20.2.4), so user.rgw.idtag and user.rgw.tail_tag hold it
+	// NUL-terminated and the index entry holds it bare. Empty selects
+	// append_rand_alpha's form, "_" and 31 random characters.
+	Tag string
+	// ContentMD5 is the decoded Content-MD5 header, 16 bytes, nil when the
+	// request carried none; a body whose MD5 differs is ErrBadDigest before
+	// the head is written (RGWPutObj::execute, rgw_op.cc:4483-4486 at
+	// v19.2.6, :4715-4718 at v20.2.4).
+	ContentMD5 []byte
 }
 
 // PutResult describes the object a write produced.

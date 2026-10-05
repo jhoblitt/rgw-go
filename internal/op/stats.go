@@ -23,4 +23,9 @@ type StatsStore interface {
 	// CheckQuota fails with ErrQuotaExceeded when adding addBytes and addObjs
 	// to rec or to owner's totals would exceed an enabled quota.
 	CheckQuota(ctx context.Context, rec *BucketRecord, owner meta.Owner, addBytes, addObjs int64) error
+	// AdjustStats is RGWQuotaHandler::update_stats after a write or delete:
+	// objs objects and addBytes bytes join rec's and owner's cached totals
+	// and removedBytes leave them (rgw_rados.cc:3358-3366 at v19.2.6,
+	// :3511-3519 at v20.2.4).
+	AdjustStats(ctx context.Context, rec *BucketRecord, owner meta.Owner, objs, addBytes, removedBytes int64) error
 }

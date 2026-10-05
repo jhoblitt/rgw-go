@@ -10,6 +10,22 @@ import (
 )
 
 type FakeStatsStore struct {
+	AdjustStatsStub        func(context.Context, *op.BucketRecord, meta.Owner, int64, int64, int64) error
+	adjustStatsMutex       sync.RWMutex
+	adjustStatsArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.Owner
+		arg4 int64
+		arg5 int64
+		arg6 int64
+	}
+	adjustStatsReturns struct {
+		result1 error
+	}
+	adjustStatsReturnsOnCall map[int]struct {
+		result1 error
+	}
 	BucketStatsStub        func(context.Context, *op.BucketRecord) (op.Stats, error)
 	bucketStatsMutex       sync.RWMutex
 	bucketStatsArgsForCall []struct {
@@ -55,6 +71,72 @@ type FakeStatsStore struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *FakeStatsStore) AdjustStats(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.Owner, arg4 int64, arg5 int64, arg6 int64) error {
+	fake.adjustStatsMutex.Lock()
+	ret, specificReturn := fake.adjustStatsReturnsOnCall[len(fake.adjustStatsArgsForCall)]
+	fake.adjustStatsArgsForCall = append(fake.adjustStatsArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.Owner
+		arg4 int64
+		arg5 int64
+		arg6 int64
+	}{arg1, arg2, arg3, arg4, arg5, arg6})
+	stub := fake.AdjustStatsStub
+	fakeReturns := fake.adjustStatsReturns
+	fake.recordInvocation("AdjustStats", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6})
+	fake.adjustStatsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeStatsStore) AdjustStatsCallCount() int {
+	fake.adjustStatsMutex.RLock()
+	defer fake.adjustStatsMutex.RUnlock()
+	return len(fake.adjustStatsArgsForCall)
+}
+
+func (fake *FakeStatsStore) AdjustStatsCalls(stub func(context.Context, *op.BucketRecord, meta.Owner, int64, int64, int64) error) {
+	fake.adjustStatsMutex.Lock()
+	defer fake.adjustStatsMutex.Unlock()
+	fake.AdjustStatsStub = stub
+}
+
+func (fake *FakeStatsStore) AdjustStatsArgsForCall(i int) (context.Context, *op.BucketRecord, meta.Owner, int64, int64, int64) {
+	fake.adjustStatsMutex.RLock()
+	defer fake.adjustStatsMutex.RUnlock()
+	argsForCall := fake.adjustStatsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
+}
+
+func (fake *FakeStatsStore) AdjustStatsReturns(result1 error) {
+	fake.adjustStatsMutex.Lock()
+	defer fake.adjustStatsMutex.Unlock()
+	fake.AdjustStatsStub = nil
+	fake.adjustStatsReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeStatsStore) AdjustStatsReturnsOnCall(i int, result1 error) {
+	fake.adjustStatsMutex.Lock()
+	defer fake.adjustStatsMutex.Unlock()
+	fake.AdjustStatsStub = nil
+	if fake.adjustStatsReturnsOnCall == nil {
+		fake.adjustStatsReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.adjustStatsReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *FakeStatsStore) BucketStats(arg1 context.Context, arg2 *op.BucketRecord) (op.Stats, error) {
