@@ -83,11 +83,13 @@ var (
 
 // Open connects the driver to cluster: it detects the release, resolves the
 // zone the gateway serves from the root pools, reads the options, creates
-// the control objects in the zone's control pool, and logs the zone and the
-// options that ask for a worker it does not run. The control watches, which
-// keep the metadata cache coherent with every other gateway, run as Run's
-// control-watch worker, and the retries of bucket index completions a
-// reshard refused as its index-completions worker.
+// the control objects in the zone's control pool, initializes the gc shards
+// as RGWGC::initialize does, refusing a gc pool it cannot open, and logs the
+// zone and the options that ask for a worker it does not run. The control watches, which keep the metadata
+// cache coherent with every other gateway, run as Run's control-watch
+// worker, the retries of bucket index completions a reshard refused as its
+// index-completions worker, and with rgw_enable_gc_threads the garbage
+// collector as its gc worker.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
@@ -127,8 +129,14 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	s.heads = s
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
 	s.w = newWriter(ctx, s, wopts)
+	if err := s.gcInitialize(ctx); err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	s.AddWorker("control-watch", sys.notify.run)
 	s.AddWorker("index-completions", s.w.completions.run)
+	if wopts.gcThreads {
+		s.AddWorker("gc", newGCWorker(s).run)
+	}
 	s.openQuota(ctx)
 	s.openUsageLog(ctx)
 	return s, nil

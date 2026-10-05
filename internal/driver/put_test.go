@@ -346,6 +346,7 @@ var _ = Describe("PutObject", func() {
 		Expect(err).NotTo(HaveOccurred())
 		gcOID := fmt.Sprintf("gc.%d", driver.GCShardForTest(s, "tx-old\x00"))
 		c.Object(gcPoolName, gcNS, gcOID).Xattrs[version.XattrName] = encode(version.ObjVersion{})
+		c.ResetCounters()
 		_, err = s.PutObject(ctx, rec, key, strings.NewReader("new"), op.PutParams{Attrs: attrs, Size: 3, Tag: "tx-new"})
 		Expect(err).NotTo(HaveOccurred())
 		writes := c.WritesTo(gcPoolName, gcNS, gcOID)
