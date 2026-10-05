@@ -94,14 +94,15 @@ func (*ListObjects) Init(ctx context.Context, r *Request) error {
 
 // VerifyPermission is RGWListBucket::verify_permission, which runs
 // get_params first, so a max-keys that is not a number is InvalidArgument
-// whatever the requester may do, and then authorizes the action against the
-// bucket.
+// whatever the requester may do, then adds the listing's condition keys, and
+// then authorizes the action against the bucket.
 func (o *ListObjects) VerifyPermission(ctx context.Context, r *Request) error {
 	n, err := ParseValueAndBound(o.MaxKeys, 0, maxListingResults(r), defaultMaxKeys)
 	if err != nil {
 		return err
 	}
 	o.Max = n
+	r.List = &ListConditions{Prefix: o.Prefix, Delimiter: o.Delimiter, MaxKeys: n}
 	a := o.Action()
 	return VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
 }

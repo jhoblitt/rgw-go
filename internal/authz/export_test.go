@@ -17,6 +17,7 @@ var (
 	IdentityPolicies = identityPolicies
 	PublicAccess     = publicAccess
 	AddTags          = addTags
+	TagSet           = tagSet
 	NeedsTags        = needsTags
 	BaseEnv          = baseEnv
 )

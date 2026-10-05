@@ -157,6 +157,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw creates a multipart upload's meta object without the exclusive create its flags ask for](#radosgw-creates-a-multipart-uploads-meta-object-without-the-exclusive-create-its-flags-ask-for) | pending | pending |  |
 | [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | pending | pending |  |
 | [Tentacle's DeleteObject removes the head without checking its write tag](#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
+| [radosgw evaluates a tag-conditioned policy without the tags it fails to read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -1021,12 +1022,16 @@ Every new entry adds its row to this table, in document order.
     `rgw_build_object_policies` calls `read_obj_policy` on the same bucket
     (`rgw_op.cc:8003-8009`, `:646-648`; v20.2.4 `:8921-8927`, `:676-678`),
     and that parses the policy again with no handler (`:419`; v20.2.4
-    `:449`).
+    `:449`). At v20.2.4 the handler exempts every request for which
+    `is_admin()` holds, an admin user's as well as a system user's
+    (`rgw_auth.cc:1068-1071`), so an admin user's object request takes the
+    same path there.
   - CopyObject's `verify_permission` parses the destination bucket's policy
     once more, also with no handler (v19.2.6 `rgw_op.cc:5475`; v20.2.4
     `:6041`; main `:6394` at 7ed73efc1be). `init_permissions` has already
     refused any other request whose own bucket policy does not parse, so
-    only a system request reaches this parse with such a policy.
+    only a system request, and at v20.2.4 an admin user's, reaches this
+    parse with such a policy.
   - The same code is on main (`rgw_op.cc:524`, `rgw_process.cc:461`,
     `rgw_asio_frontend.cc:1204` and `:1221`, 7ed73efc1be, 2026-09-25).
 - **Trigger:** a CopyObject or UploadPartCopy that names such a source and
@@ -1034,7 +1039,8 @@ Every new entry adds its row to this table, in document order.
   checks, so the requester needs no grant on either bucket; for a source
   whose policy names its own tenant, any such request whose destination
   bucket is in another tenant ends the process. Also an object request by
-  a system user on a bucket whose own stored policy does not parse.
+  a system user, or at v20.2.4 by an admin user, on a bucket whose own
+  stored policy does not parse.
 - **Releases:** every release checked, v19.2.6, v20.2.4 and main; the
   cross-tenant case from v19.2.0 and v20.1.0.
 - **rgw-go:** phase 1 (unit Z) refuses a copy whose source bucket policy does
@@ -1042,7 +1048,10 @@ Every new entry adds its row to this table, in document order.
   and parses the source's policy with the source's own tenant, so a policy
   that parses for its own bucket parses for a copy too. For the request's
   own bucket it refuses such a policy with 403 unless the requester is an
-  admin, and does not parse it again. That is a difference from radosgw,
+  admin, whose request is then evaluated without the policy, an object
+  request included. DeleteObjects checks each key as it checks a copy
+  source and parses the policy again, so an admin's DeleteObjects on such a
+  bucket is refused for every key. That is a difference from radosgw,
   which unit Z records in `docs/exclusions.md`.
 - **Upstream:** we filed [#81253](https://tracker.ceph.com/issues/81253).
   The fix in review is
@@ -6598,3 +6607,43 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932).
 - **Found:** phase 1 unit W, Task 6, 2026-10-05, transcribing
   `delete_obj` at both tags; derived from the source, not reproduced.
+
+## radosgw evaluates a tag-conditioned policy without the tags it fails to read
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, cited at v19.2.6 and then
+  v20.2.4.
+  - Before it authorizes, an op whose policies name an
+    `s3:ExistingObjectTag` or `s3:ResourceTag` key adds the object's or the
+    bucket's tags to the IAM environment through `rgw_iam_add_objtags` and
+    `rgw_iam_add_buckettags` (`rgw_op.cc:727-758`, `:757-788`).
+  - `rgw_iam_add_objtags` returns the head read's error when
+    `get_obj_attrs` fails (`:729-731`, `:759-761`), and
+    `rgw_iam_add_tags_from_bl` returns -EIO, before adding a key, for a tag
+    set that does not decode (`:708-725`, `:738-755`).
+  - Every caller ignores the result and authorizes with the environment as
+    it stands: RGWGetObj (`:987`, `:1142`), RGWGetObjTags (`:1045`,
+    `:1244`), RGWPutObjTags (`:1085`, `:1284`), RGWDeleteObjTags (`:1126`,
+    `:1344`), RGWGetACLs (`:5704`, `:6284`), and the others listed by
+    `git grep rgw_iam_add_` at each tag. RGWPutACLs assigns the result to
+    `op_ret` and still returns only the permission check's (`:5747-5756`,
+    `:6325-6334`).
+  - On a key the environment lacks, a condition holds only when it is
+    IfExists or a ForAllValues operator (`rgw_iam_policy.cc:861-868`,
+    `:881-888`); a Null test answers that the key is absent (`:857-859`,
+    v20.2.4 compares that answer with its values, `:876-879`). So a Deny
+    such as "Deny s3:DeleteObject if s3:ExistingObjectTag/protected = true"
+    is skipped when the read fails, whether from a transient RADOS error or
+    a damaged attr, and every tag condition is decided as if the object
+    carried no tags.
+- **Trigger:** a request whose bucket or identity policy names a tag key,
+  on an object whose head read fails with anything but ENOENT, or on an
+  object or bucket whose `user.rgw.x-amz-tagging` attr does not decode.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** phase 1 (unit Z) refuses such a request with 500
+  InternalError, which `op.Run` never overrides; a missing object still
+  adds no tags. That is a difference from radosgw, which
+  `docs/exclusions.md` records.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 10 review, 2026-10-05; derived from the
+  source, not reproduced.

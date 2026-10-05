@@ -1008,6 +1008,21 @@ review and verified against the tree.
   (`rgw_rest_s3.cc:4508-4520`, `permitted_cksum_algo_and_type` in
   `rgw_cksum.h`). CreateMultipartUpload takes an algorithm Tentacle does
   not know as none, as rgw-go does. Phase 2 adds Tentacle-level checksums.
+- **Members of IAM groups are refused until phase 3 evaluates group
+  policies.** radosgw loads, with a user's own identity policies, the
+  inline and managed policies of every IAM group the user's record lists
+  (`load_account_and_policies`, `rgw_auth.cc:170-184` at v19.2.6 and
+  v20.2.4) and evaluates them on every request. rgw-go phase 1 cannot read
+  groups, which only the IAM API creates and rgw-go serves from phase 3, so
+  it answers every request of a user whose record lists a group with 403
+  AccessDenied rather than evaluate the request without the group's
+  policies, which would allow what a group's Deny forbids. A missing key
+  is AccessDenied to such a user, never NoSuchKey, since a group's policy
+  could decide whether the user may list the bucket. An admin or system
+  user still passes, as radosgw's own policy denials let one, except in
+  DeleteObjects' per-key checks, which radosgw also makes without its
+  override. Account users in IAM groups therefore work through radosgw and
+  not through rgw-go until phase 3.
 
 ### Command-line differences
 
@@ -1819,6 +1834,104 @@ rgw-go does the following.
   policy does not parse (`rgw_op.cc:598-615` at v19.2.6, `:628-645` at
   v20.2.4). radosgw writes the attr cleanly; only corruption or another
   writer leaves one that does not decode.
+- **A bucket policy that does not parse refuses the request rather than
+  stopping radosgw.** radosgw parses a copy source's stored policy with no
+  handler, and its process terminates when the policy does not parse. It
+  does the same for an object request by a user whom its handler for the
+  request's own bucket lets through, a system user and on v20.2.4 an admin
+  user (`docs/ceph-upstream-bugs.md`, "radosgw terminates on a copy source
+  or system request whose bucket policy does not parse"). rgw-go refuses a
+  copy whose source bucket's policy does not parse with 403 AccessDenied,
+  for every requester and ahead of the op mask. For the request's own
+  bucket it refuses such a policy with 403 unless the requester is an
+  admin, whose request, an object request included, is evaluated without
+  the policy, as radosgw evaluates an admin's bucket request. DeleteObjects
+  checks each key as it checks a copy source, so an admin's DeleteObjects
+  on such a bucket is refused for every key, where radosgw evaluates the
+  keys without the policy for a system user, and on v20.2.4 for an admin
+  user too; v19.2.6 refuses a non-system admin's whole request in
+  `init_permissions` (`rgw_op.cc:612` at v19.2.6).
+- **A stored identity policy that does not decode is refused at the
+  permission check, not at authentication.** radosgw loads a user's
+  `user.rgw.user-policy` and `user.rgw.managed-policy` while it
+  authenticates the request, and a policy that does not decode or parse
+  fails the authentication with 403 AccessDenied (`rgw_auth.cc:548-554` at
+  v19.2.6, `:563-569` at v20.2.4). rgw-go decodes them when it authorizes
+  and refuses there with the same 403, ahead of the op mask and never
+  overridden for an admin. What rgw-go answers before it authorizes is
+  answered first: a request naming a missing bucket answers 404
+  NoSuchBucket, and an admin API request, which rgw-go authorizes by the
+  user's caps alone, is served.
+- **An op's own early errors can come before radosgw's early refusals.**
+  radosgw refuses a request on a suspended bucket, on a bucket whose stored
+  policy does not parse or whose ACL does not decode, and a missing
+  object's request from a requester who may not list its bucket, while it
+  reads the bucket and the object, before an op reads its parameters
+  (`rgw_process.cc:173-211` at v19.2.6 and v20.2.4). rgw-go makes those
+  checks when the op authorizes, after its `Init` and after what it parses
+  first, as radosgw's `verify_permission` parses some parameters first. An
+  error the op finds before it authorizes is answered first: a ListObjects
+  with `max-keys=x` on a suspended bucket answers 400 InvalidArgument where
+  radosgw answers 403 UserSuspended. Both refuse the request; only which
+  refusal differs, and the op's error depends on the request alone.
+- **Squid clusters get Tentacle's checks outside the policy language.** On
+  both releases rgw-go refuses a request whose `x-amz-expected-bucket-owner`
+  header names another owner than the request's bucket's
+  (`rgw_common.cc:1407-1412` and `:1575-1580` at v20.2.4), and a requester
+  outside the bucket owner's account when the bucket's public-access block
+  sets RestrictPublicBuckets and its policy is public (`:1374-1380`,
+  `:1541-1547`), judging the policy public as v20.2.4's `is_public` does.
+  Squid's radosgw ignores both (`docs/ceph-upstream-bugs.md`, "Squid
+  accepts RestrictPublicBuckets but never enforces it"). rgw-go also lets an
+  admin user that is not a system user through a suspended bucket's
+  refusal and an unparsable bucket policy's, as v20.2.4 does
+  (`rgw_op.cc:396`, `:433` and `:642` at v20.2.4); Squid's radosgw exempts
+  only system users (`:366`, `:403` and `:612` at v19.2.6). The policy
+  language itself, its actions, operators and principals, follows the
+  cluster's release.
+- **A copy source is checked against its own bucket.** radosgw checks
+  CopyObject's and UploadPartCopy's source through the request's state,
+  whose bucket is the destination, and takes three inputs from the
+  destination (`docs/ceph-upstream-bugs.md`, "radosgw checks a copy source
+  with inputs from the destination bucket"): the owner that decides an
+  account user's cross-account check and owns a source object's default
+  ACL, the tenant the source's policy is parsed with, and the public-access
+  block. rgw-go takes every input that describes the source from the
+  source's bucket: its owner, its policy parsed with its own tenant, and
+  its public-access block, which applies in addition to the destination's,
+  so IgnorePublicAcls holds when either block sets it and each block's
+  RestrictPublicBuckets is judged against its own bucket's owner. The
+  destination supplies requester pays and the `x-amz-expected-bucket-owner`
+  comparison, as in radosgw. A copy radosgw allows can therefore be
+  refused: an account user's copy from another account's bucket that
+  grants it nothing, a cross-tenant copy a Deny in the source's policy
+  covers, and a copy of a public source whose owner blocked public access.
+- **Tags that cannot be read refuse the request.** When a bucket policy or
+  an identity policy names an `s3:ExistingObjectTag` or `s3:ResourceTag`
+  key, radosgw reads the object's or bucket's tags into the policy
+  environment before it authorizes, and ignores a read that fails or a tag
+  set that does not decode, evaluating without the tags (`rgw_op.cc:987`,
+  `:1045`, `:1085`, `:1126` and `:5704` at v19.2.6;
+  `docs/ceph-upstream-bugs.md`, "radosgw evaluates a tag-conditioned policy
+  without the tags it fails to read"), so a Deny conditioned on a tag is
+  skipped. rgw-go answers such a request with 500 InternalError instead,
+  which op.Run's admin override does not pass. An object that does not
+  exist still adds no tags, as in radosgw, and the ACL ops, which add tags
+  whatever the policies name, refuse nothing when no policy needs them.
+  Only a failed read of the object's head, or a tag attr that neither
+  radosgw's binary form nor its text form decodes, differs, and the
+  refusal lasts while the attr stays undecodable:
+  - When a bucket policy names `s3:ResourceTag` and the bucket's tag attr
+    does not decode, every bucket op that reads the bucket's tags, listing
+    the bucket and Get, Put and DeleteBucketPolicy and Put and
+    DeleteBucketTagging among them, answers 500 to every requester, admins
+    and system users included. An object whose tag attr does not decode is
+    refused the same way for every object op that reads its tags.
+  - Multisite sync, which reads through a system user, stalls on such a
+    bucket or object for as long.
+  - The repair is outside rgw-go's S3 surface: radosgw-admin, or a radosgw
+    gateway serving the same cluster, which ignores the attr, can rewrite or
+    remove it, or remove the policy that names the tag.
 
 ### Bucket metadata differences
 
