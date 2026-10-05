@@ -182,6 +182,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket delete unlinks a bucket re-created under the same name from its owner](#radosgws-bucket-delete-unlinks-a-bucket-re-created-under-the-same-name-from-its-owner) | pending | pending |  |
 | [Tentacle cannot delete an indexless bucket it created](#tentacle-cannot-delete-an-indexless-bucket-it-created) | pending | pending |  |
 | [radosgw sends Content-Length: 0 with a 204](#radosgw-sends-content-length-0-with-a-204) | pending | pending |  |
+| [radosgw takes a SigV4 request without x-amz-content-sha256 as UNSIGNED-PAYLOAD](#radosgw-takes-a-sigv4-request-without-x-amz-content-sha256-as-unsigned-payload) | pending | pending |  |
+| [rgw_s3_auth_disable_signature_url denies header-signed requests too](#rgw_s3_auth_disable_signature_url-denies-header-signed-requests-too) | pending | pending |  |
+| [radosgw keeps repeated SigV4 query keys in arrival order](#radosgw-keeps-repeated-sigv4-query-keys-in-arrival-order) | pending | pending |  |
+| [radosgw never checks a SigV4 credential scope's date, region or service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -544,10 +548,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.1.0 and later, so every Squid and Tentacle release, and
   reef from v18.2.5; absent at v18.2.4. Checked at v18.2.5, v18.2.8,
   v19.1.0, v19.2.6, v20.2.4 and main.
-- **rgw-go:** phase 1 (unit A) bounds the trailer section at 1 KiB and
-  answers 409 LimitExceeded above it, since the largest legitimate section,
-  a signed SHA512 trailer, is 290 bytes. That is a difference from radosgw,
-  which unit A records in `docs/exclusions.md`.
+- **rgw-go:** answers 409 LimitExceeded for a trailer section longer than
+  1024 bytes, counted from the CRLF that ends the last data chunk
+  (`internal/auth/chunked.go`, `finish`, `maxTrailerSection` = 1024), since
+  the largest legitimate section, a signed SHA512 trailer, is 290 bytes.
+  `docs/exclusions.md` records the difference from radosgw.
 - **Upstream:** [#81122](https://tracker.ceph.com/issues/81122). The trailer
   code came with [ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856),
   the fix for [#63153](https://tracker.ceph.com/issues/63153), and reached
@@ -626,9 +631,11 @@ Every new entry adds its row to this table, in document order.
     bounded `std::from_chars` parse removes the over-read entirely.
 - **Releases:** every release since v12.1.0; checked at v19.2.6, v20.2.4 and
   main.
-- **rgw-go:** phase 1 (unit A) accepts a chunk size only as strict hex, 1 to
-  16 digits, and requires the CRLF that ends each chunk's data. Both are
-  differences from radosgw, which unit A records in `docs/exclusions.md`.
+- **rgw-go:** answers 400 InvalidArgument for a chunk size that is not one
+  to sixteen hex digits, before any of the chunk is stored
+  (`internal/auth/chunked.go`, `parseChunkSize`), and for chunk data not
+  followed by its CRLF (`nextHeader`). `docs/exclusions.md` records both
+  differences from radosgw.
 - **Upstream:** [#81123](https://tracker.ceph.com/issues/81123). The parse
   came with def8f6412a5, in
   [ceph/ceph#14885](https://github.com/ceph/ceph/pull/14885), and
@@ -7621,3 +7628,118 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit M, Task 7 review, 2026-10-05; derived from the
   source, not reproduced.
+
+## radosgw takes a SigV4 request without x-amz-content-sha256 as UNSIGNED-PAYLOAD
+
+- **Kind:** quirk.
+- **Evidence:** paths are under `src/rgw/`.
+  - `get_v4_exp_payload_hash` reads `x-amz-content-sha256` and, when the
+    header is absent, returns `UNSIGNED-PAYLOAD` (`rgw_auth_s3.h:638-661` at
+    v19.2.6, `:641-664` at v20.2.4, the body unchanged).
+  - Its comment says a client must send the header and allows the literal
+    only for query-string authentication, but `get_auth_data_v4` calls it
+    for every S3 op on either route, header-signed requests included
+    (`rgw_rest_s3.cc:5817` at v19.2.6, `:6384` at v20.2.4), so a header-signed request without the header is
+    verified over `UNSIGNED-PAYLOAD` and its body is not hashed. AWS refuses
+    such a request.
+- **Releases:** v19.2.6 and v20.2.4, the tags checked; the same fallback is
+  on main e6dd4bc2a2c (`rgw_auth_s3.h:660`).
+- **rgw-go:** mirrors it (`expectedPayloadHash`, `internal/auth/sigv4.go`).
+  It is a hard requirement: go-ceph's rgw/admin client, which Rook runs,
+  signs with the unsigned-payload hash and never sends the header
+  (`docs/exclusions.md`, "Signature quirks are radosgw's, not AWS's").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A's plan, transcribing `get_v4_exp_payload_hash`;
+  registered in unit A, Task 10, 2026-10-05. Derived from the source, not
+  reproduced.
+
+## rgw_s3_auth_disable_signature_url denies header-signed requests too
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`.
+  - The option is documented as presigned-only: "If enabled, any request
+    that is presigned with either V2 or V4 signature will be denied"
+    (`common/options/rgw.yaml.in:911-916` at v19.2.6, `:970-975` at
+    v20.2.4).
+  - `AWSGeneralAbstractor::get_auth_data` throws
+    `ERR_PRESIGNED_URL_DISABLED` whenever the option is on, after
+    `discover_aws_flavour` and before it looks at the version or the route
+    it found (`rgw/rgw_rest_s3.cc:5607-5610` at v19.2.6, `:6163-6166` at
+    v20.2.4, `:6544-6547` on main e6dd4bc2a2c). Every SigV2 and SigV4
+    request reaches it, header-signed ones included; only anonymous
+    requests, which the anonymous engine takes first, do not.
+  - `Strategy::apply` turns the error into EPERM with the message
+    "Presigned URLs are disabled by admin" (`rgw/rgw_auth.cc:505-509` at
+    v19.2.6, `:520-524` at v20.2.4), so every signed request is 403
+    AccessDenied.
+- **Impact:** an operator who turns the option on to refuse presigned URLs
+  refuses every authenticated request, and only anonymous access remains.
+- **Releases:** every release with the option, which came to Squid with
+  2d6efcc6623 (ceph/ceph#56343, first in v19.1.0); checked at v19.2.6,
+  v20.2.4 and main e6dd4bc2a2c.
+- **rgw-go:** mirrors it, so a cluster that sets the option behaves the
+  same with either gateway (`Verifier.Authenticate`,
+  `internal/auth/verifier.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction. The option's commit
+  message names [#64797](https://tracker.ceph.com/issues/64797).
+- **Found:** phase 1 unit A's plan, transcribing `get_auth_data`;
+  registered in unit A, Task 10, 2026-10-05. Not reproduced.
+
+## radosgw keeps repeated SigV4 query keys in arrival order
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source. Not a quirk: the function names AWS's canonical-request step 3
+  as its model (`rgw_auth_s3.cc:618-619` at v19.2.6, `:624-625` at
+  v20.2.4), and that step sorts by value too, so the arrival order is a
+  gap in the transcription, not a choice.
+- **Evidence:** paths are under `src/rgw/`.
+  - `get_v4_canonical_qs` inserts each query pair into a
+    `std::multimap<std::string, std::string>` and joins the map in order
+    (`rgw_auth_s3.cc:620-659` at v19.2.6, `:626-665` at v20.2.4). A
+    multimap orders by key only, and an insert goes after the elements
+    with an equal key, so repeated keys keep the order they arrived in.
+  - AWS sorts the canonical query string by key and then by value. A
+    client that sends `a=2&a=1` signs `a=1&a=2`, and radosgw computes
+    `a=2&a=1`, so the signature does not match.
+- **Impact:** a correctly signing AWS client that sends a repeated query
+  key with its values out of order gets 403 SignatureDoesNotMatch. A
+  request signed in arrival order, which AWS would refuse, is accepted.
+- **Releases:** v19.2.6 and v20.2.4, the tags checked; the same multimap is
+  on main e6dd4bc2a2c (`rgw_auth_s3.cc:645`).
+- **rgw-go:** mirrors it: `canonicalQueryV4` sorts the pairs stably by key
+  alone (`internal/auth/sigv4.go`), so a request radosgw verifies, rgw-go
+  verifies.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A's plan, transcribing `get_v4_canonical_qs`;
+  registered in unit A, Task 10, 2026-10-05. Derived from the source, not
+  reproduced.
+
+## radosgw never checks a SigV4 credential scope's date, region or service
+
+- **Kind:** quirk.
+- **Evidence:** paths are under `src/rgw/`.
+  - `parse_cred_scope` splits the scope into date, region and service, and
+    its only caller, `get_v4_signing_key`, feeds them to the signing-key
+    HMACs (`rgw_auth_s3.cc:962-1033` at v19.2.6, `:939-1010` at v20.2.4).
+    The scope also enters the string to sign whole, and nothing compares
+    its fields with the endpoint or with `x-amz-date`.
+  - AWS refuses a scope whose region or service is not the endpoint's, or
+    whose date is not the date of `x-amz-date`. radosgw verifies a
+    signature computed for any region, service or date against the same
+    secret.
+- **Impact:** the unchecked date undoes AWS's day-scoping of derived
+  signing keys: a signing key derived for one date, without the secret,
+  signs requests with any `x-amz-date`, bounded only by radosgw's own
+  checks on `x-amz-date` (the time skew, or a presigned URL's expiry). The
+  unchecked region and service only let a client name any region or
+  service.
+- **Releases:** v19.2.6 and v20.2.4, the tags checked; `parse_cred_scope`
+  is unchanged on main e6dd4bc2a2c (`rgw_auth_s3.cc:983`).
+- **rgw-go:** mirrors it: `parseCredScope` and `signingKeyV4`
+  (`internal/auth/sigv4.go`) use the scope's fields for the key alone, so a
+  signature computed for any region verifies against the same secret.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit A's plan, transcribing `parse_cred_scope`;
+  registered in unit A, Task 10, 2026-10-05. Derived from the source, not
+  reproduced.

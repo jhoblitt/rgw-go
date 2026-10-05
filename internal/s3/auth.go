@@ -9,7 +9,7 @@ import (
 )
 
 // Authenticator resolves a request's identity. auth.Verifier implements it;
-// AnonymousOnly is the interim implementation.
+// AnonymousOnly serves the handler specs.
 type Authenticator interface {
 	// Authenticate returns the identity, or an op.Error such as
 	// ErrInvalidAccessKeyID or ErrSignatureDoesNotMatch. payloads is the
