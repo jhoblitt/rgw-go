@@ -3,6 +3,7 @@ package driver_test
 import (
 	"bytes"
 	"context"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -251,6 +252,20 @@ var _ = Describe("SetObjectAttrs", func() {
 		Expect(c.Writes(rookIndexPool, "", shard)).To(Equal(2))
 		Expect(execIn(c.LastWrite(rookIndexPool, "", shard), 2, "bucket_complete_op", rgwcls.DecodeCompleteOp).Op).To(Equal(rgwcls.OpCancel),
 			"set_attrs cancels on any r < 0 (rgw_rados.cc:6726-6731)")
+	})
+
+	It("cancels a timed-out write too, unlike a PUT's head write", func(ctx SpecContext) {
+		setup(ctx, denc.Squid)
+		c.FailNextWrite(testDataPool, "", headOID, syscall.ETIMEDOUT)
+		err := s.SetObjectAttrs(ctx, st, nil, []string{tags.Attr})
+		Expect(err).To(MatchError(op.ErrRequestTimedOut))
+		Expect(c.Object(testDataPool, "", headOID).Xattrs).To(HaveKey(tags.Attr), "the write was not applied")
+		settle(s)
+		Expect(c.Writes(rookIndexPool, "", shard)).To(Equal(2), "the prepare and the cancel")
+		cancel := execIn(c.LastWrite(rookIndexPool, "", shard), 2, "bucket_complete_op", rgwcls.DecodeCompleteOp)
+		Expect(cancel.Op).To(Equal(rgwcls.OpCancel), "set_attrs cancels on any r < 0, ETIMEDOUT included (rgw_rados.cc:6726-6731)")
+		Expect(cancel.Tag).To(Equal(attrsTag))
+		Expect(entry().PendingMap).To(BeEmpty())
 	})
 
 	It("writes no head when the prepare fails", func(ctx SpecContext) {

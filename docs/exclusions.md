@@ -113,6 +113,16 @@ metadata sync enabled. The replication subresource answers with the
 not-found error radosgw returns when no configuration exists, and rejects
 writes. Adding a second zone to a cluster served by rgw-go is unsupported.
 
+radosgw also keeps an in-memory tombstone cache of deleted objects' mtimes,
+zone short ids and placement group versions (`rgw_obj_tombstone_cache_size`)
+for multi-zone data sync, which reads it through the state
+`get_obj_state_impl` gives a missing object
+(`driver/rados/rgw_rados.cc:6153-6165` at v19.2.6, `:6911` at v20.2.4), and
+builds it only when another zone syncs from its zone (`driver/rados/rgw_rados.cc:1343-1346` at v19.2.6,
+`:1332-1335` at v20.2.4). rgw-go
+never builds it, which is what radosgw does on every single-zone
+deployment.
+
 ### Every storage driver except RADOS
 
 What: D4N, POSIX, and by extension dbstore, DAOS and Motr.
@@ -2012,6 +2022,36 @@ does the following.
   v19.2.6 (`docs/ceph-upstream-bugs.md`, "[Squid's write conditions fail an
   If-None-Match ETag on a missing key and skip a head without a write
   tag](ceph-upstream-bugs.md#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag)").
+- **Delete conditions are Tentacle's, and a delete is guarded, on both
+  releases.** rgw-go checks a DeleteObject's If-Match,
+  `x-amz-if-match-size` and `x-amz-if-match-last-modified-time` as
+  v20.2.4's `Delete::delete_obj` does, with `check_preconditions` and an
+  `obj_check_mtime` EQ in the removal op
+  (`driver/rados/rgw_rados.cc:6663-6671` and `:7260-7329` at v20.2.4), on
+  both releases. On both it also sends the head's removal behind v19.2.6's
+  `cmpxattr` on the write tag the delete read (`prepare_atomic_modification`,
+  `:5914` and `:6493-6513` at v19.2.6). A client sees these differences:
+  - On a Squid zone, a delete that carries one of the three conditions and
+    fails it answers 412 PreconditionFailed, where v19.2.6, which does not
+    implement them, deletes: its S3 handler reads only
+    `x-amz-delete-if-unmodified-since` (`rgw_rest_s3.cc:3427-3453` at
+    v19.2.6) and `RGWDeleteObj` has no member for the others
+    (`rgw_op.h:1461-1495` at v19.2.6). Conditional delete came upstream with
+    [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348) (tracker
+    [#68183](https://tracker.ceph.com/issues/68183)), in v20.2.4 through
+    [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949); it reaches
+    Squid at 19.2.7 through
+    [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), merged after
+    v19.2.6.
+  - On a Tentacle zone, a delete whose object another writer replaced
+    between the delete's read and its removal fails the removal and answers
+    204 with the replacement standing, as on Squid. v20.2.4 removes the
+    replacement, even under an If-Match naming the replaced object's ETag,
+    and leaves the replacement's tails unreferenced
+    (`docs/ceph-upstream-bugs.md`, "[Tentacle's DeleteObject removes the
+    head without checking its write
+    tag](ceph-upstream-bugs.md#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag)").
+    The removal op carries the `cmpxattr` step v20.2.4 does not send.
 - **An attribute change adds no expirer hint.** rgw-go changes an object's
   attrs as radosgw's `RGWRados::set_attrs` does
   (`driver/rados/rgw_rados.cc:6593-6757` at v19.2.6, `:7393-7593` at

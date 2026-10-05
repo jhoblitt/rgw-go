@@ -343,11 +343,6 @@ func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 	return op.ErrNotImplemented
 }
 
-// DeleteObject implements op.ObjectStore.
-func (s *Store) DeleteObject(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error {
-	return op.ErrNotImplemented
-}
-
 // CopyObject implements op.ObjectStore.
 func (s *Store) CopyObject(context.Context, *op.ObjectState, *op.BucketRecord, meta.ObjKey, op.CopyParams) (*op.PutResult, error) {
 	return nil, op.ErrNotImplemented

@@ -270,7 +270,7 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 		return s.cancelWrite(hw, x, err)
 	}
 	if st.Manifest != nil && !hw.keepTail {
-		s.completeAtomicModification(ctx, hw, st)
+		s.completeAtomicModification(ctx, hw.rec, hw.key, st)
 	}
 	owner, display := entryOwner(attrs)
 	x.complete(rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}, rgw.DirEntryMeta{
@@ -330,12 +330,13 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectSt
 // its tail_tag, or, when it has none, its object tag: its idtag, or the tag
 // radosgw fakes for a head with a manifest and no idtag. A chain that cannot
 // be built is logged and left, as radosgw logs complete_atomic_modification's
-// failure without failing the write (:3314-3317).
-func (s *Store) completeAtomicModification(ctx context.Context, hw *headWrite, st *op.ObjectState) {
-	chain, err := s.gcChain(st.Manifest, hw.rec.Info.PlacementRule)
+// failure without failing the write (:3314-3317). st is key's head in rec's
+// bucket as the write or the delete read it.
+func (s *Store) completeAtomicModification(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, st *op.ObjectState) {
+	chain, err := s.gcChain(st.Manifest, rec.Info.PlacementRule)
 	if err != nil {
 		slog.ErrorContext(ctx, "the overwritten object's tails cannot be listed; they are leaked",
-			slog.String("bucket", hw.rec.Info.Bucket.Name), slog.String("key", hw.key.Name), slog.Any("error", err))
+			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.Any("error", err))
 		return
 	}
 	if len(chain) == 0 {
@@ -348,8 +349,8 @@ func (s *Store) completeAtomicModification(ctx context.Context, hw *headWrite, s
 	if tag == "" {
 		tag = fakeTag(st)
 	}
-	// The head is already replaced: its old tails are queued even when the
-	// request's client has gone.
+	// The head is already replaced or removed: its old tails are queued even
+	// when the request's client has gone.
 	s.enqueueGC(context.WithoutCancel(ctx), chain, tag)
 }
 
