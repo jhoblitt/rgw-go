@@ -186,6 +186,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [rgw_s3_auth_disable_signature_url denies header-signed requests too](#rgw_s3_auth_disable_signature_url-denies-header-signed-requests-too) | pending | pending |  |
 | [radosgw keeps repeated SigV4 query keys in arrival order](#radosgw-keeps-repeated-sigv4-query-keys-in-arrival-order) | pending | pending |  |
 | [radosgw never checks a SigV4 credential scope's date, region or service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service) | pending | pending |  |
+| [radosgw's ListMultipartUploads drops its common prefixes and the uploads under them](#radosgws-listmultipartuploads-drops-its-common-prefixes-and-the-uploads-under-them) | pending | pending |  |
+| [radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -7743,3 +7745,97 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A's plan, transcribing `parse_cred_scope`;
   registered in unit A, Task 10, 2026-10-05. Derived from the source, not
   reproduced.
+
+## radosgw's ListMultipartUploads drops its common prefixes and the uploads under them
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RadosBucket::list_multiparts` lists the multipart namespace with
+    `MultipartMetaFilter` as the listing's `access_list_filter`
+    (`driver/rados/rgw_sal_rados.cc:927-933` at v19.2.6, `:947-953` at
+    v20.2.4). The filter accepts a name longer than `.meta` that ends in
+    it with a dot before (`services/svc_tier_rados.cc:10-32` at both
+    tags).
+  - With a delimiter, cls_rgw's `bucket_list` returns one entry flagged
+    as a common prefix for every run of names holding the delimiter after
+    the prefix, named up to and including the delimiter
+    (`../cls/rgw/cls_rgw.cc:625-663` at v19.2.6, `:675-713` at v20.2.4).
+  - `list_objects_ordered` runs the filter on every entry it keeps after
+    the namespace check, before the prefix and the delimiter
+    (`driver/rados/rgw_rados.cc:2003-2009` at v19.2.6, `:2106-2112` at
+    v20.2.4). A common-prefix entry's name ends in the delimiter, so the
+    filter refuses it and the code that would record it as a common prefix
+    (`:2019-2087` at v19.2.6, `:2122-2190` at v20.2.4) never runs. Only a
+    delimiter that is a suffix of `.meta`, such as `a`, or ends in `.meta`
+    can form a prefix whose name passes, such as a whole meta name
+    `<key>.<id>.meta`, and that one is recorded (`:2063` and `:2076` at
+    v19.2.6, `:2166` and `:2179` at v20.2.4).
+- **Impact:** ListMultipartUploads with any other delimiter returns no
+  CommonPrefixes, and every upload whose meta name holds the delimiter after
+  the prefix is missing from the response, with nothing pointing to it: with
+  `delimiter=/`, every upload of a key holding a `/` past the prefix. A
+  client that finds its incomplete uploads this way, to abort them or to
+  resume one, never sees those, and the space they hold stays out of its
+  view. With such a delimiter, the common prefixes that survive count toward
+  the page, but `RGWListBucketMultiparts::execute` takes the next markers
+  from the last upload only (`rgw/rgw_op.cc:6741-6744` at v19.2.6,
+  `:7680-7683` at v20.2.4), so a truncated page that ends on prefixes makes
+  the next page repeat them, or start over when the page holds no upload.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Its listing applies the filter only to
+  a name it would list as an upload, so the common prefixes are listed,
+  and a truncated page takes its next markers from its last counted item:
+  an upload's key and id, or a common prefix as the key marker with no
+  upload id marker (`op.UploadListing` and `op.UploadsFromListing` in
+  `internal/op/multipart.go`; `docs/exclusions.md`, "ListMultipartUploads
+  keeps the common prefixes radosgw drops").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 5, 2026-10-05, placing the listing's name
+  filter at both tags; derived from the source, not reproduced.
+
+## radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - `RadosBucket::list_multiparts` passes the request's prefix and
+    delimiter to the listing of the multipart namespace
+    (`rgw/driver/rados/rgw_sal_rados.cc:927-933` at v19.2.6, `:947-953` at
+    v20.2.4), whose names are the meta objects', `<key>.<upload id>.meta`
+    (`RGWMPObj::init`, `rgw/services/svc_tier_rados.h:53` at both tags).
+    The listing matches the prefix against that name and searches the
+    delimiter in it past the prefix (`rgw/driver/rados/rgw_rados.cc:2011-2021`
+    at v19.2.6, `:2114-2124` at v20.2.4; `cls/rgw/cls_rgw.cc:626` at
+    v19.2.6, `:676` at v20.2.4).
+  - The key marker becomes `RGWMPObj(key_marker, upload_id_marker)`'s meta
+    name (`rgw/rgw_rest.cc:1646-1655` at v19.2.6, `:1651-1660` at v20.2.4),
+    `<key>..meta` when no upload id marker is given.
+  - An upload id is `2~` and 31 characters of `gen_rand_alphanumeric`
+    (`rgw/driver/rados/rgw_sal_rados.cc:3281` at v19.2.6, `:4125` at
+    v20.2.4), whose table holds `-` and `_` (`common/random_string.cc:48`
+    at both tags).
+- **Impact:** S3 applies these parameters to the key, and orders uploads by
+  key, then by initiation time. In radosgw:
+  - a delimiter found only in `.<upload id>.meta` rolls up an upload whose
+    key does not hold it: `.` rolls up every upload, `-` or `_` a random
+    share of them, by their ids, and `/` every upload whose id has the
+    legacy prefix `2/` (`MULTIPART_UPLOAD_ID_PREFIX_LEGACY`,
+    `rgw/rgw_multi.h:15` at both tags). Under "radosgw's
+    ListMultipartUploads drops its common prefixes and the uploads under
+    them" those uploads then vanish from the response;
+  - a prefix that runs past the key, such as `photo.`, matches the uploads
+    of the key `photo`;
+  - uploads list in the byte order of their meta names, so the key `a-b`
+    lists before `a`, and one key's uploads by upload id;
+  - a key marker without an upload id marker lists that key's own uploads
+    too, where S3 lists only the keys after it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: the prefix, the delimiter, the order and the
+  markers apply to the meta names (`op.UploadListing` and
+  `op.UploadsFromListing` in `internal/op/multipart.go`). An upload a
+  delimiter rolls up stays reachable through its common prefix, which
+  rgw-go lists.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 5, 2026-10-05, transcribing
+  `list_multiparts` at both tags; derived from the source, not reproduced.
