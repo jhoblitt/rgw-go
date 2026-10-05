@@ -157,6 +157,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw creates a multipart upload's meta object without the exclusive create its flags ask for](#radosgw-creates-a-multipart-uploads-meta-object-without-the-exclusive-create-its-flags-ask-for) | pending | pending |  |
 | [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | pending | pending |  |
 | [Tentacle's DeleteObject removes the head without checking its write tag](#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
+| [radosgw evaluates a tag-conditioned policy without the tags it fails to read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6606,3 +6607,43 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932).
 - **Found:** phase 1 unit W, Task 6, 2026-10-05, transcribing
   `delete_obj` at both tags; derived from the source, not reproduced.
+
+## radosgw evaluates a tag-conditioned policy without the tags it fails to read
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, cited at v19.2.6 and then
+  v20.2.4.
+  - Before it authorizes, an op whose policies name an
+    `s3:ExistingObjectTag` or `s3:ResourceTag` key adds the object's or the
+    bucket's tags to the IAM environment through `rgw_iam_add_objtags` and
+    `rgw_iam_add_buckettags` (`rgw_op.cc:727-758`, `:757-788`).
+  - `rgw_iam_add_objtags` returns the head read's error when
+    `get_obj_attrs` fails (`:729-731`, `:759-761`), and
+    `rgw_iam_add_tags_from_bl` returns -EIO, before adding a key, for a tag
+    set that does not decode (`:708-725`, `:738-755`).
+  - Every caller ignores the result and authorizes with the environment as
+    it stands: RGWGetObj (`:987`, `:1142`), RGWGetObjTags (`:1045`,
+    `:1244`), RGWPutObjTags (`:1085`, `:1284`), RGWDeleteObjTags (`:1126`,
+    `:1344`), RGWGetACLs (`:5704`, `:6284`), and the others listed by
+    `git grep rgw_iam_add_` at each tag. RGWPutACLs assigns the result to
+    `op_ret` and still returns only the permission check's (`:5747-5756`,
+    `:6325-6334`).
+  - On a key the environment lacks, a condition holds only when it is
+    IfExists or a ForAllValues operator (`rgw_iam_policy.cc:861-868`,
+    `:881-888`); a Null test answers that the key is absent (`:857-859`,
+    v20.2.4 compares that answer with its values, `:876-879`). So a Deny
+    such as "Deny s3:DeleteObject if s3:ExistingObjectTag/protected = true"
+    is skipped when the read fails, whether from a transient RADOS error or
+    a damaged attr, and every tag condition is decided as if the object
+    carried no tags.
+- **Trigger:** a request whose bucket or identity policy names a tag key,
+  on an object whose head read fails with anything but ENOENT, or on an
+  object or bucket whose `user.rgw.x-amz-tagging` attr does not decode.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** phase 1 (unit Z) refuses such a request with 500
+  InternalError, which `op.Run` never overrides; a missing object still
+  adds no tags. That is a difference from radosgw, which
+  `docs/exclusions.md` records.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 10 review, 2026-10-05; derived from the
+  source, not reproduced.
