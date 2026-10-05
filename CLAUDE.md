@@ -35,6 +35,10 @@ before writing Go here.
   update it in the same change that files, finds or closes one.
 - Every behaviour that differs from radosgw is recorded in `docs/exclusions.md` in the same
   change that introduces it.
+- `docs/porting-process.md` is the registry of planning and orchestration problems in the port;
+  add or update an entry whenever planning or managing the work costs rework, stalls, or needs the
+  owner. A process and planning review reads it at the end of each phase, before the next phase's
+  tasks are planned, and again at the end of phase 3, which also decides on skill changes.
 - Never use the ambient kubectl or Ceph cluster. Cluster tests use disposable rooket clusters,
   `make cluster-up RELEASE=squid|tentacle` (hack/rooket/), reached only through `rooket k`
   with `ROOKET_NAME=rgw-go-<release>`.
