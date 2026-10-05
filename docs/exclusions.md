@@ -2616,6 +2616,34 @@ following.
   named like a multipart meta object in the wrong pool"). rgw-go checks
   every entry outside the `multipart` namespace in the data pool, and lists
   and repairs such an object as any other.
+- **ListMultipartUploads keeps the common prefixes radosgw drops.** radosgw
+  lists uploads through the bucket listing with `MultipartMetaFilter` as its
+  `access_list_filter`, which it applies before the delimiter
+  (`driver/rados/rgw_sal_rados.cc:931` and
+  `driver/rados/rgw_rados.cc:2003-2009` at v19.2.6, `:951` and `:2106-2112`
+  at v20.2.4). cls_rgw's `bucket_list` has already rolled every name holding
+  the delimiter into one common-prefix entry (`cls/rgw/cls_rgw.cc:625-663`
+  at v19.2.6, `:675-713` at v20.2.4), whose name ends in the delimiter and
+  so fails the filter's `.meta` test, unless the delimiter is a suffix of
+  `.meta`, such as `a`, or ends in `.meta`: then a prefix whose name passes
+  the filter, such as a whole meta name `<key>.<id>.meta`, is listed as a
+  common prefix (`:2063` and `:2076` at v19.2.6, `:2166` and `:2179` at
+  v20.2.4). With any other delimiter, radosgw's ListMultipartUploads lists
+  no CommonPrefixes and none of the uploads under them
+  (`docs/ceph-upstream-bugs.md`, "radosgw's ListMultipartUploads drops its
+  common prefixes and the uploads under them"). rgw-go applies the filter
+  only to a name it would list as an upload, so it lists those common
+  prefixes; one formed only by part heads, left behind by an upload whose
+  meta object is gone, is listed too and holds no upload. Each common prefix
+  counts toward max-uploads, as in ListObjects, so a delimited page holds
+  fewer uploads than radosgw's for the same request. A truncated page whose
+  last counted item is a common prefix names the prefix as NextKeyMarker
+  with no NextUploadIdMarker: the marker `<prefix>..meta` falls inside the
+  prefix, and the next page's listing skips past it. radosgw's next markers
+  are those of the page's last upload, or none when it holds no upload, so
+  on such a page, which it gives only with such a delimiter, its next page
+  repeats the prefixes or starts over, and a client paging it may never end;
+  rgw-go's markers always move past the page.
 - **Listing-time suggestions are bounded.** radosgw sends each shard's
   `dir_suggest_changes` with `aio_operate` and never waits for it
   (`:9909` and `:10144` at v19.2.6, `:10831` and `:11068` at v20.2.4).
