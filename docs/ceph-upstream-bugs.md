@@ -155,6 +155,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's listing checks a plain object named like a multipart meta object in the wrong pool](#radosgws-listing-checks-a-plain-object-named-like-a-multipart-meta-object-in-the-wrong-pool) | pending | pending |  |
 | [A delimiter starting with an underscore hides the objects whose names start with one](#a-delimiter-starting-with-an-underscore-hides-the-objects-whose-names-start-with-one) | pending | pending |  |
 | [radosgw creates a multipart upload's meta object without the exclusive create its flags ask for](#radosgw-creates-a-multipart-uploads-meta-object-without-the-exclusive-create-its-flags-ask-for) | pending | pending |  |
+| [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2694,8 +2695,16 @@ Every new entry adds its row to this table, in document order.
   (`internal/driver/options.go`). Its usage log flushes every second when
   `rgw_usage_log_tick_interval` is not positive, logging an error
   (`internal/driver/usage.go`; `docs/exclusions.md`, "A usage-log tick
-  interval that is not positive"); nothing in rgw-go consumes the other four
-  yet.
+  interval that is not positive"). With `rgw_enable_quota_threads` set, its
+  quota bucket-sync and owner-sync workers likewise run every second when
+  their interval is not positive, logging an error
+  (`internal/driver/stats.go`; `docs/exclusions.md`, "Quota sync intervals
+  that are not positive"). A TTL or sync wait that is not positive acts as it
+  does in radosgw: every quota check reads the stats from RADOS, and every
+  owner the pass does not skip as idle gets a full sync on every pass. Only
+  a TTL below the current Unix time's negative differs, which rgw-go never
+  pins in 2106 (`docs/exclusions.md`, "A quota stats TTL below about
+  -1.79e9 seconds").
 - **Upstream:** [#81226](https://tracker.ceph.com/issues/81226), which we
   filed. Its fix, [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261),
   a draft, adds `min: 1` to all five options.
@@ -6492,3 +6501,40 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit P, Task 3, 2026-10-05, transcribing
   CreateMultipartUpload's meta object write; derived from the source, not
   reproduced.
+
+## radosgw keeps every modified bucket for good when its quota threads are off
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - Every write and delete updates the quota caches through
+    `update_stats` (`rgw/driver/rados/rgw_rados.cc:3358-3366` and `:5984`,
+    `:3511-3519` and `:6738`), and the owner cache's `adjust_stats` calls
+    `data_modified` whether or not it holds the owner
+    (`rgw/rgw_quota.cc:215-223`, the same lines at both tags).
+  - `RGWOwnerStatsCache::data_modified` adds the bucket, keyed by tenant,
+    name and bucket id, to `modified_buckets` unless it is there
+    (`rgw/rgw_quota.cc:704-715`, `:725-736`).
+  - Only `BucketsSyncThread` takes the set, swapping it out on each pass
+    (`rgw/rgw_quota.cc:364` and `:467-470`, `:379` and `:488-491`), and
+    that thread exists only with `rgw_enable_quota_threads`
+    (`rgw/rgw_quota.cc:488-495`, `:509-516`; `rgw/rgw_appmain.cc:235-237`,
+    `:241-243`).
+  - So with the option off, the set gains an entry for every bucket
+    instance written to and never loses one: a bucket deleted and
+    recreated under the same name adds another, since its new instance has
+    a new id.
+- **Impact:** a gateway run with `rgw_enable_quota_threads` off, as the
+  option's description invites for all but one gateway per zone
+  (`common/options/rgw.yaml.in:212-220`, `:218-226`), grows its memory by
+  one map entry per bucket instance it ever wrote to, until it restarts.
+- **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
+  `rgw/rgw_quota.cc:344`, `:507` and `:728-733`).
+- **rgw-go:** keeps the modified buckets only while its bucket sync worker
+  runs, which takes them on every pass (`Store.AdjustStats` in
+  `internal/driver/stats.go`); nothing else reads them, so no behaviour
+  differs.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 9, 2026-10-05, transcribing
+  `RGWOwnerStatsCache`; derived from the source, not reproduced.

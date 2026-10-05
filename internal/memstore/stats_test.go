@@ -85,7 +85,41 @@ var _ = Describe("stats, quota, usage and metadata", func() {
 			u.Info.UserQuota = meta.Quota{MaxSize: -1, MaxObjects: 3, Enabled: true}
 			Expect(store.PutUser(ctx, u, op.PutUserOptions{})).To(Succeed())
 			Expect(store.CheckQuota(ctx, rec, owner("alice"), 0, 1)).To(MatchError(op.ErrQuotaExceeded), "three objects already")
-			Expect(store.CheckQuota(ctx, rec, owner("bob"), 0, 1)).To(Succeed(), "an owner with no user record")
+		})
+		It("fails as init_quota does for an owner it does not hold", func(ctx SpecContext) {
+			Expect(store.CheckQuota(ctx, rec, owner("bob"), 0, 1)).To(MatchError(op.ErrNoSuchKey), "rgw_op.cc:1428-1433")
+			Expect(store.CheckQuota(ctx, rec, meta.AccountOwner("RGW00000000000000001"), 0, 1)).To(MatchError(op.ErrNoSuchKey))
+		})
+		It("takes the bucket quota from the bucket, then the owner, then the period", func(ctx SpecContext) {
+			u, err := store.GetUser(ctx, meta.UserID{ID: "alice"})
+			Expect(err).NotTo(HaveOccurred())
+			u.Info.BucketQuota = meta.Quota{MaxSize: -1, MaxObjects: 2, Enabled: true}
+			Expect(store.PutUser(ctx, u, op.PutUserOptions{})).To(Succeed())
+			Expect(store.CheckQuota(ctx, rec, owner("alice"), 0, 1)).To(MatchError(op.ErrQuotaExceeded), "alice's bucket quota")
+			rec.Info.Quota = meta.Quota{MaxSize: -1, MaxObjects: 3, Enabled: true}
+			Expect(store.CheckQuota(ctx, rec, owner("alice"), 0, 1)).To(Succeed(), "the bucket's own quota first")
+
+			period := meta.Period{ID: "p", Epoch: 1}
+			period.PeriodConfig.BucketQuota = meta.Quota{MaxSize: -1, MaxObjects: 1, Enabled: true}
+			period.PeriodConfig.UserQuota = meta.Quota{MaxSize: 4096, MaxObjects: -1, Enabled: true}
+			withPeriod := memstore.New(memstore.Config{Period: period})
+			info := meta.NewUserInfo()
+			info.UserID = meta.UserID{ID: "alice"}
+			withPeriod.AddUser(info)
+			b := mustCreate(ctx, withPeriod, "", "b", owner("alice"))
+			mustPut(ctx, withPeriod, b, "k", "v")
+			Expect(withPeriod.CheckQuota(ctx, b, owner("alice"), 0, 1)).To(MatchError(ContainSubstring("bucket")), "the period's bucket quota")
+			b.Info.Quota = meta.Quota{MaxSize: -1, MaxObjects: -1, Enabled: true}
+			Expect(withPeriod.CheckQuota(ctx, b, owner("alice"), 1, 0)).To(MatchError(ContainSubstring("user")), "the period's user quota: 4096 + rounded(1)")
+		})
+		It("uses an account owner's quotas", func(ctx SpecContext) {
+			acct := meta.NewAccountInfo()
+			acct.ID, acct.Name = "RGW00000000000000001", "acme"
+			acct.BucketQuota = meta.Quota{MaxSize: -1, MaxObjects: 1, Enabled: true}
+			store.AddAccount(acct)
+			b := mustCreate(ctx, store, "", "acme-b", meta.AccountOwner(acct.ID))
+			mustPut(ctx, store, b, "k", "v")
+			Expect(store.CheckQuota(ctx, b, meta.AccountOwner(acct.ID), 0, 1)).To(MatchError(op.ErrQuotaExceeded))
 		})
 	})
 

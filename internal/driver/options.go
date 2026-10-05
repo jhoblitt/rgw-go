@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
 // lcHashPrime is HASH_PRIME, the most lifecycle shards radosgw uses
@@ -40,6 +41,7 @@ type options struct {
 	ownerSyncWait        time.Duration // rgw_user_quota_sync_wait_time, 86400 s
 	ownerSyncIdle        bool          // rgw_user_quota_sync_idle_users, false
 	quotaThreads         bool          // rgw_enable_quota_threads, true
+	listBucketsChunk     int           // rgw_list_buckets_max_chunk, 1000, as op.ListBucketsChunk reads it
 
 	listMinReadahead       int    // rgw_list_bucket_min_readahead, 1000
 	overrideIndexMaxShards uint32 // rgw_override_bucket_index_max_shards, 0
@@ -76,6 +78,7 @@ func readOptions(conf *cephconf.Options) (options, error) {
 		ownerSyncWait:        secondsToDuration(readOption(&r, conf.Int64, "rgw_user_quota_sync_wait_time")),
 		ownerSyncIdle:        readOption(&r, conf.Bool, "rgw_user_quota_sync_idle_users"),
 		quotaThreads:         readOption(&r, conf.Bool, "rgw_enable_quota_threads"),
+		listBucketsChunk:     op.ListBucketsChunk(readOption(&r, conf.Int64, "rgw_list_buckets_max_chunk")),
 
 		listMinReadahead:       int(readOption(&r, conf.Int64, "rgw_list_bucket_min_readahead")),
 		overrideIndexMaxShards: saturate(readOption(&r, conf.Uint64, "rgw_override_bucket_index_max_shards"), uint32(math.MaxUint32)),
@@ -137,6 +140,20 @@ func secondsToDuration(n int64) time.Duration {
 		return math.MinInt64
 	}
 	return time.Duration(n) * time.Second
+}
+
+// positiveInterval returns d, a worker's interval read from option, or one
+// second with an error-level log line naming the option and the value read
+// when d is not positive: radosgw's usage-log timer and quota sync threads
+// then run without pause, and a time.Ticker refuses it
+// (docs/ceph-upstream-bugs.md, tracker #81226).
+func positiveInterval(ctx context.Context, option string, d time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	slog.ErrorContext(ctx, "worker interval is not positive; using 1 second (tracker #81226)",
+		slog.String("option", option), slog.Int64("value", int64(d/time.Second)))
+	return time.Second
 }
 
 // logWorkersNotRun logs each enabled option whose worker rgw-go does not run.

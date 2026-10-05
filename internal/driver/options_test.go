@@ -18,7 +18,7 @@ func squidDefaults() options {
 		cacheEnabled: true, cacheLRUSize: 25000, cacheExpiry: 900 * time.Second, numControlOIDs: 8, maxNotifyRetries: 10,
 		usageFlushThreshold: 1024, usageTick: 30 * time.Second, usageMaxShards: 32, usageMaxUserShards: 1, lcMaxObjs: 32,
 		bucketQuotaTTL: 10 * time.Minute, bucketQuotaCacheSize: 10000, bucketSyncInterval: 3 * time.Minute,
-		ownerSyncInterval: 24 * time.Hour, ownerSyncWait: 24 * time.Hour, quotaThreads: true,
+		ownerSyncInterval: 24 * time.Hour, ownerSyncWait: 24 * time.Hour, quotaThreads: true, listBucketsChunk: 1000,
 		listMinReadahead: 1000, bucketIndexMaxAIO: 128, dynamicResharding: true, runSyncThread: true,
 	}
 }
@@ -55,6 +55,7 @@ var _ = Describe("readOptions", func() {
 		Entry(nil, "rgw_user_quota_sync_wait_time", "7", func(o *options) { o.ownerSyncWait = 7 * time.Second }),
 		Entry(nil, "rgw_user_quota_sync_idle_users", "true", func(o *options) { o.ownerSyncIdle = true }),
 		Entry(nil, "rgw_enable_quota_threads", "false", func(o *options) { o.quotaThreads = false }),
+		Entry(nil, "rgw_list_buckets_max_chunk", "7", func(o *options) { o.listBucketsChunk = 7 }),
 		Entry(nil, "rgw_list_bucket_min_readahead", "7", func(o *options) { o.listMinReadahead = 7 }),
 		Entry(nil, "rgw_override_bucket_index_max_shards", "7", func(o *options) { o.overrideIndexMaxShards = 7 }),
 		Entry(nil, "rgw_bucket_index_max_aio", "7", func(o *options) { o.bucketIndexMaxAIO = 7 }),
@@ -114,6 +115,16 @@ var _ = Describe("readOptions", func() {
 		Expect(o.ownerSyncInterval).To(Equal(time.Duration(math.MaxInt64)))
 		Expect(o.bucketQuotaTTL).To(Equal(time.Duration(math.MinInt64)))
 	})
+
+	DescribeTable("reads an rgw_list_buckets_max_chunk the op layer pages by default as the default",
+		func(value string) {
+			o, err := readOptions(conf(map[string]string{"rgw_list_buckets_max_chunk": value}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(o.listBucketsChunk).To(Equal(1000), "op.ListBucketsChunk: radosgw's size_t lists everything, as pages of 1000 do")
+		},
+		Entry("negative", "-1"),
+		Entry("past an int32", "4294967296"),
+	)
 
 	It("fails on an option librados does not know, flooring none it did not read", func() {
 		var buf bytes.Buffer

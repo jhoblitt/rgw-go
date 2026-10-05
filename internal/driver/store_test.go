@@ -233,12 +233,6 @@ var _ = Describe("the driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("allows every write and takes every quota adjustment until it keeps quota caches", func(ctx SpecContext) {
-			alice := meta.UserOwner(meta.UserID{ID: "alice"})
-			Expect(s.CheckQuota(ctx, &op.BucketRecord{}, alice, 1<<40, 1)).To(Succeed())
-			Expect(s.AdjustStats(ctx, &op.BucketRecord{}, alice, 1, 5, 0)).To(Succeed())
-		})
-
 		DescribeTable("answers NotImplemented from every store method",
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
@@ -372,15 +366,6 @@ var _ = Describe("the driver", func() {
 			}),
 			Entry("Abort", func(ctx context.Context, s *driver.Store) error {
 				return s.Abort(ctx, &op.Upload{ID: "2~upload"})
-			}),
-
-			Entry("BucketStats", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.BucketStats(ctx, &op.BucketRecord{})
-				return err
-			}),
-			Entry("UserStats", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.UserStats(ctx, meta.UserOwner(meta.UserID{ID: "alice"}))
-				return err
 			}),
 
 			Entry("metadata Get", func(ctx context.Context, s *driver.Store) error {

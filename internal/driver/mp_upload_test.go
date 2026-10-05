@@ -49,6 +49,7 @@ var _ = Describe("CreateUpload and GetUpload", func() {
 			meta.AttrMetaPrefix + "k": []byte("v\x00"),
 		}
 		cold := meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}
+		Expect(s.CheckQuota(ctx, rec, alice, 0, 0)).To(Succeed(), "the period's bucket quota primes the bucket cache with the empty bucket")
 		up, err := s.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, OwnerName: "Alice", Placement: cold, Attrs: attrs})
 		Expect(err).NotTo(HaveOccurred())
 		settle(s)
@@ -117,7 +118,7 @@ var _ = Describe("CreateUpload and GetUpload", func() {
 		Expect(hdr.Stats[rgwcls.CategoryMultiMeta].NumEntries).To(BeEquivalentTo(1))
 		Expect(hdr.Stats[rgwcls.CategoryMultiMeta].TotalSize).To(BeZero())
 		Expect(hdr.Stats).NotTo(HaveKey(rgwcls.CategoryMain))
-		Expect(s.StatsForTest()).To(Equal(driver.QuotaDeltas{Objs: 1}), "update_stats(owner, bucket, 1, 0, 0)")
+		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{NumObjects: 1}), "update_stats(owner, bucket, 1, 0, 0)")
 	})
 
 	It("logs neither its prepare nor its complete, as init passes log_op false, while a PUT in the same zone logs both", func(ctx SpecContext) {

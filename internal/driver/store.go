@@ -48,7 +48,7 @@ type Store struct {
 	// tailBufs holds the *[]byte buffers a PUT reads its tail pieces into,
 	// each at least one chunk.
 	tailBufs sync.Pool
-	quota    quotaStub
+	quota    statsCaches
 	usage    usageLogger
 	// newTicker makes the tickers the workers run on.
 	newTicker func(time.Duration) ticker
@@ -127,6 +127,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	s.w = newWriter(ctx, s, wopts)
 	s.AddWorker("control-watch", sys.notify.run)
 	s.AddWorker("index-completions", s.w.completions.run)
+	s.openQuota(ctx)
 	s.openUsageLog(ctx)
 	return s, nil
 }
@@ -140,9 +141,13 @@ func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, nam
 	return resolveZone(ctx, roots, names, rel)
 }
 
-// Close closes the pools the Store opened. The workers stop with Run's
+// Close cancels the stats caches' refreshes under way and waits for them,
+// then closes the pools the Store opened. The workers stop with Run's
 // context, not here.
-func (s *Store) Close() error { return s.pools.closeAll() }
+func (s *Store) Close() error {
+	s.quota.close()
+	return s.pools.closeAll()
+}
 
 func detectRelease(ctx context.Context, cluster radosclient.Cluster, override *denc.Release) (denc.Release, error) {
 	if override != nil {
@@ -376,48 +381,6 @@ func (s *Store) Complete(context.Context, *op.Upload, []op.CompletePart) (*op.Pu
 // Abort implements op.MultipartStore.
 func (s *Store) Abort(context.Context, *op.Upload) error {
 	return op.ErrNotImplemented
-}
-
-// BucketStats implements op.StatsStore.
-func (s *Store) BucketStats(context.Context, *op.BucketRecord) (op.Stats, error) {
-	return op.Stats{}, op.ErrNotImplemented
-}
-
-// UserStats implements op.StatsStore.
-func (s *Store) UserStats(context.Context, meta.Owner) (op.Stats, error) {
-	return op.Stats{}, op.ErrNotImplemented
-}
-
-// quotaStub stands in for the quota caches the driver does not keep yet:
-// CheckQuota allows every write, and AdjustStats sums what it is given for
-// nothing but the specs to read. A spec may make CheckQuota refuse.
-type quotaStub struct {
-	mu                   sync.Mutex
-	objs, added, removed int64
-	check                func(ctx context.Context, addBytes, addObjs int64) error
-}
-
-// CheckQuota implements op.StatsStore. Without quota caches it allows every
-// write.
-func (s *Store) CheckQuota(ctx context.Context, _ *op.BucketRecord, _ meta.Owner, addBytes, addObjs int64) error {
-	s.quota.mu.Lock()
-	check := s.quota.check
-	s.quota.mu.Unlock()
-	if check == nil {
-		return nil
-	}
-	return check(ctx, addBytes, addObjs)
-}
-
-// AdjustStats implements op.StatsStore. Without quota caches there is
-// nothing to adjust.
-func (s *Store) AdjustStats(_ context.Context, _ *op.BucketRecord, _ meta.Owner, objs, addBytes, removedBytes int64) error {
-	s.quota.mu.Lock()
-	defer s.quota.mu.Unlock()
-	s.quota.objs += objs
-	s.quota.added += addBytes
-	s.quota.removed += removedBytes
-	return nil
 }
 
 // Get implements op.MetadataStore.

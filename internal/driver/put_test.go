@@ -55,7 +55,7 @@ func seedGCShards(c *fakerados.Cluster, n int) {
 }
 
 // newPutCluster is the cluster of the PUT fixture, with the classes a PUT
-// calls.
+// calls and the user alice, whose quotas a PUT's quota check loads.
 func newPutCluster() *fakerados.Cluster {
 	c := newIndexCluster()
 	c.RegisterClass("rgw_gc", fakerados.GCQueueClass(), fakerados.GCQueueWriteMethods...)
@@ -71,6 +71,9 @@ func newPutCluster() *fakerados.Cluster {
 		p.PeriodMap.ShortZoneIDs = map[string]uint32{putZoneID: 12345}
 	})
 	seedGCShards(c, 32)
+	owner := meta.NewUserInfo()
+	owner.UserID, owner.DisplayName = meta.UserID{ID: "alice"}, "Alice"
+	seedUser(c, owner, nil, meta.ObjVersion{Ver: 1, Tag: "alice"})
 	return c
 }
 
@@ -396,7 +399,7 @@ var _ = Describe("PutObject", func() {
 		en := entry()
 		Expect(en.Tag).To(Equal("tx-1"), "the first PUT's entry stands")
 		Expect(en.Ver).To(Equal(rgwcls.EntryVer{Pool: -1, Epoch: 0}), "the class copies the cancel's version onto the entry, tracker #80894")
-		Expect(s.StatsForTest()).To(Equal(driver.QuotaDeltas{Objs: 1, Added: 5}), "a canceled write leaves the quota cache alone")
+		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 5, SizeRounded: 4096, NumObjects: 1}), "a canceled write leaves the quota cache alone")
 	})
 
 	It("refuses If-None-Match: * on an existing key before touching the index", func(ctx SpecContext) {
@@ -489,41 +492,34 @@ var _ = Describe("PutObject", func() {
 	It("adjusts the quota cache with the new object and the size it replaced", func(ctx SpecContext) {
 		_, err := put(ctx, []byte("12345"), op.PutParams{Tag: "t1"})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(s.StatsForTest()).To(Equal(driver.QuotaDeltas{Objs: 1, Added: 5}))
+		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 5, SizeRounded: 4096, NumObjects: 1}),
+			"the period's bucket quota had the check fetch the empty bucket's stats")
 		_, err = put(ctx, []byte("abc"), op.PutParams{Tag: "t2"})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(s.StatsForTest()).To(Equal(driver.QuotaDeltas{Objs: 1, Added: 8, Removed: 5}), "rgw_rados.cc:3358-3366: no new object, 3 added, 5 removed")
+		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 3, SizeRounded: 4096, NumObjects: 1}), "rgw_rados.cc:3358-3366: no new object, 3 added, 5 removed")
 	})
 
 	It("checks the quota on the bytes received, as the second check_quota does", func(ctx SpecContext) {
-		var checked [][2]int64
-		s.SetQuotaForTest(func(_ context.Context, addBytes, addObjs int64) error {
-			checked = append(checked, [2]int64{addBytes, addObjs})
-			if addBytes > 4 {
-				return op.ErrQuotaExceeded
-			}
-			return nil
-		})
-		_, err := s.PutObject(ctx, rec, key, strings.NewReader("12345"), op.PutParams{Attrs: attrs, Size: -1, Tag: "t"})
+		rec.Info.Quota = meta.Quota{MaxSize: 8, MaxObjects: 1, CheckOnRaw: true, Enabled: true}
+		_, err := s.PutObject(ctx, rec, key, strings.NewReader("123456789"), op.PutParams{Attrs: attrs, Size: -1, Tag: "t"})
 		Expect(err).To(MatchError(op.ErrQuotaExceeded), "rgw_op.cc:4444-4448 at v19.2.6, :4676-4680 at v20.2.4")
-		Expect(checked).To(Equal([][2]int64{{5, 1}}))
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 		Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())
+		_, err = s.PutObject(ctx, rec, key, strings.NewReader("1234"), op.PutParams{Attrs: attrs, Size: -1, Tag: "t1"})
+		Expect(err).NotTo(HaveOccurred(), "4 bytes and one object fit the empty bucket")
+		settle(s)
+		_, err = s.PutObject(ctx, rec, key, strings.NewReader("1"), op.PutParams{Attrs: attrs, Size: -1, Tag: "t2"})
+		Expect(err).To(MatchError(op.ErrQuotaExceeded),
+			"5 bytes fit, but the check counts one object even for an overwrite: 1 + 1 > 1 (RGWRados::check_quota, rgw_rados.cc:10608-10618 at v19.2.6)")
 	})
 
 	It("finishes a PUT whose client leaves once its body is sent, the quota check included", func(ctx SpecContext) {
 		reqCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		var quotaCtxErr error
-		s.SetQuotaForTest(func(qctx context.Context, _, _ int64) error {
-			quotaCtxErr = qctx.Err()
-			return nil
-		})
 		body := &cancelAtEOF{r: bytes.NewReader(bytes.Repeat([]byte("q"), 5<<20)), cancel: cancel}
 		_, err := s.PutObject(reqCtx, rec, key, body, op.PutParams{Attrs: attrs, Size: 5 << 20, Tag: "t"})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).NotTo(HaveOccurred(), "radosgw's second check_quota, which loads the owner and fetches the bucket's stats, does not watch the client")
 		Expect(reqCtx.Err()).To(MatchError(context.Canceled))
-		Expect(quotaCtxErr).NotTo(HaveOccurred(), "radosgw's second check_quota does not watch the client")
 		Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
 		Expect(c.Object(testDataPool, "", tailOID(putPrefix, 1))).NotTo(BeNil())
 	})
