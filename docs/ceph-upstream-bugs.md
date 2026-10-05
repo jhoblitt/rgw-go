@@ -147,6 +147,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw files a 404 on an existing bucket under the usage bucket "-", and never logs a missing bucket](#radosgw-files-a-404-on-an-existing-bucket-under-the-usage-bucket---and-never-logs-a-missing-bucket) | pending | pending |  |
 | [radosgw files the first second of each hour's usage under the hour before](#radosgw-files-the-first-second-of-each-hours-usage-under-the-hour-before) | pending | pending |  |
 | [cls_rgw's usage reads and trims take in other users' records](#cls_rgws-usage-reads-and-trims-take-in-other-users-records) | pending | pending; [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) (the `0` half) |  |
+| [radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in capitals](#radosgw-cuts-x-forwarded-for-only-for-an-rgw_remote_addr_param-written-in-capitals) | pending | pending |  |
+| [radosgw ignores a public-access block that does not decode](#radosgw-ignores-a-public-access-block-that-does-not-decode) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6190,3 +6192,57 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit M, Task 10b, 2026-10-04, emulating
   `user_usage_log_add`'s keys in fakerados; derived from the source, not
   reproduced.
+
+## radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in capitals
+
+- **Kind:** defect.
+- **Evidence:** paths are under `src/rgw/`.
+  - `rgw_build_iam_environment` looks the variable `rgw_remote_addr_param`
+    names up in the request's `RGWEnv`, whose map compares names without
+    regard to case (`rgw_common.h:470` at v19.2.6; `rgw_env.cc:22-25` at
+    both tags), so `http_x_forwarded_for` finds the X-Forwarded-For header.
+  - It then cuts the value at its first comma only when the parameter
+    equals `"HTTP_X_FORWARDED_FOR"` byte for byte (`rgw_op.cc:869-886` at
+    v19.2.6, `:905-922` at v20.2.4).
+  - With the parameter in any other capitals, `aws:SourceIp` is the whole
+    proxy chain, `client, proxy1, ...`, which no address parses as, so an
+    `IpAddress` condition on it never holds: a policy's IP-restricted Allow
+    never grants, and its IP-restricted Deny never applies.
+- **Releases:** v19.2.6 and v20.2.4, read at both tags.
+- **rgw-go:** reproduces it: the lookup ignores case and the cut needs the
+  exact name (`sourceIP`, `internal/authz/env.go`), so a policy evaluates as
+  on the zone's radosgw.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 9 and its review, 2026-10-05, reading
+  `rgw_build_iam_environment` at both tags; derived from the source, not
+  reproduced.
+
+## radosgw ignores a public-access block that does not decode
+
+- **Kind:** defect.
+- **Evidence:** paths are under `src/rgw/`.
+  - `get_public_access_conf_from_attr` decodes a bucket's
+    `user.rgw.public-access` attr and, on a `buffer::error`, returns
+    `boost::none`, as for a bucket without the attr (`rgw_op.cc:340-355` at
+    v19.2.6, `:370-385` at v20.2.4). Nothing logs it.
+  - `rgw_build_bucket_policies` stores that as `s->bucket_access_conf`
+    (`rgw_op.cc:585` at v19.2.6), so IgnorePublicAcls stops removing the
+    public ACL grants (`rgw_common.cc:1419-1423`, `:1572-1575` at v19.2.6),
+    PutObject and PutACLs stop refusing public canned ACLs and
+    PutBucketPolicy stops refusing public policies (`rgw_op.cc:3904-3909`,
+    `:5905-5906`, `:8103-8104` at v19.2.6), and on v20.2.4
+    RestrictPublicBuckets stops refusing public policies
+    (`rgw_common.cc:1374-1380`, `:1541-1547`).
+  - The block narrows access, so dropping it widens access without a
+    trace. radosgw refuses a request whose stored bucket policy does not
+    parse instead (`rgw_op.cc:598-615` at v19.2.6, `:628-645` at v20.2.4).
+  - radosgw writes the attr cleanly; it is reachable only through a
+    corrupt attr or one another writer stored.
+- **Releases:** v19.2.6 and v20.2.4, read at both tags.
+- **rgw-go:** does not reproduce it: a block that does not decode refuses
+  the request with AccessDenied (`publicAccess`, `internal/authz/load.go`;
+  `docs/exclusions.md`, "A public-access block that does not decode refuses
+  the request").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 9 review, 2026-10-05; derived from the
+  source, not reproduced.
