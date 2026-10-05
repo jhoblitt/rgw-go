@@ -40,8 +40,8 @@ var _ = Describe("vhost", func() {
 		Entry("no host", "", []string{"s3.example.com"}, ""),
 	)
 
-	DescribeTable("looksLikeIPAddress is looks_like_ip_address",
-		func(s string, want bool) { Expect(looksLikeIPAddress(s)).To(Equal(want)) },
+	DescribeTable("LooksLikeIPAddress is looks_like_ip_address",
+		func(s string, want bool) { Expect(LooksLikeIPAddress(s)).To(Equal(want)) },
 		Entry("dotted quad", "10.0.0.1", true),
 		Entry("digits of any value", "999.1.2.3", true),
 		Entry("a trailing period counts as the third", "1.2.3.", true),

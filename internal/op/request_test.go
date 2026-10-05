@@ -1,6 +1,8 @@
 package op_test
 
 import (
+	"net/http"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -37,5 +39,20 @@ var _ = Describe("Anonymous", func() {
 	It("hands out a fresh user info each time", func() {
 		op.Anonymous().User.DisplayName = "changed"
 		Expect(op.Anonymous().User.DisplayName).To(BeEmpty())
+	})
+})
+
+var _ = Describe("HeaderValue", func() {
+	It("is the last value of a repeated header, and reports a present empty one", func() {
+		h := http.Header{}
+		h.Add("X-Amz-Acl", "public-read")
+		h.Add("X-Amz-Acl", "private")
+		h.Add("X-Amz-Empty", "")
+		v, ok := op.HeaderValue(h, "x-amz-acl")
+		Expect([]any{v, ok}).To(Equal([]any{"private", true}))
+		v, ok = op.HeaderValue(h, "X-Amz-Empty")
+		Expect([]any{v, ok}).To(Equal([]any{"", true}))
+		v, ok = op.HeaderValue(h, "X-Amz-Absent")
+		Expect([]any{v, ok}).To(Equal([]any{"", false}))
 	})
 })

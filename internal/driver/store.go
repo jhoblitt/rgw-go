@@ -60,6 +60,9 @@ type Store struct {
 	// sweepLimit bounds the stripes sweepParts walks; 0 is
 	// meta.MaxWalkStripes.
 	sweepLimit int
+	// nextBucketID is next_bucket_id's counter, the last number a bucket id
+	// was given.
+	nextBucketID atomic.Uint64
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -340,16 +343,6 @@ func (s *Store) GetPeriodConfig(context.Context, string) (meta.PeriodConfig, err
 
 // PutPeriodConfig implements op.RealmStore.
 func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) error {
-	return op.ErrNotImplemented
-}
-
-// CreateBucket implements op.BucketStore.
-func (s *Store) CreateBucket(context.Context, op.CreateBucketParams) (*op.BucketRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// DeleteBucket implements op.BucketStore.
-func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 	return op.ErrNotImplemented
 }
 

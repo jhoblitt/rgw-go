@@ -96,6 +96,12 @@ func (p *Pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	}
 	c := p.cluster
 	c.mu.Lock()
+	hook := p.store.beforeRead[oid]
+	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	name := opName("read", oid)
 	if err := p.usable(name); err != nil {
@@ -146,6 +152,22 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	if hook != nil {
 		hook(stored)
 	}
+	ver, err := p.write(oid, op, steps, flags)
+	if err != nil {
+		return ver, err
+	}
+	c.mu.Lock()
+	after := p.store.afterWrite[oid]
+	c.mu.Unlock()
+	if after != nil {
+		after()
+	}
+	return ver, nil
+}
+
+// write runs Write's op under the cluster's lock.
+func (p *Pool) write(oid string, op *radosclient.WriteOp, steps []radosclient.Step, flags radosclient.OpFlags) (uint64, error) {
+	c := p.cluster
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	name := opName("write", oid)

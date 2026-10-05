@@ -91,6 +91,18 @@ type ListConditions struct {
 	MaxKeys   int
 }
 
+// HeaderValue is a request header as radosgw's RGWEnv holds it: beast sets
+// one variable per header field in arrival order, so the last of a repeated
+// header is the one radosgw sees (rgw_asio_client.cc:36-65, rgw_env.cc:22-25
+// at v19.2.6 and v20.2.4). A header present with an empty value is present.
+func HeaderValue(h http.Header, name string) (string, bool) {
+	vs := h.Values(name)
+	if len(vs) == 0 {
+		return "", false
+	}
+	return vs[len(vs)-1], true
+}
+
 // Scope reports the resource level the request addresses.
 func (r *Request) Scope() Scope {
 	switch {

@@ -1042,6 +1042,29 @@ review and verified against the tree.
   decrypts it and re-encrypts as the request asks (`rgw_op.cc:5793-5805`
   and `:5846-5866` at v20.2.4), which needs SSE-C decryption, not yet
   implemented, or a key server, which is excluded.
+- **CreateBucket with object lock answers 501 until phase 2.** A
+  CreateBucket with `x-amz-bucket-object-lock-enabled: true`, in any case,
+  answers 501 NotImplemented and creates nothing, until object lock and
+  versioning are served. radosgw creates the bucket versioned with object
+  lock enabled (`rgw_rest_s3.cc:2534-2540` and
+  `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
+  `:2496-2498` at v20.2.4). Any other value but `false` is 400
+  InvalidArgument from both, after the permission check.
+- **A requested bucket index answers 501 on Tentacle.** Tentacle's
+  CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
+  whose `Type` and `NumShards` set the new bucket's index, and refuses a
+  re-create that asks for another index (`rgw_rest_s3.cc:2651-2684` and
+  `driver/rados/rgw_sal_rados.cc:195-201` at v20.2.4). rgw-go checks the
+  element as radosgw does, answering a malformed one with radosgw's 400
+  InvalidArgument and message. A valid one on a name no bucket holds is 501
+  NotImplemented, creating nothing, once every check radosgw makes before
+  it creates a bucket has passed: the object-lock header, the location
+  constraint, the placement and the existing-bucket checks. A name that
+  holds a bucket is answered as radosgw answers it whatever the index asks
+  for: 409 for another owner's, 200 for the requester's own. The 501
+  includes a `BucketIndex` naming a Normal index without `NumShards`,
+  which on a Normal placement asks for what an ordinary create gives.
+  Squid reads no such element.
 
 ### Command-line differences
 
@@ -1678,6 +1701,13 @@ v20.2.4 tags, rgw-go does the following.
   `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
   `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
   Header names are case-insensitive (RFC 9110, section 5.1).
+- **A 204 carries no Content-Length.** radosgw's frontend completes a
+  response whose `end_header` named no length with `Content-Length: 0`,
+  whatever its status (`BufferingFilter::complete_request`,
+  `rgw_client_io_filters.h:221-253`, and `ClientIO::send_content_length`,
+  `rgw_asio_client.cc:183-189`, at v19.2.6 and v20.2.4). net/http sends no
+  length with a 204, which RFC 9110, section 8.6, forbids, so rgw-go's
+  DeleteBucket answers 204 without one.
 
 ### Request authentication differences
 
@@ -2059,6 +2089,92 @@ differ, rgw-go does the following.
   gateway loads such a bucket by name (`docs/ceph-upstream-bugs.md`,
   "[radosgw cannot load a bucket whose entry point is from before version
   8](ceph-upstream-bugs.md#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8)").
+- **CreateBucket answers 409 whenever another owner holds the name.**
+  When another owner's create of the same name lands while a CreateBucket
+  runs, radosgw answers 200 to the loser for a bucket it does not own
+  (`docs/ceph-upstream-bugs.md`, "[radosgw answers 200 to a CreateBucket
+  that loses a race to another
+  owner](ceph-upstream-bugs.md#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner)").
+  rgw-go answers 409 BucketAlreadyExists, as both answer when the bucket
+  existed before the request. An owner's re-create of its own bucket is 200
+  from both.
+- **An abandoned bucket-creation try is removed.** When a CreateBucket
+  finds its name taken and then finds no bucket under it, a concurrent
+  delete having run, radosgw tries again with a new bucket id and leaves
+  the abandoned try's instance and index shards in RADOS; it also carries
+  that try's in-index log generation into the next, so the bucket it
+  creates lists generation 0 once per try (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's bucket creation retry leaks the abandoned instance and repeats
+  its log
+  layout](ceph-upstream-bugs.md#radosgws-bucket-creation-retry-leaks-the-abandoned-instance-and-repeats-its-log-layout)").
+  rgw-go removes the abandoned try's instance and index, logging what it
+  cannot remove, and starts each try from a fresh layout.
+- **A failed owner link fails the create.** When adding a new bucket to its
+  owner's bucket list fails, both unlink it again; radosgw then answers 200,
+  rgw-go the link's error (`docs/ceph-upstream-bugs.md`, "[radosgw reports a
+  bucket whose owner link failed as
+  created](ceph-upstream-bugs.md#radosgw-reports-a-bucket-whose-owner-link-failed-as-created)").
+  The bucket stays for its owner's re-create, which links it, on both.
+- **A bucket delete retries an instance removal that lost to another
+  write.** Both gateways read the instance again by its id when a delete
+  begins (`RadosBucket::remove`, `driver/rados/rgw_sal_rados.cc:356-360` at
+  v19.2.6, `:373-377` at v20.2.4) and remove it under the version read.
+  When another write, such as an ACL change or a reshard, changed the
+  instance since, radosgw answers 204 with the entry point removed and the
+  instance, the index and the owner's list entry left behind
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete answers success
+  when its instance removal loses a
+  race](ceph-upstream-bugs.md#radosgws-bucket-delete-answers-success-when-its-instance-removal-loses-a-race)").
+  rgw-go reads the instance again from RADOS, past its metadata cache, and
+  retries the removal, up to twenty times, then removes the shards of the
+  index generation its last read named and the owner's entry. Past twenty
+  it answers 500 InternalError and leaves what radosgw's 204 leaves: the
+  entry point removed, and the instance, the current generation's index
+  shards and the owner's entry in place. Neither removes the shards of an
+  earlier generation a reshard left behind. A delete that loses the race
+  for the entry point itself leaves everything in place on both, answered
+  204.
+- **An owner's entry naming another instance stays.** radosgw unlinks a
+  bucket from its owner's list by the bucket's name, whatever instance the
+  entry names: a delete that found its entry point re-pointed at a bucket
+  re-created under the name removes the new bucket's entry
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete unlinks a bucket
+  re-created under the same name from its
+  owner](ceph-upstream-bugs.md#radosgws-bucket-delete-unlinks-a-bucket-re-created-under-the-same-name-from-its-owner)").
+  Every unlink rgw-go makes, after a delete, after a failed link and after
+  a create whose entry point vanished, removes the entry only while it
+  names that instance, in an op that compares the entry first; an owner's
+  object removed in between counts as unlinked. An entry that changes on
+  each of five tries, as concurrent links and stats syncs could make it,
+  is left with a warning where radosgw would have removed it. Such an
+  entry grants nothing, since authorization reads the entry point and the
+  instance, never the owner's list, but ListBuckets shows the name, which
+  answers NoSuchBucket, and `max_buckets` counts it. radosgw's stats sync
+  does not remove it, as it skips a bucket it cannot load
+  (`rgw_sync_all_stats`, `rgw_user.cc:32-38` at both tags); only the
+  owner's re-create of the name, whose link points the entry at the new
+  bucket, or an admin unlink repairs it. A create whose entry point names another instance once its link is
+  written found a bucket created under the name after its own was deleted.
+  radosgw unlinks only for an entry point that is gone
+  (`rgw_sal_rados.cc:210-227` at v19.2.6, `:227-244` at v20.2.4). When the
+  newer bucket is another owner's, rgw-go unlinks its own, now stale,
+  entry, which radosgw keeps. When it is the same owner's, its link may
+  have pointed the shared entry back at the deleted instance, so rgw-go
+  links the newer bucket again and the list names the live bucket, as it
+  ends up in radosgw. A failed unlink fails rgw-go's delete with its error;
+  radosgw logs it and answers 204 (`RGWBucketCtl::do_unlink_bucket`,
+  `driver/rados/rgw_bucket.cc:3424-3432` at v19.2.6, and the same code
+  inline in `RGWBucketCtl::unlink_bucket`, `:3506-3518` at v20.2.4).
+- **An indexless bucket is deleted as each release deletes it.** rgw-go
+  creates and removes an indexless bucket's shard objects on Squid and
+  none on Tentacle, as each release's radosgw does, and checks a bucket's
+  emptiness by listing its shards on both. On Tentacle the delete of an
+  indexless bucket created there therefore answers 404 NoSuchKey from both
+  gateways and the bucket stays, and the shards of one Squid created stay
+  behind after its delete (`docs/ceph-upstream-bugs.md`, "[Tentacle cannot
+  delete an indexless bucket it
+  created](ceph-upstream-bugs.md#tentacle-cannot-delete-an-indexless-bucket-it-created)").
+  rgw-go keeps the check, since skipping it could orphan objects.
 
 ### Object read differences
 

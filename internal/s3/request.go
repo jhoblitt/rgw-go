@@ -17,8 +17,6 @@ type Config struct {
 	// DNSNames are rgw_dns_name's entries plus the zonegroup's hostnames;
 	// empty means path-style addressing only.
 	DNSNames []string
-	// RelaxedBucketNames is rgw_relaxed_s3_bucket_names.
-	RelaxedBucketNames bool
 	// MaxConcurrent is rgw_max_concurrent_requests; 0 means unlimited.
 	MaxConcurrent int
 	// TransIDSuffix is op.TransIDSuffix(instance id, zone name).
@@ -173,11 +171,11 @@ func validObjectName(name string) bool {
 // last, when neither x-amz-copy-source-range nor uploadId is present
 // (rgw_rest_s3.cc:5026-5041 at v19.2.6, :5586-5601 at v20.2.4).
 func copySource(r *op.Request) (string, bool) {
-	vals := r.Header.Values("X-Amz-Copy-Source")
-	if len(vals) == 0 || len(r.Header.Values("X-Amz-Copy-Source-Range")) > 0 || r.Query.Has("uploadId") {
+	v, ok := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
+	if _, ranged := op.HeaderValue(r.Header, "X-Amz-Copy-Source-Range"); !ok || ranged || r.Query.Has("uploadId") {
 		return "", false
 	}
-	return vals[len(vals)-1], true
+	return v, true
 }
 
 // copySourceBucket is the bucket RGWCopyObj::parse_copy_location reads from
