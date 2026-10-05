@@ -150,6 +150,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in capitals](#radosgw-cuts-x-forwarded-for-only-for-an-rgw_remote_addr_param-written-in-capitals) | pending | pending |  |
 | [radosgw ignores a public-access block that does not decode](#radosgw-ignores-a-public-access-block-that-does-not-decode) | pending | pending |  |
 | [Squid's DeleteObjectTagging stamps the object with the epoch plus one nanosecond](#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond) | pending | pending |  |
+| [radosgw never takes its OSD-filtered delimiter path](#radosgw-never-takes-its-osd-filtered-delimiter-path) | pending | pending |  |
+| [radosgw's ListObjectsV2 with versions renders a malformed ListVersionsResult](#radosgws-listobjectsv2-with-versions-renders-a-malformed-listversionsresult) | pending | pending |  |
+| [radosgw's listing checks a plain object named like a multipart meta object in the wrong pool](#radosgws-listing-checks-a-plain-object-named-like-a-multipart-meta-object-in-the-wrong-pool) | pending | pending |  |
+| [A delimiter starting with an underscore hides the objects whose names start with one](#a-delimiter-starting-with-an-underscore-hides-the-objects-whose-names-start-with-one) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6295,3 +6299,145 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 7 review, 2026-10-05, tracing the
   callers of `set_attrs`; derived from the source, not reproduced.
+
+## radosgw never takes its OSD-filtered delimiter path
+
+- **Kind:** defect, without a visible effect found. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`.
+  - `rgw_cls_list_ret`'s decode sets `cls_filtered` for a reply of struct
+    version 3 or later, the OSDs that roll names up to common prefixes
+    themselves (`cls/rgw/cls_rgw_ops.h:436-443` and `:457` at v19.2.6,
+    `:434-441` and `:455` at v20.2.4); Squid and Tentacle OSDs encode
+    version 4.
+  - `list_objects_ordered` starts its `cls_filtered` at false
+    (`rgw/driver/rados/rgw_rados.cc:1817` at v19.2.6, `:1920` at v20.2.4),
+    and `cls_bucket_list_ordered` only ANDs each shard's flag into it:
+    `*cls_filtered = *cls_filtered && r.second.cls_filtered` (`:9783`,
+    `:10703`). The flag therefore stays false, and the branch written for
+    filtering OSDs (`:2024-2053`, `:2127-2156`) never runs.
+  - The branch that does run, written for OSDs before version 16, rolls
+    names up again on the client and moves the marker past each common
+    prefix (`:2054-2085` and `:2109-2127` at v19.2.6, `:2157-2188` and
+    `:2212-2230` at v20.2.4). For the single common-prefix entry a filtering
+    OSD returns, it produces the same prefix, so the listing comes out the
+    same. The two branches differ only in that the dead one would count a
+    prefix that repeats across rounds each time, and skips the client's
+    marker adjustment.
+- **Impact:** none observed. Each listing redoes on the client the rollup
+  the OSD has done, and the code path the comments describe as current is
+  not the one that runs.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** takes the branch radosgw takes; `listObjectsOrdered`
+  (`internal/driver/list.go`) keeps no filtered branch.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 8, 2026-10-05, transcribing
+  `list_objects_ordered`; derived from the source, not reproduced.
+
+## radosgw's ListObjectsV2 with versions renders a malformed ListVersionsResult
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** `GET /<bucket>?versions&list-type=2` reaches
+  `RGWListBucket_ObjStore_S3v2`, since `get_obj_op` chooses the handler by
+  `list-type` alone (`rgw/rgw_rest_s3.cc:4610-4628` at v19.2.6,
+  `:5151-5169` at v20.2.4) and both handlers read `versions` (`:1712`,
+  `:1823`). Its
+  `send_versioned_response` (`:1970-2051` at v19.2.6, `:2081-2162` at
+  v20.2.4) differs from the v1 handler's (`:1799-1869`, `:1910-1980`):
+  - a delete marker's section is named `DeleteContinuationToken`, where v1
+    and S3 write `DeleteMarker` (`:1993-1994`);
+  - the common prefixes are written twice: once before the versions, and
+    again after them, each section then also carrying `KeyCount`, the
+    number of versions, and `StartAfter` when sent (`:2033-2046`);
+  - the key markers are `KeyContinuationToken` and
+    `VersionIdContinuationToken`, and the next ones carry an empty version
+    rather than `null` (`:1974-1979`);
+  - `EncodingType` comes after the markers, so the first common prefixes
+    are never URL-encoded (`:1981-1984`), and no version carries `Type`,
+    nor `Owner` unless `fetch-owner` is true (`:2022-2024`).
+- **Impact:** a client that sends `list-type=2` with `versions` gets a
+  document no S3 schema describes. AWS's ListObjectVersions takes no
+  `list-type`, so only a client that adds it meets this.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** renders the document as radosgw does, element for element
+  (`internal/s3/listobjects.go`), so a client sees one shape from either
+  gateway.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 8, 2026-10-05, transcribing the S3
+  listings; derived from the source, not reproduced.
+
+## radosgw's listing checks a plain object named like a multipart meta object in the wrong pool
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - A bucket listing checks an index entry against its head when the entry
+    has a pending op or is not there (`cls_bucket_list_ordered` and
+    `cls_bucket_list_unordered`, `rgw/driver/rados/rgw_rados.cc:9823-9834`
+    and `:10083-10091` at v19.2.6).
+  - `check_disk_state` sets `in_extra_data` whenever `MultipartMetaFilter`
+    accepts the entry's raw index name (`:10341-10344` at v19.2.6,
+    `:11266-11268` at v20.2.4). The filter tests only that the name ends in
+    `.meta` with a dot before it (`rgw/services/svc_tier_rados.cc:10-32`), so
+    a plain object such as `notes.v1.meta` passes it as well as a multipart
+    upload's `_multipart_<key>.<upload>.meta` does.
+  - `in_extra_data` makes `get_head_data_pool` choose the placement's
+    `data_extra_pool` (`rgw/driver/rados/rgw_zone.h:285-307` at v19.2.6,
+    `:307-330` at v20.2.4), the non-EC pool under Rook, where the plain
+    object's head is not. `get_obj_state` finds nothing, and the entry is
+    dropped from the listing with a suggested REMOVE (`:10361-10377`), which
+    `dir_suggest_changes` applies once no unexpired pending op remains
+    (`cls/rgw/cls_rgw.cc:2283-2355` at v19.2.6).
+  - Upstream already knows the filter misfiles such names. Ceph commit
+    3cafe5774a5 ("rgw: avoid infinite loop when deleting a bucket", for
+    [#49206](https://tracker.ceph.com/issues/49206), first in v17.1.0)
+    replaced `MultipartMetaFilter` in `cls_bucket_list_unordered` with a
+    test of the parsed namespace, saying the filter "may exclude data
+    multiparts but include some regular objects with .meta suffix by
+    mistake" (`rgw/driver/rados/rgw_rados.cc:10034-10038` at v19.2.6,
+    `:10956-10960` at v20.2.4). `check_disk_state` was never changed to
+    match.
+- **Impact:** after a write of such an object leaves its index entry
+  pending, for example when the gateway stops between the prepare and the
+  completion, a listing removes the entry of an object that exists. The
+  object stays readable by name but no longer lists, and the bucket's stats
+  lose it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** not affected. The driver's `checkDiskState`
+  (`internal/driver/list.go`) treats only entries in the `multipart`
+  namespace as upload meta objects and checks every other entry in the
+  data pool (`docs/exclusions.md`, "A plain object whose name ends in .meta
+  is checked where it is stored").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 8 review, 2026-10-05; derived from the
+  source, not reproduced.
+
+## A delimiter starting with an underscore hides the objects whose names start with one
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - cls_rgw's `bucket_list` searches for the delimiter in the raw index
+    name, from the filter prefix's length, and rolls a match up to a
+    common-prefix entry named up to and including the delimiter
+    (`cls/rgw/cls_rgw.cc:625-663` at v19.2.6, `:675-713` at v20.2.4). An
+    object whose name starts with `_` is indexed with the underscore
+    doubled, so `_x` is `__x`.
+  - With the delimiter `_` and no prefix, `__x` rolls up to the entry `_`.
+    `list_objects_ordered` parses each entry's name with `parse_raw_oid`,
+    which refuses a name shorter than `_x_` that starts with one underscore
+    (`rgw/rgw_obj_types.h:285-310` at both tags), and skips the entry with
+    "could not parse object name" (`rgw/driver/rados/rgw_rados.cc:1912-1917`
+    at v19.2.6, `:2015-2020` at v20.2.4). Every object starting with `_`
+    vanishes from the listing, where S3 returns the common prefix `_`.
+  - With the delimiter `__`, the same object rolls up to the entry `__`,
+    which parses as the object `_`. That name holds no `__`, so the listing
+    returns it as an object named `_` with empty metadata, in place of the
+    objects under it.
+- **Impact:** a listing with a delimiter that starts with `_` loses or
+  misnames every object whose name starts with `_`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: the driver lists through the same class call
+  and parse (`internal/driver/list.go`), and a driver spec pins both
+  delimiters.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 8 review, 2026-10-05; derived from the
+  source, not reproduced.

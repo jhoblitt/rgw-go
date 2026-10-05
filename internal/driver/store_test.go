@@ -341,10 +341,6 @@ var _ = Describe("the driver", func() {
 			Entry("DeleteBucket", func(ctx context.Context, s *driver.Store) error {
 				return s.DeleteBucket(ctx, &op.BucketRecord{})
 			}),
-			Entry("ListObjects", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.ListObjects(ctx, &op.BucketRecord{}, op.ListObjectsParams{MaxKeys: 1000})
-				return err
-			}),
 
 			Entry("DeleteObject", func(ctx context.Context, s *driver.Store) error {
 				return s.DeleteObject(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, op.DeleteParams{})

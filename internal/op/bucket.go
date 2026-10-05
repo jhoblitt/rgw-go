@@ -45,6 +45,11 @@ type ListObjectsParams struct {
 	// ListVersions returns every version and delete marker. Versioning is
 	// not implemented yet.
 	ListVersions bool
+	// AllowUnordered is radosgw's non-standard allow-unordered: the shards
+	// are listed one after another rather than merged, which no delimiter
+	// can accompany (ErrInvalidArgument) and which yields no common
+	// prefixes.
+	AllowUnordered bool
 }
 
 // ObjectEntry is one bucket index entry as a listing returns it.
@@ -61,6 +66,9 @@ type ObjectEntry struct {
 	IsLatest     bool
 	DeleteMarker bool
 	Exists       bool
+	// Appendable is that the object was written by AppendObject, which the
+	// listings render as its Type.
+	Appendable bool
 }
 
 // ListObjectsResult is one page of a listing.
@@ -68,7 +76,8 @@ type ListObjectsResult struct {
 	Entries        []ObjectEntry
 	CommonPrefixes []string
 	Truncated      bool
-	// NextMarker is the marker for the next page when Truncated.
+	// NextMarker is the marker for the next page when Truncated: the name,
+	// in ListObjectsParams.NS, of the last entry or common prefix counted.
 	NextMarker string
 }
 

@@ -1971,6 +1971,75 @@ rgw-go does the following.
   fails with ENOENT in rgw-go where radosgw fails with -EIO, or succeeds in
   rgw-go, counting the header-less shard as empty, where radosgw fails.
 
+### Bucket listing differences
+
+rgw-go lists a bucket, in ListObjects v1 and v2 and in the versions
+listing, as radosgw's `RGWListBucket` and `RGWRados::Bucket::List` do at
+the v19.2.6 and v20.2.4 tags. Where the two differ, rgw-go does the
+following.
+
+- **The versions of a bucket whose versioning was ever enabled are not
+  listed.** `GET /<bucket>?versions` on a bucket that has never had
+  versioning enabled lists every object as its "null" version, as radosgw
+  does. On a bucket whose versioning is enabled or suspended rgw-go answers
+  501 NotImplemented until versioning is served (phase 2); radosgw lists
+  its versions and delete markers.
+- **A pending multipart upload's index entry is not reconciled by a
+  listing.** A listing checks an index entry that has a pending operation,
+  or that is not there, against the object's head and suggests the repair
+  to the index shard. For a multipart upload's `.meta` entry, one in the
+  `multipart` namespace, radosgw makes that check in the bucket's
+  data-extra pool (`check_disk_state`,
+  `driver/rados/rgw_rados.cc:10341-10344` at v19.2.6, `:11266-11268` at
+  v20.2.4); rgw-go leaves such an entry as it is and suggests nothing, so
+  the upload listing shows it until a write completes it or
+  `radosgw-admin bucket check --fix` repairs it.
+- **A plain object whose name ends in .meta is checked where it is
+  stored.** radosgw chooses the data-extra pool by the raw index name
+  alone (`MultipartMetaFilter`, at the lines above), so it also checks a
+  plain object named like `notes.v1.meta` there. It does not find it, hides
+  it from the listing and suggests removing its index entry, so after an
+  interrupted write such an object can vanish from listings
+  (`docs/ceph-upstream-bugs.md`, "radosgw's listing checks a plain object
+  named like a multipart meta object in the wrong pool"). rgw-go checks
+  every entry outside the `multipart` namespace in the data pool, and lists
+  and repairs such an object as any other.
+- **A reconciled head does not sweep its multipart parts' index entries.**
+  When a listing finds the head of a pending entry, radosgw also completes
+  as deleted the index entry of every multipart part the head's manifest
+  names (`:10413-10429` at v19.2.6, `:11337-11353` at v20.2.4). rgw-go does
+  not yet, so after an interrupted multipart completion the part entries
+  stay until `radosgw-admin bucket check --check-objects --fix` removes
+  them.
+- **Listing-time suggestions are bounded.** radosgw sends each shard's
+  `dir_suggest_changes` with `aio_operate` and never waits for it
+  (`:9909` and `:10144` at v19.2.6, `:10831` and `:11068` at v20.2.4).
+  rgw-go sends them in the background too and never waits either, but
+  keeps at most `rgw_bucket_index_max_aio` in flight, each for at most 30
+  seconds; a shard's suggestions that find no free slot are dropped, and the
+  next listing of the same entries suggests them again.
+- **A shard that answers advance-and-retry fails an ordered listing.**
+  cls_rgw's `bucket_list` answers `RGWBIAdvanceAndRetryError` (-EFBIG) with
+  a marker when eight omap reads find nothing visible, and radosgw's
+  ordered listing lists that shard again from the marker
+  (`cls/rgw/cls_rgw_client.cc:99-110` and `:161-166` at v19.2.6;
+  `ListReader`, `rgw/services/svc_bi_rados.cc:948-965` at v20.2.4).
+  rgw-go's seam keeps no output for a class call that fails, so its
+  ordered listing fails with 500 UnknownError instead. The unordered
+  listing is the same in both: radosgw's reads the shard with
+  `rgw_rados_operate` directly and fails with 500 too (`:10071` at v19.2.6,
+  `:10993` at v20.2.4). Only a run of delete markers or noncurrent
+  versions longer than eight reads makes a shard answer so, and versioning
+  is not served yet.
+- **A system user's listing carries no sync fields.** For a system user's
+  request radosgw adds `RgwxTag` to each entry, `VersionedEpoch` and
+  `RgwxMtime` to each version, reads `objs-container` and the
+  `HTTP_RGWX_SHARD_ID` header, and can list a single index shard
+  (`rgw_rest_s3.cc:1724-1737`, `:1838-1845` and `:1947-1949` at v19.2.6,
+  `:1835-1848`, `:1949-1956` and `:2058-2060` at v20.2.4). These serve
+  multisite sync, which rgw-go excludes, and rgw-go renders a system
+  user's listing as any other user's.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first

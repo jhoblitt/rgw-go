@@ -6,6 +6,8 @@ import (
 	"io"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -40,13 +42,30 @@ type ReadConfigForTest struct{ Chunk, MaxReq, Window uint64 }
 // cfg, skipping Open's zone resolution and control objects, so a spec can
 // drive the data path over a counterfeiter cluster.
 func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConfigForTest) *Store {
-	return &Store{
+	s := &Store{
 		cluster: cluster,
 		release: denc.Squid,
 		zone:    &zoneConfig{Params: zone.Params, ZoneGroup: zone.ZoneGroup},
 		pools:   newPoolCache(cluster),
 		readCfg: readConfig{chunk: cfg.Chunk, maxReq: cfg.MaxReq, window: cfg.Window},
 	}
+	s.heads = s
+	s.bgAIO = semaphore.NewWeighted(1)
+	return s
+}
+
+// SetHeadStaterForTest makes h what s's listings check pending index entries
+// against.
+func SetHeadStaterForTest(s *Store, h HeadStater) { s.heads = h }
+
+// HoldSuggestSlotsForTest takes every slot listing suggestions are sent
+// under until release runs.
+func HoldSuggestSlotsForTest(s *Store) (release func()) {
+	n := int64(max(s.opts.bucketIndexMaxAIO, 1))
+	if !s.bgAIO.TryAcquire(n) {
+		panic("driver: a suggestion slot is busy")
+	}
+	return func() { s.bgAIO.Release(n) }
 }
 
 // DataPoolForTest is dataPool for the external specs.

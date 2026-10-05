@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -12,16 +14,18 @@ import (
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4722,
-// :4728, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5141, :5147,
-// :5162 and :5171 at v20.2.4), which RegisterClass takes with RGWClass.
+// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4716,
+// :4722, :4728, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5135,
+// :5141, :5147, :5162 and :5171 at v20.2.4), which RegisterClass takes with
+// RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
-	"user_usage_log_add",
+	"user_usage_log_add", "dir_suggest_changes",
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
@@ -34,11 +38,12 @@ var RGWWriteMethods = []string{
 // mp_upload_part_info_update on a multipart meta object; obj_remove and
 // obj_store_pg_ver on a head object; on a gc shard the omap-era enqueue,
 // gc_set_entry; and user_usage_log_add on a usage log object. Every other
-// method, and a bucket_list asking for entries, is EOPNOTSUPP. It reads the
-// header and entries from the stored object, as cls_cxx_map_read_header and
-// cls_cxx_map_get_val do, and encodes what it stores and replies at the
-// Squid release, whose rgw_bucket_dir_header lacks only Tentacle's reshard
-// log count.
+// method is EOPNOTSUPP. A bucket_list asking for entries and
+// dir_suggest_changes are emulated as rgwBucketListEntries and
+// rgwDirSuggestChanges say. It reads the header and entries from the stored
+// object, as cls_cxx_map_read_header and cls_cxx_map_get_val do, and encodes
+// what it stores and replies at the Squid release, whose
+// rgw_bucket_dir_header lacks only Tentacle's reshard log count.
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
@@ -72,6 +77,8 @@ func RGWClass() ClassFunc {
 			return nil, rgwGCSetEntry(call)
 		case "user_usage_log_add":
 			return nil, rgwUserUsageLogAdd(call)
+		case "dir_suggest_changes":
+			return nil, rgwDirSuggestChanges(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
@@ -196,8 +203,8 @@ func rgwBucketInitIndex(call *ClassCall) int32 {
 }
 
 // rgwBucketList is rgw_bucket_list (cls_rgw.cc:487-694 at v19.2.6,
-// :537-744 at v20.2.4) for a request of no entries: the shard's header,
-// untruncated.
+// :537-744 at v20.2.4): for a request of no entries the shard's header,
+// untruncated, and otherwise rgwBucketListEntries.
 func rgwBucketList(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeListOp)
 	if rval < 0 {
@@ -208,7 +215,7 @@ func rgwBucketList(call *ClassCall) (out []byte, rval int32) {
 		return nil, rval
 	}
 	if op.NumEntries > 0 {
-		return nil, -int32(syscall.EOPNOTSUPP)
+		return rgwBucketListEntries(call, op, h)
 	}
 	return encodeSquid(rgwcls.ListRet{Dir: rgwcls.Dir{Header: h}}), 0
 }
@@ -670,6 +677,275 @@ func (c *Cluster) UsageEntries(pool, ns, oid string) []rgwcls.UsageLogEntry {
 		// Every record is also stored under its by-user key.
 		if key == usageKeyByTime(en.Epoch, usageRecordUser(en), en.Bucket) {
 			out = append(out, en)
+		}
+	}
+	return out
+}
+
+// rgwBIAdvanceAndRetry is RGWBIAdvanceAndRetryError, -EFBIG
+// (cls_rgw_const.h:11 at v19.2.6 and v20.2.4).
+const rgwBIAdvanceAndRetry = -int32(syscall.EFBIG)
+
+// rgwListMaxAttempts is rgw_bucket_list's max_attempts, its bound on the
+// omap reads one call makes (cls_rgw.cc:492 at v19.2.6, :542 at v20.2.4).
+const rgwListMaxAttempts = 8
+
+// rgwBucketListEntries is the rest of rgw_bucket_list (cls_rgw.cc:525-694 at
+// v19.2.6, :575-744 at v20.2.4) for a request of entries. It starts after
+// the start key, past the subdirectory a delimiter-terminated start key
+// names, and makes up to eight omap reads of the entries still wanted. Each
+// entry is decoded, EINVAL when it does not decode; a key
+// decode_list_index_key refuses and a version marker are skipped; without
+// list_versions an entry that is not visible, or named as the start key, is
+// skipped with every version of its name. With a delimiter a name holding it
+// after the prefix becomes one common-prefix entry and the listing skips
+// past the subdirectory. The reply is truncated when the last read left
+// keys and found some, with the last key visited as its marker, and a
+// truncated reply of no entries is RGWBIAdvanceAndRetryError. The fake
+// stores no key in the 0x80 "ugly namespace" get_obj_vals skips.
+func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader) (out []byte, rval int32) {
+	var keys []string
+	if call.Stored != nil {
+		keys = slices.Sorted(maps.Keys(call.Stored.Omap))
+	}
+	ret := rgwcls.ListRet{Dir: rgwcls.Dir{Header: h, Entries: map[string]rgwcls.DirEntry{}}}
+	m := ret.Dir.Entries
+	start := op.StartObj.Name
+	if op.StartObj.Instance != "" {
+		// encode_list_index_key (:358-390) finds no versioned instance entry,
+		// which the fake never stores, and starts after every version of the
+		// name.
+		start += "\x01"
+	}
+	var startEntry rgwcls.ObjKey
+	var prevKey, prevPrefix string
+	done, more := false, true
+	if op.Delimiter != "" && start > op.FilterPrefix && strings.HasSuffix(start, op.Delimiter) {
+		start += "\xFF"
+	}
+	for attempt := 0; attempt < rgwListMaxAttempts && more && !done && uint32(len(m)) < op.NumEntries; attempt++ { //nolint:gosec // an entry count fits a u32
+		var page []string
+		page, more = rgwObjVals(keys, start, op.FilterPrefix, int(op.NumEntries)-len(m))
+		done = len(page) == 0
+		for i := 0; i < len(page); i++ {
+			k := page[i]
+			d := denc.NewDecoder(call.Stored.Omap[k])
+			en := rgwcls.DecodeDirEntry(d)
+			if d.Err() != nil {
+				return nil, -int32(syscall.EINVAL)
+			}
+			start, startEntry = k, en.Key
+			key, ok := rgwDecodeListIndexKey(k)
+			if !ok || en.Flags&rgwcls.FlagVerMarker != 0 {
+				continue
+			}
+			if !op.ListVersions && (!rgwVisible(en) || op.StartObj.Name == key.Name) {
+				start = key.Name + "\x01"
+				startEntry = rgwcls.ObjKey{Name: start}
+				i = sort.SearchStrings(page, start) - 1
+				continue
+			}
+			if op.Delimiter != "" && len(op.FilterPrefix) <= len(key.Name) {
+				if pos := strings.Index(key.Name[len(op.FilterPrefix):], op.Delimiter); pos >= 0 {
+					prefixKey := key.Name[:len(op.FilterPrefix)+pos+len(op.Delimiter)]
+					if prefixKey == prevPrefix {
+						continue
+					}
+					prevPrefix = prefixKey
+					if uint32(len(m)) < op.NumEntries { //nolint:gosec // an entry count fits a u32
+						proxy := rgwcls.NewDirEntry()
+						proxy.Key = rgwcls.ObjKey{Name: prefixKey}
+						proxy.Flags = rgwcls.FlagCommonPrefix
+						m[prefixKey] = proxy
+					}
+					start = prefixKey + "\xFF"
+					startEntry = rgwcls.ObjKey{Name: start}
+					i = sort.SearchStrings(page, start) - 1
+					continue
+				}
+			}
+			if uint32(len(m)) < op.NumEntries && k != prevKey { //nolint:gosec // an entry count fits a u32
+				m[k] = en
+				prevKey = k
+			}
+		}
+	}
+	ret.IsTruncated = more && !done
+	if ret.IsTruncated {
+		ret.Marker = startEntry
+	}
+	out = encodeSquid(ret)
+	if ret.IsTruncated && len(m) == 0 {
+		return out, rgwBIAdvanceAndRetry
+	}
+	return out, 0
+}
+
+// rgwObjVals is cls_cxx_map_get_vals as the OSD serves it (OMAPGETVALS):
+// the keys after start, from the filter prefix on when it sorts later, while
+// they carry the prefix, at most n, with more set when another would follow.
+func rgwObjVals(keys []string, start, prefix string, n int) (page []string, more bool) {
+	for _, k := range keys {
+		if k <= start || k < prefix {
+			continue
+		}
+		if !strings.HasPrefix(k, prefix) {
+			break
+		}
+		if len(page) >= n {
+			return page, true
+		}
+		page = append(page, k)
+	}
+	return page, false
+}
+
+// rgwDecodeListIndexKey is decode_list_index_key (cls_rgw.cc:417-462 at
+// v19.2.6, :467-512 at v20.2.4): a key without a NUL is the name; a longer
+// one is the name, then NUL-separated values, "i<instance>" and "v<ver>". A
+// key with no value after its NUL, or a version that does not parse, is
+// refused.
+func rgwDecodeListIndexKey(k string) (rgwcls.ObjKey, bool) {
+	name, rest, found := strings.Cut(k, "\x00")
+	if !found {
+		return rgwcls.ObjKey{Name: k}, true
+	}
+	if rest == "" {
+		return rgwcls.ObjKey{}, false
+	}
+	key := rgwcls.ObjKey{Name: name}
+	for v := range strings.SplitSeq(rest, "\x00") {
+		switch {
+		case strings.HasPrefix(v, "i"):
+			key.Instance = v[1:]
+		case strings.HasPrefix(v, "v"):
+			if _, err := strconv.ParseInt(v[1:], 10, 64); err != nil {
+				return rgwcls.ObjKey{}, false
+			}
+		}
+	}
+	return key, true
+}
+
+// rgwVisible is rgw_bucket_dir_entry::is_visible (cls_rgw_types.h:446-457 at
+// v19.2.6): current, which an unversioned entry always is, and not a delete
+// marker.
+func rgwVisible(en rgwcls.DirEntry) bool {
+	current := en.Flags&rgwcls.FlagVer == 0 || en.Flags&(rgwcls.FlagVer|rgwcls.FlagCurrent) == rgwcls.FlagVer|rgwcls.FlagCurrent
+	return current && en.Flags&rgwcls.FlagDeleteMarker == 0
+}
+
+// rgwDefaultTagTimeout is CEPH_RGW_DEFAULT_TAG_TIMEOUT, and the default of
+// rgw_pending_bucket_index_op_expiration, 120 seconds (cls_rgw_types.h at
+// v19.2.6 and v20.2.4).
+const rgwDefaultTagTimeout = 120 * time.Second
+
+// rgwDirSuggestChanges is Squid's rgw_dir_suggest_changes (cls_rgw.cc:2192-2408
+// at v19.2.6). A shard that does not exist is ENOENT, and a header that does
+// not decode EIO. Each change is an op byte, its log flag stripped, and an
+// entry; one that does not decode is EINVAL. A key the shard does not hold is
+// skipped. The stored entry's pending ops older than the header's tag
+// timeout, or 120 s, are dropped; a change made against an older index
+// version than the entry's is skipped; while a pending op remains nothing
+// changes. Otherwise the stored entry is unaccounted when it exists, and a
+// removal removes it while an update stores the suggested entry at the
+// header's version and accounts it. The header is written, its version
+// counted, when its stats changed. The fake keeps no bucket index log, so the
+// log flag changes nothing, and Tentacle's own reshard guard is left to the
+// guard call radosgw sends ahead of it.
+func rgwDirSuggestChanges(call *ClassCall) int32 {
+	if call.Stored == nil {
+		return -int32(syscall.ENOENT)
+	}
+	h, rval := rgwDirHeader(call)
+	if rval < 0 {
+		return rval
+	}
+	timeout := rgwDefaultTagTimeout
+	if h.TagTimeout != 0 {
+		timeout = time.Duration(h.TagTimeout) * time.Second //nolint:gosec // a tag timeout in seconds fits a Duration
+	}
+	if h.Stats == nil {
+		h.Stats = map[uint8]rgwcls.CategoryStats{}
+	}
+	changed := false
+	d := denc.NewDecoder(call.In)
+	for d.Remaining() > 0 {
+		op := d.U8() &^ rgwcls.SuggestLog
+		change := rgwcls.DecodeDirEntry(d)
+		if d.Err() != nil {
+			return -int32(syscall.EINVAL)
+		}
+		idx := change.Key.Name
+		if change.Key.Instance != "" {
+			return -int32(syscall.EOPNOTSUPP)
+		}
+		b, ok := call.Stored.Omap[idx]
+		if !ok {
+			continue
+		}
+		disk := rgwcls.NewDirEntry()
+		if len(b) > 0 {
+			dd := denc.NewDecoder(b)
+			disk = rgwcls.DecodeDirEntry(dd)
+			if dd.Err() != nil {
+				return -int32(syscall.EINVAL)
+			}
+			now := call.Now()
+			disk.PendingMap = slices.DeleteFunc(disk.PendingMap, func(p rgwcls.PendingEntry) bool {
+				return now.After(p.Info.Timestamp.Add(timeout))
+			})
+		}
+		if change.IndexVer < disk.IndexVer || len(disk.PendingMap) > 0 {
+			continue
+		}
+		if disk.Exists {
+			rgwUnaccount(&h, disk)
+			changed = true
+		}
+		switch op {
+		case rgwcls.SuggestRemove:
+			rgwRemoveEntry(call, idx)
+		case rgwcls.SuggestUpdate:
+			st := h.Stats[change.Meta.Category]
+			st.NumEntries++
+			st.TotalSize += change.Meta.AccountedSize
+			st.TotalSizeRounded += rgwRoundedSize(change.Meta.AccountedSize)
+			st.ActualSize += change.Meta.Size
+			h.Stats[change.Meta.Category] = st
+			changed = true
+			change.IndexVer = h.Ver
+			rgwPutEntry(call, idx, change)
+		}
+	}
+	if changed {
+		h.Ver++
+		call.Create().OmapHdr = encodeSquid(h)
+	}
+	return 0
+}
+
+// Suggestions decodes every dir_suggest_changes the write ops on the object
+// carried, failed ones included, oldest first: what a listing suggested to
+// the shard, whether or not the class applied it. An input that does not
+// decode panics, failing the spec.
+func (c *Cluster) Suggestions(pool, ns, oid string) []rgwcls.Suggestion {
+	var out []rgwcls.Suggestion
+	for _, w := range c.WritesTo(pool, ns, oid) {
+		for _, step := range w.Steps() {
+			ex, ok := step.(*radosclient.ExecStep)
+			if !ok || ex.Class != "rgw" || ex.Method != "dir_suggest_changes" {
+				continue
+			}
+			d := denc.NewDecoder(ex.In)
+			for d.Remaining() > 0 {
+				b := d.U8()
+				s := rgwcls.Suggestion{Op: b &^ rgwcls.SuggestLog, Log: b&rgwcls.SuggestLog != 0, Entry: rgwcls.DecodeDirEntry(d)}
+				if err := d.Err(); err != nil {
+					panic(fmt.Sprintf("fakerados: dir_suggest_changes to %s/%s/%s does not decode: %v", pool, ns, oid, err))
+				}
+				out = append(out, s)
+			}
 		}
 	}
 	return out
