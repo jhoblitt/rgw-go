@@ -185,9 +185,10 @@ const (
 )
 
 // gcTimeKey is get_time_key (cls_rgw.cc:119-125 at v19.2.6): seconds and
-// nanoseconds, zero-padded to 11 and 9 digits.
+// nanoseconds, zero-padded to 11 and 9 digits, the seconds the 32 bits
+// ceph_timespec keeps.
 func gcTimeKey(t time.Time) string {
-	return fmt.Sprintf("%011d.%09d", t.Unix(), t.Nanosecond())
+	return fmt.Sprintf("%011d.%09d", uint32(t.Unix()), t.Nanosecond()) //nolint:gosec // ceph_timespec's tv_sec is 32 bits
 }
 
 // rgwGCSetEntry is rgw_cls_gc_set_entry through gc_update_entry

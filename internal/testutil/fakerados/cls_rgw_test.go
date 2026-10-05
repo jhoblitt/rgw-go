@@ -578,6 +578,15 @@ var _ = Describe("RGWClass on a gc shard", func() {
 			Expect(ret.Truncated).To(BeFalse())
 		})
 
+		It("wraps a due time past 2106 to 32-bit seconds, as ceph_timespec keeps them, so it lists at once", func(ctx SpecContext) {
+			set(ctx, "wrapped", 4294967295)
+			ret, err := list(ctx, "", 1, true)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(Equal([]string{"wrapped"}))
+			Expect(ret.Entries[0].Time).To(Equal(now.Add(-time.Second)))
+			Expect(c.Object(logPool, "gc", "gc.1").Omap).To(HaveKey(fmt.Sprintf("1_%011d.%09d", now.Unix()-1, 5)))
+		})
+
 		It("answers a listing of a missing shard with ENOENT, as a read op meets it", func(ctx SpecContext) {
 			c.Remove(logPool, "gc", "gc.1")
 			_, err := list(ctx, "", 1, false)
