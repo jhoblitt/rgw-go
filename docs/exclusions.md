@@ -825,17 +825,21 @@ review and verified against the tree.
   differs, and only for an ID, display name or email address holding `&`,
   `<`, `>`, `'`, `"` or a control byte.
 - **A manifest walk that stops moving, or runs past its stripe bound,
-  fails.** rgw-go walks a manifest's stripes from its start in two ways:
-  `meta.Manifest.Stripes`, the whole layout, which it builds in memory, and
+  fails.** rgw-go walks a manifest's stripes from its start in three ways:
+  `meta.Manifest.Stripes`, the whole layout, which it builds in memory;
   `meta.PartWalk`, the part walk behind `meta.Manifest.PartBounds`, the
   part lookup of GET and HEAD with `partNumber`, and behind
-  GetObjectAttributes's ObjectParts listing. Each fails with
-  `denc.ErrMalformed` at the first step that does not move past the
-  previous offset, and with `meta.ErrTooManyStripes` past its bound,
-  `meta.MaxStripes` (2^21 stripes) for `Stripes` and `meta.MaxWalkStripes`
-  (2^26) for the part walk; each refuses at once a tail that needs more
-  stripes than its bound. The operation that needs the walk fails instead
-  of hanging. radosgw's walks check neither
+  GetObjectAttributes's ObjectParts listing; and the listing's sweep of a
+  reconciled head's multipart parts from the index (`check_disk_state`,
+  `driver/rados/rgw_rados.cc:10413-10429` at v19.2.6, `:11337-11353` at
+  v20.2.4). Each fails with `denc.ErrMalformed` at the first step that does
+  not move past the previous offset, and with `meta.ErrTooManyStripes` past
+  its bound, `meta.MaxStripes` (2^21 stripes) for `Stripes` and
+  `meta.MaxWalkStripes` (2^26) for the part walk and the sweep; the first
+  two refuse at once a tail that needs more stripes than their bound. The
+  operation that needs the walk fails instead of hanging; the sweep logs a
+  warning and the listing goes on, with the parts after that step left in
+  the index. radosgw's walks check neither
   (`docs/ceph-upstream-bugs.md`, "[radosgw hangs or faults walking a
   manifest whose rule has a stripe size of
   0](ceph-upstream-bugs.md#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0)").
@@ -2122,13 +2126,6 @@ following.
   named like a multipart meta object in the wrong pool"). rgw-go checks
   every entry outside the `multipart` namespace in the data pool, and lists
   and repairs such an object as any other.
-- **A reconciled head does not sweep its multipart parts' index entries.**
-  When a listing finds the head of a pending entry, radosgw also completes
-  as deleted the index entry of every multipart part the head's manifest
-  names (`:10413-10429` at v19.2.6, `:11337-11353` at v20.2.4). rgw-go does
-  not yet, so after an interrupted multipart completion the part entries
-  stay until `radosgw-admin bucket check --check-objects --fix` removes
-  them.
 - **Listing-time suggestions are bounded.** radosgw sends each shard's
   `dir_suggest_changes` with `aio_operate` and never waits for it
   (`:9909` and `:10144` at v19.2.6, `:10831` and `:11068` at v20.2.4).

@@ -56,6 +56,10 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 	return s
 }
 
+// SetSweepLimitForTest makes n the most stripes a listing's sweep of a
+// head's multipart parts walks.
+func (s *Store) SetSweepLimitForTest(n int) { s.sweepLimit = n }
+
 // SetHeadStaterForTest makes h what s's listings check pending index entries
 // against.
 func SetHeadStaterForTest(s *Store, h HeadStater) { s.heads = h }

@@ -58,6 +58,9 @@ type Store struct {
 	// bgAIO bounds the index suggestions a listing sends in the background
 	// at rgw_bucket_index_max_aio.
 	bgAIO *semaphore.Weighted
+	// sweepLimit bounds the stripes sweepParts walks; 0 is
+	// meta.MaxWalkStripes.
+	sweepLimit int
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers

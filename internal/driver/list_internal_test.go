@@ -3,6 +3,10 @@ package driver
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
 var _ = Describe("calcPerShard", func() {
@@ -11,6 +15,18 @@ var _ = Describe("calcPerShard", func() {
 		Expect(calcPerShard(1000, 1)).To(BeEquivalentTo(1001), "log(1) is 0")
 		Expect(calcPerShard(8, 64)).To(BeEquivalentTo(8), "min_read")
 		Expect(calcPerShard(1001, 11)).To(BeEquivalentTo(112), "1 + (91 + 20.89), the quotient 1001/11 an integer division")
+	})
+})
+
+var _ = Describe("sweepParts", func() {
+	It("stops at a step that does not move forward, where radosgw's walk never ends", func() {
+		m := meta.NewManifest()
+		m.Obj = meta.Obj{Bucket: meta.BucketID{Name: "b", Marker: "m", ID: "m"}, Key: meta.ObjKey{Name: "k"}}
+		m.ObjSize = 8 << 20
+		m.Prefix = ".p_"
+		m.Rules = map[uint64]meta.ManifestRule{0: {}}
+		err := (&Store{}).sweepParts(nil, &op.ObjectState{Manifest: &m})
+		Expect(err).To(MatchError(denc.ErrMalformed), "a rule whose stripe size is 0 (docs/ceph-upstream-bugs.md)")
 	})
 })
 

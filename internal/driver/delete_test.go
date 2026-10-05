@@ -12,6 +12,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -312,5 +313,251 @@ var _ = Describe("DeleteObject", func() {
 		setup(ctx, denc.Tentacle)
 		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).To(Succeed())
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
+	})
+})
+
+var _ = Describe("checkDiskState's multipart-part sweep", func() {
+	var (
+		c     *fakerados.Cluster
+		s     *driver.Store
+		rec   *op.BucketRecord
+		mtime time.Time
+	)
+	BeforeEach(func(ctx SpecContext) {
+		mtime = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+		c = newPutCluster()
+		clock := mtime
+		c.SetClock(func() time.Time { return clock })
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+	})
+	// partNameOnShard is the first of head.2~u.1, head.2~u.2, ... whose own
+	// name hashes to head's shard when same, and to another when not.
+	partNameOnShard := func(head string, same bool) string {
+		for i := 1; ; i++ {
+			name := fmt.Sprintf("%s.2~u.%d", head, i)
+			if (shardOf(rec, name) == shardOf(rec, head)) == same {
+				return name
+			}
+		}
+	}
+	// completeDels decodes the bucket_complete_op DELs among writes.
+	completeDels := func(writes []fakerados.RecordedWrite) []rgwcls.CompleteOp {
+		var out []rgwcls.CompleteOp
+		for _, w := range writes {
+			for _, st := range w.Steps() {
+				if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_complete_op" {
+					if c := rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In)); c.Op == rgwcls.OpDel {
+						out = append(out, c)
+					}
+				}
+			}
+		}
+		return out
+	}
+	// seedMultipartHead writes head, then gives it an explicit manifest with
+	// one piece in the head and one in the multipart namespace, the shortest
+	// way to name a part head (get_implicit_location puts a part's first
+	// stripe there, rgw_obj_manifest.cc:236-239). The head's entry is left
+	// pending, as when the completion's complete did not land, and the
+	// part's entry sits where the part writer put it: on the shard the
+	// HEAD's name hashes to, accounted in its header. It returns the head's
+	// mtime.
+	seedMultipartHead := func(ctx context.Context, head, part string) time.Time {
+		GinkgoHelper()
+		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: head}, bytes.NewReader(bytes.Repeat([]byte("h"), 1<<20)), op.PutParams{
+			Attrs: map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(attrsOwner, "Alice"))}, Size: 1 << 20, Tag: "tx-mp",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		headObj := meta.Obj{Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: head}}
+		m := meta.NewManifest()
+		m.ExplicitObjs, m.ObjSize, m.Obj = true, 2<<20, headObj
+		m.Objs = map[uint64]meta.ManifestPart{
+			0:       {Loc: headObj, Size: 1 << 20},
+			1 << 20: {Loc: meta.Obj{Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: part, NS: meta.NSMultipart}}, Size: 1 << 20},
+		}
+		c.Object(testDataPool, "", putBucketID+"_"+head).Xattrs[meta.AttrManifest] = encode(m)
+		st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: head})
+		Expect(err).NotTo(HaveOccurred())
+		headShard := indexShardOID(rec, head)
+		pending := entry(head, 1<<20)
+		pending.Exists = false
+		// A pending op inside the tag timeout: the listing's suggestion for
+		// the head changes nothing, so only the sweep changes the shard.
+		pending.PendingMap = []rgwcls.PendingEntry{{Tag: "tx-mp", Info: rgwcls.PendingInfo{State: rgwcls.PendingModify, Timestamp: mtime, Op: uint8(rgwcls.OpAdd)}}}
+		c.Object(rookIndexPool, "", headShard).Omap[head] = encode(pending)
+		partEntry := entry("part", 1<<20)
+		partEntry.Key.Name = meta.ObjKey{Name: part, NS: meta.NSMultipart}.IndexKeyName()
+		seedIndexEntry(c, rookIndexPool, headShard, partEntry)
+		h := c.Header(rookIndexPool, "", headShard)
+		main := h.Stats[rgwcls.CategoryMain]
+		main.NumEntries++
+		main.TotalSize += 1 << 20
+		main.TotalSizeRounded += 1 << 20
+		main.ActualSize += 1 << 20
+		h.Stats[rgwcls.CategoryMain] = main
+		seedShardHeader(c, rookIndexPool, headShard, h)
+		c.ResetCounters()
+		return st.Mtime
+	}
+
+	// seedImplicitHead writes head, then gives it the manifest a completed
+	// upload of parts 6 MiB parts leaves, striped at 4 MiB under the prefix
+	// head.2~u, with no data in the head, and leaves the head's entry
+	// pending. It returns the head's mtime and the parts' names.
+	seedImplicitHead := func(ctx context.Context, head string, parts int) (time.Time, []string) {
+		GinkgoHelper()
+		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: head}, bytes.NewReader([]byte("x")), op.PutParams{Size: 1, Tag: "tx-mp"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		headObj := meta.Obj{Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: head}}
+		m := meta.NewManifest()
+		m.Obj, m.ObjSize, m.Prefix = headObj, uint64(parts)*(6<<20), head+".2~u"
+		m.Rules = map[uint64]meta.ManifestRule{0: {StartPartNum: 1, PartSize: 6 << 20, StripeMaxSize: 4 << 20}}
+		m.TailPlacement = meta.BucketPlacement{Bucket: rec.Info.Bucket, PlacementRule: rec.Info.PlacementRule}
+		obj := c.Object(testDataPool, "", putBucketID+"_"+head)
+		obj.Data = nil
+		obj.Xattrs[meta.AttrManifest] = encode(m)
+		st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: head})
+		Expect(err).NotTo(HaveOccurred())
+		pending := entry(head, uint64(parts)*(6<<20))
+		pending.Exists = false
+		pending.PendingMap = []rgwcls.PendingEntry{{Tag: "tx-mp", Info: rgwcls.PendingInfo{State: rgwcls.PendingModify, Timestamp: mtime, Op: uint8(rgwcls.OpAdd)}}}
+		c.Object(rookIndexPool, "", indexShardOID(rec, head)).Omap[head] = encode(pending)
+		c.ResetCounters()
+		names := make([]string, parts)
+		for i := range names {
+			names[i] = fmt.Sprintf("%s.2~u.%d", head, i+1)
+		}
+		return st.Mtime, names
+	}
+	// delsByKey is every complete_op DEL sent to the bucket's shards: the
+	// shards each index key's went to.
+	delsByKey := func() map[string][]string {
+		out := map[string][]string{}
+		for i := range rec.Info.Layout.Current.Layout.Normal.NumShards {
+			oid := rec.Info.IndexShardOID(rec.Info.Layout.Current, i)
+			for _, d := range completeDels(c.WritesTo(rookIndexPool, "", oid)) {
+				out[d.Key.Name] = append(out[d.Key.Name], oid)
+			}
+		}
+		return out
+	}
+	// partKeys maps each part's index key to the shard its own name hashes to.
+	partKeys := func(parts ...string) map[string][]string {
+		out := map[string][]string{}
+		for _, p := range parts {
+			out[meta.ObjKey{Name: p, NS: meta.NSMultipart}.IndexKeyName()] = []string{indexShardOID(rec, p)}
+		}
+		return out
+	}
+
+	It("sends one complete_del per part of an implicit multipart manifest, on the shard each part's name hashes to", func(ctx SpecContext) {
+		headMtime, parts := seedImplicitHead(ctx, "big", 3)
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keys(res.Entries)).To(Equal([]string{"big"}))
+		settle(s)
+		Expect(delsByKey()).To(Equal(partKeys(parts...)), "each part's first stripe is in the multipart namespace; its other stripes are shadow (rgw_obj_manifest.cc:223-245)")
+		for i := range rec.Info.Layout.Current.Layout.Normal.NumShards {
+			for _, d := range completeDels(c.WritesTo(rookIndexPool, "", rec.Info.IndexShardOID(rec.Info.Layout.Current, i))) {
+				Expect(d.Ver).To(Equal(rgwcls.EntryVer{Pool: -1, Epoch: 0}))
+				Expect(d.Meta.Mtime).To(BeTemporally("==", headMtime))
+			}
+		}
+	})
+
+	It("stops the sweep with a warning past its stripe bound, and the listing goes on", func(ctx SpecContext) {
+		logs := gbytes.NewBuffer()
+		DeferCleanup(driver.CaptureLog(logs))
+		_, parts := seedImplicitHead(ctx, "big", 3)
+		s.SetSweepLimitForTest(3)
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keys(res.Entries)).To(Equal([]string{"big"}))
+		settle(s)
+		Expect(delsByKey()).To(Equal(partKeys(parts[:2]...)), "parts 1 and 2 lie in the first three stripes; part 3 stays in the index")
+		Expect(logs).To(gbytes.Say(`could not walk the manifest for its multipart parts' index entries`))
+		Expect(logs).To(gbytes.Say(`too many stripes`))
+	})
+
+	It("sends delete_obj_index's complete_del for every multipart stripe to the shard the part's own name hashes to", func(ctx SpecContext) {
+		part := partNameOnShard("mp", false)
+		headMtime := seedMultipartHead(ctx, "mp", part)
+		partShard := indexShardOID(rec, part)
+		headShard := indexShardOID(rec, "mp")
+		partKey := meta.ObjKey{Name: part, NS: meta.NSMultipart}.IndexKeyName()
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keys(res.Entries)).To(Equal([]string{"mp"}), "the head is reconciled and kept")
+		var dels []rgwcls.CompleteOp
+		Eventually(func() []rgwcls.CompleteOp {
+			dels = completeDels(c.WritesTo(rookIndexPool, "", partShard))
+			return dels
+		}).Should(HaveLen(1), "delete_obj_index, rgw_rados.cc:6033-6050")
+		del := dels[0]
+		Expect(del.Tag).To(BeEmpty(), "an UpdateIndex never prepared: its optag is empty")
+		Expect(del.Ver).To(Equal(rgwcls.EntryVer{Pool: -1, Epoch: 0}))
+		Expect(del.Key).To(Equal(rgwcls.ObjKey{Name: partKey}))
+		Expect(del.Meta).To(Equal(rgwcls.DirEntryMeta{Category: rgwcls.CategoryNone, Mtime: headMtime}), "cls_obj_complete_del: ent.meta.mtime = astate->mtime")
+		Expect(del.RemoveObjs).To(BeEmpty())
+		settle(s)
+		Expect(completeDels(c.WritesTo(rookIndexPool, "", headShard))).To(BeEmpty(), "nothing is sent to the shard that holds the entry")
+		_, ok := c.Entry(rookIndexPool, "", headShard, partKey)
+		Expect(ok).To(BeTrue(),
+			"radosgw's sweep misses the entry on a multi-shard bucket: 'not on disk, no action' on the wrong shard (cls_rgw.cc:1127-1140); bucket check reports it")
+	})
+
+	It("retires the entry when the part's name hashes to the shard that holds it", func(ctx SpecContext) {
+		part := partNameOnShard("mp", true)
+		seedMultipartHead(ctx, "mp", part)
+		shard := indexShardOID(rec, "mp")
+		partKey := meta.ObjKey{Name: part, NS: meta.NSMultipart}.IndexKeyName()
+		before := c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries
+		_, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() bool {
+			_, ok := c.Entry(rookIndexPool, "", shard, partKey)
+			return ok
+		}).Should(BeFalse())
+		settle(s)
+		Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(Equal(before-1), "unaccount_entry dropped the part; the head stays")
+		_, ok := c.Entry(rookIndexPool, "", shard, "mp")
+		Expect(ok).To(BeTrue())
+	})
+
+	It("sends nothing for a head whose manifest has no multipart stripe", func(ctx SpecContext) {
+		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "plain"}, bytes.NewReader(bytes.Repeat([]byte("x"), 6<<20)), op.PutParams{Size: 6 << 20, Tag: "tx-plain"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		shard := indexShardOID(rec, "plain")
+		pending := entry("plain", 6<<20)
+		pending.Exists = false
+		pending.PendingMap = []rgwcls.PendingEntry{{Tag: "t", Info: rgwcls.PendingInfo{State: rgwcls.PendingModify, Timestamp: mtime}}}
+		c.Object(rookIndexPool, "", shard).Omap["plain"] = encode(pending)
+		c.ResetCounters()
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keys(res.Entries)).To(Equal([]string{"plain"}))
+		settle(s)
+		for i := range rec.Info.Layout.Current.Layout.Normal.NumShards {
+			oid := rec.Info.IndexShardOID(rec.Info.Layout.Current, i)
+			Expect(completeDels(c.WritesTo(rookIndexPool, "", oid))).To(BeEmpty(), "the head's and the shadow tail's stripes are not in the multipart namespace")
+		}
+	})
+
+	It("sends nothing for a pending entry whose head is gone", func(ctx SpecContext) {
+		shard := indexShardOID(rec, "gone")
+		gone := entry("gone", 1)
+		gone.PendingMap = []rgwcls.PendingEntry{{Tag: "t", Info: rgwcls.PendingInfo{State: rgwcls.PendingModify, Timestamp: mtime}}}
+		seedIndexEntry(c, rookIndexPool, shard, gone)
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Entries).To(BeEmpty())
+		settle(s)
+		Expect(completeDels(c.WritesTo(rookIndexPool, "", shard))).To(BeEmpty(), "check_disk_state returns -ENOENT before the sweep (rgw_rados.cc:10362-10378)")
 	})
 })

@@ -236,9 +236,10 @@ Every new entry adds its row to this table, in document order.
   source (8a04c0a61bc, first in v0.92); the sweep itself dates from
   e5dc46f6aa9 (2012) and has only been refactored since. Checked at v19.2.6,
   v20.2.4 and main.
-- **rgw-go:** unit W's listing reconciliation reproduces radosgw's bytes,
-  wrong shard included, so the index a shared zone sees is the one radosgw
-  would leave.
+- **rgw-go:** reproduces it: the listing's reconciliation sends radosgw's
+  bytes, wrong shard included, so the index a shared zone sees is the one
+  radosgw would leave (`sweepParts` and `deleteObjIndex`,
+  `internal/driver/list.go` and `internal/driver/delete.go`).
 - **Upstream:** [#81121](https://tracker.ceph.com/issues/81121), filed after a
   full-text tracker and all-time pull-request search (2026-09-29) found no
   report or fix. The same wrong-shard mistake with multipart entries was
@@ -3282,8 +3283,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** refuses the walk. `meta.Manifest.PartBounds` and
   `meta.Manifest.Stripes` fail with `denc.ErrMalformed` at the first step
   that does not move past the previous offset, so for a part that starts in
-  the head rgw-go refuses a HEAD that radosgw answers; `docs/exclusions.md`
-  records the difference.
+  the head rgw-go refuses a HEAD that radosgw answers. A listing's sweep of
+  a reconciled head's multipart parts (`sweepParts`,
+  `internal/driver/list.go`) stops there with a warning, where radosgw's
+  `check_disk_state` walk never ends. `docs/exclusions.md` records the
+  difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused. Related, not a
   duplicate: [#66705](https://tracker.ceph.com/issues/66705) (2024) reported

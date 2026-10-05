@@ -85,6 +85,23 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 	return nil
 }
 
+// deleteObjIndex is RGWRados::delete_obj_index (:6033-6050; v20.2.4
+// :6787-6804): complete_del on an UpdateIndex that was never prepared, so
+// with an empty tag, pool -1 and epoch 0, on the shard the key's own name
+// hashes to, and not awaited. The index op is built here because newIndexOp
+// substitutes a random tag for an empty one, as UpdateIndex::prepare does,
+// and cls_rgw refuses a tag the entry's pending map does not hold
+// (cls_rgw.cc:1066-1072).
+func (s *Store) deleteObjIndex(rec *op.BucketRecord, key meta.ObjKey, mtime time.Time) {
+	x := &indexOp{
+		s:     s,
+		rec:   rec,
+		obj:   meta.Obj{Bucket: rec.Info.Bucket, Key: key},
+		blind: rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless,
+	}
+	x.completeDel(rgw.EntryVer{Pool: -1, Epoch: 0}, mtime)
+}
+
 // deleteConditions checks a delete's conditions against st and appends the
 // checks the OSD repeats, in radosgw's order: x-amz-delete-if-unmodified-since
 // first, on both releases (:5860-5875; v20.2.4 :6609-6624), then v20.2.4's
