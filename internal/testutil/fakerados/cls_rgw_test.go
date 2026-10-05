@@ -81,9 +81,9 @@ var _ = Describe("RGWClass's index transaction", func() {
 
 	It("names the emulated methods the class registers as writes", func() {
 		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
+			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
 			"user_usage_log_add", "dir_suggest_changes"),
-			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4705-4706, :4716, :4722, :4728, :4743 and :4752-4753 at v19.2.6")
+			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4705-4706, :4716, :4722, :4728, :4731, :4743 and :4752-4753 at v19.2.6")
 	})
 
 	It("reads the reshard status without the WR flag: a read op calling it on a missing shard is ENOENT", func(ctx SpecContext) {
@@ -526,6 +526,75 @@ var _ = Describe("RGWClass on a gc shard", func() {
 		obj = c.Object(logPool, "gc", "gc.3")
 		Expect(obj.Omap).To(HaveLen(2), "the old time key goes, cls_rgw.cc:3900-3909")
 		Expect(obj.Omap).To(HaveKey(fmt.Sprintf("1_%011d.%09d", now.Add(time.Minute).Unix(), 5)))
+	})
+
+	Describe("gc_list and gc_remove", func() {
+		set := func(ctx context.Context, tag string, exp uint32) {
+			GinkgoHelper()
+			info := rgwcls.GCObjInfo{Tag: tag, Chain: []rgwcls.GCObj{{Pool: "data", Key: rgwcls.ObjKey{Name: tag + "_1"}}}}
+			Expect(writeErr(ctx, p, "gc.1", func(op *radosclient.WriteOp) { rgwcls.GCSetEntry(op, exp, info, denc.Squid) })).To(Succeed())
+		}
+		list := func(ctx context.Context, marker string, maxEntries uint32, expiredOnly bool) (rgwcls.GCListRet, error) {
+			op := radosclient.NewReadOp()
+			res := rgwcls.GCList(op, marker, maxEntries, expiredOnly, denc.Squid)
+			if _, err := p.Read(ctx, "gc.1", op, radosclient.OpFlagNone); err != nil {
+				return rgwcls.GCListRet{}, err
+			}
+			return res.Result()
+		}
+		tags := func(entries []rgwcls.GCObjInfo) []string {
+			var out []string
+			for _, e := range entries {
+				out = append(out, e.Tag)
+			}
+			return out
+		}
+		BeforeEach(func(ctx SpecContext) {
+			set(ctx, "late", 120)
+			set(ctx, "early", 0)
+			set(ctx, "mid", 60)
+		})
+
+		It("lists the time index, earliest due first, paging after the last key it returned", func(ctx SpecContext) {
+			ret, err := list(ctx, "", 2, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(Equal([]string{"early", "mid"}), "gc_iterate_entries, cls_rgw.cc:3996-4084")
+			Expect(ret.Truncated).To(BeTrue())
+			Expect(ret.NextMarker).To(Equal(fmt.Sprintf("1_%011d.%09d", now.Add(time.Minute).Unix(), 5)))
+			ret, err = list(ctx, ret.NextMarker, 2, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(Equal([]string{"late"}))
+			Expect([]any{ret.Truncated, ret.NextMarker}).To(Equal([]any{false, ""}))
+		})
+
+		It("stops at the class's clock when it lists the expired only", func(ctx SpecContext) {
+			ret, err := list(ctx, "", 0, true)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(BeEmpty(), "an entry due now is not yet listed: its key sorts after now's")
+			now = now.Add(time.Minute + time.Nanosecond)
+			ret, err = list(ctx, "", 0, true)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(Equal([]string{"early", "mid"}))
+			Expect(ret.Truncated).To(BeFalse())
+		})
+
+		It("answers a listing of a missing shard with ENOENT, as a read op meets it", func(ctx SpecContext) {
+			c.Remove(logPool, "gc", "gc.1")
+			_, err := list(ctx, "", 1, false)
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+		})
+
+		It("removes both keys of each named tag, skipping a tag the shard does not hold", func(ctx SpecContext) {
+			Expect(writeErr(ctx, p, "gc.1", func(op *radosclient.WriteOp) { rgwcls.GCRemove(op, []string{"mid", "nope", "early"}, denc.Squid) })).To(Succeed())
+			obj := c.Object(logPool, "gc", "gc.1")
+			Expect(obj.Omap).To(HaveLen(2))
+			Expect(obj.Omap).To(HaveKey("0_late"))
+			ret, err := list(ctx, "", 0, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tags(ret.Entries)).To(Equal([]string{"late"}))
+			Expect(writeErr(ctx, p, "gc.7", func(op *radosclient.WriteOp) { rgwcls.GCRemove(op, []string{"late"}, denc.Squid) })).To(Succeed())
+			Expect(c.Object(logPool, "gc", "gc.7")).To(BeNil(), "nothing to remove creates nothing")
+		})
 	})
 })
 

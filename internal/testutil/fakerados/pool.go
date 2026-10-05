@@ -1,14 +1,18 @@
 package fakerados
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cls/lock"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
@@ -359,9 +363,67 @@ func (p *Pool) Notify(ctx context.Context, oid string, payload []byte, _ time.Du
 	return acks, nil
 }
 
-// LockExclusive is not supported.
-func (p *Pool) LockExclusive(context.Context, string, string, string, string, time.Duration, radosclient.LockFlags) error {
-	return notSupported("lock exclusive")
+// LockExclusive takes the named exclusive lock on oid as rados_lock_exclusive
+// does, through the lock class's lock method in an op of its own, so it needs
+// LockClass registered and fails with EOPNOTSUPP otherwise. The op is not a
+// seam write, so Writes and WritesTo leave it out; Locks shows its holders.
+func (p *Pool) LockExclusive(ctx context.Context, oid, name, cookie, desc string, duration time.Duration, flags radosclient.LockFlags) error {
+	var lf lock.Flags
+	if flags&radosclient.LockRenew != 0 {
+		lf = lock.FlagMayRenew
+	}
+	op := radosclient.NewWriteOp()
+	lock.Lock(op, lock.LockOp{Name: name, Type: lock.TypeExclusive, Cookie: cookie, Description: desc, Duration: duration, Flags: lf}, denc.Squid)
+	return p.lockOp(ctx, opName("lock exclusive", oid), oid, op)
+}
+
+// Locks returns the holders of the named lock on the object that have not
+// expired by the cluster's clock, ordered by holder, nil when it has none.
+// Each names its client as ListLockers does, with an empty Address. A lock
+// xattr that does not decode panics, failing the spec.
+func (c *Cluster) Locks(pool, ns, oid, name string) []radosclient.Locker {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	obj := c.store(pool, ns).objects[oid]
+	if obj == nil {
+		return nil
+	}
+	b, ok := obj.Xattrs[lockXattrPrefix+name]
+	if !ok {
+		return nil
+	}
+	d := denc.NewDecoder(b)
+	info := lock.DecodeInfo(d)
+	if err := d.Err(); err != nil {
+		panic(fmt.Sprintf("fakerados: lock %q on %s/%s/%s does not decode: %v", name, pool, ns, oid, err))
+	}
+	now := c.now()
+	var out []radosclient.Locker
+	for id, li := range info.Lockers {
+		if !li.Expiration.IsZero() && li.Expiration.Before(now) {
+			continue
+		}
+		out = append(out, radosclient.Locker{Client: id.Locker.String(), Cookie: id.Cookie})
+	}
+	slices.SortFunc(out, func(a, b radosclient.Locker) int {
+		return cmp.Or(strings.Compare(a.Client, b.Client), strings.Compare(a.Cookie, b.Cookie))
+	})
+	return out
+}
+
+// lockOp runs a lock call's op on oid without recording it as a write.
+func (p *Pool) lockOp(ctx context.Context, name, oid string, op *radosclient.WriteOp) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c := p.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := p.usable(name); err != nil {
+		return err
+	}
+	_, err := p.run(name, oid, op.Steps(), true, radosclient.OpFlagNone, c.now())
+	return err
 }
 
 // LockShared is not supported.
@@ -369,9 +431,13 @@ func (p *Pool) LockShared(context.Context, string, string, string, string, strin
 	return notSupported("lock shared")
 }
 
-// Unlock is not supported.
-func (p *Pool) Unlock(context.Context, string, string, string) error {
-	return notSupported("unlock")
+// Unlock releases the named lock the fake client holds on oid under cookie,
+// as rados_unlock does through the lock class's unlock method: ENOENT when it
+// holds none.
+func (p *Pool) Unlock(ctx context.Context, oid, name, cookie string) error {
+	op := radosclient.NewWriteOp()
+	lock.Unlock(op, name, cookie, denc.Squid)
+	return p.lockOp(ctx, opName("unlock", oid), oid, op)
 }
 
 // BreakLock is not supported.

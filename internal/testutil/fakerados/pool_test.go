@@ -1252,12 +1252,10 @@ var _ = Describe("the cluster", func() {
 		Expect(obj.Omap).NotTo(BeNil())
 	})
 
-	It("answers the lock calls and mon commands with ErrNotSupported", func(ctx SpecContext) {
+	It("answers the shared lock calls and mon commands with ErrNotSupported", func(ctx SpecContext) {
 		p, err := c.Pool(ctx, "pool", "")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(p.LockExclusive(ctx, "o", "l", "c", "", time.Second, 0)).To(MatchError(radosclient.ErrNotSupported))
 		Expect(p.LockShared(ctx, "o", "l", "c", "t", "", time.Second, 0)).To(MatchError(radosclient.ErrNotSupported))
-		Expect(p.Unlock(ctx, "o", "l", "c")).To(MatchError(radosclient.ErrNotSupported))
 		Expect(p.BreakLock(ctx, "o", "l", "client.1", "c")).To(MatchError(radosclient.ErrNotSupported))
 		_, err = p.ListLockers(ctx, "o", "l")
 		Expect(err).To(MatchError(radosclient.ErrNotSupported))
