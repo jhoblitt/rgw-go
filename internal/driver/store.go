@@ -58,6 +58,9 @@ type Store struct {
 	// bgAIO bounds the index suggestions a listing sends in the background
 	// at rgw_bucket_index_max_aio.
 	bgAIO *semaphore.Weighted
+	// sweepLimit bounds the stripes sweepParts walks; 0 is
+	// meta.MaxWalkStripes.
+	sweepLimit int
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -340,11 +343,6 @@ func (s *Store) CreateBucket(context.Context, op.CreateBucketParams) (*op.Bucket
 
 // DeleteBucket implements op.BucketStore.
 func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
-}
-
-// DeleteObject implements op.ObjectStore.
-func (s *Store) DeleteObject(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error {
 	return op.ErrNotImplemented
 }
 

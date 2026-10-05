@@ -434,9 +434,11 @@ func (s *Store) bucketList(ctx context.Context, pool radosclient.Pool, oid strin
 // suggestion removes it, with ver set to indexVer. Otherwise the entry takes
 // the head's size, accounted size, mtime, etag, content type, storage class,
 // owner, appendability, Main category, data pool and epoch, write tag and
-// existence, and the suggestion updates it. Either way the entry leaves its
-// pending ops behind. A head check that fails fails the listing, but one the
-// object store cannot make yet keeps the entry as it is with no suggestion.
+// existence, and the suggestion updates it, and the multipart parts its
+// manifest names leave the index, as sweepParts says. Either way the entry
+// leaves its pending ops behind. A head check that fails fails the listing,
+// but one the object store cannot make yet keeps the entry as it is with no
+// suggestion.
 // A multipart upload's meta entry is kept as it is too: radosgw checks it in
 // the data-extra pool, which the object store does not read
 // (docs/exclusions.md, "A pending multipart upload's index entry is not
@@ -478,10 +480,12 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 	owner := aclOwner(ctx, st.Attrs[meta.AttrACL], rec, key)
 	m.Owner, m.OwnerDisplayName = owner.ID, owner.DisplayName
 	_, m.AppendableValue = st.Attrs[meta.AttrAppendPartNum]
-	// radosgw's delete_obj_index sweep of the head's multipart parts goes
-	// here (:10413-10429 at v19.2.6, :11337-11353 at v20.2.4): every stripe
-	// of st.Manifest in the multipart namespace gets its index entry
-	// completed as deleted. It is not implemented yet.
+	if st.Manifest != nil {
+		if err := s.sweepParts(rec, st); err != nil {
+			slog.WarnContext(ctx, "could not walk the manifest for its multipart parts' index entries",
+				slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.Any("error", err))
+		}
+	}
 	m.Category = rgwcls.CategoryMain
 	if pool, ok := s.dataPool(rec.Info.PlacementRule, rec.Info.Bucket); ok && pool.Name != "" {
 		if h, err := s.pools.get(ctx, pool); err == nil {
@@ -500,6 +504,35 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 	ent.Exists = true
 	updates[oid] = append(updates[oid], rgwcls.Suggestion{Op: rgwcls.SuggestUpdate, Log: logOp, Entry: *ent})
 	return true, nil
+}
+
+// sweepParts is check_disk_state's walk of an existing head's manifest
+// (:10413-10429; v20.2.4 :11337-11353): every stripe in the multipart
+// namespace, a part's head, has its index entry completed as deleted with
+// delete_obj_index, hashed on the part's own name as raw_obj_to_obj leaves
+// it (svc_tier_rados.h:131-143), though the part writer indexed it under the
+// upload's (docs/ceph-upstream-bugs.md, "check_disk_state removes a
+// multipart part's index entry from the wrong shard"). The walk stops with
+// denc.ErrMalformed at a step that does not move forward and with
+// meta.ErrTooManyStripes past meta.MaxWalkStripes stripes, where radosgw's
+// never ends.
+func (s *Store) sweepParts(rec *op.BucketRecord, st *op.ObjectState) error {
+	limit := cmp.Or(s.sweepLimit, meta.MaxWalkStripes)
+	it, err := st.Manifest.Seek(0)
+	for n := 1; err == nil && !it.Done(); n++ {
+		if loc, _, _ := it.Location(); loc.Key.NS == meta.NSMultipart {
+			s.deleteObjIndex(rec, loc.Key, st.Mtime)
+		}
+		prev := it.Ofs()
+		switch err = it.Next(); {
+		case err != nil, it.Done():
+		case it.Ofs() <= prev:
+			err = fmt.Errorf("%w: manifest iteration does not advance past offset %d of %d", denc.ErrMalformed, prev, st.Manifest.ObjSize)
+		case n >= limit:
+			err = fmt.Errorf("%w: more than %d before offset %d of %d", meta.ErrTooManyStripes, limit, it.Ofs(), st.Manifest.ObjSize)
+		}
+	}
+	return err
 }
 
 // blStr is rgw_bl_str (rgw_common.h:2063-2071 at v19.2.6): the attr's bytes

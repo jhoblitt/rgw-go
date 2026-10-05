@@ -35,8 +35,9 @@ var RGWWriteMethods = []string{
 // header; the index transaction, bucket_prepare_op and bucket_complete_op;
 // guard_bucket_resharding, get_bucket_resharding and
 // set_bucket_resharding, with which a spec stages a reshard;
-// mp_upload_part_info_update on a multipart meta object; obj_remove and
-// obj_store_pg_ver on a head object; on a gc shard the omap-era enqueue,
+// mp_upload_part_info_update on a multipart meta object; obj_remove,
+// obj_store_pg_ver and obj_check_mtime on a head object; on a gc shard the
+// omap-era enqueue,
 // gc_set_entry; and user_usage_log_add on a usage log object. Every other
 // method is EOPNOTSUPP. A bucket_list asking for entries and
 // dir_suggest_changes are emulated as rgwBucketListEntries and
@@ -73,6 +74,8 @@ func RGWClass() ClassFunc {
 			return nil, rgwObjRemove(call)
 		case "obj_store_pg_ver":
 			return nil, rgwObjStorePGVer(call)
+		case "obj_check_mtime":
+			return nil, rgwObjCheckMtime(call)
 		case "gc_set_entry":
 			return nil, rgwGCSetEntry(call)
 		case "user_usage_log_add":
@@ -127,6 +130,45 @@ func rgwObjStorePGVer(call *ClassCall) int32 {
 		ver = call.Stored.Version
 	}
 	call.Create().Xattrs[op.Attr] = binary.LittleEndian.AppendUint64(nil, ver)
+	return 0
+}
+
+// rgwObjCheckMtime is rgw_obj_check_mtime (cls_rgw.cc:2553-2615 at v19.2.6,
+// :2721-2783 at v20.2.4, the same code): the object's mtime, the zero
+// real_time when it does not exist, compared with the request's under its
+// type, both cut to whole seconds unless the request asks for high
+// precision; a comparison that fails is ECANCELED, and an unknown type
+// EINVAL. cls_cxx_stat2 sees the object as the op has left it so far.
+func rgwObjCheckMtime(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeCheckMtimeOp)
+	if rval < 0 {
+		return rval
+	}
+	obj, want := time.Unix(0, 0), op.Mtime
+	if o := call.Object(); o != nil {
+		obj = o.Mtime
+	}
+	if !op.HighPrecisionTime {
+		obj, want = time.Unix(obj.Unix(), 0), time.Unix(want.Unix(), 0)
+	}
+	var ok bool
+	switch op.Type {
+	case rgwcls.MtimeEQ:
+		ok = obj.Equal(want)
+	case rgwcls.MtimeLT:
+		ok = obj.Before(want)
+	case rgwcls.MtimeLE:
+		ok = !obj.After(want)
+	case rgwcls.MtimeGT:
+		ok = obj.After(want)
+	case rgwcls.MtimeGE:
+		ok = !obj.Before(want)
+	default:
+		return -int32(syscall.EINVAL)
+	}
+	if !ok {
+		return -int32(syscall.ECANCELED)
+	}
 	return 0
 }
 

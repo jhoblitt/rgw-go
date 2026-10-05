@@ -525,13 +525,7 @@ var _ = Describe("PutObject", func() {
 	})
 
 	It("keeps its tails when the head write times out, as it may yet land", func(ctx SpecContext) {
-		rgw := fakerados.RGWClass()
-		c.RegisterClass("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
-			if call.Method == "obj_store_pg_ver" {
-				return nil, -int32(syscall.ETIMEDOUT)
-			}
-			return rgw(call)
-		}, fakerados.RGWWriteMethods...)
+		c.FailNextWrite(testDataPool, "", headOID, syscall.ETIMEDOUT)
 		_, err := put(ctx, bytes.Repeat([]byte("t"), 6<<20), op.PutParams{Tag: "t"})
 		Expect(err).To(MatchError(op.ErrRequestTimedOut))
 		Expect(c.Object(testDataPool, "", tailOID(putPrefix, 1))).NotTo(BeNil(), "writer.clear_written, rgw_putobj_processor.cc:395-401")

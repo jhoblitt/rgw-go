@@ -156,6 +156,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A delimiter starting with an underscore hides the objects whose names start with one](#a-delimiter-starting-with-an-underscore-hides-the-objects-whose-names-start-with-one) | pending | pending |  |
 | [radosgw creates a multipart upload's meta object without the exclusive create its flags ask for](#radosgw-creates-a-multipart-uploads-meta-object-without-the-exclusive-create-its-flags-ask-for) | pending | pending |  |
 | [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | pending | pending |  |
+| [Tentacle's DeleteObject removes the head without checking its write tag](#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -236,9 +237,10 @@ Every new entry adds its row to this table, in document order.
   source (8a04c0a61bc, first in v0.92); the sweep itself dates from
   e5dc46f6aa9 (2012) and has only been refactored since. Checked at v19.2.6,
   v20.2.4 and main.
-- **rgw-go:** unit W's listing reconciliation reproduces radosgw's bytes,
-  wrong shard included, so the index a shared zone sees is the one radosgw
-  would leave.
+- **rgw-go:** reproduces it: the listing's reconciliation sends radosgw's
+  bytes, wrong shard included, so the index a shared zone sees is the one
+  radosgw would leave (`sweepParts` and `deleteObjIndex`,
+  `internal/driver/list.go` and `internal/driver/delete.go`).
 - **Upstream:** [#81121](https://tracker.ceph.com/issues/81121), filed after a
   full-text tracker and all-time pull-request search (2026-09-29) found no
   report or fix. The same wrong-shard mistake with multipart entries was
@@ -3282,8 +3284,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** refuses the walk. `meta.Manifest.PartBounds` and
   `meta.Manifest.Stripes` fail with `denc.ErrMalformed` at the first step
   that does not move past the previous offset, so for a part that starts in
-  the head rgw-go refuses a HEAD that radosgw answers; `docs/exclusions.md`
-  records the difference.
+  the head rgw-go refuses a HEAD that radosgw answers. A listing's sweep of
+  a reconciled head's multipart parts (`sweepParts`,
+  `internal/driver/list.go`) stops there with a warning, where radosgw's
+  `check_disk_state` walk never ends. `docs/exclusions.md` records the
+  difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused. Related, not a
   duplicate: [#66705](https://tracker.ceph.com/issues/66705) (2024) reported
@@ -6538,3 +6543,58 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit M, Task 9, 2026-10-05, transcribing
   `RGWOwnerStatsCache`; derived from the source, not reproduced.
+
+## Tentacle's DeleteObject removes the head without checking its write tag
+
+- **Kind:** defect, a regression. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - v19.2.6's `Delete::delete_obj` calls `prepare_atomic_modification`
+    with `removal_op` set (`rgw_rados.cc:5914` at v19.2.6), which appends a
+    `cmpxattr` of `user.rgw.idtag` against the tag the delete read
+    ("first verify that the object wasn't replaced under",
+    `rgw_rados.cc:6493-6513` at v19.2.6) ahead of the head's `obj_remove`. A
+    head another writer replaced since the read fails the removal with
+    -ECANCELED; the index op is canceled and the request answers 204
+    (`:5968-5972`; `rgw_op.cc:5302-5304` at v19.2.6).
+  - Ceph commit 55f5b762c67, "RGW | fix conditional Delete and
+    MultiDelete" (ceph/ceph#63348 on main; its picks f28f0d9147d through
+    ceph/ceph#65949 on tentacle and ce98cebb815 through ceph/ceph#65932 on
+    squid), replaced that call with `check_preconditions`, which only
+    compares the state read before the op (`rgw_rados.cc:6663-6671` and
+    `:7260-7329` at v20.2.4), and dropped `removal_op` from
+    `prepare_atomic_modification`. Nothing else in the removal op checks
+    the object: it is `obj_remove`, after `obj_check_mtime` when a time
+    condition is set (`:6609-6624`, `:6665-6668`, `:6690-6699` at
+    v20.2.4). The same code is on main (`rgw_rados.cc:7214-7250` at
+    origin/main, 2026-10-04) and on the squid branch after v19.2.6.
+- **Impact:** when a PUT replaces an object between a delete's read and its
+  removal:
+  - a delete with If-Match or `x-amz-if-match-size` naming the replaced
+    object removes the replacement, whose ETag or size the condition does
+    not name, so the conditional delete is not atomic;
+  - the removal deletes the replacement's head, and
+    `complete_atomic_modification` queues the tails of the state the delete
+    read (`rgw_rados.cc:6715-6720` and `:6102-6130` at v20.2.4), which the
+    PUT already queued, so no one queues the replacement's tails and they
+    stay in the data pool, unreferenced, until an orphan scan finds them.
+
+  Severity is low: the race window lies inside one request's handling,
+  between its head read and its removal.
+- **Releases:** v20.2.4, main, and the squid branch after v19.2.6, where
+  ceph/ceph#65932 merged after v19.2.6 was tagged, so the next Squid release
+  carries it too. v19.2.6 is not affected.
+- **rgw-go:** unaffected: rgw-go keeps the guard on both releases
+  (`internal/driver/delete.go`; `docs/exclusions.md`, "Delete conditions
+  are Tentacle's, and a delete is guarded, on both releases").
+- **Upstream:** found independently upstream and filed on 2026-09-26 as
+  [#80898](https://tracker.ceph.com/issues/80898) (the replacement's tails leak) and
+  [#80906](https://tracker.ceph.com/issues/80906) (a conditional delete that loses
+  the race is answered success or 500), both Fix Under Review. The fix,
+  which guards the head's removal on the id tag the delete read, is
+  [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), with
+  [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096) (workunit tests) and
+  [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101). The regression came from
+  [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949) and
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932).
+- **Found:** phase 1 unit W, Task 6, 2026-10-05, transcribing
+  `delete_obj` at both tags; derived from the source, not reproduced.

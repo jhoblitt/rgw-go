@@ -70,6 +70,8 @@ type store struct {
 	writes     map[string][]RecordedWrite
 	// beforeWrite holds the hooks BeforeWrite registered, by object name.
 	beforeWrite map[string]func(o *Object)
+	// failWrite holds the errno FailNextWrite set, by object name.
+	failWrite map[string]syscall.Errno
 }
 
 // RecordedRead is one read op a pool ran on an object, as Read received it.
@@ -225,6 +227,7 @@ func (c *Cluster) store(pool, ns string) *store {
 		writes:     map[string][]RecordedWrite{},
 
 		beforeWrite: map[string]func(o *Object){},
+		failWrite:   map[string]syscall.Errno{},
 	}
 	c.stores[k] = s
 	return s
@@ -282,6 +285,16 @@ func (c *Cluster) FailWatch(pool, ns, oid string, n int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.store(pool, ns).failWatch[oid] = &failure{n: n, err: err}
+}
+
+// FailNextWrite makes the next write op on the object fail with errno
+// without applying any of its steps, as an op the OSD refuses whole does. The
+// op is still counted and recorded. A spec stages with it a reply that leaves
+// the op's outcome unknown, such as ETIMEDOUT.
+func (c *Cluster) FailNextWrite(pool, ns, oid string, errno syscall.Errno) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store(pool, ns).failWrite[oid] = errno
 }
 
 // FailNotify makes the next n Notify calls on the object fail with err,

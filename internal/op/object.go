@@ -84,9 +84,24 @@ type PutResult struct {
 
 // DeleteParams shapes a delete.
 type DeleteParams struct {
+	// IfMatch is If-Match: "*" or an ETag the object's must begin with,
+	// unquoted first (check_preconditions, driver/rados/rgw_rados.cc:7287-7306
+	// at v20.2.4); empty means unset.
 	IfMatch string
 	// Mtime is the delete time; zero means now.
 	Mtime time.Time
+	// UnmodifiedSince is x-amz-delete-if-unmodified-since: the object must not
+	// have changed after it, compared in whole seconds; zero means unset
+	// (Delete::delete_obj, driver/rados/rgw_rados.cc:5860-5875 at v19.2.6,
+	// :6609-6624 at v20.2.4).
+	UnmodifiedSince time.Time
+	// IfMatchSize is x-amz-if-match-size: the object's size must equal it;
+	// nil means unset (check_preconditions, :7264-7269 at v20.2.4).
+	IfMatchSize *uint64
+	// IfMatchLastModified is x-amz-if-match-last-modified-time: the object's
+	// mtime must equal it, compared in whole seconds; zero means unset
+	// (check_preconditions, :7271-7284 at v20.2.4).
+	IfMatchLastModified time.Time
 }
 
 // CopyParams shapes a copy.
