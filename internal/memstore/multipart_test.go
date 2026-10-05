@@ -114,6 +114,23 @@ var _ = Describe("multipart", func() {
 		_, err = store.PutPart(ctx, up, 1, strings.NewReader("aaa"), op.PutParams{Size: 4})
 		Expect(err).To(MatchError(op.ErrRequestTimeout), "shorter")
 	})
+	It("refuses a part whose MD5 is not its Content-MD5 with BadDigest, storing nothing", func(ctx SpecContext) {
+		other := md5.Sum([]byte("other"))
+		_, err := store.PutPart(ctx, up, 1, strings.NewReader("aaa"), op.PutParams{Size: 3, ContentMD5: other[:]})
+		Expect(err).To(MatchError(op.ErrBadDigest))
+		parts, err := store.ListParts(ctx, up, 0, 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parts.Parts).To(BeEmpty())
+		sum := md5.Sum([]byte("aaa"))
+		_, err = store.PutPart(ctx, up, 1, strings.NewReader("aaa"), op.PutParams{Size: 3, ContentMD5: sum[:]})
+		Expect(err).NotTo(HaveOccurred())
+	})
+	It("answers NoSuchUpload for an unknown upload before reading the body", func(ctx SpecContext) {
+		body := strings.NewReader("x")
+		_, err := store.PutPart(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: key}, 1, body, op.PutParams{Size: 1})
+		Expect(err).To(MatchError(op.ErrNoSuchUpload))
+		Expect(body.Len()).To(Equal(1), "the body is unread")
+	})
 	It("copies a range of an object into a part", func(ctx SpecContext) {
 		mustPut(ctx, store, rec, "src", "hello world")
 		src, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "src"})

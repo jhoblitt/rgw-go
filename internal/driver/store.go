@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -348,16 +347,6 @@ func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 
 // CopyObject implements op.ObjectStore.
 func (s *Store) CopyObject(context.Context, *op.ObjectState, *op.BucketRecord, meta.ObjKey, op.CopyParams) (*op.PutResult, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// PutPart implements op.MultipartStore.
-func (s *Store) PutPart(context.Context, *op.Upload, int, io.Reader, op.PutParams) (*op.PartResult, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// CopyPart implements op.MultipartStore.
-func (s *Store) CopyPart(context.Context, *op.Upload, int, *op.ObjectState, op.ByteRange) (*op.PartResult, error) {
 	return nil, op.ErrNotImplemented
 }
 

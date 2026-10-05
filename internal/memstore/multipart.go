@@ -21,20 +21,11 @@ import (
 // completion but the last must be at least this long.
 const minPartSize = 5 << 20
 
-// uploadIDPrefix is MULTIPART_UPLOAD_ID_PREFIX (rgw_multi.h:16 at v19.2.6),
-// which marks a v2 upload id.
-const uploadIDPrefix = "2~"
-
 func uploadKey(bucketID, key, id string) string {
 	return bucketID + "\x00" + key + "\x00" + id
 }
 
-// metaName is an upload's meta object name in the multipart namespace,
-// RGWMPObj::init's "<key>.<upload id>.meta" (svc_tier_rados.h:45-55 at
-// v19.2.6).
-func metaName(key, uploadID string) string { return key + "." + uploadID + ".meta" }
-
-func (u *upload) metaName() string { return metaName(u.up.Key.Name, u.up.ID) }
+func (u *upload) metaName() string { return meta.MultipartMetaName(u.up.Key.Name, u.up.ID) }
 
 // copyUpload returns the caller's view of u, its bucket rec.
 func copyUpload(u *upload, rec *op.BucketRecord) *op.Upload {
@@ -56,7 +47,7 @@ func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.O
 	}
 	u := &upload{
 		up: op.Upload{
-			ID:        uploadIDPrefix + randomAlphanumeric(31),
+			ID:        meta.MultipartUploadIDPrefix + randomAlphanumeric(31),
 			Key:       key,
 			Owner:     cloneOwner(p.Owner),
 			OwnerName: p.OwnerName,
@@ -93,10 +84,24 @@ func (s *Store) upload(up *op.Upload) (*upload, error) {
 }
 
 // PutPart implements op.MultipartStore; a part replaces one of its number.
+// As the driver does, it answers NoSuchUpload for an unknown upload before
+// reading the body, and refuses a body whose MD5 is not p.ContentMD5 with
+// BadDigest.
 func (s *Store) PutPart(_ context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams) (*op.PartResult, error) {
+	s.mu.RLock()
+	_, err := s.upload(up)
+	s.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
 	data, err := readBody(body, p.Size)
 	if err != nil {
 		return nil, err
+	}
+	if p.ContentMD5 != nil {
+		if sum := md5.Sum(data); !bytes.Equal(sum[:], p.ContentMD5) { //nolint:gosec // Content-MD5 is an MD5
+			return nil, fmt.Errorf("part %d: %w", n, op.ErrBadDigest)
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,7 +180,7 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 	}
 	marker := ""
 	if p.KeyMarker != "" {
-		marker = metaName(p.KeyMarker, p.UploadIDMarker)
+		marker = meta.MultipartMetaName(p.KeyMarker, p.UploadIDMarker)
 	}
 	var ups []*upload
 	for _, u := range s.uploads {

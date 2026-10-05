@@ -99,6 +99,10 @@ func (p *Pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	}
 	p.store.reads[oid]++
 	p.store.lastReads[oid] = RecordedRead{steps: steps, flags: flags}
+	if err := p.store.failRead[oid].take(); err != nil {
+		failResults(steps, err)
+		return 0, err
+	}
 	return p.run(name, oid, steps, false, flags, time.Time{})
 }
 
@@ -146,15 +150,19 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	}
 	mtime, ok := op.Mtime()
 	p.store.writes[oid] = append(p.store.writes[oid], RecordedWrite{steps: steps, mtime: mtime, hasMtime: ok, flags: flags})
-	if errno, fail := p.store.failWrite[oid]; fail {
-		delete(p.store.failWrite, oid)
-		return 0, &radosclient.Error{Errno: int32(errno), Op: name} //nolint:gosec // an errno fits an int32
+	if err := p.store.failWrite[oid].take(); err != nil {
+		failResults(steps, err)
+		return 0, err
 	}
 	// librados stamps a write op without an mtime with the client's clock.
 	if !ok {
 		mtime = c.now()
 	}
-	return p.run(name, oid, steps, true, flags, mtime)
+	ver, err := p.run(name, oid, steps, true, flags, mtime)
+	if err == nil {
+		p.store.order = append(p.store.order, oid)
+	}
+	return ver, err
 }
 
 // listing returns the namespace's objects in the order RADOS lists them,
