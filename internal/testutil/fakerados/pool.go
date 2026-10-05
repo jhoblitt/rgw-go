@@ -98,7 +98,26 @@ func (p *Pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 		return 0, err
 	}
 	p.store.reads[oid]++
+	p.store.lastReads[oid] = RecordedRead{steps: steps, flags: flags}
 	return p.run(name, oid, steps, false, flags, time.Time{})
+}
+
+// BeforeWrite makes fn run before every later write op on the object, with
+// the stored object, nil when it does not exist, so a spec can stage what an
+// op meets: a racing writer's change, or the object gone. fn runs without the
+// cluster's lock, so it may call the Cluster. A change it makes to the object
+// in place is one the op sees only while no other op on the object runs
+// concurrently: such an op races the change, and may replace the object
+// between fn and this op, which then meets the replacement. A nil fn removes
+// the hook.
+func (c *Cluster) BeforeWrite(pool, ns, oid string, fn func(o *Object)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn == nil {
+		delete(c.store(pool, ns).beforeWrite, oid)
+		return
+	}
+	c.store(pool, ns).beforeWrite[oid] = fn
 }
 
 // Write runs a write op atomically and returns the object's version after
@@ -113,6 +132,12 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 		return 0, err
 	}
 	c := p.cluster
+	c.mu.Lock()
+	hook, stored := p.store.beforeWrite[oid], p.store.objects[oid]
+	c.mu.Unlock()
+	if hook != nil {
+		hook(stored)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	name := opName("write", oid)

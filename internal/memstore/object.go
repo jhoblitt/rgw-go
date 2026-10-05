@@ -1,6 +1,7 @@
 package memstore
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/md5" //nolint:gosec // an S3 ETag is the MD5 of the data
@@ -95,6 +96,10 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	if err != nil {
 		return nil, err
 	}
+	sum := md5.Sum(data) //nolint:gosec // an S3 ETag is the MD5 of the data
+	if p.ContentMD5 != nil && !bytes.Equal(sum[:], p.ContentMD5) {
+		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrBadDigest)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.instance(rec)
@@ -105,7 +110,13 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	if err := checkWrite(b.objects[k], p.IfMatch, p.IfNoneMatch); err != nil {
 		return nil, err
 	}
-	o := s.newObject(k, data, cmp.Or(p.ETag, md5Hex(data)), cloneAttrs(p.Attrs), p.Mtime, p.StorageClass)
+	o := s.newObject(k, data, cmp.Or(p.ETag, hex.EncodeToString(sum[:])), cloneAttrs(p.Attrs), p.Mtime, p.StorageClass)
+	o.state.WriteTag = p.Tag
+	if p.Tag == "" {
+		// append_rand_alpha(cct, "", tag, 32), rgw_common.h:1621-1628 at
+		// v19.2.6, :1623-1630 at v20.2.4.
+		o.state.WriteTag = "_" + randomAlphanumeric(31)
+	}
 	b.objects[k] = o
 	return putResult(o), nil
 }
@@ -246,18 +257,22 @@ func readBody(body io.Reader, size int64) ([]byte, error) {
 	return data, nil
 }
 
-// checkWrite is prepare_atomic_modification's check of a write's If-Match
-// and If-None-Match against the object it replaces (rgw_rados.cc:6515-6543 at
-// v19.2.6): "*" asks whether an object exists, and an ETag is compared as
-// strncmp(cond, etag, len(etag)) compares it, which a missing object, having
-// no etag attr, fails either way.
+// checkWrite is v20.2.4's check_preconditions for a write's If-Match and
+// If-None-Match against the object it replaces (rgw_rados.cc:7286-7328 at
+// v20.2.4), which rgw-go applies on Squid too: "*" asks whether an object
+// exists, an ETag condition is unquoted and must start with the object's
+// ETag, If-Match on no object is NoSuchKey, and If-None-Match with an ETag
+// passes when there is no object.
 func checkWrite(o *object, ifMatch, ifNoneMatch string) error {
-	matches := func(cond string) bool { return o != nil && strings.HasPrefix(cond, o.state.ETag) }
-	switch {
-	case ifMatch == "*" && o == nil,
-		ifMatch != "" && ifMatch != "*" && !matches(ifMatch),
-		ifNoneMatch == "*" && o != nil,
-		ifNoneMatch != "" && ifNoneMatch != "*" && (o == nil || matches(ifNoneMatch)):
+	if ifMatch != "" {
+		switch {
+		case o == nil:
+			return op.ErrNoSuchKey
+		case ifMatch != "*" && !etagMatches(ifMatch, o.state.ETag):
+			return op.ErrPreconditionFailed
+		}
+	}
+	if ifNoneMatch != "" && o != nil && (ifNoneMatch == "*" || etagMatches(ifNoneMatch, o.state.ETag)) {
 		return op.ErrPreconditionFailed
 	}
 	return nil

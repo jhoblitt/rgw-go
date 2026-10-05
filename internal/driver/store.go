@@ -42,6 +42,10 @@ type Store struct {
 	// those handed back and not taken out again.
 	readBufs       sync.Pool
 	pooledReadBufs atomic.Int64
+	// tailBufs holds the *[]byte buffers a PUT reads its tail pieces into,
+	// each at least one chunk.
+	tailBufs sync.Pool
+	quota    quotaStub
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -321,11 +325,6 @@ func (s *Store) ListObjects(context.Context, *op.BucketRecord, op.ListObjectsPar
 	return op.ListObjectsResult{}, op.ErrNotImplemented
 }
 
-// PutObject implements op.ObjectStore.
-func (s *Store) PutObject(context.Context, *op.BucketRecord, meta.ObjKey, io.Reader, op.PutParams) (*op.PutResult, error) {
-	return nil, op.ErrNotImplemented
-}
-
 // DeleteObject implements op.ObjectStore.
 func (s *Store) DeleteObject(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error {
 	return op.ErrNotImplemented
@@ -391,9 +390,36 @@ func (s *Store) UserStats(context.Context, meta.Owner) (op.Stats, error) {
 	return op.Stats{}, op.ErrNotImplemented
 }
 
-// CheckQuota implements op.StatsStore.
-func (s *Store) CheckQuota(context.Context, *op.BucketRecord, meta.Owner, int64, int64) error {
-	return op.ErrNotImplemented
+// quotaStub stands in for the quota caches the driver does not keep yet:
+// CheckQuota allows every write, and AdjustStats sums what it is given for
+// nothing but the specs to read. A spec may make CheckQuota refuse.
+type quotaStub struct {
+	mu                   sync.Mutex
+	objs, added, removed int64
+	check                func(ctx context.Context, addBytes, addObjs int64) error
+}
+
+// CheckQuota implements op.StatsStore. Without quota caches it allows every
+// write.
+func (s *Store) CheckQuota(ctx context.Context, _ *op.BucketRecord, _ meta.Owner, addBytes, addObjs int64) error {
+	s.quota.mu.Lock()
+	check := s.quota.check
+	s.quota.mu.Unlock()
+	if check == nil {
+		return nil
+	}
+	return check(ctx, addBytes, addObjs)
+}
+
+// AdjustStats implements op.StatsStore. Without quota caches there is
+// nothing to adjust.
+func (s *Store) AdjustStats(_ context.Context, _ *op.BucketRecord, _ meta.Owner, objs, addBytes, removedBytes int64) error {
+	s.quota.mu.Lock()
+	defer s.quota.mu.Unlock()
+	s.quota.objs += objs
+	s.quota.added += addBytes
+	s.quota.removed += removedBytes
+	return nil
 }
 
 // Log implements op.UsageLogger. Having no usage log to write to yet, it

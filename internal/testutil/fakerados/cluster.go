@@ -66,8 +66,24 @@ type store struct {
 	failNotify map[string]*failure
 	notifies   map[string][][]byte
 	reads      map[string]int
+	lastReads  map[string]RecordedRead
 	writes     map[string][]RecordedWrite
+	// beforeWrite holds the hooks BeforeWrite registered, by object name.
+	beforeWrite map[string]func(o *Object)
 }
+
+// RecordedRead is one read op a pool ran on an object, as Read received it.
+type RecordedRead struct {
+	steps []radosclient.Step
+	flags radosclient.OpFlags
+}
+
+// Steps returns the op's steps in call order, their results filled as the op
+// left them.
+func (r RecordedRead) Steps() []radosclient.Step { return slices.Clone(r.steps) }
+
+// Flags returns the op flags Read was given.
+func (r RecordedRead) Flags() radosclient.OpFlags { return r.flags }
 
 // RecordedWrite is one write op a pool ran on an object, as Write received
 // it.
@@ -205,7 +221,10 @@ func (c *Cluster) store(pool, ns string) *store {
 		failNotify: map[string]*failure{},
 		notifies:   map[string][][]byte{},
 		reads:      map[string]int{},
+		lastReads:  map[string]RecordedRead{},
 		writes:     map[string][]RecordedWrite{},
+
+		beforeWrite: map[string]func(o *Object){},
 	}
 	c.stores[k] = s
 	return s
@@ -319,6 +338,34 @@ func (c *Cluster) WritesTo(pool, ns, oid string) []RecordedWrite {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.store(pool, ns).writes[oid])
+}
+
+// LastRead returns the last read op run on the object, failed or not, and
+// the zero RecordedRead when none has run.
+func (c *Cluster) LastRead(pool, ns, oid string) RecordedRead {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.store(pool, ns).lastReads[oid]
+}
+
+// ResetCounters forgets every read and write op run so far in every pool, so
+// Reads, Writes, LastRead, LastWrite and WritesTo count from here. The
+// objects stay.
+func (c *Cluster) ResetCounters() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.stores {
+		clear(s.reads)
+		clear(s.lastReads)
+		clear(s.writes)
+	}
+}
+
+// PoolID returns the id every handle on the named pool reports.
+func (c *Cluster) PoolID(pool string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.store(pool, "").id
 }
 
 // Pool opens a handle on pool and namespace. Each call returns a new handle,

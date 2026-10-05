@@ -3,6 +3,7 @@ package memstore_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"errors"
 	"strconv"
 	"strings"
@@ -105,6 +106,28 @@ var _ = Describe("objects", func() {
 		_, err := store.PutObject(ctx, rec, key, strings.NewReader("hello"), op.PutParams{Size: 6})
 		Expect(err).To(MatchError(op.ErrRequestTimeout))
 	})
+	It("refuses a body whose MD5 is not the supplied Content-MD5", func(ctx SpecContext) {
+		other := md5.Sum([]byte("other"))
+		_, err := store.PutObject(ctx, rec, key, strings.NewReader("hello"), op.PutParams{Size: 5, ContentMD5: other[:]})
+		Expect(err).To(MatchError(op.ErrBadDigest))
+		st, err := store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Exists).To(BeFalse(), "nothing stored")
+		same := md5.Sum([]byte("hello"))
+		_, err = store.PutObject(ctx, rec, key, strings.NewReader("hello"), op.PutParams{Size: 5, ContentMD5: same[:]})
+		Expect(err).NotTo(HaveOccurred(), "a matching Content-MD5")
+	})
+	It("stores the write tag it was given, and append_rand_alpha's 32 characters without one", func(ctx SpecContext) {
+		_, err := store.PutObject(ctx, rec, key, strings.NewReader("x"), op.PutParams{Size: 1, Tag: "tx000001-a"})
+		Expect(err).NotTo(HaveOccurred())
+		st, err := store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.WriteTag).To(Equal("tx000001-a"))
+		mustPut(ctx, store, rec, "k", "y")
+		st, err = store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.WriteTag).To(MatchRegexp(`^_[A-Za-z0-9_-]{31}$`))
+	})
 	It("prefetches the first 4 MiB of the head, which StatObject leaves out", func(ctx SpecContext) {
 		data := bytes.Repeat([]byte("0123456789abcdef"), (5<<20)/16)
 		_, err := store.PutObject(ctx, rec, key, bytes.NewReader(data), op.PutParams{Size: int64(len(data))})
@@ -135,7 +158,7 @@ var _ = Describe("objects", func() {
 		second := mustPut(ctx, store, rec, "k", "b")
 		Expect(second.Epoch).To(BeNumerically(">", first.Epoch))
 	})
-	DescribeTable("checks If-Match and If-None-Match as prepare_atomic_modification does",
+	DescribeTable("checks If-Match and If-None-Match as v20.2.4's check_preconditions does, on every release",
 		func(ctx SpecContext, exists bool, ifMatch, ifNoneMatch string, want error) {
 			if exists {
 				mustPut(ctx, store, rec, "k", "old")
@@ -148,15 +171,16 @@ var _ = Describe("objects", func() {
 			}
 		},
 		Entry("If-Match * on an object", true, "*", "", nil),
-		Entry("If-Match * on no object", false, "*", "", op.ErrPreconditionFailed),
+		Entry("If-Match * on no object", false, "*", "", op.ErrNoSuchKey),
 		Entry("If-Match of the ETag", true, md5Hex([]byte("old")), "", nil),
+		Entry("If-Match of the quoted ETag", true, `"`+md5Hex([]byte("old"))+`"`, "", nil),
 		Entry("If-Match of another ETag", true, md5Hex([]byte("other")), "", op.ErrPreconditionFailed),
-		Entry("If-Match of an ETag on no object", false, md5Hex([]byte("old")), "", op.ErrPreconditionFailed),
+		Entry("If-Match of an ETag on no object", false, md5Hex([]byte("old")), "", op.ErrNoSuchKey),
 		Entry("If-None-Match * on no object", false, "", "*", nil),
 		Entry("If-None-Match * on an object", true, "", "*", op.ErrPreconditionFailed),
 		Entry("If-None-Match of the ETag", true, "", md5Hex([]byte("old")), op.ErrPreconditionFailed),
 		Entry("If-None-Match of another ETag", true, "", md5Hex([]byte("other")), nil),
-		Entry("If-None-Match of an ETag on no object, which has no ETag to compare", false, "", md5Hex([]byte("old")), op.ErrPreconditionFailed),
+		Entry("If-None-Match of an ETag on no object, which has no ETag to match", false, "", md5Hex([]byte("old")), nil),
 	)
 	It("reads a range, clamping its end to the object", func(ctx SpecContext) {
 		mustPut(ctx, store, rec, "k", "hello world")

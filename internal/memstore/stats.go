@@ -48,6 +48,13 @@ func (s *Store) CheckQuota(_ context.Context, rec *op.BucketRecord, owner meta.O
 	return nil
 }
 
+// AdjustStats implements op.StatsStore. memstore keeps no quota cache: its
+// totals are summed from its objects at every read, and those already hold
+// the write.
+func (s *Store) AdjustStats(context.Context, *op.BucketRecord, meta.Owner, int64, int64, int64) error {
+	return nil
+}
+
 // stats totals a bucket's objects; SizeRounded rounds each object up to
 // 4 KiB, as rgw_rounded_objsize does.
 func stats(b *bucket) op.Stats {

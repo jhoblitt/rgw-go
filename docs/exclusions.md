@@ -1401,6 +1401,11 @@ does the following.
   chunk size radosgw fails every write of a chunk longer than the window
   with EDEADLK (`rgw_aio_throttle.cc:40-42` and `:131-132` at v19.2.6 and
   v20.2.4), and every PUT whose body is longer than the window fails.
+  When a pool's required alignment raises the aligned chunk above the
+  window, rgw-go refuses every PUT to that pool with 500 UnknownError,
+  radosgw's answer to EDEADLK (`rgw_common.cc:346-353` at v19.2.6,
+  `:359-366` at v20.2.4); radosgw refuses only a PUT that sends a tail
+  piece longer than the window, and stores one that fits in its head.
 - **Counts too large for radosgw's integers.** rgw-go holds a shard count in
   32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
   63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.
@@ -1782,6 +1787,70 @@ does the following.
   alone, so where that attr is later, it answers 304 Not Modified where
   Tentacle serves the object, and serves it where Tentacle answers 412
   PreconditionFailed. Squid has no such attr.
+
+### Object write differences
+
+rgw-go writes an object's tails, head and bucket index entry as radosgw's
+`AtomicObjectProcessor` and `RGWRados::Object::Write::write_meta` do at the
+v19.2.6 and v20.2.4 tags, and queues an overwritten object's tails for the
+GC as `complete_atomic_modification` does. Where the two differ, rgw-go
+does the following.
+
+- **A GC chain object too large for one entry is queued alone.** rgw-go
+  splits an overwritten object's tails into GC entries whose estimated
+  encoding stays within `rgw_max_chunk_size`, as `send_split_chain` does
+  (`driver/rados/rgw_gc.cc:68-118` at v19.2.6 and v20.2.4), but an object
+  whose estimate alone passes that size goes into an entry of its own.
+  radosgw then never finishes the write: it decrements its iterator past
+  the object, sends an empty entry and comes back to the same object
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's send_split_chain repeats an
+  object in its remainder and loops on an object too large for an
+  entry](ceph-upstream-bugs.md#radosgws-send_split_chain-repeats-an-object-in-its-remainder-and-loops-on-an-object-too-large-for-an-entry)").
+  Only an `rgw_max_chunk_size` smaller than one tail's estimate, a few
+  hundred bytes, reaches it.
+- **Inline tail deletes run in parallel on Squid too.** When the GC shard
+  refuses an overwritten object's tails, rgw-go deletes them inline with
+  up to `rgw_multi_obj_del_max_aio` refcount puts in flight, as
+  `delete_objs_inline` does at v20.2.4 (`driver/rados/rgw_rados.cc:6155-6194`).
+  At v19.2.6 radosgw sends them one at a time (`:5432-5462`). rgw-go puts
+  each object's ref through its own pool and locator, as v19.2.6 does,
+  where v20.2.4 sends every put through the first object's pool and drops
+  the locator (`driver/rados/rgw_rados.cc:6162-6185`; `rgw_aio.cc:61-63` and
+  `:100` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[Tentacle's
+  delete_objs_inline puts every ref through the first object's pool,
+  without its
+  locator](ceph-upstream-bugs.md#tentacles-delete_objs_inline-puts-every-ref-through-the-first-objects-pool-without-its-locator)").
+  For every chain radosgw builds, the requests match v20.2.4's: its
+  objects share one tail pool and carry no locator, whether they are
+  shadow-namespace tails or, for an overwritten multipart object,
+  multipart-namespace parts. Only their order and overlap differ from
+  v19.2.6's.
+- **Write conditions are Tentacle's on Squid too.** rgw-go checks a PUT's
+  If-Match and If-None-Match as v20.2.4's `check_preconditions` does
+  (`driver/rados/rgw_rados.cc:7286-7328` at v20.2.4), on both releases,
+  keeping its comparison of a condition's start over the ETag's length. A
+  client of a Squid zone sees these differences from v19.2.6
+  (`prepare_atomic_modification`, `:6493-6544` at v19.2.6):
+  - The conditions of a head with a manifest and no write tag, whose tag
+    radosgw fakes, are checked, where v19.2.6 skips them and overwrites.
+  - A quoted If-Match naming the current ETag is accepted, where v19.2.6
+    answers 412 PreconditionFailed.
+  - A quoted If-None-Match naming the current ETag answers 412
+    PreconditionFailed, where v19.2.6 overwrites.
+  - If-None-Match naming an ETag succeeds on a missing key and on an
+    existing object with no ETag, where v19.2.6 answers 412
+    PreconditionFailed.
+  - If-Match, `*` or an ETag, on a missing key answers 404 NoSuchKey, where
+    v19.2.6 answers 412 PreconditionFailed.
+
+  v19.2.6 skips the check on a head with a fake tag (`need_guard`,
+  `:6493-6495` at v19.2.6), which lets a conditional write overwrite an
+  update it was meant to protect; [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348)
+  fixed it for Tentacle, and its Squid backport,
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), merged after
+  v19.2.6 (`docs/ceph-upstream-bugs.md`, "[Squid's write conditions fail an
+  If-None-Match ETag on a missing key and skip a head without a write
+  tag](ceph-upstream-bugs.md#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag)").
 
 ### Bucket index differences
 

@@ -89,6 +89,14 @@ var _ = Describe("stats, quota, usage and metadata", func() {
 		})
 	})
 
+	It("takes AdjustStats without counting the write twice: its totals are summed from the objects", func(ctx SpecContext) {
+		rec := mustCreate(ctx, store, "", "b", owner("alice"))
+		mustPut(ctx, store, rec, "k", "12345")
+		Expect(store.AdjustStats(ctx, rec, owner("alice"), 1, 5, 0)).To(Succeed())
+		Expect(store.BucketStats(ctx, rec)).To(Equal(op.Stats{Size: 5, SizeRounded: 4096, NumObjects: 1}))
+		Expect(store.UserStats(ctx, owner("alice"))).To(Equal(op.Stats{Size: 5, SizeRounded: 4096, NumObjects: 1}))
+	})
+
 	It("logs usage entries and hands out copies of the log", func(ctx SpecContext) {
 		e := op.UsageEntry{Owner: owner("alice"), Bucket: "b", Time: start, Category: "put_obj", BytesReceived: 5, Ops: 1, SuccessfulOps: 1}
 		store.Log(ctx, e)

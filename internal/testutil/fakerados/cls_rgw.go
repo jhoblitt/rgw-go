@@ -1,9 +1,13 @@
 package fakerados
 
 import (
+	"encoding/binary"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"syscall"
+	"time"
 
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -11,12 +15,12 @@ import (
 )
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4743 and :4752 at
-// v19.2.6, :5107-5115, :5162 and :5171 at v20.2.4), which RegisterClass
-// takes with RGWClass.
+// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4728,
+// :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5147, :5162 and :5171
+// at v20.2.4), which RegisterClass takes with RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-	"mp_upload_part_info_update",
+	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
@@ -25,13 +29,14 @@ var RGWWriteMethods = []string{
 // bucket_list asking for no entries, which is how radosgw reads a shard's
 // header; the index transaction, bucket_prepare_op and bucket_complete_op;
 // guard_bucket_resharding, get_bucket_resharding and
-// set_bucket_resharding, with which a spec stages a reshard; and
-// mp_upload_part_info_update on a multipart meta object. Every other
-// method, and a bucket_list asking for entries, is EOPNOTSUPP. It reads the
-// header and entries from the stored object, as cls_cxx_map_read_header and
-// cls_cxx_map_get_val do, and encodes what it stores and replies at the
-// Squid release, whose rgw_bucket_dir_header lacks only Tentacle's reshard
-// log count.
+// set_bucket_resharding, with which a spec stages a reshard;
+// mp_upload_part_info_update on a multipart meta object; obj_remove and
+// obj_store_pg_ver on a head object; and on a gc shard the omap-era
+// enqueue, gc_set_entry. Every other method, and a bucket_list asking for
+// entries, is EOPNOTSUPP. It reads the header and entries from the stored
+// object, as cls_cxx_map_read_header and cls_cxx_map_get_val do, and encodes
+// what it stores and replies at the Squid release, whose
+// rgw_bucket_dir_header lacks only Tentacle's reshard log count.
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
@@ -57,9 +62,104 @@ func RGWClass() ClassFunc {
 			return nil, rgwSetBucketResharding(call)
 		case "mp_upload_part_info_update":
 			return nil, rgwMPUploadPartInfoUpdate(call)
+		case "obj_remove":
+			return nil, rgwObjRemove(call)
+		case "obj_store_pg_ver":
+			return nil, rgwObjStorePGVer(call)
+		case "gc_set_entry":
+			return nil, rgwGCSetEntry(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
+}
+
+// rgwObjRemove is rgw_obj_remove (cls_rgw.cc:2410-2482 at v19.2.6): the
+// object is removed, and when it held xattrs under one of the request's
+// prefixes it is created again, empty, with only those. It reads the xattrs
+// from the stored object, as cls_cxx_getxattrs does, and a missing object is
+// cls_cxx_remove's ENOENT. radosgw sends it after a create, so the steps that
+// follow in the op build the new head on what it leaves.
+func rgwObjRemove(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeObjRemoveOp)
+	if rval < 0 {
+		return rval
+	}
+	kept := map[string][]byte{}
+	if len(op.KeepAttrPrefixes) > 0 && call.Stored != nil {
+		for name, v := range call.Stored.Xattrs {
+			if slices.ContainsFunc(op.KeepAttrPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+				kept[name] = slices.Clone(v)
+			}
+		}
+	}
+	if rval := call.Remove(); rval < 0 {
+		return rval
+	}
+	if len(kept) > 0 {
+		maps.Copy(call.Create().Xattrs, kept)
+	}
+	return 0
+}
+
+// rgwObjStorePGVer is rgw_obj_store_pg_ver (cls_rgw.cc:2484-2507 at
+// v19.2.6): the named xattr takes cls_current_version, the placement group's
+// last user version, as 8 little-endian bytes. The fake has no placement
+// group and stores the version the object had before the op, 0 for a new
+// one.
+func rgwObjStorePGVer(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeStorePGVerOp)
+	if rval < 0 {
+		return rval
+	}
+	var ver uint64
+	if call.Stored != nil {
+		ver = call.Stored.Version
+	}
+	call.Create().Xattrs[op.Attr] = binary.LittleEndian.AppendUint64(nil, ver)
+	return 0
+}
+
+// The omap key prefixes of the omap-era gc queue, gc_index_prefixes
+// (cls_rgw.cc:3838-3842 at v19.2.6): the entry under its tag, and again
+// under its due time.
+const (
+	gcNameIndex = "0_"
+	gcTimeIndex = "1_"
+)
+
+// gcTimeKey is get_time_key (cls_rgw.cc:119-125 at v19.2.6): seconds and
+// nanoseconds, zero-padded to 11 and 9 digits.
+func gcTimeKey(t time.Time) string {
+	return fmt.Sprintf("%011d.%09d", t.Unix(), t.Nanosecond())
+}
+
+// rgwGCSetEntry is rgw_cls_gc_set_entry through gc_update_entry
+// (cls_rgw.cc:3896-3941 and :3964-3978 at v19.2.6): an entry already under
+// the tag loses its time-index key, and the entry, due ExpirationSecs from
+// the class's clock, is stored under the tag and under its time.
+func rgwGCSetEntry(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeGCSetEntryOp)
+	if rval < 0 {
+		return rval
+	}
+	info := op.Info
+	if call.Stored != nil {
+		if b, ok := call.Stored.Omap[gcNameIndex+info.Tag]; ok {
+			d := denc.NewDecoder(b)
+			old := rgwcls.DecodeGCObjInfo(d)
+			if d.Err() != nil {
+				return -int32(syscall.EIO)
+			}
+			if obj := call.Object(); obj != nil {
+				delete(obj.Omap, gcTimeIndex+gcTimeKey(old.Time))
+			}
+		}
+	}
+	info.Time = call.Now().Add(time.Duration(op.ExpirationSecs) * time.Second)
+	obj := call.Create()
+	obj.Omap[gcNameIndex+info.Tag] = encodeSquid(info)
+	obj.Omap[gcTimeIndex+gcTimeKey(info.Time)] = encodeSquid(info)
+	return 0
 }
 
 // rgwDirHeader is read_bucket_header (cls_rgw.cc:464-485 at v19.2.6,
