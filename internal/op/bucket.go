@@ -50,6 +50,16 @@ type ListObjectsParams struct {
 	// can accompany (ErrInvalidArgument) and which yields no common
 	// prefixes.
 	AllowUnordered bool
+	// NameFilter, when set, is RGWRados::Bucket::ListParams::
+	// access_list_filter: a name in NS it refuses is skipped, uncounted, after
+	// the page's next marker has moved past it, as list_objects_ordered and
+	// list_objects_unordered skip it (rgw_rados.cc:2003-2009 and :2297-2303 at
+	// v19.2.6, :2106-2112 and :2400-2406 at v20.2.4). A name the delimiter
+	// rolls into a common prefix still forms it, where radosgw refuses the
+	// prefix itself (docs/exclusions.md, "ListMultipartUploads keeps the
+	// common prefixes radosgw drops"). ListUploads passes
+	// meta.IsMultipartMeta, radosgw's MultipartMetaFilter.
+	NameFilter func(name string) bool
 }
 
 // ObjectEntry is one bucket index entry as a listing returns it.

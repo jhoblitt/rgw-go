@@ -71,8 +71,8 @@ func (s *Store) ListObjects(ctx context.Context, rec *op.BucketRecord, p op.List
 // entries: an unparsable name is skipped, so is an entry that is not
 // visible unless versions are listed; a name outside p.NS ends a namespaced
 // listing and is skipped by a plain one, which moves its marker past a run
-// of namespaced names; then the prefix filter, the delimiter rollup and the
-// page bound. Rounds end when the cls listing is complete, at least half the
+// of namespaced names; then the prefix filter, the delimiter rollup,
+// p.NameFilter and the page bound. Rounds end when the cls listing is complete, at least half the
 // page is filled, or after eight rounds with anything, or when the marker
 // stops moving.
 //
@@ -165,6 +165,14 @@ rounds:
 					}
 					continue
 				}
+			}
+			// radosgw runs access_list_filter before the prefix and the
+			// delimiter (:2003-2009), so it also refuses a class common-prefix
+			// entry whose name the filter refuses; a refused name is skipped
+			// here only where it would be listed (docs/exclusions.md,
+			// "ListMultipartUploads keeps the common prefixes radosgw drops").
+			if p.NameFilter != nil && !p.NameFilter(key.Name) {
+				continue
 			}
 			if count >= maxN {
 				truncated = true
@@ -620,8 +628,9 @@ func (s *Store) suggest(ctx context.Context, pool radosclient.Pool, updates map[
 // every parsable entry read while the page has room, before the entry is
 // filtered; only the page's last counted entry can leave it, since a
 // listing ends truncated only once the page is full. An unparsable name, an
-// entry that is not visible unless versions are listed, one outside p.NS and
-// one outside the prefix are then skipped. No common prefixes are formed.
+// entry that is not visible unless versions are listed, one outside p.NS, one
+// p.NameFilter refuses (:2297-2303) and one outside the prefix are then
+// skipped. No common prefixes are formed.
 func (s *Store) listObjectsUnordered(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	maxN := min(max(p.MaxKeys, 0), listAbsoluteMax)
 	readAhead := uint32(maxN + min(maxN, listUnorderedReadAhead)) //nolint:gosec // at most 2 * listAbsoluteMax
@@ -655,7 +664,8 @@ rounds:
 				continue
 			}
 			key.Instance = e.Key.Instance
-			if (!p.ListVersions && !visible(e)) || key.NS != p.NS || !strings.HasPrefix(key.Name, p.Prefix) {
+			if (!p.ListVersions && !visible(e)) || key.NS != p.NS || (p.NameFilter != nil && !p.NameFilter(key.Name)) ||
+				!strings.HasPrefix(key.Name, p.Prefix) {
 				continue
 			}
 			if count >= maxN {

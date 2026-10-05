@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	"math/rand/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/testutil/mptest"
 )
 
 // A part at rgw_multipart_min_part_size's default, and a short last part.
@@ -159,6 +161,10 @@ var _ = Describe("multipart", func() {
 		res, err = store.ListParts(ctx, up, res.NextMarker, 2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect([]any{numbers(res), res.NextMarker, res.Truncated}).To(Equal([]any{[]int{3}, 3, false}), "second page")
+		res, err = store.ListParts(ctx, up, res.NextMarker, 2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]any{numbers(res), res.NextMarker, res.Truncated}).To(Equal([]any{[]int(nil), 0, false}),
+			"an empty page's next marker is 0, where send_response's cur_max starts")
 	})
 	It("lists uploads in meta-name order, <key>.<upload id>.meta, after radosgw's marker", func(ctx SpecContext) {
 		for _, name := range []string{"c", "a", "a"} {
@@ -217,6 +223,34 @@ var _ = Describe("multipart", func() {
 			"the delimiter is searched in the whole meta name, as radosgw lists it")
 		Expect([]any{res.Uploads, res.NextKeyMarker, res.NextUploadIDMarker}).To(Equal([]any{[]op.Upload(nil), "", ""}),
 			"a page of prefixes alone names no upload")
+		res, err = store.ListUploads(ctx, rec, op.ListUploadsParams{Delimiter: ".", MaxUploads: 2})
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]any{res.CommonPrefixes, res.Truncated}).To(Equal([]any{[]string{"big.", "dir/x."}, true}), "a truncated page of prefixes")
+		Expect([]string{res.NextKeyMarker, res.NextUploadIDMarker}).To(Equal([]string{"dir/x.", ""}),
+			"a page that ends on a common prefix names it as the key marker")
+		res, err = store.ListUploads(ctx, rec, op.ListUploadsParams{Delimiter: ".", KeyMarker: res.NextKeyMarker, MaxUploads: 2})
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]any{res.CommonPrefixes, res.Truncated}).To(Equal([]any{[]string{"dir/y.", "top."}, false}), "the page after it")
+	})
+
+	It("gives every upload and common prefix once at every page size", func(ctx SpecContext) {
+		r := rand.New(rand.NewPCG(uint64(GinkgoRandomSeed()), 5)) //nolint:gosec // a spec's reproducible data
+		var keys []string
+		for range 12 {
+			b := make([]byte, 1+r.IntN(4))
+			for i := range b {
+				b[i] = "ab/.-x"[r.IntN(6)]
+			}
+			keys = append(keys, string(b))
+			_, err := store.CreateUpload(ctx, rec, meta.ObjKey{Name: string(b)}, op.UploadParams{})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		for _, delim := range []string{"", "/", ".", "-", "x"} {
+			for _, prefix := range []string{"", "a"} {
+				Expect(mptest.CheckPaging(ctx, store, rec, op.ListUploadsParams{Prefix: prefix, Delimiter: delim})).To(Succeed(),
+					"seed %d, keys %q, prefix %q, delimiter %q", GinkgoRandomSeed(), keys, prefix, delim)
+			}
+		}
 	})
 
 	Context("Complete", func() {

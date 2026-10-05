@@ -346,16 +346,6 @@ func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) erro
 	return op.ErrNotImplemented
 }
 
-// ListParts implements op.MultipartStore.
-func (s *Store) ListParts(context.Context, *op.Upload, int, int) (op.ListPartsResult, error) {
-	return op.ListPartsResult{}, op.ErrNotImplemented
-}
-
-// ListUploads implements op.MultipartStore.
-func (s *Store) ListUploads(context.Context, *op.BucketRecord, op.ListUploadsParams) (op.ListUploadsResult, error) {
-	return op.ListUploadsResult{}, op.ErrNotImplemented
-}
-
 // Complete implements op.MultipartStore.
 func (s *Store) Complete(context.Context, *op.Upload, []op.CompletePart) (*op.PutResult, error) {
 	return nil, op.ErrNotImplemented
