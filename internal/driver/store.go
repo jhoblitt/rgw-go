@@ -42,7 +42,10 @@ type Store struct {
 	// those handed back and not taken out again.
 	readBufs       sync.Pool
 	pooledReadBufs atomic.Int64
-	quota          quotaStub
+	// tailBufs holds the *[]byte buffers a PUT reads its tail pieces into,
+	// each at least one chunk.
+	tailBufs sync.Pool
+	quota    quotaStub
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -320,11 +323,6 @@ func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 // ListObjects implements op.BucketStore.
 func (s *Store) ListObjects(context.Context, *op.BucketRecord, op.ListObjectsParams) (op.ListObjectsResult, error) {
 	return op.ListObjectsResult{}, op.ErrNotImplemented
-}
-
-// PutObject implements op.ObjectStore.
-func (s *Store) PutObject(context.Context, *op.BucketRecord, meta.ObjKey, io.Reader, op.PutParams) (*op.PutResult, error) {
-	return nil, op.ErrNotImplemented
 }
 
 // DeleteObject implements op.ObjectStore.

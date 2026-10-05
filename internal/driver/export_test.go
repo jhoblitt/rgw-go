@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"hash"
 	"io"
 	"time"
 
@@ -189,3 +190,95 @@ func (x *IndexOp) Cancel() { x.cancel() }
 
 // PreparedForTest reports whether a prepare of x succeeded.
 func (x *IndexOp) PreparedForTest() bool { return x.prepared }
+
+// GCShardForTest is gcShard for the external specs.
+func GCShardForTest(s *Store, tag string) int { return s.w.gcShard(tag) }
+
+// Layout is layout with its fields exported for the specs.
+type Layout struct {
+	HeadPool, TailPool     radosclient.Pool
+	HeadRule, TailRule     meta.PlacementRule
+	Chunk, Stripe, MaxHead uint64
+}
+
+// PlanPutForTest is planPut for the external specs.
+func (s *Store) PlanPutForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, storageClass string) (Layout, error) {
+	l, err := s.planPut(ctx, rec, key, storageClass)
+	return Layout{
+		HeadPool: l.headPool, TailPool: l.tailPool, HeadRule: l.headRule, TailRule: l.tailRule,
+		Chunk: l.chunk, Stripe: l.stripe, MaxHead: l.maxHead,
+	}, err
+}
+
+// TailWriter is a tailWriter over the manifest a PUT of a key builds, for
+// the external specs.
+type TailWriter struct {
+	tw *tailWriter
+	m  *meta.Manifest
+}
+
+// NewTailWriterForTest plans a PUT of key under storageClass and returns
+// its tail writer, with the prefix "." plus 31 characters of s's rand and
+// "_".
+func (s *Store) NewTailWriterForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, storageClass string) (*TailWriter, error) {
+	l, err := s.planPut(ctx, rec, key, storageClass)
+	if err != nil {
+		return nil, err
+	}
+	m := meta.NewTrivialManifest(meta.Obj{Bucket: rec.Info.Bucket, Key: key}, l.headRule, l.tailRule, "."+s.w.rand(31)+"_", l.maxHead, l.stripe)
+	return &TailWriter{tw: s.newTailWriter(&m, l), m: &m}, nil
+}
+
+// Consume is consume.
+func (t *TailWriter) Consume(ctx context.Context, body io.Reader, size int64, h hash.Hash) (head []byte, n uint64, err error) {
+	return t.tw.consume(ctx, body, size, h)
+}
+
+// Drain is drain.
+func (t *TailWriter) Drain() error { return t.tw.drain() }
+
+// Discard is discard.
+func (t *TailWriter) Discard() { t.tw.discard() }
+
+// Tails returns the oids of the tails the writer issued, in issue order.
+func (t *TailWriter) Tails() []string {
+	t.tw.mu.Lock()
+	defer t.tw.mu.Unlock()
+	oids := make([]string, 0, len(t.tw.stripes))
+	for _, st := range t.tw.stripes {
+		oids = append(oids, meta.Stripe{Obj: st.obj}.OID())
+	}
+	return oids
+}
+
+// PeakBuffered is the most bytes of tail buffers the writer held at once.
+func (t *TailWriter) PeakBuffered() uint64 {
+	t.tw.mu.Lock()
+	defer t.tw.mu.Unlock()
+	return t.tw.peak
+}
+
+// QuotaDeltas sums the AdjustStats calls a Store took.
+type QuotaDeltas struct{ Objs, Added, Removed int64 }
+
+// StatsForTest is the sum of the AdjustStats calls s took.
+func (s *Store) StatsForTest() QuotaDeltas {
+	s.quota.mu.Lock()
+	defer s.quota.mu.Unlock()
+	return QuotaDeltas{Objs: s.quota.objs, Added: s.quota.added, Removed: s.quota.removed}
+}
+
+// SetQuotaForTest makes check, given CheckQuota's context, the answer of s's
+// CheckQuota.
+func (s *Store) SetQuotaForTest(check func(ctx context.Context, addBytes, addObjs int64) error) {
+	s.quota.mu.Lock()
+	defer s.quota.mu.Unlock()
+	s.quota.check = check
+}
+
+// CancelWriteForTest is cancelWrite after a head write that failed with err
+// under the conditions ifMatch and ifNoneMatch, through x.
+func (s *Store) CancelWriteForTest(x *IndexOp, ifMatch, ifNoneMatch string, err error) (canceled bool, out error) {
+	res, out := s.cancelWrite(&headWrite{ifMatch: ifMatch, ifNoneMatch: ifNoneMatch}, x, err)
+	return res.canceled, out
+}

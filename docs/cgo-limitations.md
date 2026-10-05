@@ -275,6 +275,46 @@ benchmark was re-run.
   ([Squid](benchmarks/2026-10-02-seam-squid/REPORT.md),
   [Tentacle](benchmarks/2026-10-02-seam-tentacle/REPORT.md)).
 
+### A stripe's pieces are written one at a time
+
+- **Evidence:** radosgw's `RadosWriter::process` hands each piece of a tail
+  stripe to the throttle and returns without waiting for it
+  (`rgw_putobj_processor.cc:140-159` at v19.2.6, `:168-187` at v20.2.4), so
+  a stripe's pieces are in flight together, sent from one thread in stream
+  order, and the OSD applies them in that order. rgw-go must keep that
+  order, or a later piece landing first would be truncated by the stripe's
+  `write_full`, but `radosclient.Pool.Write` blocks until the write
+  completes and has no submit-then-await split. So the tail writer
+  (`tailWriter.write`, `internal/driver/stripe.go`) submits each piece only
+  after the previous piece of its stripe has completed; different stripes
+  still write in parallel within the put window. In sync mode this is
+  inherent: the blocking `WriteOp.Operate` returns only at completion. In
+  callback and pipe mode the fork's `WriteOp.OperateAsync` returns once
+  `rados_aio_write_op_operate` has submitted
+  (rados/write_op_operate_async.go:15-41 at go-ceph cbf97f85fcf5), and goceph
+  waits for the completion after it (`internal/radosclient/goceph/pool.go`),
+  so a seam that returned at submission could lift it there.
+- **Cost:** confined to a chunk smaller than the stripe. Within one pool
+  radosgw aligns both by the head pool's alignment, so with
+  `rgw_max_chunk_size` and `rgw_obj_stripe_size` at their 4 MiB defaults a
+  stripe is one piece. Default sizes still reach it when a storage class's
+  tail pool is not the head's: the chunk then takes the tail pool's
+  alignment and the stripe the head pool's (`AtomicObjectProcessor::prepare`,
+  `rgw_putobj_processor.cc:280-317` at v19.2.6, `:308-345` at v20.2.4). An
+  erasure-coded pool without overwrites requires alignment to its stripe
+  width (`pg_pool_t::required_alignment`, `osd/osd_types.h:1754-1757` at
+  v19.2.6), k times the 4 KiB default stripe unit (`OSDMonitor.cc:7820-7828`),
+  so with k=3 the chunk is 4190208 bytes and a 4194304-byte stripe from a
+  replicated head pool is written as a 4190208-byte piece and then a
+  4096-byte one, the second a round trip after the first. An
+  `rgw_max_chunk_size` set below the stripe size reaches it in any pool.
+- **Status:** accepted; found in W Task 5's review.
+- **Measure:** PUT throughput and latency of objects of several stripes
+  into a tail pool whose chunk is smaller than the stripe (the k=3 layout
+  above, and `rgw_max_chunk_size` at 1 MiB under the 4 MiB stripe), rgw-go
+  against radosgw at the same `rgw_put_obj_min_window_size`, in each mode.
+- **Measured:** not yet.
+
 ### The objecter throttle blocks the submitting thread
 
 - **Evidence:** librados budgets every operation against

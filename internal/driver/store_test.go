@@ -346,10 +346,6 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
-			Entry("PutObject", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.PutObject(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, strings.NewReader("v"), op.PutParams{Size: 1})
-				return err
-			}),
 			Entry("DeleteObject", func(ctx context.Context, s *driver.Store) error {
 				return s.DeleteObject(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, op.DeleteParams{})
 			}),
