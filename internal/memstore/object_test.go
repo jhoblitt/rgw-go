@@ -293,6 +293,14 @@ var _ = Describe("objects", func() {
 			Entry("if-none-match of the ETag", "", "src-etag", op.ErrNotModified),
 			Entry("if-none-match of another ETag", "", `"other"`, nil),
 		)
+		It("writes the copy under its tag, or append_rand_alpha's form without one", func(ctx SpecContext) {
+			_, err := store.CopyObject(ctx, src, dst, meta.ObjKey{Name: "copy"}, op.CopyParams{Tag: "tx-copy"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readCopy(ctx, store, dst).WriteTag).To(Equal("tx-copy"))
+			_, err = store.CopyObject(ctx, src, dst, meta.ObjKey{Name: "copy"}, op.CopyParams{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readCopy(ctx, store, dst).WriteTag).To(MatchRegexp(`^_[A-Za-z0-9_-]{31}$`))
+		})
 		It("reports a missing source as NoSuchKey", func(ctx SpecContext) {
 			Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
 			_, err := store.CopyObject(ctx, src, dst, meta.ObjKey{Name: "copy"}, op.CopyParams{})

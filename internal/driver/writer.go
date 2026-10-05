@@ -62,14 +62,15 @@ type writeOptions struct {
 	gcMaxDeferred      uint64 // rgw_gc_max_deferred, 50
 	gcThreads          bool   // rgw_enable_gc_threads, true
 	multiObjDelMaxAIO  int    // rgw_multi_obj_del_max_aio, 16, floored to 1 as RGWDeleteMultiObj::execute does
-	copyConcurrentIO   int    // rgw_max_copy_obj_concurrent_io, 10
+	copyConcurrentIO   int    // rgw_max_copy_obj_concurrent_io, 10, 0 used as 1 with an error-level log line
 }
 
 // readWriteOptions reads the write options through conf, each through the
 // accessor its rgw.yaml.in type calls for, and fails on the first option
 // librados does not know or whose value does not parse. An rgw_gc_max_objs
 // below 1 is used as 1 with an error-level log line, as floorShards uses
-// the other shard counts. A negative rgw_gc_obj_min_wait is used as its
+// the other shard counts, and so is a zero rgw_max_copy_obj_concurrent_io.
+// A negative rgw_gc_obj_min_wait is used as its
 // default, 7200 s, with an error-level log line, and one too long for the
 // class's 32-bit due time is logged too and saturated at each enqueue
 // (gcExpiration): radosgw narrows it to a uint32_t expiration whose due
@@ -115,6 +116,14 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	// std::max<uint32_t>(1, rgw_multi_obj_del_max_aio) narrows the option
 	// before it floors it (rgw_op.cc:7011 at v19.2.6).
 	o.multiObjDelMaxAIO = int(max(uint32(delAIO), 1)) //nolint:gosec // narrowed as C++ narrows it
+	if o.copyConcurrentIO == 0 {
+		// radosgw fails every copy that shares tails with EDEADLK then
+		// (docs/ceph-upstream-bugs.md); a negative value, which limits
+		// nothing there, is kept.
+		slog.Error("copy refcount concurrency is zero; using 1",
+			slog.String("option", "rgw_max_copy_obj_concurrent_io"), slog.Int("value", 0))
+		o.copyConcurrentIO = 1
+	}
 	if o.chunkSize == 0 || o.stripeSize == 0 || o.putWindow < o.chunkSize {
 		return writeOptions{}, fmt.Errorf("driver: rgw_max_chunk_size %d, rgw_obj_stripe_size %d, rgw_put_obj_min_window_size %d: "+
 			"a zero size, or a window below one chunk, cannot write", o.chunkSize, o.stripeSize, o.putWindow)

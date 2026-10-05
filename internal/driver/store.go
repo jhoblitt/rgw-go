@@ -353,11 +353,6 @@ func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 	return op.ErrNotImplemented
 }
 
-// CopyObject implements op.ObjectStore.
-func (s *Store) CopyObject(context.Context, *op.ObjectState, *op.BucketRecord, meta.ObjKey, op.CopyParams) (*op.PutResult, error) {
-	return nil, op.ErrNotImplemented
-}
-
 // ListParts implements op.MultipartStore.
 func (s *Store) ListParts(context.Context, *op.Upload, int, int) (op.ListPartsResult, error) {
 	return op.ListPartsResult{}, op.ErrNotImplemented

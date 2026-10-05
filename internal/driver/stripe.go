@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"log/slog"
 	"sync"
@@ -154,8 +153,12 @@ type tailWriter struct {
 	m     *meta.Manifest
 	pool  radosclient.Pool
 	chunk uint64
-	sem   *semaphore.Weighted // the put window, in bytes
-	wg    sync.WaitGroup
+	// maxSize is rgw_max_put_size, to which RGWPutObj_ObjStore::get_data
+	// holds a request's body; copy_obj_data's stream, which no request
+	// carries, has no limit.
+	maxSize uint64
+	sem     *semaphore.Weighted // the put window, in bytes
+	wg      sync.WaitGroup
 
 	// namer names stripe n; nil is m.TailObj. A part writer names stripe 0
 	// the part head, "<prefix>.<part>", and the rest its shadow stripes,
@@ -183,7 +186,10 @@ type tailWriter struct {
 }
 
 func (s *Store) newTailWriter(m *meta.Manifest, l layout) *tailWriter {
-	return &tailWriter{s: s, m: m, pool: l.tailPool, chunk: l.chunk, sem: semaphore.NewWeighted(int64(s.w.opts.putWindow))} //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
+	return &tailWriter{
+		s: s, m: m, pool: l.tailPool, chunk: l.chunk, maxSize: s.w.opts.maxPutSize,
+		sem: semaphore.NewWeighted(int64(s.w.opts.putWindow)), //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
+	}
 }
 
 // newPartWriter is newTailWriter for part n of m, a part manifest: its
@@ -364,13 +370,13 @@ func (t *tailWriter) readHead(r io.Reader, declared int64) (head []byte, done bo
 	return head, done, err
 }
 
-// consume reads body to EOF, hashing every byte into h: the first
+// consume reads body to EOF, writing every byte to h: the first
 // m.MaxHeadSize bytes come back as the head's data, the rest go to tail
 // objects in stripe order, each stripe in pieces of at most one chunk, as
 // StripeProcessor and ChunkProcessor cut them (rgw_putobj.cc). A stripe is
 // issued only when data for it arrives, and no empty write is sent. A body
 // error is returned as it is, except io.ErrUnexpectedEOF, which is
-// ErrRequestTimeout; a body past rgw_max_put_size is EntityTooLarge
+// ErrRequestTimeout; a body past maxSize is EntityTooLarge
 // (rgw_rest.cc:1096-1098 at v19.2.6, :1101-1103 at v20.2.4). declared is the
 // body's length, -1 when unknown.
 //
@@ -378,7 +384,7 @@ func (t *tailWriter) readHead(r io.Reader, declared int64) (head []byte, done bo
 // written by writeFirst before anything else is read, and the rest follows
 // as above. When its exclusive create meets EEXIST, consume returns that
 // error, radosclient.ErrExists, keeping the stripe in t.first.
-func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64, h hash.Hash) (head []byte, size uint64, err error) {
+func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64, h io.Writer) (head []byte, size uint64, err error) {
 	r := io.TeeReader(body, h)
 	if t.exclusiveFirst {
 		size, err = t.consumeFirst(ctx, r, declared)
@@ -389,7 +395,7 @@ func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64
 		return nil, 0, bodyErr(err)
 	}
 	size = uint64(len(head))
-	if size > t.s.w.opts.maxPutSize {
+	if size > t.maxSize {
 		return nil, 0, op.ErrEntityTooLarge
 	}
 	size, err = t.stream(ctx, r, size, done)
@@ -460,7 +466,7 @@ func (t *tailWriter) readFirst(r io.Reader, declared int64, limit uint64) (*firs
 	case err != nil:
 		t.release(p, true)
 		return nil, bodyErr(err)
-	case uint64(got) > t.s.w.opts.maxPutSize: //nolint:gosec // a read count is never negative
+	case uint64(got) > t.maxSize: //nolint:gosec // a read count is never negative
 		t.release(p, true)
 		return nil, op.ErrEntityTooLarge
 	case uint64(got) > t.s.w.opts.putWindow: //nolint:gosec // a read count is never negative
@@ -475,7 +481,7 @@ func (t *tailWriter) readFirst(r io.Reader, declared int64, limit uint64) (*firs
 // met EEXIST under prev's prefix: it sends that stripe again under its own,
 // as process_first_chunk resubmits its data to the new head, and streams the
 // rest of body, hashing it into h, which holds the first stripe already.
-func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, body io.Reader, h hash.Hash) (uint64, error) {
+func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, body io.Reader, h io.Writer) (uint64, error) {
 	f := prev.first
 	prev.first = nil
 	held := uint64(cap(*f.p))
@@ -551,7 +557,7 @@ func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done 
 				continue
 			}
 			piece := uint64(got) //nolint:gosec // a read count is never negative
-			if size+piece > t.s.w.opts.maxPutSize {
+			if size+piece > t.maxSize {
 				t.release(p, true)
 				return 0, op.ErrEntityTooLarge
 			}

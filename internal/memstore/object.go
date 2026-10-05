@@ -189,6 +189,10 @@ func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.Bucke
 	}
 	k := objKey(dstKey)
 	o := s.newObject(k, so.data, etag, attrs, p.Mtime, cmp.Or(p.StorageClass, so.state.StorageClass))
+	o.state.WriteTag = p.Tag
+	if p.Tag == "" {
+		o.state.WriteTag = "_" + randomAlphanumeric(31)
+	}
 	db.objects[k] = o
 	return putResult(o), nil
 }

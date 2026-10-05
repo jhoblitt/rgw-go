@@ -347,11 +347,6 @@ var _ = Describe("the driver", func() {
 				return s.DeleteBucket(ctx, &op.BucketRecord{})
 			}),
 
-			Entry("CopyObject", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.CopyObject(ctx, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true}, &op.BucketRecord{}, meta.ObjKey{Name: "k2"}, op.CopyParams{})
-				return err
-			}),
-
 			Entry("ListParts", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.ListParts(ctx, &op.Upload{ID: "2~upload"}, 0, 1000)
 				return err
