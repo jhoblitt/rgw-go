@@ -1500,10 +1500,12 @@ does the following.
   with EDEADLK (`rgw_aio_throttle.cc:40-42` and `:131-132` at v19.2.6 and
   v20.2.4), and every PUT whose body is longer than the window fails.
   When a pool's required alignment raises the aligned chunk above the
-  window, rgw-go refuses every PUT to that pool with 500 UnknownError,
-  radosgw's answer to EDEADLK (`rgw_common.cc:346-353` at v19.2.6,
-  `:359-366` at v20.2.4); radosgw refuses only a PUT that sends a tail
-  piece longer than the window, and stores one that fits in its head.
+  window, rgw-go refuses every PUT and UploadPart to that pool with 500
+  UnknownError, radosgw's answer to EDEADLK (`rgw_common.cc:346-353` at
+  v19.2.6, `:359-366` at v20.2.4); radosgw refuses only a PUT that sends a
+  tail piece longer than the window, and stores one that fits in its head,
+  and only an UploadPart whose first stripe or a later piece is longer
+  than the window.
 - **Counts too large for radosgw's integers.** rgw-go holds a shard count in
   32 bits, using a larger one as 2^32-1, and the bucket-index AIO limit in
   63, using a larger one as 2^63-1. It caps `rgw_lc_max_objs` at 7877.
@@ -2176,6 +2178,72 @@ does the following.
   object expirer hint, where radosgw adds one (`:6643-6655` at v19.2.6,
   `:7443-7455` at v20.2.4). rgw-go runs no expirer ("Swift API and Swift
   authentication").
+- **A failed part upload does not shrink the quota cache.** When an
+  UploadPart fails after its part head was created, rgw-go removes the
+  part as radosgw's `~RadosWriter` does, the head through the bucket index
+  when it sits in the pool the bucket's placement names
+  (`driver/rados/rgw_putobj_processor.cc:184-229` at v19.2.6, `:212-257`
+  at v20.2.4). radosgw's removal, `RGWRados::delete_obj`, then subtracts
+  one object and the head's size from the bucket's and the owner's cached
+  stats (`driver/rados/rgw_rados.cc:5984` at v19.2.6, `:6738` at v20.2.4)
+  even when the part failed before its head was counted: a short body, a
+  failed quota check, a wrong Content-MD5, a failed payload signature or a
+  body past `rgw_max_put_size`. rgw-go subtracts the head only when its
+  write had counted the part, as it has for a part that fails while it is
+  registered, so after a failure before that its cache keeps one object
+  and up to one stripe more than radosgw's until the entry is fetched
+  again (`docs/ceph-upstream-bugs.md`, "[A failed UploadPart shrinks
+  radosgw's quota
+  cache](ceph-upstream-bugs.md#a-failed-uploadpart-shrinks-radosgws-quota-cache)").
+- **A part whose head write lost a race is not registered.** radosgw
+  answers a part head write that fails with ECANCELED, ENOENT or EEXIST
+  as a lost race and success (`driver/rados/rgw_rados.cc:3388-3391` at
+  v19.2.6, `:3541-3544` at v20.2.4), registers the part on the upload's
+  meta object, and then, because the write was canceled, removes the
+  part's objects (`driver/rados/rgw_putobj_processor.cc:604-606` at
+  v19.2.6, `:643-645` at v20.2.4), leaving a registered part whose data is
+  gone (`docs/ceph-upstream-bugs.md`, "[radosgw registers a part whose
+  head write lost a race and then removes its
+  data](ceph-upstream-bugs.md#radosgw-registers-a-part-whose-head-write-lost-a-race-and-then-removes-its-data)").
+  rgw-go removes the objects and fails the UploadPart with 500
+  InternalError without registering it. The part head write is a
+  non-atomic one without conditions or a create, so no reply from an OSD
+  is known to reach this path.
+- **UploadPart ignores If-Match and If-None-Match.** rgw-go writes a part
+  head without the request's write conditions on both releases, as
+  v19.2.6's `MultipartObjectProcessor::complete` does
+  (`driver/rados/rgw_putobj_processor.cc:491-531` at v19.2.6). v20.2.4's
+  passes them to the part head's write (`:563-564`), where they are
+  checked against the part head the request has just created: If-None-Match:
+  `*`, and If-Match naming an ETag, then fail with 412 PreconditionFailed for
+  a part in the bucket placement's pool, and any If-Match with 404
+  NoSuchKey for a part whose storage class lives in another pool, after
+  the body was received (`docs/ceph-upstream-bugs.md`, "[Tentacle fails an
+  UploadPart that sends If-None-Match: * for a part in the bucket
+  placement's pool](ceph-upstream-bugs.md#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool)").
+  Where a Tentacle radosgw answers those, rgw-go stores the part.
+- **UploadPartCopy reads one version of its source.** rgw-go copies a
+  part's source range from the one state the request read: the head bytes
+  that read prefetched, the rest of the head through reads guarded by its
+  write tag, and the tails its manifest names, so the part holds that
+  version or the copy fails. radosgw reads the source's state
+  again for each `rgw_max_chunk_size` piece of the range (`RGWPutObj::get_data`,
+  `rgw_op.cc:4018-4085` at v19.2.6, `:4227-4294` at v20.2.4) and copies the
+  rest of the range from the new version; a shorter new version fails the
+  copy with 416 InvalidRange after the leading pieces were written, and an
+  emptied one ends the part short without an error
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  UploadPartCopy can assemble a part from two versions of its
+  source](ceph-upstream-bugs.md#radosgws-uploadpartcopy-can-assemble-a-part-from-two-versions-of-its-source)").
+- **An upload without a v2 id keys a part by its canonical number.**
+  radosgw registers a part of an upload whose id lacks the `2~` or `2/`
+  prefix under `part.` and the part number as the request spelled it
+  (`part_num_str`, `driver/rados/rgw_putobj_processor.cc:534-543` at
+  v19.2.6, `:572-581` at v20.2.4). The driver receives the number as an
+  integer and writes it in decimal without leading zeros, so a request
+  spelling it `07` registers `part.7` where radosgw registers `part.07`.
+  Only an upload that a radosgw older than the v2 ids created reaches
+  this; rgw-go and every current radosgw make v2 ids.
 
 ### Bucket index differences
 

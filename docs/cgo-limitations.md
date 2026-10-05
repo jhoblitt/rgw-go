@@ -315,6 +315,31 @@ benchmark was re-run.
   against radosgw at the same `rgw_put_obj_min_window_size`, in each mode.
 - **Measured:** not yet.
 
+### Bucket index completions to one shard can land out of order
+
+- **Evidence:** radosgw sends each `bucket_complete_op` with
+  `aio_operate` and does not wait for it (`cls_obj_complete_op`,
+  `driver/rados/rgw_rados.cc:9514-9518` at v19.2.6), and librados applies the
+  operations one client submits to one object in submission order, so an
+  object's completion reaches its index shard before any later operation the
+  same gateway sends there. rgw-go has no submit-then-await split either
+  (see "A stripe's pieces are written one at a time"), so its completion
+  manager runs each completion's blocking write in a goroutine of its own
+  (`completionManager.submit`, `internal/driver/completion.go`), and a
+  completion can reach the shard after a later prepare or completion of the
+  same entry. A failed UploadPart shows it: the part head's ADD completion
+  can land after the prepare, or the completion, of the DEL that removes
+  the head.
+- **Cost:** none found. cls_rgw refuses a completion whose tag is no longer
+  pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at v19.2.6,
+  `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
+  entry's, in the same pool, into a cancel (`:1082-1085`, `:1217-1220`). So a
+  late ADD after the DEL completed is refused, and one between the DEL's
+  prepare and completion is undone by the completion: the entry ends removed
+  in every order, and the driver's vanished-upload spec takes the shard's
+  operations in any order (`internal/driver/mp_part_test.go`). A
+  submit-then-await seam would restore librados' order.
+
 ### The objecter throttle blocks the submitting thread
 
 - **Evidence:** librados budgets every operation against
