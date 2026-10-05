@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5" //nolint:gosec // generate_fake_tag's digest, not a security boundary
 	"encoding/binary"
@@ -43,6 +44,25 @@ type headWrite struct {
 	create               bool // PUT_OBJ_CREATE: reset the object
 	modifyTail, keepTail bool
 	size, accountedSize  uint64
+	// nonAtomic takes prepare_atomic_modification's branch for an object
+	// never set atomic (rgw_rados.cc:6497-6505; v20.2.4 :7334-7343): no
+	// guard and no idtag or tail_tag, and a reset is create(false) and
+	// obj_remove whether the object exists or not. radosgw writes the
+	// multipart meta object and the part heads so, without conditions,
+	// and writeMeta refuses a non-atomic write that carries any.
+	nonAtomic bool
+	// pool, oid and loc place the head where the key's oid in the bucket's
+	// data pool would not: the meta object in the data-extra pool, a part
+	// head in its upload's tail pool. As in an objRef, the pool handle
+	// already carries loc when there is one. A nil pool keeps headRef's
+	// placement.
+	pool     radosclient.Pool
+	oid, loc string
+	// category is the index entry's; 0 is Main.
+	category uint8
+	// completeMultipart adds no bytes to the quota cache, which the parts
+	// already added (rgw_rados.cc:3359-3366; v20.2.4 :3512-3519).
+	completeMultipart bool
 }
 
 // headResult is what write_meta leaves behind.
@@ -133,6 +153,18 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	if mtime.IsZero() {
 		mtime = s.now()
 	}
+	if hw.nonAtomic {
+		if hw.ifMatch != "" || hw.ifNoneMatch != "" {
+			// radosgw's non-atomic writers, RadosMultipartUpload::init and
+			// MultipartObjectProcessor::complete, set no conditions
+			// (rgw_putobj_processor.cc:515-529 at v19.2.6), so a caller that
+			// passes them asks for a write radosgw never makes.
+			return headResult{}, fmt.Errorf("%w: a non-atomic head write of %s carries write conditions", op.ErrInternalError, hw.key.Name)
+		}
+		// Without conditions write_meta's only pass assumes no entry
+		// (:3429-3436), and its create(false) cannot fail with EEXIST.
+		return s.doWriteMeta(ctx, hw, x, &op.ObjectState{Bucket: hw.rec, Key: hw.key}, mtime, true)
+	}
 	assumeNoent := hw.ifMatch == "" && hw.ifNoneMatch == ""
 	if assumeNoent {
 		res, err := s.doWriteMeta(ctx, hw, x, &op.ObjectState{Bucket: hw.rec, Key: hw.key}, mtime, true)
@@ -151,27 +183,34 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 // :3234-3570) over st, the head as read, or as missing on the
 // assume-no-entry pass.
 func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *op.ObjectState, mtime time.Time, assumeNoent bool) (headResult, error) {
-	ref, err := s.headRef(ctx, hw.rec, hw.key)
+	ref, err := s.headWriteRef(ctx, hw)
 	if err != nil {
 		return headResult{}, err
 	}
 	w := radosclient.NewWriteOp()
-	if gerr := s.guardHead(w, hw, st); gerr != nil {
-		return headResult{}, gerr
-	}
-	if hw.create {
-		if st.Exists {
-			// remove_rgw_head_obj keeps the olh attrs (rgw_rados.cc:5722-5727).
+	if hw.nonAtomic {
+		if hw.create {
 			w.Create(false)
 			rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
-		} else {
-			w.Create(true)
 		}
-	}
-	tag := []byte(hw.tag + "\x00")
-	w.SetXattr(meta.AttrIDTag, tag)
-	if hw.modifyTail {
-		w.SetXattr(meta.AttrTailTag, tag)
+	} else {
+		if gerr := s.guardHead(w, hw, st); gerr != nil {
+			return headResult{}, gerr
+		}
+		if hw.create {
+			if st.Exists {
+				// remove_rgw_head_obj keeps the olh attrs (rgw_rados.cc:5722-5727).
+				w.Create(false)
+				rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
+			} else {
+				w.Create(true)
+			}
+		}
+		tag := []byte(hw.tag + "\x00")
+		w.SetXattr(meta.AttrIDTag, tag)
+		if hw.modifyTail {
+			w.SetXattr(meta.AttrTailTag, tag)
+		}
 	}
 	w.SetMtime(mtime)
 	if hw.data != nil {
@@ -225,7 +264,7 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 	}
 	epoch, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
 	if err != nil {
-		if assumeNoent && errors.Is(err, radosclient.ErrExists) {
+		if assumeNoent && !hw.nonAtomic && errors.Is(err, radosclient.ErrExists) {
 			return headResult{}, errRetryGuarded
 		}
 		return s.cancelWrite(hw, x, err)
@@ -235,17 +274,30 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 	}
 	owner, display := entryOwner(attrs)
 	x.complete(rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}, rgw.DirEntryMeta{
-		Category: rgw.CategoryMain, Size: hw.size, AccountedSize: hw.accountedSize, Mtime: mtime,
+		Category: cmp.Or(hw.category, rgw.CategoryMain), Size: hw.size, AccountedSize: hw.accountedSize, Mtime: mtime,
 		ETag: etag, Owner: owner, OwnerDisplayName: display, ContentType: contentType, StorageClass: storageClass,
 	})
 	added := int64(1)
 	if origExists {
 		added = 0
 	}
-	if err := s.AdjustStats(ctx, hw.rec, hw.rec.Info.Owner, added, int64(hw.accountedSize), int64(origSize)); err != nil { //nolint:gosec // object sizes are far below 2^63
+	addBytes := int64(hw.accountedSize) //nolint:gosec // object sizes are far below 2^63
+	if hw.completeMultipart {
+		addBytes = 0
+	}
+	if err := s.AdjustStats(ctx, hw.rec, hw.rec.Info.Owner, added, addBytes, int64(origSize)); err != nil { //nolint:gosec // object sizes are far below 2^63
 		slog.WarnContext(ctx, "quota cache adjustment failed", slog.String("bucket", hw.rec.Info.Bucket.Name), slog.Any("error", err))
 	}
 	return headResult{epoch: epoch, poolID: ref.pool.ID(), mtime: mtime}, nil
+}
+
+// headWriteRef is where hw writes: the object its pool override names, or
+// the key's head in the bucket's data pool.
+func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error) {
+	if hw.pool == nil {
+		return s.headRef(ctx, hw.rec, hw.key)
+	}
+	return objRef{pool: hw.pool, oid: hw.oid, loc: hw.loc}, nil
 }
 
 // guardHead checks the write's conditions, then adds

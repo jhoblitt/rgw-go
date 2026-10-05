@@ -348,16 +348,6 @@ func (s *Store) CopyObject(context.Context, *op.ObjectState, *op.BucketRecord, m
 	return nil, op.ErrNotImplemented
 }
 
-// CreateUpload implements op.MultipartStore.
-func (s *Store) CreateUpload(context.Context, *op.BucketRecord, meta.ObjKey, op.UploadParams) (*op.Upload, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// GetUpload implements op.MultipartStore.
-func (s *Store) GetUpload(context.Context, *op.BucketRecord, meta.ObjKey, string) (*op.Upload, error) {
-	return nil, op.ErrNotImplemented
-}
-
 // PutPart implements op.MultipartStore.
 func (s *Store) PutPart(context.Context, *op.Upload, int, io.Reader, op.PutParams) (*op.PartResult, error) {
 	return nil, op.ErrNotImplemented

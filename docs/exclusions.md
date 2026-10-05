@@ -956,6 +956,35 @@ review and verified against the tree.
   (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs. No
   request reaches the refusal yet: the driver's multipart completion,
   which will append the parts, still answers NotImplemented.
+- **Client checksums are ignored until phase 2.** rgw-go ignores the
+  `x-amz-checksum-*` headers and aws-chunked trailers of PutObject,
+  UploadPart and CompleteMultipartUpload, and `x-amz-checksum-algorithm` on
+  CreateMultipartUpload, on both releases, and stores no checksum. A Squid
+  radosgw ignores them too, so on Squid nothing differs. A Tentacle radosgw
+  validates a supplied checksum, answering 400 BadDigest on a mismatch, and
+  stores the object's checksum in `user.rgw.cksum` (`rgw_op.cc:4757-4789`
+  for PutObject and UploadPart, `:7295-7341` for CompleteMultipartUpload,
+  at v20.2.4); it also keeps the algorithm CreateMultipartUpload names in
+  the upload's `multipart_upload_info` (`:7006-7010`), where rgw-go writes
+  no checksum type. On a Tentacle cluster an object rgw-go wrote therefore
+  carries no `user.rgw.cksum`: GetObjectAttributes and a checksum-mode GET
+  through radosgw show no checksum for it, and rgw-go accepts a checksum
+  that does not match the data. An upload a Tentacle radosgw created with a
+  checksum algorithm cannot be completed through radosgw once any of its
+  parts went through rgw-go: completion sums the parts' checksums
+  (`try_sum_part_cksums`, called at `:7274-7281`, with the algorithm
+  `get_info` read back, `driver/rados/rgw_sal_rados.cc:4573-4574`) and
+  answers 400 InvalidRequest for a part that has none (`:7108-7114`). rgw-go
+  also accepts what a Tentacle radosgw refuses: an
+  `x-amz-checksum-algorithm` or `x-amz-sdk-checksum-algorithm` that names
+  no algorithm it knows, which fails PutObject and UploadPart with EINVAL,
+  400 InvalidArgument (`RGWPutObj_Cksum::Factory`,
+  `rgw_cksum_pipe.cc:40-62`, caught at `rgw_op.cc:4602-4611`), and an
+  `x-amz-checksum-type` that does not suit CreateMultipartUpload's
+  algorithm, which fails it with 400 InvalidRequest
+  (`rgw_rest_s3.cc:4508-4520`, `permitted_cksum_algo_and_type` in
+  `rgw_cksum.h`). CreateMultipartUpload takes an algorithm Tentacle does
+  not know as none, as rgw-go does. Phase 2 adds Tentacle-level checksums.
 
 ### Command-line differences
 
@@ -1277,7 +1306,13 @@ does the following.
   v19.2.6, `:2616-2620` at v20.2.4). radosgw's object stat drops that
   failure and opens a pool with an empty name, so it answers 400
   InvalidArgument instead (`docs/ceph-upstream-bugs.md`, "radosgw's object
-  stat ignores a data pool it cannot resolve").
+  stat ignores a data pool it cannot resolve"). The same holds for a
+  multipart upload's meta object, whose data-extra pool both gateways
+  resolve from the same two placements: rgw-go answers a read of it with
+  500 UnknownError, where radosgw's `RadosMultipartUpload::get_info`
+  reaches that stat and answers 400 (`driver/rados/rgw_sal_rados.cc:3672`
+  at v19.2.6, `:4531` at v20.2.4). Both answer the meta object's write
+  with 500 UnknownError.
 - **No bootstrap.** rgw-go writes nothing at startup but the control
   objects, which radosgw creates too. When no zone or zonegroup resolves,
   it refuses to start with `driver.ErrNoZone`, naming the object it looked
@@ -1286,7 +1321,11 @@ does the following.
   it, naming the pool. A data pool found missing is not created either:
   rgw-go stats an object in it as absent, and a read or write that needs
   the pool fails, naming it. radosgw creates what is missing instead, a
-  data pool on the first stat, read or write that opens it.
+  data pool on the first stat, read or write that opens it. With the
+  data-extra pool missing, rgw-go reads a multipart upload's meta object as
+  absent, NoSuchUpload, which radosgw answers too once it has created the
+  pool, but it fails CreateMultipartUpload with 404 NoSuchUpload, naming
+  the pool, where radosgw creates the pool and then the upload.
   SiteConfig::load creates the default zone and zonegroup
   (read_or_create_default_zone and read_or_create_default_zonegroup,
   `driver/rados/rgw_zone.cc:1214`, `:1222` and `:1312` at v19.2.6, `:1208`,

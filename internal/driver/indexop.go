@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -73,6 +74,19 @@ type indexOp struct {
 	// prepared is UpdateIndex::is_prepared: the prepare succeeded, so a
 	// second write pass does not send another (_do_write_meta, :3289-3294).
 	prepared bool
+	// hashName replaces the key's name as the shard's hash source,
+	// rgw_obj::index_hash_source (rgw_obj_types.h:540-541): the multipart
+	// meta object and the part heads are indexed on their upload key's
+	// shard.
+	hashName string
+	// removeObjs are the entries the completion or cancel closing this op
+	// retires in the same class call, rgw_cls_obj_complete_op::remove_objs.
+	removeObjs []rgw.ObjKey
+	// noLog is a write_meta caller's log_op false, which keeps the change
+	// out of the bucket index log whatever the zone's log_data: what
+	// RadosMultipartUpload::init passes for the meta object
+	// (rgw_sal_rados.cc:3323; v20.2.4 :4169).
+	noLog bool
 }
 
 // newIndexOp starts the index change of key in rec's bucket under tag, or,
@@ -95,7 +109,7 @@ func (s *Store) newIndexOp(rec *op.BucketRecord, key meta.ObjKey, tag string) *i
 // current instance, kept until a reshard drops it.
 func (x *indexOp) currentShard(ctx context.Context) (indexShard, error) {
 	if x.shard == nil {
-		sh, err := x.s.indexShardFor(ctx, &x.rec.Info, x.obj.Key)
+		sh, err := x.s.indexShardFor(ctx, &x.rec.Info, meta.ObjKey{Name: cmp.Or(x.hashName, x.obj.Key.Name)})
 		if err != nil {
 			return indexShard{}, err
 		}
@@ -124,7 +138,7 @@ func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
 	rgw.GuardBucketResharding(w, x.s.release)
 	p := rgw.PrepareOp{Op: mod, Key: x.clsKey(), Tag: x.tag, Locator: x.obj.Key.Locator()}
 	if x.s.release < denc.Tentacle {
-		p.LogOp = x.s.w.logData
+		p.LogOp = x.logOp()
 		p.ZonesTrace = x.zonesTrace()
 	}
 	rgw.BucketPrepareOp(w, p, x.s.release)
@@ -145,9 +159,13 @@ func (x *indexOp) completeOp(c rgw.CompleteOp) *radosclient.WriteOp {
 func (x *indexOp) completion(mod rgw.ModifyOp, ver rgw.EntryVer, m rgw.DirEntryMeta) rgw.CompleteOp {
 	return rgw.CompleteOp{
 		Op: mod, Key: x.clsKey(), Locator: x.obj.Key.Locator(), Ver: ver, Meta: m, Tag: x.tag,
-		LogOp: x.s.w.logData, ZonesTrace: x.zonesTrace(),
+		LogOp: x.logOp(), ZonesTrace: x.zonesTrace(), RemoveObjs: x.removeObjs,
 	}
 }
+
+// logOp is add_log: the caller's log_op and the zone's need_to_log_data
+// (:7095, :7147, :7177, :7201).
+func (x *indexOp) logOp() bool { return x.s.w.logData && !x.noLog }
 
 // prepare is UpdateIndex::prepare (:7079-7106; v20.2.4 :7932-7957): the
 // prepare, behind the reshard guard, before the caller writes the head. Only
