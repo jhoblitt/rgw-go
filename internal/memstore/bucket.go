@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -169,8 +171,14 @@ func applyAttrs(attrs, set map[string][]byte, rm []string) map[string][]byte {
 
 // ListObjects implements op.BucketStore in index order: Marker and
 // NextMarker are key names in p.NS, and the order of names is the order of
-// the index keys radosgw escapes them to.
+// the index keys radosgw escapes them to. An object's owner is its ACL's,
+// which radosgw writes into the index entry. AllowUnordered lists in the
+// same order with no common prefixes, and with a delimiter is
+// ErrInvalidArgument.
 func (s *Store) ListObjects(_ context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
+	if p.AllowUnordered && p.Delimiter != "" {
+		return op.ListObjectsResult{}, fmt.Errorf("%w: unordered bucket listing requested with a delimiter", op.ErrInvalidArgument)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	b, err := s.instance(rec)
@@ -180,13 +188,17 @@ func (s *Store) ListObjects(_ context.Context, rec *op.BucketRecord, p op.ListOb
 	var entries []op.ObjectEntry
 	for key, o := range b.objects {
 		if key.NS == p.NS {
+			owner, name := aclOwner(o.state.Attrs[meta.AttrACL])
 			entries = append(entries, op.ObjectEntry{
-				Key:          key,
-				Size:         o.state.Size,
-				Mtime:        o.state.Mtime,
-				ETag:         o.state.ETag,
-				StorageClass: cmp.Or(o.state.StorageClass, meta.StorageClassStandard),
-				Exists:       true,
+				Key:              key,
+				Size:             o.state.Size,
+				Mtime:            o.state.Mtime,
+				ETag:             o.state.ETag,
+				Owner:            owner,
+				OwnerDisplayName: name,
+				StorageClass:     cmp.Or(o.state.StorageClass, meta.StorageClassStandard),
+				IsLatest:         true,
+				Exists:           true,
 			})
 		}
 	}
@@ -227,6 +239,21 @@ func (s *Store) ListObjects(_ context.Context, rec *op.BucketRecord, p op.ListOb
 		}
 	}
 	return res, nil
+}
+
+// aclOwner is the owner of an object's stored ACL, the owner radosgw writes
+// into its index entry, and nothing for an object without one or with one
+// that does not decode.
+func aclOwner(b []byte) (owner meta.Owner, displayName string) {
+	if b == nil {
+		return meta.Owner{}, ""
+	}
+	d := denc.NewDecoder(b)
+	pol := acl.DecodePolicy(d)
+	if d.Err() != nil || pol.Owner.ID == "" {
+		return meta.Owner{}, ""
+	}
+	return meta.ParseOwner(pol.Owner.ID), pol.Owner.DisplayName
 }
 
 // pager is the per-name logic of list_objects_ordered once a name is past

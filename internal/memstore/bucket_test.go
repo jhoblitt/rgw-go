@@ -2,11 +2,14 @@ package memstore_test
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -206,8 +209,27 @@ var _ = Describe("buckets", func() {
 				Mtime:        start,
 				ETag:         md5Hex([]byte("c")),
 				StorageClass: meta.StorageClassStandard,
+				IsLatest:     true,
 				Exists:       true,
-			}}))
+			}}), "an unversioned entry is current, as is_current has it")
+		})
+		It("names the owner of each object's ACL, as the index entry's meta.owner does", func(ctx SpecContext) {
+			e := denc.NewEncoder()
+			acl.Policy{Owner: acl.Owner{ID: "alice", DisplayName: "Alice"}}.Encode(e, denc.Squid)
+			_, err := store.PutObject(ctx, rec, meta.ObjKey{Name: "owned"}, strings.NewReader("v"),
+				op.PutParams{Size: 1, Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}})
+			Expect(err).NotTo(HaveOccurred())
+			_, res := listNames(ctx, store, rec, op.ListObjectsParams{Prefix: "owned", MaxKeys: 1})
+			Expect(res.Entries).To(HaveLen(1))
+			Expect(res.Entries[0].Owner).To(Equal(owner("alice")))
+			Expect(res.Entries[0].OwnerDisplayName).To(Equal("Alice"))
+		})
+		It("lists unordered without common prefixes and refuses a delimiter", func(ctx SpecContext) {
+			names, res := listNames(ctx, store, rec, op.ListObjectsParams{MaxKeys: 10, AllowUnordered: true})
+			Expect(names).To(ConsistOf("_u", "a", "b/1", "b/2", "c", "d/x/1"))
+			Expect(res.CommonPrefixes).To(BeEmpty())
+			_, err := store.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10, AllowUnordered: true, Delimiter: "/"})
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
 		})
 		It("lists the upload namespace for NS multipart", func(ctx SpecContext) {
 			up, err := store.CreateUpload(ctx, rec, meta.ObjKey{Name: "big"}, op.UploadParams{Owner: owner("alice"), OwnerName: "Alice"})
