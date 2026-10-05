@@ -140,6 +140,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ARN ordering is not a strict weak ordering](#radosgws-arn-ordering-is-not-a-strict-weak-ordering) | pending | pending |  |
 | [radosgw's policy parser forgets a statement's keys when an object in an array closes](#radosgws-policy-parser-forgets-a-statements-keys-when-an-object-in-an-array-closes) | pending | pending |  |
 | [radosgw refuses a JSON true, false or null in a policy with "No error?"](#radosgw-refuses-a-json-true-false-or-null-in-a-policy-with-no-error) | pending | pending |  |
+| [Squid's PUT refuses a quoted If-Match that matches the object's ETag](#squids-put-refuses-a-quoted-if-match-that-matches-the-objects-etag) | [#64439](https://tracker.ceph.com/issues/64439), [#80924](https://tracker.ceph.com/issues/80924) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
+| [Squid's write conditions fail an If-None-Match ETag on a missing key and skip a head without a write tag](#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag) | [#68183](https://tracker.ceph.com/issues/68183), [#80925](https://tracker.ceph.com/issues/80925), [#80906](https://tracker.ceph.com/issues/80906), [#80922](https://tracker.ceph.com/issues/80922), [#80907](https://tracker.ceph.com/issues/80907), [#80898](https://tracker.ceph.com/issues/80898) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
+| [radosgw's send_split_chain repeats an object in its remainder and loops on an object too large for an entry](#radosgws-send_split_chain-repeats-an-object-in-its-remainder-and-loops-on-an-object-too-large-for-an-entry) | none | none | ✓ |
+| [Tentacle's delete_objs_inline puts every ref through the first object's pool, without its locator](#tentacles-delete_objs_inline-puts-every-ref-through-the-first-objects-pool-without-its-locator) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -5859,3 +5863,188 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit Z, Task 5 review, 2026-10-04, transcribing
   `PolicyParser::Default`; derived from the source, not reproduced.
+
+## Squid's PUT refuses a quoted If-Match that matches the object's ETag
+
+- **Kind:** defect, fixed in Tentacle and, after v19.2.6, in Squid; the
+  prefix acceptance below is unfixed at v20.2.4. Unreproduced here: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - PutObject reads If-Match and If-None-Match raw
+    (`RGWPutObj_ObjStore_S3::get_params`, `rgw_rest_s3.cc:2622-2623` at
+    v19.2.6, `:2783-2784` at v20.2.4) and hands them to the head write
+    (`rgw_op.cc:4559-4560` at v19.2.6, `:4838` at v20.2.4).
+  - Squid compares If-Match with `strncmp(if_match, etag, etag.length())`
+    against the stored ETag, which is the bare hex digest, stored without a
+    NUL (`rgw_op.cc:4522` at v19.2.6; `prepare_atomic_modification`,
+    `driver/rados/rgw_rados.cc:6515-6527` at v19.2.6, the comparison at
+    `:6524`). An If-Match in the quoted form RFC 7232 gives an entity tag,
+    the form an ETag response header carries and AWS SDKs send back, starts
+    with `"`, so it never matches: the PUT fails 412 PreconditionFailed
+    though the object's ETag is the one named. A bare digest matches. The
+    same raw comparison applies to a quoted If-None-Match, which then never
+    refuses (`:6536-6542`).
+  - The comparison stops at the ETag's length, so any If-Match that begins
+    with the current ETag matches, whatever follows it: `"<etag>"` fails only
+    for its leading quote, and `<etag>x` passes. Tentacle's
+    `check_preconditions` unquotes both conditions with `rgw_string_unquote`
+    first (`driver/rados/rgw_rados.cc:7296` and `:7318` at v20.2.4) but keeps
+    the prefix comparison (`:7299` and `:7321`), so a condition that begins
+    with the ETag still matches there.
+- **Impact:** on Squid a conditional PUT with a quoted If-Match fails 412
+  whatever the object holds, and one with a quoted If-None-Match naming the
+  current ETag overwrites the object; clients that send ETags as they
+  received them cannot use either condition. On both releases a condition
+  that only begins with the current ETag counts as naming it.
+- **Releases:** v19.2.6 for the quoted condition; v19.2.6 and v20.2.4 for
+  the prefix.
+- **rgw-go:** checks the conditions as v20.2.4 does on both releases:
+  quoted conditions are unquoted, and the prefix comparison is kept
+  (`checkPreconditions`, `internal/driver/headwrite.go`; `docs/exclusions.md`,
+  "Write conditions are Tentacle's on Squid too").
+- **Upstream:** [#64439](https://tracker.ceph.com/issues/64439) (open; a
+  quoted If-Match is rejected) and
+  [#80924](https://tracker.ceph.com/issues/80924) (open; the prefix
+  comparison accepts any If-Match that begins with the current ETag, which
+  survives the fix at v20.2.4 `rgw_rados.cc:7299`). The quoted condition is
+  fixed by [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
+  backports [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949)
+  (tentacle, in v20.2.4) and
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merged
+  after v19.2.6).
+- **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
+  preconditions; derived from the source, not reproduced. Upstream reported
+  it first.
+
+## Squid's write conditions fail an If-None-Match ETag on a missing key and skip a head without a write tag
+
+- **Kind:** defect, and a security issue: an integrity bypass that defeats
+  If-None-Match: * and If-Match and so loses an update. Fixed in Tentacle
+  and, after v19.2.6, in Squid. Unreproduced here: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; lines are
+  `rgw_rados.cc` at v19.2.6 unless marked.
+  - `prepare_atomic_modification` checks a write's conditions only inside
+    `if (need_guard)`, and `need_guard` is false whenever the head's tag is
+    fake (`:6493-6495`, `:6508-6544`). `get_obj_state_impl` fakes the tag of
+    a head that has a manifest and no `user.rgw.idtag` (`:6238-6245`), as a
+    head written before radosgw kept write tags has. On such a head no
+    condition is checked: If-Match with any ETag passes, and so does
+    If-None-Match: *, after which the reset overwrites the head
+    (`:6546-6553`).
+  - With an If-None-Match naming an ETag, a key without an object, or an
+    object stored without an ETag, has no etag attr, and
+    `!state->get_attr(RGW_ATTR_ETAG, bl)` refuses the PUT with 412
+    PreconditionFailed (`:6536-6542`), though no ETag matches.
+  - Tentacle checks the conditions first, whatever the guard
+    (`check_preconditions`, called at `:3294-3297` at v20.2.4), and passes an
+    If-None-Match ETag when the object has no ETag (`:7315-7324` at
+    v20.2.4).
+- **Impact:** on Squid, If-None-Match: * does not stop an overwrite of a
+  head without a write tag, and If-Match does not stop one whose ETag has
+  changed, so a conditional writer overwrites an update it meant to keep;
+  and a PUT with an If-None-Match ETag fails 412 on a new key, or on an
+  object stored without an ETag.
+- **Releases:** v19.2.6. v20.2.4 is not affected.
+- **rgw-go:** checks the conditions as v20.2.4 does on both releases
+  (`guardHead` and `checkPreconditions`, `internal/driver/headwrite.go`;
+  `docs/exclusions.md`, "Write conditions are Tentacle's on Squid too").
+- **Upstream:** [#68183](https://tracker.ceph.com/issues/68183) (Resolved);
+  related: [#80925](https://tracker.ceph.com/issues/80925),
+  [#80906](https://tracker.ceph.com/issues/80906),
+  [#80922](https://tracker.ceph.com/issues/80922),
+  [#80907](https://tracker.ceph.com/issues/80907) and
+  [#80898](https://tracker.ceph.com/issues/80898). Fixed by
+  [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
+  backports [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949)
+  (tentacle, in v20.2.4) and
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merged
+  after v19.2.6).
+- **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
+  preconditions; derived from the source, not reproduced. Upstream reported
+  it first.
+
+## radosgw's send_split_chain repeats an object in its remainder and loops on an object too large for an entry
+
+- **Kind:** defect, unfixed at v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** `RGWGC::send_split_chain` is the same at v19.2.6 and
+  v20.2.4 (`driver/rados/rgw_gc.cc:68-118`).
+  - It adds each object of an overwritten or deleted object's tail chain
+    to a batch, and when the batch's estimated encoding passes
+    `rgw_max_chunk_size`, it takes the object out again, steps its iterator
+    back (`--it`, `:89-90`) and sends the batch (`:92`). On success the loop's
+    `it++` returns to the object, which starts the next batch.
+  - When the send fails, the remainder to delete inline starts at the
+    stepped-back iterator (`:94`), the batch's last object, which the batch
+    already holds: `delete_objs_inline` puts that object's ref twice. The
+    second put is a no-op, the tag being retired or the object gone.
+  - An object whose estimate alone passes `rgw_max_chunk_size` leaves the
+    batch empty after it is taken out. The first object of the chain steps
+    the iterator back from the list's start, which is undefined; any later
+    one makes the loop send an empty entry and come back to the same
+    object, without end while the shard accepts the entries.
+    `rgw_max_chunk_size` has no minimum (`common/options/rgw.yaml.in:84-98`
+    at v19.2.6), and one tail's estimate is a few hundred bytes.
+- **Impact:** not a security issue. The repeated object is harmless:
+  `delete_objs_inline` puts by refcount tag, so the second put with the
+  same tag only repeats a request and logs ENOENT or changes nothing. The
+  loop has no bound, but no client reaches it: an object's estimate comes
+  from its oid, a few hundred bytes and at most a few KB, against
+  `rgw_max_chunk_size`'s 4 MiB default, so only an operator who lowers the
+  option to that scale makes an overwrite or delete of an object with
+  tails never finish.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces the repeated object, and queues an object too
+  large for an entry in an entry of its own (`enqueueGC`,
+  `internal/driver/gc_enqueue.go`; `docs/exclusions.md`, "A GC chain object
+  too large for one entry is queued alone").
+- **Upstream:** pending: sent to rgw-bug-reproduction. A prior-art search
+  found no tracker issue or fix PR. The batching came with
+  [ceph/ceph#46020](https://github.com/ceph/ceph/pull/46020).
+- **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the GC enqueue;
+  derived from the source, not reproduced.
+
+## Tentacle's delete_objs_inline puts every ref through the first object's pool, without its locator
+
+- **Kind:** defect, latent. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - v20.2.4's `RGWRados::delete_objs_inline` opens one I/O context, on the
+    pool of the chain's first object, sets full-try on it, and sends every
+    object's refcount put through it (`driver/rados/rgw_rados.cc:6162-6171`
+    and `:6178-6189` at v20.2.4). It moves each object's pool and locator
+    into the `rgw_raw_obj` it hands the throttle, but `rgw::Aio`'s
+    `librados_op` operates on `r.obj.oid` alone, through the context it was
+    given (`rgw_aio.cc:61-63` and `:100` at v20.2.4), so neither is used: an
+    object in another pool is looked for in the first one, and an object
+    with a locator under its name alone.
+  - v19.2.6 opens a context for each change of pool and sets each object's
+    locator before its put (`driver/rados/rgw_rados.cc:5437-5457` at
+    v19.2.6).
+  - The function deletes inline the chain of an overwritten or deleted
+    object whose GC enqueue failed (`:6118-6127` at v20.2.4) and multipart
+    parts, from three call sites in `driver/rados/rgw_sal_rados.cc` at
+    v20.2.4. Two clean up during multipart completion:
+    `cleanup_orphaned_parts` (`:3929-3943`, reached from
+    `RGWCompleteMultipart::execute`, `rgw_op.cc:7416`) and
+    `cleanup_part_history` (`:3976-3990`, reached from `complete` at
+    `:4421`, from `cleanup_orphaned_parts` at `:3925`, and from `abort` at
+    `:4059`). Only the third, in `abort` (`:4066-4079`), deletes an aborted
+    upload's parts.
+  - As far as this reading finds, no chain radosgw builds today reaches the
+    defect: one manifest's tails share its tail pool, which the function's
+    own comment assumes ("RGWObjManifest uses the same pool for all tail
+    objects", `driver/rados/rgw_rados.cc:6162-6163` at v20.2.4); an upload's
+    parts share its placement; and their shadow and multipart namespace
+    names carry no locator.
+- **Impact:** none observed today. A chain that spans pools or holds an
+  object with a locator would have its refs put on the wrong object or on
+  none, leaking the objects the put misses.
+- **Releases:** v20.2.4. v19.2.6 is not affected.
+- **rgw-go:** puts each object's ref through its own pool and locator, as
+  v19.2.6 does (`deleteInline`, `internal/driver/gc_enqueue.go`), which
+  sends the same requests as v20.2.4 for every chain radosgw builds
+  (`docs/exclusions.md`, "Inline tail deletes run in parallel on Squid
+  too").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 5 review, 2026-10-04, comparing the
+  inline delete with v20.2.4; derived from the source, not reproduced.
