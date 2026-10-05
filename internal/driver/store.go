@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -50,6 +52,12 @@ type Store struct {
 	usage    usageLogger
 	// newTicker makes the tickers the workers run on.
 	newTicker func(time.Duration) ticker
+	// heads is what a listing checks a pending index entry's head with: the
+	// Store itself, or a spec's fake.
+	heads HeadStater
+	// bgAIO bounds the index suggestions a listing sends in the background
+	// at rgw_bucket_index_max_aio.
+	bgAIO *semaphore.Weighted
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -114,6 +122,8 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg,
 		newTicker: newTimeTicker,
 	}
+	s.heads = s
+	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
 	s.w = newWriter(ctx, s, wopts)
 	s.AddWorker("control-watch", sys.notify.run)
 	s.AddWorker("index-completions", s.w.completions.run)
@@ -326,11 +336,6 @@ func (s *Store) CreateBucket(context.Context, op.CreateBucketParams) (*op.Bucket
 // DeleteBucket implements op.BucketStore.
 func (s *Store) DeleteBucket(context.Context, *op.BucketRecord) error {
 	return op.ErrNotImplemented
-}
-
-// ListObjects implements op.BucketStore.
-func (s *Store) ListObjects(context.Context, *op.BucketRecord, op.ListObjectsParams) (op.ListObjectsResult, error) {
-	return op.ListObjectsResult{}, op.ErrNotImplemented
 }
 
 // DeleteObject implements op.ObjectStore.

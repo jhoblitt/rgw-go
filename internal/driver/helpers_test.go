@@ -2,6 +2,7 @@ package driver_test
 
 import (
 	"maps"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,6 +12,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
 
@@ -185,4 +187,38 @@ func seedShardHeader(c *fakerados.Cluster, indexPool, oid string, hdr rgwcls.Dir
 		c.Put(indexPool, "", oid, nil)
 	}
 	c.Object(indexPool, "", oid).OmapHdr = encode(hdr)
+}
+
+// indexMtime is the mtime entry gives every index entry.
+var indexMtime = time.Date(2026, 9, 27, 1, 2, 3, 456_000_000, time.UTC)
+
+// entry is a bucket index entry for the plain object name, existing, with
+// size bytes in the Main category, owned by alice.
+func entry(name string, size uint64) rgwcls.DirEntry {
+	e := rgwcls.NewDirEntry()
+	e.Key = rgwcls.ObjKey{Name: meta.ObjKey{Name: name}.IndexKeyName()}
+	e.Exists = true
+	e.Meta = rgwcls.DirEntryMeta{
+		Category: rgwcls.CategoryMain, Size: size, AccountedSize: size, Mtime: indexMtime, ETag: "e-" + name,
+		Owner: "alice", OwnerDisplayName: "Alice", StorageClass: meta.StorageClassStandard,
+	}
+	return e
+}
+
+// shardOf is the shard of rec's current index generation that holds the
+// object name, meta.IndexShard over its shard count.
+func shardOf(rec *op.BucketRecord, name string) uint32 {
+	sh, _ := meta.IndexShard(name, rec.Info.Layout.Current.Layout.Normal.NumShards)
+	return sh
+}
+
+// seedIndexEntry stores ent, encoded at the Squid release, in the bucket
+// index shard oid of the namespace-less indexPool under its key's name, the
+// omap key of an entry without an instance, creating the shard with an empty
+// header when it does not exist.
+func seedIndexEntry(c *fakerados.Cluster, indexPool, oid string, ent rgwcls.DirEntry) {
+	if c.Object(indexPool, "", oid) == nil {
+		seedShardHeader(c, indexPool, oid, rgwcls.DirHeader{Stats: map[uint8]rgwcls.CategoryStats{}})
+	}
+	c.Object(indexPool, "", oid).Omap[ent.Key.Name] = encode(ent)
 }
