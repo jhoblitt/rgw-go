@@ -98,15 +98,34 @@ type objRef struct {
 // wraps radosclient.ErrNotFound and names it.
 func (s *Store) rawRef(ctx context.Context, rule meta.PlacementRule, obj meta.Obj) (objRef, error) {
 	pool, ok := s.dataPool(rule, obj.Bucket)
-	if !ok {
-		return objRef{}, fmt.Errorf("%w: no data pool for placement %q of bucket %s", op.ErrUnknown, rule, obj.Bucket.Name)
+	return s.openRef(ctx, resolvedPool{pool: pool, ok: ok, kind: "data pool", rule: rule}, obj, op.ScopeObject)
+}
+
+// resolvedPool is a placement's answer for one object: the pool, whether any
+// placement resolved it, and, for errors, which pool of which rule it is.
+type resolvedPool struct {
+	pool meta.Pool
+	ok   bool
+	kind string
+	rule meta.PlacementRule
+}
+
+// openRef is the part of rgw_obj_to_raw and rgw_get_rados_ref that follows
+// the pool's resolution: no pool is the head-object helpers' -EIO,
+// UnknownError; a pool without a name is librados's EINVAL,
+// InvalidArgument; a failed open is op.FromRADOS under scope. The name and
+// locator are get_obj_bucket_and_oid_loc's, and the handle carries the
+// locator.
+func (s *Store) openRef(ctx context.Context, p resolvedPool, obj meta.Obj, scope op.Scope) (objRef, error) {
+	if !p.ok {
+		return objRef{}, fmt.Errorf("%w: no %s for placement %q of bucket %s", op.ErrUnknown, p.kind, p.rule, obj.Bucket.Name)
 	}
-	if pool.Name == "" {
-		return objRef{}, fmt.Errorf("%w: the data pool for placement %q of bucket %s has no name", op.ErrInvalidArgument, rule, obj.Bucket.Name)
+	if p.pool.Name == "" {
+		return objRef{}, fmt.Errorf("%w: the %s for placement %q of bucket %s has no name", op.ErrInvalidArgument, p.kind, p.rule, obj.Bucket.Name)
 	}
-	h, err := s.pools.get(ctx, pool)
+	h, err := s.pools.get(ctx, p.pool)
 	if err != nil {
-		return objRef{}, op.FromRADOS(err, op.ScopeObject)
+		return objRef{}, op.FromRADOS(err, scope)
 	}
 	stripe := meta.Stripe{Obj: obj}
 	ref := objRef{pool: h, oid: stripe.OID(), loc: stripe.Locator()}

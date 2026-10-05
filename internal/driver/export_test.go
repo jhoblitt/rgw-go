@@ -9,6 +9,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -327,3 +328,73 @@ func (s *Store) FlushUsageForTest(ctx context.Context) error { return s.flushUsa
 
 // RunUsageFlushForTest is runUsageFlush for the external specs.
 func (s *Store) RunUsageFlushForTest(ctx context.Context) error { return s.runUsageFlush(ctx) }
+
+// SetHashNameForTest sets x's index hash source.
+func (x *IndexOp) SetHashNameForTest(name string) { x.hashName = name }
+
+// SetRemoveObjsForTest sets the entries x's completion or cancel retires.
+func (x *IndexOp) SetRemoveObjsForTest(keys []rgw.ObjKey) { x.removeObjs = keys }
+
+// HeadWriteForTest is the headWrite fields the specs set.
+type HeadWriteForTest struct {
+	Key                  meta.ObjKey
+	Tag                  string
+	IfMatch, IfNoneMatch string
+	Data                 []byte
+	Attrs                map[string][]byte
+	Create, NonAtomic    bool
+	Pool                 radosclient.Pool
+	OID, Loc             string
+	Category             uint8
+	CompleteMultipart    bool
+	Size, AccountedSize  uint64
+}
+
+// WriteMetaForTest is writeMeta of hw in rec's bucket through x; it returns
+// the head's epoch.
+func (s *Store) WriteMetaForTest(ctx context.Context, rec *op.BucketRecord, hw HeadWriteForTest, x *IndexOp) (uint64, error) {
+	res, err := s.writeMeta(ctx, &headWrite{
+		rec: rec, key: hw.Key, tag: hw.Tag, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch, data: hw.Data, attrs: hw.Attrs, create: hw.Create,
+		nonAtomic: hw.NonAtomic, pool: hw.Pool, oid: hw.OID, loc: hw.Loc, category: hw.Category,
+		completeMultipart: hw.CompleteMultipart, size: hw.Size, accountedSize: hw.AccountedSize,
+	}, x)
+	return res.epoch, err
+}
+
+// MetaRef is mpRef with its fields exported for the specs.
+type MetaRef struct {
+	Pool     radosclient.Pool
+	OID, Loc string
+	Key      meta.ObjKey
+}
+
+func exportRef(r mpRef) MetaRef { return MetaRef{Pool: r.pool, OID: r.oid, Loc: r.loc, Key: r.key} }
+
+// MetaRefForTest is metaRef for the external specs.
+func (s *Store) MetaRefForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string) (MetaRef, error) {
+	r, err := s.metaRef(ctx, rec, key, uploadID)
+	return exportRef(r), err
+}
+
+// MetaState is metaState with its fields exported for the specs.
+type MetaState struct {
+	Ref     MetaRef
+	Size    uint64
+	Mtime   time.Time
+	Attrs   map[string][]byte
+	Version version.ObjVersion
+	Info    meta.MultipartUploadInfo
+}
+
+// ReadMetaForTest is readMeta of upload uploadID of key in rec's bucket.
+func (s *Store) ReadMetaForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string) (*MetaState, error) {
+	r, err := s.metaRef(ctx, rec, key, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	st, err := s.readMeta(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	return &MetaState{Ref: exportRef(st.ref), Size: st.size, Mtime: st.mtime, Attrs: st.attrs, Version: st.version, Info: st.info}, nil
+}

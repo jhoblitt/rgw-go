@@ -350,14 +350,6 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
-			Entry("CreateUpload", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.CreateUpload(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, op.UploadParams{})
-				return err
-			}),
-			Entry("GetUpload", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetUpload(ctx, &op.BucketRecord{}, meta.ObjKey{Name: "k"}, "2~upload")
-				return err
-			}),
 			Entry("PutPart", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.PutPart(ctx, &op.Upload{ID: "2~upload"}, 1, strings.NewReader("v"), op.PutParams{Size: 1})
 				return err
