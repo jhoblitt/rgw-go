@@ -1819,6 +1819,23 @@ rgw-go does the following.
   policy does not parse (`rgw_op.cc:598-615` at v19.2.6, `:628-645` at
   v20.2.4). radosgw writes the attr cleanly; only corruption or another
   writer leaves one that does not decode.
+- **A bucket policy that does not parse refuses the request rather than
+  stopping radosgw.** radosgw parses a copy source's stored policy with no
+  handler, and its process terminates when the policy does not parse. It
+  does the same for an object request by a user whom its handler for the
+  request's own bucket lets through, a system user and on v20.2.4 an admin
+  user (`docs/ceph-upstream-bugs.md`, "radosgw terminates on a copy source
+  or system request whose bucket policy does not parse"). rgw-go refuses a
+  copy whose source bucket's policy does not parse with 403 AccessDenied,
+  for every requester and ahead of the op mask. For the request's own
+  bucket it refuses such a policy with 403 unless the requester is an
+  admin, whose request, an object request included, is evaluated without
+  the policy, as radosgw evaluates an admin's bucket request. DeleteObjects
+  checks each key as it checks a copy source, so an admin's DeleteObjects
+  on such a bucket is refused for every key, where radosgw evaluates the
+  keys without the policy for a system user, and on v20.2.4 for an admin
+  user too; v19.2.6 refuses a non-system admin's whole request in
+  `init_permissions` (`rgw_op.cc:612` at v19.2.6).
 
 ### Bucket metadata differences
 

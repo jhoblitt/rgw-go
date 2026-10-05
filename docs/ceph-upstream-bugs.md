@@ -1021,12 +1021,16 @@ Every new entry adds its row to this table, in document order.
     `rgw_build_object_policies` calls `read_obj_policy` on the same bucket
     (`rgw_op.cc:8003-8009`, `:646-648`; v20.2.4 `:8921-8927`, `:676-678`),
     and that parses the policy again with no handler (`:419`; v20.2.4
-    `:449`).
+    `:449`). At v20.2.4 the handler exempts every request for which
+    `is_admin()` holds, an admin user's as well as a system user's
+    (`rgw_auth.cc:1068-1071`), so an admin user's object request takes the
+    same path there.
   - CopyObject's `verify_permission` parses the destination bucket's policy
     once more, also with no handler (v19.2.6 `rgw_op.cc:5475`; v20.2.4
     `:6041`; main `:6394` at 7ed73efc1be). `init_permissions` has already
     refused any other request whose own bucket policy does not parse, so
-    only a system request reaches this parse with such a policy.
+    only a system request, and at v20.2.4 an admin user's, reaches this
+    parse with such a policy.
   - The same code is on main (`rgw_op.cc:524`, `rgw_process.cc:461`,
     `rgw_asio_frontend.cc:1204` and `:1221`, 7ed73efc1be, 2026-09-25).
 - **Trigger:** a CopyObject or UploadPartCopy that names such a source and
@@ -1034,7 +1038,8 @@ Every new entry adds its row to this table, in document order.
   checks, so the requester needs no grant on either bucket; for a source
   whose policy names its own tenant, any such request whose destination
   bucket is in another tenant ends the process. Also an object request by
-  a system user on a bucket whose own stored policy does not parse.
+  a system user, or at v20.2.4 by an admin user, on a bucket whose own
+  stored policy does not parse.
 - **Releases:** every release checked, v19.2.6, v20.2.4 and main; the
   cross-tenant case from v19.2.0 and v20.1.0.
 - **rgw-go:** phase 1 (unit Z) refuses a copy whose source bucket policy does
@@ -1042,7 +1047,10 @@ Every new entry adds its row to this table, in document order.
   and parses the source's policy with the source's own tenant, so a policy
   that parses for its own bucket parses for a copy too. For the request's
   own bucket it refuses such a policy with 403 unless the requester is an
-  admin, and does not parse it again. That is a difference from radosgw,
+  admin, whose request is then evaluated without the policy, an object
+  request included. DeleteObjects checks each key as it checks a copy
+  source and parses the policy again, so an admin's DeleteObjects on such a
+  bucket is refused for every key. That is a difference from radosgw,
   which unit Z records in `docs/exclusions.md`.
 - **Upstream:** we filed [#81253](https://tracker.ceph.com/issues/81253).
   The fix in review is
