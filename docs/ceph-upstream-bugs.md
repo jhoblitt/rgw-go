@@ -2680,7 +2680,11 @@ Every new entry adds its row to this table, in document order.
   `rgw_log.cc:116`, `rgw_quota.cc:137-138`, `:392-399`, `:447` and `:663`,
   and still no `min:`); older releases not checked.
 - **rgw-go:** reads each option once at startup, keeping a negative value
-  (`internal/driver/options.go`); nothing in rgw-go consumes them yet.
+  (`internal/driver/options.go`). Its usage log flushes every second when
+  `rgw_usage_log_tick_interval` is not positive, logging an error
+  (`internal/driver/usage.go`; `docs/exclusions.md`, "A usage-log tick
+  interval that is not positive"); nothing in rgw-go consumes the other four
+  yet.
 - **Upstream:** [#81226](https://tracker.ceph.com/issues/81226), which we
   filed. Its fix, [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261),
   a draft, adds `min: 1` to all five options.

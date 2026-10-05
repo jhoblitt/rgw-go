@@ -1208,6 +1208,22 @@ crypto/tls and net/url ones go1.27.1's.
   requests in flight first only when `rgw_graceful_stop` is set, and it
   defaults to false (`:1139-1171` at v20.2.4). rgw-go reads neither
   `rgw_graceful_stop` nor `rgw_exit_timeout_secs`.
+- **Usage logged at shutdown.** With `rgw_enable_usage_log` set, rgw-go's
+  usage-log worker makes its last flush as soon as shutdown begins, while
+  the frontend is still draining. Until the shutdown order is fixed, so that
+  the drain ends before the driver's workers stop, the usage of requests
+  that finish during the drain is lost, unless they push the log past
+  `rgw_usage_log_flush_threshold`. Tentacle's radosgw with
+  `rgw_graceful_stop` set waits for the requests in flight before it
+  finalizes its usage logger (`AsioFrontend::stop`,
+  `rgw_asio_frontend.cc:1139-1171`; `rgw_appmain.cc:624` and `:628` at
+  v20.2.4), so it logs them. Without it, and at v19.2.6
+  (`rgw_appmain.cc:589` and `:593`), radosgw closes the connections first,
+  and a request that reaches `log_usage` after the finalize finds no usage
+  logger and is not logged (`rgw_log.cc:189-201`). rgw-go's last flush also
+  gives up 10 s after shutdown begins, as does a tick flush still writing
+  then, and their entries are lost; radosgw's `~UsageLogger` waits for its
+  flush without bound (`rgw_log.cc:128-133`).
 - **Ports and endpoints parse strictly.** rgw-go refuses port 0 and a
   port with anything but digits. radosgw reads a port with `strtoul` and
   refuses it only above 65535 or when `strtoul` reads no digits at all
@@ -1340,7 +1356,12 @@ does the following.
   flag, and radosgw reads several where it uses them, so there the change
   takes effect at the next use: the usage-log shard counts each time it names
   a usage object (`usage_log_hash`, `driver/rados/rgw_rados.cc:1615-1628` at
-  v19.2.6, `:1718-1731` at v20.2.4) and
+  v19.2.6, `:1718-1731` at v20.2.4); `rgw_enable_usage_log` at each request
+  (`RGWConf::init`, `rgw_env.cc:150` at both tags, which each request's
+  `ClientIO::init_env` calls, `rgw_asio_client.cc:29`);
+  `rgw_usage_log_flush_threshold` each time the usage log takes an entry and
+  `rgw_usage_log_tick_interval` each time it re-arms its flush timer
+  (`rgw_log.cc:151` and `:116` at both tags); and
   `rgw_override_bucket_index_max_shards` at each bucket creation
   (`init_default_bucket_layout`, `driver/rados/rgw_bucket.cc:2790-2796` at
   v19.2.6, `:2908-2910` at v20.2.4).
@@ -1429,6 +1450,17 @@ does the following.
   cached, and a multiple of 2^55 s turns expiry off
   (`docs/ceph-upstream-bugs.md`, "[radosgw wraps an rgw_cache_expiry_interval
   above 18446744073 seconds](ceph-upstream-bugs.md#radosgw-wraps-an-rgw_cache_expiry_interval-above-18446744073-seconds)").
+- **A usage-log tick interval that is not positive.** With
+  `rgw_enable_usage_log` set and `rgw_usage_log_tick_interval` 0 or
+  negative, rgw-go flushes its usage log every second and logs an error
+  naming the option and the value it read. Ceph's config sets no minimum on
+  the option (`common/options/rgw.yaml.in:1651-1665` at v19.2.6,
+  `:1734-1748` at v20.2.4). radosgw re-arms its flush timer that many
+  seconds after each flush (`rgw_log.cc:109-117` at both tags), so it
+  flushes without pause, spinning between requests
+  (`docs/ceph-upstream-bugs.md`, "[radosgw spins or stops caching on a
+  negative usage-log or quota interval](ceph-upstream-bugs.md#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval)").
+  Its usage entries reach the usage log at once; rgw-go's within a second.
 - **The read window counts buffers and holds them until written.** rgw-go
   keeps a GET's reads within `rgw_get_obj_window_size`, but a piece's share
   of the window is the buffer it reads into, a pooled

@@ -15,12 +15,13 @@ import (
 )
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4728,
-// :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5147, :5162 and :5171
-// at v20.2.4), which RegisterClass takes with RGWClass.
+// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4722,
+// :4728, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123, :5141, :5147,
+// :5162 and :5171 at v20.2.4), which RegisterClass takes with RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
+	"user_usage_log_add",
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
@@ -31,12 +32,13 @@ var RGWWriteMethods = []string{
 // guard_bucket_resharding, get_bucket_resharding and
 // set_bucket_resharding, with which a spec stages a reshard;
 // mp_upload_part_info_update on a multipart meta object; obj_remove and
-// obj_store_pg_ver on a head object; and on a gc shard the omap-era
-// enqueue, gc_set_entry. Every other method, and a bucket_list asking for
-// entries, is EOPNOTSUPP. It reads the header and entries from the stored
-// object, as cls_cxx_map_read_header and cls_cxx_map_get_val do, and encodes
-// what it stores and replies at the Squid release, whose
-// rgw_bucket_dir_header lacks only Tentacle's reshard log count.
+// obj_store_pg_ver on a head object; on a gc shard the omap-era enqueue,
+// gc_set_entry; and user_usage_log_add on a usage log object. Every other
+// method, and a bucket_list asking for entries, is EOPNOTSUPP. It reads the
+// header and entries from the stored object, as cls_cxx_map_read_header and
+// cls_cxx_map_get_val do, and encodes what it stores and replies at the
+// Squid release, whose rgw_bucket_dir_header lacks only Tentacle's reshard
+// log count.
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
@@ -68,6 +70,8 @@ func RGWClass() ClassFunc {
 			return nil, rgwObjStorePGVer(call)
 		case "gc_set_entry":
 			return nil, rgwGCSetEntry(call)
+		case "user_usage_log_add":
+			return nil, rgwUserUsageLogAdd(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
@@ -547,4 +551,126 @@ func manifestEmpty(m meta.Manifest) bool {
 		return len(m.Objs) == 0
 	}
 	return len(m.Rules) == 0
+}
+
+// rgwUserUsageLogAdd is rgw_user_usage_log_add (cls_rgw.cc:3563-3618 at
+// v19.2.6, :3965-4020 at v20.2.4). A request or a stored record that does
+// not decode is EINVAL. Each entry is filed under its payer, or its owner
+// when it has none, merged into the record already stored for its hour,
+// that user and its bucket, and stored under both the by-time and the
+// by-user key, creating the object. The stored record is read from the
+// store, so of two entries of one request with the same key the second
+// overwrites the first; radosgw never sends two.
+func rgwUserUsageLogAdd(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeUsageAddOp)
+	if rval < 0 {
+		return rval
+	}
+	for _, en := range op.Info.Entries {
+		payerKeyed := !usageUserEmpty(en.Payer)
+		byTime := usageKeyByTime(en.Epoch, usageRecordUser(en), en.Bucket)
+		if call.Stored != nil {
+			if b, ok := call.Stored.Omap[byTime]; ok {
+				stored, rval := decodeRequest(b, rgwcls.DecodeUsageLogEntry)
+				if rval < 0 {
+					return rval
+				}
+				en = aggregateUsage(en, stored)
+			}
+		}
+		// The class keeps a pointer to the entry's payer or owner, so the
+		// by-user key takes that field as the merge left it.
+		user := en.Owner
+		if payerKeyed {
+			user = en.Payer
+		}
+		rec := encodeSquid(en)
+		omap := call.Create().Omap
+		omap[byTime] = rec
+		omap[usageKeyByUser(user, en.Epoch, en.Bucket)] = slices.Clone(rec)
+	}
+	return 0
+}
+
+// usageUserEmpty is rgw_user::empty of a user's string form: its id is
+// empty.
+func usageUserEmpty(s string) bool { return meta.ParseUserID(s).ID == "" }
+
+// usageRecordUser is the user cls_rgw files en under: its payer, or its
+// owner when it has no payer.
+func usageRecordUser(en rgwcls.UsageLogEntry) string {
+	if usageUserEmpty(en.Payer) {
+		return en.Owner
+	}
+	return en.Payer
+}
+
+// usageKeyByTime is usage_record_name_by_time (cls_rgw.cc:3536-3541 at
+// v19.2.6, :3938-3943 at v20.2.4).
+func usageKeyByTime(epoch uint64, user, bucket string) string {
+	return fmt.Sprintf("%011d_%s_%s", epoch, user, bucket)
+}
+
+// usageKeyByUser is usage_record_name_by_user (cls_rgw.cc:3543-3548 at
+// v19.2.6, :3945-3950 at v20.2.4).
+func usageKeyByUser(user string, epoch uint64, bucket string) string {
+	return fmt.Sprintf("%s_%011d_%s", user, epoch, bucket)
+}
+
+// aggregateUsage is rgw_usage_log_entry::aggregate (cls_rgw_types.h:1005-1023
+// at v19.2.6, :1044-1062 at v20.2.4) of e into en: en takes e's owner,
+// payer, bucket and epoch only when its own owner is empty, and every
+// category of e is added to en's category and to its total.
+func aggregateUsage(en, e rgwcls.UsageLogEntry) rgwcls.UsageLogEntry {
+	if usageUserEmpty(en.Owner) {
+		en.Owner, en.Payer, en.Bucket, en.Epoch = e.Owner, e.Payer, e.Bucket, e.Epoch
+	}
+	sums := maps.Clone(en.UsageMap)
+	if sums == nil {
+		sums = map[string]rgwcls.UsageData{}
+	}
+	for cat, d := range e.UsageMap {
+		sums[cat] = addUsageData(sums[cat], d)
+		en.TotalUsage = addUsageData(en.TotalUsage, d)
+	}
+	en.UsageMap = sums
+	en.S3SelectUsage.BytesProcessed += e.S3SelectUsage.BytesProcessed
+	en.S3SelectUsage.BytesReturned += e.S3SelectUsage.BytesReturned
+	return en
+}
+
+// addUsageData is rgw_usage_data::aggregate.
+func addUsageData(a, b rgwcls.UsageData) rgwcls.UsageData {
+	return rgwcls.UsageData{
+		BytesSent:     a.BytesSent + b.BytesSent,
+		BytesReceived: a.BytesReceived + b.BytesReceived,
+		Ops:           a.Ops + b.Ops,
+		SuccessfulOps: a.SuccessfulOps + b.SuccessfulOps,
+	}
+}
+
+// UsageEntries decodes the usage records the stored object keeps, each once,
+// in the order of their by-time keys: by hour, then user, then bucket. It is
+// nil when the object does not exist. A record that does not decode panics,
+// failing the spec.
+func (c *Cluster) UsageEntries(pool, ns, oid string) []rgwcls.UsageLogEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	obj := c.store(pool, ns).objects[oid]
+	if obj == nil {
+		return nil
+	}
+	var out []rgwcls.UsageLogEntry
+	for _, key := range slices.Sorted(maps.Keys(obj.Omap)) {
+		d := denc.NewDecoder(obj.Omap[key])
+		en := rgwcls.DecodeUsageLogEntry(d)
+		if err := d.Err(); err != nil {
+			panic(fmt.Sprintf("fakerados: usage record %q of %s/%s/%s does not decode: %v", key, pool, ns, oid, err))
+		}
+		// Every record is also stored under its by-user key.
+		if key == usageKeyByTime(en.Epoch, usageRecordUser(en), en.Bucket) {
+			out = append(out, en)
+		}
+	}
+	return out
 }

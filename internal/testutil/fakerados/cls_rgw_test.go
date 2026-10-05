@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
+	"slices"
 	"syscall"
 	"time"
 
@@ -79,8 +81,9 @@ var _ = Describe("RGWClass's index transaction", func() {
 
 	It("names the emulated methods the class registers as writes", func() {
 		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry"),
-			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4705-4706, :4728, :4743 and :4752-4753 at v19.2.6")
+			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry",
+			"user_usage_log_add"),
+			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4705-4706, :4722, :4728, :4743 and :4752-4753 at v19.2.6")
 	})
 
 	It("reads the reshard status without the WR flag: a read op calling it on a missing shard is ENOENT", func(ctx SpecContext) {
@@ -485,5 +488,65 @@ var _ = Describe("RGWClass on a gc shard", func() {
 		obj = c.Object(logPool, "gc", "gc.3")
 		Expect(obj.Omap).To(HaveLen(2), "the old time key goes, cls_rgw.cc:3900-3909")
 		Expect(obj.Omap).To(HaveKey(fmt.Sprintf("1_%011d.%09d", now.Add(time.Minute).Unix(), 5)))
+	})
+})
+
+var _ = Describe("RGWClass's user_usage_log_add", func() {
+	const (
+		logPool = "zone.rgw.log"
+		usageNS = "usage"
+		oid     = "usage.3"
+		epoch   = 1790596800
+	)
+	var (
+		c *fakerados.Cluster
+		p radosclient.Pool
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = fakerados.New()
+		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		var err error
+		p, err = c.Pool(ctx, logPool, usageNS)
+		Expect(err).NotTo(HaveOccurred())
+	})
+	add := func(ctx context.Context, entries ...rgwcls.UsageLogEntry) error {
+		return writeErr(ctx, p, oid, func(op *radosclient.WriteOp) {
+			rgwcls.UsageLogAdd(op, rgwcls.UsageLogInfo{Entries: entries}, denc.Squid)
+		})
+	}
+	entry := func(owner, payer, cat string, ops uint64) rgwcls.UsageLogEntry {
+		d := rgwcls.UsageData{Ops: ops, SuccessfulOps: ops}
+		return rgwcls.UsageLogEntry{
+			Owner: owner, Payer: payer, Bucket: "b", Epoch: epoch, TotalUsage: d,
+			UsageMap: map[string]rgwcls.UsageData{cat: d},
+		}
+	}
+
+	It("stores each entry under its by-time and by-user keys, filed under its payer when it has one", func(ctx SpecContext) {
+		own, paid := entry("alice", "", "get_obj", 1), entry("alice", "carol", "get_obj", 1)
+		Expect(add(ctx, own, paid)).To(Succeed())
+		Expect(slices.Sorted(maps.Keys(c.Object(logPool, usageNS, oid).Omap))).To(Equal([]string{
+			"01790596800_alice_b", "01790596800_carol_b", "alice_01790596800_b", "carol_01790596800_b",
+		}), "usage_record_name_by_time and usage_record_name_by_user")
+		Expect(c.UsageEntries(logPool, usageNS, oid)).To(Equal([]rgwcls.UsageLogEntry{own, paid}))
+	})
+
+	It("adds an entry's counters to the record its key already holds", func(ctx SpecContext) {
+		Expect(add(ctx, entry("alice", "", "get_obj", 1))).To(Succeed())
+		Expect(add(ctx, entry("alice", "", "put_obj", 2))).To(Succeed())
+		Expect(c.UsageEntries(logPool, usageNS, oid)).To(ConsistOf(rgwcls.UsageLogEntry{
+			Owner: "alice", Bucket: "b", Epoch: epoch,
+			TotalUsage: rgwcls.UsageData{Ops: 3, SuccessfulOps: 3},
+			UsageMap: map[string]rgwcls.UsageData{
+				"get_obj": {Ops: 1, SuccessfulOps: 1},
+				"put_obj": {Ops: 2, SuccessfulOps: 2},
+			},
+		}))
+	})
+
+	It("refuses a request that does not decode with EINVAL", func(ctx SpecContext) {
+		err := writeErr(ctx, p, oid, func(op *radosclient.WriteOp) { op.Exec("rgw", "user_usage_log_add", []byte{1}) })
+		Expect(err).To(haveErrno(syscall.EINVAL))
+		Expect(c.Object(logPool, usageNS, oid)).To(BeNil())
 	})
 })
