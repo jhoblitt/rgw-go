@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -341,14 +340,6 @@ var _ = Describe("the driver", func() {
 				return err
 			}),
 
-			Entry("PutPart", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.PutPart(ctx, &op.Upload{ID: "2~upload"}, 1, strings.NewReader("v"), op.PutParams{Size: 1})
-				return err
-			}),
-			Entry("CopyPart", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.CopyPart(ctx, &op.Upload{ID: "2~upload"}, 1, &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true, Size: 1}, op.ByteRange{Length: 1})
-				return err
-			}),
 			Entry("ListParts", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.ListParts(ctx, &op.Upload{ID: "2~upload"}, 0, 1000)
 				return err

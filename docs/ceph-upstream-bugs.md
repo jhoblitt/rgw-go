@@ -158,6 +158,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | pending | pending |  |
 | [Tentacle's DeleteObject removes the head without checking its write tag](#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
 | [radosgw evaluates a tag-conditioned policy without the tags it fails to read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read) | pending | pending |  |
+| [A failed UploadPart shrinks radosgw's quota cache](#a-failed-uploadpart-shrinks-radosgws-quota-cache) | pending | pending |  |
+| [Tentacle fails an UploadPart that sends If-None-Match: * for a part in the bucket placement's pool](#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool) | pending | pending |  |
+| [radosgw's UploadPartCopy can assemble a part from two versions of its source](#radosgws-uploadpartcopy-can-assemble-a-part-from-two-versions-of-its-source) | pending | pending |  |
+| [radosgw registers a part whose head write lost a race and then removes its data](#radosgw-registers-a-part-whose-head-write-lost-a-race-and-then-removes-its-data) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6647,3 +6651,180 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit Z, Task 10 review, 2026-10-05; derived from the
   source, not reproduced.
+
+## A failed UploadPart shrinks radosgw's quota cache
+
+- **Kind:** defect: quota-cache integrity, low. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - A part's first stripe is created by `RadosWriter::write_exclusive`,
+    which adds the part head to the writer's `written` set
+    (`driver/rados/rgw_putobj_processor.cc:161-177`, `:189-205`). The head
+    is counted in the quota cache only later, by the part head's
+    `write_meta` in `MultipartObjectProcessor::complete`, through
+    `update_stats(owner, bucket, 1, accounted_size, 0)`
+    (`driver/rados/rgw_rados.cc:3364-3366`, `:3517-3519`).
+  - `RGWPutObj::execute` returns before `complete` when the body ends
+    short, the second quota check fails, the Content-MD5 does not match,
+    the aws-chunked or SigV4 payload check fails, or the body passes
+    `rgw_max_put_size` (`rgw_op.cc:4430-4486`, `:4662-4718`). The
+    processor's `~RadosWriter` then removes what it wrote, and for a part
+    head in the pool the bucket's placement rule names it calls
+    `RGWRados::delete_obj` (`driver/rados/rgw_putobj_processor.cc:184-229`,
+    `:212-257`; the call at `:224`, `:252`).
+  - `delete_obj`'s unversioned path reads the head's state, whose
+    `accounted_size` is the head's own size (`driver/rados/rgw_rados.cc:6173`,
+    `:6927`), removes it through the index and ends with
+    `update_stats(bucket_owner, bucket, -1, 0, obj_accounted_size)`
+    (`:5984`, `:6738`). `RGWQuotaHandler::update_stats` applies that to
+    both the bucket's and the owner's cached stats, clamping at zero
+    (`rgw_quota.cc:957-960`, `:978-981`; `RGWQuotaStatsUpdate`,
+    `:175-212` at both tags).
+  - Nothing added the head, so each such request subtracts one object and
+    up to one stripe, `rgw_obj_stripe_size` (4 MiB by default), that the
+    cache never held.
+- **Impact:** the trigger is any client allowed to UploadPart into the
+  bucket, with a part of any size: the end of the body flushes the part's
+  first stripe through `write_exclusive` (`rgw_op.cc:4425`, `:4656`), and a
+  Content-MD5 the client chose to mismatch then fails the request with
+  BadDigest before `processor->complete` (`:4483-4486`, `:4715-4718`), so
+  even a 1-byte part lowers the cached object count of the bucket and of
+  its owner by one. Four things limit it:
+  - the cache clamps each value at zero (`RGWQuotaStatsUpdate::update`,
+    `rgw_quota.cc:192-208` at both tags);
+  - only the cache moves: the index's own stats, which the cache is
+    fetched from again, are untouched, as cls_rgw unaccounts only an entry
+    that exists (`unaccount_entry`, `cls/rgw/cls_rgw.cc:887-898`,
+    `:1017-1028`), and the part head never had one;
+  - one attempt moves the cached size by at most one stripe,
+    `rgw_obj_stripe_size` (4 MiB by default);
+  - the cache heals itself: a lookup at least `rgw_bucket_quota_ttl`/2
+    (300 s by default) after the entry was fetched starts a refresh from the
+    index, and the entry expires at `rgw_bucket_quota_ttl`
+    (`rgw_quota.cc:132-155` at both tags).
+
+  Within that window the quota checks see less usage than there is, so a
+  bucket or user near its quota can take more than the quota allows. Each
+  gateway caches on its own.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. It removes the part head through the
+  index as radosgw does, but subtracts it from the quota cache only when
+  the head's write_meta had added the part (`removePartHead`,
+  `internal/driver/mp_part.go`; `docs/exclusions.md`, "A failed part
+  upload does not shrink the quota cache").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 4, 2026-10-05, transcribing
+  `~RadosWriter`'s removal of a part head; derived from the source, not
+  reproduced.
+
+## Tentacle fails an UploadPart that sends If-None-Match: * for a part in the bucket placement's pool
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/` at v20.2.4.
+  - `RGWPutObj_ObjStore_S3::get_params` takes If-Match and If-None-Match
+    for every PUT, UploadPart included (`rgw_rest_s3.cc:2783-2784`), and
+    `RGWPutObj::execute` hands them to the part's processor
+    (`rgw_op.cc:4836-4838`).
+  - v20.2.4's `MultipartObjectProcessor::complete` sets them on the part
+    head's `write_meta` (`driver/rados/rgw_putobj_processor.cc:563-564`);
+    v19.2.6's sets neither (`:491-531` at v19.2.6).
+  - With a condition set, `write_meta` skips the assume-no-entry pass and
+    reads the part head's state (`driver/rados/rgw_rados.cc:3583-3592`),
+    from the pool the bucket's placement rule names
+    (`get_obj_state_impl`, `:6899`). There the request's own exclusive
+    create has already put the part head (`RadosWriter::write_exclusive`,
+    `driver/rados/rgw_putobj_processor.cc:189-205`).
+  - `check_preconditions` then fails If-None-Match: * on that head with
+    412 PreconditionFailed, and If-Match naming an ETag too, since a part
+    head has no ETag until this write sets it (`driver/rados/rgw_rados.cc:3294`,
+    `:7286-7322`). `~RadosWriter` removes the part.
+  - For a part whose storage class lives in another pool the state read
+    finds nothing, so If-None-Match: * passes, while If-Match, `*` or an
+    ETag, fails with 404 NoSuchKey: `check_preconditions` answers ENOENT
+    for a missing object (`driver/rados/rgw_rados.cc:7287-7305`).
+- **Impact:** on Tentacle, an UploadPart of a part in the bucket placement's
+  pool that sends If-None-Match: * or If-Match with an ETag always fails,
+  after the part's body has been received and written, and a part of a
+  storage class in another pool fails on any If-Match instead; on Squid
+  every such request succeeds. The outcome depends on the upload's storage
+  class, not on any state the client can see.
+- **Releases:** v20.2.4; v19.2.6 ignores the conditions.
+- **rgw-go:** does not reproduce it: a part write takes no conditions on
+  either release (`PutPart`, `internal/driver/mp_part.go`;
+  `docs/exclusions.md`, "UploadPart ignores If-Match and If-None-Match").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 4, 2026-10-05, comparing
+  `MultipartObjectProcessor::complete` at the two tags; derived from the
+  source, not reproduced.
+
+## radosgw's UploadPartCopy can assemble a part from two versions of its source
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWPutObj::execute` copies a part's source range in pieces of
+    `rgw_max_chunk_size`, calling `get_data(fst, cur_lst, data)` for each
+    (`rgw_op.cc:4394`, `:4626`).
+  - Each call builds a new source object, whose `RadosObject` has an
+    `RGWObjectCtx` of its own (`driver/rados/rgw_sal_rados.h:536-544`,
+    `:543-551`), and runs `read_op->prepare` on it, reading the source's
+    head and manifest again, before it iterates the piece
+    (`rgw_op.cc:4018-4085`, `:4227-4294`; the prepare at `:4039`, `:4248`).
+  - Only the source's first state, read before the loop, set the range;
+    nothing compares a later piece's state with it.
+- **Impact:** a source object overwritten while a part copies from it
+  yields a part whose leading pieces come from the old object and the rest
+  from the new one: data that was never any version of the source, under
+  an ETag computed over it. A shorter new version that is not empty fails
+  the copy with 416 InvalidRange once a piece starts past its end, after the
+  leading pieces were written: each piece's `range_to_ofs` refuses an offset
+  at or past the object's size with ERANGE (`rgw_op.cc:4072`, `:4281`;
+  `rgw_sal.cc:429-449`, `:426-446`). An emptied source skips that check,
+  reads nothing and ends the copy, and the part is stored short without an
+  error, since a copy's expected length grows with what each piece read
+  (`rgw_op.cc:4398`, `:4630`).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. `CopyPart` reads the whole range from
+  the one state the op read, through the read path, whose head reads that
+  state's write tag guards, so the part holds that version or the copy
+  fails (`internal/driver/mp_part.go`;
+  `docs/exclusions.md`, "UploadPartCopy reads one version of its source").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 4, 2026-10-05, transcribing
+  UploadPartCopy's read of its source; derived from the source, not
+  reproduced.
+
+## radosgw registers a part whose head write lost a race and then removes its data
+
+- **Kind:** defect, latent. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `_do_write_meta` answers a head write that fails with ECANCELED,
+    ENOENT or EEXIST, without conditions, as a lost race: it cancels the
+    index entry, sets `meta.canceled` and returns 0
+    (`driver/rados/rgw_rados.cc:3369-3391`, `:3522-3544`).
+  - `MultipartObjectProcessor::complete` goes on after that 0: it
+    registers the part on the meta object with
+    `cls_rgw_mp_upload_part_info_update`, and only then, finding the write
+    canceled, skips `writer.clear_written()`
+    (`driver/rados/rgw_putobj_processor.cc:530-606`, `:566-645`), so
+    `~RadosWriter` removes the part head and its stripes (`:184-229`,
+    `:212-257`).
+  - The upload then holds a part record whose objects are gone, and a
+    completion that lists the part writes an object whose manifest names
+    them.
+- **Impact:** none known in practice. The part head write is never set
+  atomic and carries no create and no conditions, so it has no guard that
+  ECANCELED or EEXIST would come from, and its setxattr and class call
+  create the object rather than fail with ENOENT. The path needs an OSD
+  reply no known failure gives.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: a canceled part head write removes
+  the part's objects and fails the UploadPart without registering it
+  (`registerPart`, `internal/driver/mp_part.go`; `docs/exclusions.md`, "A
+  part whose head write lost a race is not registered").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 4, 2026-10-05, transcribing
+  `MultipartObjectProcessor::complete`; derived from the source, not
+  reproduced.

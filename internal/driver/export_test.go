@@ -452,3 +452,54 @@ func (s *Store) RunAccountSyncForTest(ctx context.Context) error {
 func (s *Store) SyncAllStatsForTest(ctx context.Context, owner meta.Owner) error {
 	return s.syncAllStats(ctx, owner)
 }
+
+// PartWriter is a part's tailWriter for the external specs.
+type PartWriter struct{ tw *tailWriter }
+
+// NewPartWriterForTest is newPartWriter for part n of m over l.
+func (s *Store) NewPartWriterForTest(m *meta.Manifest, l Layout, n uint32) *PartWriter {
+	return &PartWriter{tw: s.newPartWriter(m, layout{
+		headPool: l.HeadPool, tailPool: l.TailPool, headRule: l.HeadRule, tailRule: l.TailRule,
+		chunk: l.Chunk, stripe: l.Stripe, maxHead: l.MaxHead,
+	}, n)}
+}
+
+// Consume is consume of a body of the declared size, -1 when unknown; it
+// returns the body's length.
+func (p *PartWriter) Consume(ctx context.Context, body io.Reader, size int64, h hash.Hash) (uint64, error) {
+	_, n, err := p.tw.consume(ctx, body, size, h)
+	return n, err
+}
+
+// Drain is drain.
+func (p *PartWriter) Drain() error { return p.tw.drain() }
+
+// Discard is discard.
+func (p *PartWriter) Discard() { p.tw.discard() }
+
+// First is the first stripe the writer kept when its exclusive create met
+// EEXIST, nil when it kept none.
+func (p *PartWriter) First() []byte {
+	if p.tw.first == nil {
+		return nil
+	}
+	return (*p.tw.first.p)[:p.tw.first.n]
+}
+
+// PeakBuffered is the most bytes of buffers the writer held at once.
+func (p *PartWriter) PeakBuffered() uint64 {
+	p.tw.mu.Lock()
+	defer p.tw.mu.Unlock()
+	return p.tw.peak
+}
+
+// PartLayoutForTest is partLayout for the external specs: the layout and
+// whether the part head goes through the bucket index when it is removed.
+func (s *Store) PartLayoutForTest(ctx context.Context, rec *op.BucketRecord, dest meta.PlacementRule) (Layout, bool, error) {
+	pl, err := s.partLayout(ctx, rec, dest)
+	l := pl.layout
+	return Layout{
+		HeadPool: l.headPool, TailPool: l.tailPool, HeadRule: l.headRule, TailRule: l.tailRule,
+		Chunk: l.chunk, Stripe: l.stripe, MaxHead: l.maxHead,
+	}, pl.indexedHead, err
+}

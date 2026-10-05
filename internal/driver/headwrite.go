@@ -156,9 +156,12 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	if hw.nonAtomic {
 		if hw.ifMatch != "" || hw.ifNoneMatch != "" {
 			// radosgw's non-atomic writers, RadosMultipartUpload::init and
-			// MultipartObjectProcessor::complete, set no conditions
-			// (rgw_putobj_processor.cc:515-529 at v19.2.6), so a caller that
-			// passes them asks for a write radosgw never makes.
+			// MultipartObjectProcessor::complete, set no conditions on Squid
+			// (rgw_putobj_processor.cc:515-529 at v19.2.6). Tentacle's
+			// complete passes UploadPart's (:563-564 at v20.2.4), which rgw-go
+			// ignores (docs/exclusions.md, "UploadPart ignores If-Match and
+			// If-None-Match"), so a caller that passes them asks for a write
+			// rgw-go never makes.
 			return headResult{}, fmt.Errorf("%w: a non-atomic head write of %s carries write conditions", op.ErrInternalError, hw.key.Name)
 		}
 		// Without conditions write_meta's only pass assumes no entry

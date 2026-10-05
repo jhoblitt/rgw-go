@@ -35,10 +35,6 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 	if !st.Exists {
 		return fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey) // :5903-5912
 	}
-	ref, err := s.headRef(ctx, rec, key)
-	if err != nil {
-		return err
-	}
 	w := radosclient.NewWriteOp()
 	if cerr := s.deleteConditions(w, st, p); cerr != nil {
 		return cerr
@@ -49,13 +45,29 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 	if st.WriteTag != "" {
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	}
-	// radosgw finishes a delete whatever its client does, and a remove
-	// abandoned to a canceled context could land after its index change was
-	// canceled, leaving an entry no listing checks again.
+	return s.removeHead(ctx, rec, key, "", st, w, true)
+}
+
+// removeHead is what delete_obj's unversioned path does once its checks are
+// in w (:5917-5986; v20.2.4 :6673-6740): the index prepare DEL under a fresh
+// tag on the shard hashName names, or the key's own when it is empty, the
+// head's obj_remove after w's checks under full-try, then complete_del, not
+// awaited, the GC enqueue of the old tails and, when counted, the quota
+// adjustment; a removal that failed otherwise than by timing out cancels the
+// prepare. st is the head as read. The removal runs to its end whatever the
+// client does.
+func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool) error {
+	ref, err := s.headRef(ctx, rec, key)
+	if err != nil {
+		return err
+	}
+	// A remove abandoned to a canceled context could land after its index
+	// change was canceled, leaving an entry no listing checks again.
 	ctx = context.WithoutCancel(ctx)
 	// The removal never sets state->write_tag, so the prepare takes
 	// UpdateIndex::prepare's random tag (:7087-7093).
 	x := s.newIndexOp(rec, key, "")
+	x.hashName = hashName
 	if err = x.prepare(ctx, rgw.OpDel); err != nil {
 		return op.FromRADOS(err, op.ScopeObject)
 	}
@@ -75,6 +87,12 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 		x.cancel() // :5968-5972
 		return op.FromRADOS(err, op.ScopeObject)
 	}
+	if !counted {
+		return nil
+	}
+	// radosgw adjusts only once complete_del has also succeeded (r is
+	// overwritten by it, :5958-5986); rgw-go's completion is not awaited, so
+	// the adjustment follows the removal itself.
 	accounted := st.Size
 	if st.Compression != nil {
 		accounted = st.Compression.OrigSize

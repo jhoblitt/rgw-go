@@ -620,6 +620,7 @@ var _ = Describe("a read op", func() {
 		Expect(c.Object(poolName, ns, "obj").Data).To(Equal([]byte("old")))
 		Expect(c.Writes(poolName, ns, "obj")).To(Equal(1), "the failed op is counted")
 		Expect(c.LastWrite(poolName, ns, "obj").Flags()).To(Equal(radosclient.OpFlagFullTry))
+		Expect(c.WriteOrder(poolName, ns)).To(Equal([]string{"other"}), "the failed op is not among those that succeeded")
 		_, err = p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(c.Object(poolName, ns, "obj").Data).To(Equal([]byte("new")))
@@ -725,6 +726,33 @@ var _ = Describe("a read op", func() {
 		Expect(data(writes[1])).To(Equal([]byte("b")))
 		Expect(writes[1].Steps()).To(Equal(c.LastWrite(poolName, ns, "obj").Steps()))
 		Expect(c.WritesTo(poolName, ns, "never")).To(BeEmpty())
+	})
+
+	It("names the objects of the write ops that succeeded in order with WriteOrder, until ResetCounters", func(ctx SpecContext) {
+		Expect(writeErr(ctx, p, "b", func(op *radosclient.WriteOp) { op.WriteFull([]byte("1")) })).To(Succeed())
+		Expect(writeErr(ctx, p, "a", func(op *radosclient.WriteOp) { op.WriteFull([]byte("2")) })).To(Succeed())
+		Expect(writeErr(ctx, p, "absent", func(op *radosclient.WriteOp) { op.AssertExists() })).To(MatchError(radosclient.ErrNotFound))
+		Expect(writeErr(ctx, p, "b", func(op *radosclient.WriteOp) { op.SetXattr("x", []byte("3")) })).To(Succeed())
+		Expect(c.WriteOrder(poolName, ns)).To(Equal([]string{"b", "a", "b"}), "a failed op is left out")
+		Expect(c.WriteOrder(poolName, "other")).To(BeEmpty())
+		c.ResetCounters()
+		Expect(c.WriteOrder(poolName, ns)).To(BeEmpty())
+	})
+
+	It("fails the next read op on an object with FailNextRead's errno, in every result, once", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("abc"))
+		c.FailNextRead(poolName, ns, "obj", syscall.EIO)
+		op := radosclient.NewReadOp()
+		read := op.Read(0, 3)
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(ContainSubstring("input/output error")))
+		Expect(read.Err).To(MatchError(err))
+		Expect(c.Reads(poolName, ns, "obj")).To(Equal(1))
+		op = radosclient.NewReadOp()
+		read = op.Read(0, 3)
+		_, err = p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(read.Data[:read.N]).To(Equal([]byte("abc")))
 	})
 
 	It("reads a range, a short tail and nothing past the end", func(ctx SpecContext) {

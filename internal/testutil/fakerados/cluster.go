@@ -70,8 +70,12 @@ type store struct {
 	writes     map[string][]RecordedWrite
 	// beforeWrite holds the hooks BeforeWrite registered, by object name.
 	beforeWrite map[string]func(o *Object)
-	// failWrite holds the errno FailNextWrite set, by object name.
-	failWrite map[string]syscall.Errno
+	// failRead and failWrite hold the errors FailNextRead and FailNextWrite
+	// injected, by object name.
+	failRead, failWrite map[string]*failure
+	// order names the objects of the write ops that succeeded, in the order
+	// they did.
+	order []string
 }
 
 // RecordedRead is one read op a pool ran on an object, as Read received it.
@@ -227,7 +231,8 @@ func (c *Cluster) store(pool, ns string) *store {
 		writes:     map[string][]RecordedWrite{},
 
 		beforeWrite: map[string]func(o *Object){},
-		failWrite:   map[string]syscall.Errno{},
+		failRead:    map[string]*failure{},
+		failWrite:   map[string]*failure{},
 	}
 	c.stores[k] = s
 	return s
@@ -285,16 +290,6 @@ func (c *Cluster) FailWatch(pool, ns, oid string, n int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.store(pool, ns).failWatch[oid] = &failure{n: n, err: err}
-}
-
-// FailNextWrite makes the next write op on the object fail with errno
-// without applying any of its steps, as an op the OSD refuses whole does. The
-// op is still counted and recorded. A spec stages with it a reply that leaves
-// the op's outcome unknown, such as ETIMEDOUT.
-func (c *Cluster) FailNextWrite(pool, ns, oid string, errno syscall.Errno) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.store(pool, ns).failWrite[oid] = errno
 }
 
 // FailNotify makes the next n Notify calls on the object fail with err,
@@ -361,9 +356,36 @@ func (c *Cluster) LastRead(pool, ns, oid string) RecordedRead {
 	return c.store(pool, ns).lastReads[oid]
 }
 
+// WriteOrder returns the names of the objects whose write ops succeeded in
+// the namespace, in the order they did, one name for each op.
+func (c *Cluster) WriteOrder(pool, ns string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.store(pool, ns).order)
+}
+
+// FailNextRead makes the next read op on the object fail with errno before
+// it runs.
+func (c *Cluster) FailNextRead(pool, ns, oid string, errno syscall.Errno) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store(pool, ns).failRead[oid] = &failure{n: 1, err: &radosclient.Error{Errno: int32(errno), Op: opName("read", oid)}} //nolint:gosec // an errno is small
+}
+
+// FailNextWrite makes the next write op on the object fail with errno
+// without applying any of its steps, as an op the OSD refuses whole does, and
+// with errno in every step's result. The op is still counted and recorded. A
+// spec stages with it a reply that leaves the op's outcome unknown, such as
+// ETIMEDOUT.
+func (c *Cluster) FailNextWrite(pool, ns, oid string, errno syscall.Errno) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store(pool, ns).failWrite[oid] = &failure{n: 1, err: &radosclient.Error{Errno: int32(errno), Op: opName("write", oid)}} //nolint:gosec // an errno is small
+}
+
 // ResetCounters forgets every read and write op run so far in every pool, so
-// Reads, Writes, LastRead, LastWrite and WritesTo count from here. The
-// objects stay.
+// Reads, Writes, LastRead, LastWrite, WritesTo and WriteOrder count from
+// here. The objects stay.
 func (c *Cluster) ResetCounters() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -371,6 +393,7 @@ func (c *Cluster) ResetCounters() {
 		clear(s.reads)
 		clear(s.lastReads)
 		clear(s.writes)
+		s.order = nil
 	}
 }
 
