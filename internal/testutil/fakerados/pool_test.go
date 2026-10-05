@@ -604,6 +604,27 @@ var _ = Describe("a read op", func() {
 		Expect(c.LastWrite(poolName, ns, "never").Steps()).To(BeEmpty())
 	})
 
+	It("fails the next write op on an object with FailNextWrite's errno without applying it, and only that one", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("old"))
+		c.FailNextWrite(poolName, ns, "obj", syscall.ETIMEDOUT)
+		read := radosclient.NewReadOp()
+		read.Stat()
+		_, err := p.Read(ctx, "obj", read, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred(), "a read is not a write")
+		wop := radosclient.NewWriteOp()
+		wop.WriteFull([]byte("new"))
+		_, err = p.Write(ctx, "other", wop, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred(), "another object")
+		_, err = p.Write(ctx, "obj", wop, radosclient.OpFlagFullTry)
+		Expect(err).To(MatchError(radosclient.ErrTimedOut))
+		Expect(c.Object(poolName, ns, "obj").Data).To(Equal([]byte("old")))
+		Expect(c.Writes(poolName, ns, "obj")).To(Equal(1), "the failed op is counted")
+		Expect(c.LastWrite(poolName, ns, "obj").Flags()).To(Equal(radosclient.OpFlagFullTry))
+		_, err = p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Object(poolName, ns, "obj").Data).To(Equal([]byte("new")))
+	})
+
 	It("keeps the last read op run on each object, a failed one too, with LastRead", func(ctx SpecContext) {
 		c.Put(poolName, ns, "obj", []byte("abc"))
 		op := radosclient.NewReadOp()

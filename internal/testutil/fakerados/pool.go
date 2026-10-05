@@ -146,6 +146,10 @@ func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	}
 	mtime, ok := op.Mtime()
 	p.store.writes[oid] = append(p.store.writes[oid], RecordedWrite{steps: steps, mtime: mtime, hasMtime: ok, flags: flags})
+	if errno, fail := p.store.failWrite[oid]; fail {
+		delete(p.store.failWrite, oid)
+		return 0, &radosclient.Error{Errno: int32(errno), Op: name} //nolint:gosec // an errno fits an int32
+	}
 	// librados stamps a write op without an mtime with the client's clock.
 	if !ok {
 		mtime = c.now()

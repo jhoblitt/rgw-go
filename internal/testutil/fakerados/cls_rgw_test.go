@@ -446,6 +446,44 @@ var _ = Describe("RGWClass on a head object", func() {
 		Expect(writeErr(ctx, p, "fresh", func(op *radosclient.WriteOp) { rgwcls.ObjStorePGVer(op, "user.rgw.pg_ver", denc.Squid) })).To(Succeed())
 		Expect(c.Object(data, "", "fresh").Xattrs).To(HaveKeyWithValue("user.rgw.pg_ver", make([]byte, 8)), "a new object")
 	})
+
+	DescribeTable("obj_check_mtime compares the object's mtime and cancels the op when it fails",
+		func(ctx SpecContext, typ rgwcls.MtimeCheck, offset time.Duration, highPrecision bool, want error) {
+			mtime := time.Date(2026, 10, 5, 12, 0, 0, 400_000_000, time.UTC)
+			c.Object(data, "", "head").Mtime = mtime
+			err := writeErr(ctx, p, "head", func(op *radosclient.WriteOp) {
+				rgwcls.ObjCheckMtime(op, mtime.Add(offset), typ, highPrecision, denc.Squid)
+				op.WriteFull([]byte("changed"))
+			})
+			if want == nil {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(c.Object(data, "", "head").Data).To(Equal([]byte("changed")))
+				return
+			}
+			Expect(err).To(MatchError(want))
+			Expect(c.Object(data, "", "head").Data).To(Equal([]byte("old data")), "the op is not applied")
+		},
+		Entry("EQ, in whole seconds", rgwcls.MtimeEQ, 500*time.Millisecond, false, nil),
+		Entry("EQ, high precision", rgwcls.MtimeEQ, 500*time.Millisecond, true, radosclient.ErrCanceled),
+		Entry("LE, a later time", rgwcls.MtimeLE, time.Second, false, nil),
+		Entry("LE, the same second", rgwcls.MtimeLE, -300*time.Millisecond, false, nil),
+		Entry("LE, an earlier second: cls_rgw.cc:2610-2612", rgwcls.MtimeLE, -time.Second, false, radosclient.ErrCanceled),
+		Entry("LT, the same second", rgwcls.MtimeLT, time.Duration(0), false, radosclient.ErrCanceled),
+		Entry("GT, an earlier second", rgwcls.MtimeGT, -time.Second, false, nil),
+		Entry("GE, a later second", rgwcls.MtimeGE, time.Second, false, radosclient.ErrCanceled),
+	)
+
+	It("compares a missing object's mtime as zero with obj_check_mtime", func(ctx SpecContext) {
+		Expect(writeErr(ctx, p, "absent", func(op *radosclient.WriteOp) {
+			rgwcls.ObjCheckMtime(op, time.Unix(1, 0), rgwcls.MtimeLE, false, denc.Squid)
+			op.Create(false)
+		})).To(Succeed(), "cls_rgw.cc:2572-2574: ENOENT skips the stat")
+		Expect(writeErr(ctx, p, "absent2", func(op *radosclient.WriteOp) {
+			rgwcls.ObjCheckMtime(op, time.Unix(1, 0), rgwcls.MtimeEQ, false, denc.Squid)
+			op.Create(false)
+		})).To(MatchError(radosclient.ErrCanceled))
+		Expect(c.Object(data, "", "absent2")).To(BeNil())
+	})
 })
 
 var _ = Describe("RGWClass on a gc shard", func() {
