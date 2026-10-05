@@ -459,7 +459,7 @@ type check struct {
 // a policy must allow, and the ACLs are not consulted.
 func (e *Evaluator) permit(r *op.Request, c *check) (ok bool, rule string) {
 	id := identity{id: &r.Identity}
-	if v, present := header(r.Header, "X-Amz-Expected-Bucket-Owner"); present {
+	if v, present := op.HeaderValue(r.Header, "X-Amz-Expected-Bucket-Owner"); present {
 		if r.BucketRec == nil || v != expectedOwner(r.BucketRec.Info.Owner) {
 			return false, "expected bucket owner"
 		}
@@ -568,7 +568,7 @@ func requesterPays(r *op.Request, id identity) bool {
 	if id.IsAnonymous() {
 		return false
 	}
-	v, ok := header(r.Header, "X-Amz-Request-Payer")
+	v, ok := op.HeaderValue(r.Header, "X-Amz-Request-Payer")
 	if !ok {
 		if !hasQuery(r, "x-amz-request-payer") {
 			return false
@@ -605,7 +605,7 @@ func (c *check) ignorePublicACLs() bool {
 // referer is the Referer the ACL's referer grants match, HTTP_REFERER, which
 // beast sets from the last of a repeated header; "" when absent.
 func referer(r *op.Request) string {
-	v, _ := header(r.Header, "Referer")
+	v, _ := op.HeaderValue(r.Header, "Referer")
 	return v
 }
 

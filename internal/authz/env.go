@@ -70,7 +70,7 @@ func baseKeys(cfg Config, r *op.Request) []envPair {
 		{"aws:EpochTime", now.Format("2006-01-02T15:04:05.000000000Z")},
 		{"aws:PrincipalType", "User"},
 	}
-	if v, ok := header(r.Header, "Referer"); ok {
+	if v, ok := op.HeaderValue(r.Header, "Referer"); ok {
 		ps = append(ps, envPair{"aws:Referer", v})
 	}
 	if secureTransport(cfg, r) {
@@ -79,7 +79,7 @@ func baseKeys(cfg Config, r *op.Request) []envPair {
 	if ip, ok := sourceIP(cfg, r); ok {
 		ps = append(ps, envPair{"aws:SourceIp", ip})
 	}
-	if v, ok := header(r.Header, "User-Agent"); ok {
+	if v, ok := op.HeaderValue(r.Header, "User-Agent"); ok {
 		ps = append(ps, envPair{"aws:UserAgent", v})
 	}
 	if u := r.Identity.User; u != nil {
@@ -89,22 +89,10 @@ func baseKeys(cfg Config, r *op.Request) []envPair {
 	subuser, _, _ := strings.Cut(r.Identity.SubUser, "\x00")
 	ps = append(ps, envPair{"rgw:subuser", subuser})
 	sts := "false"
-	if _, ok := header(r.Header, "X-Amz-Security-Token"); ok {
+	if _, ok := op.HeaderValue(r.Header, "X-Amz-Security-Token"); ok {
 		sts = "true"
 	}
 	return append(ps, envPair{"sts:authentication", sts})
-}
-
-// header is a request header as radosgw's RGWEnv holds it: beast sets one
-// variable per header field in arrival order, so the last of a repeated
-// header is the one radosgw sees (rgw_asio_client.cc:36-65, rgw_env.cc:22-25
-// at v19.2.6 and v20.2.4). A header present with an empty value is present.
-func header(h http.Header, name string) (string, bool) {
-	vs := h.Values(name)
-	if len(vs) == 0 {
-		return "", false
-	}
-	return vs[len(vs)-1], true
 }
 
 // secureTransport is rgw_transport_is_secure (rgw_common.cc:1071-1094 at
@@ -116,10 +104,10 @@ func secureTransport(cfg Config, r *op.Request) bool {
 	if !cfg.TrustForwardedHTTPS {
 		return false
 	}
-	if v, ok := header(r.Header, "Forwarded"); ok && strings.Contains(v, "proto=https") {
+	if v, ok := op.HeaderValue(r.Header, "Forwarded"); ok && strings.Contains(v, "proto=https") {
 		return true
 	}
-	v, ok := header(r.Header, "X-Forwarded-Proto")
+	v, ok := op.HeaderValue(r.Header, "X-Forwarded-Proto")
 	return ok && v == "https"
 }
 
@@ -164,9 +152,9 @@ func cgiVar(r *op.Request, name string) (string, bool) {
 		}
 		return host, true
 	case "CONTENT_LENGTH":
-		return header(r.Header, "Content-Length")
+		return op.HeaderValue(r.Header, "Content-Length")
 	case "CONTENT_TYPE":
-		return header(r.Header, "Content-Type")
+		return op.HeaderValue(r.Header, "Content-Type")
 	case "HTTP_VERSION", "HTTP_HOST", "HTTP_CONTENT_LENGTH", "HTTP_CONTENT_TYPE":
 		return "", false
 	default:
@@ -174,7 +162,7 @@ func cgiVar(r *op.Request, name string) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		return header(r.Header, swapDashes(field))
+		return op.HeaderValue(r.Header, swapDashes(field))
 	}
 }
 
@@ -267,17 +255,17 @@ func listKeys(cfg Config, r *op.Request) []envPair {
 // (RGWHandler_REST_S3::init, rgw_rest_s3.cc:5026-5029 at v19.2.6, :5586-5589
 // at v20.2.4). Any other PUT that checks s3:PutObject is RGWPutObj.
 func isCopyObject(r *op.Request) bool {
-	_, src := header(r.Header, "X-Amz-Copy-Source")
-	_, ranged := header(r.Header, "X-Amz-Copy-Source-Range")
+	_, src := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
+	_, ranged := op.HeaderValue(r.Header, "X-Amz-Copy-Source-Range")
 	return src && !ranged && !hasQuery(r, "uploadId")
 }
 
 // copyKeys are RGWCopyObj's: the copy source header as sent, and the
 // metadata directive when present.
 func copyKeys(r *op.Request) []envPair {
-	src, _ := header(r.Header, "X-Amz-Copy-Source")
+	src, _ := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
 	ps := []envPair{{"s3:x-amz-copy-source", src}}
-	if v, ok := header(r.Header, "X-Amz-Metadata-Directive"); ok {
+	if v, ok := op.HeaderValue(r.Header, "X-Amz-Metadata-Directive"); ok {
 		ps = append(ps, envPair{"s3:x-amz-metadata-directive", v})
 	}
 	return ps
@@ -289,7 +277,7 @@ func copyKeys(r *op.Request) []envPair {
 // verify_permission, so it adds none here.
 func putObjectKeys(cfg Config, r *op.Request) []envPair {
 	ps := append(grantKeys(r), envPair{"s3:x-amz-acl", cannedACL(r)})
-	if h, ok := header(r.Header, "X-Amz-Tagging"); ok {
+	if h, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
 		if set, err := tags.ParseHeader(h, tags.MaxObjectTags); err == nil {
 			for _, t := range set.Tags {
 				ps = append(ps, envPair{"s3:RequestObjectTag/" + t.Key, t.Value})
@@ -302,7 +290,7 @@ func putObjectKeys(cfg Config, r *op.Request) []envPair {
 // cannedACL is s->canned_acl, x-amz-acl or empty, which the ops add even when
 // empty.
 func cannedACL(r *op.Request) string {
-	v, _ := header(r.Header, "X-Amz-Acl")
+	v, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
 	return v
 }
 
@@ -325,7 +313,7 @@ func grantKeys(r *op.Request) []envPair {
 	}
 	var ps []envPair
 	for _, g := range grantHeaders {
-		if v, ok := header(r.Header, g.header); ok {
+		if v, ok := op.HeaderValue(r.Header, g.header); ok {
 			ps = append(ps, envPair{g.key, v})
 		}
 	}
@@ -376,7 +364,7 @@ func cryptAttr(r *op.Request, name string, withQuery bool) (string, bool) {
 	var val string
 	var found bool
 	for _, p := range metaPrefixes {
-		if v, ok := header(r.Header, p+name); ok {
+		if v, ok := op.HeaderValue(r.Header, p+name); ok {
 			val, found = v, true
 		}
 	}

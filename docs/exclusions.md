@@ -1042,6 +1042,14 @@ review and verified against the tree.
   decrypts it and re-encrypts as the request asks (`rgw_op.cc:5793-5805`
   and `:5846-5866` at v20.2.4), which needs SSE-C decryption, not yet
   implemented, or a key server, which is excluded.
+- **CreateBucket with object lock answers 501 until phase 2.** A
+  CreateBucket with `x-amz-bucket-object-lock-enabled: true`, in any case,
+  answers 501 NotImplemented and creates nothing, until object lock and
+  versioning are served. radosgw creates the bucket versioned with object
+  lock enabled (`rgw_rest_s3.cc:2534-2540` and
+  `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
+  `:2496-2498` at v20.2.4). Any other value but `false` is 400
+  InvalidArgument from both, after the permission check.
 
 ### Command-line differences
 
@@ -2059,6 +2067,15 @@ differ, rgw-go does the following.
   gateway loads such a bucket by name (`docs/ceph-upstream-bugs.md`,
   "[radosgw cannot load a bucket whose entry point is from before version
   8](ceph-upstream-bugs.md#radosgw-cannot-load-a-bucket-whose-entry-point-is-from-before-version-8)").
+- **CreateBucket answers 409 whenever another owner holds the name.**
+  When another owner's create of the same name lands while a CreateBucket
+  runs, radosgw answers 200 to the loser for a bucket it does not own
+  (`docs/ceph-upstream-bugs.md`, "[radosgw answers 200 to a CreateBucket
+  that loses a race to another
+  owner](ceph-upstream-bugs.md#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner)").
+  rgw-go answers 409 BucketAlreadyExists, as both answer when the bucket
+  existed before the request. An owner's re-create of its own bucket is 200
+  from both.
 - **An abandoned bucket-creation try is removed.** When a CreateBucket
   finds its name taken and then finds no bucket under it, a concurrent
   delete having run, radosgw tries again with a new bucket id and leaves
