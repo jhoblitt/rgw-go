@@ -255,6 +255,16 @@ var _ = Describe("BuildEnv", func() {
 			Expect(pairsOf(cfg, r, policy.S3ListBucket)).To(Equal(baseFor("")))
 		})
 
+		It("takes the parameters the listing read, once it has set them", func() {
+			r := envRequest(http.MethodGet, "b", "", "prefix=q&delimiter=x&max-keys=7x")
+			r.List = &op.ListConditions{Prefix: "a/", Delimiter: "/", MaxKeys: 3}
+			Expect(pairsOf(cfg, r, policy.S3ListBucket)).To(Equal(with(baseFor(""),
+				"s3:prefix", "a/", "s3:delimiter", "/", "s3:max-keys", "3")))
+			r.List = &op.ListConditions{}
+			Expect(pairsOf(cfg, r, policy.S3ListBucketVersions)).To(Equal(with(baseFor(""), "s3:max-keys", "0")),
+				"an empty prefix and delimiter are left out, max-keys never")
+		})
+
 		It("adds nothing for HEAD bucket, which checks s3:ListBucket too", func() {
 			r := envRequest(http.MethodHead, "b", "", "prefix=a/")
 			Expect(pairsOf(cfg, r, policy.S3ListBucket)).To(Equal(baseFor("")))

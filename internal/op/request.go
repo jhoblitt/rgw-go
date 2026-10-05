@@ -69,12 +69,26 @@ type Request struct {
 	// BucketRec and ObjState are loaded by the op's Init.
 	BucketRec *BucketRecord
 	ObjState  *ObjectState
+	// List is set by a bucket listing once it has read its parameters, before
+	// it authorizes; nil for every other request.
+	List *ListConditions
 
 	// Status and the byte counters are filled by the protocol layer as the
 	// response goes out, for Complete, metrics and the usage log.
 	Status   int
 	BytesIn  int64
 	BytesOut int64
+}
+
+// ListConditions are the listing parameters RGWListBucket::verify_permission
+// adds to the IAM environment once get_params has read them (rgw_op.cc:
+// 3033-3045 at v19.2.6, :3267-3279 at v20.2.4): s3:prefix and s3:delimiter
+// when not empty, and s3:max-keys always, the count the listing returns at
+// most, after parse_value_and_bound has bounded it.
+type ListConditions struct {
+	Prefix    string
+	Delimiter string
+	MaxKeys   int
 }
 
 // Scope reports the resource level the request addresses.

@@ -233,18 +233,31 @@ func opKeys(cfg Config, r *op.Request, a policy.Action) (keys []envPair, tagsFir
 // listKeys are RGWListBucket's: the prefix and the delimiter when not empty,
 // and always the max-keys it lists with, which parse_value_and_bound bounds
 // by rgw_max_listing_results with 1000 when absent (rgw_rest_s3.h:160 at
-// v19.2.6, :161 at v20.2.4). A max-keys that does not parse fails the
-// request before radosgw adds a key; the op refuses it first in rgw-go too.
+// v19.2.6, :161 at v20.2.4). They are the listing's own r.List once it has
+// set them, and otherwise read from the query as get_params reads it. A
+// max-keys that does not parse fails the request before radosgw adds a key;
+// the op refuses it first in rgw-go too.
 func listKeys(cfg Config, r *op.Request) []envPair {
+	var (
+		prefix, delimiter string
+		maxKeys           int
+		err               error
+	)
+	if l := r.List; l != nil {
+		prefix, delimiter, maxKeys = l.Prefix, l.Delimiter, l.MaxKeys
+	} else {
+		prefix, delimiter = query(r, "prefix"), query(r, "delimiter")
+		maxKeys, err = op.ParseValueAndBound(query(r, "max-keys"), 0, cfg.maxListing(), 1000)
+	}
 	var ps []envPair
-	if v := query(r, "prefix"); v != "" {
-		ps = append(ps, envPair{"s3:prefix", v})
+	if prefix != "" {
+		ps = append(ps, envPair{"s3:prefix", prefix})
 	}
-	if v := query(r, "delimiter"); v != "" {
-		ps = append(ps, envPair{"s3:delimiter", v})
+	if delimiter != "" {
+		ps = append(ps, envPair{"s3:delimiter", delimiter})
 	}
-	if n, err := op.ParseValueAndBound(query(r, "max-keys"), 0, cfg.maxListing(), 1000); err == nil {
-		ps = append(ps, envPair{"s3:max-keys", strconv.Itoa(n)})
+	if err == nil {
+		ps = append(ps, envPair{"s3:max-keys", strconv.Itoa(maxKeys)})
 	}
 	return ps
 }
