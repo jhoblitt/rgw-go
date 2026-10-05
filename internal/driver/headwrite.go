@@ -63,6 +63,13 @@ type headWrite struct {
 	// completeMultipart adds no bytes to the quota cache, which the parts
 	// already added (rgw_rados.cc:3359-3366; v20.2.4 :3512-3519).
 	completeMultipart bool
+	// expect is the head as the caller read it, for a write that is only
+	// safe on that head: there is no assume-no-entry pass and no read of
+	// its own, the guard compares against expect, and a head replaced or
+	// removed since fails the write with the guard's error instead of
+	// counting as success. radosgw has no such write; a copy onto itself
+	// needs it (docs/exclusions.md, "Object write differences").
+	expect *op.ObjectState
 }
 
 // headResult is what write_meta leaves behind.
@@ -167,6 +174,9 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 		// Without conditions write_meta's only pass assumes no entry
 		// (:3429-3436), and its create(false) cannot fail with EEXIST.
 		return s.doWriteMeta(ctx, hw, x, &op.ObjectState{Bucket: hw.rec, Key: hw.key}, mtime, true)
+	}
+	if hw.expect != nil {
+		return s.doWriteMeta(ctx, hw, x, hw.expect, mtime, false)
 	}
 	assumeNoent := hw.ifMatch == "" && hw.ifNoneMatch == ""
 	if assumeNoent {
@@ -315,6 +325,17 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectSt
 	if err := s.checkPreconditions(st, hw.ifMatch, hw.ifNoneMatch); err != nil {
 		return err
 	}
+	if hw.expect != nil {
+		// The expected head is always compared: on its write tag, or, for a
+		// head whose tag radosgw would fake, on its stored manifest, which
+		// names the tails the write keeps.
+		if tag := st.Attrs[meta.AttrIDTag]; len(tag) > 0 {
+			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, tag)
+		} else {
+			w.CmpXattr(meta.AttrManifest, radosclient.CmpEQ, st.Attrs[meta.AttrManifest])
+		}
+		return nil
+	}
 	// get_obj_state_impl fakes a tag for a head with a manifest and none
 	// (:6238-6245); a fake tag is never compared.
 	fake := st.Manifest != nil && st.WriteTag == ""
@@ -392,6 +413,11 @@ func (s *Store) cancelWrite(hw *headWrite, x *indexOp, err error) (headResult, e
 		canceled = true
 	}
 	res := headResult{canceled: canceled}
+	if hw.expect != nil {
+		// A replaced head is ECANCELED, ConcurrentModification, and a removed
+		// one ENOENT, NoSuchKey.
+		return res, op.FromRADOS(err, op.ScopeObject)
+	}
 	if hw.ifMatch == "" && hw.ifNoneMatch == "" {
 		if errors.Is(err, radosclient.ErrCanceled) || errors.Is(err, radosclient.ErrNotFound) || errors.Is(err, radosclient.ErrExists) {
 			return res, nil

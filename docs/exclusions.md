@@ -1023,6 +1023,25 @@ review and verified against the tree.
   DeleteObjects' per-key checks, which radosgw also makes without its
   override. Account users in IAM groups therefore work through radosgw and
   not through rgw-go until phase 3.
+- **A copy that streams its data copies the stored bytes.** Where a copy
+  cannot share the source's tails (another pool, placement or storage
+  class, or a source held in its head), rgw-go reads the source's stored
+  bytes and writes them unchanged, keeping a compressed source's
+  compression attribute and its accounted size, as a Squid radosgw does
+  (`copy_obj_data`, `driver/rados/rgw_rados.cc:5034-5115` at v19.2.6). A
+  Tentacle radosgw decodes such a source instead and re-encodes it with
+  the destination placement's compression type
+  (`RGWCopyObjDPF::set_writer`, `rgw_op.cc:5770-5844` at v20.2.4), so the
+  two gateways' copies can differ in codec and block layout; each reads
+  back identically through either gateway. For the same reason a Tentacle
+  radosgw compresses an uncompressed source that a copy streams into a
+  placement with a compression type, which rgw-go, like Squid, stores
+  uncompressed. rgw-go refuses an encrypted copy source with 501
+  NotImplemented on both releases, as a Squid radosgw does
+  (`driver/rados/rgw_rados.cc:4755-4763` at v19.2.6); a Tentacle radosgw
+  decrypts it and re-encrypts as the request asks (`rgw_op.cc:5793-5805`
+  and `:5846-5866` at v20.2.4), which needs SSE-C decryption, not yet
+  implemented, or a key server, which is excluded.
 
 ### Command-line differences
 
@@ -1451,8 +1470,13 @@ does the following.
 - **Shard counts and the bucket-index AIO limit that are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
   `rgw_lc_max_objs` or `rgw_gc_max_objs`, and a zero
-  `rgw_bucket_index_max_aio`, is used as 1,
-  and rgw-go logs an error naming the option and the value it read. With
+  `rgw_bucket_index_max_aio` or `rgw_max_copy_obj_concurrent_io`, is used
+  as 1,
+  and rgw-go logs an error naming the option and the value it read. With a
+  zero `rgw_max_copy_obj_concurrent_io` radosgw fails every copy that
+  shares its source's tails with 500 UnknownError ("radosgw fails every
+  tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io"); a negative
+  one limits nothing in either gateway. With
   `rgw_usage_max_shards` at 1, rgw-go names every usage object `usage.0`.
   Ceph's config refuses an `rgw_usage_max_user_shards` below its minimum of
   1 before either gateway reads it (`Option::validate`,
@@ -2359,6 +2383,53 @@ does the following.
   spelling it `07` registers `part.7` where radosgw registers `part.07`.
   Only an upload that a radosgw older than the v2 ids created reaches
   this; rgw-go and every current radosgw make v2 ids.
+- **A copy keeps its tail references when its head write timed out.** A
+  copy that shares its source's tails takes a refcount reference on each
+  under its tag before it writes its head, as radosgw's `copy_obj` does.
+  When the head write fails, radosgw drops the references again
+  (`done_ret`, `driver/rados/rgw_rados.cc:4983-4986` and `:4990-5031` at
+  v19.2.6, `:5243-5246` and `:5250-5290` at v20.2.4), even after
+  ETIMEDOUT, when the head may yet land; the copy's head then names tails
+  that hold no reference for it, and they are removed with their source
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's copy drops its tail
+  references after a head write that timed
+  out](ceph-upstream-bugs.md#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out)").
+  rgw-go keeps them after a timeout, as radosgw keeps a PUT's tails then
+  (`AtomicObjectProcessor::complete`, `rgw_putobj_processor.cc:395-401` at
+  v19.2.6), so a copy whose head never lands leaks its references instead.
+  Only a gateway with `rados_osd_op_timeout` set sees a timeout.
+- **A copy drops its tail references when its head write loses a race.**
+  When a copy's head write meets a head another writer replaced, removed
+  or created, radosgw answers success, as for any unconditional write,
+  and keeps the references it took, which no head names: the tails then
+  outlive their source for good (`write_meta` returning 0 with
+  `meta.canceled`, `driver/rados/rgw_rados.cc:3369-3391` at v19.2.6,
+  `:3522-3544` at v20.2.4, and `copy_obj` returning at `:4988`, `:5248`;
+  `docs/ceph-upstream-bugs.md`, "[radosgw's copy keeps its tail references
+  when its head write loses a
+  race](ceph-upstream-bugs.md#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race)").
+  rgw-go also answers success and drops them, as `done_ret` would.
+- **A copy onto itself is guarded on the head it read.** A copy of an
+  object onto itself keeps the object's tails and writes its manifest back
+  under a new head. radosgw writes that head as any other: an exclusive
+  create, and on EEXIST a guarded write on the head as it reads it then
+  (`write_meta`, `driver/rados/rgw_rados.cc:3419-3440` at v19.2.6), not on
+  the head the copy was read from (`RGWCopyObj::execute`, `rgw_op.cc:5599`
+  at v19.2.6, `:6164` at v20.2.4). A PUT or DELETE of the key in between
+  has already queued those tails for the GC, and the copy then lands the
+  old manifest on them, over the PUT's head or in place of the deleted
+  one, so the object loses its tails once the GC runs
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's copy of an object onto itself
+  can land its old manifest on tails queued for the
+  GC](ceph-upstream-bugs.md#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc)").
+  rgw-go writes a copy onto itself in one guarded write, compared with the
+  write tag the copy read, or with its stored manifest when it has none,
+  and without the exclusive create. A head replaced since answers 409
+  ConcurrentModification, as radosgw answers a read whose head guard fails
+  (ECANCELED, `rgw_common.cc:141` at v19.2.6, `:143` at v20.2.4); a head
+  removed since answers 404 NoSuchKey, as a copy of a missing source does.
+  Either way the newer object, or the deletion, stands, where radosgw
+  answers 200.
 
 ### Bucket index differences
 

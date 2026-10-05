@@ -171,6 +171,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | pending | pending |  |
 | [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | pending | pending |  |
 | [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | pending | pending |  |
+| [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | pending | pending |  |
+| [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | pending | pending |  |
+| [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | pending | pending |  |
+| [radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC](#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc) | pending | pending |  |
+| [radosgw fails every tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io](#radosgw-fails-every-tail-sharing-copy-on-a-zero-rgw_max_copy_obj_concurrent_io) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -7223,3 +7228,189 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A, Task 9, 2026-10-04, transcribing
   `LocalEngine::authenticate`; confirmed by the Task 9 review. Not
   reproduced.
+
+## radosgw's copy drops its tail references after a head write that timed out
+
+- **Kind:** defect, unfixed at v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - A copy whose source's tails it can share takes a refcount reference on
+    each, `cls_refcount_get(tag + '\0', implicit)`, before it writes its
+    head (`RGWRados::copy_obj`, `rgw_rados.cc:4906-4952`, `:5166-5212`).
+  - When `write_meta` fails, `copy_obj` jumps to `done_ret`
+    (`:4983-4986`, `:5243-5246`), which puts every reference whose get
+    succeeded (`:4990-5031`, `:5250-5290`), whatever the error.
+  - `write_meta` returns -ETIMEDOUT when the head write timed out, and its
+    own `done_cancel` then leaves the index entry pending because "rgw
+    can't determine whether or not the rados op succeeded"
+    (`rgw_rados.cc:3369-3380`, `:3522-3533`). A PUT keeps its tails in
+    that case for the same reason (`AtomicObjectProcessor::complete`,
+    `rgw_putobj_processor.cc:395-401`, `:429-434`), since commit
+    23fcab7fc6b, "rgw: fix data corruption when rados op return
+    ETIMEDOUT" (on squid as 63505589868); `copy_obj` was not changed.
+  - So a head write that times out and then lands names the source's
+    tails without a reference under its tag. Deleting or overwriting the
+    source queues those tails for the GC under the source's tail tag, and
+    the GC's `cls_refcount_put(tag, implicit)` (`rgw_gc.cc:684`, `:696`)
+    drops the tails' remaining reference, the writer's implicit one, and
+    removes them (`cls/refcount/cls_refcount.cc:112-132` at both tags).
+- **Impact:** data loss: the copy keeps its head chunk and loses the rest
+  of its data once the source goes. librados reports ETIMEDOUT only with
+  `rados_osd_op_timeout` set, which defaults to 0, no timeout
+  (`common/options/global.yaml.in:6379-6386` at v19.2.6, `:6538-6545` at
+  v20.2.4).
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** keeps the references after a head write that timed out, so
+  a head that never lands leaks them instead (`shareTails`,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy keeps its tail
+  references when its head write timed out").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 8, 2026-10-05, transcribing
+  `copy_obj`; derived from the source, not reproduced.
+
+## radosgw's copy keeps its tail references when its head write loses a race
+
+- **Kind:** defect, unfixed at v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - A copy that shares its source's tails takes a reference on each under
+    its tag before it writes its head (`rgw_rados.cc:4906-4952`,
+    `:5166-5212`).
+  - Its head write is unconditional, so a head another writer replaced,
+    removed or created between the copy's read and its write fails the
+    guarded op with ECANCELED, ENOENT or EEXIST, and `_do_write_meta`
+    cancels the index entry, sets `meta.canceled` and returns 0
+    (`:3369-3391`, `:3522-3544`).
+  - `copy_obj` returns 0 on that (`:4983-4988`, `:5243-5248`) without
+    reading `meta.canceled`, so `done_ret` never runs and the references
+    stay, though no head names the tails under the copy's tag.
+  - Once the source is deleted or overwritten, the GC's put under the
+    source's tail tag drops the writer's implicit reference and leaves
+    the copy's, so the tails are never removed
+    (`cls/refcount/cls_refcount.cc:112-132` at both tags).
+- **Impact:** a storage leak of the shared tails for each copy that loses
+  such a race; no data is lost or exposed.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** answers success as radosgw does and drops the references,
+  as `done_ret` would (`shareTails`, `internal/driver/copy.go`;
+  `docs/exclusions.md`, "A copy drops its tail references when its head
+  write loses a race").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 8, 2026-10-05, transcribing
+  `copy_obj`; derived from the source, not reproduced.
+
+## Squid labels a copy to another storage class with its source's class
+
+- **Kind:** defect, fixed in Tentacle. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`.
+  - v19.2.6's `copy_obj` keeps the source's `user.rgw.storage_class` in
+    the attrs a COPY directive carries over
+    (`driver/rados/rgw_rados.cc:4765-4787` at v19.2.6).
+  - A copy to another storage class streams its data
+    (`:4847-4849`), and its head write sets that attr, then sets
+    `user.rgw.storage_class` again from the new manifest's tail class only
+    when that is not empty (`_do_write_meta`, `:3220-3262`). A copy into
+    a placement's default class, whose rule has an empty class, so keeps
+    the source's class, such as COLD, on a head whose data lies in the
+    STANDARD pool.
+  - GetObject and HeadObject report `x-amz-storage-class` from that attr
+    (`rgw_rest.cc:106`, `rgw_rest_s3.cc:544-548` at v19.2.6), while the
+    bucket index entry carries the manifest's class, so a listing shows
+    STANDARD.
+  - v20.2.4 erases the attr from the source's attrs
+    (`driver/rados/rgw_rados.cc:5028` at v20.2.4), with commit
+    fdb78c7fb07, "rgw: implement CopyObject for encrypted object" (on
+    tentacle as dbf6b8e4b07).
+- **Impact:** a copied object reports the wrong storage class to
+  GetObject and HeadObject; its data is right. Its index entry starts with
+  the right class, but a listing that repairs the entry rebuilds it from
+  the head's attr (`check_disk_state`, `driver/rados/rgw_rados.cc:10397-10400`,
+  `:10433` and `:10447` at v19.2.6; rgw-go's `checkDiskState` does the
+  same), after which the listing shows the wrong class too,
+  and lifecycle, which reads the index entry, can transition the object by
+  it.
+- **Releases:** v19.2.6. v20.2.4 is not affected.
+- **rgw-go:** reproduces it on Squid and drops the attr on Tentacle
+  (`copyAttrs`, `internal/driver/copy.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 8, 2026-10-05, comparing `copy_obj` at
+  both tags; derived from the source, not reproduced.
+
+## radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC
+
+- **Kind:** defect, unfixed at v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RGWCopyObj::execute` loads the source's state once
+    (`rgw_op.cc:5599`, `:6164`), and `copy_object` hands `copy_obj` the
+    destination's own object context (`driver/rados/rgw_sal_rados.cc:2976-2977`,
+    `:3819-3820`), so a copy onto itself reads the head once as the source
+    and writes it as a destination it has not read.
+  - A copy onto itself keeps the source's tails, takes no references, and
+    writes the source's manifest back with `keep_tail`
+    (`driver/rados/rgw_rados.cc:4955-4957` and `:4965-4983`, `:5215-5243`).
+  - `write_meta` writes that head with an exclusive create, and on EEXIST
+    invalidates the destination's state, reads the head again and guards
+    the write on the write tag it reads then (`:3305-3308` and
+    `:3419-3440`, `:3458-3461` and `:3572-3594`), not on the tag the copy
+    read.
+  - A PUT that overwrites the key between the copy's read and its head
+    write queues the old tails for the GC under their tail tag; the copy's
+    guarded write then matches the PUT's head and replaces it with the old
+    manifest, whose tails it keeps, and the PUT's own tails are queued
+    nowhere. A DELETE in the same window queues the tails the same way, and
+    the copy's exclusive create then succeeds and brings the head back.
+  - The GC later puts each of those tails with the old tail tag and
+    `implicit_ref` (`driver/rados/rgw_gc.cc:684`, `:696`), which drops the
+    tail writer's implicit reference, the only one, and removes the tail
+    (`cls/refcount/cls_refcount.cc:112-132` at both tags).
+- **Impact:** data loss: after `rgw_gc_obj_min_wait` the object keeps
+  only its head chunk while its manifest names tails that are gone, and a
+  PUT the copy overwrote leaks its tails. A client reaches it with a
+  self-copy that changes metadata (`x-amz-metadata-directive: REPLACE`)
+  racing a PUT or DELETE of the same key.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** guards a copy onto itself on the head it read, without an
+  exclusive create, and answers a lost race with 409
+  ConcurrentModification or 404 NoSuchKey, leaving the newer object or the
+  deletion (`shareTails`, `internal/driver/copy.go`, and `headWrite.expect`,
+  `internal/driver/headwrite.go`; `docs/exclusions.md`, "A copy onto
+  itself is guarded on the head it read").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 8 review, 2026-10-05, reading
+  `copy_obj`'s self-copy path with `write_meta`; derived from the source,
+  not reproduced.
+
+## radosgw fails every tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io
+
+- **Kind:** defect, unfixed at v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`.
+  - `rgw_max_copy_obj_concurrent_io` is an int with no minimum
+    (`common/options/rgw.yaml.in:2033-2040` at v19.2.6, `:2133-2140` at
+    v20.2.4), and `copy_obj` makes its refcount throttle from it
+    (`rgw/driver/rados/rgw_rados.cc:4911` at v19.2.6, `:5171` at v20.2.4).
+  - `BlockingAioThrottle::get` and `YieldingAioThrottle::get` answer a
+    request whose cost exceeds the window with EDEADLK
+    (`rgw/rgw_aio_throttle.cc:40-42` and `:131-132` at both tags), and each
+    refcount get costs 1, so with a window of 0 the first get fails,
+    `copy_obj` returns EDEADLK, and the copy answers 500 UnknownError, which
+    no S3 error names (`rgw_common.cc:346-353` at v19.2.6, `:359-366` at
+    v20.2.4).
+  - A negative value converts to a window near 2^64 and limits nothing.
+- **Impact:** with the option at 0, every copy whose source's tails can be
+  shared, the common same-placement copy of an object larger than its
+  head, fails; streamed copies and copies of small objects still work.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** uses a zero as 1 with an error-level log line, as it does a
+  zero `rgw_bucket_index_max_aio` (`readWriteOptions`,
+  `internal/driver/writer.go`; `docs/exclusions.md`, "Shard counts and the
+  bucket-index AIO limit that are not positive"), and keeps a negative
+  value, which limits nothing, as radosgw does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 8, 2026-10-05, transcribing
+  `copy_obj`'s refcount loop; derived from the source, not reproduced.

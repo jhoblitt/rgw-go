@@ -114,7 +114,16 @@ type CopyParams struct {
 	StorageClass string
 	// IfMatch and IfNoneMatch are the x-amz-copy-source-if-match and
 	// -if-none-match conditions, which copy_obj applies to the source's ETag.
+	// The op checks them against the source state before CopyObject; the
+	// RADOS driver does not check them again, while memstore does.
 	IfMatch, IfNoneMatch string
+	// Tag is the write tag: radosgw passes the request id (rgw_op.cc:5672 at
+	// v19.2.6, :6246 at v20.2.4), under which a copy that shares the source's
+	// tails takes their references and writes its head. Empty selects
+	// append_rand_alpha's form, "_" and 31 random characters. A copy that
+	// streams the data ignores it and draws a random tag, as copy_obj_data
+	// does.
+	Tag string
 }
 
 //counterfeiter:generate . ObjectStore

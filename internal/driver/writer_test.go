@@ -66,6 +66,18 @@ var _ = Describe("the write options", func() {
 		Expect(s.WriteOptionsForTest().MultiObjDelMaxAIO).To(Equal(1), "rgw_op.cc:7011 at v19.2.6")
 	})
 
+	It("uses a zero rgw_max_copy_obj_concurrent_io as 1, logging the option, and keeps a negative one", func(ctx SpecContext) {
+		var buf bytes.Buffer
+		DeferCleanup(driver.CaptureLog(&buf))
+		s, err := driver.Open(ctx, c, conf(map[string]string{"rgw_max_copy_obj_concurrent_io": "0"}), driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.WriteOptionsForTest().CopyConcurrentIO).To(Equal(1))
+		Expect(buf.String()).To(ContainSubstring("rgw_max_copy_obj_concurrent_io"))
+		s, err = driver.Open(ctx, c, conf(map[string]string{"rgw_max_copy_obj_concurrent_io": "-1"}), driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.WriteOptionsForTest().CopyConcurrentIO).To(Equal(-1), "make_throttle's unsigned window: no limit, as radosgw")
+	})
+
 	DescribeTable("uses the default for a negative rgw_gc_obj_min_wait, logging the option and the value",
 		func(ctx SpecContext, value string) {
 			var buf bytes.Buffer
