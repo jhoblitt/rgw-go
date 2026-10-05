@@ -144,6 +144,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Squid's write conditions fail an If-None-Match ETag on a missing key and skip a head without a write tag](#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag) | [#68183](https://tracker.ceph.com/issues/68183), [#80925](https://tracker.ceph.com/issues/80925), [#80906](https://tracker.ceph.com/issues/80906), [#80922](https://tracker.ceph.com/issues/80922), [#80907](https://tracker.ceph.com/issues/80907), [#80898](https://tracker.ceph.com/issues/80898) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
 | [radosgw's send_split_chain repeats an object in its remainder and loops on an object too large for an entry](#radosgws-send_split_chain-repeats-an-object-in-its-remainder-and-loops-on-an-object-too-large-for-an-entry) | none | none | ✓ |
 | [Tentacle's delete_objs_inline puts every ref through the first object's pool, without its locator](#tentacles-delete_objs_inline-puts-every-ref-through-the-first-objects-pool-without-its-locator) | pending | pending |  |
+| [radosgw files a 404 on an existing bucket under the usage bucket "-", and never logs a missing bucket](#radosgw-files-a-404-on-an-existing-bucket-under-the-usage-bucket---and-never-logs-a-missing-bucket) | pending | pending |  |
+| [radosgw files the first second of each hour's usage under the hour before](#radosgw-files-the-first-second-of-each-hours-usage-under-the-hour-before) | pending | pending |  |
+| [cls_rgw's usage reads and trims take in other users' records](#cls_rgws-usage-reads-and-trims-take-in-other-users-records) | pending | pending; [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) (the `0` half) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6052,3 +6055,138 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 5 review, 2026-10-04, comparing the
   inline delete with v20.2.4; derived from the source, not reproduced.
+
+## radosgw files a 404 on an existing bucket under the usage bucket "-", and never logs a missing bucket
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; a single line number is the same
+  at v19.2.6 and v20.2.4, and a pair is v19.2.6's, then v20.2.4's.
+  - `log_usage` files a request on a bucket under `s->bucket_owner`, and for
+    any 404 replaces the bucket's name with `-`: "bucket not found, use the
+    invalid '-' as bucket name" (`rgw_log.cc:207-208` and `:222-225`; the
+    same lines on main at 6cafff02b39). Ceph commit c0074935d17 (2016), which
+    added the `-`, states its purpose as logging "under the virtual error
+    bucket '-' when bucket not found".
+  - A missing bucket never reaches the usage log.
+    `rgw_build_bucket_policies` returns `-ERR_NO_SUCH_BUCKET` before it sets
+    `s->bucket_owner` (`rgw_op.cc:539-540` and `:552`, `:569-570` and
+    `:582`; main `:649` and `:666`), so the entry's user is empty, and
+    `RGWRados::log_usage` drops it with "user name empty ... skipping"
+    (`driver/rados/rgw_rados.cc:1645-1648`, `:1748-1751`; main
+    `:1836-1839`).
+  - Every 404 on a bucket that exists is filed under `-` instead, with the
+    bucket's owner as its user: NoSuchKey, NoSuchUpload,
+    NoSuchLifecycleConfiguration, NoSuchBucketPolicy,
+    NoSuchCORSConfiguration and NoSuchTagSet are all 404
+    (`rgw_common.cc:97-137`, `:98-138`).
+- **Impact:** a bucket's usage, as `radosgw-admin usage show --bucket` and
+  the admin API report it, leaves out the bucket's 404 traffic, such as GETs
+  and HEADs of missing keys and the error documents they send; it appears
+  under the owner's bucket `-`, merged with the 404s of every other bucket
+  of that owner. The requests the `-` was added for, those to a missing
+  bucket, are not logged at all, and each flush that drops them logs a
+  warning.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** reproduces it, so that usage written by both gateways adds up
+  under the same buckets: `op.LogUsage` files every 404 under `-` and logs
+  nothing for a request whose bucket was not loaded
+  (`internal/op/usagelog.go`), and the driver files an entry under the
+  bucket it is given (`internal/driver/usage.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 10b, 2026-10-04, deciding whether rgw-go
+  keeps `log_usage`'s `-`; derived from the source, not reproduced.
+
+## radosgw files the first second of each hour's usage under the hour before
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`, and the lines are the same at v19.2.6
+  and v20.2.4.
+  - `UsageLogger::insert_user` files each entry under the hour its round
+    timestamp starts, and moves that timestamp to the entry's hour only when
+    `timestamp.sec() > round_timestamp + 3600` (`rgw/rgw_log.cc:139-143`; the
+    same lines on main at 6cafff02b39).
+  - `utime_t` has no `operator+` taking a number, so `round_timestamp`
+    converts to `double` (`include/utime.h:230-232` and `:518-535`), and the
+    test compares whole seconds and is strict.
+  - So an entry stamped hh:00:00.x, the first second of an hour, while the
+    round timestamp is at the hour before, is filed under the hour before;
+    from hh:00:01 entries move to the new hour.
+- **Impact:** the usage of requests that finish in the first second of an
+  hour is reported in the previous hour's record whenever the round
+  timestamp sits at that previous hour: after the gateway logged a request
+  in it, or after the gateway started in it, since the constructor sets the
+  round timestamp to the start time's hour (`rgw/rgw_log.cc:120-126`).
+  `radosgw-admin usage show` with a start
+  or end date on the hour counts them on the wrong side.
+- **Releases:** v19.2.6, v20.2.4 and main.
+- **rgw-go:** reproduces it (`Store.Log` in `internal/driver/usage.go`), so
+  that both gateways file a request of the same second under the same hour.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 10b, 2026-10-04, transcribing
+  `insert_user`; derived from the source, not reproduced.
+
+## cls_rgw's usage reads and trims take in other users' records
+
+- **Kind:** defect: the half for ids beginning with `0` is fixed in v21.0.0,
+  and the rest is unfixed through main. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's, then
+  v20.2.4's.
+  - `user_usage_log_add` stores each record under two omap keys of its usage
+    object: by time, the epoch in 11 digits, `_`, the user, `_` and the
+    bucket; and by user, the user, `_`, the epoch in 11 digits, `_` and the
+    bucket (`cls/rgw/cls_rgw.cc:3536-3548`, `:3938-3950`; the method
+    `:3563-3618`, `:3965-4020`).
+  - A read or trim for one user scans the keys from its by-user prefix at the
+    start epoch and stops at the first key that does not begin with the user
+    and `_` (`cls/rgw/cls_rgw.cc:3636-3651` and `:3676-3681`, `:4038-4053`
+    and `:4078-4083`). Another user whose id is that id, `_` and then a
+    letter, `test_ops` for `test`, has by-user keys that begin so and sort
+    after the start, so where both users' records share a usage object, as
+    about one pair in `rgw_usage_max_shards` does (`usage_log_hash`,
+    `rgw/driver/rados/rgw_rados.cc:1615-1628`, `:1718-1731`), the scan hands
+    on the other user's records too, until it meets a record dated at or
+    past the end. The trim
+    callback removes the keys built from the record's own owner
+    (`cls/rgw/cls_rgw.cc:3752-3768`, `:4154-4170`), so a trim for `test`
+    deletes `test_ops`'s records.
+  - A read or trim for all users scans from the by-time key of the start
+    epoch to the first key not below the by-time key of the end epoch
+    (`cls/rgw/cls_rgw.cc:3636-3637`, `:3645-3646` and `:3669-3674`,
+    `:4038-4039`, `:4047-4048` and `:4071-4076`), and every by-user key in
+    that range is decoded and handed on as well, so a read counts its record
+    twice.
+    When no end date is given, the end is 2^64-1 (`rgw/rgw_admin.cc:7691`,
+    `rgw/radosgw-admin/radosgw-admin.cc:8077`; `rgw/rgw_rest_usage.cc:53`),
+    whose key is `18446744073709551615`. By-time keys begin with `0` until
+    2286, so such an undated range holds the by-user keys of every id
+    beginning with `0`, and of ids beginning with `1` and a digit below `8`,
+    such as `1000`. A dated end's key is `0` and ten more digits, so a dated
+    range holds only the by-user keys that sort between its two keys, and
+    not those of an id such as `0alice`.
+  - Ceph commit 674d42d9023 (ceph/ceph#65329, in v21.0.0; see "cls_rgw usage
+    trim never removes a payer-keyed record") puts `~` before the by-user key
+    of an id beginning with `0` (main `cls/rgw/cls_rgw.cc:4146-4179` at
+    6cafff02b39). Main still matches the by-user prefix as before
+    (`:4322-4377`) and leaves ids beginning with `1` in an undated range.
+- **Impact:** `radosgw-admin usage show --uid=test`, and the admin API's
+  usage GET for `test`, report `test_ops`'s usage beside `test`'s whenever
+  the two share a usage object, and `usage trim --uid=test`, or the admin
+  API's usage DELETE for `test`, deletes it. A usage show for all users with
+  no end date counts twice the usage of every user whose id begins with `0`,
+  or with `1` and a digit below `8`.
+- **Releases:** v19.2.6 and v20.2.4; main for the prefix match and for ids
+  beginning with `1`.
+- **rgw-go:** writes the same two keys through `user_usage_log_add`, as it
+  must for radosgw to read them (`internal/driver/usage.go`). It reads and
+  trims no usage yet; unit N's usage read and trim send the same class
+  methods and inherit the defect. fakerados's `Cluster.UsageEntries` tells
+  the two keys apart by rebuilding each record's by-time key.
+- **Upstream:** pending: sent to rgw-bug-reproduction. The half for ids
+  beginning with `0` is fixed by
+  [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) (commit
+  674d42d9023).
+- **Found:** phase 1 unit M, Task 10b, 2026-10-04, emulating
+  `user_usage_log_add`'s keys in fakerados; derived from the source, not
+  reproduced.
