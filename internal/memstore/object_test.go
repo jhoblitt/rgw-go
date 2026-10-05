@@ -226,6 +226,21 @@ var _ = Describe("objects", func() {
 		mustPut(ctx, store, rec, "k", "v")
 		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).To(Succeed(), "any object")
 	})
+	It("refuses a delete whose time or size conditions fail, comparing times in whole seconds", func(ctx SpecContext) {
+		clk.t = start.Add(500 * time.Millisecond)
+		mustPut(ctx, store, rec, "k", "vv")
+		wrong, size := uint64(1), uint64(2)
+		for _, p := range []op.DeleteParams{
+			{UnmodifiedSince: start.Add(-time.Second)},
+			{IfMatchSize: &wrong},
+			{IfMatchLastModified: start.Add(time.Second)},
+		} {
+			Expect(store.DeleteObject(ctx, rec, key, p)).To(MatchError(op.ErrPreconditionFailed), "%+v", p)
+		}
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{
+			UnmodifiedSince: start, IfMatchSize: &size, IfMatchLastModified: start.Add(900 * time.Millisecond),
+		})).To(Succeed(), "the mtime's fraction is dropped on both sides")
+	})
 	It("takes the null instance for the plain object", func(ctx SpecContext) {
 		mustPut(ctx, store, rec, "k", "v")
 		st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "k", Instance: "null"})

@@ -121,10 +121,12 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	return putResult(o), nil
 }
 
-// DeleteObject implements op.ObjectStore. IfMatch is checked as Tentacle's
-// check_preconditions checks a delete's (rgw_rados.cc:7287-7306 at v20.2.4):
-// "*" passes any object, and an ETag must match the object's; Squid's
-// delete takes no If-Match.
+// DeleteObject implements op.ObjectStore. The conditions are checked as
+// Tentacle's Delete::delete_obj checks them, on both releases
+// (driver/rados/rgw_rados.cc:6609-6671 at v20.2.4): the mtime must not be
+// after UnmodifiedSince, the size must equal IfMatchSize, the mtime must
+// equal IfMatchLastModified, both in whole seconds, and If-Match "*" passes
+// any object while an ETag must match the object's.
 func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,11 +139,27 @@ func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.O
 	if !ok {
 		return fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey)
 	}
-	if p.IfMatch != "" && p.IfMatch != "*" && !etagMatches(p.IfMatch, o.state.ETag) {
+	if !deleteAllowed(&o.state, p) {
 		return fmt.Errorf("object %s: %w", key.Name, op.ErrPreconditionFailed)
 	}
 	delete(b.objects, k)
 	return nil
+}
+
+// deleteAllowed reports whether st passes a delete's conditions.
+func deleteAllowed(st *op.ObjectState, p op.DeleteParams) bool {
+	mtime := st.Mtime.Truncate(time.Second)
+	switch {
+	case !p.UnmodifiedSince.IsZero() && mtime.After(p.UnmodifiedSince.Truncate(time.Second)):
+		return false
+	case p.IfMatchSize != nil && *p.IfMatchSize != st.Size:
+		return false
+	case !p.IfMatchLastModified.IsZero() && !mtime.Equal(p.IfMatchLastModified.Truncate(time.Second)):
+		return false
+	case p.IfMatch != "" && p.IfMatch != "*" && !etagMatches(p.IfMatch, st.ETag):
+		return false
+	}
+	return true
 }
 
 // CopyObject implements op.ObjectStore. IfMatch and IfNoneMatch are checked
