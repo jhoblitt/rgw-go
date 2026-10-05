@@ -1729,6 +1729,62 @@ does the following.
   passes its 15-minute skew check (`docs/ceph-upstream-bugs.md`, "radosgw's
   SigV2 date check wraps the request time to 32 bits"). rgw-go compares the
   full time and answers such a request with 403 RequestTimeTooSkewed.
+- **A signed OPTIONS request is verified over OPTIONS and answered 501
+  until CORS lands.** radosgw serves an OPTIONS request on a bucket or an
+  object as its CORS preflight op. It builds the canonical request over
+  the request's `Access-Control-Request-Method` instead of `OPTIONS`, and
+  answers 400 InvalidArgument, before it looks the key up, when that header
+  is missing or names no CORS method: for SigV4 on both floors, for SigV2
+  on Tentacle only (`get_v4_canonical_method`, `rgw_auth_s3.cc:705-732`,
+  called at `rgw_rest_s3.cc:5827` at v19.2.6; `get_canonical_method`,
+  `rgw_auth_s3.cc:1749-1776`, called at `:258` and at `rgw_rest_s3.cc:6394`
+  at v20.2.4). For a key the index finds, once the user's account loads and
+  the key is in the user's record, it then skips the signature compare,
+  SigV2 and SigV4 alike, and runs the preflight (`rgw_rest_s3.cc:6325-6360`
+  at v19.2.6, `:6896-6931` at v20.2.4; `docs/ceph-upstream-bugs.md`,
+  "radosgw grants a signed CORS preflight without comparing its
+  signature"). rgw-go serves no CORS preflight in phase 1: it verifies a
+  signed OPTIONS request as any other, over the method `OPTIONS`, and
+  answers one that verifies with 501 NotImplemented. Where radosgw runs the
+  preflight whatever the signature, rgw-go answers 403
+  SignatureDoesNotMatch unless the request was signed over `OPTIONS`, a
+  request signed as radosgw expects included. Where radosgw answers 400
+  InvalidArgument for a missing or unknown method, rgw-go goes on to the
+  key: an unknown one is 403 InvalidAccessKeyId, and a known one is
+  answered as its signature decides. Otherwise an unknown key is 403
+  InvalidAccessKeyId from both. rgw-go does not give that 400 on its own:
+  it is the first step of radosgw's preflight signing, which phase 2's
+  CORS work takes whole, and alone it would refuse requests as radosgw
+  does while verifying the rest over another method. An unsigned OPTIONS
+  request is anonymous in both, which rgw-go answers with 501
+  NotImplemented.
+- **A system request's rgwx-uid names its owner, not its user record.**
+  Only radosgw's own multisite connection sends a system request with
+  `rgwx-uid` or `rgwx-perm-check-uid` (`RGWRESTConn`,
+  `rgw_rest_conn.h:234-237` and `rgw_rest_conn.cc:330-331` at v20.2.4),
+  and rgw-go answers one on both floors as Squid does. With a non-empty
+  `rgwx-uid` naming a user, Tentacle makes that user the request's user
+  record (`SysReqApplier::load_acct_info` returns it,
+  `rgw_auth_filters.h:324-344`, and `Strategy::apply` stores it,
+  `rgw_auth.cc:534`), so everything that reads the request's user record
+  reads the named user, such as the suspended check (`rgw_process.cc:374`),
+  the op mask (`rgw_op.cc:1223`), the MODIFY op-mask check (`:1655`) and
+  the placement chosen for a new bucket (`:3753`, `:8319`). Squid keeps the
+  system user's record (`rgw_auth.cc:519`, `rgw_auth_filters.h:283-317` at
+  v19.2.6), as rgw-go does on both floors, with the owner and the tenant the
+  named user's on every floor. Tentacle also adds impersonation of the user
+  a system request names in `rgwx-perm-check-uid`
+  (`rgw_rest_s3.cc:6950-6978` at v20.2.4), but reads that parameter before
+  system parameters are visible: `args.get` sees only ordinary parameters
+  (`:6953`; `rgw_common.cc:991-1000`), every `rgwx-` name is filed as a
+  system parameter (`:931-937`), and system parameters become visible only
+  once authentication has granted (`set_system`, `rgw_common.h:462-467`,
+  called at `rgw_auth_filters.h:355` from `rgw_auth.cc:540`). The
+  impersonation therefore never applies, and both releases and rgw-go serve
+  such a request as the system user (`docs/ceph-upstream-bugs.md`,
+  "Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync
+  pipe's source read goes unchecked"). Multisite is excluded, so a
+  single-zone rgw-go receives neither parameter from radosgw.
 
 ### Authorization differences
 
