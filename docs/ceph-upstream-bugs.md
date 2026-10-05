@@ -149,6 +149,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's usage reads and trims take in other users' records](#cls_rgws-usage-reads-and-trims-take-in-other-users-records) | pending | pending; [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329) (the `0` half) |  |
 | [radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in capitals](#radosgw-cuts-x-forwarded-for-only-for-an-rgw_remote_addr_param-written-in-capitals) | pending | pending |  |
 | [radosgw ignores a public-access block that does not decode](#radosgw-ignores-a-public-access-block-that-does-not-decode) | pending | pending |  |
+| [Squid's DeleteObjectTagging stamps the object with the epoch plus one nanosecond](#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6246,3 +6247,51 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit Z, Task 9 review, 2026-10-05; derived from the
   source, not reproduced.
+
+## Squid's DeleteObjectTagging stamps the object with the epoch plus one nanosecond
+
+- **Kind:** defect, fixed in Tentacle as a side effect of bucket logging.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; lines are v19.2.6's unless
+  marked.
+  - `RGWDeleteObjTags::execute` calls `delete_obj_attrs` on `s->object`
+    without loading it first (`rgw_op.cc:1133-1139`). Its
+    `verify_permission` loads it, through `rgw_iam_add_objtags` and
+    `get_obj_attrs`, only when a policy carries an existing-object-tag or
+    resource-tag condition (`rgw_op.cc:1117-1131` and `:727-731`).
+  - The permission check reads the object's ACL through
+    `rop->get_attr` (`get_obj_policy_from_attr`, `rgw_op.cc:288-302`), and
+    that call fills only the object context's `RGWObjState`
+    (`RadosObject::RadosReadOp::get_attr`,
+    `driver/rados/rgw_sal_rados.cc:2875-2878`;
+    `RGWRados::Object::Read::get_attr`, `driver/rados/rgw_rados.cc:6349-6362`),
+    not the SAL object's own `state` (`StoreObject::state`,
+    `rgw_sal_store.h:187`). Only `read_attrs` sets that `state.mtime`
+    (`driver/rados/rgw_sal_rados.cc:2367-2372`).
+  - `delete_obj_attrs` does not load the object either
+    (`driver/rados/rgw_sal_rados.cc:2421-2429`), and `set_obj_attrs`, under
+    the `FLAG_LOG_OP` it passes, nudges that zero mtime by a nanosecond
+    (`:2378-2391`).
+  - `set_attrs` takes any `set_mtime` other than zero as the object's
+    mtime, writes it to the head with `mtime2`, and completes the index
+    entry with it (`driver/rados/rgw_rados.cc:6683-6688`, `:6722-6725`).
+  - v20.2.4 calls `get_obj_attrs` before `delete_obj_attrs`, for bucket
+    logging (`rgw_op.cc:1351-1375` at v20.2.4; Ceph commit 12c201b2f94,
+    "rgw/logging: support object metadata changes in journal mode", which
+    v19.2.6 does not contain), so the nudge starts from the stored mtime.
+- **Impact:** on Squid, a DeleteObjectTagging without such a policy
+  condition sets the object's mtime to 1970-01-01T00:00:00.000000001, on the
+  head and in its bucket index entry. GET and HEAD then report a
+  Last-Modified of 1970, a listing reports the same, If-Modified-Since and
+  If-Unmodified-Since compare against it, and lifecycle expiration by age
+  takes the object as decades old (`rgw_lc.cc:1142-1156`). Not a security
+  issue.
+- **Releases:** v19.2.6. v20.2.4 is not affected.
+- **rgw-go:** decided by the DeleteObjectTagging op. The driver's
+  `SetObjectAttrs` nudges the mtime of the state it is given
+  (`internal/driver/attrs.go`), so the op decides whether that state is the
+  one its Init read, Tentacle's behaviour, or a zero mtime, Squid's. No
+  exclusions entry is recorded until it does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 7 review, 2026-10-05, tracing the
+  callers of `set_attrs`; derived from the source, not reproduced.
