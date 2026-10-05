@@ -35,6 +35,11 @@ type ObjectState struct {
 	// :166-175 and :9787-9789 at v20.2.4); zero for an object that carries
 	// none.
 	Version meta.ObjVersion
+
+	// defaultACLLogged is set once ObjectACLFor has warned that the head
+	// carries no ACL: radosgw reads the ACL once per request and warns once,
+	// where rgw-go's authorizer and an op may each derive it from the state.
+	defaultACLLogged bool
 }
 
 // ByteRange is a resolved range: Length bytes from Offset.

@@ -145,28 +145,13 @@ func (o *GetObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
 }
 
-// Execute takes the policy get_obj_policy_from_attr builds. A head whose ACL
-// does not decode is decode_policy's -EIO.
+// Execute takes the policy get_obj_policy_from_attr builds (ObjectACLFor).
 func (o *GetObjectACL) Execute(ctx context.Context, r *Request) error {
-	st := r.ObjState
-	if st == nil || !st.Exists {
-		return fmt.Errorf("%w: %s", ErrNoSuchKey, r.Object.Name)
-	}
-	if b, ok := st.Attrs[meta.AttrACL]; ok {
-		p, err := decodeACL(b, "object "+r.Object.Name)
-		if err != nil {
-			return err
-		}
-		o.Policy = p
-		return nil
-	}
-	slog.WarnContext(ctx, "couldn't find acl header for object, generating default",
-		slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name))
-	bucketACL, err := BucketACLFor(r.BucketRec)
+	p, err := ObjectACLFor(ctx, r.ObjState, r.BucketRec)
 	if err != nil {
 		return err
 	}
-	o.Policy = acl.DefaultPolicy(meta.ParseOwner(bucketACL.Owner.ID), bucketACL.Owner.DisplayName)
+	o.Policy = p
 	return nil
 }
 
@@ -191,6 +176,38 @@ func BucketACLFor(rec *BucketRecord) (acl.Policy, error) {
 		return acl.DefaultPolicy(rec.Info.Owner, ""), nil
 	}
 	return decodeACL(b, "bucket "+rec.Info.Bucket.Name)
+}
+
+// ObjectACLFor is get_obj_policy_from_attr (rgw_op.cc:288-326 at v19.2.6,
+// :331-369 at v20.2.4): the ACL of the object st, in bucket, as
+// rgw_build_object_policies reads it into s->object_acl. That is the head's
+// user.rgw.acl or, for a head without one, a policy giving FULL_CONTROL to
+// the owner bucket's ACL names, under its display name (s->bucket_owner,
+// :552 at v19.2.6, :582 at v20.2.4); only then is the bucket's ACL read. An
+// ACL that does not decode is decode_policy's -EIO, an UnknownError, and a
+// missing object is the head read's -ENOENT, NoSuchKey. The warning about a
+// head without an ACL is logged once per state, so once per request.
+func ObjectACLFor(ctx context.Context, st *ObjectState, bucket *BucketRecord) (acl.Policy, error) {
+	if st == nil || !st.Exists {
+		var key string
+		if st != nil {
+			key = st.Key.Name
+		}
+		return acl.Policy{}, fmt.Errorf("%w: %s", ErrNoSuchKey, key)
+	}
+	if b, ok := st.Attrs[meta.AttrACL]; ok {
+		return decodeACL(b, "object "+st.Key.Name)
+	}
+	if !st.defaultACLLogged {
+		st.defaultACLLogged = true
+		slog.WarnContext(ctx, "couldn't find acl header for object, generating default",
+			slog.String("bucket", bucket.Info.Bucket.Name), slog.String("key", st.Key.Name))
+	}
+	bucketACL, err := BucketACLFor(bucket)
+	if err != nil {
+		return acl.Policy{}, err
+	}
+	return acl.DefaultPolicy(meta.ParseOwner(bucketACL.Owner.ID), bucketACL.Owner.DisplayName), nil
 }
 
 // decodeACL is decode_policy (rgw_op.cc:227-245 at v19.2.6, :270-288 at
