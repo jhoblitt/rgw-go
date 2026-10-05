@@ -176,6 +176,12 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | pending | pending |  |
 | [radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC](#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc) | pending | pending |  |
 | [radosgw fails every tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io](#radosgw-fails-every-tail-sharing-copy-on-a-zero-rgw_max_copy_obj_concurrent_io) | pending | pending |  |
+| [radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout](#radosgws-bucket-creation-retry-leaks-the-abandoned-instance-and-repeats-its-log-layout) | pending | pending |  |
+| [radosgw reports a bucket whose owner link failed as created](#radosgw-reports-a-bucket-whose-owner-link-failed-as-created) | pending | pending |  |
+| [radosgw's bucket delete answers success when its instance removal loses a race](#radosgws-bucket-delete-answers-success-when-its-instance-removal-loses-a-race) | pending | pending |  |
+| [radosgw's bucket delete unlinks a bucket re-created under the same name from its owner](#radosgws-bucket-delete-unlinks-a-bucket-re-created-under-the-same-name-from-its-owner) | pending | pending |  |
+| [Tentacle cannot delete an indexless bucket it created](#tentacle-cannot-delete-an-indexless-bucket-it-created) | pending | pending |  |
+| [radosgw sends Content-Length: 0 with a 204](#radosgw-sends-content-length-0-with-a-204) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2571,7 +2577,9 @@ Every new entry adds its row to this table, in document order.
   `rgw_rados.cc:1408-1412` and `rgw_bucket.cc:3088-3090`); older releases
   not checked.
 - **rgw-go:** reads the option once at startup, without radosgw's clamp
-  (`internal/driver/options.go`); nothing in rgw-go reads it yet.
+  (`internal/driver/options.go`), and gives a new bucket's index that many
+  shards when it is set, unbounded, as `init_default_bucket_layout` does
+  (`Store.defaultLayout` in `internal/driver/bucketops.go`).
 - **Upstream:** [#70980](https://tracker.ceph.com/issues/70980), "a bucket
   can only effectively use up to 65,521 bucket index shards", reports it. It
   was rejected on 2025-04-18 once `radosgw-admin bucket reshard` was shown to
@@ -7414,3 +7422,202 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 8, 2026-10-05, transcribing
   `copy_obj`'s refcount loop; derived from the source, not reproduced.
+
+## radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - `RGWRados::create_bucket` makes up to 20 tries. Each initializes the
+    index of a new bucket id, then writes the instance and the entry point
+    exclusively (`rgw_rados.cc:2372-2418` at v19.2.6, `:2477-2526` at
+    v20.2.4). When the entry point exists, it reads the bucket by name, and
+    when that read finds none, a concurrent delete having removed it, it
+    starts the next try at once (`continue`, `rgw_rados.cc:2422-2429` at
+    v19.2.6, `:2530-2537` at v20.2.4). That try's instance and index shards
+    are written and never removed: only a try that finds another instance
+    removes its own (`:2434-2447` at v19.2.6, `:2542-2555` at v20.2.4).
+  - Every try works on the same `RGWBucketInfo`, `RadosBucket`'s own
+    `info` (`rgw_sal_rados.cc:167-171` at v19.2.6, `:176-181` at v20.2.4),
+    and `init_default_bucket_layout` appends the in-index log generation to
+    its layout's `logs` without clearing them (`rgw_bucket.cc:2798-2800` at
+    v19.2.6, `:2916-2918` at v20.2.4). A bucket created on its nth try is
+    stored with n copies of log generation 0.
+- **Impact:** a create that loses to a bucket created and deleted under the
+  same name, in the window between its entry-point write and its re-read,
+  leaves an instance object in the domain root and a full set of empty index
+  shards for each abandoned try, which nothing references or removes. The
+  bucket it then creates lists its log generation more than once, which only
+  multisite's bucket sync and log trimming read; that path was not traced.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** removes an abandoned try's instance and index before the next
+  try and gives each try a fresh layout (`Store.CreateBucket` in
+  `internal/driver/bucketops.go`; `docs/exclusions.md`, "An abandoned
+  bucket-creation try is removed").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
+  `create_bucket` at both tags; derived from the source, not reproduced.
+
+## radosgw reports a bucket whose owner link failed as created
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - Once a new bucket's instance and entry point are written,
+    `RadosBucket::create` adds it to its owner's bucket list. When that
+    link fails, it unlinks the bucket and assigns the unlink's result to the
+    value it returns (`ret = unlink(dpp, params.owner, y)`,
+    `driver/rados/rgw_sal_rados.cc:190-197` at v19.2.6, `:207-214` at
+    v20.2.4), so an unlink that succeeds turns the link's failure into 0.
+  - `RGWCreateBucket::execute` then finishes without an error
+    (`rgw_op.cc:3640-3647` at v19.2.6, `:3868-3875` at v20.2.4), and
+    `send_response` answers 200 (`rgw_rest_s3.cc:2544-2555` at v19.2.6,
+    `:2705-2716` at v20.2.4).
+- **Impact:** the client is told its bucket was created. The bucket exists,
+  entry point and instance, but is in no owner's list: ListBuckets does not
+  show it, the owner's stats do not count it, and `max_buckets` does not
+  count it either. The owner's re-create repairs it, as a partial creation
+  (`rgw_sal_rados.cc:173-190` at v19.2.6).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** returns the link's failure after the same unlink
+  (`Store.CreateBucket` in `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "A failed owner link fails the create").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
+  `RadosBucket::create` at both tags; derived from the source, not
+  reproduced.
+
+## radosgw's bucket delete answers success when its instance removal loses a race
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RadosBucket::remove` reloads the bucket, which leaves the instance's
+    version in `info.objv_tracker` (`driver/rados/rgw_sal_rados.cc:357` and
+    `:610-637` at v19.2.6, `:374` at v20.2.4;
+    `services/svc_bucket_sobj.cc:343-371` at v19.2.6, `:293-320` at
+    v20.2.4).
+  - `RGWRados::delete_bucket` removes the entry point, then the instance
+    under that tracker, and returns the instance removal's error, -ECANCELED
+    when the instance changed since the reload (`driver/rados/rgw_rados.cc:5279-5293`
+    at v19.2.6, `:5993-6006` at v20.2.4; `driver/rados/rgw_bucket.cc:3164-3181`
+    at v19.2.6, `:3295-3310` at v20.2.4; only -ENOENT is tolerated,
+    `services/svc_bucket_sobj.cc:577-580` at v19.2.6, `:516-519` at
+    v20.2.4). `remove` returns that error before it cleans the index and
+    unlinks the bucket (`rgw_sal_rados.cc:445-450` at v19.2.6, `:462-467`
+    at v20.2.4).
+  - `RGWDeleteBucket::execute` turns -ECANCELED into success, for a lost
+    entry-point race, which it takes to have unlinked already
+    (`rgw_op.cc:3792-3797` at v19.2.6, `:4001-4006` at v20.2.4).
+- **Impact:** a DELETE that races any write of the bucket's instance, such
+  as a PutBucketAcl, PutBucketTagging or a reshard, after `remove`'s reload
+  is answered 204 while only the entry point is gone. The instance and the
+  index stay behind, unreferenced, and the bucket stays in its owner's list,
+  so ListBuckets shows a bucket that every request answers NoSuchBucket for,
+  and `max_buckets` counts it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reads the instance again when the delete begins, as
+  `remove` does, removes it under the version read, and when another write
+  changed it since, reads it again from RADOS and retries, so the delete
+  goes on to the index the last read names and the owner's entry. After
+  twenty lost removals it answers 500 InternalError, leaving what radosgw's
+  204 leaves
+  (`Store.DeleteBucket` in `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "A bucket delete retries an instance removal that
+  lost to another write").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
+  `delete_bucket` at both tags; derived from the source, not reproduced.
+
+## radosgw's bucket delete unlinks a bucket re-created under the same name from its owner
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - `RGWRados::delete_bucket` reads the entry point afresh and, when it
+    names another instance, leaves it in place
+    (`rgw/driver/rados/rgw_rados.cc:5254-5277` at v19.2.6, `:5968-5991` at
+    v20.2.4).
+  - `RadosBucket::remove` then unlinks the bucket from its owner whatever
+    the entry point named (`rgw/driver/rados/rgw_sal_rados.cc:461-462` at
+    v19.2.6, `:482-483` at v20.2.4), through `RGWBucketCtl::unlink_bucket`
+    and `rgwrados::buckets::remove` (`rgw/driver/rados/rgw_bucket.cc:3407-3432`
+    and `rgw/driver/rados/buckets.cc:62-78` at v19.2.6;
+    `rgw_bucket.cc:3506-3518` and `buckets.cc:62-78` at v20.2.4).
+  - `cls_user_remove_bucket` keys the owner's entry by the bucket's name
+    alone and removes whatever instance it names
+    (`cls/user/cls_user.cc:239-276` at both tags).
+- **Impact:** when a DELETE reads a bucket, another DELETE of the same
+  bucket completes, and the owner creates the bucket again before the first
+  DELETE re-reads the entry point, the first DELETE removes the new bucket's
+  entry from its owner's list. The new bucket exists and answers by name,
+  but ListBuckets does not show it, and the owner's stats and `max_buckets`
+  do not count it until the owner re-creates it again.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** removes the owner's entry only while it names the instance
+  being deleted, comparing the entry it read in the same op that removes it
+  (`Store.unlinkInstance` in `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "An owner's entry naming another instance stays").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7 review, 2026-10-05, transcribing
+  `RadosBucket::remove` at both tags; derived from the source, not
+  reproduced.
+
+## Tentacle cannot delete an indexless bucket it created
+
+- **Kind:** defect, unfixed at v20.2.4; main not checked. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/`.
+  - Squid's `init_index` and `clean_index` create and remove the shard
+    objects whatever the index type (`rgw/services/svc_bi_rados.cc:354-393`
+    at v19.2.6). Tentacle's create and remove none for an index that is not
+    Normal (`:456-458` and `:521-523` at v20.2.4).
+  - `RGWDeleteBucket::execute` checks an own bucket's emptiness whatever
+    its index type (`rgw/rgw_op.cc:3761-3772` at v19.2.6, `:3968-3981` at
+    v20.2.4), through `RadosBucket::check_empty` and
+    `RGWRados::check_bucket_empty`, which lists the shards with
+    `cls_bucket_list_unordered` (`rgw/driver/rados/rgw_sal_rados.cc:777-780`
+    and `rgw/driver/rados/rgw_rados.cc:5741-5755` at v20.2.4). That opens
+    the shard objects without looking at the index type
+    (`rgw/services/svc_bi_rados.cc:191-215` at v19.2.6, `:199-216` at
+    v20.2.4).
+  - `bucket_list` is a read method (`cls/rgw/cls_rgw.cc:4693` at v19.2.6,
+    `:5110` at v20.2.4), so on a missing shard object the OSD answers
+    -ENOENT, which the DELETE returns: 404 NoSuchKey
+    (`rgw/rgw_common.cc:98` at v20.2.4).
+- **Impact:** on Tentacle, an indexless bucket created there can never be
+  deleted through S3: every DELETE answers 404 NoSuchKey and the bucket
+  stays. An indexless bucket a Squid gateway created has shard objects, so
+  a Tentacle DELETE passes the check, but Tentacle's `clean_index` then
+  skips them, and they stay in the index pool, unreferenced.
+- **Releases:** v20.2.4. v19.2.6 is not affected for buckets it creates.
+- **rgw-go:** meets it as radosgw does at each release: on Tentacle the
+  emptiness check fails on the missing shards with NoSuchKey, and an index
+  that is not Normal is not cleaned (`Store.DeleteBucket` and
+  `Store.hasIndexObjects` in `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "An indexless bucket is deleted as each release
+  deletes it"). Skipping the check could orphan objects.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7 review, 2026-10-05, tracing the delete
+  of an indexless bucket at both tags; derived from the source, not
+  reproduced.
+
+## radosgw sends Content-Length: 0 with a 204
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** a response whose `end_header` names no length, as
+  DeleteBucket's 204 does (`rgw/rgw_rest_s3.cc:2731-2740` at v20.2.4), is
+  completed by `BufferingFilter::complete_request`, which sends the length
+  of the buffered body, 0 (`rgw/rgw_client_io_filters.h:221-253` at both
+  tags), through `ClientIO::send_content_length`, which writes
+  `Content-Length: 0` whatever the status (`rgw/rgw_asio_client.cc:183-189`
+  at both tags). RFC 9110, section 8.6, forbids a Content-Length in a 204.
+- **Impact:** a strict client or proxy may refuse the response; common
+  clients ignore the header.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** sends no length with a 204, as net/http allows none
+  (`docs/exclusions.md`, "A 204 carries no Content-Length").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 7 review, 2026-10-05; derived from the
+  source, not reproduced.
