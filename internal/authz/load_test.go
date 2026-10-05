@@ -231,42 +231,55 @@ var _ = Describe("needsTags", func() {
 	})
 })
 
-var _ = Describe("addTags", func() {
+var _ = Describe("tagSet and addTags", func() {
 	var attrs map[string][]byte
 
 	BeforeEach(func() {
 		attrs = map[string][]byte{tags.Attr: encodeTags("env", "prod", "team", "a")}
 	})
 
-	It("adds each tag under the keys asked for", func() {
+	added := func(existing, resource bool) policy.Env {
+		GinkgoHelper()
+		set, err := authz.TagSet(attrs)
+		Expect(err).NotTo(HaveOccurred())
 		var env policy.Env
-		authz.AddTags(&env, attrs, true, true)
+		authz.AddTags(&env, set, existing, resource)
+		return env
+	}
+
+	It("adds each tag under the keys asked for", func() {
+		env := added(true, true)
 		Expect(env.Lookup("s3:ExistingObjectTag/env")).To(Equal([]string{"prod"}))
 		Expect(env.Lookup("s3:ExistingObjectTag/team")).To(Equal([]string{"a"}))
 		Expect(env.Lookup("s3:ResourceTag/env")).To(Equal([]string{"prod"}))
 		Expect(env.Lookup("s3:ResourceTag/team")).To(Equal([]string{"a"}))
 
-		env = policy.Env{}
-		authz.AddTags(&env, attrs, false, true)
+		env = added(false, true)
 		Expect(env.Lookup("s3:ExistingObjectTag/env")).To(BeNil(), "resource only")
 		Expect(env.Lookup("s3:ResourceTag/env")).To(Equal([]string{"prod"}), "resource only")
 	})
 
 	It("adds a repeated key's values in multimap order", func() {
 		attrs[tags.Attr] = encodeTags("k", "b", "k", "a")
-		var env policy.Env
-		authz.AddTags(&env, attrs, false, true)
+		env := added(false, true)
 		Expect(env.Lookup("s3:ResourceTag/k")).To(Equal([]string{"b", "a"}))
 	})
 
-	It("adds nothing without tags or for a tag set that does not decode", func() {
+	It("finds no set without the attr, and adds nothing for none", func() {
+		set, err := authz.TagSet(nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(set).To(BeNil())
 		var env, empty policy.Env
 		authz.AddTags(&env, nil, true, true)
+		Expect(env.Clone()).To(Equal(empty.Clone()))
+	})
+
+	It("fails on a tag set that does not decode", func() {
 		// Neither the binary form nor, as text, a valid x-amz-tagging string.
 		for _, b := range [][]byte{{}, {0xff, '&'}} {
 			attrs[tags.Attr] = b
-			authz.AddTags(&env, attrs, true, true)
+			_, err := authz.TagSet(attrs)
+			Expect(err).To(HaveOccurred(), "%q", b)
 		}
-		Expect(env.Clone()).To(Equal(empty.Clone()))
 	})
 })

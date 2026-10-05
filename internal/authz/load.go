@@ -116,19 +116,28 @@ func needsTags(policies ...*policy.Policy) (existing, resource bool) {
 	return existing, resource
 }
 
-// addTags is rgw_iam_add_tags_from_bl (rgw_op.cc:708-725 at v19.2.6,
-// :738-755 at v20.2.4): each tag of attrs' tag set, in its order, under
-// s3:ExistingObjectTag/<key> when existing and then s3:ResourceTag/<key> when
-// resource. A tag set that does not decode adds nothing; radosgw returns -EIO
-// before adding a key, and every caller ignores it.
-func addTags(env *policy.Env, attrs map[string][]byte, existing, resource bool) {
+// tagSet is the tag set attrs carries, as rgw_iam_add_tags_from_bl decodes
+// it (rgw_op.cc:708-725 at v19.2.6, :738-755 at v20.2.4); nil when attrs
+// carries none. A tag set that does not decode is an error. radosgw returns
+// -EIO before adding a key, and every caller ignores it.
+func tagSet(attrs map[string][]byte) (*tags.Set, error) {
 	b, ok := attrs[tags.Attr]
-	if !ok || !existing && !resource {
-		return
+	if !ok {
+		return nil, nil
 	}
 	d := denc.NewDecoder(b)
 	set := tags.Decode(d)
-	if d.Err() != nil {
+	if err := d.Err(); err != nil {
+		return nil, fmt.Errorf("decoding a tag set: %w", err)
+	}
+	return &set, nil
+}
+
+// addTags is rgw_iam_add_tags_from_bl's loop: each tag of set, in its order,
+// under s3:ExistingObjectTag/<key> when existing and then
+// s3:ResourceTag/<key> when resource. A nil set adds nothing.
+func addTags(env *policy.Env, set *tags.Set, existing, resource bool) {
+	if set == nil {
 		return
 	}
 	for _, t := range set.Tags {
