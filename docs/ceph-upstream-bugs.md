@@ -2694,8 +2694,16 @@ Every new entry adds its row to this table, in document order.
   (`internal/driver/options.go`). Its usage log flushes every second when
   `rgw_usage_log_tick_interval` is not positive, logging an error
   (`internal/driver/usage.go`; `docs/exclusions.md`, "A usage-log tick
-  interval that is not positive"); nothing in rgw-go consumes the other four
-  yet.
+  interval that is not positive"). With `rgw_enable_quota_threads` set, its
+  quota bucket-sync and owner-sync workers likewise run every second when
+  their interval is not positive, logging an error
+  (`internal/driver/stats.go`; `docs/exclusions.md`, "Quota sync intervals
+  that are not positive"). A TTL or sync wait that is not positive acts as it
+  does in radosgw: every quota check reads the stats from RADOS, and every
+  owner the pass does not skip as idle gets a full sync on every pass. Only
+  a TTL below the current Unix time's negative differs, which rgw-go never
+  pins in 2106 (`docs/exclusions.md`, "A quota stats TTL below about
+  -1.79e9 seconds").
 - **Upstream:** [#81226](https://tracker.ceph.com/issues/81226), which we
   filed. Its fix, [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261),
   a draft, adds `min: 1` to all five options.

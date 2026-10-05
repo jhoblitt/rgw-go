@@ -26,26 +26,63 @@ func (s *Store) UserStats(_ context.Context, owner meta.Owner) (op.Stats, error)
 	return s.ownerStats(owner), nil
 }
 
-// CheckQuota implements op.StatsStore as RGWQuotaHandlerImpl::check_quota
-// checks a write (rgw_quota.cc:912-955 at v19.2.6): rec's quota against the
-// bucket's totals, then the owning user's user quota against the owner's.
+// CheckQuota implements op.StatsStore as RGWOp::init_quota and
+// RGWQuotaHandlerImpl::check_quota check a write (rgw_op.cc:1383-1449 and
+// rgw_quota.cc:912-955 at v19.2.6): the effective bucket quota against the
+// bucket's totals, then the effective user quota against the owner's,
+// without the driver's caches. An owner it does not hold fails the check
+// with radosgw's bare ENOENT, NoSuchKey.
 func (s *Store) CheckQuota(_ context.Context, rec *op.BucketRecord, owner meta.Owner, addBytes, addObjs int64) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	b, err := s.instance(rec)
+	bq, uq, err := s.effectiveQuotas(rec, owner)
 	if err != nil {
 		return err
 	}
-	if exceeds(rec.Info.Quota, stats(b), addBytes, addObjs) {
-		return fmt.Errorf("bucket %s: %w", rec.Info.Bucket.Name, op.ErrQuotaExceeded)
+	if bq.Enabled {
+		b, err := s.instance(rec)
+		if err != nil {
+			return err
+		}
+		if exceeds(bq, stats(b), addBytes, addObjs) {
+			return fmt.Errorf("bucket %s: %w", rec.Info.Bucket.Name, op.ErrQuotaExceeded)
+		}
 	}
-	if owner.User == nil {
-		return nil
-	}
-	if u, ok := s.users[owner.User.String()]; ok && exceeds(u.Info.UserQuota, s.ownerStats(owner), addBytes, addObjs) {
+	if exceeds(uq, s.ownerStats(owner), addBytes, addObjs) {
 		return fmt.Errorf("user %s: %w", owner, op.ErrQuotaExceeded)
 	}
 	return nil
+}
+
+// effectiveQuotas is init_quota's precedence: the period's quotas, then the
+// bucket's own bucket quota or else the owner's when enabled, and the
+// owner's user quota when enabled.
+func (s *Store) effectiveQuotas(rec *op.BucketRecord, owner meta.Owner) (bucket, user meta.Quota, err error) {
+	var ownerBucket, ownerUser meta.Quota
+	if owner.User != nil {
+		u, ok := s.users[owner.User.String()]
+		if !ok {
+			return meta.Quota{}, meta.Quota{}, fmt.Errorf("bucket owner %s: %w", owner, op.ErrNoSuchKey)
+		}
+		ownerBucket, ownerUser = u.Info.BucketQuota, u.Info.UserQuota
+	} else {
+		a, ok := s.accounts[owner.Account]
+		if !ok {
+			return meta.Quota{}, meta.Quota{}, fmt.Errorf("bucket owner %s: %w", owner, op.ErrNoSuchKey)
+		}
+		ownerBucket, ownerUser = a.Info.BucketQuota, a.Info.Quota
+	}
+	bucket, user = s.cfg.Period.PeriodConfig.BucketQuota, s.cfg.Period.PeriodConfig.UserQuota
+	switch {
+	case rec.Info.Quota.Enabled:
+		bucket = rec.Info.Quota
+	case ownerBucket.Enabled:
+		bucket = ownerBucket
+	}
+	if ownerUser.Enabled {
+		user = ownerUser
+	}
+	return bucket, user, nil
 }
 
 // AdjustStats implements op.StatsStore. memstore keeps no quota cache: its

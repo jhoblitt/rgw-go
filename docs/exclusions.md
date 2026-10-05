@@ -289,6 +289,15 @@ gone, and radosgw writes into the new bucket's index
 (`docs/ceph-upstream-bugs.md`, "radosgw re-reads a resharding bucket by name,
 so a write can land in a bucket recreated under that name").
 
+radosgw's quota sync threads also check each bucket whose stats they write
+to its owner, and with `rgw_dynamic_resharding` set queue one past the
+per-shard threshold for resharding (`check_bucket_shards`,
+`rgw_quota.cc:596` at v19.2.6 and `:617` at v20.2.4, `rgw_user.cc:44` at
+both; `driver/rados/rgw_rados.cc:10523-10582` at v19.2.6). rgw-go's sync
+workers write the same stats and check nothing, so a bucket that only
+rgw-go writes to is queued by a coexisting radosgw's checks or an
+operator's `radosgw-admin bucket reshard`.
+
 Cost accepted: buckets that grow past the per-shard threshold list more
 slowly until an operator reshards them.
 
@@ -1500,6 +1509,36 @@ does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw spins or stops caching on a
   negative usage-log or quota interval](ceph-upstream-bugs.md#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval)").
   Its usage entries reach the usage log at once; rgw-go's within a second.
+- **Quota sync intervals that are not positive.** With
+  `rgw_enable_quota_threads` set and `rgw_user_quota_bucket_sync_interval`
+  or `rgw_user_quota_sync_interval` 0 or negative, rgw-go runs that sync
+  every second and logs an error naming the option and the value it read.
+  radosgw's owner-sync threads then loop without pause at both tags, and so
+  does its bucket-sync thread at v19.2.6; at v20.2.4 the bucket-sync thread
+  waits a second for 0 through -1024 and loops without pause below that
+  (`rgw_quota.cc:378-381` and `:427-428` at v19.2.6, `:394-401` and
+  `:448-449` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw spins or
+  stops caching on a negative usage-log or quota interval](ceph-upstream-bugs.md#radosgw-spins-or-stops-caching-on-a-negative-usage-log-or-quota-interval)").
+  rgw-go does not read the developer option `rgw_reshard_debug_interval`,
+  by which a Tentacle radosgw scales its bucket-sync interval. Each sync
+  runs on a ticker, so a pass that takes longer than its interval is
+  followed by the next at once, where radosgw waits the interval after
+  every pass. A zero or negative `rgw_user_quota_sync_wait_time` gives
+  every owner the pass does not skip as idle a full sync on every pass in
+  both gateways.
+- **A quota stats TTL below about -1.79e9 seconds.** A zero or negative
+  `rgw_bucket_quota_ttl` makes both gateways read a bucket's or owner's
+  stats from RADOS on every quota check, and start a background refresh
+  too once an entry is cached. Below about -1.79e9 s, the current Unix
+  time, radosgw's expiration wraps below zero and is pinned in 2106
+  (`rgw_quota.cc:136-139`; `include/utime.h:528-535` at both tags), so it
+  serves cached stats; rgw-go keeps reading them on every check. Down to
+  about -3.58e9 s, twice the current Unix time, the refresh time
+  (now plus half the TTL) stays positive and past, so each check
+  starts a background refresh whose stats `set_stats` pins again
+  (`rgw_quota.cc:149-156`): radosgw serves stats one refresh old. Below
+  that the refresh time is pinned in 2106 too, and radosgw serves the
+  first stats it cached for good.
 - **The read window counts buffers and holds them until written.** rgw-go
   keeps a GET's reads within `rgw_get_obj_window_size`, but a piece's share
   of the window is the buffer it reads into, a pooled

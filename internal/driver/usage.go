@@ -90,21 +90,15 @@ func (u *usageLogger) reset(now time.Time, loc *time.Location) {
 
 // openUsageLog starts the usage log, with its flush worker, when
 // rgw_enable_usage_log is set. A tick interval that is not positive is used
-// as one second, with an error-level log line naming the option: radosgw
-// re-arms its flush timer that far in the past and flushes without pause
-// (docs/ceph-upstream-bugs.md, tracker #81226), and a time.Ticker refuses it.
+// as one second (positiveInterval): radosgw re-arms its flush timer that far
+// in the past and flushes without pause.
 func (s *Store) openUsageLog(ctx context.Context) {
 	if !s.opts.usageLogEnabled {
 		return
 	}
 	s.usage.reset(time.Now(), time.Local)
 	s.usage.finalFlush = usageFinalFlushTimeout
-	s.usage.tick = s.opts.usageTick
-	if s.usage.tick <= 0 {
-		slog.ErrorContext(ctx, "usage log tick interval is not positive; using 1 second (tracker #81226)",
-			slog.String("option", "rgw_usage_log_tick_interval"), slog.Int64("value", int64(s.usage.tick/time.Second)))
-		s.usage.tick = time.Second
-	}
+	s.usage.tick = positiveInterval(ctx, "rgw_usage_log_tick_interval", s.opts.usageTick)
 	s.AddWorker("usage-flush", s.runUsageFlush)
 }
 

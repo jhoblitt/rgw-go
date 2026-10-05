@@ -240,11 +240,12 @@ var _ = Describe("the head write's placement, atomicity, category and index knob
 	})
 
 	It("adds no bytes to the quota for a completed multipart upload", func(ctx SpecContext) {
+		Expect(s.CheckQuota(ctx, rec, alice, 0, 0)).To(Succeed(), "the period's bucket quota primes the bucket cache with the empty bucket")
 		_, err := s.WriteMetaForTest(ctx, rec, driver.HeadWriteForTest{
 			Key: meta.ObjKey{Name: "k"}, Tag: "tag", Data: []byte("abc"), Attrs: attrsWithACL(initiator), Create: true,
 			Size: 3, AccountedSize: 3, CompleteMultipart: true,
 		}, s.NewIndexOpForTest(rec, meta.ObjKey{Name: "k"}, "tag"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(s.StatsForTest()).To(Equal(driver.QuotaDeltas{Objs: 1}), "update_stats(owner, bucket, 1, 0, orig_size), rgw_rados.cc:3359-3362")
+		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{NumObjects: 1}), "update_stats(owner, bucket, 1, 0, orig_size), rgw_rados.cc:3359-3362")
 	})
 })

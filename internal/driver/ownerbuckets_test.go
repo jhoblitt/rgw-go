@@ -90,9 +90,8 @@ var _ = Describe("the owner's bucket list", func() {
 		uids  = "users.uid"
 	)
 	var (
-		c     *fakerados.Cluster
-		s     *driver.Store
-		alice meta.Owner
+		c *fakerados.Cluster
+		s *driver.Store
 	)
 	open := func(ctx context.Context, cluster radosclient.Cluster, kv map[string]string) *driver.Store {
 		GinkgoHelper()
@@ -112,7 +111,6 @@ var _ = Describe("the owner's bucket list", func() {
 		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
 		seedRookZone(c, "ceph-objectstore", true)
 		s = open(ctx, c, nil)
-		alice = meta.UserOwner(meta.UserID{ID: "alice"})
 	})
 	bucket := func(name string) meta.BucketID {
 		return meta.BucketID{Name: name, Marker: "m-" + name, ID: "m-" + name}

@@ -49,6 +49,7 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 		zone:    &zoneConfig{Params: zone.Params, ZoneGroup: zone.ZoneGroup},
 		pools:   newPoolCache(cluster),
 		readCfg: readConfig{chunk: cfg.Chunk, maxReq: cfg.MaxReq, window: cfg.Window},
+		quota:   newStatsCaches(options{bucketQuotaCacheSize: 10000, bucketQuotaTTL: 600 * time.Second}, time.Now),
 	}
 	s.heads = s
 	s.bgAIO = semaphore.NewWeighted(1)
@@ -278,24 +279,6 @@ func (t *TailWriter) PeakBuffered() uint64 {
 	return t.tw.peak
 }
 
-// QuotaDeltas sums the AdjustStats calls a Store took.
-type QuotaDeltas struct{ Objs, Added, Removed int64 }
-
-// StatsForTest is the sum of the AdjustStats calls s took.
-func (s *Store) StatsForTest() QuotaDeltas {
-	s.quota.mu.Lock()
-	defer s.quota.mu.Unlock()
-	return QuotaDeltas{Objs: s.quota.objs, Added: s.quota.added, Removed: s.quota.removed}
-}
-
-// SetQuotaForTest makes check, given CheckQuota's context, the answer of s's
-// CheckQuota.
-func (s *Store) SetQuotaForTest(check func(ctx context.Context, addBytes, addObjs int64) error) {
-	s.quota.mu.Lock()
-	defer s.quota.mu.Unlock()
-	s.quota.check = check
-}
-
 // CancelWriteForTest is cancelWrite after a head write that failed with err
 // under the conditions ifMatch and ifNoneMatch, through x.
 func (s *Store) CancelWriteForTest(x *IndexOp, ifMatch, ifNoneMatch string, err error) (canceled bool, out error) {
@@ -397,4 +380,71 @@ func (s *Store) ReadMetaForTest(ctx context.Context, rec *op.BucketRecord, key m
 		return nil, err
 	}
 	return &MetaState{Ref: exportRef(st.ref), Size: st.size, Mtime: st.mtime, Attrs: st.attrs, Version: st.version, Info: st.info}, nil
+}
+
+// Clock is a clock a spec moves by hand, with the tickers it drives.
+type Clock interface {
+	Now() time.Time
+	NewTicker(d time.Duration) Ticker
+}
+
+// SetClockForTest makes c the clock s stamps its writes and times its stats
+// caches with, and the source of its workers' tickers.
+func SetClockForTest(s *Store, c Clock) {
+	s.sysobj.now = c.Now
+	s.newTicker = c.NewTicker
+}
+
+// WaitQuotaRefreshesForTest waits for the stats caches' background
+// refreshes under way.
+func WaitQuotaRefreshesForTest(s *Store) {
+	s.quota.bucket.wait()
+	s.quota.owner.wait()
+}
+
+// CachedBucketStatsForTest is the bucket cache's entry for rec, zero when it
+// holds none.
+func CachedBucketStatsForTest(s *Store, rec *op.BucketRecord) op.Stats {
+	st, _ := s.quota.bucket.peek(bucketStatsKey(rec.Info.Bucket))
+	return st
+}
+
+// CachedOwnerStatsForTest is the owner cache's entry for owner, zero when it
+// holds none.
+func CachedOwnerStatsForTest(s *Store, owner meta.Owner) op.Stats {
+	st, _ := s.quota.owner.peek(ownerStatsKey(owner))
+	return st
+}
+
+// BucketStatsKeyForTest names rec's bucket in ModifiedBucketsForTest.
+func BucketStatsKeyForTest(rec *op.BucketRecord) string { return bucketName(rec.Info.Bucket) }
+
+func bucketName(b meta.BucketID) string { return b.Tenant + "/" + b.Name + ":" + b.ID }
+
+// ModifiedBucketsForTest is the modified-bucket set the bucket sync worker
+// drains: each bucket's owner, by BucketStatsKeyForTest's name.
+func ModifiedBucketsForTest(s *Store) map[string]meta.Owner {
+	s.quota.mu.Lock()
+	defer s.quota.mu.Unlock()
+	out := map[string]meta.Owner{}
+	for _, mb := range s.quota.modified {
+		out[bucketName(mb.bucket)] = mb.owner
+	}
+	return out
+}
+
+// RunBucketsSyncForTest is runBucketsSync for the external specs.
+func (s *Store) RunBucketsSyncForTest(ctx context.Context) error { return s.runBucketsSync(ctx) }
+
+// RunUserSyncForTest is the user section's runOwnerSync.
+func (s *Store) RunUserSyncForTest(ctx context.Context) error { return s.runOwnerSync(ctx, userOwners) }
+
+// RunAccountSyncForTest is the account section's runOwnerSync.
+func (s *Store) RunAccountSyncForTest(ctx context.Context) error {
+	return s.runOwnerSync(ctx, accountOwners)
+}
+
+// SyncAllStatsForTest is syncAllStats for the external specs.
+func (s *Store) SyncAllStatsForTest(ctx context.Context, owner meta.Owner) error {
+	return s.syncAllStats(ctx, owner)
 }

@@ -8,10 +8,21 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
-// defaultListBucketsChunk is rgw_list_buckets_max_chunk's default
+// DefaultListBucketsChunk is rgw_list_buckets_max_chunk's default
 // (src/common/options/rgw.yaml.in:1939-1948 at v19.2.6, :2039-2048 at
 // v20.2.4).
-const defaultListBucketsChunk = 1000
+const DefaultListBucketsChunk = 1000
+
+// ListBucketsChunk is the page size an rgw_list_buckets_max_chunk of v asks
+// for. radosgw converts a negative chunk to a huge unsigned count, which
+// lists everything, as the default chunk does page by page; a chunk past
+// what an int holds on every build lists everything too.
+func ListBucketsChunk(v int64) int {
+	if v >= 0 && v <= math.MaxInt32 {
+		return int(v)
+	}
+	return DefaultListBucketsChunk
+}
 
 // ListBuckets is RGWListBuckets: the service-scope GET and HEAD. Execute
 // hands the owner's buckets to Page one listing page at a time, as
@@ -63,13 +74,10 @@ func (o *ListBuckets) Execute(ctx context.Context, r *Request) error {
 	if o.Limit == 0 || r.Identity.Anonymous {
 		return o.Begin()
 	}
-	chunk := defaultListBucketsChunk
+	chunk := DefaultListBucketsChunk
 	if r.Env.Conf != nil {
-		// radosgw converts a negative chunk to a huge unsigned count, which
-		// lists everything, as the default chunk does page by page; a chunk
-		// past what an int holds on every build lists everything too.
-		if v, err := r.Env.Conf.Int64("rgw_list_buckets_max_chunk"); err == nil && v >= 0 && v <= math.MaxInt32 {
-			chunk = int(v)
+		if v, err := r.Env.Conf.Int64("rgw_list_buckets_max_chunk"); err == nil {
+			chunk = ListBucketsChunk(v)
 		}
 	}
 	marker, total, begun := o.Marker, 0, false
