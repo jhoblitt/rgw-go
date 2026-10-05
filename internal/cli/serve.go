@@ -317,10 +317,6 @@ func s3Config(conf *cephconf.Options, zi op.ZoneInfo, instanceID uint64) (s3.Con
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_dns_name: %w", err)
 	}
-	relaxed, err := conf.Bool("rgw_relaxed_s3_bucket_names")
-	if err != nil {
-		return s3.Config{}, fmt.Errorf("reading rgw_relaxed_s3_bucket_names: %w", err)
-	}
 	maxConcurrent, err := conf.Int64("rgw_max_concurrent_requests")
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_max_concurrent_requests: %w", err)
@@ -333,11 +329,10 @@ func s3Config(conf *cephconf.Options, zi op.ZoneInfo, instanceID uint64) (s3.Con
 		server = "Ceph Object Gateway (" + zi.Release().String() + ")"
 	}
 	return s3.Config{
-		DNSNames:           append(dns, zi.ZoneGroup().Hostnames...),
-		RelaxedBucketNames: relaxed,
-		MaxConcurrent:      int(maxConcurrent),
-		TransIDSuffix:      op.TransIDSuffix(instanceID, zi.Zone().Name),
-		ServerHeader:       server,
+		DNSNames:      append(dns, zi.ZoneGroup().Hostnames...),
+		MaxConcurrent: int(maxConcurrent),
+		TransIDSuffix: op.TransIDSuffix(instanceID, zi.Zone().Name),
+		ServerHeader:  server,
 	}, nil
 }
 

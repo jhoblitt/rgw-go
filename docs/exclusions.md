@@ -1050,6 +1050,21 @@ review and verified against the tree.
   `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
   `:2496-2498` at v20.2.4). Any other value but `false` is 400
   InvalidArgument from both, after the permission check.
+- **A requested bucket index answers 501 on Tentacle.** Tentacle's
+  CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
+  whose `Type` and `NumShards` set the new bucket's index, and refuses a
+  re-create that asks for another index (`rgw_rest_s3.cc:2651-2684` and
+  `driver/rados/rgw_sal_rados.cc:195-201` at v20.2.4). rgw-go checks the
+  element as radosgw does, answering a malformed one with radosgw's 400
+  InvalidArgument and message. A valid one on a name no bucket holds is 501
+  NotImplemented, creating nothing, once every check radosgw makes before
+  it creates a bucket has passed: the object-lock header, the location
+  constraint, the placement and the existing-bucket checks. A name that
+  holds a bucket is answered as radosgw answers it whatever the index asks
+  for: 409 for another owner's, 200 for the requester's own. The 501
+  includes a `BucketIndex` naming a Normal index without `NumShards`,
+  which on a Normal placement asks for what an ordinary create gives.
+  Squid reads no such element.
 
 ### Command-line differences
 
@@ -1686,6 +1701,13 @@ v20.2.4 tags, rgw-go does the following.
   `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
   `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
   Header names are case-insensitive (RFC 9110, section 5.1).
+- **A 204 carries no Content-Length.** radosgw's frontend completes a
+  response whose `end_header` named no length with `Content-Length: 0`,
+  whatever its status (`BufferingFilter::complete_request`,
+  `rgw_client_io_filters.h:221-253`, and `ClientIO::send_content_length`,
+  `rgw_asio_client.cc:183-189`, at v19.2.6 and v20.2.4). net/http sends no
+  length with a 204, which RFC 9110, section 8.6, forbids, so rgw-go's
+  DeleteBucket answers 204 without one.
 
 ### Request authentication differences
 

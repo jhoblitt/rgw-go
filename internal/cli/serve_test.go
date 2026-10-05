@@ -236,7 +236,6 @@ var _ = Describe("S3Config", func() {
 	BeforeEach(func() {
 		opts = cephconf.MapGetter{
 			"rgw_dns_name":                "s3.example.com, s3.internal",
-			"rgw_relaxed_s3_bucket_names": "true",
 			"rgw_max_concurrent_requests": "1024",
 			"rgw_service_provider_name":   "",
 		}
@@ -248,11 +247,10 @@ var _ = Describe("S3Config", func() {
 
 	It("reads the options the S3 handler takes, rgw_dns_name joined with the zonegroup's hostnames", func() {
 		Expect(cli.S3Config(cephconf.NewOptions(opts), zi, 4107)).To(Equal(s3.Config{
-			DNSNames:           []string{"s3.example.com", "s3.internal", "zg.example.com"},
-			RelaxedBucketNames: true,
-			MaxConcurrent:      1024,
-			TransIDSuffix:      "-4107-zone-a",
-			ServerHeader:       "Ceph Object Gateway (squid)",
+			DNSNames:      []string{"s3.example.com", "s3.internal", "zg.example.com"},
+			MaxConcurrent: 1024,
+			TransIDSuffix: "-4107-zone-a",
+			ServerHeader:  "Ceph Object Gateway (squid)",
 		}))
 	})
 

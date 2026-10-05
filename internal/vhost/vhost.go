@@ -56,7 +56,7 @@ func Bucket(host string, names []string) string {
 	}
 	domain, subdomain := findHostInDomains(host, names)
 	if subdomain == "" && domain != host && hasName(names) &&
-		!looksLikeIPAddress(host) && validBucketName(host) {
+		!LooksLikeIPAddress(host) && validBucketName(host) {
 		return host
 	}
 	return subdomain
@@ -118,11 +118,11 @@ func lowerASCII(c byte) byte {
 	return c
 }
 
-// looksLikeIPAddress is looks_like_ip_address (rgw_rest_s3.h:801-826 at
+// LooksLikeIPAddress is looks_like_ip_address (rgw_rest_s3.h:801-826 at
 // v19.2.6, :831-856 at v20.2.4): an address inet_pton(AF_INET6) accepts, or
 // digits split by exactly three dots with none leading or doubled, whatever
 // the digits' values.
-func looksLikeIPAddress(s string) bool {
+func LooksLikeIPAddress(s string) bool {
 	if strings.IndexByte(s, ':') >= 0 && net.ParseIP(s) != nil {
 		return true
 	}
