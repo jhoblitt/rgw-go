@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -185,8 +186,8 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Expect(resp.Header.Get("Server")).To(Equal("Ceph Object Gateway (" + release + ")"))
 		})
 
-		It("answers 501 NotImplemented for an op no unit serves yet", func(ctx SpecContext) {
-			resp, body, err := fetch(ctx, client, http.MethodGet, base+"/plain", nil)
+		It("answers 501 NotImplemented for an op it does not serve yet, a bucket's CORS preflight", func(ctx SpecContext) {
+			resp, body, err := fetch(ctx, client, http.MethodOptions, base+"/plain", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusNotImplemented))
 			Expect(body).To(ContainSubstring("<Code>NotImplemented</Code>"))
@@ -194,15 +195,16 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Expect(body).To(MatchRegexp(`<HostId>[0-9]+-%s-%s</HostId>`, regexp.QuoteMeta(m.Zone), regexp.QuoteMeta(m.Zonegroup)))
 		})
 
-		It("answers 501 for a signed request, which only anonymous authentication refuses", func(ctx SpecContext) {
+		It("answers 403 InvalidAccessKeyId for a signed request with a key the cluster has never seen", func(ctx SpecContext) {
 			h := http.Header{
-				"Authorization": {"AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260101/us-east-1/s3/aws4_request, " +
-					"SignedHeaders=host;x-amz-date, Signature=0000"},
-				"X-Amz-Date": {"20260101T000000Z"},
+				"Authorization": {"AWS4-HMAC-SHA256 Credential=AKNOBODY/20150830/us-east-1/s3/aws4_request, " +
+					"SignedHeaders=host;x-amz-date, Signature=" + strings.Repeat("0", 64)},
+				"X-Amz-Date": {time.Now().UTC().Format("20060102T150405Z")},
 			}
-			resp, _, err := fetch(ctx, client, http.MethodGet, base+"/", h)
+			resp, body, err := fetch(ctx, client, http.MethodGet, base+"/", h)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.StatusCode).To(Equal(http.StatusNotImplemented))
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+			Expect(body).To(ContainSubstring("<Code>InvalidAccessKeyId</Code>"))
 		})
 
 		It("answers 405 for POST /", func(ctx SpecContext) {

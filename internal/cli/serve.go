@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jhoblitt/rgw-go/internal/auth"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/frontend"
@@ -251,9 +252,14 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if err != nil {
 		return err
 	}
+	authCfg, err := auth.ConfigFrom(conf, s3cfg.DNSNames)
+	if err != nil {
+		return fmt.Errorf("reading auth options: %w", err)
+	}
+	verifier := auth.New(authCfg, store, store)
 	var s3h http.Handler
 	if s3On {
-		s3h = s3.NewHandler(env, s3.AnonymousOnly{}, s3cfg)
+		s3h = s3.NewHandler(env, verifier, s3cfg)
 	}
 	root := newRouter(s3h, newUnservedHandler(env, s3cfg), s3cfg, unserved)
 

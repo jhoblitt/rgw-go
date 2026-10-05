@@ -58,7 +58,7 @@ func ConfigFrom(o *cephconf.Options, dnsNames []string) (Config, error) {
 		case errors.Is(err, cephconf.ErrUnknownOption):
 			continue
 		case err != nil:
-			return Config{}, fmt.Errorf("reading auth config: %w", err)
+			return Config{}, fmt.Errorf("%s: %w", opt.name, err)
 		}
 		*opt.dst = v
 	}
