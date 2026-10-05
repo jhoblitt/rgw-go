@@ -169,6 +169,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's gc takes a failed omap listing of a converted shard for an empty one](#radosgws-gc-takes-a-failed-omap-listing-of-a-converted-shard-for-an-empty-one) | pending | pending |  |
 | [A negative or overlong rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next pass](#a-negative-or-overlong-rgw_gc_obj_min_wait-makes-radosgws-gc-free-overwritten-tails-at-its-next-pass) | pending | pending |  |
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | pending | pending |  |
+| [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | pending | pending |  |
+| [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -7097,3 +7099,127 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 9 review, 2026-10-05, reading
   `RGWGC::process`; derived from the source, not reproduced.
+
+## Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked
+
+- **Kind:** defect, security-relevant: a regression in Tentacle, unfixed
+  through main. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a line names
+  another tag.
+  - `LocalEngine::authenticate`, once a system user's signature verifies,
+    impersonates the user the request names in `rgwx-perm-check-uid`
+    (`rgw_rest_s3.cc:6950-6978`). It reads the parameter with
+    `s->info.args.get` (`:6953`; main `:7352-7355` at 6cafff02b39).
+  - `RGWHTTPArgs::get` reads only `val_map` (`rgw_common.cc:991-1000`).
+    `parse` hands every parameter to `append` (`:904`; the S3 handler parses
+    at `rgw_rest_s3.cc:5460-5461`), which files an `rgwx-` name in
+    `sys_val_map` instead (`rgw_common.cc:931-937`). Only `set_system()`
+    copies `sys_val_map` into `val_map` (`rgw_common.h:462-467`); its one
+    caller is `SysReqApplier::modify_request_state`
+    (`rgw_auth_filters.h:355`), which `Strategy::apply` runs after the
+    engine has granted (`rgw_auth.cc:509`, `:540`). `SysReqApplier` reads
+    `rgwx-uid` with `sys_get` instead (`rgw_auth_filters.h:318`).
+  - So the parameter always reads empty, and the request runs as the system
+    user. `SysReqApplier::is_admin` is true for a system user that is not
+    impersonating (`rgw_auth_filters.h:284-290`), so the permission override
+    serves it (`rgw_process.cc:228-235`).
+  - A destination zone's user-mode sync pipe sends the parameter, naming the
+    pipe's user, on the object fetch, together with `rgwx-prepend-metadata`
+    (`driver/rados/rgw_data_sync.cc:2994-3044`,
+    `driver/rados/rgw_cr_rados.cc:815-817`, `driver/rados/rgw_rados.cc:4589`,
+    `rgw_rest_conn.cc:330-335`). The source answers every system GET with
+    prepended metadata with `Rgwx-Perm-Checked: true` and keeps the object's
+    tags for an admin (`rgw_rest_s3.cc:420-439`; main `:451`).
+  - The destination checks the source bucket against the pipe's user only
+    when that header is missing (`driver/rados/rgw_rados.cc:3618-3627`,
+    `:3837-3852`, `:4504-4528`; main `:4044`). The read check Squid's
+    destination made in its sync filter
+    (`driver/rados/rgw_data_sync.cc:2854-2859` at v19.2.6) is gone, removed
+    by a3f40b4ec6f, "rgw: pass uid on fetch object in data sync"; only the
+    write into the destination bucket is still checked
+    (`driver/rados/rgw_data_sync.cc:3016`).
+  - Introduced by 0e650ea2766, "rgw: SysReqApplier overrides is_admin_of
+    based on impersonation", which came to main with
+    [ceph/ceph#61962](https://github.com/ceph/ceph/pull/61962); its
+    cherry-pick cedcb3773c9 is first in v20.1.0.
+  - The fix the evidence points to is one word: read the parameter with
+    `args.sys_get` instead of `args.get` (`rgw_rest_s3.cc:6953`), as
+    `SysReqApplier` already reads `rgwx-uid`.
+- **Impact:** between a source zone and a destination zone both on Tentacle
+  or later, a user-mode sync pipe replicates source objects, and their tags,
+  without any check that the pipe's user may read them. S3
+  PutBucketReplication creates every pipe in user mode, with the requester's
+  owner as its user (`rgw_rest_s3.cc:1404-1405`), and needs only
+  s3:PutReplicationConfiguration on the source bucket
+  (`rgw_op.cc:1505-1515`). A principal allowed to configure a bucket's
+  replication can therefore copy objects it may not read into a bucket it
+  can write in another zone. The destination still checks
+  s3:ReplicateObject on the destination bucket
+  (`driver/rados/rgw_data_sync.cc:3016`), and drops tags only on an explicit
+  s3:ReplicateTags Deny there (`:3023`). Against a source that does not send
+  the header, such as Squid, which ignores the parameter, the destination
+  instead checks s3:ReplicateObject on the source bucket for the pipe's user
+  (`driver/rados/rgw_rados.cc:3837-3852`). That is a bucket-level check, not
+  the per-object read check Squid's destination made, and a Squid
+  destination still makes its own check
+  (`driver/rados/rgw_data_sync.cc:2854-2859` at v19.2.6).
+- **Releases:** v20.1.0 on, checked at v20.2.4 and main 6cafff02b39; v19.2.6
+  has neither the parameter nor the header.
+- **rgw-go:** unaffected. Multisite is excluded, so rgw-go never sends the
+  parameter, and it serves a system request carrying it as the system user,
+  as Tentacle does in effect (`docs/exclusions.md`, "A system request's
+  rgwx-uid names its owner, not its user record").
+- **Upstream:** pending: sent to rgw-bug-reproduction. a3f40b4ec6f's message
+  names [#68884](https://tracker.ceph.com/issues/68884).
+- **Found:** phase 1 unit A, Task 9 review, 2026-10-04, by code reading; the
+  sync consequence while writing this entry, the same day. Not reproduced.
+
+## radosgw grants a signed CORS preflight without comparing its signature
+
+- **Kind:** quirk or defect, for rgw-bug-reproduction to classify and to
+  rate: the skip is deliberate, for presigned URLs whose signed headers
+  a browser's preflight cannot carry (fe15b52edb5, "rgw/auth: ignoring
+  signatures for HTTP OPTIONS calls", first in v19.1.0, which came with
+  [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458)).
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `LocalEngine::authenticate` grants a request typed `RGW_OP_OPTIONS_CORS`
+    without comparing its signature, SigV2 and SigV4 alike
+    (`rgw_rest_s3.cc:6354-6360`, `:6925-6931`; main `:7327` at
+    6cafff02b39), once the key index finds the key, the user's account loads
+    and the key is in the user's record (`:6325-6352`, `:6896-6923`).
+  - Before that, a SigV4 request, and on Tentacle a SigV2 one, must name a
+    CORS method in `Access-Control-Request-Method` or it is EINVAL
+    (`rgw_auth_s3.cc:705-732`, `:1749-1776`).
+  - The request then runs as the key's user: its suspended check applies
+    (`rgw_process.cc:372`, `:374`), and the ops log records the key's id and
+    user (`LocalApplier::write_ops_log_entry`, `rgw_auth.cc:1118-1125`,
+    `:1146-1153`). The preflight op checks no permission
+    (`RGWOptionsCORS::verify_permission` returns 0, `rgw_op.h:1752`,
+    `:1912`).
+  - The rate limiter then charges the request to the key's user: it keys on
+    `s->user`'s id and applies that user's limit, or the global user limit,
+    taking the anonymous limit only for the anonymous user
+    (`rate_limit`, `rgw_process.cc:108-132` at both tags, called at `:248`,
+    `:251`). It counts only GET and HEAD as reads, so an OPTIONS request is
+    charged as a write (`rgw_ratelimit.h:153-154`, `:154-155`).
+- **Impact:** anyone who knows an access key id, but not its secret, can send
+  a preflight that runs as that key's user. It learns whether the user is
+  suspended (403 UserSuspended), and the ops log attributes the request to
+  the key. Where per-user rate limits are set, such preflights drain the
+  user's write-op budget, and the user's own writes are then refused as
+  rate-limited: a denial of service against that user. What the preflight
+  reads is no more than an anonymous preflight reads.
+- **Releases:** v19.1.0 on; checked at v19.2.6, v20.2.4 and main
+  6cafff02b39.
+- **rgw-go:** differs: rgw-go serves no CORS preflight in phase 1 and
+  verifies a signed OPTIONS request's signature as any other's
+  (`docs/exclusions.md`, "A signed OPTIONS request is verified over OPTIONS
+  and answered 501 until CORS lands"). Phase 2's CORS work decides whether
+  to take the skip.
+- **Upstream:** pending: sent to rgw-bug-reproduction. fe15b52edb5's message
+  names [#64308](https://tracker.ceph.com/issues/64308).
+- **Found:** phase 1 unit A, Task 9, 2026-10-04, transcribing
+  `LocalEngine::authenticate`; confirmed by the Task 9 review. Not
+  reproduced.
