@@ -70,6 +70,9 @@ type store struct {
 	writes     map[string][]RecordedWrite
 	// beforeWrite holds the hooks BeforeWrite registered, by object name.
 	beforeWrite map[string]func(o *Object)
+	// afterWrite and beforeRead hold the hooks AfterWrite and BeforeRead
+	// registered, by object name.
+	afterWrite, beforeRead map[string]func()
 	// failRead and failWrite hold the errors FailNextRead and FailNextWrite
 	// injected, by object name.
 	failRead, failWrite map[string]*failure
@@ -231,6 +234,8 @@ func (c *Cluster) store(pool, ns string) *store {
 		writes:     map[string][]RecordedWrite{},
 
 		beforeWrite: map[string]func(o *Object){},
+		afterWrite:  map[string]func(){},
+		beforeRead:  map[string]func(){},
 		failRead:    map[string]*failure{},
 		failWrite:   map[string]*failure{},
 	}
@@ -245,6 +250,42 @@ func (c *Cluster) Object(pool, ns, oid string) *Object {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.store(pool, ns).objects[oid]
+}
+
+// Objects returns the objects of pool and ns by name: the cluster's own
+// copies, as Object returns them, in a map of the caller's.
+func (c *Cluster) Objects(pool, ns string) map[string]*Object {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.store(pool, ns).objects)
+}
+
+// AfterWrite makes fn run after every later write op on the object that
+// succeeds, once its change is stored, so a spec can stage what a racing
+// client does between two of an op's writes. fn runs without the cluster's
+// lock, so it may call the Cluster. A nil fn removes the hook.
+func (c *Cluster) AfterWrite(pool, ns, oid string, fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn == nil {
+		delete(c.store(pool, ns).afterWrite, oid)
+		return
+	}
+	c.store(pool, ns).afterWrite[oid] = fn
+}
+
+// BeforeRead makes fn run before every later read op on the object, so a
+// spec can stage what a client does between two of an op's reads. fn runs
+// without the cluster's lock, so it may call the Cluster. A nil fn removes
+// the hook.
+func (c *Cluster) BeforeRead(pool, ns, oid string, fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn == nil {
+		delete(c.store(pool, ns).beforeRead, oid)
+		return
+	}
+	c.store(pool, ns).beforeRead[oid] = fn
 }
 
 // Put stores an object holding data, at version 1, replacing any object of

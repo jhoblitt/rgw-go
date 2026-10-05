@@ -339,14 +339,6 @@ var _ = Describe("the driver", func() {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
 
-			Entry("CreateBucket", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(meta.UserID{ID: "alice"}), Exclusive: true})
-				return err
-			}),
-			Entry("DeleteBucket", func(ctx context.Context, s *driver.Store) error {
-				return s.DeleteBucket(ctx, &op.BucketRecord{})
-			}),
-
 			Entry("ListParts", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.ListParts(ctx, &op.Upload{ID: "2~upload"}, 0, 1000)
 				return err
