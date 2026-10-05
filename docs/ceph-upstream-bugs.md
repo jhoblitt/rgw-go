@@ -3622,8 +3622,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01, where
   `get_obj_state_impl` still drops the result at `rgw_rados.cc:7448`).
 - **rgw-go:** the driver's pool resolution answers 500 UnknownError, naming
-  the placement, as radosgw's head-object helpers do;
-  `docs/exclusions.md` records the difference from radosgw's stat.
+  the placement, as radosgw's head-object helpers do, for a multipart
+  upload's meta object in the data-extra pool as for an object's head;
+  `docs/exclusions.md` records the difference from radosgw's stat, which
+  `RadosMultipartUpload::get_info` reaches too
+  (`driver/rados/rgw_sal_rados.cc:3672` at v19.2.6, `:4531` at v20.2.4).
 - **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 3, 2026-10-01, transcribing radosgw's

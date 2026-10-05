@@ -1306,7 +1306,13 @@ does the following.
   v19.2.6, `:2616-2620` at v20.2.4). radosgw's object stat drops that
   failure and opens a pool with an empty name, so it answers 400
   InvalidArgument instead (`docs/ceph-upstream-bugs.md`, "radosgw's object
-  stat ignores a data pool it cannot resolve").
+  stat ignores a data pool it cannot resolve"). The same holds for a
+  multipart upload's meta object, whose data-extra pool both gateways
+  resolve from the same two placements: rgw-go answers a read of it with
+  500 UnknownError, where radosgw's `RadosMultipartUpload::get_info`
+  reaches that stat and answers 400 (`driver/rados/rgw_sal_rados.cc:3672`
+  at v19.2.6, `:4531` at v20.2.4). Both answer the meta object's write
+  with 500 UnknownError.
 - **No bootstrap.** rgw-go writes nothing at startup but the control
   objects, which radosgw creates too. When no zone or zonegroup resolves,
   it refuses to start with `driver.ErrNoZone`, naming the object it looked
@@ -1315,7 +1321,11 @@ does the following.
   it, naming the pool. A data pool found missing is not created either:
   rgw-go stats an object in it as absent, and a read or write that needs
   the pool fails, naming it. radosgw creates what is missing instead, a
-  data pool on the first stat, read or write that opens it.
+  data pool on the first stat, read or write that opens it. With the
+  data-extra pool missing, rgw-go reads a multipart upload's meta object as
+  absent, NoSuchUpload, which radosgw answers too once it has created the
+  pool, but it fails CreateMultipartUpload with 404 NoSuchUpload, naming
+  the pool, where radosgw creates the pool and then the upload.
   SiteConfig::load creates the default zone and zonegroup
   (read_or_create_default_zone and read_or_create_default_zonegroup,
   `driver/rados/rgw_zone.cc:1214`, `:1222` and `:1312` at v19.2.6, `:1208`,
