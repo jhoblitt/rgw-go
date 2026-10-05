@@ -1676,6 +1676,57 @@ rgw-go does the following.
   authentication answers with -EPERM (`rgw_auth.cc:548-554` at v19.2.6,
   `:563-569` at v20.2.4). radosgw writes these attrs cleanly; only
   corruption or another writer leaves such bytes.
+- **A PUT's encryption condition keys leave out the bucket's default
+  encryption.** radosgw's PutObject, UploadPart and UploadPartCopy read
+  their parameters before authorizing, and `get_encryption_defaults` fills
+  in the bucket's stored default algorithm and KMS key id when the request
+  names none (`rgw_rest_s3.cc:146-264` and `:2612` at v19.2.6, `:151-269`
+  and `:2773` at v20.2.4), so `s3:x-amz-server-side-encryption` and
+  `s3:x-amz-server-side-encryption-aws-kms-key-id` carry the bucket's
+  default in the policy environment. rgw-go adds those keys from the
+  request's headers and query string alone. A bucket default names SSE-S3
+  or SSE-KMS, which rgw-go refuses ("Key management: SSE-KMS and SSE-S3
+  with every backend"), so such a write fails in rgw-go either way; a
+  policy condition on these keys can make it fail with 403 AccessDenied
+  where radosgw's refusal, if it has no key server, comes from encryption.
+- **`aws:SourceIp` from a variable that is not a request header is
+  absent.** `rgw_remote_addr_param` may name any variable of radosgw's
+  request environment, and radosgw sets `aws:SourceIp` to its value
+  (`rgw_op.cc:869-886` at v19.2.6, `:905-922` at v20.2.4). rgw-go reads
+  `REMOTE_ADDR`, `CONTENT_TYPE`, `CONTENT_LENGTH` and `HTTP_` followed by a
+  header's name, from the headers Go's net/http leaves in a server request
+  (Go 1.27): it takes out Host and Transfer-Encoding always, and Trailer
+  and Content-Length from a chunked request (`net/http/server.go:1087`,
+  `net/http/transfer.go:644`, `:727`, `:790`). So for `HTTP_HOST`,
+  `HTTP_TRANSFER_ENCODING`, and on a chunked request `HTTP_TRAILER` and
+  `CONTENT_LENGTH`, and for the request line's and the listener's variables
+  (`REQUEST_METHOD`, `REQUEST_URI`, `SCRIPT_URI`, `QUERY_STRING`,
+  `HTTP_VERSION`, `SERVER_PORT`, `SERVER_PORT_SECURE`), rgw-go adds no
+  `aws:SourceIp`, so neither an `IpAddress` nor a `NotIpAddress` condition
+  holds unless it is IfExists. None of them carries a client address.
+- **A typed condition on a repeated key reads the value upstream's builds
+  read.** Which of a key's values a Numeric, Date, Bool, BinaryEquals,
+  IpAddress or NotIpAddress condition reads depends on the libstdc++ that
+  built radosgw, and on Tentacle on how many pairs the environment held as
+  each value was added (`policy.Env`). rgw-go follows upstream's el9
+  builds by release, GCC 11 for v19.2.6 and GCC 13.3 for v20.2.4, and
+  adds the environment's keys in radosgw's order, its tag keys at each
+  op's own point. A radosgw built with another libstdc++, such as a Squid
+  built with GCC 12 or later, which reads as Tentacle does, can read
+  another value. Only tag keys repeat, from a tag set or an
+  `x-amz-tagging` header that names a key twice.
+- **A public-access block that does not decode refuses the request.**
+  radosgw takes a bucket's `user.rgw.public-access` attr that does not
+  decode for no block at all (`get_public_access_conf_from_attr`,
+  `rgw_op.cc:340-355` at v19.2.6, `:370-385` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "radosgw ignores a public-access block that
+  does not decode"), so IgnorePublicAcls, BlockPublicPolicy and
+  RestrictPublicBuckets stop applying and the bucket's public grants and
+  public policy take effect. rgw-go answers a request on such a bucket with
+  403 AccessDenied instead, as radosgw answers one whose stored bucket
+  policy does not parse (`rgw_op.cc:598-615` at v19.2.6, `:628-645` at
+  v20.2.4). radosgw writes the attr cleanly; only corruption or another
+  writer leaves one that does not decode.
 
 ### Bucket metadata differences
 
