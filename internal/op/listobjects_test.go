@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
@@ -84,6 +85,19 @@ var _ = Describe("ListObjects", func() {
 		Entry("Squid, 1000: rgw.yaml.in:3428-3435 at v19.2.6", denc.Squid, 1000),
 		Entry("Tentacle, 5000: rgw.yaml.in:3613-3620 at v20.2.4", denc.Tentacle, 5000),
 	)
+	It("hands the authorizer its condition keys, max-keys bounded, before it authorizes", func(ctx SpecContext) {
+		env.Conf = cephconf.NewOptions(cephconf.MapGetter(map[string]string{"rgw_max_listing_results": "3"}))
+		authz := &opfakes.FakeAuthorizer{}
+		var seen *op.ListConditions
+		authz.VerifyBucketStub = func(_ context.Context, r *op.Request, _ policy.Action, _ acl.Permission) error {
+			seen = r.List
+			return nil
+		}
+		env.Authz = authz
+		Expect(op.Run(ctx, &op.ListObjects{Prefix: "p/", Delimiter: "/", MaxKeys: "5000"}, request())).To(Succeed())
+		Expect(seen).To(Equal(&op.ListConditions{Prefix: "p/", Delimiter: "/", MaxKeys: 3}),
+			"rgw_op.cc:3039-3045 at v19.2.6")
+	})
 	It("answers InvalidArgument for a max-keys that is not a number, before the permission check", func(ctx SpecContext) {
 		r := request()
 		r.Identity = op.Anonymous()
