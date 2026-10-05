@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -219,6 +222,92 @@ var _ = Describe("GetObjectACL", func() {
 			"the op itself decodes the bucket ACL only to build a default; OwnerOnly reads no ACL")
 		f.setAttrs(ctx, "small", nil, meta.AttrACL)
 		Expect(op.Run(ctx, &op.GetObjectACL{}, f.req("small"))).To(MatchError(op.ErrUnknown))
+	})
+})
+
+// captureLogs sends slog's default logger to a buffer until the spec ends.
+// slog.SetDefault also points the log package's output at the new handler,
+// and restoring the old default logger leaves it there, so the cleanup puts
+// log's writer and flags back too.
+func captureLogs() *bytes.Buffer {
+	var buf bytes.Buffer
+	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	DeferCleanup(func() {
+		slog.SetDefault(oldLogger)
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+	return &buf
+}
+
+const noObjectACL = "couldn't find acl header for object, generating default"
+
+var _ = Describe("ObjectACLFor", func() {
+	var (
+		bucket *op.BucketRecord
+		st     *op.ObjectState
+		alice  meta.Owner
+	)
+
+	BeforeEach(func() {
+		alice = meta.UserOwner(meta.UserID{ID: "alice"})
+		bucket = &op.BucketRecord{Info: meta.NewBucketInfo(), Attrs: map[string][]byte{
+			meta.AttrACL: encodedPolicy(acl.DefaultPolicy(alice, "Alice")),
+		}}
+		bucket.Info.Bucket.Name = "b"
+		bucket.Info.Owner = meta.UserOwner(meta.UserID{ID: "carol"})
+		st = &op.ObjectState{Key: meta.ObjKey{Name: "o"}, Exists: true, Attrs: map[string][]byte{}}
+	})
+
+	It("is the head's stored ACL, leaving the bucket's unread", func(ctx SpecContext) {
+		stored := acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "dave"}), "Dave")
+		st.Attrs[meta.AttrACL] = encodedPolicy(stored)
+		bucket.Attrs[meta.AttrACL] = []byte{0xff}
+		Expect(op.ObjectACLFor(ctx, st, bucket)).To(Equal(stored))
+	})
+
+	It("is FULL_CONTROL to the owner the bucket's ACL names, under its display name, for a head without one", func(ctx SpecContext) {
+		Expect(op.ObjectACLFor(ctx, st, bucket)).To(Equal(acl.DefaultPolicy(alice, "Alice")))
+	})
+
+	It("answers UnknownError for an ACL that does not decode, and NoSuchKey for a missing object", func(ctx SpecContext) {
+		st.Attrs[meta.AttrACL] = []byte{0xff}
+		_, err := op.ObjectACLFor(ctx, st, bucket)
+		Expect(err).To(MatchError(op.ErrUnknown))
+		_, err = op.ObjectACLFor(ctx, nil, bucket)
+		Expect(err).To(MatchError(op.ErrNoSuchKey), "nil state")
+		st.Exists = false
+		_, err = op.ObjectACLFor(ctx, st, bucket)
+		Expect(err).To(MatchError(op.ErrNoSuchKey), "not existing")
+	})
+
+	It("warns about a head without an ACL once per state", func(ctx SpecContext) {
+		logs := captureLogs()
+		for range 2 {
+			_, err := op.ObjectACLFor(ctx, st, bucket)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		Expect(strings.Count(logs.String(), noObjectACL)).To(Equal(1), logs.String())
+		other := &op.ObjectState{Key: meta.ObjKey{Name: "o"}, Exists: true}
+		_, err := op.ObjectACLFor(ctx, other, bucket)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Count(logs.String(), noObjectACL)).To(Equal(2), "another request's state")
+	})
+
+	It("warns once for a GetObjectAcl whose authorizer reads the ACL too", func(ctx SpecContext) {
+		f := newObjectReadFixture(ctx, denc.Squid)
+		f.setAttrs(ctx, "small", nil, meta.AttrACL)
+		authz := &opfakes.FakeAuthorizer{}
+		authz.VerifyObjectStub = func(ctx context.Context, r *op.Request, _ policy.Action, _ acl.Permission) error {
+			_, err := op.ObjectACLFor(ctx, r.ObjState, r.BucketRec)
+			return err
+		}
+		f.env.Authz = authz
+		logs := captureLogs()
+		Expect(op.Run(ctx, &op.GetObjectACL{}, f.req("small"))).To(Succeed())
+		Expect(authz.VerifyObjectCallCount()).To(Equal(1))
+		Expect(strings.Count(logs.String(), noObjectACL)).To(Equal(1), logs.String())
 	})
 })
 
