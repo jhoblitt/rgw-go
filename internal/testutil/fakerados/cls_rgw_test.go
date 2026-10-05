@@ -2,6 +2,8 @@ package fakerados_test
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
 	"syscall"
 	"time"
 
@@ -77,8 +79,8 @@ var _ = Describe("RGWClass's index transaction", func() {
 
 	It("names the emulated methods the class registers as writes", func() {
 		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-			"mp_upload_part_info_update"),
-			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4743 and :4752-4753 at v19.2.6")
+			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry"),
+			"CLS_METHOD_WR, cls_rgw.cc:4691, :4697-4698, :4705-4706, :4728, :4743 and :4752-4753 at v19.2.6")
 	})
 
 	It("reads the reshard status without the WR flag: a read op calling it on a missing shard is ENOENT", func(ctx SpecContext) {
@@ -389,5 +391,99 @@ var _ = Describe("RGWClass's mp_upload_part_info_update", func() {
 			rgwcls.MPUploadPartInfoUpdate(op, key, encodeAt(part("k.2~gone"), denc.Squid), denc.Squid)
 		})).To(Succeed())
 		Expect(c.Object(extra, "", gone).Omap).To(HaveKey(key))
+	})
+})
+
+var _ = Describe("RGWClass on a head object", func() {
+	const data = "zone.rgw.buckets.data"
+	var (
+		c *fakerados.Cluster
+		p radosclient.Pool
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = fakerados.New()
+		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		var err error
+		p, err = c.Pool(ctx, data, "")
+		Expect(err).NotTo(HaveOccurred())
+		c.Put(data, "", "head", []byte("old data"))
+		obj := c.Object(data, "", "head")
+		obj.Xattrs["user.rgw.idtag"] = []byte("old\x00")
+		obj.Xattrs["user.rgw.olh.ver"] = []byte("3")
+		obj.Xattrs["user.rgw.olh.info"] = []byte("i")
+		obj.Omap["k"] = []byte("v")
+	})
+
+	It("removes the object with obj_remove when no prefix is kept", func(ctx SpecContext) {
+		Expect(writeErr(ctx, p, "head", func(op *radosclient.WriteOp) { rgwcls.ObjRemove(op, nil, denc.Squid) })).To(Succeed())
+		Expect(c.Object(data, "", "head")).To(BeNil(), "cls_rgw.cc:2423-2425")
+		Expect(writeErr(ctx, p, "head", func(op *radosclient.WriteOp) { rgwcls.ObjRemove(op, nil, denc.Squid) })).
+			To(MatchError(radosclient.ErrNotFound), "cls_cxx_remove of a missing object")
+	})
+
+	It("keeps only the xattrs under the prefixes, and the op's later steps build the new head on them", func(ctx SpecContext) {
+		Expect(writeErr(ctx, p, "head", func(op *radosclient.WriteOp) {
+			op.Create(false)
+			rgwcls.ObjRemove(op, []string{"user.rgw.olh."}, denc.Squid)
+			op.SetXattr("user.rgw.idtag", []byte("new\x00"))
+			op.WriteFull([]byte("new"))
+		})).To(Succeed())
+		obj := c.Object(data, "", "head")
+		Expect(obj.Data).To(Equal([]byte("new")))
+		Expect(obj.Omap).To(BeEmpty())
+		Expect(obj.Xattrs).To(Equal(map[string][]byte{
+			"user.rgw.olh.ver": []byte("3"), "user.rgw.olh.info": []byte("i"), "user.rgw.idtag": []byte("new\x00"),
+		}), "cls_rgw.cc:2427-2479")
+	})
+
+	It("stores the version the object had before the op as 8 little-endian bytes with obj_store_pg_ver", func(ctx SpecContext) {
+		before := c.Object(data, "", "head").Version
+		Expect(writeErr(ctx, p, "head", func(op *radosclient.WriteOp) { rgwcls.ObjStorePGVer(op, "user.rgw.pg_ver", denc.Squid) })).To(Succeed())
+		Expect(c.Object(data, "", "head").Xattrs).To(HaveKeyWithValue("user.rgw.pg_ver", binary.LittleEndian.AppendUint64(nil, before)))
+		Expect(writeErr(ctx, p, "fresh", func(op *radosclient.WriteOp) { rgwcls.ObjStorePGVer(op, "user.rgw.pg_ver", denc.Squid) })).To(Succeed())
+		Expect(c.Object(data, "", "fresh").Xattrs).To(HaveKeyWithValue("user.rgw.pg_ver", make([]byte, 8)), "a new object")
+	})
+})
+
+var _ = Describe("RGWClass on a gc shard", func() {
+	const logPool = "zone.rgw.log"
+	var (
+		c   *fakerados.Cluster
+		p   radosclient.Pool
+		now time.Time
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = fakerados.New()
+		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		now = time.Date(2026, 10, 4, 12, 0, 0, 5, time.UTC)
+		c.SetClock(func() time.Time { return now })
+		var err error
+		p, err = c.Pool(ctx, logPool, "gc")
+		Expect(err).NotTo(HaveOccurred())
+	})
+	decodeInfo := func(b []byte) rgwcls.GCObjInfo {
+		GinkgoHelper()
+		d := denc.NewDecoder(b)
+		info := rgwcls.DecodeGCObjInfo(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		return info
+	}
+
+	It("stores a gc_set_entry under its tag and its due time, and moves the time key on a second one", func(ctx SpecContext) {
+		info := rgwcls.GCObjInfo{Tag: "t\x00", Chain: []rgwcls.GCObj{{Pool: "data", Key: rgwcls.ObjKey{Name: "tail_1"}}}}
+		Expect(writeErr(ctx, p, "gc.3", func(op *radosclient.WriteOp) { rgwcls.GCSetEntry(op, 7200, info, denc.Squid) })).To(Succeed())
+		due := now.Add(2 * time.Hour)
+		want := info
+		want.Time = due
+		obj := c.Object(logPool, "gc", "gc.3")
+		Expect(obj.Omap).To(HaveLen(2))
+		Expect(decodeInfo(obj.Omap["0_t\x00"])).To(Equal(want), "cls_rgw.cc:3924")
+		Expect(decodeInfo(obj.Omap[fmt.Sprintf("1_%011d.%09d", due.Unix(), 5)])).To(Equal(want), "cls_rgw.cc:3928, get_time_key")
+
+		now = now.Add(time.Minute)
+		Expect(writeErr(ctx, p, "gc.3", func(op *radosclient.WriteOp) { rgwcls.GCSetEntry(op, 60, info, denc.Squid) })).To(Succeed())
+		obj = c.Object(logPool, "gc", "gc.3")
+		Expect(obj.Omap).To(HaveLen(2), "the old time key goes, cls_rgw.cc:3900-3909")
+		Expect(obj.Omap).To(HaveKey(fmt.Sprintf("1_%011d.%09d", now.Add(time.Minute).Unix(), 5)))
 	})
 })

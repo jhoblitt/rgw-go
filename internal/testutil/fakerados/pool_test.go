@@ -604,6 +604,88 @@ var _ = Describe("a read op", func() {
 		Expect(c.LastWrite(poolName, ns, "never").Steps()).To(BeEmpty())
 	})
 
+	It("keeps the last read op run on each object, a failed one too, with LastRead", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("abc"))
+		op := radosclient.NewReadOp()
+		op.Stat()
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		op = radosclient.NewReadOp()
+		op.GetXattrs()
+		_, err = p.Read(ctx, "obj", op, radosclient.OpFlagBalanceReads)
+		Expect(err).NotTo(HaveOccurred())
+		op = radosclient.NewReadOp()
+		op.Stat()
+		_, err = p.Read(ctx, "absent", op, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		last := c.LastRead(poolName, ns, "obj")
+		Expect(last.Steps()).To(HaveExactElements(BeAssignableToTypeOf(&radosclient.GetXattrsStep{})))
+		Expect(last.Flags()).To(Equal(radosclient.OpFlagBalanceReads))
+		Expect(c.LastRead(poolName, ns, "absent").Steps()).To(HaveExactElements(BeAssignableToTypeOf(&radosclient.StatStep{})))
+		Expect(c.LastRead(poolName, ns, "never").Steps()).To(BeEmpty())
+	})
+
+	It("forgets every read and write op so far with ResetCounters, keeping the objects", func(ctx SpecContext) {
+		wop := radosclient.NewWriteOp()
+		wop.WriteFull([]byte("x"))
+		_, err := p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		op := radosclient.NewReadOp()
+		op.Stat()
+		_, err = p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		c.ResetCounters()
+		Expect([]int{c.Reads(poolName, ns, "obj"), c.Writes(poolName, ns, "obj")}).To(Equal([]int{0, 0}))
+		Expect(c.WritesTo(poolName, ns, "obj")).To(BeEmpty())
+		Expect(c.LastWrite(poolName, ns, "obj").Steps()).To(BeEmpty())
+		Expect(c.LastRead(poolName, ns, "obj").Steps()).To(BeEmpty())
+		Expect(c.Object(poolName, ns, "obj").Data).To(Equal([]byte("x")))
+		wop = radosclient.NewWriteOp()
+		wop.Truncate(0)
+		_, err = p.Write(ctx, "obj", wop, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.WritesTo(poolName, ns, "obj")[0].Steps()).To(HaveExactElements(BeAssignableToTypeOf(&radosclient.TruncateStep{})),
+			"the first op after a reset is the first recorded")
+	})
+
+	It("runs a BeforeWrite hook with the stored object before each write op on it, outside the cluster's lock", func(ctx SpecContext) {
+		var seen []*fakerados.Object
+		c.BeforeWrite(poolName, ns, "obj", func(o *fakerados.Object) {
+			seen = append(seen, o)
+			if o != nil {
+				o.Xattrs["raced"] = []byte("1")
+				c.Put(poolName, ns, "other", nil)
+			}
+		})
+		create := func() error {
+			return writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) { op.Create(true) })
+		}
+		Expect(create()).To(Succeed())
+		Expect(seen).To(HaveExactElements(BeNil()), "the object did not exist")
+		Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) {
+			op.CmpXattr("raced", radosclient.CmpEQ, nil)
+			op.SetXattr("mine", []byte("1"))
+		})).To(MatchError(radosclient.ErrCanceled), "the op meets what the hook staged")
+		Expect(seen).To(HaveLen(2))
+		Expect(c.Object(poolName, ns, "other")).NotTo(BeNil(), "the hook may call the cluster")
+		op := radosclient.NewReadOp()
+		op.Stat()
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen).To(HaveLen(2), "a read op runs no hook")
+		c.BeforeWrite(poolName, ns, "obj", nil)
+		Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) { op.SetXattr("x", nil) })).To(Succeed())
+		Expect(seen).To(HaveLen(2), "a nil hook removes it")
+	})
+
+	It("reports a pool's id with PoolID, the id its handles report", func(ctx SpecContext) {
+		Expect(c.PoolID(poolName)).To(Equal(p.ID()))
+		other, err := c.Pool(ctx, "other", "x")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.PoolID("other")).To(Equal(other.ID()))
+		Expect(c.PoolID("other")).NotTo(Equal(p.ID()))
+	})
+
 	It("lists the write ops run on an object, oldest first, with WritesTo", func(ctx SpecContext) {
 		for _, data := range []string{"a", "b"} {
 			wop := radosclient.NewWriteOp()
