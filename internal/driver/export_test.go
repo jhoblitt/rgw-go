@@ -282,3 +282,29 @@ func (s *Store) CancelWriteForTest(x *IndexOp, ifMatch, ifNoneMatch string, err 
 	res, out := s.cancelWrite(&headWrite{ifMatch: ifMatch, ifNoneMatch: ifNoneMatch}, x, err)
 	return res.canceled, out
 }
+
+// Ticker is ticker for the external specs' clocks.
+type Ticker = ticker
+
+// SetTickerForTest makes newTicker the source of the tickers s's workers
+// run on.
+func (s *Store) SetTickerForTest(newTicker func(time.Duration) Ticker) { s.newTicker = newTicker }
+
+// ResetUsageLogForTest starts s's usage log over as radosgw's UsageLogger
+// constructor does at now, in the time zone loc.
+func (s *Store) ResetUsageLogForTest(now time.Time, loc *time.Location) {
+	s.usage.reset(now, loc)
+}
+
+// SetUsageFinalFlushTimeoutForTest sets how long s's usage worker goes on
+// flushing once its context has ended.
+func (s *Store) SetUsageFinalFlushTimeoutForTest(d time.Duration) { s.usage.finalFlush = d }
+
+// UsageOIDForTest is usageOID for the external specs.
+func UsageOIDForTest(s *Store, user string, index uint32) string { return s.usageOID(user, index) }
+
+// FlushUsageForTest is flushUsage for the external specs.
+func (s *Store) FlushUsageForTest(ctx context.Context) error { return s.flushUsage(ctx) }
+
+// RunUsageFlushForTest is runUsageFlush for the external specs.
+func (s *Store) RunUsageFlushForTest(ctx context.Context) error { return s.runUsageFlush(ctx) }

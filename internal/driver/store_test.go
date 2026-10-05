@@ -414,12 +414,6 @@ var _ = Describe("the driver", func() {
 			}),
 		)
 
-		It("drops a usage entry, having no usage log to write it to", func(ctx SpecContext) {
-			Expect(func() {
-				s.Log(ctx, op.UsageEntry{Bucket: "plain", Category: "get_obj", Ops: 1, SuccessfulOps: 1})
-			}).NotTo(Panic())
-		})
-
 		It("gives an Env whose every store is itself and whose options are Open's", func() {
 			env := s.Env()
 			Expect([]any{

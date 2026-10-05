@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -46,6 +47,9 @@ type Store struct {
 	// each at least one chunk.
 	tailBufs sync.Pool
 	quota    quotaStub
+	usage    usageLogger
+	// newTicker makes the tickers the workers run on.
+	newTicker func(time.Duration) ticker
 
 	mu      sync.Mutex
 	started bool // Run has taken the workers
@@ -106,10 +110,14 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	}
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
-	s := &Store{cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg}
+	s := &Store{
+		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg,
+		newTicker: newTimeTicker,
+	}
 	s.w = newWriter(ctx, s, wopts)
 	s.AddWorker("control-watch", sys.notify.run)
 	s.AddWorker("index-completions", s.w.completions.run)
+	s.openUsageLog(ctx)
 	return s, nil
 }
 
@@ -421,10 +429,6 @@ func (s *Store) AdjustStats(_ context.Context, _ *op.BucketRecord, _ meta.Owner,
 	s.quota.removed += removedBytes
 	return nil
 }
-
-// Log implements op.UsageLogger. Having no usage log to write to yet, it
-// drops the entry.
-func (s *Store) Log(context.Context, op.UsageEntry) {}
 
 // Get implements op.MetadataStore.
 func (s *Store) Get(context.Context, string, string) (op.MetadataEntry, error) {
