@@ -11,6 +11,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 // DeleteObject is RGWDeleteObj (rgw_op.cc:5129-5327 at v19.2.6, :5519-5726
@@ -149,7 +150,7 @@ func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEn
 // microseconds since the epoch, as sscanf reads them.
 func parseDate(date string) (time.Time, bool) {
 	date = rgwtext.CString(date)
-	tm, rest, ok := strptime(date, "%Y-%m-%d")
+	tm, rest, ok := strptime.Parse(strptime.Tm{}, date, "%Y-%m-%d")
 	if !ok {
 		sec, usec, scanned := scanSecUsec(date)
 		if !scanned {
@@ -163,13 +164,13 @@ func parseDate(date string) (time.Time, bool) {
 		nsec   uint64
 	)
 	if rest != "" && (rest[0] == ' ' || rest[0] == 'T') {
-		var clock cTM
+		var clock strptime.Tm
 		if clock, gmtoff, nsec, ok = parseDateClock(rest[1:]); !ok {
 			return time.Time{}, false
 		}
-		tm.hour, tm.minute, tm.sec = clock.hour, clock.minute, clock.sec
+		tm.Hour, tm.Min, tm.Sec = clock.Hour, clock.Min, clock.Sec
 	}
-	return utimeTime(uint64(internalTimegm(tm))-uint64(gmtoff), nsec), true //nolint:gosec // epoch -= gmtoff in uint64_t
+	return utimeTime(uint64(tm.Timegm().Unix())-uint64(gmtoff), nsec), true //nolint:gosec // epoch -= gmtoff in uint64_t
 }
 
 // parseDateClock is parse_date's time: it copies the first 31 bytes of p
@@ -182,7 +183,7 @@ func parseDate(date string) (time.Time, bool) {
 // (docs/ceph-upstream-bugs.md); the format here has room for it. rgw-go
 // refuses a "%" of p's that reaches the format, which radosgw's strptime
 // would take for a conversion (docs/exclusions.md).
-func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
+func parseDateClock(p string) (clock strptime.Tm, gmtoff int64, nsec uint64, ok bool) {
 	var f [33]byte
 	copy(f[:31], p)
 	copy(f[:5], "%H:%M")
@@ -201,22 +202,13 @@ func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
 	format := string(f[:strings.IndexByte(string(f[:]), 0)])
 	for i := range len(format) {
 		if format[i] == '%' && i != 0 && i != 3 && i != 6 && (!zone || i != q) {
-			return cTM{}, 0, 0, false
+			return strptime.Tm{}, 0, 0, false
 		}
 	}
-	var rest string
-	if zone {
-		// strptime emulates %z as the last conversion only, so the zone is
-		// read from what the format before it leaves.
-		if clock, rest, ok = strptime(p, format[:q]); !ok {
-			return cTM{}, 0, 0, false
-		}
-		if _, gmtoff, ok = zoneOffset(rest); !ok {
-			return cTM{}, 0, 0, false
-		}
-	} else if clock, _, ok = strptime(p, format); !ok {
-		return cTM{}, 0, 0, false
+	if clock, _, ok = strptime.Parse(strptime.Tm{}, p, format); !ok {
+		return strptime.Tm{}, 0, 0, false
 	}
+	gmtoff = int64(clock.Gmtoff)
 	if subsec >= 0 {
 		digits := []byte("000000000")
 		for i := 0; i < 9 && subsec+i < len(p) && isCDigit(p[subsec+i]); i++ {

@@ -69,6 +69,17 @@ var _ = Describe("Timegm", func() {
 		Expect(strptime.Tm{Year: 0, Mon: 2, Mday: 1}.Timegm().Unix()).To(Equal(int64(-62161948800)))
 		Expect(time.Date(0, 3, 1, 0, 0, 0, 0, time.UTC).Unix()).To(Equal(int64(-62161948800 - 86400)))
 	})
+	DescribeTable("carries a month outside 0-11 into the year, as internal_timegm does",
+		func(mon int, want time.Time) {
+			Expect(strptime.Tm{Year: 2024, Mon: mon, Mday: 29}.Timegm()).To(Equal(want), "month %d", mon)
+		},
+		Entry("month 12 is next January", 12, time.Date(2025, 1, 29, 0, 0, 0, 0, time.UTC)),
+		Entry("month 13 is next February, a common year's", 13, time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)),
+		Entry("month -1 is last December", -1, time.Date(2023, 12, 29, 0, 0, 0, 0, time.UTC)),
+		Entry("month -11 is last February, a common year's", -11, time.Date(2023, 3, 1, 0, 0, 0, 0, time.UTC)),
+		Entry("month -12 is last January", -12, time.Date(2023, 1, 29, 0, 0, 0, 0, time.UTC)),
+		Entry("month 98 is eight years on", 98, time.Date(2032, 3, 29, 0, 0, 0, 0, time.UTC)),
+	)
 	It("ignores the zone offset", func() {
 		Expect(strptime.Tm{Year: 1970, Mday: 1, Gmtoff: 3600}.Timegm().Unix()).To(BeZero())
 	})

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 func hasPrefixFold(s, prefix string) bool {
@@ -617,7 +618,7 @@ func fromISO8601(s string) (uint64, bool) {
 	}
 	month, day, hour, minute, sec := 1, 1, 0, 0, 0
 	nanos := func(frac int) (uint64, bool) {
-		t := timegm(year, month-1, day, hour, minute, sec)
+		t := strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}.Timegm().Unix()
 		if t == -1 {
 			return 0, false
 		}
@@ -665,35 +666,4 @@ func fromISO8601(s string) (uint64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// daysBeforeMonth is timegm.h's days_from_1jan table, by leap year.
-var daysBeforeMonth = [2][12]int{
-	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334},
-	{0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335},
-}
-
-// timegm is internal_timegm (src/include/timegm.h:54-77 at v19.2.6 and
-// v20.2.4) for a 0-based month: it carries the month into the year and lets
-// every other field run on linearly.
-func timegm(year, month, day, hour, minute, sec int) int64 {
-	if month > 11 {
-		year += month / 12
-		month %= 12
-	} else if month < 0 {
-		back := (-month + 11) / 12
-		year -= back
-		month += 12 * back
-	}
-	leap := 0
-	if year%400 == 0 || year%100 != 0 && year%4 == 0 {
-		leap = 1
-	}
-	days := daysFrom0(year) - daysFrom0(1970) + daysBeforeMonth[leap][month] + day - 1
-	return 86400*int64(days) + int64(3600*hour+60*minute+sec)
-}
-
-func daysFrom0(year int) int {
-	year--
-	return 365*year + year/400 - year/100 + year/4
 }
