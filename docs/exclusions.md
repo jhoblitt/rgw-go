@@ -601,6 +601,43 @@ review and verified against the tree.
   removed only by a lock call that succeeds, because unlock, break,
   get_info and assert_locked calls that fail drop their transaction and
   leave it in place.
+- **A CompleteMultipartUpload records itself on the meta object before its
+  head write.** rgw-go writes the completion record of
+  [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103), the fix in
+  review for tracker [#80896](https://tracker.ceph.com/issues/80896), in
+  that PR's format as of its head (2026-09-28), so that a radosgw carrying
+  the fix and rgw-go read each other's records:
+  `user.rgw.mp_completion_tag`, the idtag the completion's head carries
+  with its trailing NUL, and `user.rgw.mp_completion_instance`, `null` for
+  the key's own head. Both go on the meta object in the op that renews the
+  completion lock, before the head write, and both are removed after a head
+  write that certainly failed; after one that timed out they stay. A
+  completion that finds a record finishes the earlier completion, writing
+  no head, only when the head the record names carries the recorded tag and
+  the ETag the request's parts make; otherwise it answers 404 NoSuchUpload
+  and writes nothing, because that head was never written or was replaced
+  or deleted and its parts queued for the GC. A retry after a crash between
+  the record and the head write, or after a head write that timed out and
+  never landed, is therefore refused, and the upload has to be aborted, as
+  in the PR. A floor radosgw coexists with the record without knowing it:
+  - it reads a meta object's `user.rgw.*` xattrs, the record's among them
+    (`raw_obj_stat`'s `rgw_filter_attrset`, `driver/rados/rgw_rados.cc:8866`
+    at v19.2.6, `:9810` at v20.2.4), and no code at either tag names them;
+  - ListParts reads only named attrs among them: the ACL
+    (`rgw_op.cc:6669-6694` at v19.2.6), and at v20.2.4 the ACL and
+    `user.rgw.cksum` (`:7593-7633`); ListMultipartUploads reads the bucket
+    index, and an abort removes the record with the meta object;
+  - a completion copies the meta object's attrs onto the head
+    (`rgw_op.cc:6467` at v19.2.6, `:7293` and `:7343` at v20.2.4), so an
+    object a floor radosgw completes from a recorded upload carries the
+    record, which nothing reads from a head and a GET does not render (it
+    renders `rgw_to_http_attrs` and `x-amz-meta-` attrs alone,
+    `rgw_rest_s3.cc:546-582` at v19.2.6, `:663-699` at v20.2.4). rgw-go
+    strips the record from the attrs it copies.
+
+  A floor radosgw writes no record, and answers neither refusal: a floor
+  radosgw's retry or abort of an upload rgw-go recorded still meets
+  #80896. The format is revisited when the PR merges.
 - **Signature quirks are radosgw's, not AWS's.** When a request carries
   no `x-amz-content-sha256` header, radosgw treats the payload as
   unsigned rather than rejecting the request as AWS does. This is a hard
@@ -992,9 +1029,9 @@ review and verified against the tree.
   (`set_multipart_part_rule`, `driver/rados/rgw_putobj_processor.cc:455`
   at v19.2.6, `:489` at v20.2.4). Only a part whose manifest an older
   radosgw stored below manifest version 3, which decodes as explicit
-  (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs. No
-  request reaches the refusal yet: the driver's multipart completion,
-  which will append the parts, still answers NotImplemented.
+  (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs:
+  CompleteMultipartUpload answers 400 InvalidPart for an upload holding
+  such a part, which radosgw completes, and leaves the upload in place.
 - **Client checksums are ignored until phase 2.** rgw-go ignores the
   `x-amz-checksum-*` headers and aws-chunked trailers of PutObject,
   UploadPart and CompleteMultipartUpload, and `x-amz-checksum-algorithm` on
@@ -1503,10 +1540,14 @@ does the following.
   `ClientIO::init_env` calls, `rgw_asio_client.cc:29`);
   `rgw_usage_log_flush_threshold` each time the usage log takes an entry and
   `rgw_usage_log_tick_interval` each time it re-arms its flush timer
-  (`rgw_log.cc:151` and `:116` at both tags); and
+  (`rgw_log.cc:151` and `:116` at both tags);
   `rgw_override_bucket_index_max_shards` at each bucket creation
   (`init_default_bucket_layout`, `driver/rados/rgw_bucket.cc:2790-2796` at
-  v19.2.6, `:2908-2910` at v20.2.4).
+  v19.2.6, `:2908-2910` at v20.2.4); and `rgw_mp_lock_max_time` and
+  `rgw_multipart_min_part_size` at each CompleteMultipartUpload
+  (`rgw_op.cc:6430-6431` and `driver/rados/rgw_sal_rados.cc:3458` at
+  v19.2.6, `rgw_op.cc:7244-7245` and `driver/rados/rgw_sal_rados.cc:4306`
+  at v20.2.4).
 - **Shard counts, the bucket-index AIO limit and the copy concurrency that
   are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
@@ -2486,6 +2527,12 @@ does the following.
     PreconditionFailed.
   - If-Match, `*` or an ETag, on a missing key answers 404 NoSuchKey, where
     v19.2.6 answers 412 PreconditionFailed.
+  - CompleteMultipartUpload honors both headers as v20.2.4 does
+    (`rgw_rest_s3.cc:4572-4573`, `driver/rados/rgw_sal_rados.cc:4481-4482`
+    at v20.2.4), where v19.2.6 reads neither for it
+    (`RGWCompleteMultipart_ObjStore_S3::get_params`, `rgw_rest_s3.cc:4064-4074`
+    at v19.2.6) and completes over whatever the key holds. A refused
+    completion leaves the upload whole, so it can be completed again.
 
   v19.2.6 skips the check on a head with a fake tag (`need_guard`,
   `:6493-6495` at v19.2.6), which lets a conditional write overwrite an
@@ -2544,8 +2591,11 @@ does the following.
   tags are removed, where v19.2.6 reports 1970-01-01.
 - **Writes to a versioned or object-lock bucket answer 501 until
   versioning is served.** Every write rgw-go serves, PutObject, CopyObject,
-  DeleteObject, DeleteObjects, PutObjectAcl, PutObjectTagging and
-  DeleteObjectTagging, takes radosgw's unversioned path. On a bucket whose
+  DeleteObject, DeleteObjects, PutObjectAcl, PutObjectTagging,
+  DeleteObjectTagging and CompleteMultipartUpload, takes radosgw's
+  unversioned path, where radosgw's CompleteMultipartUpload writes a new
+  version, or the null one through the OLH (`rgw_op.cc:6459-6466` at
+  v19.2.6, `:7284-7291` at v20.2.4). On a bucket whose
   versioning is enabled or suspended, or that has object lock, that path
   would write or remove a version's head beside the bucket's OLH under an
   index entry for the plain key, and for a versioned delete it skips the
@@ -2653,6 +2703,91 @@ does the following.
   spelling it `07` registers `part.7` where radosgw registers `part.07`.
   Only an upload that a radosgw older than the v2 ids created reaches
   this; rgw-go and every current radosgw make v2 ids.
+- **CompleteMultipartUpload checks the part heads and keeps the parts until
+  its head is written.** rgw-go validates and assembles a completion as
+  `RadosMultipartUpload::complete` does (`driver/rados/rgw_sal_rados.cc:3433-3640`
+  at v19.2.6, `:4279-4490` at v20.2.4), with these differences:
+  - Before the head write, rgw-go stats the head object of every part and
+    answers 400 InvalidPart, leaving the upload in place, when one is
+    missing. radosgw checks only the part infos the meta object lists, so it
+    writes a head naming parts whose objects are gone, which reads as
+    NoSuchKey.
+  - A stored part ETag that is not 32 hex digits answers 400 InvalidPart.
+    radosgw's `hex_to_buf` hashes whatever it decodes of it into the
+    object's ETag (`:3503-3505` at v19.2.6, `:4351-4353` at v20.2.4). Every
+    gateway stores a part's ETag as the hex MD5 of its body, so only a
+    damaged part info reaches this.
+  - radosgw sends the parts' index entries, and those of each part's
+    earlier uploads, with the head write's index change
+    (`obj_op.meta.remove_objs`, `:3624` at v19.2.6, `:4472` at v20.2.4), and
+    its cancel of a refused head write applies them too
+    (`rgw_rados.cc:3374` at v19.2.6, `:3527` at v20.2.4;
+    `cls/rgw/cls_rgw.cc:1213-1227` at v19.2.6, `:1344-1358` at v20.2.4): a
+    completion refused by If-None-Match: * or If-Match: * losing its race,
+    or failing at the OSD, leaves an upload whose parts have no index
+    entries (`docs/ceph-upstream-bugs.md`, "[A refused CompleteMultipartUpload
+    drops its parts' index
+    entries](ceph-upstream-bugs.md#a-refused-completemultipartupload-drops-its-parts-index-entries)").
+    rgw-go sends them with the meta object's removal, after the head is
+    written, so a refused completion keeps them, and the bucket's stats
+    count the parts with the object for the moment between the two.
+  - radosgw queues each part's earlier uploads for the GC before it writes
+    the head, one GC entry per such part under the upload id
+    (`cleanup_part_history`, `:3103-3148` and `:3573` at v19.2.6,
+    `:3947-3992` and `:4421` at v20.2.4); rgw-go queues them in one entry
+    after the head write. A refused completion keeps them, and a crash or a
+    timeout between the head write and the meta object's removal leaves the
+    upload's objects and entries for a retry to retire.
+- **CompleteMultipartUpload finishes an earlier completion of its upload
+  instead of writing it again.** When the key's head names an object of the
+  upload being completed, an earlier completion wrote it and its meta object
+  outlived it: the process stopped, or the meta object's removal failed,
+  which radosgw only logs (`rgw_op.cc:6497-6530` at v19.2.6, `:7387-7420` at
+  v20.2.4). radosgw completes such an upload again, and its head write
+  queues the earlier head's tails, the same parts, for the GC, so the object
+  loses its data; an abort does the same (`docs/ceph-upstream-bugs.md`, "[A
+  multipart completion whose meta object outlives its head write lets a
+  retry or an abort delete the object's
+  data](ceph-upstream-bugs.md#a-multipart-completion-whose-meta-object-outlives-its-head-write-lets-a-retry-or-an-abort-delete-the-objects-data)").
+  rgw-go's own completions leave a record on the meta object, which decides
+  a retry ("A CompleteMultipartUpload records itself on the meta object
+  before its head write"). For a meta object without one, as a floor
+  radosgw leaves it, rgw-go reads the key's head before writing:
+  - when it is the object this completion would write, with the same
+    ETag, size and part objects, rgw-go writes no head, removes the meta
+    object with the parts' entries, and answers 200 with the ETag, without
+    checking the request's If-Match or If-None-Match again;
+  - when it names the upload's parts but differs, rgw-go answers 404
+    NoSuchUpload and changes nothing.
+
+  A completed object that a floor radosgw wrote and that was overwritten or
+  deleted before the retry no longer names the upload, and leaves no
+  record; its tails, the parts, are then queued for the GC, and rgw-go,
+  like radosgw, completes the upload over them unless the GC has already
+  removed a part head.
+- **CompleteMultipartUpload renews its lock before the head write.** rgw-go
+  takes the `RGWCompleteMultipart` lock as radosgw does, and just before
+  the head write renews it, with `LOCK_FLAG_MUST_RENEW` and assert_exists in
+  one op, for another `rgw_mp_lock_max_time`. When the lock is no longer its
+  own, because it lapsed during a long completion or another gateway took
+  it, rgw-go answers 500 InternalError, "This multipart completion is
+  already in progress", writes nothing and leaves the upload whole.
+  v19.2.6 and v20.2.4 neither renew nor check the lock, so a completion
+  that outlives it can race another one over the same parts
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload does
+  not keep its lock past rgw_mp_lock_max_time](ceph-upstream-bugs.md#radosgws-completemultipartupload-does-not-keep-its-lock-past-rgw_mp_lock_max_time)");
+  later radosgw renews it every half duration and refuses the head write
+  with the same 500 when a renewal failed
+  ([ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696)). Requests
+  of one gateway share its RADOS client and so its lock holder, as
+  radosgw's do, so the renewal cannot tell this completion from another of
+  the same gateway that took a lapsed lock. The renewal also leaves a
+  window from the read of the key's head that looks for an earlier
+  completion to the head write's own read: a completion of the same upload
+  whose head write was in flight longer than `rgw_mp_lock_max_time`, after
+  its renewal, can land its head there, and this completion's head write
+  then queues that head's tails, the same parts, for the GC. radosgw main
+  has the same window.
 - **A copy keeps its tail references when its head write timed out.** A
   copy that shares its source's tails takes a refcount reference on each
   under its tag before it writes its head, as radosgw's `copy_obj` does.
