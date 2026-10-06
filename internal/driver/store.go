@@ -37,6 +37,7 @@ type Store struct {
 	sysobj  *sysobjs
 	readCfg readConfig
 	w       *writer
+	mp      mpOptions
 	// headBufs holds the *[]byte buffers prefetches read the head into.
 	headBufs sync.Pool
 	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
@@ -119,6 +120,10 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	mp, err := readMPOptions(conf)
+	if err != nil {
+		return nil, errors.Join(err, pools.closeAll())
+	}
 	sys, err := openSysObj(ctx, pools, zc.Params, opts, release)
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
@@ -127,7 +132,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	opts.logWorkersNotRun(ctx)
 	s := &Store{
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg,
-		newTicker: newTimeTicker,
+		mp: mp, newTicker: newTimeTicker,
 	}
 	s.heads = s
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
@@ -344,11 +349,6 @@ func (s *Store) GetPeriodConfig(context.Context, string) (meta.PeriodConfig, err
 // PutPeriodConfig implements op.RealmStore.
 func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) error {
 	return op.ErrNotImplemented
-}
-
-// Complete implements op.MultipartStore.
-func (s *Store) Complete(context.Context, *op.Upload, []op.CompletePart) (*op.PutResult, error) {
-	return nil, op.ErrNotImplemented
 }
 
 // Abort implements op.MultipartStore.

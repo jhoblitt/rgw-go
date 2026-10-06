@@ -286,12 +286,38 @@ var _ = Describe("multipart", func() {
 				_, err = store.GetUpload(ctx, rec, key, up.ID)
 				Expect(err).NotTo(HaveOccurred(), "the upload survives")
 			},
-			Entry("parts out of order", []op.CompletePart{{Number: 2, ETag: tailETag}, {Number: 1, ETag: bigETag}}, op.ErrInvalidPartOrder),
-			Entry("a repeated part", []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 1, ETag: bigETag}}, op.ErrInvalidPartOrder),
+			Entry("a repeated part whose last entry has the wrong ETag", []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 1, ETag: tailETag}, {Number: 2, ETag: tailETag}}, op.ErrInvalidPart),
 			Entry("an ETag that does not match", []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 2, ETag: bigETag}}, op.ErrInvalidPart),
 			Entry("a part never uploaded", []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 3, ETag: tailETag}}, op.ErrInvalidPart),
 			Entry("only some of the uploaded parts", []op.CompletePart{{Number: 1, ETag: bigETag}}, op.ErrInvalidPart),
 		)
+		It("sorts the parts by number and keeps the last of a repeated number, as radosgw's std::map does", func(ctx SpecContext) {
+			_, err := store.PutPart(ctx, up, 3, strings.NewReader("more"), op.PutParams{Size: 4})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.PutPart(ctx, up, 2, bytes.NewReader(bigPart), op.PutParams{Size: int64(len(bigPart))})
+			Expect(err).NotTo(HaveOccurred())
+			res, err := store.Complete(ctx, up, []op.CompletePart{
+				{Number: 3, ETag: md5Hex([]byte("more"))}, {Number: 2, ETag: `"bogus"`}, {Number: 1, ETag: bigETag}, {Number: 2, ETag: bigETag},
+			})
+			Expect(err).NotTo(HaveOccurred(), "rgw_multi.cc:44-53")
+			Expect(res.ETag).To(Equal(etagOfETags(bigETag, bigETag, md5Hex([]byte("more")))))
+		})
+		It("keeps the request's write tag and honors its conditions, leaving a refused upload in place", func(ctx SpecContext) {
+			_, err := store.PutObject(ctx, rec, key, strings.NewReader("old"), op.PutParams{Size: 3})
+			Expect(err).NotTo(HaveOccurred())
+			parts := []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 2, ETag: tailETag}}
+			up.IfNoneMatch = "*"
+			_, err = store.Complete(ctx, up, parts)
+			Expect(err).To(MatchError(op.ErrPreconditionFailed))
+			_, err = store.GetUpload(ctx, rec, key, up.ID)
+			Expect(err).NotTo(HaveOccurred(), "the upload survives a refused completion")
+			up.IfNoneMatch, up.WriteTag = "", "tx-complete"
+			_, err = store.Complete(ctx, up, parts)
+			Expect(err).NotTo(HaveOccurred())
+			st, err := store.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.WriteTag).To(Equal("tx-complete"))
+		})
 		It("refuses a part below 5 MiB anywhere but last with EntityTooSmall", func(ctx SpecContext) {
 			_, err := store.PutPart(ctx, up, 1, strings.NewReader("small"), op.PutParams{Size: 5})
 			Expect(err).NotTo(HaveOccurred())
