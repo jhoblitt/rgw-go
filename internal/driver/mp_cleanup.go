@@ -54,12 +54,13 @@ func readMPOptions(conf *cephconf.Options) (mpOptions, error) {
 
 // lockMeta is MPRadosSerializer::try_lock (:3750-3760; v20.2.4
 // :4613-4624): one write op on the meta object, assert_exists then an
-// exclusive lock under cookie "" for rgw_mp_lock_max_time. The seam's
-// error comes back for the caller's mapping: ENOENT for a missing meta
-// object, EBUSY for another client's lock, EEXIST for this client's.
-func (s *Store) lockMeta(ctx context.Context, ref mpRef) error {
+// exclusive lock under cookie for rgw_mp_lock_max_time. radosgw's serializer
+// sends cookie "", as a completion does. The seam's error comes back for
+// the caller's mapping: ENOENT for a missing meta object, EBUSY for another
+// holder, EEXIST for this client's own hold under the same cookie.
+func (s *Store) lockMeta(ctx context.Context, ref mpRef, cookie string) error {
 	w := radosclient.NewWriteOp()
-	lock.LockExisting(w, completeLockName, "", "", s.mp.lockMaxTime, s.release)
+	lock.LockExisting(w, completeLockName, cookie, "", s.mp.lockMaxTime, s.release)
 	_, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
 	return err
 }
@@ -111,15 +112,16 @@ func (s *Store) clearRecord(ctx context.Context, ref mpRef) {
 	}
 }
 
-// unlockMeta is the serializer's unlock (Lock::unlock, cookie ""), which
-// RGWCompleteMultipart::complete sends whenever the lock was not released
-// with the meta object (rgw_op.cc:6582-6593 at v19.2.6, :7506-7517 at
-// v20.2.4). It runs to its end whatever the client does, and a failure is
-// logged; a lock no longer held answers ENOENT, which is not.
-func (s *Store) unlockMeta(ctx context.Context, ref mpRef) {
+// unlockMeta is the serializer's unlock (Lock::unlock) of this client's
+// hold under cookie, which RGWCompleteMultipart::complete sends whenever the
+// lock was not released with the meta object (rgw_op.cc:6582-6593 at
+// v19.2.6, :7506-7517 at v20.2.4). It runs to its end whatever the client
+// does, and a failure is logged; a lock no longer held answers ENOENT, which
+// is not.
+func (s *Store) unlockMeta(ctx context.Context, ref mpRef, cookie string) {
 	ctx = context.WithoutCancel(ctx)
 	w := radosclient.NewWriteOp()
-	lock.Unlock(w, completeLockName, "", s.release)
+	lock.Unlock(w, completeLockName, cookie, s.release)
 	if _, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone); err != nil && !errors.Is(err, radosclient.ErrNotFound) {
 		slog.WarnContext(ctx, "failed to unlock the multipart meta object", slog.String("oid", ref.oid), slog.Any("error", err))
 	}
@@ -343,6 +345,25 @@ type metaDelete struct {
 	// accounted is what the quota cache drops with the object: the meta
 	// object's own size for a completion, the parts' total for an abort.
 	accounted uint64
+	// abort makes the removal an abort's, which must leave the upload whole
+	// whenever it does not remove it: the op first asserts the
+	// RGWCompleteMultipart lock this client holds under cookie, so the OSD
+	// fails it with EBUSY, however late it runs, once that hold lapsed or
+	// was broken, whoever holds the lock since: a cls_lock locker is the
+	// request's entity and its cookie (cls_lock.cc:174-178 and :507-519 at
+	// v19.2.6 and v20.2.4), so a completion of this gateway, the same
+	// entity under cookie "", does not pass for an abort's hold under its
+	// own cookie; a cancel retires none of removeObjs, where
+	// delete_obj's cancel retires them (:5969) from an upload that stands;
+	// and a meta object already gone comes back as radosclient.ErrNotFound
+	// without the quota cache change, as delete_obj returns -ENOENT before
+	// it (:5979-5984).
+	abort bool
+	// cookie is the abort's lock cookie, which the assertion names.
+	cookie string
+	// deadline bounds the wait for the removal's reply; zero waits as long as
+	// the op takes. A removal past it is answered as one that timed out.
+	deadline time.Duration
 }
 
 // deleteMeta is Delete::delete_obj on the meta object (rgw_rados.cc:5757-5987;
@@ -354,10 +375,11 @@ type metaDelete struct {
 // v19.2.6), under pool_full_try. A removal that worked, or found no object,
 // completes the DEL with d.removeObjs and drops one object and d.accounted
 // bytes from the quota cache; ETIMEDOUT leaves the pending entry for a
-// listing to reconcile and answers ErrRequestTimedOut; anything else cancels
-// with d.removeObjs, as radosgw does (:5969). ECANCELED, a part registered
-// since the version was read, comes back as radosclient.ErrCanceled for the
-// caller's retry.
+// listing to reconcile and answers ErrRequestTimedOut, as does a reply not in
+// by d.deadline; anything else cancels
+// with d.removeObjs, as radosgw does (:5969), or without them for an abort
+// (metaDelete.abort). ECANCELED, a part registered since the version was
+// read, comes back as radosclient.ErrCanceled for the caller's retry.
 func (s *Store) deleteMeta(ctx context.Context, d metaDelete) error {
 	ctx = context.WithoutCancel(ctx)
 	x := s.newIndexOp(d.rec, d.ref.key, "")
@@ -368,21 +390,37 @@ func (s *Store) deleteMeta(ctx context.Context, d metaDelete) error {
 		return op.FromRADOS(err, op.ScopeUpload)
 	}
 	w := radosclient.NewWriteOp()
+	if d.abort {
+		// First: past obj_remove the op's object has no lock to assert.
+		lock.AssertLocked(w, completeLockName, lock.TypeExclusive, d.cookie, "", s.release)
+	}
 	rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
 	if d.version.Ver != 0 {
 		version.Check(w, d.version, version.CondEQ, s.release)
 	}
-	epoch, err := d.ref.pool.Write(ctx, d.ref.oid, w, radosclient.OpFlagFullTry)
+	wctx := ctx
+	if d.deadline > 0 {
+		var cancel context.CancelFunc
+		wctx, cancel = context.WithTimeout(ctx, d.deadline)
+		defer cancel()
+	}
+	epoch, err := d.ref.pool.Write(wctx, d.ref.oid, w, radosclient.OpFlagFullTry)
 	switch {
-	case errors.Is(err, radosclient.ErrTimedOut):
+	case errors.Is(err, radosclient.ErrTimedOut), errors.Is(err, context.DeadlineExceeded):
 		return op.FromRADOS(err, op.ScopeUpload)
 	case err == nil || errors.Is(err, radosclient.ErrNotFound):
 		x.completeDel(rgw.EntryVer{Pool: d.ref.pool.ID(), Epoch: epoch}, d.mtime)
+		if err != nil && d.abort {
+			return err
+		}
 		if aerr := s.AdjustStats(ctx, d.rec, d.rec.Info.Owner, -1, 0, int64(d.accounted)); aerr != nil { //nolint:gosec // object sizes are far below 2^63
 			slog.WarnContext(ctx, "quota cache adjustment failed", slog.String("bucket", d.rec.Info.Bucket.Name), slog.Any("error", aerr))
 		}
 		return nil
 	default:
+		if d.abort {
+			x.removeObjs = nil
+		}
 		x.cancel()
 		if errors.Is(err, radosclient.ErrCanceled) {
 			return err

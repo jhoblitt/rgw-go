@@ -2390,6 +2390,32 @@ differ, rgw-go does the following.
   delete an indexless bucket it
   created](ceph-upstream-bugs.md#tentacle-cannot-delete-an-indexless-bucket-it-created)").
   rgw-go keeps the check, since skipping it could orphan objects.
+- **A bucket delete aborts its multipart uploads under their completion
+  lock.** For a bucket of its own zonegroup, after the emptiness check,
+  radosgw aborts every upload the bucket's multipart listing names
+  (`RadosBucket::abort_multiparts`, `driver/rados/rgw_sal_rados.cc:958-1013`
+  at v19.2.6, `:978-1033` at v20.2.4, called at `:395-400` and
+  `:412-417`), and so does rgw-go, with two differences:
+  - rgw-go aborts each upload as AbortMultipartUpload does, under its
+    `RGWCompleteMultipart` lock ("AbortMultipartUpload removes the upload
+    before it frees the parts"); `abort_multiparts` calls the abort without
+    taking it. An upload whose lock another gateway holds, a completion in
+    progress or one that stopped, fails the delete with 503
+    ServiceUnavailable until the lock is released or lapses, and so does
+    one this gateway's own completion holds, since the abort locks under a
+    cookie of its own; the bucket stays. radosgw deletes the bucket and frees
+    the upload's parts under the completion.
+  - rgw-go aborts each listed upload once. radosgw's listing appends each
+    page to the uploads of the pages before, so every later page aborts
+    those again and its WARNING counts them again
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete aborts each page of multipart uploads again on every later page](ceph-upstream-bugs.md#radosgws-bucket-delete-aborts-each-page-of-multipart-uploads-again-on-every-later-page)").
+    rgw-go logs the number of uploads it listed, those already gone
+    included, once.
+  - An upload whose parts the key's object names ("AbortMultipartUpload
+    leaves a completed upload's parts alone") is skipped with a warning and
+    counted, as radosgw counts the abort it makes of it; the delete goes on
+    and leaves its meta object and parts. The emptiness check lets the
+    delete reach it only for a head without a visible index entry.
 
 ### Object read differences
 
@@ -2947,6 +2973,76 @@ does the following.
   its renewal, can land its head there, and this completion's head write
   then queues that head's tails, the same parts, for the GC. radosgw main
   has the same window.
+- **AbortMultipartUpload removes the upload before it frees the parts.**
+  rgw-go aborts an upload as `RadosMultipartUpload::abort` does
+  (`driver/rados/rgw_sal_rados.cc:3151-3263` at v19.2.6, `:3995-4107` at
+  v20.2.4), under the `RGWCompleteMultipart` lock that
+  `RGWAbortMultipart::execute` takes (`rgw_op.cc:6614-6650` at v19.2.6,
+  `:7538-7574` at v20.2.4), with these differences:
+  - radosgw queues every part's objects for the GC and then removes the
+    meta object with the parts' index entries; a removal that fails leaves
+    an upload that can still be completed over the queued objects, and
+    its cancel drops the parts' entries (`docs/ceph-upstream-bugs.md`,
+    "[radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload](ceph-upstream-bugs.md#radosgws-abortmultipartupload-queues-the-parts-for-the-gc-before-it-removes-the-upload)"). rgw-go removes the meta object
+    first and queues the parts, in one chain under the upload id, once it
+    is gone. A removal that fails or that racing parts cancel fifteen times
+    leaves the upload whole, its parts' entries included, and queues
+    nothing; one that times out queues nothing either, and its parts leak
+    when it lands. A gateway that stops between the removal and the queue
+    leaks the parts, where radosgw's leaves a live upload over freed ones.
+  - rgw-go takes the lock under a cookie of the abort's own, 128 random
+    bits, where radosgw and rgw-go's completions use "", and the removal
+    asserts, in its own op and before `obj_remove`, that the abort still
+    holds it under that cookie. A cls_lock locker is the request's entity
+    and its cookie (`cls/lock/cls_lock.cc:174-178`, `:201-212` and
+    `:507-519` at v19.2.6 and v20.2.4), and requests of one gateway share
+    its RADOS client and so its entity ("CompleteMultipartUpload renews its
+    lock before the head write"), so the cookie is what tells the abort's
+    hold from one a completion of the same gateway takes after the abort's
+    lapsed. The OSD then refuses the removal, however late it runs, once
+    the abort's hold lapsed or was broken, whoever took the lock since: the
+    abort answers 503 ServiceUnavailable, or 408 when it stopped waiting,
+    and queues nothing. A radosgw gateway is another entity, so the cookie
+    changes nothing in how its locks and the abort's exclude each other.
+    rgw-go also answers 503 early, without the op, once less than
+    `min(30 s, rgw_mp_lock_max_time / 4)` of the lock's term remains, and
+    waits no longer than that for the removal's reply. radosgw neither
+    renews nor checks the lock.
+  - A meta object another gateway removed meanwhile answers 404
+    NoSuchUpload, as on radosgw, without the quota cache change and with
+    nothing queued, where radosgw has already queued the parts.
+  - Each abort reads the key's head as well ("AbortMultipartUpload leaves a
+    completed upload's parts alone").
+  - A part without a manifest, which only a gateway older than Hammer
+    wrote, is logged and skipped, and its head's index entry under the
+    upload's own prefix is retired with the meta object. radosgw's branch
+    for it deletes an object with an empty name, because `list_parts`
+    leaves the part's oid empty (`:3186-3192` at v19.2.6, `:4030-4036` at
+    v20.2.4), and keeps that entry; the part's objects leak on both.
+- **AbortMultipartUpload leaves a completed upload's parts alone.** An
+  upload whose meta object outlived its completion's head write still
+  lists its parts, and radosgw's abort queues them for the GC, the
+  completed object's data (`docs/ceph-upstream-bugs.md`, "[A multipart
+  completion whose meta object outlives its head write lets a retry or an
+  abort delete the object's
+  data](ceph-upstream-bugs.md#a-multipart-completion-whose-meta-object-outlives-its-head-write-lets-a-retry-or-an-abort-delete-the-objects-data)").
+  rgw-go reads the key's head in each round of the abort:
+  - when the meta object carries a completion record ("A
+    CompleteMultipartUpload records itself on the meta object before its
+    head write") and the head carries the recorded tag, it removes the
+    meta object alone, behind its version and with its own size off the
+    quota cache, lists no part and queues nothing, and answers 204, as
+    [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103)'s abort
+    does. The parts' index entries stay, as in the PR. A record naming a
+    version other than the key's own head answers 501 NotImplemented and
+    changes nothing, since rgw-go reads no version;
+  - otherwise, when the head names an object of the upload, as a floor
+    radosgw's completion leaves it, rgw-go answers 404 NoSuchUpload and
+    changes nothing, where v19.2.6 and v20.2.4 queue the object's parts.
+    The upload stays listed until the object is overwritten or deleted,
+    which queues its tails, the parts, after which an abort succeeds;
+  - a key whose head is a versioned object's olh answers 501
+    NotImplemented, as every read of one does until versioning is served.
 - **A copy keeps its tail references when its head write timed out.** A
   copy that shares its source's tails takes a refcount reference on each
   under its tag before it writes its head, as radosgw's `copy_obj` does.

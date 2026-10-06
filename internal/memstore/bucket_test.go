@@ -109,6 +109,18 @@ var _ = Describe("buckets", func() {
 		Expect(ents).To(BeEmpty(), "the owner's list")
 		Expect(store.DeleteBucket(ctx, rec)).To(MatchError(op.ErrNoSuchBucket), "again")
 	})
+	It("drops the bucket's in-flight uploads with it, as RadosBucket::remove aborts them", func(ctx SpecContext) {
+		rec := mustCreate(ctx, store, "", "b", owner("alice"))
+		up, err := store.CreateUpload(ctx, rec, meta.ObjKey{Name: "k"}, op.UploadParams{Owner: owner("alice")})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.DeleteBucket(ctx, rec)).To(Succeed(), "uploads are no content")
+		_, err = store.GetUpload(ctx, rec, up.Key, up.ID)
+		Expect(err).To(MatchError(op.ErrNoSuchUpload), "the deleted instance's upload is gone")
+		again := mustCreate(ctx, store, "", "b", owner("alice"))
+		res, err := store.ListUploads(ctx, again, op.ListUploadsParams{MaxUploads: 1000})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Uploads).To(BeEmpty(), "a bucket re-created under the name lists none")
+	})
 	It("guards PutBucketInfo by the instance version and bumps it", func(ctx SpecContext) {
 		rec := mustCreate(ctx, store, "", "b", owner("alice"))
 		stale := *rec

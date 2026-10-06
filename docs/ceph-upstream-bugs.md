@@ -203,6 +203,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | none | none | ✓ |
 | [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | none | none | ✓ |
 | [radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get) | none | none | ✓ |
+| [radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload](#radosgws-abortmultipartupload-queues-the-parts-for-the-gc-before-it-removes-the-upload) | [#80896](https://tracker.ceph.com/issues/80896) | none |  |
+| [radosgw's bucket delete aborts each page of multipart uploads again on every later page](#radosgws-bucket-delete-aborts-each-page-of-multipart-uploads-again-on-every-later-page) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -8661,9 +8663,16 @@ Every new entry adds its row to this table, in document order.
   completion would write, refusing any other with 404 NoSuchUpload
   ("CompleteMultipartUpload finishes an earlier completion of its upload
   instead of writing it again"). The part history is queued only after the
-  head write. rgw-go's AbortMultipartUpload, not implemented yet, has to
-  honor the record too. The record's format is the PR's at its head; it is
-  revisited when the PR merges.
+  head write. rgw-go's AbortMultipartUpload honors the record as the PR's
+  abort does: when the key's head carries the recorded tag it removes the
+  meta object alone and queues no part. Without a record it does not
+  reproduce the abort half either, where v19.2.6 and v20.2.4 queue the
+  object's parts: when the key's head names an object of the upload, it
+  answers 404 NoSuchUpload and changes nothing (`Store.Abort`,
+  `internal/driver/mp_abort.go`; `docs/exclusions.md`,
+  "AbortMultipartUpload leaves a completed upload's parts alone"). The
+  record's format is the PR's at its head; it is revisited when the PR
+  merges.
 - **Upstream:** [#80896](https://tracker.ceph.com/issues/80896) (Fix Under
   Review); the tracker names
   [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103) as its fix.
@@ -8744,7 +8753,12 @@ Every new entry adds its row to this table, in document order.
   immune on a queue shard, and moves every shard to the queue at startup
   as radosgw does (`gcInitialize`, `internal/driver/gc.go`). A
   completion's part history goes in one entry, where radosgw sends one per
-  part uploaded again.
+  part uploaded again. An abort sends its parts in one chain, once the meta
+  object is removed, where radosgw sends one per round of its retry after a
+  racing part (`Store.Abort`, `internal/driver/mp_abort.go`); on an omap-log
+  shard it meets the defect only for a chain long enough to split, or for
+  an upload whose earlier completion queued part history under the same
+  upload id before its object was overwritten.
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; it places the entry in the lineage of the gc work in
   [ceph/ceph#28421](https://github.com/ceph/ceph/pull/28421),
@@ -8994,3 +9008,98 @@ Every new entry adds its row to this table, in document order.
   upload's metadata to the GET that sends it; confirmed by
   rgw-bug-reproduction's triage against a model of the code. Not
   reproduced on a running system.
+
+## radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload
+
+- **Kind:** defect, robustness (triage estimate CVSS about 2.2), found
+  upstream first as a facet of tracker #80896. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RadosMultipartUpload::abort` sends every part's objects to the GC
+    under the upload id (`driver/rados/rgw_sal_rados.cc:3222-3236`;
+    `:4066-4080`), and only then removes the meta object, with the parts'
+    index entries, behind the version it read (`:3238-3250`; `:4082-4094`).
+  - A completion cannot run beside the abort: both take the exclusive
+    `RGWCompleteMultipart` lock (`rgw_op.cc:6434-6435` and `:6640-6641`;
+    `:7248-7249` and `:7564-7565`), which `MPRadosSerializer::try_lock`
+    takes with assert_exists and lock_exclusive
+    (`driver/rados/rgw_sal_rados.cc:3750-3760`; `:4613-4624`). The defect
+    is in the windows where the parts are queued and the upload still
+    stands once the abort is over:
+    - a removal that fails other than with ECANCELED ends the abort with
+      its error (`:3251-3256`; `:4095-4100`), and so does the fifteenth
+      ECANCELED from parts that keep racing it, which falls out of the loop
+      (`:3257-3262`; `:4101-4106`); the removal's cancel also drops the
+      parts' index entries (`driver/rados/rgw_rados.cc:5969`; `:6723`);
+    - a gateway that stops between the GC send and the removal;
+    - an abort that runs longer than `rgw_mp_lock_max_time`: neither it nor
+      `RGWAbortMultipart::execute` renews or checks the lock
+      (`rgw_op.cc:6637-6649`; `:7561-7573`), so a completion can take the
+      lapsed lock and write its head over the parts the abort queues.
+  - In the first two windows the meta object and the part infos remain, so
+    ListParts lists the parts and a later CompleteMultipartUpload, which
+    checks only the part infos (`driver/rados/rgw_sal_rados.cc:3433-3640`;
+    `:4279-4490`), writes a head over the queued objects.
+- **Impact:** once `rgw_gc_obj_min_wait`, two hours by default, has passed,
+  the GC removes the parts, and the completed object's head stands over
+  nothing: a GET answers 404 NoSuchKey. Reaching it takes a failed removal,
+  fifteen racing part uploads, a gateway that stops mid-abort, or an abort
+  slower than the lock, followed by a completion of the same upload.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce the first two windows. It removes the meta
+  object first and queues the parts once the meta object is gone, and a
+  failed removal keeps the parts' index entries. It closes the third with
+  a lock cookie of each abort's own, which the OSD checks: the abort takes
+  the lock under it, and the removal asserts that hold in its own op, so
+  the OSD refuses the removal, however late it runs, once the abort's hold
+  lapsed, even when a completion of the same gateway, the same entity
+  under cookie "", took the lock since (`cls/lock/cls_lock.cc:174-178`,
+  `:201-212` and `:507-519` at both tags); the abort then answers 503 and
+  queues nothing (`Store.Abort`, `internal/driver/mp_abort.go`;
+  `docs/exclusions.md`, "AbortMultipartUpload removes the upload before it
+  frees the parts").
+- **Upstream:** [#80896](https://tracker.ceph.com/issues/80896) (Fix
+  Under Review) covers it as one facet. Its fix,
+  [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103), does not: at
+  2c1db8239cc its abort still sends the chain to the GC before `delete_obj`
+  (`driver/rados/rgw_sal_rados.cc:4311-4348`), so the fix PR for this facet
+  is none.
+- **Found:** phase 1 unit P, Task 7, 2026-10-05, ordering the abort's GC
+  enqueue and meta object removal; upstream reported it first, as part of
+  #80896; derived from the source, not reproduced.
+
+## radosgw's bucket delete aborts each page of multipart uploads again on every later page
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: wasted work and a
+  wrong count. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of lines
+  is v19.2.6's, then v20.2.4's.
+  - `RadosBucket::abort_multiparts` declares its `uploads` vector once,
+    before the loop that lists a page of 1000 meta objects at a time
+    (`rgw_sal_rados.cc:963` and `:970-1010`; `:983` and `:990-1030`).
+  - The marker advances: `marker = params.marker.name` moves each listing
+    past the last page (`:953`; `:973`). Only the accumulator is stale:
+    `list_multiparts` appends each page's uploads to that vector and never
+    clears it (`:945-946`; `:965-966`), so the loop over `uploads` on page k
+    aborts the uploads of pages 1 to k-1 again (`:985-1003`; `:1005-1023`).
+  - Each repeated abort reads the removed meta object's attrs, gets ENOENT
+    and answers `-ERR_NO_SUCH_UPLOAD` (`RadosMultipartUpload::abort`,
+    `:3167-3172`; `:4011-4016`), which the loop logs, skips and counts in
+    `num_deleted` (`:990-1002`; `:1010-1022`); the WARNING after each page
+    logs that running count (`:1004-1008`; `:1024-1028`).
+- **Impact:** deleting a bucket whose uploads fill k pages makes
+  500·k(k-1) extra meta-object reads, about N²/2000 for N uploads, and the
+  last logged count of aborted uploads is too high by as many: 1003
+  uploads report 1000 after the first page and 2003 after the second.
+  Nothing is lost: an upload aborted again is already gone. No upload id
+  repeats, so a repeated abort cannot meet a new upload.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Its bucket delete aborts each listed
+  upload once and counts it once (`abortMultiparts`,
+  `internal/driver/mp_abort.go`; `docs/exclusions.md`, "A bucket delete
+  aborts its multipart uploads under their completion lock").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 7, 2026-10-05, reading
+  `abort_multiparts` for the bucket delete; derived from the source, not
+  reproduced.

@@ -339,10 +339,6 @@ var _ = Describe("the driver", func() {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
 
-			Entry("Abort", func(ctx context.Context, s *driver.Store) error {
-				return s.Abort(ctx, &op.Upload{ID: "2~upload"})
-			}),
-
 			Entry("metadata Get", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.Get(ctx, "user", "alice")
 				return err

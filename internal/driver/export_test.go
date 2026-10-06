@@ -560,3 +560,8 @@ func (s *Store) PartLayoutForTest(ctx context.Context, rec *op.BucketRecord, des
 		Chunk: l.chunk, Stripe: l.stripe, MaxHead: l.maxHead,
 	}, pl.indexedHead, err
 }
+
+// AbortMultipartsForTest is abortMultiparts for the external specs.
+func AbortMultipartsForTest(s *Store, ctx context.Context, rec *op.BucketRecord) (int, error) {
+	return s.abortMultiparts(ctx, rec)
+}

@@ -300,7 +300,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 	parts = op.SortCompleteParts(parts)
 	ref, err := s.metaRef(ctx, rec, key, up.ID)
 	if err == nil {
-		err = s.lockMeta(ctx, ref)
+		err = s.lockMeta(ctx, ref, "")
 	} else if !errors.Is(err, radosclient.ErrNotFound) {
 		return nil, err
 	}
@@ -322,7 +322,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 	ctx = context.WithoutCancel(ctx)
 	res, released, err := s.completeLocked(ctx, up, ref, parts)
 	if !released {
-		s.unlockMeta(ctx, ref)
+		s.unlockMeta(ctx, ref, "")
 	}
 	return res, err
 }

@@ -351,11 +351,6 @@ func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) erro
 	return op.ErrNotImplemented
 }
 
-// Abort implements op.MultipartStore.
-func (s *Store) Abort(context.Context, *op.Upload) error {
-	return op.ErrNotImplemented
-}
-
 // Get implements op.MetadataStore.
 func (s *Store) Get(context.Context, string, string) (op.MetadataEntry, error) {
 	return op.MetadataEntry{}, op.ErrNotImplemented

@@ -350,7 +350,9 @@ const maxRemoveRetries = 20
 // load_bucket does (rgw_sal_rados.cc:356-360; v20.2.4 :373-377): one already
 // gone is radosgw's -ENOENT, NoSuchKey, and the delete stops there. For a
 // bucket of this zonegroup it syncs the owner's stats, logging a failure,
-// and refuses a bucket with objects. It then reads the entry point afresh,
+// refuses a bucket with objects, and aborts the bucket's multipart uploads
+// (abortMultiparts, rgw_sal_rados.cc:395-400; v20.2.4 :412-417), stopping at
+// an abort that fails. It then reads the entry point afresh,
 // as remove's new tracker does, and leaves it when the read fails or it
 // names another instance; otherwise it removes it under the version read,
 // and a failure there, a lost race included, is returned before anything
@@ -384,9 +386,13 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 		if err := s.checkBucketEmpty(ctx, cur); err != nil {
 			return err
 		}
-		// radosgw aborts the bucket's multipart uploads here, for its own
-		// zonegroup's bucket and after the emptiness check
-		// (rgw_sal_rados.cc:395-400 at v19.2.6, :412-417 at v20.2.4).
+		n, err := s.abortMultiparts(ctx, cur)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			slog.WarnContext(ctx, "aborted incomplete multipart uploads", slog.String("bucket", b.Name), slog.Int("count", n))
+		}
 	}
 	e, err := s.readEntryPoint(ctx, b.Tenant, b.Name)
 	switch {
