@@ -1,93 +1,19 @@
-package auth
+// Package strptime transcribes glibc's strptime in the C locale and ceph's
+// internal_timegm, the date parsing radosgw does through the C library, for
+// the packages that must read dates as radosgw reads them.
+package strptime
 
-import (
-	"math"
-	"strings"
-	"time"
-)
+import "time"
 
-// atoll is the C library's atoll, strtoll in base 10: leading whitespace, a
-// sign, then digits up to the first non-digit, saturating at the int64
-// bounds as strtoll does.
-func atoll(s string) int64 {
-	i := 0
-	for i < len(s) && isSpace(s[i]) {
-		i++
-	}
-	neg := false
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		neg = s[i] == '-'
-		i++
-	}
-	// n accumulates the negated value, so math.MinInt64 is reachable.
-	var n int64
-	for ; i < len(s) && isDigit(s[i]); i++ {
-		d := int64(s[i] - '0')
-		if n < (math.MinInt64+d)/10 {
-			if neg {
-				return math.MinInt64
-			}
-			return math.MaxInt64
-		}
-		n = n*10 - d
-	}
-	switch {
-	case neg:
-		return n
-	case n == math.MinInt64:
-		return math.MaxInt64
-	}
-	return -n
-}
-
-// stringToULOK reports whether stringtoul accepts s (rgw_string.h:86-100 at
-// v19.2.6 and v20.2.4): strtoul in base 10, so leading whitespace and a sign
-// are taken, and the digits must run to the end. It refuses ULONG_MAX, which
-// an overflow saturates to and "-1" wraps to. An empty string is 0.
-func stringToULOK(s string) bool {
-	if s == "" {
-		return true
-	}
-	i := 0
-	for i < len(s) && isSpace(s[i]) {
-		i++
-	}
-	neg := false
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		neg = s[i] == '-'
-		i++
-	}
-	start := i
-	var n uint64
-	overflow := false
-	for ; i < len(s) && isDigit(s[i]); i++ {
-		d := uint64(s[i] - '0')
-		if n > (math.MaxUint64-d)/10 {
-			overflow = true
-			continue
-		}
-		n = n*10 + d
-	}
-	switch {
-	case i == start, i != len(s), overflow:
-		return false
-	case neg:
-		return n != 1
-	}
-	return n != math.MaxUint64
-}
-
-// cString is s as a C string: radosgw hands the date parsers a char
-// pointer, so a NUL that url_decode produced from %00 ends the text.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
-}
-
-// tm is the part of struct tm radosgw's date parsing fills and reads.
-type tm struct {
-	year, mon, mday, hour, min, sec int // year in full; mon from 0
-	gmtoff                          int // seconds east of UTC, from %z
+// Tm is the part of struct tm radosgw's date parsing fills and reads.
+type Tm struct {
+	Year   int // in full
+	Mon    int // from 0
+	Mday   int
+	Hour   int
+	Min    int
+	Sec    int
+	Gmtoff int // seconds east of UTC, from %z
 }
 
 // cumulativeDays is days_from_1jan's table: the days before each month, in
@@ -105,17 +31,18 @@ func daysFrom0(year int) int {
 	return 365*year + year/400 - year/100 + year/4
 }
 
-// timegm is internal_timegm (include/timegm.h:24-77 at v19.2.6 and v20.2.4):
+// Timegm is internal_timegm (include/timegm.h:24-77 at v19.2.6 and v20.2.4):
 // calendar arithmetic that never checks the day against the month, so the
 // 31st of April is the 1st of May and second 60 the next minute. strptime
-// leaves the month in range, so its normalization is not needed.
-func (t tm) timegm() time.Time {
+// leaves the month in range, so its normalization is not needed. It ignores
+// Gmtoff, as internal_timegm does.
+func (t Tm) Timegm() time.Time {
 	leap := 0
-	if t.year%400 == 0 || t.year%100 != 0 && t.year%4 == 0 {
+	if t.Year%400 == 0 || t.Year%100 != 0 && t.Year%4 == 0 {
 		leap = 1
 	}
-	days := daysFrom0(t.year) - daysFrom0(1970) + cumulativeDays[leap][t.mon] + t.mday - 1
-	return time.Unix(int64(days)*86400+int64(3600*t.hour+60*t.min+t.sec), 0).UTC()
+	days := daysFrom0(t.Year) - daysFrom0(1970) + cumulativeDays[leap][t.Mon] + t.Mday - 1
+	return time.Unix(int64(days)*86400+int64(3600*t.Hour+60*t.Min+t.Sec), 0).UTC()
 }
 
 var (
@@ -144,6 +71,20 @@ var (
 	}
 )
 
+// isSpace is isspace in the C locale.
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func lowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
 // hasPrefixFold is match_string: strncasecmp in the C locale.
 func hasPrefixFold(s, prefix string) bool {
 	if len(s) < len(prefix) {
@@ -157,12 +98,18 @@ func hasPrefixFold(s, prefix string) bool {
 	return true
 }
 
-// strptime is glibc's strptime in the C locale (time/strptime_l.c at
-// glibc-2.34, the C library of radosgw's el9 images), for the conversions
-// radosgw's date formats use: %a %A %b %d %H %m %M %S %y %Y %z. Whitespace in
-// the format matches any run of whitespace, an empty one included; any other
-// character must match itself. It returns what follows the match.
-func strptime(s, format string) (t tm, rest string, ok bool) {
+// Parse is glibc's strptime in the C locale (time/strptime_l.c at
+// glibc-2.34, the C library of radosgw's el9 images) on s, starting from the
+// fields of t, as a caller that passes the same struct tm twice does. It
+// knows the conversions radosgw's date formats use, and the ones a format
+// built from request text can name that need no locale data: %a %A %b %B %h
+// %d %e %H %m %M %S %y %Y %z %n %t %%. Any other character after a % fails,
+// including a flag, width or E/O modifier on a listed conversion; glibc runs
+// those modified forms and %C %D %F %G %I %R %T %U %V %W %X %Z %c %g %j %k
+// %l %p %r %s %u %w %x, and fails on the rest too. Whitespace in the format
+// matches any run of whitespace, an empty one included; any other character
+// must match itself. It returns what follows the match.
+func Parse(t Tm, s, format string) (out Tm, rest string, ok bool) {
 	p := 0
 	for f := 0; f < len(format); f++ {
 		fc := format[f]
@@ -174,47 +121,57 @@ func strptime(s, format string) (t tm, rest string, ok bool) {
 		}
 		if fc != '%' {
 			if p >= len(s) || s[p] != fc {
-				return tm{}, "", false
+				return Tm{}, "", false
 			}
 			p++
 			continue
 		}
 		f++
 		if f == len(format) {
-			return tm{}, "", false
+			return Tm{}, "", false
 		}
 		var v int
 		switch format[f] {
 		case 'a', 'A':
 			p, ok = matchWeekday(s, p)
-		case 'b':
-			t.mon, p, ok = matchMonth(s, p)
-		case 'd':
-			t.mday, p, ok = getNumber(s, p, 1, 31, 2)
+		case 'b', 'B', 'h':
+			t.Mon, p, ok = matchMonth(s, p)
+		case 'd', 'e':
+			t.Mday, p, ok = getNumber(s, p, 1, 31, 2)
 		case 'H':
-			t.hour, p, ok = getNumber(s, p, 0, 23, 2)
+			t.Hour, p, ok = getNumber(s, p, 0, 23, 2)
 		case 'm':
 			v, p, ok = getNumber(s, p, 1, 12, 2)
-			t.mon = v - 1
+			t.Mon = v - 1
 		case 'M':
-			t.min, p, ok = getNumber(s, p, 0, 59, 2)
+			t.Min, p, ok = getNumber(s, p, 0, 59, 2)
 		case 'S':
-			t.sec, p, ok = getNumber(s, p, 0, 61, 2)
+			t.Sec, p, ok = getNumber(s, p, 0, 61, 2)
 		case 'y':
 			v, p, ok = getNumber(s, p, 0, 99, 2)
-			t.year = 1900 + v
+			t.Year = 1900 + v
 			if v < 69 {
-				t.year += 100
+				t.Year += 100
 			}
 		case 'Y':
-			t.year, p, ok = getNumber(s, p, 0, 9999, 4)
+			t.Year, p, ok = getNumber(s, p, 0, 9999, 4)
 		case 'z':
-			t.gmtoff, p, ok = matchZone(s, p)
+			t.Gmtoff, p, ok = matchZone(s, p)
+		case 'n', 't':
+			for p < len(s) && isSpace(s[p]) {
+				p++
+			}
+			ok = true
+		case '%':
+			ok = p < len(s) && s[p] == '%'
+			if ok {
+				p++
+			}
 		default:
 			ok = false
 		}
 		if !ok {
-			return tm{}, "", false
+			return Tm{}, "", false
 		}
 	}
 	return t, s[p:], true
@@ -261,8 +218,8 @@ func matchWeekday(s string, p int) (next int, ok bool) {
 	return longest, longest >= 0
 }
 
-// matchMonth is strptime's %b: the longest month name, full or abbreviated,
-// in any case.
+// matchMonth is strptime's %b, %B and %h: the longest month name, full or
+// abbreviated, in any case.
 func matchMonth(s string, p int) (mon, next int, ok bool) {
 	mon, longest := -1, -1
 	for i, names := range monthNames {

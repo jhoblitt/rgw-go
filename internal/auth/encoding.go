@@ -3,6 +3,8 @@ package auth
 import (
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 // isSpace is isspace in the C locale, which radosgw never leaves.
@@ -182,7 +184,7 @@ func parseISO8601Basic(s string) (time.Time, bool) {
 // strptime read it, before internal_timegm carries a second 60 into the next
 // year.
 func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
-	fields, rest, ok := strptime(cString(s), "%Y%m%dT%H%M%S")
+	fields, rest, ok := strptime.Parse(strptime.Tm{}, cString(s), "%Y%m%dT%H%M%S")
 	if !ok {
 		return time.Time{}, 0, false
 	}
@@ -190,7 +192,7 @@ func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
 	if rest != "" && rest != "Z" && (rest[0] != '.' || rest[len(rest)-1] != 'Z' || !stringToULOK(rest[1:len(rest)-1])) {
 		return time.Time{}, 0, false
 	}
-	return fields.timegm(), fields.year, true
+	return fields.Timegm(), fields.Year, true
 }
 
 // rfc2616Forms are parse_rfc2616's attempts in its order, each with the
@@ -220,8 +222,8 @@ func parseRFC2616(s string) (time.Time, bool) {
 func rfc2616Date(s string) (t time.Time, year int, ok bool) {
 	s = cString(s)
 	for _, form := range rfc2616Forms {
-		if fields, rest, parsed := strptime(s, form.format); parsed && form.end(rest) {
-			return fields.timegm().Add(-time.Duration(fields.gmtoff) * time.Second), fields.year, true
+		if fields, rest, parsed := strptime.Parse(strptime.Tm{}, s, form.format); parsed && form.end(rest) {
+			return fields.Timegm().Add(-time.Duration(fields.Gmtoff) * time.Second), fields.Year, true
 		}
 	}
 	return time.Time{}, 0, false
