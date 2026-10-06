@@ -8,6 +8,16 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
+var _ = Describe("SortCompleteParts", func() {
+	It("sorts by number and keeps the last ETag of a repeated number, as std::map<int, string> does", func() {
+		got := op.SortCompleteParts([]op.CompletePart{{Number: 3, ETag: "c"}, {Number: 1, ETag: "a1"}, {Number: 2, ETag: "b"}, {Number: 1, ETag: "a2"}})
+		Expect(got).To(Equal([]op.CompletePart{{Number: 1, ETag: "a2"}, {Number: 2, ETag: "b"}, {Number: 3, ETag: "c"}}))
+	})
+	It("returns no parts for none", func() {
+		Expect(op.SortCompleteParts(nil)).To(BeEmpty())
+	})
+})
+
 var _ = Describe("UploadListing", func() {
 	It("lists meta names in the multipart namespace with the request's prefix, delimiter and page", func() {
 		lp := op.UploadListing(op.ListUploadsParams{Prefix: "p", Delimiter: "/", MaxUploads: 7})

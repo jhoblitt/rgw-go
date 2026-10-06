@@ -428,6 +428,21 @@ func (s *Store) ReadMetaForTest(ctx context.Context, rec *op.BucketRecord, key m
 	return &MetaState{Ref: exportRef(st.ref), Size: st.size, Mtime: st.mtime, Attrs: st.attrs, Version: st.version, Info: st.info}, nil
 }
 
+// MPOptionsForTest is the multipart options Open read: the completion lock's
+// duration and the minimum part size.
+func (s *Store) MPOptionsForTest() (lockMaxTime time.Duration, minPartSize uint64) {
+	return s.mp.lockMaxTime, s.mp.minPartSize
+}
+
+// NamesUploadObjectsForTest is namesUploadObjects over prefixes.
+func NamesUploadObjectsForTest(m *meta.Manifest, prefixes ...string) bool {
+	set := map[string]bool{}
+	for _, p := range prefixes {
+		set[p] = true
+	}
+	return namesUploadObjects(m, set)
+}
+
 // Clock is a clock a spec moves by hand, with the tickers it drives.
 type Clock interface {
 	Now() time.Time

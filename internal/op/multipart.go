@@ -3,6 +3,8 @@ package op
 import (
 	"context"
 	"io"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -19,6 +21,15 @@ type Upload struct {
 	Placement meta.PlacementRule
 	// Attrs are the head xattrs the completed object receives.
 	Attrs map[string][]byte
+	// WriteTag is the completed head's idtag and tail_tag; radosgw passes the
+	// request id (rgw_op.cc:6482-6485 at v19.2.6, s->req_id). Empty selects a
+	// random tag.
+	WriteTag string
+	// IfMatch and IfNoneMatch are CompleteMultipartUpload's conditional
+	// headers, which v20.2.4 honors (rgw_rest_s3.cc:4572-4573 at v20.2.4) and
+	// rgw-go honors on both releases (docs/exclusions.md, "Write conditions
+	// are Tentacle's on Squid too"); empty means unset.
+	IfMatch, IfNoneMatch string
 }
 
 // UploadParams shapes CreateUpload.
@@ -131,6 +142,21 @@ type CompletePart struct {
 	ETag   string
 }
 
+// SortCompleteParts is the std::map<int, string> RGWMultiCompleteUpload::xml_end
+// fills from a completion's parts (rgw_multi.cc:44-53 at v19.2.6 and
+// v20.2.4): sorted by number, the last ETag of a repeated number kept.
+func SortCompleteParts(parts []CompletePart) []CompletePart {
+	byNum := map[int]string{}
+	for _, p := range parts {
+		byNum[p.Number] = p.ETag
+	}
+	out := make([]CompletePart, 0, len(byNum))
+	for _, n := range slices.Sorted(maps.Keys(byNum)) {
+		out = append(out, CompletePart{Number: n, ETag: byNum[n]})
+	}
+	return out
+}
+
 //counterfeiter:generate . MultipartStore
 
 // MultipartStore implements the seven multipart operations over radosgw's layout.
@@ -142,8 +168,10 @@ type MultipartStore interface {
 	ListParts(ctx context.Context, up *Upload, marker, maxParts int) (ListPartsResult, error)
 	ListUploads(ctx context.Context, rec *BucketRecord, p ListUploadsParams) (ListUploadsResult, error)
 	// Complete assembles parts into the object under the RGWCompleteMultipart
-	// lock and returns it; a part that does not match is ErrInvalidPart, an
-	// out-of-order list ErrInvalidPartOrder.
+	// lock and returns it; a part that does not match is ErrInvalidPart.
+	// Parts are sorted by number before validation, the last of a repeated
+	// number kept, as radosgw's std::map<int, string> keeps them
+	// (rgw_multi.cc:44-53 at v19.2.6 and v20.2.4), so no order error exists.
 	Complete(ctx context.Context, up *Upload, parts []CompletePart) (*PutResult, error)
 	Abort(ctx context.Context, up *Upload) error
 }

@@ -178,10 +178,13 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 
 // Complete implements op.MultipartStore as RadosMultipartUpload::complete
 // checks and assembles a completion (rgw_sal_rados.cc:3433-3640 at v19.2.6):
-// the listed parts must be the uploaded ones, in lockstep, each with its
-// ETag, every one but the last at least minPartSize; the object's ETag is
-// the MD5 of the parts' binary MD5s, "-" and the part count. It takes the
-// upload's attrs, and the upload is gone once it lands.
+// the listed parts, sorted by op.SortCompleteParts, must be the
+// uploaded ones, in lockstep, each with its ETag, every one but the last at
+// least minPartSize; the object's ETag is the MD5 of the parts' binary MD5s,
+// "-" and the part count. up's If-Match and If-None-Match are checked as a
+// PUT's are, and a refused completion leaves the upload in place. The
+// object takes the upload's attrs and up's write tag, and the upload is gone
+// once it lands.
 func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePart) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,11 +192,7 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	if err != nil {
 		return nil, err
 	}
-	for i := 1; i < len(parts); i++ {
-		if parts[i].Number <= parts[i-1].Number {
-			return nil, fmt.Errorf("part %d after part %d: %w", parts[i].Number, parts[i-1].Number, op.ErrInvalidPartOrder)
-		}
-	}
+	parts = op.SortCompleteParts(parts)
 	uploaded := slices.Sorted(maps.Keys(u.parts))
 	if len(uploaded) != len(parts) {
 		return nil, fmt.Errorf("%d parts listed of %d uploaded: %w", len(parts), len(uploaded), op.ErrInvalidPart)
@@ -221,7 +220,13 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	}
 	etag := hex.EncodeToString(digests.Sum(nil)) + "-" + strconv.Itoa(len(parts))
 	k := objKey(u.up.Key)
+	if err := checkWrite(b.objects[k], up.IfMatch, up.IfNoneMatch); err != nil {
+		return nil, err
+	}
 	o := s.newObject(k, data.Bytes(), etag, cloneAttrs(u.up.Attrs), time.Time{}, u.up.Placement.StorageClass)
+	if up.WriteTag != "" {
+		o.state.WriteTag = up.WriteTag
+	}
 	b.objects[k] = o
 	delete(s.uploads, uploadKey(u.bucketID, u.up.Key.Name, u.up.ID))
 	return putResult(o), nil

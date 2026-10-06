@@ -339,10 +339,6 @@ var _ = Describe("the driver", func() {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
 
-			Entry("Complete", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.Complete(ctx, &op.Upload{ID: "2~upload"}, []op.CompletePart{{Number: 1, ETag: `"etag"`}})
-				return err
-			}),
 			Entry("Abort", func(ctx context.Context, s *driver.Store) error {
 				return s.Abort(ctx, &op.Upload{ID: "2~upload"})
 			}),
