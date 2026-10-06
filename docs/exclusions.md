@@ -2154,11 +2154,14 @@ rgw-go does the following.
   PutObject or CopyObject whose new object's policy grants AllUsers or
   AuthenticatedUsers anything under such a block, as PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
-  that does not decode for one that blocks public ACLs in these writes and
-  in PutObjectAcl, where radosgw takes it for none; the authorizer refuses
-  such a bucket's requests from anyone but an admin ("A public-access
-  block that does not decode refuses the request"). CreateMultipartUpload
-  applies the block when rgw-go serves it.
+  that does not decode for one that blocks public ACLs in these writes and,
+  when rgw-go serves them, in PutObjectAcl and PutBucketAcl, and for one
+  that blocks public policies in PutBucketPolicy when it serves that
+  (`rgw_op.cc:8103-8108` at v19.2.6, `:9029-9034` at v20.2.4), where
+  radosgw takes it for none; the authorizer refuses such a bucket's
+  requests from anyone but an admin ("A public-access block that does not
+  decode refuses the request"), so only an admin meets these refusals.
+  CreateMultipartUpload applies the block when rgw-go serves it.
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
   DeleteObject that names a version, and a DeleteObjects any of whose keys
@@ -2203,6 +2206,25 @@ rgw-go does the following.
   - The repair is outside rgw-go's S3 surface: radosgw-admin, or a radosgw
     gateway serving the same cluster, which ignores the attr, can rewrite or
     remove it, or remove the policy that names the tag.
+- **An account grantee does not resolve on the RADOS driver until its
+  account store lands.** radosgw resolves a grantee named by `id` through
+  `read_owner_display_name`, which loads a user or, for an account id, the
+  account (`load_account_by_id`), and one named by `emailAddress` through
+  `read_aclowner_by_email`, which reads the email index users and accounts
+  share and then the owner it names (`rgw_acl_s3.cc:300-337`, called from
+  `parse_grantee_str` at `:356-371` and `resolve_grant` at `:504-518`, all
+  at v19.2.6 and v20.2.4; `load_owner_by_email`,
+  `driver/rados/rgw_sal_rados.cc:1296-1309` at v19.2.6, `:1835-1848` at
+  v20.2.4). A miss is radosgw's -ENOENT, 404 NoSuchKey from a grant header.
+  rgw-go's RADOS driver does not yet read accounts, and its account
+  lookups answer NotImplemented. So on that driver a grant header naming
+  an account id, or an email address that no user holds, answers 501
+  NotImplemented, where radosgw grants the account or answers 404; in an
+  ACL document such a grantee or owner answers radosgw's 400 for an
+  unresolvable one, InvalidArgument or UnresolvableGrantByEmailAddress,
+  where radosgw would grant an account. rgw-go cannot tell an email that
+  nothing holds from one an account holds, so it reports no miss it has
+  not seen.
 
 ### Bucket metadata differences
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -224,58 +225,18 @@ func confBool(r *op.Request, name string) bool {
 	return err == nil && v
 }
 
-// createS3Policy is create_s3_policy (:2408-2422; v20.2.4 :2524-2538) for
-// the requester's ACL owner: with any x-amz-grant header, the grants the
-// headers name, which a canned ACL beside them makes InvalidRequest;
-// otherwise the canned ACL, private when x-amz-acl is absent, whose
-// bucket-owner grants name s->bucket_owner, which a create has not set yet.
-// An unknown canned ACL or a grant radosgw cannot parse is InvalidArgument,
-// and a grantee that does not exist is radosgw's -ENOENT, NoSuchKey.
+// createS3Policy is create_s3_policy for the requester's ACL owner
+// (authz.DefaultACL), whose bucket-owner grants name s->bucket_owner, which
+// a create has not set yet. An unknown canned ACL or a grant radosgw cannot
+// parse is InvalidArgument, and a grantee that does not exist is radosgw's
+// -ENOENT, NoSuchKey.
 func createS3Policy(ctx context.Context, r *op.Request) (acl.Policy, error) {
-	owner := aclOwner(r.Identity)
-	canned, _ := op.HeaderValue(r.Header, "x-amz-acl")
-	var (
-		p   acl.Policy
-		err error
-	)
-	if hasGrantHeader(r.Header) {
-		if canned != "" {
-			return acl.Policy{}, op.ErrInvalidRequest
-		}
-		grant := func(name string) string {
-			v, _ := op.HeaderValue(r.Header, name)
-			return v
-		}
-		p, err = acl.FromHeaders(ctx, userResolver(r), owner, acl.GrantHeaders{
-			Read:        grant("x-amz-grant-read"),
-			Write:       grant("x-amz-grant-write"),
-			ReadACP:     grant("x-amz-grant-read-acp"),
-			WriteACP:    grant("x-amz-grant-write-acp"),
-			FullControl: grant("x-amz-grant-full-control"),
-		})
-	} else {
-		p, err = acl.Canned(owner, acl.Owner{}, canned)
-	}
-	switch {
-	case errors.Is(err, acl.ErrInvalid):
-		return acl.Policy{}, fmt.Errorf("%w: %w", op.ErrInvalidArgument, err)
-	case errors.Is(err, acl.ErrGranteeNotFound):
-		return acl.Policy{}, fmt.Errorf("%w: %w", op.ErrNoSuchKey, err)
-	case err != nil:
-		return acl.Policy{}, err
+	res := authz.UserResolver{Users: r.Env.Users, Accounts: r.Env.Accounts}
+	p, err := authz.DefaultACL(ctx, r, res, aclOwner(r.Identity), acl.Owner{})
+	if err != nil {
+		return acl.Policy{}, authz.ErrorFor(err)
 	}
 	return p, nil
-}
-
-// hasGrantHeader is s->has_acl_header, any header whose name starts with
-// x-amz-grant (rgw_rest_s3.cc:5024 at v19.2.6, :5584 at v20.2.4).
-func hasGrantHeader(h http.Header) bool {
-	for k := range h {
-		if len(k) >= len("x-amz-grant") && strings.EqualFold(k[:len("x-amz-grant")], "x-amz-grant") {
-			return true
-		}
-	}
-	return false
 }
 
 // aclOwner is get_aclowner (rgw_auth.cc:1019-1030 at v19.2.6, :1039-1050 at
@@ -290,65 +251,6 @@ func aclOwner(id op.Identity) acl.Owner {
 		return acl.Owner{ID: id.User.UserID.String(), DisplayName: id.User.DisplayName}
 	}
 	return acl.Owner{}
-}
-
-// userResolver is the acl.Resolver grant headers and ACL documents resolve
-// their grantees through, over r's user and account stores. The resolver is
-// local until the authorizer's own resolver lands.
-func userResolver(r *op.Request) acl.Resolver {
-	return storeResolver{users: r.Env.Users, accounts: r.Env.Accounts}
-}
-
-// storeResolver is read_owner_display_name and read_aclowner_by_email
-// (rgw_acl_s3.cc:300-337 at v19.2.6 and v20.2.4) over the stores: an email
-// names a user, or else an account, through the email index they share.
-type storeResolver struct {
-	users    op.UserStore
-	accounts op.AccountStore
-}
-
-// DisplayName is a user's display name or an account's name.
-func (s storeResolver) DisplayName(ctx context.Context, owner meta.Owner) (string, error) {
-	if owner.User != nil {
-		rec, err := s.users.GetUser(ctx, *owner.User)
-		if err != nil {
-			return "", ownerMiss(err)
-		}
-		return rec.Info.DisplayName, nil
-	}
-	rec, err := s.accounts.GetAccount(ctx, owner.Account)
-	if err != nil {
-		return "", ownerMiss(err)
-	}
-	return rec.Info.Name, nil
-}
-
-// OwnerByEmail is the user or account an email names, with its name.
-func (s storeResolver) OwnerByEmail(ctx context.Context, email string) (acl.Owner, error) {
-	user, err := s.users.GetUserByEmail(ctx, email)
-	switch {
-	case err == nil:
-		return acl.Owner{ID: user.Info.UserID.String(), DisplayName: user.Info.DisplayName}, nil
-	case !errors.Is(err, op.ErrNoSuchUser):
-		return acl.Owner{}, err
-	}
-	acct, err := s.accounts.GetAccountByEmail(ctx, email)
-	switch {
-	case errors.Is(err, op.ErrNoSuchEntity):
-		return acl.Owner{}, fmt.Errorf("%w: %w", acl.ErrUnresolvableEmail, err)
-	case err != nil:
-		return acl.Owner{}, err
-	}
-	return acl.Owner{ID: acct.Info.ID, DisplayName: acct.Info.Name}, nil
-}
-
-// ownerMiss marks a store's miss as acl.ErrNoSuchOwner and passes any other
-// failure on.
-func ownerMiss(err error) error {
-	if errors.Is(err, op.ErrNoSuchUser) || errors.Is(err, op.ErrNoSuchEntity) {
-		return fmt.Errorf("%w: %w", acl.ErrNoSuchOwner, err)
-	}
-	return err
 }
 
 // deleteBucket is RGWDeleteBucket_ObjStore_S3: 204 with no body

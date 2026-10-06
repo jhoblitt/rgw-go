@@ -200,6 +200,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload does not keep its lock past rgw_mp_lock_max_time](#radosgws-completemultipartupload-does-not-keep-its-lock-past-rgw_mp_lock_max_time) | [#75375](https://tracker.ceph.com/issues/75375) | [ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696) |  |
 | [radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last](#radosgw-sends-several-gc-chains-under-one-tag-and-an-omap-era-gc-shard-keeps-only-the-last) | pending | pending |  |
 | [A CompleteMultipartUpload that loses its head write's race leaks its parts](#a-completemultipartupload-that-loses-its-head-writes-race-leaks-its-parts) | pending | pending |  |
+| [radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private](#radosgws-putbucketacl-takes-any-canned-acl-whose-name-holds-bucket-for-private) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -8635,4 +8636,41 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 6 review, 2026-10-05, reading
   `done_cancel` for the completion's lost race; derived from the source, not
+  reproduced.
+
+## radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWPutACLs_ObjStore_S3::get_policy_from_state` clears a bucket
+    request's canned ACL when `s->canned_acl.find("bucket")` finds the text
+    anywhere in it (`rgw_rest_s3.cc:3640-3644` at v19.2.6, `:3923-3927` at
+    v20.2.4), meaning to ignore `bucket-owner-read` and
+    `bucket-owner-full-control`, which name the bucket's owner and do not
+    apply to a bucket.
+  - The cleared name reaches `create_canned` as empty, which builds the
+    private ACL (`rgw_acl_s3.cc:420`), so a name radosgw does not know but
+    which holds "bucket", such as `x-amz-acl: nobucketsuch`, is never seen
+    by `create_canned`'s refusal of an unknown name (`rgw_acl_s3.cc:450-452`
+    at v19.2.6 and v20.2.4). Nothing checks the header's value earlier: it
+    is read as is (`rgw_rest_s3.cc:5020-5022` at v19.2.6, `:5580-5582` at
+    v20.2.4).
+  - An object's PutObjectAcl keeps the name, so the same header there
+    answers 400 InvalidArgument.
+- **Impact:** a PutBucketAcl whose canned ACL is misspelled but holds
+  "bucket" answers 200 and replaces the bucket's ACL with the private one,
+  where any other unknown name answers 400 InvalidArgument and leaves the
+  ACL as it was. The result is no more open than before: the private ACL
+  grants only the owner, and its FULL_CONTROL gives the owner nothing it
+  lacked, since a bucket's owner can always rewrite the ACL through the
+  WRITE_ACP an owner holds implicitly (`rgw_acl.cc:172` at v19.2.6 and
+  v20.2.4).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it (`(*authz.Evaluator).BuildACL`,
+  `internal/authz/write.go`), so a bucket ACL request means the same with
+  either gateway.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit Z, Task 11, 2026-10-05, transcribing
+  `RGWPutACLs::execute` for `BuildACL`; derived from the source, not
   reproduced.
