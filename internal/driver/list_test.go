@@ -159,6 +159,44 @@ var _ = Describe("ListObjects", func() {
 		Expect(keys(res.Entries)).To(Equal([]string{"b.2~3.meta"}))
 		Expect(res.Truncated).To(BeFalse())
 	})
+	Describe("NameFilter", func() {
+		seedMultipart := func(names ...string) {
+			for _, n := range names {
+				e := entry("x", 1)
+				e.Key.Name = meta.ObjKey{Name: n, NS: meta.NSMultipart}.IndexKeyName()
+				seedEntry(e)
+			}
+		}
+		It("skips a refused name after the marker moves past it and before counting, as access_list_filter does", func(ctx SpecContext) {
+			seedMultipart("a.2~1.1", "a.2~1.meta", "a.2~2.1", "a.2~2.meta", "b.2~3.meta")
+			p := op.ListObjectsParams{NS: meta.NSMultipart, MaxKeys: 2, NameFilter: meta.IsMultipartMeta}
+			res, err := s.ListObjects(ctx, rec, p)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys(res.Entries)).To(Equal([]string{"a.2~1.meta", "a.2~2.meta"}), "part heads neither count nor appear, rgw_rados.cc:2003-2009 at v19.2.6")
+			Expect(res.Truncated).To(BeTrue())
+			Expect(res.NextMarker).To(Equal("a.2~2.meta"), "the last counted entry")
+			p.Marker = res.NextMarker
+			res, err = s.ListObjects(ctx, rec, p)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys(res.Entries)).To(Equal([]string{"b.2~3.meta"}))
+			Expect(res.Truncated).To(BeFalse())
+		})
+		It("keeps the common prefixes the class rolls refused names into", func(ctx SpecContext) {
+			seedMultipart("d/x.2~1.1", "d/x.2~1.meta", "e.2~2.meta", "f/y.2~9.1")
+			res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{NS: meta.NSMultipart, Delimiter: "/", MaxKeys: 10, NameFilter: meta.IsMultipartMeta})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys(res.Entries)).To(Equal([]string{"e.2~2.meta"}))
+			Expect(res.CommonPrefixes).To(Equal([]string{"d/", "f/"}),
+				"radosgw filters the class's common-prefix entries too, rgw_rados.cc:2003-2009 (docs/exclusions.md)")
+		})
+		It("filters an unordered listing after the namespace and before the prefix", func(ctx SpecContext) {
+			seedMultipart("a.2~1.1", "a.2~1.meta", "b.2~3.meta", "b.2~3.2")
+			res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{NS: meta.NSMultipart, MaxKeys: 10, AllowUnordered: true, NameFilter: meta.IsMultipartMeta})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys(res.Entries)).To(ConsistOf("a.2~1.meta", "b.2~3.meta"), "rgw_rados.cc:2297-2303 at v19.2.6")
+			Expect(res.Truncated).To(BeFalse())
+		})
+	})
 	It("renders an index entry as the listing's object entry", func(ctx SpecContext) {
 		e := entry("k", 9)
 		e.Meta.AccountedSize, e.Meta.StorageClass, e.Meta.AppendableValue = 7, "", true

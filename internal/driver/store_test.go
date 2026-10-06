@@ -339,14 +339,6 @@ var _ = Describe("the driver", func() {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
 
-			Entry("ListParts", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.ListParts(ctx, &op.Upload{ID: "2~upload"}, 0, 1000)
-				return err
-			}),
-			Entry("ListUploads", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.ListUploads(ctx, &op.BucketRecord{}, op.ListUploadsParams{MaxUploads: 1000})
-				return err
-			}),
 			Entry("Complete", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.Complete(ctx, &op.Upload{ID: "2~upload"}, []op.CompletePart{{Number: 1, ETag: `"etag"`}})
 				return err

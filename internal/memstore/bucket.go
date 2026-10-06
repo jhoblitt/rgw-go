@@ -174,13 +174,20 @@ func applyAttrs(attrs, set map[string][]byte, rm []string) map[string][]byte {
 // the index keys radosgw escapes them to. An object's owner is its ACL's,
 // which radosgw writes into the index entry. AllowUnordered lists in the
 // same order with no common prefixes, and with a delimiter is
-// ErrInvalidArgument.
+// ErrInvalidArgument. A name p.NameFilter refuses is skipped uncounted unless
+// it rolls into a common prefix, as the driver skips it.
 func (s *Store) ListObjects(_ context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	if p.AllowUnordered && p.Delimiter != "" {
 		return op.ListObjectsResult{}, fmt.Errorf("%w: unordered bucket listing requested with a delimiter", op.ErrInvalidArgument)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listObjects(rec, p)
+}
+
+// listObjects is ListObjects past its argument check; the caller holds the
+// lock.
+func (s *Store) listObjects(rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	b, err := s.instance(rec)
 	if err != nil {
 		return op.ListObjectsResult{}, err
@@ -225,6 +232,9 @@ func (s *Store) ListObjects(_ context.Context, rec *op.BucketRecord, p op.ListOb
 	for i := range entries {
 		name := entries[i].Key.Name
 		if name <= p.Marker {
+			continue
+		}
+		if p.NameFilter != nil && !p.NameFilter(name) && !pg.rollsUp(name) {
 			continue
 		}
 		switch pg.next(name) {
@@ -289,6 +299,13 @@ func newPager(prefix, delim, marker string, maxKeys int) *pager {
 		}
 	}
 	return g
+}
+
+// rollsUp reports that name holds the delimiter after the prefix, so that it
+// lists as a common prefix.
+func (g *pager) rollsUp(name string) bool {
+	rest, ok := strings.CutPrefix(name, g.prefix)
+	return ok && g.delim != "" && strings.Contains(rest, g.delim)
 }
 
 func (g *pager) next(name string) pageStep {

@@ -10,7 +10,6 @@ import (
 	"maps"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -139,7 +138,9 @@ func (s *Store) storePart(u *upload, n int, data []byte) *op.PartResult {
 }
 
 // ListParts implements op.MultipartStore: the parts numbered past marker, in
-// order, at most maxParts of them; NextMarker is the last number returned.
+// order, at most maxParts of them; NextMarker is the last number returned,
+// and 0 when none is, as ListParts renders cur_max (rgw_rest_s3.cc:4135-4149
+// at v19.2.6).
 func (s *Store) ListParts(_ context.Context, up *op.Upload, marker, maxParts int) (op.ListPartsResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -154,7 +155,7 @@ func (s *Store) ListParts(_ context.Context, up *op.Upload, marker, maxParts int
 		}
 	}
 	slices.Sort(numbers)
-	res := op.ListPartsResult{NextMarker: marker}
+	var res op.ListPartsResult
 	for _, n := range numbers[:min(max(maxParts, 0), len(numbers))] {
 		res.Parts = append(res.Parts, u.parts[n].Part)
 		res.NextMarker = n
@@ -163,52 +164,16 @@ func (s *Store) ListParts(_ context.Context, up *op.Upload, marker, maxParts int
 	return res, nil
 }
 
-// ListUploads implements op.MultipartStore as RadosBucket::list_multiparts
-// lists the multipart namespace (rgw_sal_rados.cc:915-956 at v19.2.6): in
-// the order of the uploads' meta names, "<key>.<upload id>.meta", after the
-// marker "<KeyMarker>.<UploadIDMarker>.meta" (rgw_rest.cc:1646-1654), with
-// Prefix and Delimiter applied to the meta names as ListObjects applies
-// them to key names. A key marker without an upload id marker thus sorts
-// before that key's own uploads, and "a-b" lists before "a". The next
-// markers name the last upload of the page, as RGWListBucketMultiparts
-// sets them (rgw_op.cc:6741-6744), and stay empty when it holds none.
+// ListUploads implements op.MultipartStore as the driver does: the listing
+// op.UploadListing names, as op.UploadsFromListing pages it.
 func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUploadsParams) (op.ListUploadsResult, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if _, err := s.instance(rec); err != nil {
+	lr, err := s.listObjects(rec, op.UploadListing(p))
+	s.mu.RUnlock()
+	if err != nil {
 		return op.ListUploadsResult{}, err
 	}
-	marker := ""
-	if p.KeyMarker != "" {
-		marker = meta.MultipartMetaName(p.KeyMarker, p.UploadIDMarker)
-	}
-	var ups []*upload
-	for _, u := range s.uploads {
-		if u.bucketID == rec.Info.Bucket.ID && u.metaName() > marker {
-			ups = append(ups, u)
-		}
-	}
-	slices.SortFunc(ups, func(a, b *upload) int { return strings.Compare(a.metaName(), b.metaName()) })
-
-	var res op.ListUploadsResult
-	pg := newPager(p.Prefix, p.Delimiter, marker, p.MaxUploads)
-list:
-	for _, u := range ups {
-		switch pg.next(u.metaName()) {
-		case pagePrefix:
-			res.CommonPrefixes = append(res.CommonPrefixes, pg.last)
-		case pageEntry:
-			res.Uploads = append(res.Uploads, *copyUpload(u, rec))
-		case pageFull:
-			res.Truncated = true
-			break list
-		case pageSkip:
-		}
-	}
-	if n := len(res.Uploads); n > 0 {
-		res.NextKeyMarker, res.NextUploadIDMarker = res.Uploads[n-1].Key.Name, res.Uploads[n-1].ID
-	}
-	return res, nil
+	return op.UploadsFromListing(rec, lr), nil
 }
 
 // Complete implements op.MultipartStore as RadosMultipartUpload::complete

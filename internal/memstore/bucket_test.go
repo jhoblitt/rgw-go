@@ -196,6 +196,16 @@ var _ = Describe("buckets", func() {
 			Expect(res.Truncated).To(BeTrue(), "truncated")
 			Expect(res.NextMarker).To(Equal("a"), "next marker")
 		})
+		It("skips a name NameFilter refuses without counting it, but rolls it into its common prefix", func(ctx SpecContext) {
+			refuse := func(name string) bool { return name != "a" && !strings.HasPrefix(name, "b/") }
+			names, res := listNames(ctx, store, rec, op.ListObjectsParams{MaxKeys: 2, NameFilter: refuse})
+			Expect(names).To(Equal([]string{"_u", "c"}), "a, b/1 and b/2 refused")
+			Expect(res.Truncated).To(BeTrue(), "truncated")
+			Expect(res.NextMarker).To(Equal("c"), "the last name counted")
+			names, res = listNames(ctx, store, rec, op.ListObjectsParams{Delimiter: "/", MaxKeys: 10, NameFilter: refuse})
+			Expect(names).To(Equal([]string{"_u", "c"}), "entries under a delimiter")
+			Expect(res.CommonPrefixes).To(Equal([]string{"b/", "d/"}), "b/ holds only refused names")
+		})
 		It("returns nothing but truncation for MaxKeys 0", func(ctx SpecContext) {
 			names, res := listNames(ctx, store, rec, op.ListObjectsParams{MaxKeys: 0})
 			Expect(names).To(BeEmpty(), "entries")
