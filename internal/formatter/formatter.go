@@ -80,9 +80,3 @@ func (f *failure) Fail(err error) {
 }
 
 func (f *failure) Err() error { return f.err }
-
-// cString is s as a C string reads it: up to its first NUL.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
-}

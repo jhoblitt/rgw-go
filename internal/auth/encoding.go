@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
@@ -184,7 +185,7 @@ func parseISO8601Basic(s string) (time.Time, bool) {
 // strptime read it, before internal_timegm carries a second 60 into the next
 // year.
 func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
-	fields, rest, ok := strptime.Parse(strptime.Tm{}, cString(s), "%Y%m%dT%H%M%S")
+	fields, rest, ok := strptime.Parse(strptime.Tm{}, rgwtext.CString(s), "%Y%m%dT%H%M%S")
 	if !ok {
 		return time.Time{}, 0, false
 	}
@@ -220,7 +221,7 @@ func parseRFC2616(s string) (time.Time, bool) {
 // rfc2616Date is parseRFC2616 that also returns the year as strptime read it,
 // before internal_timegm's carries and the zone offset move the instant.
 func rfc2616Date(s string) (t time.Time, year int, ok bool) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	for _, form := range rfc2616Forms {
 		if fields, rest, parsed := strptime.Parse(strptime.Tm{}, s, form.format); parsed && form.end(rest) {
 			return fields.Timegm().Add(-time.Duration(fields.Gmtoff) * time.Second), fields.Year, true

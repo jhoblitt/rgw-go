@@ -3,6 +3,7 @@ package formatter
 import (
 	"strconv"
 
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
@@ -28,8 +29,10 @@ func (h *htmlFormatter) item(name, text string) {
 	h.newline()
 }
 
-func (h *htmlFormatter) DumpString(name, s string)    { h.item(name, xmltext.Escape(s)) }
-func (h *htmlFormatter) DumpUnquoted(name, s string)  { h.item(name, xmltext.Escape(cString(s))) }
+func (h *htmlFormatter) DumpString(name, s string) { h.item(name, xmltext.Escape(s)) }
+func (h *htmlFormatter) DumpUnquoted(name, s string) {
+	h.item(name, xmltext.Escape(rgwtext.CString(s)))
+}
 func (h *htmlFormatter) DumpInt(name string, v int64) { h.item(name, strconv.FormatInt(v, 10)) }
 
 func (h *htmlFormatter) DumpUnsigned(name string, v uint64) { h.item(name, strconv.FormatUint(v, 10)) }

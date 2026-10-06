@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
@@ -87,7 +88,7 @@ func (a Args) Bool(name string, def bool) (v, present bool, err error) {
 	if !ok {
 		return def, false, nil
 	}
-	switch c := lowerASCII(cString(s)); {
+	switch c := lowerASCII(rgwtext.CString(s)); {
 	case s == "" || c == "true" || s == "1":
 		return true, true, nil
 	case c == "false" || s == "0":
@@ -170,19 +171,13 @@ func lowerASCII(s string) string {
 	return string(b)
 }
 
-// cString is s as a C string reads it: up to its first NUL.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
-}
-
 // strtoMagnitude reads s as glibc's strtoll and strtoull do in base 10:
 // leading white space, an optional sign, then digits. It reports the
 // magnitude, saturated, whether it overflowed, and whether the conversion
 // consumed the whole C string, as `*end == '\0'` asks: true for an empty
 // string, which converts to 0, and false for one with no digits.
 func strtoMagnitude(s string) (neg bool, mag uint64, overflow, whole bool) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	i := 0
 	for i < len(s) && strings.IndexByte(" \t\n\v\f\r", s[i]) >= 0 {
 		i++
@@ -260,7 +255,7 @@ func stringToULL(s string) (uint64, error) {
 // the date is ignored. A text that is not a date is "<sec>.<usec>", read
 // with sscanf's "%d.%d". The epoch is internal_timegm's less the %z offset.
 func parseDate(s string) (uint64, bool) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	tm, rest, ok := strptime.Parse(strptime.Tm{}, s, "%Y-%m-%d")
 	if !ok {
 		return secUsec(s)
@@ -300,7 +295,7 @@ func timeFormat(p string) string {
 			f[q+2] = 0
 		}
 	}
-	return cString(string(f[:]))
+	return rgwtext.CString(string(f[:]))
 }
 
 // secUsec is sscanf(s, "%d.%d", &sec, &usec) == 2, then

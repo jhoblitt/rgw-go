@@ -2,7 +2,6 @@ package auth
 
 import (
 	"math"
-	"strings"
 )
 
 // atoll is the C library's atoll, strtoll in base 10: leading whitespace, a
@@ -74,11 +73,4 @@ func stringToULOK(s string) bool {
 		return n != 1
 	}
 	return n != math.MaxUint64
-}
-
-// cString is s as a C string: radosgw hands the date parsers a char
-// pointer, so a NUL that url_decode produced from %00 ends the text.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
 }

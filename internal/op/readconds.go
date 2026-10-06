@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // ParseRange is RGWGetObj::parse_range (rgw_op.cc:160-224 at v19.2.6,
@@ -20,7 +21,7 @@ import (
 // from the value's first byte however much whitespace precedes the unit
 // (docs/ceph-upstream-bugs.md).
 func ParseRange(value string) (ofs, end int64, partial bool, err error) {
-	rs := cString(value)
+	rs := rgwtext.CString(value)
 	end = -1
 	if i := strings.Index(rs, "bytes="); i >= 0 {
 		rs = rs[i+len("bytes="):]
@@ -103,7 +104,7 @@ func RangeToOfs(size uint64, ofs, end int64) (first, last uint64, err error) {
 // and the seconds pass through utime_t's 32 bits, so a date before 1970 or
 // after 2106-02-07T06:28:15Z wraps (docs/ceph-upstream-bugs.md).
 func ParseHTTPTime(s string) (time.Time, error) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	tm, ok := parseRFC2616(s)
 	var ns uint32
 	if !ok {
@@ -669,11 +670,4 @@ func lowerASCII(c byte) byte {
 		return c + 'a' - 'A'
 	}
 	return c
-}
-
-// cString is s as radosgw sees a header value, a C string that ends at its
-// first NUL.
-func cString(s string) string {
-	before, _, _ := strings.Cut(s, "\x00")
-	return before
 }

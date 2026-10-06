@@ -11,6 +11,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // DeleteObject is RGWDeleteObj (rgw_op.cc:5129-5327 at v19.2.6, :5519-5726
@@ -146,7 +147,7 @@ func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEn
 // at v19.2.6 and v20.2.4): strtoll's whitespace, sign and digits, which must
 // end the string and fit an int64.
 func strictStrtoll(s string) (int64, bool) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	n := scanCNumber(s)
 	switch {
 	case n.digits == 0, n.end != len(s), n.overflow:
@@ -166,7 +167,7 @@ func strictStrtoll(s string) (int64, bool) {
 // or followed by a space or "T" and a time; otherwise "%d.%d", seconds and
 // microseconds since the epoch, as sscanf reads them.
 func parseDate(date string) (time.Time, bool) {
-	date = cString(date)
+	date = rgwtext.CString(date)
 	tm, rest, ok := strptime(date, "%Y-%m-%d")
 	if !ok {
 		sec, usec, scanned := scanSecUsec(date)

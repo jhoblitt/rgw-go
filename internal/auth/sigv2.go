@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
@@ -123,7 +124,7 @@ func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts 
 		}
 	}
 	var b strings.Builder
-	for _, line := range []string{rv.req.Method, md5, ctype, cString(date)} {
+	for _, line := range []string{rv.req.Method, md5, ctype, rgwtext.CString(date)} {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}

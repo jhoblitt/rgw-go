@@ -3,6 +3,8 @@ package formatter
 import (
 	"bytes"
 	"strconv"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // jsonSection is json_formatter_stack_entry_d.
@@ -118,7 +120,7 @@ func (j *jsonFormatter) quoted(name, v string) {
 
 func (j *jsonFormatter) DumpString(name, s string)    { j.quoted(name, s) }
 func (j *jsonFormatter) DumpStream(name, s string)    { j.quoted(name, s) }
-func (j *jsonFormatter) DumpUnquoted(name, s string)  { j.value(name, cString(s)) }
+func (j *jsonFormatter) DumpUnquoted(name, s string)  { j.value(name, rgwtext.CString(s)) }
 func (j *jsonFormatter) DumpInt(name string, v int64) { j.value(name, strconv.FormatInt(v, 10)) }
 
 func (j *jsonFormatter) DumpUnsigned(name string, v uint64) { j.value(name, strconv.FormatUint(v, 10)) }
