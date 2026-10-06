@@ -329,7 +329,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
-		refuse(ctx, w, r, err)
+		refuseAuth(w, r, err)
 		return
 	}
 	ApplyAuth(r, res)
@@ -375,6 +375,14 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	r.Bucket = ""
 	WriteError(ctx, w, r, err)
+}
+
+// refuseAuth answers a failed authentication as refuse does and logs
+// nothing: an authenticator's error can carry what the request's
+// credentials hold, and the authenticator logs its own failures.
+func refuseAuth(w http.ResponseWriter, r *op.Request, err error) {
+	r.Bucket = ""
+	writeErrorDocument(w, r, op.AsError(err))
 }
 
 // ApplyAuth gives r the authenticated identity and, when the authenticator

@@ -216,9 +216,10 @@ var _ = Describe("Verifier identities", func() {
 		Expect(err).To(MatchError(op.ErrAccessDenied))
 	})
 
-	It("answers InvalidAccessKeyId for an unknown or inactive key and AccessDenied for a key the user record lacks", func(ctx SpecContext) {
+	It("answers InvalidAccessKeyId for an unknown or inactive key and AccessDenied for a key the user record lacks, naming no key", func(ctx SpecContext) {
 		_, err := authenticate(ctx, signWith(ctx, newGet(ctx, "http://s3.example.com/"), "AKNOBODY", "x", fixedNow()))
 		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID))
+		Expect(err.Error()).NotTo(ContainSubstring("AKNOBODY"), "an unknown key")
 		_, err = authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "grace"))
 		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID), "memstore does not index an inactive key")
 
@@ -228,6 +229,7 @@ var _ = Describe("Verifier identities", func() {
 		users.GetUserByAccessKeyReturns(rec, nil)
 		_, err = auth.New(cfg, users, nil).Authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "grace"), anyPayload)
 		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID), "a store that returns the inactive key's user")
+		Expect(err.Error()).NotTo(ContainSubstring("AKGRACE"), "an inactive key")
 
 		rec, err = store.GetUser(ctx, meta.UserID{ID: "alice"})
 		Expect(err).NotTo(HaveOccurred())
@@ -235,6 +237,7 @@ var _ = Describe("Verifier identities", func() {
 		users.GetUserByAccessKeyReturns(rec, nil)
 		_, err = auth.New(cfg, users, nil).Authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice"), anyPayload)
 		Expect(err).To(MatchError(op.ErrAccessDenied), "a key the index knows but the record lost")
+		Expect(err.Error()).NotTo(ContainSubstring("AKALICE"), "a key the record lost")
 	})
 
 	It("takes the access key id from the lookup, not from the stored key", func(ctx SpecContext) {
@@ -253,18 +256,21 @@ var _ = Describe("Verifier identities", func() {
 		Expect(key).To(Equal("AKALICE"))
 	})
 
-	It("logs a failed key lookup other than a missing user, with the access key id and no secret", func(ctx SpecContext) {
+	It("logs a failed key lookup other than a missing user with its code, and none of the request's credentials", func(ctx SpecContext) {
 		buf := captureLog()
 		users := &opfakes.FakeUserStore{}
-		users.GetUserByAccessKeyReturns(nil, errors.New("rados: timed out"))
+		// A store's error names the index object it read, the key itself.
+		users.GetUserByAccessKeyReturns(nil, fmt.Errorf("%w: reading users.keys/AKALICE: rados: timed out", op.ErrServiceUnavailable))
 		req := signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice")
 		_, err := auth.New(cfg, users, nil).Authenticate(ctx, req, anyPayload)
 		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID))
+		Expect(err.Error()).NotTo(ContainSubstring("AKALICE"))
 		recs := logRecords(buf)
 		Expect(recs).To(HaveLen(1))
 		Expect(recs[0]).To(HaveKeyWithValue("level", "ERROR"))
-		Expect(recs[0]).To(HaveKeyWithValue("access_key", "AKALICE"))
+		Expect(recs[0]).To(HaveKeyWithValue("code", "ServiceUnavailable"))
 		_, sig, _ := strings.Cut(req.Header.Get("Authorization"), "Signature=")
+		Expect(buf.String()).NotTo(ContainSubstring("AKALICE"))
 		Expect(buf.String()).NotTo(ContainSubstring(secretOf("alice")))
 		Expect(buf.String()).NotTo(ContainSubstring(sig))
 
@@ -274,23 +280,25 @@ var _ = Describe("Verifier identities", func() {
 		Expect(logRecords(buf)).To(BeEmpty(), "an unknown key is not an error to log")
 	})
 
-	It("denies an rgwx-uid user that does not load, and logs a failure other than a missing user", func(ctx SpecContext) {
+	It("denies an rgwx-uid user that does not load, and logs a failure other than a missing user without the rgwx-uid", func(ctx SpecContext) {
 		buf := captureLog()
 		rec, err := store.GetUser(ctx, meta.UserID{ID: "carol"})
 		Expect(err).NotTo(HaveOccurred())
 		users := &opfakes.FakeUserStore{}
 		users.GetUserByAccessKeyReturns(rec, nil)
-		users.GetUserReturns(nil, errors.New("rados: timed out"))
+		users.GetUserReturns(nil, errors.New("decoding user t1$bob: rados: timed out"))
 		verifier := auth.New(cfg, users, nil)
 		_, err = verifier.Authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/?rgwx-uid=t1%24bob"), "carol"), anyPayload)
 		Expect(err).To(MatchError(op.ErrAccessDenied))
+		Expect(err.Error()).NotTo(ContainSubstring("bob"))
 		Expect(users.GetUserCallCount()).To(Equal(1))
 		_, id := users.GetUserArgsForCall(0)
 		Expect(id).To(Equal(meta.UserID{Tenant: "t1", ID: "bob"}))
 		recs := logRecords(buf)
 		Expect(recs).To(HaveLen(1))
 		Expect(recs[0]).To(HaveKeyWithValue("level", "ERROR"))
-		Expect(recs[0]).To(HaveKeyWithValue("user_id", "t1$bob"))
+		Expect(recs[0]).To(HaveKeyWithValue("code", "InternalError"))
+		Expect(buf.String()).NotTo(ContainSubstring("bob"))
 
 		buf.Reset()
 		users.GetUserReturns(nil, fmt.Errorf("user t1$bob: %w", op.ErrNoSuchUser))
@@ -298,6 +306,36 @@ var _ = Describe("Verifier identities", func() {
 		Expect(err).To(MatchError(op.ErrAccessDenied))
 		Expect(err).NotTo(MatchError(op.ErrNoSuchUser), "the store's error stays out of the answer")
 		Expect(logRecords(buf)).To(BeEmpty(), "a missing user is not an error to log")
+	})
+
+	It("denies an rgwx-uid account that does not load, and logs it without the rgwx-uid", func(ctx SpecContext) {
+		buf := captureLog()
+		const id = "RGW00000000000000009"
+		_, err := authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/?rgwx-uid="+id), "carol"))
+		Expect(err).To(MatchError(op.ErrAccessDenied))
+		Expect(err.Error()).NotTo(ContainSubstring(id))
+		recs := logRecords(buf)
+		Expect(recs).To(HaveLen(1))
+		Expect(recs[0]).To(HaveKeyWithValue("level", "ERROR"))
+		Expect(recs[0]).To(HaveKeyWithValue("code", "NoSuchEntity"))
+		Expect(buf.String()).NotTo(ContainSubstring(id))
+
+		buf.Reset()
+		_, err = auth.New(cfg, store, nil).Authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/?rgwx-uid="+id), "carol"), anyPayload)
+		Expect(err).To(MatchError(op.ErrAccessDenied), "no account store")
+		Expect(err.Error()).NotTo(ContainSubstring(id))
+		Expect(logRecords(buf)).To(HaveLen(1))
+		Expect(buf.String()).NotTo(ContainSubstring(id))
+	})
+
+	It("logs the stored account id of an account user whose account does not load", func(ctx SpecContext) {
+		buf := captureLog()
+		_, err := authenticate(ctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "henry"))
+		Expect(err).To(MatchError(op.ErrAccessDenied))
+		recs := logRecords(buf)
+		Expect(recs).To(HaveLen(1))
+		Expect(recs[0]).To(HaveKeyWithValue("level", "ERROR"))
+		Expect(recs[0]).To(HaveKeyWithValue("account_id", "RGW00000000000000009"))
 	})
 
 	It("honors rgwx-uid for a system user only", func(ctx SpecContext) {

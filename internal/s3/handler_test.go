@@ -3,9 +3,13 @@ package s3_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -64,6 +68,36 @@ func serveReq(h http.Handler, method, target string, body io.Reader, hdr ...stri
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// captureLog sends slog's default logger to a buffer as JSON until the spec
+// ends. slog.SetDefault also points the log package at the new handler, and
+// restoring the old default leaves it there, so log's writer and flags are
+// restored too.
+func captureLog() *bytes.Buffer {
+	var buf bytes.Buffer
+	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	DeferCleanup(func() {
+		slog.SetDefault(oldLogger)
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+	return &buf
+}
+
+// logRecords decodes the JSON lines captureLog collected.
+func logRecords(buf *bytes.Buffer) []map[string]any {
+	var recs []map[string]any
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		Expect(json.Unmarshal([]byte(line), &rec)).To(Succeed())
+		recs = append(recs, rec)
+	}
+	return recs
 }
 
 // ok is a route that answers 200 and records the request it served.
@@ -535,6 +569,52 @@ var _ = Describe("Handler", func() {
 		rec := get("/")
 		Expect(rec.Code).To(Equal(200))
 		Expect(rec.Body.String()).To(Equal("ok"))
+	})
+	Describe("the error log", func() {
+		It("answers a refused authentication with its error document and logs none of the credentials its error carries", func() {
+			buf := captureLog()
+			const (
+				keyID = "AKIAEXAMPLEKEYID0001"
+				sig   = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+			)
+			authz := "AWS4-HMAC-SHA256 Credential=" + keyID + "/20250927/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=" + sig
+			as := s3.AuthenticatorFunc(func(_ context.Context, r *http.Request, _ op.PayloadForms) (*op.AuthResult, error) {
+				return nil, fmt.Errorf("%w: key index read failed for %s", op.ErrInternalError, r.Header.Get("Authorization"))
+			})
+			h = newHandler(store, as, s3.Config{})
+			rec := get("/plain/k", "Authorization", authz)
+			Expect(rec.Code).To(Equal(500))
+			Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message></Message>` +
+				`<RequestId>` + rec.Header().Get("x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
+			Expect(buf.String()).NotTo(ContainSubstring(keyID))
+			Expect(buf.String()).NotTo(ContainSubstring(sig))
+		})
+		DescribeTable("logs a route's server-side failure with the request id, its code and its cause",
+			func(sentinel *op.Error) {
+				buf := captureLog()
+				h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error {
+					return fmt.Errorf("%w: reading the bucket list: rados: timed out", sentinel)
+				})
+				rec := get("/")
+				Expect(rec.Code).To(Equal(sentinel.Status))
+				Expect(logRecords(buf)).To(ContainElement(SatisfyAll(
+					HaveKeyWithValue("level", "ERROR"),
+					HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+					HaveKeyWithValue("code", sentinel.Code),
+					HaveKeyWithValue("error", ContainSubstring("rados: timed out")),
+				)))
+			},
+			Entry("an InternalError", op.ErrInternalError),
+			Entry("an UnknownError", op.ErrUnknown),
+		)
+		It("does not log a route's client error", func() {
+			buf := captureLog()
+			h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error {
+				return op.ErrNoSuchBucket
+			})
+			Expect(get("/").Code).To(Equal(404))
+			Expect(logRecords(buf)).To(BeEmpty())
+		})
 	})
 	Describe("usage logging", func() {
 		It("logs a successful ListBuckets once, with its final status and bytes", func() {
