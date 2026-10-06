@@ -72,11 +72,19 @@ var (
 	// ErrGranteeNotFound is the -ENOENT a grant header naming no user or
 	// account fails with.
 	ErrGranteeNotFound = errors.New("acl: grantee not found")
+	// ErrOwnerMismatch is RGWPutACLs::execute's -EPERM for a new policy
+	// whose owner is not the existing policy's (rgw_op.cc:5859-5864 at
+	// v19.2.6, :6505-6510 at v20.2.4).
+	ErrOwnerMismatch = errors.New("acl: owner mismatch")
+	// ErrTooManyGrants is RGWPutACLs::execute's -ERR_LIMIT_EXCEEDED for a
+	// policy with more grants than rgw_acl_grants_max_num
+	// (rgw_op.cc:5866-5883 at v19.2.6, :6512-6529 at v20.2.4).
+	ErrTooManyGrants = errors.New("acl: too many grants")
 )
 
-// ParseError is a ParseS3XML failure: Err, ErrInvalid or
-// ErrUnresolvableEmail, with the message radosgw sets in s->err.message,
-// empty where it sets none.
+// ParseError is a failure with the message radosgw sets in s->err.message,
+// empty where it sets none: ParseS3XML's, whose Err is ErrInvalid or
+// ErrUnresolvableEmail, and a PutACLs refusal's.
 type ParseError struct {
 	Message string
 	Err     error
