@@ -332,7 +332,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		refuse(ctx, w, r, err)
 		return
 	}
-	applyAuth(r, res)
+	ApplyAuth(r, res)
 	if route.Name == "put_obj" && r.Body != nil {
 		r.Body = &countingReader{r: r.Body, n: &r.BytesIn}
 	}
@@ -377,11 +377,11 @@ func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error
 	WriteError(ctx, w, r, err)
 }
 
-// applyAuth gives r the authenticated identity and, when the authenticator
+// ApplyAuth gives r the authenticated identity and, when the authenticator
 // replaces the request body with a reader that verifies the payload as it is
 // read, that reader and its length. Nothing reads the request body before
-// this.
-func applyAuth(r *op.Request, res *op.AuthResult) {
+// this. The admin handler applies its AuthResult through it too.
+func ApplyAuth(r *op.Request, res *op.AuthResult) {
 	r.Identity = res.Identity
 	if res.Body != nil {
 		r.Body = res.Body

@@ -28,6 +28,9 @@ type Env struct {
 	Now func() time.Time
 	// HostID is radosgw's host_id, rendered in error documents.
 	HostID string
+	// ClusterID is the RADOS fsid, what /admin/info reports as the storage
+	// backend's cluster_id; set at startup.
+	ClusterID string
 }
 
 // Clock returns the current time from Now or time.Now.

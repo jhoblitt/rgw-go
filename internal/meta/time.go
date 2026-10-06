@@ -20,20 +20,24 @@ const (
 	relativeBelow = 60 * 60 * 24 * 365 * 10
 )
 
-// MarshalJSON renders t as utime_t::gmtime does: "<sec>.<usec>" for a time
-// within ten years of the epoch, the zero time included, and an ISO 8601 UTC
-// date with microseconds otherwise.
-func (t Time) MarshalJSON() ([]byte, error) {
+// Gmtime is utime_t::gmtime (src/include/utime.h:247-277 at v19.2.6), the
+// text encode_json gives a time through dump_stream: "<sec>.<usec>" for a
+// time within ten years of the epoch, the zero time included, and an ISO
+// 8601 UTC date with microseconds otherwise.
+func (t Time) Gmtime() string {
 	var sec, nsec uint32
 	if !t.IsZero() {
 		sec = uint32(t.Unix())        //nolint:gosec // utime_t truncates seconds to u32
 		nsec = uint32(t.Nanosecond()) //nolint:gosec // Nanosecond is within [0, 1e9)
 	}
 	if sec < relativeBelow {
-		return json.Marshal(fmt.Sprintf("%d.%06d", sec, nsec/1000))
+		return fmt.Sprintf("%d.%06d", sec, nsec/1000)
 	}
-	return json.Marshal(time.Unix(int64(sec), int64(nsec)).UTC().Format(dumpLayout))
+	return time.Unix(int64(sec), int64(nsec)).UTC().Format(dumpLayout)
 }
+
+// MarshalJSON renders t as Gmtime does.
+func (t Time) MarshalJSON() ([]byte, error) { return json.Marshal(t.Gmtime()) }
 
 // UnmarshalJSON accepts either form MarshalJSON writes. Zero seconds and
 // microseconds give the zero time.

@@ -51,37 +51,42 @@ var _ = DescribeTable("ResourcePaths are where register_resource puts a manager"
 )
 
 var _ = Describe("UnservedAPIs", func() {
-	options := func(apis, swiftPrefix string) *cephconf.Options {
+	options := func(apis, swiftPrefix, adminEntry string) *cephconf.Options {
 		return cephconf.NewOptions(cephconf.MapGetter{
 			"rgw_enable_apis":      apis,
 			"rgw_swift_url_prefix": swiftPrefix,
 			"rgw_swift_auth_entry": "auth",
-			"rgw_admin_entry":      "admin",
+			"rgw_admin_entry":      adminEntry,
 		})
 	}
 
-	DescribeTable("lists the managers rgw-go does not serve and whether S3 is the default",
-		func(enabled, swiftPrefix string, wantPaths []string, wantS3 bool) {
-			conf := options(enabled, swiftPrefix)
+	DescribeTable("lays out the managers radosgw registers and whether S3 is the default",
+		func(enabled, swiftPrefix, adminEntry string, wantPaths []string, wantAdmin string, wantS3 bool) {
+			conf := options(enabled, swiftPrefix, adminEntry)
 			apis, err := cephconf.EnabledAPIs(conf)
 			Expect(err).NotTo(HaveOccurred())
-			paths, s3On, err := cli.UnservedAPIs(conf, apis)
+			paths, adminPath, s3On, err := cli.UnservedAPIs(conf, apis)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(paths).To(ConsistOf(wantPaths))
+			Expect(adminPath).To(Equal(wantAdmin))
 			Expect(s3On).To(Equal(wantS3))
 		},
-		Entry("radosgw's default", "s3, s3website, swift, swift_auth, admin, sts, iam, notifications", "swift",
-			[]string{"/swift", "/auth", "/admin"}, true),
-		Entry("S3 alone", "s3", "swift", []string{}, true),
-		Entry("the zero API at its fixed path", "s3, zero", "swift", []string{"/zero"}, true),
-		Entry("no S3", "swift,admin", "swift", []string{"/swift", "/admin"}, false),
-		Entry("Swift at the root, which leaves S3 off", "s3, swift, swift_auth", "/", []string{"/auth"}, false),
-		Entry("a nested Swift prefix and its parent", "s3, swift", "api/swift", []string{"/api/swift", "/api"}, true),
+		Entry("radosgw's default", "s3, s3website, swift, swift_auth, admin, sts, iam, notifications", "swift", "admin",
+			[]string{"/swift", "/auth"}, "/admin", true),
+		Entry("S3 alone", "s3", "swift", "admin", []string{}, "", true),
+		Entry("the zero API at its fixed path", "s3, zero", "swift", "admin", []string{"/zero"}, "", true),
+		Entry("no S3", "swift,admin", "swift", "admin", []string{"/swift"}, "/admin", false),
+		Entry("Swift at the root, which leaves S3 off", "s3, swift, swift_auth", "/", "admin", []string{"/auth"}, "", false),
+		Entry("a nested Swift prefix and its parent", "s3, swift", "api/swift", "admin", []string{"/api/swift", "/api"}, "", true),
+		Entry("a nested admin entry keeps its parent, which has no handler", "s3, admin", "swift", "a/b", []string{"/a"}, "/a/b", true),
+		Entry("the admin API replaces Swift registered at its path", "s3, swift, admin", "admin", "admin", []string{}, "/admin", true),
+		Entry("the zero API replaces the admin API at its path", "s3, admin, zero", "swift", "zero", []string{"/zero"}, "", true),
+		Entry("a nested admin entry never replaces a parent Swift holds", "s3, swift, admin", "a", "a/b", []string{"/a"}, "/a/b", true),
 	)
 
 	It("names an option it cannot read", func() {
 		conf := cephconf.NewOptions(cephconf.MapGetter{"rgw_swift_url_prefix": "swift", "rgw_swift_auth_entry": "auth"})
-		_, _, err := cli.UnservedAPIs(conf, cephconf.APIs{S3: true, Admin: true})
+		_, _, _, err := cli.UnservedAPIs(conf, cephconf.APIs{S3: true, Admin: true})
 		Expect(err).To(MatchError(cephconf.ErrUnknownOption))
 		Expect(err).To(MatchError(HavePrefix("reading rgw_admin_entry: ")))
 	})
@@ -224,6 +229,86 @@ var _ = Describe("the router", func() {
 		serve(cli.NewRouter(nil, env, cfg, nil), http.MethodHead, "/")
 		_, _, _, _, out := metrics.ObserveArgsForCall(0)
 		Expect(out).To(BeZero())
+	})
+})
+
+var _ = Describe("the router with the admin API", func() {
+	const adminStatus = http.StatusAccepted
+	var (
+		env    *op.Env
+		cfg    s3.Config
+		s3h    http.Handler
+		adminH http.Handler
+	)
+
+	BeforeEach(func() {
+		env = &op.Env{HostID: "4107-zone-a-zonegroup", Metrics: op.NopMetrics{}}
+		cfg = s3.Config{DNSNames: []string{"s3.example.com"}, TransIDSuffix: op.TransIDSuffix(4107, "zone-a")}
+		s3h = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+		adminH = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(adminStatus) })
+	})
+
+	serve := func(h http.Handler, host, path string) int {
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+		req.Host, req.URL.Path = host, path
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	DescribeTable("sends the admin entry and what lies under it to the admin handler, as get_resource_mgr matches it",
+		func(path string, want int) {
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
+			Expect(serve(h, "127.0.0.1", path)).To(Equal(want))
+		},
+		Entry("the entry", "/admin", adminStatus),
+		Entry("its directory", "/admin/", adminStatus),
+		Entry("a resource", "/admin/info", adminStatus),
+		Entry("a resource no manager takes, which the admin handler refuses", "/admin/nosuch", adminStatus),
+		Entry("a longer first segment, to S3", "/adminx", http.StatusTeapot),
+		Entry("the entry past the first segment, to S3", "/plain/admin", http.StatusTeapot),
+		Entry("the entry in another case, to S3", "/Admin/info", http.StatusTeapot),
+		Entry("the root, to S3", "/", http.StatusTeapot),
+		Entry("an unserved API beside it", "/swift/v1", http.StatusMethodNotAllowed),
+	)
+
+	It("sends a virtual-hosted request for the key admin/x to S3", func() {
+		h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, nil)
+		Expect(serve(h, "b.s3.example.com", "/admin/x")).To(Equal(http.StatusTeapot))
+	})
+
+	It("sends a Host naming the bucket admin, with the path /info, to the admin API", func() {
+		h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, nil)
+		Expect(serve(h, "admin.s3.example.com", "/info")).To(Equal(adminStatus))
+	})
+
+	It("serves a nested rgw_admin_entry and answers 405 at its parent, which has no handler", func() {
+		conf := cephconf.NewOptions(cephconf.MapGetter{
+			"rgw_enable_apis": "s3, admin", "rgw_swift_url_prefix": "swift",
+			"rgw_swift_auth_entry": "auth", "rgw_admin_entry": "a/b",
+		})
+		apis, err := cephconf.EnabledAPIs(conf)
+		Expect(err).NotTo(HaveOccurred())
+		paths, adminPath, _, err := cli.UnservedAPIs(conf, apis)
+		Expect(err).NotTo(HaveOccurred())
+		h := cli.NewAdminRouter(s3h, adminH, adminPath, env, cfg, paths)
+		Expect(serve(h, "127.0.0.1", "/a/x")).To(Equal(http.StatusMethodNotAllowed))
+		Expect(serve(h, "127.0.0.1", "/a")).To(Equal(http.StatusMethodNotAllowed))
+		Expect(serve(h, "127.0.0.1", "/a/b/info")).To(Equal(adminStatus))
+		Expect(serve(h, "127.0.0.1", "/ab")).To(Equal(http.StatusTeapot))
+	})
+
+	It("serves the admin API with S3 off, and answers 405 everywhere else", func() {
+		h := cli.NewAdminRouter(nil, adminH, "/admin", env, cfg, []string{"/swift"})
+		Expect(serve(h, "127.0.0.1", "/admin/info")).To(Equal(adminStatus))
+		Expect(serve(h, "127.0.0.1", "/")).To(Equal(http.StatusMethodNotAllowed))
+		Expect(serve(h, "127.0.0.1", "/bucket/key")).To(Equal(http.StatusMethodNotAllowed))
+	})
+
+	It("lets a longer unserved path under the admin entry win, as the longest resource does", func() {
+		h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/admin/swift"})
+		Expect(serve(h, "127.0.0.1", "/admin/swift/x")).To(Equal(http.StatusMethodNotAllowed))
+		Expect(serve(h, "127.0.0.1", "/admin/info")).To(Equal(adminStatus))
 	})
 })
 
