@@ -188,6 +188,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw never checks a SigV4 credential scope's date, region or service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service) | pending | pending |  |
 | [radosgw's ListMultipartUploads drops its common prefixes and the uploads under them](#radosgws-listmultipartuploads-drops-its-common-prefixes-and-the-uploads-under-them) | pending | pending |  |
 | [radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name) | pending | pending |  |
+| [Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
+| [radosgw's parse_date writes a NUL one byte past its format buffer](#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer) | pending | pending | ✓ |
+| [radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -1140,10 +1143,16 @@ Every new entry adds its row to this table, in document order.
     7ed73efc1be, 2026-09-25).
 - **Releases:** every Squid and Tentacle release; checked at v18.2.8, which
   checks the object's ACL, and at v19.2.6, v20.2.4 and main.
-- **rgw-go:** phase 1's plan mirrors it: W's CopyObject checks its source
-  with `VerifyBucketPermissionIn`, the bucket form. Not yet ruled; if rgw-go
-  checks the object's ACL instead, `docs/exclusions.md` records the
-  difference.
+- **rgw-go:** requires READ on both ACLs (owner ruling, option C): when no
+  bucket or identity policy decides, W's CopyObject checks its source with
+  `VerifyBucketPermissionIn` against the bucket's ACL and then with
+  `VerifyObjectPermissionIn` against the object's
+  (`internal/op/copyobject.go`). It so refuses the copies the regression
+  lets a bucket grantee make, allows none radosgw refuses, and refuses an
+  object-only grantee as radosgw does. `docs/exclusions.md` records the
+  difference ("A copy source needs READ in its bucket's ACL and in its
+  own"). If upstream returns to the object's ACL, rgw-go may relax to the
+  object's alone.
 - **Upstream:** no tracker issue or pull request reports it (full-text
   tracker and all-time pull-request search, 2026-09-30). The bucket form
   reached squid through
@@ -6354,11 +6363,12 @@ Every new entry adds its row to this table, in document order.
   takes the object as decades old (`rgw_lc.cc:1142-1156`). Not a security
   issue.
 - **Releases:** v19.2.6. v20.2.4 is not affected.
-- **rgw-go:** decided by the DeleteObjectTagging op. The driver's
-  `SetObjectAttrs` nudges the mtime of the state it is given
-  (`internal/driver/attrs.go`), so the op decides whether that state is the
-  one its Init read, Tentacle's behaviour, or a zero mtime, Squid's. No
-  exclusions entry is recorded until it does.
+- **rgw-go:** does not reproduce it. The DeleteObjectTagging op hands the
+  driver's `SetObjectAttrs` the state its Init read, as v20.2.4 loads the
+  object first, on both releases (`internal/op/objectattrs.go`), so the
+  stored mtime is the one nudged. `docs/exclusions.md` records the
+  difference from v19.2.6 ("DeleteObjectTagging keeps the object's mtime
+  on Squid too").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 7 review, 2026-10-05, tracing the
   callers of `set_attrs`; derived from the source, not reproduced.
@@ -7852,3 +7862,123 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 5, 2026-10-05, transcribing
   `list_multiparts` at both tags; derived from the source, not reproduced.
+
+## Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do
+
+- **Kind:** defect, a regression; fixed on main, not on the release
+  branches. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - On a bucket with MFA delete enabled, `RGWDeleteMultiObj::execute` asks
+    for a verified MFA token when the request names a version. v19.2.6
+    tests each key's instance for being set (`rgw_op.cc:7055-7068`);
+    v20.2.4 tests it for being empty (`rgw_op.cc:7969-7983`), so it asks
+    for MFA when a key names no version and not when every key names one.
+  - The inversion came with f28f0d9147d, "RGW | fix conditional Delete and
+    MultiDelete" (cherry-picked from 55f5b762c67), which moved the check to
+    `RGWMultiDelObject::get_version_id`. v20.2.0 still tests
+    `!i.instance.empty()`; v20.2.1 through v20.2.4 carry the inversion.
+  - Squid's backport of conditional delete,
+    [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (merged
+    a742f50616e, after v19.2.6), carries it too: the squid branch tests
+    `instance.empty()` (`rgw_op.cc:7071` at a742f50616e).
+  - b703ec465f3, "rgw: fix inverted MFA check in DeleteMultiObj", restores
+    the test on main. The tentacle branch (7411a080411, 2026-09-30) and the
+    squid branch (a742f50616e) still carry the inversion.
+  - DeleteObject's own check is unaffected (`rgw_op.cc:5548-5553` at
+    v20.2.4).
+- **Impact:** on an affected gateway, a DeleteObjects on a bucket with MFA
+  delete whose every key names a version deletes those versions without
+  MFA, which MFA delete exists to prevent; one that names a key without a
+  version is refused unless MFA verified, which S3 does not ask for.
+- **Releases:** v20.2.1 through v20.2.4, checked at v20.2.0 and v20.2.4;
+  Squid from the first release after v19.2.6 that carries
+  ceph/ceph#65932. v19.2.6 is not affected.
+- **rgw-go:** checks as v19.2.6 and main do, on both releases. It verifies
+  no MFA token, so it refuses every DeleteObjects naming a version on such
+  a bucket (`internal/op/deleteobjects.go`; `docs/exclusions.md`, "Deletes
+  that need MFA are refused").
+- **Upstream:** [#77869](https://tracker.ceph.com/issues/77869), fixed on
+  main by [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821)
+  (merge 8131835af85). Backports to tentacle and squid: pending: sent to
+  rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 10, 2026-10-05, reading
+  `RGWDeleteMultiObj::execute` at both tags; derived from the source, not
+  reproduced.
+
+## radosgw's parse_date writes a NUL one byte past its format buffer
+
+- **Kind:** defect, an out-of-bounds stack write. Unreproduced: derived from
+  the source.
+- **Evidence:** `utime_t::parse_date` (`include/utime.h:397-502` at v19.2.6
+  and v20.2.4; `include/utime.cc:163` on main, 7ed73efc1be) reads the time
+  after a date by copying at most 31 bytes of it into `char fmt[32]` and
+  rewriting that into a `strptime` format (`include/utime.h:413-437`). When
+  the ninth byte is `.`, it skips the digits that follow, from `fmt + 9`;
+  a `-` or `+` there becomes `%z` with `*q = '%'; *(q+1) = 'z';
+  *(q+2) = 0;`. A sign at `fmt[30]` therefore writes the NUL to `fmt[32]`,
+  one byte past the array.
+- **Trigger:** a time with a `.`, 21 digits and a sign, such as
+  `2026-01-01T01:02:03.012345678901234567890+`. radosgw's DeleteObject
+  parses `x-amz-delete-if-unmodified-since` with it while it reads its
+  parameters, before it authorizes (`RGWDeleteObj_ObjStore_S3::get_params`,
+  `rgw_rest_s3.cc:3435-3444` at v19.2.6, `:3696-3705` at v20.2.4), so any
+  requester who can send a DeleteObject reaches it, an anonymous one
+  included. Every other `parse_date` caller, `utime_t::parse` and the JSON
+  decoders of `ceph_json.cc` among them, reaches it with its own input.
+- **Impact:** one zero byte written past a stack array. What it overwrites
+  depends on the compiler's frame layout. When it lands on the stack
+  protector's canary it most likely changes nothing: glibc's canary keeps
+  its lowest byte zero, which is the byte a little-endian write past the
+  array reaches first. Otherwise it zeroes one byte of padding, or of
+  another local of `parse_date`, such as `tm` or the low byte of the
+  `subsec` pointer, whose effect is a wrong parse or, for the pointer, a
+  read through a corrupted address. Not observed.
+- **Releases:** every release checked: v19.2.6, v20.2.4 and main.
+- **rgw-go:** not affected; it parses such a value as the format radosgw
+  builds would read it (`internal/op/deleteobject.go`), and refuses a `%`
+  of the value's that reaches the format (`docs/exclusions.md`, "A delete
+  date with a `%` after its seconds is refused").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 10, 2026-10-05, porting `parse_date`;
+  derived from the source, not reproduced.
+
+## radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; lines are v19.2.6's unless
+  marked.
+  - A bucket's BlockPublicAcls is checked in two places only
+    (`block_public_acls`, `rgw_op.cc:3904` and `:5906`; v20.2.4 `:4113` and
+    `:6552`): RGWPutObj's `init_processing` and RGWPutACLs' `execute`.
+  - RGWPutObj's check refuses the canned ACLs `public-read`,
+    `public-read-write` and `authenticated-read` alone
+    (`rgw_op.cc:3903-3909`; v20.2.4 `:4112-4118`). A request that sets its
+    ACL with `x-amz-grant-*` headers carries no canned ACL, and
+    `create_s3_policy` builds its policy from the headers
+    (`rgw_rest_s3.cc:2408-2422` and `:2618`), so a grant of READ to the
+    AllUsers group passes the check and the object is stored public.
+    RGWPutACLs, by contrast, refuses any policy `is_public` finds
+    (`rgw_op.cc:5905-5910`).
+  - RGWCopyObj derives from `RGWOp` (`rgw_op.h:1497`; v20.2.4 `:1602`), not
+    from RGWPutObj, and checks no block: a copy with `x-amz-acl:
+    public-read` or a public grant header stores a public object in a
+    bucket that blocks public ACLs.
+  - RGWInitMultipart derives from `RGWOp` too (`rgw_op.h:1842`; v20.2.4
+    `:2007`) and checks no block, though it builds the upload's policy
+    with `create_s3_policy` from the same headers
+    (`rgw_rest_s3.cc:3969-3979`; v20.2.4 `:4450-4460`), and
+    CompleteMultipartUpload stores the object under that policy.
+- **Impact:** a bucket owner's BlockPublicAcls does not stop a writer from
+  making new objects public, through grant headers on PutObject or any ACL
+  on CopyObject and CreateMultipartUpload; S3 documents the setting as refusing PUT Object calls
+  whose ACL is public.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: PutObject and CopyObject refuse a new
+  object's public policy under the block, whatever headers set it
+  (`internal/op/putobject.go`, `internal/op/copyobject.go`;
+  `docs/exclusions.md`, "A block of public ACLs refuses a public ACL on
+  PutObject and CopyObject"). CreateMultipartUpload is to apply the block
+  when rgw-go serves it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit W, Task 10, 2026-10-05, auditing the write ops'
+  public-access checks; derived from the source, not reproduced.
