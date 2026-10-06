@@ -1490,7 +1490,8 @@ does the following.
   `rgw_override_bucket_index_max_shards` at each bucket creation
   (`init_default_bucket_layout`, `driver/rados/rgw_bucket.cc:2790-2796` at
   v19.2.6, `:2908-2910` at v20.2.4).
-- **Shard counts and the bucket-index AIO limit that are not positive.** A
+- **Shard counts, the bucket-index AIO limit and the copy concurrency that
+  are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
   `rgw_lc_max_objs` or `rgw_gc_max_objs`, and a zero
   `rgw_bucket_index_max_aio` or `rgw_max_copy_obj_concurrent_io`, is used
@@ -1846,6 +1847,19 @@ does the following.
   "Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync
   pipe's source read goes unchecked"). Multisite is excluded, so a
   single-zone rgw-go receives neither parameter from radosgw.
+- **A body read whole is checked against its signed hash.** radosgw reads
+  the body of CreateBucket, the ACL, policy and tagging PUTs,
+  CompleteMultipartUpload, DeleteObjects and the other subresource PUTs
+  through `read_all_input`, which drops the verdict of the payload's
+  SHA-256 check (`rgw_op.h:215-237` at v19.2.6, `:229-251` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw ignores a payload-hash mismatch
+  on bodies read by
+  read_all_input](ceph-upstream-bugs.md#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input)"),
+  so it acts on a signed body whose hash does not match
+  `x-amz-content-sha256`. rgw-go reads such a body to its end through the
+  authenticator's verifying reader before it parses or acts on it, and
+  refuses one whose hash does not match with 400 XAmzContentSHA256Mismatch,
+  changing nothing.
 
 ### Authorization differences
 
@@ -2044,6 +2058,58 @@ rgw-go does the following.
   refused: an account user's copy from another account's bucket that
   grants it nothing, a cross-tenant copy a Deny in the source's policy
   covers, and a copy of a public source whose owner blocked public access.
+- **A copy source needs READ in its bucket's ACL and in its own.** When no
+  bucket or identity policy decides, radosgw authorizes CopyObject's source
+  against the source bucket's ACL alone, and reads the source object's ACL
+  without using it (`rgw_op.cc:5409-5459` at v19.2.6, `:5975-6025` at
+  v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw checks a CopyObject
+  source against its bucket's ACL, not the
+  object's](ceph-upstream-bugs.md#radosgw-checks-a-copyobject-source-against-its-buckets-acl-not-the-objects)").
+  So a grantee of READ on the bucket, which for S3 is leave to list it, can
+  copy any object in it, one whose own ACL refuses them included. rgw-go
+  checks the source against the bucket's ACL and then
+  against the object's, and needs READ in both. Policies decide first, as
+  in radosgw, so a policy that allows or denies the read decides it. A
+  grantee of the bucket alone is refused where radosgw copies; a grantee of
+  the object alone is refused by both; rgw-go allows no copy radosgw
+  refuses.
+- **A block of public ACLs refuses a public ACL on PutObject and
+  CopyObject.** radosgw enforces a bucket's BlockPublicAcls on PutObject
+  only for the canned ACLs `public-read`, `public-read-write` and
+  `authenticated-read` (`rgw_op.cc:3903-3909` at v19.2.6, `:4112-4118` at
+  v20.2.4), so a public policy built from `x-amz-grant-*` headers is
+  stored; CopyObject and CreateMultipartUpload, `RGWOp`s of their own,
+  check no block at all (`docs/ceph-upstream-bugs.md`, "[radosgw lets a
+  public ACL through a block of public ACLs on PutObject's grant headers,
+  CopyObject and
+  CreateMultipartUpload](ceph-upstream-bugs.md#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload)").
+  rgw-go refuses, with 403 AccessDenied before the permission check, a
+  PutObject or CopyObject whose new object's policy grants AllUsers or
+  AuthenticatedUsers anything under such a block, as PutObjectAcl's
+  `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
+  that does not decode for one that blocks public ACLs in these writes and
+  in PutObjectAcl, where radosgw takes it for none; the authorizer refuses
+  such a bucket's requests from anyone but an admin ("A public-access
+  block that does not decode refuses the request"). CreateMultipartUpload
+  applies the block when rgw-go serves it.
+- **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
+  header. On a bucket with MFA delete enabled, radosgw refuses a
+  DeleteObject that names a version, and a DeleteObjects any of whose keys
+  names one, with 403 AccessDenied unless the request's MFA token
+  verified (`rgw_op.cc:5158-5163` and `:7055-7068` at v19.2.6, `:5548-5553`
+  at v20.2.4). rgw-go refuses each of them, whatever the header holds, an
+  admin's included: radosgw checks the delete permission first, and when
+  it refuses an admin its override lets the delete through without the MFA
+  check (`rgw_process.cc:228-236` at v19.2.6, `:228-239` at v20.2.4). On
+  a Tentacle zone radosgw's DeleteObjects check is inverted: it asks for
+  MFA when a key names no version, and lets a request whose every key
+  names a version through without it (`:7969-7983` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[Tentacle's DeleteObjects asks for MFA for
+  the keys that need none and not for the versions that
+  do](ceph-upstream-bugs.md#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do)").
+  rgw-go checks as v19.2.6 and ceph main do on both releases, so on a
+  Tentacle zone it refuses a request naming a version that radosgw serves,
+  and serves one naming none that radosgw refuses without MFA.
 - **Tags that cannot be read refuse the request.** When a bucket policy or
   an identity policy names an `s3:ExistingObjectTag` or `s3:ResourceTag`
   key, radosgw reads the object's or bucket's tags into the policy
@@ -2424,6 +2490,12 @@ does the following.
     Squid at 19.2.7 through
     [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), merged after
     v19.2.6.
+  - DeleteObjects checks each `<Object>`'s ETag, Size and LastModifiedTime
+    as v20.2.4 does (`rgw_op.cc:7830-7832` at v20.2.4), on both releases.
+    On a Squid zone, a key whose condition fails is answered with 412
+    PreconditionFailed in its result and kept, where v19.2.6, whose parser
+    reads only Key and VersionId (`rgw_multi_del.cc:17-36` and `:57-72` at
+    v19.2.6), deletes it.
   - On a Tentacle zone, a delete whose object another writer replaced
     between the delete's read and its removal fails the removal and answers
     204 with the replacement standing, as on Squid. v20.2.4 removes the
@@ -2433,6 +2505,44 @@ does the following.
     head without checking its write
     tag](ceph-upstream-bugs.md#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag)").
     The removal op carries the `cmpxattr` step v20.2.4 does not send.
+- **DeleteObjectTagging keeps the object's mtime on Squid too.** rgw-go
+  removes an object's tags as v20.2.4's `RGWDeleteObjTags::execute` does,
+  with the object's attrs loaded first, so the head and its index entry
+  keep the stored mtime advanced by the nanosecond every attr change adds
+  (`rgw_op.cc:1351-1375` at v20.2.4). v19.2.6 removes them without loading
+  the object, and stamps it with the epoch plus a nanosecond
+  (`rgw_op.cc:1133-1139` at v19.2.6; `docs/ceph-upstream-bugs.md`, "[Squid's
+  DeleteObjectTagging stamps the object with the epoch plus one
+  nanosecond](ceph-upstream-bugs.md#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond)").
+  A client of a Squid zone sees the object's own Last-Modified after the
+  tags are removed, where v19.2.6 reports 1970-01-01.
+- **Writes to a versioned or object-lock bucket answer 501 until
+  versioning is served.** Every write rgw-go serves, PutObject, CopyObject,
+  DeleteObject, DeleteObjects, PutObjectAcl, PutObjectTagging and
+  DeleteObjectTagging, takes radosgw's unversioned path. On a bucket whose
+  versioning is enabled or suspended, or that has object lock, that path
+  would write or remove a version's head beside the bucket's OLH under an
+  index entry for the plain key, and for a versioned delete it skips the
+  retention and legal-hold checks radosgw makes (`verify_object_lock`,
+  `rgw_op.cc:5185-5221` and `:6845-6869` at v19.2.6, `:5576-5610` and
+  `:7782-7806` at v20.2.4). rgw-go answers such a write, and any write
+  naming a version, a copy's source included, with 501 NotImplemented
+  before it touches the store; DeleteObjects answers it through its status
+  line before its first key. radosgw serves them. The bucket listing makes
+  the same refusal for a versioned bucket ("The versions of a bucket whose
+  versioning was ever enabled are not listed").
+- **A delete date with a `%` after its seconds is refused.**
+  `utime_t::parse_date` reads `x-amz-delete-if-unmodified-since` by copying
+  the text after the seconds into its `strptime` format
+  (`include/utime.h:406-441` at v19.2.6 and v20.2.4), so a `%` there is a
+  conversion glibc's `strptime` applies to the rest of the value. rgw-go
+  answers such a value with 400 InvalidArgument; radosgw parses it as that
+  conversion directs. A value that reaches the format's 31st byte with a
+  sign also makes radosgw write past the format's end
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's parse_date writes a NUL one
+  byte past its format
+  buffer](ceph-upstream-bugs.md#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer)");
+  rgw-go parses that value as radosgw's format then reads it.
 - **An attribute change adds no expirer hint.** rgw-go changes an object's
   attrs as radosgw's `RGWRados::set_attrs` does
   (`driver/rados/rgw_rados.cc:6593-6757` at v19.2.6, `:7393-7593` at
@@ -2531,7 +2641,8 @@ does the following.
   `docs/ceph-upstream-bugs.md`, "[radosgw's copy keeps its tail references
   when its head write loses a
   race](ceph-upstream-bugs.md#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race)").
-  rgw-go also answers success and drops them, as `done_ret` would.
+  rgw-go also answers success (a copy onto itself excepted) and drops
+  them, as `done_ret` would.
 - **A copy onto itself is guarded on the head it read.** A copy of an
   object onto itself keeps the object's tails and writes its manifest back
   under a new head. radosgw writes that head as any other: an exclusive
