@@ -40,7 +40,7 @@ func ParseArgs(rawQuery string) Args {
 		return a
 	}
 	for pair := range strings.SplitSeq(strings.TrimPrefix(rawQuery, "?"), "&") {
-		name, val, _ := strings.Cut(urlDecode(pair, true), "=")
+		name, val, _ := strings.Cut(rgwtext.URLDecode(pair, true), "=")
 		if strings.Contains(name, "X-Amz-") {
 			name = lowerASCII(name)
 		}
@@ -77,7 +77,7 @@ func (a Args) String(name, def string) (v string, present bool) {
 	if !ok {
 		return def, false
 	}
-	return urlDecode(v, true), true
+	return rgwtext.URLDecode(v, true), true
 }
 
 // Bool is RESTArgs::get_bool (rgw_rest.cc:1002-1032 at v19.2.6): absent is
@@ -332,54 +332,6 @@ func scanInt(s string) (n int64, rest string, ok bool) {
 	}
 	neg, mag, overflow, _ := strtoMagnitude(s[:i])
 	return int64(int32(strtoll(neg, mag, overflow))), s[i:], true //nolint:gosec // %d stores an int
-}
-
-// urlDecode is radosgw's url_decode (rgw_common.cc:1701-1734 at v19.2.6),
-// the decoding internal/s3 and internal/auth carry too: "%XX" decodes and,
-// in a query, '+' is a space; a '%' with fewer than two bytes after it ends
-// the result there, and one followed by a non-hex byte empties it.
-func urlDecode(s string, inQuery bool) string {
-	if strings.IndexByte(s, '%') < 0 && strings.IndexByte(s, '+') < 0 {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '%':
-			if len(s)-i < 3 {
-				return b.String()
-			}
-			hi, okHi := unhex(s[i+1])
-			lo, okLo := unhex(s[i+2])
-			if !okHi || !okLo {
-				return ""
-			}
-			b.WriteByte(hi<<4 | lo)
-			i += 2
-		case c == '+' && inQuery:
-			b.WriteByte(' ')
-		default:
-			if c == '?' {
-				inQuery = true
-			}
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-func unhex(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	default:
-		return 0, false
-	}
 }
 
 // Format is RGWFormat for the admin API.

@@ -36,56 +36,6 @@ func asciiLower(s string) string {
 	return string(b)
 }
 
-// unhex is HexTable::to_num for the hex digits. radosgw indexes the table
-// with a signed char, so a byte above 0x7f reads outside it
-// (rgw_common.cc:1690-1692 at v19.2.6, :1753-1755 at v20.2.4); here such a
-// byte is no hex digit.
-func unhex(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
-}
-
-// urlDecode is url_decode (rgw_common.cc:1701-1734 at v19.2.6, :1764-1797 at
-// v20.2.4): '+' is a space only in query mode, which a literal '?' switches
-// on; a bad hex digit empties the whole result; a truncated escape ends
-// decoding.
-func urlDecode(s string, inQuery bool) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c != '%' {
-			if inQuery && c == '+' {
-				b.WriteByte(' ')
-				continue
-			}
-			if c == '?' {
-				inQuery = true
-			}
-			b.WriteByte(c)
-			continue
-		}
-		if len(s)-i < 3 {
-			break
-		}
-		hi, okHi := unhex(s[i+1])
-		lo, okLo := unhex(s[i+2])
-		if !okHi || !okLo {
-			return ""
-		}
-		b.WriteByte(hi<<4 | lo)
-		i += 2
-	}
-	return b.String()
-}
-
 const upperHex = "0123456789ABCDEF"
 
 // aws4URIEncode is aws4_uri_encode (rgw_auth_s3.h:555-590 at v19.2.6,
@@ -112,7 +62,7 @@ func aws4URIEncode(s string, encodeSlash bool) string {
 // aws4Recode is aws4_uri_recode: url_decode outside query mode, then
 // aws4_uri_encode.
 func aws4Recode(s string, encodeSlash bool) string {
-	return aws4URIEncode(urlDecode(s, false), encodeSlash)
+	return aws4URIEncode(rgwtext.URLDecode(s, false), encodeSlash)
 }
 
 // trimSpace is rgw_trim_whitespace.

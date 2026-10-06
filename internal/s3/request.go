@@ -9,6 +9,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
@@ -106,7 +107,7 @@ func DecodedURI(req *http.Request, cfg Config) string {
 	if strings.HasPrefix(rawPath, "/") {
 		sep = ""
 	}
-	return urlDecode("/"+b+sep+rawPath, false)
+	return rgwtext.URLDecode("/"+b+sep+rawPath, false)
 }
 
 // PostAuthInit finishes parsing once the request is authenticated, as
@@ -189,7 +190,7 @@ func copySourceBucket(v string) (string, bool) {
 	if name == "" {
 		return "", false
 	}
-	bucket, key, ok := strings.Cut(urlDecode(strings.TrimPrefix(name, "/"), false), "/")
+	bucket, key, ok := strings.Cut(rgwtext.URLDecode(strings.TrimPrefix(name, "/"), false), "/")
 	if !ok || key == "" {
 		return "", false
 	}
@@ -254,7 +255,7 @@ func parseArgs(raw string) url.Values {
 		return args
 	}
 	for pair := range strings.SplitSeq(strings.TrimPrefix(raw, "?"), "&") {
-		name, val, _ := strings.Cut(urlDecode(pair, true), "=")
+		name, val, _ := strings.Cut(rgwtext.URLDecode(pair, true), "=")
 		if strings.Contains(name, "X-Amz-") {
 			name = lowerASCIIString(name)
 		}
@@ -269,52 +270,4 @@ func lowerASCIIString(s string) string {
 		b[i] = lowerASCII(c)
 	}
 	return string(b)
-}
-
-// urlDecode is radosgw's url_decode (rgw_common.cc:1701-1734 at v19.2.6).
-// "%XX" decodes and, in a query, "+" is a space; a "%" with fewer than two
-// characters after it ends the result there, and one followed by a non-hex
-// character makes the whole result empty.
-func urlDecode(s string, inQuery bool) string {
-	if strings.IndexByte(s, '%') < 0 && strings.IndexByte(s, '+') < 0 {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '%':
-			if len(s)-i < 3 {
-				return b.String()
-			}
-			hi, okHi := unhex(s[i+1])
-			lo, okLo := unhex(s[i+2])
-			if !okHi || !okLo {
-				return ""
-			}
-			b.WriteByte(hi<<4 | lo)
-			i += 2
-		case c == '+' && inQuery:
-			b.WriteByte(' ')
-		default:
-			if c == '?' {
-				inQuery = true
-			}
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-func unhex(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	default:
-		return 0, false
-	}
 }

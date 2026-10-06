@@ -9,24 +9,6 @@ import (
 )
 
 var _ = Describe("radosgw encodings", func() {
-	DescribeTable("urlDecode is rgw_common.cc's url_decode",
-		func(in string, inQuery bool, want string) {
-			Expect(urlDecode(in, inQuery)).To(Equal(want), "%q", in)
-		},
-		Entry("plain", "/a/b", false, "/a/b"),
-		Entry("percent", "/a%2Fb%41", false, "/a/bA"),
-		Entry("plus kept outside a query", "/a+b", false, "/a+b"),
-		Entry("plus is a space in a query", "a+b", true, "a b"),
-		Entry("a ? switches to query mode", "/p+q?r+s", false, "/p+q?r s"),
-		Entry("an escaped ? does not switch to query mode", "/p%3Fq+r", false, "/p?q+r"),
-		Entry("a bad hex digit empties the result", "/a%zzb", false, ""),
-		Entry("a truncated escape stops decoding", "/a%4", false, "/a"),
-	)
-
-	It("takes a byte above 0x7f in an escape as a bad hex digit", func() {
-		Expect(urlDecode("/a%\xc3\xbcb", false)).To(BeEmpty())
-	})
-
 	DescribeTable("aws4URIEncode is aws4_uri_encode",
 		func(in string, slash bool, want string) {
 			Expect(aws4URIEncode(in, slash)).To(Equal(want), "%q", in)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // Attr is RGW_ATTR_TAGS (rgw_common.h:115 at v19.2.6, :126 at v20.2.4), the
@@ -220,56 +221,9 @@ func (s *Set) addString(input string, limit int) error {
 	}
 	for kv := range strings.SplitSeq(input, "&") {
 		key, value, _ := strings.Cut(kv, "=")
-		if err := s.Add(urlDecode(key), urlDecode(value), limit); err != nil {
+		if err := s.Add(rgwtext.URLDecode(key, false), rgwtext.URLDecode(value, false), limit); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// urlDecode is url_decode with in_query false (rgw_common.cc:1701-1734 at
-// v19.2.6, :1764-1797 at v20.2.4). A "+" stays a "+" until a "?" has been
-// copied, and is a space after it; a "%" with fewer than two bytes after it
-// ends the result; a "%" followed by a byte that is not a hex digit makes the
-// whole result empty. A byte from 0x80 up after a "%" is not a hex digit
-// here; radosgw looks it up outside its hex table, a difference
-// docs/exclusions.md records.
-func urlDecode(s string) string {
-	var b strings.Builder
-	inQuery := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c != '%' {
-			if inQuery && c == '+' {
-				c = ' '
-			} else if c == '?' {
-				inQuery = true
-			}
-			b.WriteByte(c)
-			continue
-		}
-		if len(s)-i < 3 {
-			break
-		}
-		hi, okHi := unhex(s[i+1])
-		lo, okLo := unhex(s[i+2])
-		if !okHi || !okLo {
-			return ""
-		}
-		b.WriteByte(hi<<4 | lo)
-		i += 2
-	}
-	return b.String()
-}
-
-func unhex(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
 }
