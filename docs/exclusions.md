@@ -2679,7 +2679,8 @@ does the following.
   when its head write loses a
   race](ceph-upstream-bugs.md#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race)").
   rgw-go also answers success (a copy onto itself excepted) and drops
-  them, as `done_ret` would.
+  them, as `done_ret` would and as the upstream fix in review,
+  [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098), does.
 - **A copy onto itself is guarded on the head it read.** A copy of an
   object onto itself keeps the object's tails and writes its manifest back
   under a new head. radosgw writes that head as any other: an exclusive
