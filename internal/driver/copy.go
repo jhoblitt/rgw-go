@@ -112,12 +112,17 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // copyAttrs is copy_obj's attr rewrite (:4755-4794; v20.2.4 :5010-5049, with
 // set_copy_attrs at :3673-3700 and v20.2.4 :3858-3885): the source's attrs
 // with the request's ACL, without delete_at, the object-lock attrs other than
-// the request's, the OLH attrs in a bucket without versioning, and the
-// replication attrs; then the source's attrs whole for COPY, or the request's
-// with the source's etag and tail tag where it has none for REPLACE; then
-// without idtag, pg_ver and source_zone, and with the source's compression
-// info. A Tentacle gateway also drops the source's storage class (v20.2.4
-// :5028).
+// the request's, the OLH attrs in a bucket without versioning, the storage
+// class and the replication attrs; then the source's attrs whole for COPY, or
+// the request's with the source's etag and tail tag where it has none for
+// REPLACE; then without idtag, pg_ver and source_zone, and with the source's
+// compression info.
+//
+// The storage class is dropped on both releases, as v20.2.4 drops it
+// (:5028), so the head write labels the copy from its destination placement
+// alone. A Squid radosgw keeps it, and its head write overrides it only with
+// a non-empty class (:3258-3262), so a copy into a placement's default class
+// keeps its source's label (docs/ceph-upstream-bugs.md).
 //
 // An encrypted source is NotImplemented on both releases. A Squid radosgw
 // refuses it (:4755-4763); a Tentacle one decrypts it and encrypts the copy
@@ -146,9 +151,7 @@ func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[str
 		delete(srcAttrs, meta.AttrOLHInfo)
 		delete(srcAttrs, meta.AttrOLHVer)
 	}
-	if s.release >= denc.Tentacle {
-		delete(srcAttrs, meta.AttrStorageClass)
-	}
+	delete(srcAttrs, meta.AttrStorageClass)
 	delete(srcAttrs, meta.AttrReplicationTrace)
 	delete(srcAttrs, meta.AttrReplicatedAt)
 	delete(srcAttrs, meta.AttrReplicationStatus)
