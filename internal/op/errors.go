@@ -144,6 +144,15 @@ var (
 	ErrInsufficientCapacity         = &Error{Code: "InsufficientCapacity", Status: 507, Errno: 28}
 )
 
+// ErrMetadataNameTooLong is the S3 answer to rgw_get_request_metadata's
+// -ENAMETOOLONG, a metadata header whose attr name passes
+// rgw_max_attr_name_len (rgw_op.h:2203-2206 at v19.2.6, :2377-2381 at
+// v20.2.4). Only radosgw's Swift table names it, "Metadata name too long"
+// (rgw_common.cc:149 at v19.2.6, :151 at v20.2.4); for S3, set_req_state_err
+// finds no row and answers UnknownError (:322-354 at v19.2.6, :332-367 at
+// v20.2.4). It is no row of the S3 table, so Errors leaves it out.
+var ErrMetadataNameTooLong = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.ENAMETOOLONG)}
+
 // Errors returns every sentinel above, for tests and for the ops log's table.
 func Errors() []*Error { return slices.Clone(errorSet) }
 

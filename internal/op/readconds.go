@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
 // ParseRange is RGWGetObj::parse_range (rgw_op.cc:160-224 at v19.2.6,
@@ -112,6 +114,77 @@ func ParseHTTPTime(s string) (time.Time, error) {
 	}
 	sec, nsec := utime(internalTimegm(tm), ns)
 	return time.Unix(int64(sec), int64(nsec)).UTC(), nil
+}
+
+// CheckReadConditions is RGWRados::Object::Read::prepare's conditional block
+// (driver/rados/rgw_rados.cc:6945-6990 at v19.2.6, :7793-7839 at v20.2.4) as
+// a copy applies it to its source state st, with the dates as
+// RGWCopyObj::init_common parses them through parse_time, ErrInvalidArgument
+// when one does not parse. Each condition is nil when its header is absent;
+// one present with an empty value is a condition, an empty date failing to
+// parse and an empty If-Match matching no ETag, as in radosgw.
+func CheckReadConditions(st *ObjectState, ifModifiedSince, ifUnmodifiedSince, ifMatch, ifNoneMatch *string) error {
+	c, err := parseReadConds(ifModifiedSince, ifUnmodifiedSince, ifMatch, ifNoneMatch)
+	if err != nil {
+		return err
+	}
+	return c.check(st)
+}
+
+// readConds are a copy's source conditions once init_common has parsed the
+// dates; nil fields are absent headers.
+type readConds struct {
+	since, unmodSince    *time.Time
+	ifMatch, ifNoneMatch *string
+}
+
+// parseReadConds is init_common's parse of the two dates.
+func parseReadConds(ifModifiedSince, ifUnmodifiedSince, ifMatch, ifNoneMatch *string) (readConds, error) {
+	c := readConds{ifMatch: ifMatch, ifNoneMatch: ifNoneMatch}
+	for _, d := range []struct {
+		in  *string
+		out **time.Time
+	}{{ifModifiedSince, &c.since}, {ifUnmodifiedSince, &c.unmodSince}} {
+		if d.in == nil {
+			continue
+		}
+		t, err := ParseHTTPTime(*d.in)
+		if err != nil {
+			return readConds{}, err
+		}
+		*d.out = &t
+	}
+	return c, nil
+}
+
+// check is Read::prepare's comparisons on st: the dates against its mtime in
+// whole seconds, If-None-Match turning If-Modified-Since off and If-Match
+// turning If-Unmodified-Since off; then an unquoted If-Match must start with
+// the stored ETag and an If-None-Match must not, "*" being no wildcard. A
+// state without the ETag attr fails get_attr with -ENODATA, which the S3
+// error table lacks.
+func (c readConds) check(st *ObjectState) error {
+	mtime := st.Mtime.Unix()
+	if c.since != nil && c.ifNoneMatch == nil && c.since.Unix() >= mtime {
+		return ErrNotModified
+	}
+	if c.unmodSince != nil && c.ifMatch == nil && c.unmodSince.Unix() < mtime {
+		return ErrPreconditionFailed
+	}
+	if c.ifMatch == nil && c.ifNoneMatch == nil {
+		return nil
+	}
+	etag, ok := st.Attrs[meta.AttrETag]
+	if !ok {
+		return fmt.Errorf("%w: %s has no etag to compare", ErrUnknown, st.Key.Name)
+	}
+	if c.ifMatch != nil && !strings.HasPrefix(Unquote(*c.ifMatch), string(etag)) {
+		return ErrPreconditionFailed
+	}
+	if c.ifNoneMatch != nil && strings.HasPrefix(Unquote(*c.ifNoneMatch), string(etag)) {
+		return ErrNotModified
+	}
+	return nil
 }
 
 // Unquote is rgw_string_unquote (rgw_common.cc:518-533 at v19.2.6, :531-546
@@ -487,13 +560,22 @@ func matchCName(s string, names []string) (idx int, rest string, ok bool) {
 
 // skipZone is glibc strptime's %z, whose offset parse_time drops.
 func skipZone(s string) (string, bool) {
+	rest, _, ok := zoneOffset(s)
+	return rest, ok
+}
+
+// zoneOffset is glibc strptime's %z: "Z", or a sign and two or four digits, a colon allowed after
+// the first two, whose minutes must be below 60. gmtoff is the tm_gmtoff it
+// sets, in seconds east of UTC.
+func zoneOffset(s string) (rest string, gmtoff int64, ok bool) {
 	s = strings.TrimLeft(s, cSpaces)
 	if strings.HasPrefix(s, "Z") {
-		return s[1:], true
+		return s[1:], 0, true
 	}
 	if s == "" || (s[0] != '+' && s[0] != '-') {
-		return "", false
+		return "", 0, false
 	}
+	neg := s[0] == '-'
 	s = s[1:]
 	n, val := 0, 0
 	for n < 4 && s != "" && isCDigit(s[0]) {
@@ -504,14 +586,17 @@ func skipZone(s string) (string, bool) {
 			s = s[1:]
 		}
 	}
-	switch n {
-	case 2:
-		return s, true
-	case 4:
-		return s, val%100 < 60
-	default:
-		return "", false
+	switch {
+	case n == 2:
+		val *= 100
+	case n != 4, val%100 >= 60:
+		return "", 0, false
 	}
+	gmtoff = int64(val/100*3600 + val%100*60)
+	if neg {
+		gmtoff = -gmtoff
+	}
+	return s, gmtoff, true
 }
 
 // internalTimegm is internal_timegm (include/timegm.h at v19.2.6 and
