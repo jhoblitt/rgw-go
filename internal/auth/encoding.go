@@ -140,8 +140,13 @@ func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
 		return time.Time{}, 0, false
 	}
 	rest = trimSpace(rest)
-	if rest != "" && rest != "Z" && (rest[0] != '.' || rest[len(rest)-1] != 'Z' || !stringToULOK(rest[1:len(rest)-1])) {
-		return time.Time{}, 0, false
+	if rest != "" && rest != "Z" {
+		if rest[0] != '.' || rest[len(rest)-1] != 'Z' {
+			return time.Time{}, 0, false
+		}
+		if _, ok := rgwtext.StringToUL(rest[1 : len(rest)-1]); !ok {
+			return time.Time{}, 0, false
+		}
 	}
 	return fields.Timegm(), fields.Year, true
 }

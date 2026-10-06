@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -88,7 +87,7 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 		o.params.IfMatchLastModified = t
 	}
 	if o.IfMatchSize != nil {
-		v, ok := strictStrtoll(*o.IfMatchSize)
+		v, ok := rgwtext.StrictStrtoll(rgwtext.CString(*o.IfMatchSize))
 		if !ok {
 			return fmt.Errorf("%w: bad size %q", ErrInvalidArgument, *o.IfMatchSize)
 		}
@@ -142,24 +141,6 @@ func (o *DeleteObject) Complete(context.Context, *Request) {}
 // mfaEnabled is RGWBucketInfo::mfa_enabled (rgw_common.h:1077 at v19.2.6,
 // :1119 at v20.2.4).
 func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEnabled != 0 }
-
-// strictStrtoll is ceph's strict_strtoll in base 10 (common/strtol.cc:42-59
-// at v19.2.6 and v20.2.4): strtoll's whitespace, sign and digits, which must
-// end the string and fit an int64.
-func strictStrtoll(s string) (int64, bool) {
-	s = rgwtext.CString(s)
-	n := scanCNumber(s)
-	switch {
-	case n.digits == 0, n.end != len(s), n.overflow:
-		return 0, false
-	case n.neg && n.v > 1<<63, !n.neg && n.v > math.MaxInt64:
-		return 0, false
-	case n.neg:
-		return int64(-n.v), true //nolint:gosec // n.v <= 2^63, whose negation wraps to MinInt64
-	default:
-		return int64(n.v), true //nolint:gosec // n.v <= math.MaxInt64 here
-	}
-}
 
 // parseDate is utime_t::parse_date (include/utime.h:397-502 at v19.2.6 and
 // v20.2.4) turned into the utime_t its caller builds: a date strptime takes
@@ -248,18 +229,19 @@ func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
 	return clock, gmtoff, nsec, true
 }
 
-// scanSecUsec is sscanf(date, "%d.%d", &sec, &usec) == 2: each number as
-// glibc's scanf reads a %d, through strtol and then cut to an int.
+// scanSecUsec is sscanf(date, "%d.%d", &sec, &usec) == 2.
 func scanSecUsec(s string) (sec, usec int32, ok bool) {
-	n := scanCNumber(s)
-	if n.digits == 0 || n.end >= len(s) || s[n.end] != '.' {
+	sec, rest, ok := rgwtext.ScanInt(s)
+	if !ok {
 		return 0, 0, false
 	}
-	m := scanCNumber(s[n.end+1:])
-	if m.digits == 0 {
+	if rest, ok = strings.CutPrefix(rest, "."); !ok {
 		return 0, 0, false
 	}
-	return int32(atoll(s[:n.end])), int32(atoll(s[n.end+1:][:m.end])), true //nolint:gosec // scanf stores strtol's long in an int
+	if usec, _, ok = rgwtext.ScanInt(rest); !ok {
+		return 0, 0, false
+	}
+	return sec, usec, true
 }
 
 // utimeTime is utime_t(epoch, nsec).to_real_time(): the epoch cut to 32-bit

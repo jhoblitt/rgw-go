@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"math"
 	"slices"
 	"strings"
 
@@ -100,34 +99,28 @@ func (a Args) Bool(name string, def bool) (v, present bool, err error) {
 // Int64 is RESTArgs::get_int64 over stringtoll (rgw_string.h:38-52 at
 // v19.2.6 and v20.2.4): strtoll, refusing LLONG_MAX and trailing text.
 func (a Args) Int64(name string, def int64) (v int64, present bool, err error) {
-	return read(a, name, def, stringToLL)
+	return read(a, name, def, rgwtext.StringToLL)
 }
 
 // Int32 is RESTArgs::get_int32 over stringtol (rgw_string.h:70-84): strtol's
 // 64-bit long, refusing LONG_MAX and trailing text, then truncated to 32
 // bits.
 func (a Args) Int32(name string, def int32) (v int32, present bool, err error) {
-	return read(a, name, def, func(s string) (int32, error) {
-		n, err := stringToLL(s)
-		return int32(n), err //nolint:gosec // stringtol casts its long to int32_t
-	})
+	return read(a, name, def, rgwtext.StringToL)
 }
 
 // Uint64 is RESTArgs::get_uint64 over stringtoull (rgw_string.h:54-68):
 // strtoull, which negates a negative value, refusing ULLONG_MAX and
 // trailing text.
 func (a Args) Uint64(name string, def uint64) (v uint64, present bool, err error) {
-	return read(a, name, def, stringToULL)
+	return read(a, name, def, rgwtext.StringToULL)
 }
 
 // Uint32 is RESTArgs::get_uint32 over stringtoul (rgw_string.h:86-100):
 // strtoul's 64-bit unsigned long, refusing ULONG_MAX and trailing text, then
 // truncated to 32 bits.
 func (a Args) Uint32(name string, def uint32) (v uint32, present bool, err error) {
-	return read(a, name, def, func(s string) (uint32, error) {
-		n, err := stringToULL(s)
-		return uint32(n), err //nolint:gosec // stringtoul casts its unsigned long to uint32_t
-	})
+	return read(a, name, def, rgwtext.StringToUL)
 }
 
 // Epoch is RESTArgs::get_epoch over utime_t::parse_date (rgw_rest.cc:982-1000
@@ -135,24 +128,18 @@ func (a Args) Uint32(name string, def uint32) (v uint32, present bool, err error
 // a date with a time, or "<sec>.<usec>"; anything else is
 // ErrInvalidArgument.
 func (a Args) Epoch(name string, def uint64) (v uint64, present bool, err error) {
-	return read(a, name, def, func(s string) (uint64, error) {
-		n, ok := parseDate(s)
-		if !ok {
-			return 0, op.ErrInvalidArgument
-		}
-		return n, nil
-	})
+	return read(a, name, def, parseDate)
 }
 
 // read is the shape the numeric RESTArgs readers share: def when the
-// argument is absent, and def with conv's error when conv refuses it.
-func read[T any](a Args, name string, def T, conv func(string) (T, error)) (v T, present bool, err error) {
+// argument is absent, and def with ErrInvalidArgument when conv refuses it.
+func read[T any](a Args, name string, def T, conv func(string) (T, bool)) (v T, present bool, err error) {
 	s, ok := a.vals[name]
 	if !ok {
 		return def, false, nil
 	}
-	if v, err = conv(s); err != nil {
-		return def, true, err
+	if v, ok = conv(s); !ok {
+		return def, true, op.ErrInvalidArgument
 	}
 	return v, true, nil
 }
@@ -169,83 +156,6 @@ func lowerASCII(s string) string {
 		}
 	}
 	return string(b)
-}
-
-// strtoMagnitude reads s as glibc's strtoll and strtoull do in base 10:
-// leading white space, an optional sign, then digits. It reports the
-// magnitude, saturated, whether it overflowed, and whether the conversion
-// consumed the whole C string, as `*end == '\0'` asks: true for an empty
-// string, which converts to 0, and false for one with no digits.
-func strtoMagnitude(s string) (neg bool, mag uint64, overflow, whole bool) {
-	s = rgwtext.CString(s)
-	i := 0
-	for i < len(s) && strings.IndexByte(" \t\n\v\f\r", s[i]) >= 0 {
-		i++
-	}
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		neg = s[i] == '-'
-		i++
-	}
-	start := i
-	for ; i < len(s) && '0' <= s[i] && s[i] <= '9'; i++ {
-		d := uint64(s[i] - '0')
-		if mag > (math.MaxUint64-d)/10 {
-			overflow = true
-			mag = math.MaxUint64
-			continue
-		}
-		if !overflow {
-			mag = mag*10 + d
-		}
-	}
-	if i == start {
-		return false, 0, false, s == ""
-	}
-	return neg, mag, overflow, i == len(s)
-}
-
-// stringToLL is stringtoll: strtoll's value, ErrInvalidArgument for
-// LLONG_MAX, the value an overflow saturates to, or trailing text.
-func stringToLL(s string) (int64, error) {
-	neg, mag, overflow, whole := strtoMagnitude(s)
-	v := strtoll(neg, mag, overflow)
-	if v == math.MaxInt64 || !whole {
-		return 0, op.ErrInvalidArgument
-	}
-	return v, nil
-}
-
-// strtoll is the value strtoll gives a magnitude strtoMagnitude read,
-// saturated at the int64 bounds.
-func strtoll(neg bool, mag uint64, overflow bool) int64 {
-	switch {
-	case neg && (overflow || mag > 1<<63):
-		return math.MinInt64
-	case neg:
-		return -int64(mag-1) - 1 //nolint:gosec // mag is at most 1<<63 here
-	case overflow || mag > math.MaxInt64:
-		return math.MaxInt64
-	default:
-		return int64(mag) //nolint:gosec // mag is at most MaxInt64 here
-	}
-}
-
-// stringToULL is stringtoull: strtoull's value, a negative one negated,
-// ErrInvalidArgument for ULLONG_MAX, the value an overflow saturates to, or
-// trailing text.
-func stringToULL(s string) (uint64, error) {
-	neg, mag, overflow, whole := strtoMagnitude(s)
-	v := mag
-	switch {
-	case overflow:
-		v = math.MaxUint64
-	case neg:
-		v = -mag
-	}
-	if v == math.MaxUint64 || !whole {
-		return 0, op.ErrInvalidArgument
-	}
-	return v, nil
 }
 
 // parseDate is utime_t::parse_date's epoch (src/include/utime.h:397-500 at
@@ -301,37 +211,17 @@ func timeFormat(p string) string {
 // secUsec is sscanf(s, "%d.%d", &sec, &usec) == 2, then
 // internal_timegm(gmtime_r(sec)), which is sec.
 func secUsec(s string) (uint64, bool) {
-	sec, rest, ok := scanInt(s)
+	sec, rest, ok := rgwtext.ScanInt(s)
 	if !ok {
 		return 0, false
 	}
 	if rest, ok = strings.CutPrefix(rest, "."); !ok {
 		return 0, false
 	}
-	if _, _, ok = scanInt(rest); !ok {
+	if _, _, ok = rgwtext.ScanInt(rest); !ok {
 		return 0, false
 	}
 	return uint64(sec), true //nolint:gosec // radosgw casts time_t to uint64_t
-}
-
-// scanInt is glibc sscanf's %d: white space, an optional sign and at least
-// one digit, converted as strtol converts them, saturating at the bounds of
-// a 64-bit long, then stored into an int.
-func scanInt(s string) (n int64, rest string, ok bool) {
-	s = strings.TrimLeft(s, " \t\n\v\f\r")
-	i := 0
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		i++
-	}
-	start := i
-	for i < len(s) && '0' <= s[i] && s[i] <= '9' {
-		i++
-	}
-	if i == start {
-		return 0, s, false
-	}
-	neg, mag, overflow, _ := strtoMagnitude(s[:i])
-	return int64(int32(strtoll(neg, mag, overflow))), s[i:], true //nolint:gosec // %d stores an int
 }
 
 // Format is RGWFormat for the admin API.

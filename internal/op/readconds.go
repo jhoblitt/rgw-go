@@ -50,13 +50,13 @@ func ParseRange(value string) (ofs, end int64, partial bool, err error) {
 		return 0, -1, false, ErrInvalidRange
 	}
 	if endStr != "" {
-		end = atoll(endStr)
+		end = rgwtext.Atoll(endStr)
 		if end < 0 {
 			return 0, -1, false, ErrInvalidRange
 		}
 	}
 	if ofsStr != "" {
-		ofs = atoll(ofsStr)
+		ofs = rgwtext.Atoll(ofsStr)
 	} else {
 		// RFC 2616's suffix-byte-range-spec. radosgw negates whatever end
 		// holds, so "bytes=-" takes its initial -1 and starts at byte 1.
@@ -205,77 +205,6 @@ func Unquote(s string) string {
 	return s[1 : n-1]
 }
 
-// cNumber is what glibc's strtoll and strtoul scan in base 10: leading
-// whitespace, an optional sign, then digits. v is the digits' value, saturated
-// at math.MaxUint64 when overflow is set; digits is how many there were, and
-// end the index past them.
-type cNumber struct {
-	v             uint64
-	neg, overflow bool
-	digits, end   int
-}
-
-func scanCNumber(s string) cNumber {
-	var n cNumber
-	i := 0
-	for i < len(s) && isCSpace(s[i]) {
-		i++
-	}
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		n.neg = s[i] == '-'
-		i++
-	}
-	for ; i < len(s) && isCDigit(s[i]); i++ {
-		n.digits++
-		d := uint64(s[i] - '0')
-		if n.overflow || n.v > (math.MaxUint64-d)/10 {
-			n.v, n.overflow = math.MaxUint64, true
-			continue
-		}
-		n.v = n.v*10 + d
-	}
-	n.end = i
-	return n
-}
-
-// atoll is glibc's atoll, strtoll in base 10: 0 when there are no digits,
-// saturating at the int64 bounds.
-func atoll(s string) int64 {
-	n := scanCNumber(s)
-	switch {
-	case n.neg && n.v > math.MaxInt64:
-		return math.MinInt64
-	case n.neg:
-		return -int64(n.v) //nolint:gosec // n.v <= math.MaxInt64 here
-	case n.v > math.MaxInt64:
-		return math.MaxInt64
-	default:
-		return int64(n.v) //nolint:gosec // n.v <= math.MaxInt64 here
-	}
-}
-
-// strtoul is glibc's strtoul in base 10 as radosgw's stringtoul calls it
-// (rgw_string.h:86-99 at v19.2.6 and v20.2.4): a minus negates in unsigned
-// arithmetic, and the rest of the string must be digits. ok is false where
-// stringtoul refuses: a byte after the digits, a non-empty string with no
-// digits, or a result of ULONG_MAX, which an overflow saturates to. The
-// empty string is 0.
-func strtoul(s string) (v uint64, ok bool) {
-	n := scanCNumber(s)
-	switch {
-	case n.digits == 0:
-		// No digits: strtoul leaves its end pointer at the string's start.
-		return 0, s == ""
-	case n.end < len(s), n.overflow:
-		return 0, false
-	}
-	v = n.v
-	if n.neg {
-		v = -v
-	}
-	return v, v != math.MaxUint64
-}
-
 // fromBase64 is rgw::from_base64 (rgw_b64.h:61-80 at v19.2.6 and v20.2.4),
 // which decodes the SSE-C key headers: the trailing '=' are dropped, and
 // boost's decoder skips whitespace, reads any other '=' as a zero and drops
@@ -401,12 +330,12 @@ func parseISO8601(s string) (cTM, uint32, bool) {
 		return cTM{}, 0, false
 	}
 	frac := str[1 : len(str)-1]
-	v, ok := strtoul(frac)
+	v, ok := rgwtext.StringToUL(frac)
 	if !ok {
 		return cTM{}, 0, false
 	}
 	digits := min(len(frac), 9)
-	return tm, uint32(uint64(uint32(v)) * isoNanoScale[digits]), true //nolint:gosec // radosgw truncates both to 32 bits
+	return tm, uint32(uint64(v) * isoNanoScale[digits]), true //nolint:gosec // radosgw truncates the product to 32 bits
 }
 
 var (

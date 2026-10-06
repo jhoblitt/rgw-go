@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 func hasPrefixFold(s, prefix string) bool {
@@ -202,7 +204,7 @@ func ParseMaskedIP(s string) (MaskedIP, bool) {
 	if !slash {
 		m.Prefix = m.width()
 	} else {
-		v, n := strtoul(prefix)
+		v, n, _ := rgwtext.Strtoull(prefix)
 		if n < len(prefix) && prefix[n] != 0 {
 			return MaskedIP{}, false
 		}
@@ -389,38 +391,6 @@ func inetPton6(s string) (a [16]byte, ok bool) {
 		return a, false
 	}
 	return tmp, true
-}
-
-// strtoul is glibc's strtoul(3) in base 10: leading whitespace, an optional
-// sign, a negative value negated modulo 2^64, ULONG_MAX past it. n is the
-// bytes consumed, 0 when there are no digits.
-func strtoul(s string) (v uint64, n int) {
-	i := 0
-	for i < len(s) && isCSpace(s[i]) {
-		i++
-	}
-	neg := false
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		neg = s[i] == '-'
-		i++
-	}
-	start, overflow := i, false
-	for ; i < len(s) && isDigit(s[i]); i++ {
-		d := uint64(s[i] - '0')
-		if v > (math.MaxUint64-d)/10 {
-			overflow = true
-		}
-		v = v*10 + d
-	}
-	switch {
-	case i == start:
-		return 0, 0
-	case overflow:
-		return math.MaxUint64, i
-	case neg:
-		return -v, i
-	}
-	return v, i
 }
 
 // strtod is glibc's strtod(3) in the C locale, as std::stod calls it: f is

@@ -56,7 +56,7 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 		if expires == "" {
 			return nil, fmt.Errorf("%w: presigned url without Expires", op.ErrAccessDenied)
 		}
-		if now.Unix() >= atoll(expires) {
+		if now.Unix() >= rgwtext.Atoll(expires) {
 			return nil, fmt.Errorf("%w: presigned url expired", op.ErrAccessDenied)
 		}
 		if tok, ok := rv.param("x-amz-security-token"); ok && tok == "" {

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"math"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -46,17 +45,6 @@ var _ = Describe("radosgw encodings", func() {
 		Expect(isBase64Charset("rL0Y20zC+Fzt72VPzMSk2A=!")).To(BeFalse(), "'!' is outside the charset")
 		Expect(isBase64Charset("rL0Y 20zC\t+Fzt")).To(BeTrue(), "isspace is part of is_base64_for_content_md5")
 	})
-
-	DescribeTable("atoll",
-		func(in string, want int64) { Expect(atoll(in)).To(Equal(want), "%q", in) },
-		Entry("digits", "604800", int64(604800)),
-		Entry("trailing junk", "300abc", int64(300)),
-		Entry("leading space and sign", "  -5", int64(-5)),
-		Entry("no digits", "abc", int64(0)),
-		Entry("empty", "", int64(0)),
-		Entry("overflow saturates as strtoll does", "99999999999999999999", int64(math.MaxInt64)),
-		Entry("negative overflow saturates", "-99999999999999999999", int64(math.MinInt64)),
-	)
 
 	DescribeTable("parseISO8601Basic is parse_iso8601 without the extended format",
 		func(in string, ok bool, want time.Time) {
