@@ -21,6 +21,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/admin"
 	"github.com/jhoblitt/rgw-go/internal/auth"
+	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/frontend"
@@ -246,7 +247,11 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	}
 	zone, zonegroup := store.Zone(), store.ZoneGroup()
 	env := store.Env()
-	env.Authz = op.OwnerOnly{}
+	authzCfg, err := authz.ConfigFrom(conf, store.Release())
+	if err != nil {
+		return err
+	}
+	env.Authz = authz.New(authzCfg)
 	env.Metrics = reg
 	env.HostID = op.HostID(cluster.InstanceID(), zone.Name, zonegroup.Name)
 	s3cfg, err := s3Config(conf, store, cluster.InstanceID())
