@@ -30,12 +30,21 @@ type errorDocument struct {
 // r.Bucket, which radosgw knows only once postauth_init has run. A status
 // rgw_err::is_err does not count as an error, 200-399 (rgw_common.cc:203-207
 // at v19.2.6 and v20.2.4), gets no document, as end_header then dumps none.
-// An InternalError or UnknownError is logged with its cause under ctx.
+// An InternalError or UnknownError is logged under ctx with its code and its
+// cause, so err must carry no request header value: it is an error the
+// handler or its ops built, never an authenticator's, which refuseAuth
+// answers instead.
 func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	e := op.AsError(err)
 	if errors.Is(e, op.ErrInternalError) || errors.Is(e, op.ErrUnknown) {
-		slog.ErrorContext(ctx, "request failed", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.ErrorContext(ctx, "request failed", slog.String("request_id", r.ID),
+			slog.String("code", e.Code), slog.Any("error", err))
 	}
+	writeErrorDocument(w, r, e)
+}
+
+// writeErrorDocument renders e as WriteError's response.
+func writeErrorDocument(w http.ResponseWriter, r *op.Request, e *op.Error) {
 	if 200 <= e.Status && e.Status <= 399 {
 		SetCommonHeaders(w, r)
 		w.WriteHeader(e.Status)
