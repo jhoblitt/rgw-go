@@ -22,7 +22,8 @@ import (
 // account, which must load or the request is EACCES; the tenant becomes the
 // named one's and the identity stays the system user's
 // (SysReqApplier::load_acct_info, rgw_auth_filters.h:282-317 at v19.2.6,
-// :304-345 at v20.2.4; docs/exclusions.md has Tentacle's user record).
+// :304-345 at v20.2.4; docs/exclusions.md has Tentacle's user record). A
+// failure is logged by its code alone, without the rgwx-uid.
 func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRecord, accessKey string, key meta.AccessKey, account *meta.AccountInfo) (op.Identity, error) {
 	info := rec.Info
 	id := op.Identity{
@@ -49,16 +50,17 @@ func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRe
 	if owner.User == nil {
 		acct, err := v.loadAccount(ctx, owner.Account)
 		if err != nil {
-			return op.Identity{}, fmt.Errorf("%w: rgwx-uid", err)
+			slog.ErrorContext(ctx, "rgwx-uid account lookup failed", slog.String("code", errorCode(err)))
+			return op.Identity{}, fmt.Errorf("%w: the rgwx-uid account does not load", op.ErrAccessDenied)
 		}
 		id.Owner, id.Tenant = owner, acct.Tenant
 		return id, nil
 	}
 	if _, err := v.creds.GetUser(ctx, *owner.User); err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {
-			slog.ErrorContext(ctx, "rgwx-uid user lookup failed", slog.String("user_id", uid), slog.Any("error", err))
+			slog.ErrorContext(ctx, "rgwx-uid user lookup failed", slog.String("code", errorCode(err)))
 		}
-		return op.Identity{}, fmt.Errorf("%w: rgwx-uid %s does not load", op.ErrAccessDenied, uid)
+		return op.Identity{}, fmt.Errorf("%w: the rgwx-uid user does not load", op.ErrAccessDenied)
 	}
 	id.Owner, id.Tenant = owner, owner.User.Tenant
 	return id, nil

@@ -138,43 +138,60 @@ func (v *Verifier) parseAuthData(rv *requestView, ver version, rt route, payload
 // account user. Any lookup failure is ERR_INVALID_ACCESS_KEY. radosgw indexes
 // only active keys, so an inactive one fails the lookup; rgw-go checks the
 // flag after it, which keeps the answer whatever a store indexes. Stored
-// identity policies are decoded at authorization, not here.
+// identity policies are decoded at authorization, not here. Neither its
+// errors nor its log name the access key, which is the request's.
 func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord, meta.AccessKey, *meta.AccountInfo, error) {
 	rec, err := v.creds.GetUserByAccessKey(ctx, accessKey)
 	if err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {
-			slog.ErrorContext(ctx, "access key lookup failed", slog.String("access_key", accessKey), slog.Any("error", err))
+			slog.ErrorContext(ctx, "access key lookup failed", slog.String("code", errorCode(err)))
 		}
-		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: %s", op.ErrInvalidAccessKeyID, accessKey)
+		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key does not load", op.ErrInvalidAccessKeyID)
 	}
 	key, ok := rec.Info.AccessKeys[accessKey]
 	if !ok {
-		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: access key %s not in its user's record", op.ErrAccessDenied, accessKey)
+		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key is not in its user's record", op.ErrAccessDenied)
 	}
 	if !key.Active {
-		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: access key %s is inactive", op.ErrInvalidAccessKeyID, accessKey)
+		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key is inactive", op.ErrInvalidAccessKeyID)
 	}
 	var account *meta.AccountInfo
 	if rec.Info.AccountID != "" {
 		if account, err = v.loadAccount(ctx, rec.Info.AccountID); err != nil {
-			return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: account of user %s", err, rec.Info.UserID)
+			slog.ErrorContext(ctx, "account lookup failed", slog.String("account_id", rec.Info.AccountID), slog.Any("error", err))
+			return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the account of user %s does not load", op.ErrAccessDenied, rec.Info.UserID)
 		}
 	}
 	return rec, key, account, nil
 }
 
-// loadAccount loads account id, which any failure, a missing account store
-// included, turns into ErrAccessDenied, logged
-// (load_account_and_policies, rgw_auth.cc:143-155 at v19.2.6 and v20.2.4).
+var errNoAccountStore = errors.New("no account store")
+
+// loadAccount loads account id. A failure, a missing account store
+// included, is the caller's to log and to answer with ErrAccessDenied
+// (load_account_and_policies, rgw_auth.cc:143-155 at v19.2.6 and v20.2.4),
+// as only the caller knows whether id is the request's rgwx-uid.
 func (v *Verifier) loadAccount(ctx context.Context, id string) (*meta.AccountInfo, error) {
 	if v.accounts == nil {
-		slog.ErrorContext(ctx, "account lookup unavailable", slog.String("account_id", id))
-		return nil, fmt.Errorf("%w: no account store for account %s", op.ErrAccessDenied, id)
+		return nil, errNoAccountStore
 	}
 	rec, err := v.accounts.GetAccount(ctx, id)
 	if err != nil {
-		slog.ErrorContext(ctx, "account lookup failed", slog.String("account_id", id), slog.Any("error", err))
-		return nil, fmt.Errorf("%w: account %s does not load", op.ErrAccessDenied, id)
+		return nil, err
 	}
 	return &rec.Info, nil
+}
+
+// errorCode is the code of the S3 error err maps to, for a log that must not
+// carry err's text: a store's error names the object it read, and the object
+// a lookup by the request's access key or rgwx-uid reads is named by that
+// value. The code is the sentinel's that errors.Is matches, so nothing of err
+// flows into the log.
+func errorCode(err error) string {
+	for _, s := range op.Errors() {
+		if errors.Is(err, s) {
+			return s.Code
+		}
+	}
+	return op.ErrInternalError.Code
 }
