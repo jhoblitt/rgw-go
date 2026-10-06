@@ -2553,6 +2553,20 @@ does the following.
   removed since answers 404 NoSuchKey, as a copy of a missing source does.
   Either way the newer object, or the deletion, stands, where radosgw
   answers 200.
+- **A copy is labeled with its destination's storage class on both
+  releases.** rgw-go drops the source's `user.rgw.storage_class` from the
+  attrs a copy carries over, on both releases, as Tentacle's radosgw does
+  (`driver/rados/rgw_rados.cc:5028` at v20.2.4), so the copy's head write
+  labels it from its destination placement alone. Squid's radosgw keeps
+  the attr (`:4765-4787` at v19.2.6) and replaces it only with a
+  non-empty class (`:3258-3262`), so a copy into a placement's default
+  class keeps its source's label, such as COLD, on data in the STANDARD
+  pool, and GetObject and HeadObject report it
+  (`docs/ceph-upstream-bugs.md`, "[Squid labels a copy to another storage
+  class with its source's
+  class](ceph-upstream-bugs.md#squid-labels-a-copy-to-another-storage-class-with-its-sources-class)").
+  On a Squid cluster rgw-go reports STANDARD for such a copy where
+  radosgw reports the source's class.
 
 ### Bucket index differences
 

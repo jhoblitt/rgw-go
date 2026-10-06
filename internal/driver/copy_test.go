@@ -2,6 +2,7 @@ package driver_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -342,27 +343,81 @@ var _ = Describe("CopyObject", func() {
 		Entry("Tentacle, which would decrypt it", denc.Tentacle),
 	)
 
-	DescribeTable("carries the source's storage class attr to another class on Squid only",
-		func(ctx SpecContext, rel denc.Release, want bool) {
+	// classCase is a copy between storage classes: a 5 MiB source PUT under
+	// srcClass, its head relabeled label when that is set, copied under
+	// reqClass, with REPLACE when replace; shared is whether the copy shares
+	// the source's tails, and want is the destination's storage class attr,
+	// empty for none, which GetObject and HeadObject report as STANDARD.
+	type classCase struct {
+		srcClass, label, reqClass string
+		replace, shared           bool
+		want                      string
+	}
+	DescribeTable("labels a copy with its destination placement's storage class on both releases",
+		func(ctx SpecContext, rel denc.Release, cc classCase) {
 			openStore(ctx, rel, nil)
-			coldKey := meta.ObjKey{Name: "cold"}
-			putObject(ctx, coldKey, bytes.Repeat([]byte("c"), 5<<20), op.PutParams{Tag: "tx-cold", StorageClass: "COLD"})
-			st, err := s.PrefetchObject(ctx, rec, coldKey)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrStorageClass, []byte("COLD")))
-			s.SetRandForTest(fixedRand("THIRDTHIRDTHIRDTHIRDTHIRDTHIRD3"))
-			_, err = s.CopyObject(ctx, st, rec, dstKey, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
-			Expect(err).NotTo(HaveOccurred())
-			head := c.Object(testDataPool, "", dstOID)
-			Expect(head.Data).To(Equal(bytes.Repeat([]byte("c"), 4<<20)), "copy_data into the default class keeps a head chunk")
-			if want {
-				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrStorageClass, []byte("COLD")))
-			} else {
-				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrStorageClass))
+			key := meta.ObjKey{Name: "classed"}
+			putObject(ctx, key, bytes.Repeat([]byte("c"), 5<<20), op.PutParams{Tag: "tx-classed", StorageClass: cc.srcClass})
+			if cc.label != "" {
+				c.Object(testDataPool, "", putBucketID+"_classed").Xattrs[meta.AttrStorageClass] = []byte(cc.label)
 			}
+			st, err := s.PrefetchObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			if label := cmp.Or(cc.label, cc.srcClass); label != "" {
+				Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrStorageClass, []byte(label)), "the source's label")
+			}
+			s.SetRandForTest(fixedRand("THIRDTHIRDTHIRDTHIRDTHIRDTHIRD3"))
+			_, err = s.CopyObject(ctx, st, rec, dstKey, op.CopyParams{
+				Attrs: reqAttrs(), ReplaceAttrs: cc.replace, StorageClass: cc.reqClass, Tag: "tx-copy",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			srcTailPool := testDataPool
+			if cc.srcClass != "" {
+				srcTailPool = coldPool
+			}
+			if cc.shared {
+				Expect(refsOf(c, srcTailPool, tailOID(secondPrefix, 1)).Refs).To(HaveKey("tx-copy\x00"), "the copy shares the source's tails")
+			} else {
+				Expect(c.Object(srcTailPool, "", tailOID(secondPrefix, 1)).Xattrs).NotTo(HaveKey(refcount.XattrName), "the copy streams its data")
+			}
+			head := c.Object(testDataPool, "", dstOID)
+			dst, err := s.StatObject(ctx, rec, dstKey)
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			en, ok := c.Entry(rookIndexPool, "", shard, "dst")
+			Expect(ok).To(BeTrue())
+			if cc.want == "" {
+				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrStorageClass), "no label: STANDARD")
+			} else {
+				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrStorageClass, []byte(cc.want)))
+			}
+			Expect(dst.StorageClass).To(Equal(cc.want), "the class GetObject and HeadObject report")
+			Expect(en.Meta.StorageClass).To(Equal(cc.want), "the class a listing reports")
 		},
-		Entry("Squid keeps it", denc.Squid, true),
-		Entry("Tentacle drops it, v20.2.4 rgw_rados.cc:5028", denc.Tentacle, false),
+		Entry("Squid: COLD to the default class reports STANDARD, where its radosgw keeps COLD",
+			denc.Squid, classCase{srcClass: "COLD"}),
+		Entry("Tentacle: COLD to the default class reports STANDARD, v20.2.4 rgw_rados.cc:5028",
+			denc.Tentacle, classCase{srcClass: "COLD"}),
+		Entry("Squid: COLD to the default class with REPLACE reports STANDARD",
+			denc.Squid, classCase{srcClass: "COLD", replace: true}),
+		Entry("Tentacle: COLD to the default class with REPLACE reports STANDARD",
+			denc.Tentacle, classCase{srcClass: "COLD", replace: true}),
+		Entry("Squid: COLD to an explicit STANDARD is labeled STANDARD",
+			denc.Squid, classCase{srcClass: "COLD", reqClass: "STANDARD", want: "STANDARD"}),
+		Entry("Tentacle: COLD to an explicit STANDARD is labeled STANDARD",
+			denc.Tentacle, classCase{srcClass: "COLD", reqClass: "STANDARD", want: "STANDARD"}),
+		Entry("Squid: a STANDARD source labeled COLD shares its tails and drops the label",
+			denc.Squid, classCase{label: "COLD", shared: true}),
+		Entry("Tentacle: a STANDARD source labeled COLD shares its tails and drops the label",
+			denc.Tentacle, classCase{label: "COLD", shared: true}),
+		Entry("Squid: STANDARD to COLD reports COLD",
+			denc.Squid, classCase{reqClass: "COLD", want: "COLD"}),
+		Entry("Tentacle: STANDARD to COLD reports COLD",
+			denc.Tentacle, classCase{reqClass: "COLD", want: "COLD"}),
+		Entry("Squid: COLD to COLD shares its tails and stays COLD",
+			denc.Squid, classCase{srcClass: "COLD", reqClass: "COLD", shared: true, want: "COLD"}),
+		Entry("Tentacle: COLD to COLD shares its tails and stays COLD",
+			denc.Tentacle, classCase{srcClass: "COLD", reqClass: "COLD", shared: true, want: "COLD"}),
 	)
 
 	It("drops the references it took when a tail is gone, and keeps the tails' own", func(ctx SpecContext) {
