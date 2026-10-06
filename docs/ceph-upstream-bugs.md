@@ -191,6 +191,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
 | [radosgw's parse_date writes a NUL one byte past its format buffer](#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer) | pending | pending | ✓ |
 | [radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload) | pending | pending | ✓ |
+| [RESTArgs::get_string url-decodes an admin argument a second time](#restargsget_string-url-decodes-an-admin-argument-a-second-time) | pending | pending |  |
+| [radosgw's integer argument readers refuse their type's maximum and truncate to 32 bits](#radosgws-integer-argument-readers-refuse-their-types-maximum-and-truncate-to-32-bits) | pending | pending |  |
+| [HTMLFormatter formats a long value from an ended va_list](#htmlformatter-formats-a-long-value-from-an-ended-va_list) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -7909,22 +7912,44 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, an out-of-bounds stack write. Unreproduced: derived from
   the source.
-- **Evidence:** `utime_t::parse_date` (`include/utime.h:397-502` at v19.2.6
-  and v20.2.4; `include/utime.cc:163` on main, 7ed73efc1be) reads the time
-  after a date by copying at most 31 bytes of it into `char fmt[32]` and
-  rewriting that into a `strptime` format (`include/utime.h:413-437`). When
-  the ninth byte is `.`, it skips the digits that follow, from `fmt + 9`;
-  a `-` or `+` there becomes `%z` with `*q = '%'; *(q+1) = 'z';
-  *(q+2) = 0;`. A sign at `fmt[30]` therefore writes the NUL to `fmt[32]`,
-  one byte past the array.
+- **Evidence:** paths are under `src/`.
+  - `utime_t::parse_date` (`include/utime.h:397-502` at v19.2.6 and
+    v20.2.4, unchanged between them; `include/utime.cc:163` on main
+    7ed73efc1be, the buffer at `:179-203`) reads the time after a date's ' '
+    or 'T' with a strptime format built from the text itself in
+    `char fmt[32] = {0}`: `strncpy(fmt, p, sizeof(fmt) - 1)`, then `%H:%M`
+    and `%S` written over its first eight bytes (`include/utime.h:413-437`).
+    When the ninth byte is '.', `q` walks the digits after it, from
+    `fmt + 9`, and a '+' or '-' where they end becomes `%z` through
+    `*q = '%'; *(q+1) = 'z'; *(q+2) = 0;`.
+  - A time text of "HH:MM:SS." and 21 digits then a sign puts the sign at
+    `fmt[30]`, so `*(q+2) = 0` writes `fmt[32]`, one byte past the array,
+    before strptime runs, so no zone digits are needed. A shorter digit run
+    stays inside it; `fmt[31]` is always the NUL strncpy left, so no longer
+    run reaches a sign.
 - **Trigger:** a time with a `.`, 21 digits and a sign, such as
-  `2026-01-01T01:02:03.012345678901234567890+`. radosgw's DeleteObject
-  parses `x-amz-delete-if-unmodified-since` with it while it reads its
-  parameters, before it authorizes (`RGWDeleteObj_ObjStore_S3::get_params`,
-  `rgw_rest_s3.cc:3435-3444` at v19.2.6, `:3696-3705` at v20.2.4), so any
-  requester who can send a DeleteObject reaches it, an anonymous one
-  included. Every other `parse_date` caller, `utime_t::parse` and the JSON
-  decoders of `ceph_json.cc` among them, reaches it with its own input.
+  `2026-01-01T01:02:03.012345678901234567890+`. Request text reaches
+  `parse_date` through:
+  - the admin API's date arguments, `RESTArgs::get_epoch` and `get_time`
+    (`rgw/rgw_rest.cc:973` and `:995` at v19.2.6, `:978` and `:1000` at
+    v20.2.4);
+  - the S3 usage request's dates (`rgw/rgw_op.cc:2618-2626` at v19.2.6,
+    `:2850-2858` at v20.2.4);
+  - DeleteObject's `x-amz-delete-if-unmodified-since`
+    (`RGWDeleteObj_ObjStore_S3::get_params`, `rgw/rgw_rest_s3.cc:3435-3444`
+    at v19.2.6, `:3696-3705` at v20.2.4), which
+    `RGWDeleteObj::init_processing` reads before any permission check
+    (`rgw/rgw_op.cc:5129-5136` at v19.2.6, `:5519` at v20.2.4), so any
+    requester who can send a DeleteObject reaches it, an anonymous one
+    included;
+  - every XML date the request documents decode (`rgw/rgw_xml.cc:421-445`
+    at both tags);
+  - the JSON decoders of a `utime_t` or `real_time`
+    (`common/ceph_json.cc:473-512` at both tags), which `PUT
+    /admin/metadata` reaches through the document's "mtime"
+    (`rgw/rgw_metadata.cc:530` at v19.2.6, `:325` at v20.2.4);
+  - `utime_t::parse` (`include/utime.h:504-512` at both tags), with its
+    callers' input.
 - **Impact:** one zero byte written past a stack array. What it overwrites
   depends on the compiler's frame layout. When it lands on the stack
   protector's canary it most likely changes nothing: glibc's canary keeps
@@ -7932,15 +7957,25 @@ Every new entry adds its row to this table, in document order.
   array reaches first. Otherwise it zeroes one byte of padding, or of
   another local of `parse_date`, such as `tm` or the low byte of the
   `subsec` pointer, whose effect is a wrong parse or, for the pointer, a
-  read through a corrupted address. Not observed.
-- **Releases:** every release checked: v19.2.6, v20.2.4 and main.
-- **rgw-go:** not affected; it parses such a value as the format radosgw
-  builds would read it (`internal/op/deleteobject.go`), and refuses a `%`
-  of the value's that reaches the format (`docs/exclusions.md`, "A delete
-  date with a `%` after its seconds is refused").
+  read through a corrupted address. The byte and its offset are fixed, so
+  a requester cannot steer the write. AddressSanitizer would report it.
+  Not observed.
+- **Releases:** every release checked: v19.2.6, v20.2.4 and main
+  7ed73efc1be.
+- **rgw-go:** not affected. Both of its ports read such a value as the
+  format radosgw builds would read it, with the terminator kept inside the
+  format: `parseDate` in `internal/admin/request.go`, over
+  `internal/strptime`, for the admin API's dates, and `parseDate` in
+  `internal/op/deleteobject.go` for DeleteObject's. Each refuses some `%`
+  conversions of the value that radosgw's format would run
+  (`docs/exclusions.md`, "A date whose time names a conversion rgw-go does
+  not run is refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, porting `parse_date`;
   derived from the source, not reproduced.
+- **Found:** phase 1 unit N, Task 3, 2026-10-05, transcribing `parse_date`
+  for the admin API's date arguments; derived from the source, not
+  reproduced.
 
 ## radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload
 
@@ -7982,3 +8017,78 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, auditing the write ops'
   public-access checks; derived from the source, not reproduced.
+
+## RESTArgs::get_string url-decodes an admin argument a second time
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWHTTPArgs::parse` url-decodes each query pair as a query, so `%2B`
+    is already '+' and `%25` already '%' in the value it stores
+    (`rgw_common.cc:848-898` at v19.2.6).
+  - `RESTArgs::get_string`, which the admin ops read their string
+    arguments through, decodes that value again with `in_query` set
+    (`rgw_rest.cc:854-871` at v19.2.6, `:859-876` at v20.2.4).
+  - A value the client encoded once is decoded twice: `uid=a%2Bb` reaches
+    the op as `a b`, and `uid=a%2525b` as `a%b`.
+- **Impact:** an admin client that encodes its arguments once, as go-ceph's
+  rgw/admin package does through `url.Values`, cannot name a user, bucket
+  or key whose name holds '+' or '%': the op receives another name, and a
+  '%' followed by text that is not hex empties the value.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** mirrors it (`Args.String`, `internal/admin/request.go`), so
+  an admin request means the same with either gateway; `Args.Get` keeps
+  the single decoding the handlers' own `args.get` calls see.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 3, 2026-10-05, transcribing `RESTArgs`;
+  derived from the source, not reproduced.
+
+## radosgw's integer argument readers refuse their type's maximum and truncate to 32 bits
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** `stringtoll`, `stringtoull`, `stringtol` and `stringtoul`
+  (`src/rgw/rgw_string.h:38-100` at v19.2.6 and v20.2.4, unchanged), which
+  `RESTArgs::get_int64`, `get_uint64`, `get_int32` and `get_uint32` call
+  (`src/rgw/rgw_rest.cc:873-955` at v19.2.6):
+  - each takes its C conversion's saturated overflow value as the error
+    marker, so the type's own maximum, written out, is refused too:
+    `18446744073709551615` for a u64, `9223372036854775807` for an i64;
+  - `strtoull` negates a negative text, so `-2` reads as 2^64-2 and only
+    `-1` is refused;
+  - `stringtol` and `stringtoul` convert with the 64-bit `long` and
+    `unsigned long` and cast the result to 32 bits unchecked, so
+    `4294967296` reads as 0 and `4294967297` as 1;
+  - an empty value reads as 0, since `strtoll` leaves nothing behind it.
+- **Impact:** an admin argument out of its type's range is taken as
+  another value rather than refused, such as a 32-bit count of 2^32 read
+  as 0.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** mirrors it (`Args.Int64`, `Int32`, `Uint64` and `Uint32`,
+  `internal/admin/request.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 3, 2026-10-05, transcribing `RESTArgs`;
+  derived from the source, not reproduced.
+
+## HTMLFormatter formats a long value from an ended va_list
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
+  Unreproduced: derived from the source.
+- **Evidence:** `HTMLFormatter::dump_format_va` copies `ap` to `ap_copy`,
+  formats from `ap`, ends `ap_copy`, and, when the text did not fit its
+  1024-byte buffer, formats again from the ended `ap_copy`
+  (`src/common/HTMLFormatter.cc:141-168` at v19.2.6 and v20.2.4, unchanged).
+  JSONFormatter and XMLFormatter format from the copy first and keep `ap`
+  for the retry (`src/common/Formatter.cc:348-365` and `:544-571` at
+  v19.2.6). The C standard leaves a va_list used after `va_end` undefined.
+- **Impact:** a boolean or unquoted value of 1024 bytes or more in an HTML
+  response, which radosgw's admin API can write for a zone's tier
+  configuration, is formatted through undefined behaviour. With GCC on
+  x86-64 and AArch64, where `va_end` does nothing, the retry reads the
+  intact copy and the output is right.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected; `NewHTML` (`internal/formatter/html.go`) writes
+  the value whole.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 3, 2026-10-05, transcribing
+  HTMLFormatter; derived from the source, not reproduced.
