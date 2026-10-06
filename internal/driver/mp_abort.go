@@ -236,3 +236,62 @@ func abortErr(up *op.Upload, err error) error {
 	}
 	return err
 }
+
+// abortMultipartsPage is abort_multiparts' max, the uploads one listing
+// returns.
+const abortMultipartsPage = 1000
+
+// abortMultiparts is RadosBucket::abort_multiparts (rgw_sal_rados.cc:958-1013
+// at v19.2.6, :978-1033 at v20.2.4), which RadosBucket::remove runs for its
+// own zonegroup's bucket after the emptiness check (:395-400 at v19.2.6,
+// :412-417 at v20.2.4): the multipart namespace listed by meta object name,
+// MultipartMetaFilter, in pages of 1000 without a prefix or a delimiter,
+// each upload aborted through Abort. NoSuchUpload, which radosgw's -ENOENT
+// and -ERR_NO_SUCH_UPLOAD both reach here as, is logged and skipped; an
+// upload refused because its parts back the key's object is skipped with a
+// warning, and counted, as radosgw counts the abort it makes of it; any
+// other error is returned, and the bucket delete fails with it. aborted is
+// num_deleted, which counts the skipped uploads too. Each upload is aborted
+// once, where radosgw, whose list_multiparts appends each page to the one
+// vector, aborts every earlier page's uploads again on each later page
+// (docs/ceph-upstream-bugs.md, "radosgw's bucket delete aborts each page of
+// multipart uploads again on every later page"), and under the
+// RGWCompleteMultipart lock, which abort_multiparts does not take
+// (docs/exclusions.md, "A bucket delete aborts its multipart uploads under
+// their completion lock").
+func (s *Store) abortMultiparts(ctx context.Context, rec *op.BucketRecord) (aborted int, err error) {
+	var marker string
+	for {
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{NS: meta.NSMultipart, NameFilter: meta.IsMultipartMeta, Marker: marker, MaxKeys: abortMultipartsPage})
+		if err != nil {
+			return aborted, err
+		}
+		for i := range res.Entries {
+			e := &res.Entries[i]
+			key, id, ok := meta.ParseMultipartMeta(e.Key.Name)
+			if !ok {
+				continue
+			}
+			err := s.Abort(ctx, &op.Upload{ID: id, Bucket: rec, Key: meta.ObjKey{Name: key}})
+			switch {
+			case errors.Is(err, errUploadStands):
+				// radosgw's abort frees such an upload's parts and counts it.
+				slog.WarnContext(ctx, "not aborting a multipart upload whose parts back an object; its meta object and parts stay",
+					slog.String("bucket", rec.Info.Bucket.Name), slog.String("meta", e.Key.Name), slog.Any("error", err))
+			case errors.Is(err, op.ErrNoSuchUpload):
+				slog.InfoContext(ctx, "multipart upload not found for cleanup on bucket delete",
+					slog.String("bucket", rec.Info.Bucket.Name), slog.String("meta", e.Key.Name), slog.Any("error", err))
+			case err != nil:
+				return aborted, fmt.Errorf("aborting multipart upload %s of bucket %s: %w", e.Key.Name, rec.Info.Bucket.Name, err)
+			}
+			aborted++
+		}
+		if !res.Truncated {
+			return aborted, nil
+		}
+		if res.NextMarker == marker {
+			return aborted, fmt.Errorf("%w: listing the multipart uploads of bucket %s made no progress past %q", op.ErrInternalError, rec.Info.Bucket.Name, marker)
+		}
+		marker = res.NextMarker
+	}
+}

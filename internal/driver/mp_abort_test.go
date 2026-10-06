@@ -71,6 +71,13 @@ func ownLock(ctx context.Context, c *fakerados.Cluster, oid string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// multipartEntry is an index entry for name in the multipart namespace.
+func multipartEntry(name string) rgwcls.DirEntry {
+	e := entry(name, 0)
+	e.Key = rgwcls.ObjKey{Name: meta.ObjKey{Name: name, NS: meta.NSMultipart}.IndexKeyName()}
+	return e
+}
+
 var _ = Describe("Abort", func() {
 	var (
 		c       *fakerados.Cluster
@@ -677,5 +684,138 @@ var _ = Describe("Abort", func() {
 			partsIntact(up, 1)
 			Expect(allGCEntries(c)).To(BeEmpty())
 		})
+	})
+})
+
+var _ = Describe("DeleteBucket aborts in-flight uploads", func() {
+	const zgID = "zg-ceph-objectstore"
+	var (
+		c   *fakerados.Cluster
+		s   *driver.Store
+		rec *op.BucketRecord
+	)
+	create := func(ctx context.Context, zonegroup string) *op.BucketRecord {
+		GinkgoHelper()
+		r, err := s.CreateBucket(ctx, op.CreateBucketParams{
+			Name: "plain", Owner: initiator, Zonegroup: zonegroup,
+			Placement: meta.PlacementRule{Name: "default-placement"},
+			Attrs:     map[string][]byte{meta.AttrACL: {1}}, Exclusive: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return r
+	}
+	BeforeEach(func(ctx SpecContext) {
+		DeferCleanup(driver.CaptureLog(GinkgoWriter))
+		c = newPutCluster()
+		s = openPutStore(ctx, c, denc.Squid, nil, time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC))
+		DeferCleanup(s.Close)
+		rec = create(ctx, zgID)
+	})
+	AfterEach(func() { settle(s) })
+	upload := func(ctx context.Context, r *op.BucketRecord, name string, parts int) *op.Upload {
+		GinkgoHelper()
+		up, err := s.CreateUpload(ctx, r, meta.ObjKey{Name: name}, op.UploadParams{Owner: initiator, Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator)})
+		Expect(err).NotTo(HaveOccurred())
+		for n := 1; n <= parts; n++ {
+			_, err := s.PutPart(ctx, up, n, bytes.NewReader(bytes.Repeat([]byte("p"), 5<<20)), op.PutParams{Attrs: attrsWithACL(initiator), Size: 5 << 20})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		settle(s)
+		return up
+	}
+	shardOID := func(r *op.BucketRecord, name string) string {
+		return fmt.Sprintf(".dir.%s.%d", r.Info.Bucket.ID, shardOf(r, name))
+	}
+
+	It("aborts every upload in pages of 1000, counting each once, and then deletes the bucket", func(ctx SpecContext) {
+		up1 := upload(ctx, rec, "k", 1)
+		s.SetRandForTest(fixedRand(secondPrefix))
+		up2 := upload(ctx, rec, "other", 0)
+		for i := range 1001 { // meta entries without objects, each a tolerated NoSuchUpload; 1003 > 1000 makes a second page
+			name := fmt.Sprintf("ghost%04d", i)
+			seedIndexEntry(c, rookIndexPool, shardOID(rec, name), multipartEntry(name+".2~x.meta"))
+		}
+		n, err := driver.AbortMultipartsForTest(s, ctx, rec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(1003), "the two real uploads and the 1001 skipped ones, once each, where radosgw aborts page one again on page two")
+		Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up1.ID))).To(BeNil())
+		Expect(c.Object(extraPoolName, "", metaOID(rec, "other", up2.ID))).To(BeNil())
+		Expect(c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", driver.GCShardForTest(s, up1.ID)))).To(HaveLen(1), "the part's stripes wait for the GC worker")
+
+		for i := range 1001 {
+			name := fmt.Sprintf("ghost%04d", i)
+			delete(c.Object(rookIndexPool, "", shardOID(rec, name)).Omap, "_multipart_"+name+".2~x.meta")
+		}
+		Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "the second listing finds nothing to abort")
+		Expect(c.Objects(rookIndexPool, "")).To(BeEmpty(), "clean_index ran after the aborts")
+		Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+	})
+	It("aborts through DeleteBucket, skips a meta entry whose object is gone, and fails the delete on any other abort error", func(ctx SpecContext) {
+		seedIndexEntry(c, rookIndexPool, shardOID(rec, "ghost"), multipartEntry("ghost.2~x.meta"))
+		up := upload(ctx, rec, "k", 1)
+		mOID := metaOID(rec, "k", up.ID)
+		holdLock(ctx, c, mOID)
+		Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrServiceUnavailable), "abort_multiparts returns the abort's error and remove stops there")
+		Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil(), "the entry point survives")
+		Expect(c.Object(extraPoolName, "", mOID)).NotTo(BeNil())
+		releaseLock(c, mOID)
+		Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "the ghost entry is skipped, the real upload aborted")
+		Expect(c.Object(extraPoolName, "", mOID)).To(BeNil())
+		Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+		Expect(allGCEntries(c)).To(HaveLen(1))
+	})
+	It("skips, with a warning, an upload whose parts back an object, and counts it as radosgw's num_deleted does", func(ctx SpecContext) {
+		up := upload(ctx, rec, "k", 1)
+		mOID := metaOID(rec, "k", up.ID)
+		cl, head := c, rec.Info.Bucket.Marker+"_k"
+		armed := false
+		cl.BeforeWrite(extraPoolName, "", mOID, func(*fakerados.Object) {
+			if !armed && cl.Object(testDataPool, "", head) != nil {
+				armed = true
+				cl.FailNextWrite(extraPoolName, "", mOID, syscall.EIO)
+			}
+		})
+		etag := md5hex(bytes.Repeat([]byte("p"), 5<<20))
+		_, err := s.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: etag}})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		c.BeforeWrite(extraPoolName, "", mOID, nil)
+		delete(c.Object(extraPoolName, "", mOID).Xattrs, "user.rgw.mp_completion_tag")
+		delete(c.Object(extraPoolName, "", mOID).Xattrs, "user.rgw.mp_completion_instance")
+		var logs syncBuffer
+		DeferCleanup(driver.CaptureLog(&logs))
+		n, err := driver.AbortMultipartsForTest(s, ctx, rec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(1), "radosgw's abort of it returns 0, which num_deleted counts")
+		Expect(c.Object(extraPoolName, "", mOID)).NotTo(BeNil())
+		Expect(allGCEntries(c)).To(BeEmpty())
+		Expect(logs.String()).To(ContainSubstring(`"level":"WARN","msg":"not aborting a multipart upload whose parts back an object`))
+		Expect(logs.String()).NotTo(ContainSubstring("not found for cleanup"))
+	})
+	It("fails the delete with 503 while this gateway's own completion holds an upload's lock", func(ctx SpecContext) {
+		up := upload(ctx, rec, "k", 1)
+		ownLock(ctx, c, metaOID(rec, "k", up.ID))
+		Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrServiceUnavailable))
+		Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil(), "the entry point survives")
+	})
+	It("refuses a bucket with an object before it aborts anything", func(ctx SpecContext) {
+		up := upload(ctx, rec, "k", 1)
+		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "o"}, strings.NewReader("x"), op.PutParams{Attrs: attrsWithACL(initiator), Size: 1, Tag: "t"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+		Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up.ID))).NotTo(BeNil())
+	})
+	It("does not list or abort anything for a bucket another zonegroup owns", func(ctx SpecContext) {
+		Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+		foreign := create(ctx, "elsewhere")
+		up := upload(ctx, foreign, "k", 1)
+		c.ResetCounters()
+		Expect(s.DeleteBucket(ctx, foreign)).To(Succeed())
+		for i := range 11 {
+			Expect(c.Reads(rookIndexPool, "", fmt.Sprintf(".dir.%s.%d", foreign.Info.Bucket.ID, i))).To(BeZero(), "results.is_truncated = own_bucket: no listing at all")
+		}
+		Expect(c.Writes(extraPoolName, "", metaOID(foreign, "k", up.ID))).To(BeZero())
+		Expect(c.Object(extraPoolName, "", metaOID(foreign, "k", up.ID))).NotTo(BeNil(), "abort_multiparts runs only under own_bucket")
 	})
 })

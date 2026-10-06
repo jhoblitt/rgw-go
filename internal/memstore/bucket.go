@@ -88,7 +88,8 @@ func (s *Store) CreateBucket(_ context.Context, p op.CreateBucketParams) (*op.Bu
 	return copyBucket(&b.rec), nil
 }
 
-// DeleteBucket implements op.BucketStore.
+// DeleteBucket implements op.BucketStore: a bucket without objects goes, and
+// its in-flight uploads with it, as RadosBucket::remove aborts them.
 func (s *Store) DeleteBucket(_ context.Context, rec *op.BucketRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,6 +99,11 @@ func (s *Store) DeleteBucket(_ context.Context, rec *op.BucketRecord) error {
 	}
 	if len(b.objects) > 0 {
 		return fmt.Errorf("bucket %s: %w", rec.Info.Bucket.Name, op.ErrBucketNotEmpty)
+	}
+	for k, u := range s.uploads {
+		if u.bucketID == rec.Info.Bucket.ID {
+			delete(s.uploads, k)
+		}
 	}
 	delete(s.instances, rec.Info.Bucket.ID)
 	key := bucketKey(rec.Info.Bucket.Tenant, rec.Info.Bucket.Name)
