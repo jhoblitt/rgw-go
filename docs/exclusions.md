@@ -157,6 +157,13 @@ class, which nothing else in scope uses, and the pass has an external
 substitute in `radosgw-admin objects expire`. rgw-go treats the delete-at
 xattr as opaque metadata: preserved on copy, never acted on.
 
+Objects written through Swift as dynamic or static large objects carry
+`user.rgw.user_manifest` or `user.rgw.slo_manifest`, and radosgw composes
+them from their segments even on an S3 GET or HEAD. rgw-go does not: it
+answers 501 NotImplemented on GET and HEAD rather than serve the manifest
+object itself as the data. Such objects exist only where a client wrote
+them through Swift.
+
 ### Lua scripting
 
 What: request and background Lua scripts.
@@ -196,6 +203,15 @@ cluster are not excluded.
 
 Still required: an object whose manifest says its data lives in a cloud
 tier must be reported as such and never served as if it were local.
+
+rgw-go does so as radosgw does: a cloud-tiered object answers 403
+InvalidObjectState on GET, with the headers alone on HEAD, and on Tentacle
+a restored copy is served and a restore in progress answers 400
+RequestTimeout. One case differs: where a Tentacle tier allows
+read-through, radosgw starts a restore from the cloud and answers 400
+RequestTimeout ("restore is still in progress"), while rgw-go, which runs
+no restore, answers the 403 ("Object read differences", "Cloud
+read-through").
 
 ### Keystone and LDAP authentication
 
@@ -1118,6 +1134,36 @@ review and verified against the tree.
   includes a `BucketIndex` naming a Normal index without `NumShards`,
   which on a Normal placement asks for what an ordinary create gives.
   Squid reads no such element.
+- **GetObjectAttributes is served on Squid too.** A Squid radosgw has no
+  GetObjectAttributes operation and answers `GET ?attributes` as a
+  GetObject, with the object's body (`RGWHandler_REST_Obj_S3::op_get`,
+  `rgw_rest_s3.cc:4805-4821` at v19.2.6); rgw-go serves the operation on
+  both releases, as the Tentacle feature level for gateway-side features
+  asks, so on a Squid zone the same request returns the attributes
+  document from rgw-go and the object from radosgw ("Request parsing and
+  dispatch differences", "On Squid, `?attributes` is GetObjectAttributes").
+  The s3-tests case `test_get_object_attributes` is recorded as failed
+  against Squid's radosgw (`test/s3tests/baseline/squid.json`); against
+  rgw-go on Squid it exercises the operation instead.
+- **BitTorrent files are not served.** `?torrent` answers 404 NoSuchKey
+  for an object that has no torrent, as radosgw does, and 501
+  NotImplemented for one that carries `user.rgw.torrent`, where radosgw
+  returns the bencoded file. Ceph's S3 compliance table lists GET Object
+  torrent as unsupported (`doc/dev/radosgw/s3_compliance.rst:250`,
+  "Operations on Objects", at v19.2.6 and v20.2.4), but the code serves a
+  stored torrent: a PUT generates one only while `rgw_torrent_flag` is on,
+  and the option defaults to false (`RGWPutObj::get_torrent_filter`,
+  `rgw_op.cc:4110-4125` at v19.2.6, `:4319-4334` at v20.2.4;
+  `common/options/rgw.yaml.in:3205-3210` at v19.2.6, `:3343-3348` at
+  v20.2.4), and `GET ?torrent`, authorized as `s3:GetObjectTorrent` or
+  `s3:GetObjectVersionTorrent` (`rgw_op.cc:989-994` at v19.2.6,
+  `:1195-1196` at v20.2.4), returns the stored file (`:2276-2292` at
+  v19.2.6, `:2512-2528` at v20.2.4). On a zone with the default
+  configuration the two gateways therefore agree, 404 NoSuchKey; they
+  differ only for objects written while an operator had the flag on, which
+  Rook's operator does not set (rook/rook at 9f8960d3d). radosgw also reads
+  a torrent that an older release kept in the head object's omap ("Object
+  read differences", "Torrents"); rgw-go does not.
 
 ### Command-line differences
 
@@ -2454,6 +2500,70 @@ does the following.
   alone, so where that attr is later, it answers 304 Not Modified where
   Tentacle serves the object, and serves it where Tentacle answers 412
   PreconditionFailed. Squid has no such attr.
+- **Stored checksums are not shown.** A Tentacle radosgw answers a GET or
+  HEAD carrying `x-amz-checksum-mode: enabled`, without a Range, with the
+  checksum stored in `user.rgw.cksum` as an `x-amz-checksum-<algorithm>`
+  header and `x-amz-checksum-type` (`rgw_rest_s3.cc:314-318` and
+  `:548-586` at v20.2.4), and fills GetObjectAttributes' `Checksum`, and
+  each listed part's checksum, from the stored ones (`:4029-4057`,
+  `:4091-4094`). rgw-go sends neither header and an empty
+  `<Checksum></Checksum>`, so it hides a checksum a Tentacle radosgw
+  stored, until phase 2 adds checksums ("Client checksums are ignored
+  until phase 2", above). Squid stores and sends none.
+- **No x-amz-expiration.** radosgw computes `x-amz-expiration` for a GET
+  or HEAD from the bucket's lifecycle rules (`get_s3_expiration_header`,
+  `rgw_rest_s3.cc:112-118`, `:389` and `:462` at v19.2.6; `:117-123`,
+  `:400` and `:498` at v20.2.4). rgw-go reads no lifecycle configuration
+  until phase 2, so it sends the header for no object; for a bucket
+  without lifecycle rules the two agree.
+- **No object-lock headers.** On a bucket with object lock enabled,
+  radosgw sends `x-amz-object-lock-mode` and
+  `x-amz-object-lock-retain-until-date` from an object's retention, and
+  `x-amz-object-lock-legal-hold` from its legal hold, to a requester
+  allowed `s3:GetObjectRetention` or `s3:GetObjectLegalHold`
+  (`rgw_op.cc:1007-1010` and `rgw_rest_s3.cc:595-613` at v19.2.6;
+  `rgw_op.cc:1148-1164` and `rgw_rest_s3.cc:712-730` at v20.2.4). rgw-go
+  sends none of them until phase 2 serves object lock. Tentacle also
+  refuses a system request on such a bucket that lacks either permission
+  (`rgw_op.cc:1150-1163` at v20.2.4); rgw-go makes neither check.
+- **A restore attr that does not decode.** On Tentacle, rgw-go omits
+  `x-amz-restore`, and the cloud tier's storage class a temporary restored
+  copy reports, when `user.rgw.restore-status` or `user.rgw.restore-type`
+  is empty or `user.rgw.restore-expiry-date` is shorter than its eight
+  bytes, and logs a warning. radosgw ends its process on a GET or HEAD of
+  such an object (`docs/ceph-upstream-bugs.md`, "[Tentacle's radosgw
+  terminates on a GET or HEAD of an object whose restore attr does not
+  decode](ceph-upstream-bugs.md#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode)").
+- **HEAD ?acl.** rgw-go answers a HEAD of an object's `?acl` with the
+  headers of the GET, whose Content-Length counts the XML declaration, and
+  no body. radosgw sends the ACL document, without the declaration, as a
+  body after the headers, with a Content-Length of that document
+  (`docs/ceph-upstream-bugs.md`, "[radosgw sends the ACL document as a body
+  after the headers of a HEAD
+  ?acl](ceph-upstream-bugs.md#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl)").
+- **A mapped attr never frames the response.** When
+  `rgw_extended_http_attrs` names `content-length`, `transfer-encoding`,
+  `connection`, `trailer`, `keep-alive`, `upgrade`, `te` or
+  `proxy-connection`, rgw-go drops the header the matching object attr,
+  such as `user.rgw.content_length` or `user.rgw.trailer`, would give a GET
+  or HEAD, and frames the response itself: these are the framing and
+  hop-by-hop headers net/http reads from a handler's headers, a Trailer
+  among them declaring trailers that would never come. radosgw sends such
+  an attr's value as one more header beside the
+  framing it writes (`rgw_rest_s3.cc:544-571` and `:617-621` at v19.2.6,
+  `:661-688` and `:734-738` at v20.2.4). No PUT through radosgw stores
+  `user.rgw.content_length`: beast hands a request's Content-Length to
+  radosgw as `CONTENT_LENGTH`, not the `HTTP_CONTENT_LENGTH` the option's
+  mapping reads (`rgw_asio_client.cc:41-44` and `rgw_rest.cc:199-208` at
+  v19.2.6 and v20.2.4), so that attr exists only where something else
+  wrote it. A request's other such headers, Transfer-Encoding and
+  Connection among them, do reach the mapping, as `HTTP_TRANSFER_ENCODING`,
+  `HTTP_CONNECTION` and the like (`rgw_asio_client.cc:50-65`;
+  `rgw_rest.cc:2258-2265` at v19.2.6, `:2281` at v20.2.4), so under the
+  option a PUT radosgw serves can record them and a later GET sends them
+  back. Every other name a mapped attr
+  shares with a header radosgw sends, such as Content-Type or ETag, is sent
+  twice by both gateways, in radosgw's order.
 
 ### Object write differences
 
