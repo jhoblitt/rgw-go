@@ -162,35 +162,34 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle fails an UploadPart that sends If-None-Match: * for a part in the bucket placement's pool](#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool) | [#68183](https://tracker.ceph.com/issues/68183) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
 | [radosgw's UploadPartCopy can assemble a part from two versions of its source](#radosgws-uploadpartcopy-can-assemble-a-part-from-two-versions-of-its-source) | none | none | ✓ |
 | [radosgw registers a part whose head write lost a race and then removes its data](#radosgw-registers-a-part-whose-head-write-lost-a-race-and-then-removes-its-data) | none | none | ✓ |
-| [radosgw's gc removes queue entries by count, so a pass drops entries not yet due that precede due ones](#radosgws-gc-removes-queue-entries-by-count-so-a-pass-drops-entries-not-yet-due-that-precede-due-ones) | pending | pending |  |
-| [radosgw's gc worker runs its passes without pause on a non-positive rgw_gc_processor_period](#radosgws-gc-worker-runs-its-passes-without-pause-on-a-non-positive-rgw_gc_processor_period) | pending | pending |  |
+| [radosgw's gc removes queue entries by count, so a pass drops entries not yet due that precede due ones](#radosgws-gc-removes-queue-entries-by-count-so-a-pass-drops-entries-not-yet-due-that-precede-due-ones) | none | none | ✓ |
+| [radosgw's gc worker runs its passes without pause on a non-positive rgw_gc_processor_period](#radosgws-gc-worker-runs-its-passes-without-pause-on-a-non-positive-rgw_gc_processor_period) | none | none | ✓ |
 | [radosgw's gc processor faults on a chain object without a pool](#radosgws-gc-processor-faults-on-a-chain-object-without-a-pool) | none | none | ✓ |
-| [radosgw's gc stalls a converted shard behind an entry it cannot free](#radosgws-gc-stalls-a-converted-shard-behind-an-entry-it-cannot-free) | pending | pending |  |
-| [radosgw's gc takes a failed omap listing of a converted shard for an empty one](#radosgws-gc-takes-a-failed-omap-listing-of-a-converted-shard-for-an-empty-one) | pending | pending |  |
+| [radosgw's gc stalls a converted shard behind an entry it cannot free](#radosgws-gc-stalls-a-converted-shard-behind-an-entry-it-cannot-free) | [#68169](https://tracker.ceph.com/issues/68169), [#77098](https://tracker.ceph.com/issues/77098) | [ceph/ceph#59902](https://github.com/ceph/ceph/pull/59902), [ceph/ceph#70395](https://github.com/ceph/ceph/pull/70395), [ceph/ceph#70396](https://github.com/ceph/ceph/pull/70396) |  |
+| [radosgw's gc takes a failed omap listing of a converted shard for an empty one](#radosgws-gc-takes-a-failed-omap-listing-of-a-converted-shard-for-an-empty-one) | none | none | ✓ |
 | [A negative or overlong rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next pass](#a-negative-or-overlong-rgw_gc_obj_min_wait-makes-radosgws-gc-free-overwritten-tails-at-its-next-pass) | none | none | ✓ |
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | none | none | ✓ |
 | [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | none | none | ✓ |
-| [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) |  |
+| [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) | ✓ (the rate-limit charge) |
 | [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | [#80899](https://tracker.ceph.com/issues/80899) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | [#80899](https://tracker.ceph.com/issues/80899), [#80902](https://tracker.ceph.com/issues/80902) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
 | [radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC](#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc) | pending | pending |  |
 | [radosgw fails every tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io](#radosgw-fails-every-tail-sharing-copy-on-a-zero-rgw_max_copy_obj_concurrent_io) | pending | pending |  |
-| [radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout](#radosgws-bucket-creation-retry-leaks-the-abandoned-instance-and-repeats-its-log-layout) | pending | pending |  |
-| [radosgw reports a bucket whose owner link failed as created](#radosgw-reports-a-bucket-whose-owner-link-failed-as-created) | pending | pending |  |
-| [radosgw's bucket delete answers success when its instance removal loses a race](#radosgws-bucket-delete-answers-success-when-its-instance-removal-loses-a-race) | pending | pending |  |
-| [radosgw's bucket delete unlinks a bucket re-created under the same name from its owner](#radosgws-bucket-delete-unlinks-a-bucket-re-created-under-the-same-name-from-its-owner) | pending | pending |  |
-| [Tentacle cannot delete an indexless bucket it created](#tentacle-cannot-delete-an-indexless-bucket-it-created) | pending | pending |  |
-| [radosgw sends Content-Length: 0 with a 204](#radosgw-sends-content-length-0-with-a-204) | pending | pending |  |
+| [radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout](#radosgws-bucket-creation-retry-leaks-the-abandoned-instance-and-repeats-its-log-layout) | none | none | ✓ |
+| [radosgw reports a bucket whose owner link failed as created](#radosgw-reports-a-bucket-whose-owner-link-failed-as-created) | none | none | ✓ |
+| [radosgw's bucket delete answers success when its instance removal loses a race](#radosgws-bucket-delete-answers-success-when-its-instance-removal-loses-a-race) | [#69738](https://tracker.ceph.com/issues/69738) | [ceph/ceph#61684](https://github.com/ceph/ceph/pull/61684) |  |
+| [radosgw's bucket delete unlinks a bucket re-created under the same name from its owner](#radosgws-bucket-delete-unlinks-a-bucket-re-created-under-the-same-name-from-its-owner) | none | none | ✓ |
+| [Tentacle cannot delete an indexless bucket it created](#tentacle-cannot-delete-an-indexless-bucket-it-created) | none | none | ✓ |
 | [radosgw takes a SigV4 request without x-amz-content-sha256 as UNSIGNED-PAYLOAD](#radosgw-takes-a-sigv4-request-without-x-amz-content-sha256-as-unsigned-payload) | pending | pending |  |
-| [rgw_s3_auth_disable_signature_url denies header-signed requests too](#rgw_s3_auth_disable_signature_url-denies-header-signed-requests-too) | pending | pending |  |
+| [rgw_s3_auth_disable_signature_url denies header-signed requests too](#rgw_s3_auth_disable_signature_url-denies-header-signed-requests-too) | none | none | ✓ |
 | [radosgw keeps repeated SigV4 query keys in arrival order](#radosgw-keeps-repeated-sigv4-query-keys-in-arrival-order) | pending | pending |  |
 | [radosgw never checks a SigV4 credential scope's date, region or service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service) | pending | pending |  |
-| [radosgw's ListMultipartUploads drops its common prefixes and the uploads under them](#radosgws-listmultipartuploads-drops-its-common-prefixes-and-the-uploads-under-them) | pending | pending |  |
-| [radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name) | pending | pending |  |
-| [Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
-| [radosgw's parse_date writes a NUL one byte past its format buffer](#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer) | pending | pending | ✓ |
-| [radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload) | pending | pending | ✓ |
+| [radosgw's ListMultipartUploads drops its common prefixes and the uploads under them](#radosgws-listmultipartuploads-drops-its-common-prefixes-and-the-uploads-under-them) | none | none | ✓ |
+| [radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name) | none | none | ✓ |
+| [Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869), [#78708](https://tracker.ceph.com/issues/78708) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
+| [radosgw's parse_date writes a NUL one byte past its format buffer](#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer) | none | none | ✓ |
+| [radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload) | none | none | ✓ |
 | [RESTArgs::get_string url-decodes an admin argument a second time](#restargsget_string-url-decodes-an-admin-argument-a-second-time) | pending | pending |  |
 | [radosgw's integer argument readers refuse their type's maximum and truncate to 32 bits](#radosgws-integer-argument-readers-refuse-their-types-maximum-and-truncate-to-32-bits) | pending | pending |  |
 | [HTMLFormatter formats a long value from an ended va_list](#htmlformatter-formats-a-long-value-from-an-ended-va_list) | pending | pending |  |
@@ -198,11 +197,12 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A refused CompleteMultipartUpload drops its parts' index entries](#a-refused-completemultipartupload-drops-its-parts-index-entries) | [#80907](https://tracker.ceph.com/issues/80907) | [ceph/ceph#72109](https://github.com/ceph/ceph/pull/72109) |  |
 | [A multipart completion whose meta object outlives its head write lets a retry or an abort delete the object's data](#a-multipart-completion-whose-meta-object-outlives-its-head-write-lets-a-retry-or-an-abort-delete-the-objects-data) | [#80896](https://tracker.ceph.com/issues/80896), [#75375](https://tracker.ceph.com/issues/75375) | [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103) |  |
 | [radosgw's CompleteMultipartUpload does not keep its lock past rgw_mp_lock_max_time](#radosgws-completemultipartupload-does-not-keep-its-lock-past-rgw_mp_lock_max_time) | [#75375](https://tracker.ceph.com/issues/75375) | [ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696) |  |
-| [radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last](#radosgw-sends-several-gc-chains-under-one-tag-and-an-omap-era-gc-shard-keeps-only-the-last) | pending | pending |  |
+| [radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last](#radosgw-sends-several-gc-chains-under-one-tag-and-an-omap-era-gc-shard-keeps-only-the-last) | none | none | ✓ |
 | [A CompleteMultipartUpload that loses its head write's race leaks its parts](#a-completemultipartupload-that-loses-its-head-writes-race-leaks-its-parts) | pending | pending |  |
 | [radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private](#radosgws-putbucketacl-takes-any-canned-acl-whose-name-holds-bucket-for-private) | pending | pending |  |
-| [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | pending | pending | ✓ |
-| [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | pending | pending | ✓ |
+| [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | none | none | ✓ |
+| [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | none | none | ✓ |
+| [radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3266,9 +3266,8 @@ Every new entry adds its row to this table, in document order.
   sizes its output from that exact sum so every pair fits it, and checks
   each pair's compressed length against the input that remains.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
-  no issue or fix PR; it is unfiled while filing is paused. Being a
-  memory-safety defect, it waits on the owner's choice of disclosure
-  channel.
+  no issue or fix PR; it is unfiled while filing is paused. Though a
+  memory-safety defect, it is disclosed publicly, as every defect here is.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's lz4
   decompressor; derived from the source, not reproduced.
 
@@ -3396,8 +3395,8 @@ Every new entry adds its row to this table, in document order.
   an infinite loop in the same part lookup for an upload of a single part,
   which [ceph/ceph#58288](https://github.com/ceph/ceph/pull/58288) fixed;
   that fix does not reach a stripe-0 rule, whose iterator never gets to the
-  end. Being a crash and a cross-zone hang, it waits on the owner's choice
-  of disclosure channel.
+  end. Though a crash and a cross-zone hang, it is disclosed publicly, as
+  every defect here is.
 - **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
   review of rgw-go's part lookup; derived from the source, not reproduced.
 
@@ -6748,10 +6747,10 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw keeps every modified bucket for good when its quota threads are off
 
-- **Kind:** a hardening note, not a defect, and not security-relevant:
-  radosgw keeps one entry per bucket it modified and never drains them
-  while its quota threads are off, which is not the default. Unreproduced:
-  derived from the source.
+- **Kind:** quirk, not security-relevant: radosgw keeps one entry per
+  bucket it modified and never drains them while its quota threads are
+  off, which is not the default; worth hardening, not a defect.
+  Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - Every write and delete updates the quota caches through
@@ -7098,8 +7097,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's gc removes queue entries by count, so a pass drops entries not yet due that precede due ones
 
-- **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+- **Kind:** defect, unfixed through main: an operational leak, gated on
+  the operator's configuration, not security-relevant. Unreproduced:
+  derived from the source.
 - **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - `RGWGC::process` lists a converted shard's queue for the expired
@@ -7107,7 +7107,9 @@ Every new entry adds its row to this table, in document order.
     `entries.size()` entries (`rgw/driver/rados/rgw_gc.cc:617` and `:710`,
     `:632` and `:722`).
   - `cls_rgw_gc_queue_list_entries` counts every entry it scans that is not
-    deferred toward the page, but returns only those already due
+    deferred toward the page, but returns only those already due, and does
+    not stop at the first entry not yet due, though its comment says it
+    could, "since all subsequent entries won't have expired"
     (`cls/rgw_gc/cls_rgw_gc.cc:192-201` at both tags).
   - `cls_rgw_gc_queue_remove_entries` removes that many entries from the
     queue's front, whatever their due time (`:261` and `:332-347` at both
@@ -7122,20 +7124,30 @@ Every new entry adds its row to this table, in document order.
     A. A's objects are never freed. B stays queued until a later pass lists
     it again, whose puts answer ENOENT, which counts as done.
 - **Impact:** the tails of the dropped entry leak, with no log line; live
-  data is never freed early.
+  data is never freed early: the dropped entry's head is already gone. Only
+  an operator reorders the queue, by lowering `rgw_gc_obj_min_wait` or
+  running gateways with different values; no client can, since the GET
+  path's `defer_gc`, which pushed an entry's due time later, is disabled
+  ([#47866](https://tracker.ceph.com/issues/47866)).
 - **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25, the
   same code in both files).
-- **rgw-go:** meets it as radosgw does: its gc worker sends the same
+- **rgw-go:** meets it as radosgw does, on purpose, since both gateways
+  share one queue and its class's semantics: its gc worker sends the same
   listing and removal (`internal/driver/gc.go`), and a spec pins the
   dropped entry. `docs/exclusions.md` has no entry for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; the gc stall reports
+  ([#77098](https://tracker.ceph.com/issues/77098) among them) are
+  distinct. The fix would stop the listing at the first entry not yet due,
+  or remove entries up to the marker of the last one processed.
 - **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
   `RGWGC::process`; derived from the source, not reproduced.
 
 ## radosgw's gc worker runs its passes without pause on a non-positive rgw_gc_processor_period
 
-- **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+- **Kind:** defect, unfixed through main: operational, gated on the
+  operator's configuration, not security-relevant. Unreproduced: derived
+  from the source.
 - **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - `rgw_gc_processor_period` and `rgw_gc_processor_max_time` are `int`
@@ -7161,7 +7173,8 @@ Every new entry adds its row to this table, in document order.
   after a pass when the period is not positive and logs an error naming the
   option (`internal/driver/gc.go`; `docs/exclusions.md`, "A gc processor
   period that is not positive").
-- **Upstream:** pending: sent to rgw-bug-reproduction. Related:
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; the fix would clamp the period to a floor. Related:
   [#81226](https://tracker.ceph.com/issues/81226) reports the same class of
   defect for the usage-log and quota intervals.
 - **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
@@ -7229,8 +7242,12 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's gc stalls a converted shard behind an entry it cannot free
 
-- **Kind:** defect; main fixes one cause. Unreproduced: derived from the
-  source.
+- **Kind:** defect; main fixes one cause. Operational, not
+  security-relevant: no client can plant an entry that cannot be freed.
+  Not found by us: it is the public gc stall
+  ([#68169](https://tracker.ceph.com/issues/68169),
+  [#77098](https://tracker.ceph.com/issues/77098)). Unreproduced here:
+  derived from the source.
 - **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
   lines is v19.2.6's, then v20.2.4's.
   - On a shard moved to the rgw_gc queue, a pool that cannot be opened, a
@@ -7258,39 +7275,67 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** a gc shard that stops collecting, its tails leaking, with an
   error logged on each pass.
 - **Releases:** v19.2.6 and v20.2.4; main for the persistent put failure.
-- **rgw-go:** meets it as the floor releases do (`internal/driver/gc.go`);
+  The squid branch does not carry main's fix as of a742f50616e
+  (2026-09-03); its cherry-pick, 7b77cbc4466, is only on the umbrella
+  branches.
+- **rgw-go:** meets it as the floor releases do: on a queue shard its gc
+  worker removes a page's entries only once every put of the page
+  succeeded, and a pool it cannot open, a deleted one included, a put it
+  cannot schedule or one that fails ends the pass before the removal
+  (`freeEntries` and `shardPass`, `internal/driver/gc.go`).
   `docs/exclusions.md` has no entry for it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** [#68169](https://tracker.ceph.com/issues/68169)
+  (Backporting) reports the deleted pool, and
+  [#77098](https://tracker.ceph.com/issues/77098) the stall behind an entry
+  that cannot be freed. Main's fix is
+  [ceph/ceph#59902](https://github.com/ceph/ceph/pull/59902) (merge
+  ccd9d3e94bc, 73535b105de). rgw-bug-reproduction's triage reports a squid
+  backport, [ceph/ceph#70395](https://github.com/ceph/ceph/pull/70395), as
+  merged, and a tentacle backport,
+  [ceph/ceph#70396](https://github.com/ceph/ceph/pull/70396), as open.
 - **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
   `RGWGC::process` and `RGWGCIOManager`; derived from the source, not
   reproduced.
 
 ## radosgw's gc takes a failed omap listing of a converted shard for an empty one
 
-- **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+- **Kind:** defect, unfixed through main: a leak that heals at restart,
+  not security-relevant. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
   lines is v19.2.6's, then v20.2.4's.
   - On a shard it has not yet seen converted, `RGWGC::process` lists the
-    omap log, reads the shard's cls version, and on version 1 with no
-    entries lists once more for any entry at all; when that finds none it
-    marks the shard converted for the rest of the process's life
-    (`rgw_gc.cc:590-614`, `:605-629`).
-  - A listing that fails returns no entries, and neither result is checked
-    before the decision, so two failed listings, a timeout or an EIO, mark
-    a shard converted while its omap log still holds entries. From then on
-    the gateway lists only the queue and never frees those entries' objects
-    until it restarts.
+    omap log (`rgw_gc.cc:591`, `:606`), reads the shard's cls version, and
+    on version 1 with no entries lists once more for any entry at all
+    (`:600`, `:615`); when that finds none it marks the shard converted
+    (`:601-602`, `:616-617`; the whole block `:590-614`, `:605-629`).
+  - A listing that fails returns no entries, and the second listing's
+    result is not checked before the decision, so that one failed listing,
+    a timeout or an EIO, marks a shard converted while its omap log still
+    holds entries. The first listing is unchecked too, but its failure
+    only leads to the second. From then on the gateway lists only the
+    queue and never frees those entries' objects.
+  - The mark is an in-memory `std::vector<bool>` that
+    `RGWGC::initialize` fills with false (`rgw_gc.h:52` and
+    `rgw_gc.cc:45-46` at v19.2.6), so a restart lists the omap log again.
+  - `RGWGC::list`, which the admin's gc listing runs, has the same
+    unchecked second listing before the same mark (`rgw_gc.cc:274-278`,
+    `:288-292`).
   - A shard at version 1 holds omap entries only from before
     `RGWGC::initialize` converted it, or from enqueues the queue refused
     with ECANCELED or EPERM (`RGWGC::send_chain`, `:120-139` at both
     tags).
 - **Impact:** a leak, until restart, of the tails named by a converted
-  shard's leftover omap entries; it needs two failed reads in a row.
+  shard's leftover omap entries, mostly its backlog from before the
+  conversion; it needs one failed read at the wrong moment.
 - **Releases:** v19.2.6, v20.2.4 and main (7ed73efc1be, 2026-09-25,
   unchanged).
-- **rgw-go:** meets it as radosgw does (`internal/driver/gc.go`).
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **rgw-go:** meets it as radosgw does: its gc worker marks the shard
+  converted when the second listing returns no entries, without checking
+  that listing's error, and keeps the mark in memory for the worker's life
+  (`shardPass`, `internal/driver/gc.go`).
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. The fix would end the pass when the second listing fails,
+  `if (ret < 0) goto done;`, before the mark.
 - **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
   `RGWGC::process`; derived from the source, not reproduced.
 
@@ -7753,7 +7798,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+- **Kind:** defect, unfixed through main: a leak, not security-relevant.
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/driver/rados/`.
   - `RGWRados::create_bucket` makes up to 20 tries. Each initializes the
@@ -7770,25 +7815,32 @@ Every new entry adds its row to this table, in document order.
     and `init_default_bucket_layout` appends the in-index log generation to
     its layout's `logs` without clearing them (`rgw_bucket.cc:2798-2800` at
     v19.2.6, `:2916-2918` at v20.2.4). A bucket created on its nth try is
-    stored with n copies of log generation 0.
+    stored with n copies of log generation 0, in the live bucket's
+    instance.
+  - Main at e6dd4bc2a2c is unchanged (`continue` at `rgw_rados.cc:2620-2621`,
+    the append at `rgw_bucket.cc:3100-3102`), and its
+    `RGWRados::create_vector_bucket` repeats the pattern
+    (`rgw_rados.cc:2653-2716`).
 - **Impact:** a create that loses to a bucket created and deleted under the
   same name, in the window between its entry-point write and its re-read,
   leaves an instance object in the domain root and a full set of empty index
   shards for each abandoned try, which nothing references or removes. The
   bucket it then creates lists its log generation more than once, which only
   multisite's bucket sync and log trimming read; that path was not traced.
-- **Releases:** v19.2.6 and v20.2.4.
+  The 20 tries bound both.
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c.
 - **rgw-go:** removes an abandoned try's instance and index before the next
-  try and gives each try a fresh layout (`Store.CreateBucket` in
-  `internal/driver/bucketops.go`; `docs/exclusions.md`, "An abandoned
-  bucket-creation try is removed").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+  try and gives each try a fresh layout: it builds a new bucket info on
+  every try (`Store.CreateBucket` in `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "An abandoned bucket-creation try is removed").
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix.
 - **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
   `create_bucket` at both tags; derived from the source, not reproduced.
 
 ## radosgw reports a bucket whose owner link failed as created
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+- **Kind:** defect, unfixed through main, not security-relevant.
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - Once a new bucket's instance and entry point are written,
@@ -7796,7 +7848,11 @@ Every new entry adds its row to this table, in document order.
     link fails, it unlinks the bucket and assigns the unlink's result to the
     value it returns (`ret = unlink(dpp, params.owner, y)`,
     `driver/rados/rgw_sal_rados.cc:190-197` at v19.2.6, `:207-214` at
-    v20.2.4), so an unlink that succeeds turns the link's failure into 0.
+    v20.2.4, `:234-241` on main e6dd4bc2a2c), so an unlink that succeeds
+    turns the link's failure into 0. The error is lost there, not in
+    `RGWCreateBucket::execute`.
+  - The rollback stops at the unlink: nothing removes the instance or the
+    entry point the create wrote.
   - `RGWCreateBucket::execute` then finishes without an error
     (`rgw_op.cc:3640-3647` at v19.2.6, `:3868-3875` at v20.2.4), and
     `send_response` answers 200 (`rgw_rest_s3.cc:2544-2555` at v19.2.6,
@@ -7805,20 +7861,28 @@ Every new entry adds its row to this table, in document order.
   entry point and instance, but is in no owner's list: ListBuckets does not
   show it, the owner's stats do not count it, and `max_buckets` does not
   count it either. The owner's re-create repairs it, as a partial creation
-  (`rgw_sal_rados.cc:173-190` at v19.2.6).
-- **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** returns the link's failure after the same unlink
-  (`Store.CreateBucket` in `internal/driver/bucketops.go`;
+  (`rgw_sal_rados.cc:173-190` at v19.2.6). It is no squat: another user's
+  create of the name answers BucketAlreadyExists, as for any bucket.
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c.
+- **rgw-go:** returns the link's failure after the same unlink, and, as
+  radosgw does, leaves the instance and entry point for the owner's
+  re-create (`Store.CreateBucket` in `internal/driver/bucketops.go`;
   `docs/exclusions.md`, "A failed owner link fails the create").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. The nearest is the inverse defect,
+  [#69738](https://tracker.ceph.com/issues/69738), an owner's list still
+  naming a bucket that a delete racing its creation removed, which
+  [ceph/ceph#61684](https://github.com/ceph/ceph/pull/61684) fixed on the
+  create side (first in v20.1.0).
 - **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
   `RadosBucket::create` at both tags; derived from the source, not
   reproduced.
 
 ## radosgw's bucket delete answers success when its instance removal loses a race
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
-  Unreproduced: derived from the source.
+- **Kind:** quirk: the success is deliberate upstream, not found by us and
+  not security-relevant, but it costs consistency, as below. Unreproduced:
+  derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - `RadosBucket::remove` reloads the bucket, which leaves the instance's
     version in `info.objv_tracker` (`driver/rados/rgw_sal_rados.cc:357` and
@@ -7834,16 +7898,23 @@ Every new entry adds its row to this table, in document order.
     v20.2.4). `remove` returns that error before it cleans the index and
     unlinks the bucket (`rgw_sal_rados.cc:445-450` at v19.2.6, `:462-467`
     at v20.2.4).
-  - `RGWDeleteBucket::execute` turns -ECANCELED into success, for a lost
-    entry-point race, which it takes to have unlinked already
-    (`rgw_op.cc:3792-3797` at v19.2.6, `:4001-4006` at v20.2.4).
-- **Impact:** a DELETE that races any write of the bucket's instance, such
-  as a PutBucketAcl, PutBucketTagging or a reshard, after `remove`'s reload
+  - `RGWDeleteBucket::execute` turns -ECANCELED into success on purpose:
+    its comment reads "lost a race, either with mdlog sync or another
+    delete bucket operation. in either case, we've already called
+    ctl.bucket->unlink_bucket()" (`rgw_op.cc:3792-3797` at v19.2.6,
+    `:4001-4006` at v20.2.4, `:4470-4475` on main e6dd4bc2a2c; since
+    e9cf41f9bfd, "rgw: fix for bucket delete racing with mdlog sync",
+    2016). On this path `remove` has returned before its own unlink, so
+    the unlink the comment counts on is the race winner's.
+- **Impact:** against another DELETE the success is right. A DELETE that
+  races any other write of the bucket's instance, such as a PutBucketAcl,
+  PutBucketTagging, a reshard or a metadata sync, after `remove`'s reload
   is answered 204 while only the entry point is gone. The instance and the
   index stay behind, unreferenced, and the bucket stays in its owner's list,
   so ListBuckets shows a bucket that every request answers NoSuchBucket for,
-  and `max_buckets` counts it.
-- **Releases:** v19.2.6 and v20.2.4.
+  and `max_buckets` counts it: the ghost bucket of
+  [#69738](https://tracker.ceph.com/issues/69738).
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c.
 - **rgw-go:** reads the instance again when the delete begins, as
   `remove` does, removes it under the version read, and when another write
   changed it since, reads it again from RADOS and retries, so the delete
@@ -7853,14 +7924,18 @@ Every new entry adds its row to this table, in document order.
   (`Store.DeleteBucket` in `internal/driver/bucketops.go`;
   `docs/exclusions.md`, "A bucket delete retries an instance removal that
   lost to another write").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** prior art: [#69738](https://tracker.ceph.com/issues/69738)
+  (Resolved) reported the ghost bucket, and
+  [ceph/ceph#61684](https://github.com/ceph/ceph/pull/61684) fixed its
+  create side, leaving this delete-side mapping as it was. Nothing to file
+  for the mapping itself.
 - **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
   `delete_bucket` at both tags; derived from the source, not reproduced.
 
 ## radosgw's bucket delete unlinks a bucket re-created under the same name from its owner
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
-  Unreproduced: derived from the source.
+- **Kind:** defect, unfixed through main: consistency, not
+  security-relevant. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`.
   - `RGWRados::delete_bucket` reads the entry point afresh and, when it
     names another instance, leaves it in place
@@ -7873,33 +7948,51 @@ Every new entry adds its row to this table, in document order.
     and `rgw/driver/rados/buckets.cc:62-78` at v19.2.6;
     `rgw_bucket.cc:3506-3518` and `buckets.cc:62-78` at v20.2.4).
   - `cls_user_remove_bucket` keys the owner's entry by the bucket's name
-    alone and removes whatever instance it names
-    (`cls/user/cls_user.cc:239-276` at both tags).
+    alone (`get_key_by_bucket_name`, `cls/user/cls_user.cc:45-48`) and
+    removes whatever instance it names (`:239-276`), though its op carries
+    the bucket's marker and id (`cls_user_bucket`,
+    `cls/user/cls_user_types.h:15-18`); all at both tags.
 - **Impact:** when a DELETE reads a bucket, another DELETE of the same
   bucket completes, and the owner creates the bucket again before the first
   DELETE re-reads the entry point, the first DELETE removes the new bucket's
   entry from its owner's list. The new bucket exists and answers by name,
-  but ListBuckets does not show it, and the owner's stats and `max_buckets`
-  do not count it until the owner re-creates it again.
-- **Releases:** v19.2.6 and v20.2.4.
+  but ListBuckets does not show it, and the owner's stats, quota and
+  `max_buckets` do not count it until the owner re-creates it again. Stats
+  sync does not restore the entry: `cls_user_set_buckets_info` skips a
+  bucket it does not find (`cls/user/cls_user.cc:151-153`). It is the
+  delete-side mirror of
+  [#69738](https://tracker.ceph.com/issues/69738).
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c, whose
+  `cls_user_remove_bucket` is the same (`cls/user/cls_user.cc:239-276`).
 - **rgw-go:** removes the owner's entry only while it names the instance
-  being deleted, comparing the entry it read in the same op that removes it
-  (`Store.unlinkInstance` in `internal/driver/bucketops.go`;
+  being deleted: it compares the entry's decoded bucket id, and removes it
+  under a comparison with the entry it read, retrying a lost comparison up
+  to five times (`Store.unlinkInstance` in `internal/driver/bucketops.go`;
   `docs/exclusions.md`, "An owner's entry naming another instance stays").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; [ceph/ceph#61684](https://github.com/ceph/ceph/pull/61684)
+  fixed only the create side of
+  [#69738](https://tracker.ceph.com/issues/69738). The fix would remove the
+  entry only when its bucket id and marker match the op's.
 - **Found:** phase 1 unit M, Task 7 review, 2026-10-05, transcribing
   `RadosBucket::remove` at both tags; derived from the source, not
   reproduced.
 
 ## Tentacle cannot delete an indexless bucket it created
 
-- **Kind:** defect, unfixed at v20.2.4; main not checked. Unreproduced:
-  derived from the source.
+- **Kind:** defect, unfixed through main: a correctness defect under
+  version skew, not security-relevant. Unreproduced: derived from the
+  source.
 - **Evidence:** paths are under `src/`.
   - Squid's `init_index` and `clean_index` create and remove the shard
     objects whatever the index type (`rgw/services/svc_bi_rados.cc:354-393`
     at v19.2.6). Tentacle's create and remove none for an index that is not
-    Normal (`:456-458` and `:521-523` at v20.2.4).
+    Normal (`:456-458` and `:521-523` at v20.2.4). The guards came with
+    c7774831d5c, "rgw/rados: indexless buckets skip init_index/clean_index",
+    merged by [ceph/ceph#61269](https://github.com/ceph/ceph/pull/61269)
+    and first in v20.0.0, which left `check_bucket_empty` unguarded
+    (`rgw/driver/rados/rgw_rados.cc:5723` at v20.2.4, `:6253` on main
+    e6dd4bc2a2c).
   - `RGWDeleteBucket::execute` checks an own bucket's emptiness whatever
     its index type (`rgw/rgw_op.cc:3761-3772` at v19.2.6, `:3968-3981` at
     v20.2.4), through `RadosBucket::check_empty` and
@@ -7918,37 +8011,26 @@ Every new entry adds its row to this table, in document order.
   stays. An indexless bucket a Squid gateway created has shard objects, so
   a Tentacle DELETE passes the check, but Tentacle's `clean_index` then
   skips them, and they stay in the index pool, unreferenced.
-- **Releases:** v20.2.4. v19.2.6 is not affected for buckets it creates.
-- **rgw-go:** meets it as radosgw does at each release: on Tentacle the
-  emptiness check fails on the missing shards with NoSuchKey, and an index
-  that is not Normal is not cleaned (`Store.DeleteBucket` and
-  `Store.hasIndexObjects` in `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "An indexless bucket is deleted as each release
-  deletes it"). Skipping the check could orphan objects.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Releases:** v20.2.4 and main e6dd4bc2a2c. v19.2.6 is not affected for
+  buckets it creates.
+- **rgw-go:** reproduces both halves, as radosgw does at each release: on
+  Tentacle the emptiness check fails on the missing shards with NoSuchKey
+  and the bucket stays, and an index that is not Normal is not cleaned, so
+  a Squid-made indexless bucket's shard objects stay behind
+  (`Store.checkBucketEmpty`, `Store.cleanIndex` and
+  `Store.hasIndexObjects` in `internal/driver/bucketops.go`, with a spec
+  in `bucketops_test.go`; `docs/exclusions.md`, "An indexless bucket is
+  deleted as each release deletes it"). Skipping the check could orphan
+  objects.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; the closest,
+  [#73861](https://tracker.ceph.com/issues/73861) and
+  [ceph/ceph#69533](https://github.com/ceph/ceph/pull/69533), concern
+  another path. The fix would guard `check_bucket_empty` as the other two
+  are guarded.
 - **Found:** phase 1 unit M, Task 7 review, 2026-10-05, tracing the delete
   of an indexless bucket at both tags; derived from the source, not
   reproduced.
-
-## radosgw sends Content-Length: 0 with a 204
-
-- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4; main not checked.
-  Unreproduced: derived from the source.
-- **Evidence:** a response whose `end_header` names no length, as
-  DeleteBucket's 204 does (`rgw/rgw_rest_s3.cc:2731-2740` at v20.2.4), is
-  completed by `BufferingFilter::complete_request`, which sends the length
-  of the buffered body, 0 (`rgw/rgw_client_io_filters.h:221-253` at both
-  tags), through `ClientIO::send_content_length`, which writes
-  `Content-Length: 0` whatever the status (`rgw/rgw_asio_client.cc:183-189`
-  at both tags). RFC 9110, section 8.6, forbids a Content-Length in a 204.
-- **Impact:** a strict client or proxy may refuse the response; common
-  clients ignore the header.
-- **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** sends no length with a 204, as net/http allows none
-  (`docs/exclusions.md`, "A 204 carries no Content-Length").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
-- **Found:** phase 1 unit M, Task 7 review, 2026-10-05; derived from the
-  source, not reproduced.
 
 ## radosgw takes a SigV4 request without x-amz-content-sha256 as UNSIGNED-PAYLOAD
 
@@ -7976,8 +8058,9 @@ Every new entry adds its row to this table, in document order.
 
 ## rgw_s3_auth_disable_signature_url denies header-signed requests too
 
-- **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+- **Kind:** defect, unfixed through main: an over-denial gated on the
+  operator's configuration, which fails closed, not security-relevant.
+  Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`.
   - The option is documented as presigned-only: "If enabled, any request
     that is presigned with either V2 or V4 signature will be denied"
@@ -8002,8 +8085,13 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** mirrors it, so a cluster that sets the option behaves the
   same with either gateway (`Verifier.Authenticate`,
   `internal/auth/verifier.go`).
-- **Upstream:** pending: sent to rgw-bug-reproduction. The option's commit
-  message names [#64797](https://tracker.ceph.com/issues/64797).
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. The option came with
+  [#64797](https://tracker.ceph.com/issues/64797), which its commit
+  message names, through
+  [ceph/ceph#56044](https://github.com/ceph/ceph/pull/56044) on main and
+  ceph/ceph#56343 on squid. The fix would check that the route is the
+  query string before refusing.
 - **Found:** phase 1 unit A's plan, transcribing `get_auth_data`;
   registered in unit A, Task 10, 2026-10-05. Not reproduced.
 
@@ -8067,8 +8155,8 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's ListMultipartUploads drops its common prefixes and the uploads under them
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
-  Unreproduced: derived from the source.
+- **Kind:** defect, unfixed through main: an under-listing, not
+  security-relevant. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - `RadosBucket::list_multiparts` lists the multipart namespace with
     `MultipartMetaFilter` as the listing's `access_list_filter`
@@ -8090,6 +8178,9 @@ Every new entry adds its row to this table, in document order.
     can form a prefix whose name passes, such as a whole meta name
     `<key>.<id>.meta`, and that one is recorded (`:2063` and `:2076` at
     v19.2.6, `:2166` and `:2179` at v20.2.4).
+  - Main at e6dd4bc2a2c is unchanged: the filter at `rgw_rados.cc:2194-2200`
+    runs before the prefix and delimiter checks from `:2202` on, and
+    `list_multiparts` sets it at `rgw_sal_rados.cc:1179-1183`.
 - **Impact:** ListMultipartUploads with any other delimiter returns no
   CommonPrefixes, and every upload whose meta name holds the delimiter after
   the prefix is missing from the response, with nothing pointing to it: with
@@ -8101,7 +8192,7 @@ Every new entry adds its row to this table, in document order.
   from the last upload only (`rgw/rgw_op.cc:6741-6744` at v19.2.6,
   `:7680-7683` at v20.2.4), so a truncated page that ends on prefixes makes
   the next page repeat them, or start over when the page holds no upload.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c.
 - **rgw-go:** does not reproduce it. Its listing applies the filter only to
   a name it would list as an upload, so the common prefixes are listed,
   and a truncated page takes its next markers from its last counted item:
@@ -8109,13 +8200,20 @@ Every new entry adds its row to this table, in document order.
   upload id marker (`op.UploadListing` and `op.UploadsFromListing` in
   `internal/op/multipart.go`; `docs/exclusions.md`, "ListMultipartUploads
   keeps the common prefixes radosgw drops").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix for the drop;
+  [#47527](https://tracker.ceph.com/issues/47527) and its fix,
+  [ceph/ceph#43779](https://github.com/ceph/ceph/pull/43779), named the
+  common prefixes in the response's XML, a different layer. The fix would
+  run the filter after the rollup, or exempt the common-prefix entries,
+  and is shared with the next entry's.
 - **Found:** phase 1 unit P, Task 5, 2026-10-05, placing the listing's name
   filter at both tags; derived from the source, not reproduced.
 
 ## radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4; main not checked.
+- **Kind:** defect, unfixed through main, not security-relevant: the
+  over-listing stays within one bucket that the requester may list.
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`.
   - `RadosBucket::list_multiparts` passes the request's prefix and
@@ -8134,6 +8232,8 @@ Every new entry adds its row to this table, in document order.
     (`rgw/driver/rados/rgw_sal_rados.cc:3281` at v19.2.6, `:4125` at
     v20.2.4), whose table holds `-` and `_` (`common/random_string.cc:48`
     at both tags).
+  - Main at e6dd4bc2a2c passes them the same way
+    (`rgw/driver/rados/rgw_sal_rados.cc:1179-1183`).
 - **Impact:** S3 applies these parameters to the key, and orders uploads by
   key, then by initiation time. In radosgw:
   - a delimiter found only in `.<upload id>.meta` rolls up an upload whose
@@ -8149,20 +8249,26 @@ Every new entry adds its row to this table, in document order.
     lists before `a`, and one key's uploads by upload id;
   - a key marker without an upload id marker lists that key's own uploads
     too, where S3 lists only the keys after it.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.6, v20.2.4 and main e6dd4bc2a2c.
 - **rgw-go:** reproduces it: the prefix, the delimiter, the order and the
   markers apply to the meta names (`op.UploadListing` and
   `op.UploadsFromListing` in `internal/op/multipart.go`). An upload a
   delimiter rolls up stays reachable through its common prefix, which
   rgw-go lists.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. It shares its root with the previous entry, and so its
+  fix: compare the prefix, the delimiter and the markers with the key
+  recovered from the meta name, and start a key marker's listing after
+  that key.
 - **Found:** phase 1 unit P, Task 5, 2026-10-05, transcribing
   `list_multiparts` at both tags; derived from the source, not reproduced.
 
 ## Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do
 
-- **Kind:** defect, a regression; fixed on main, not on the release
-  branches. Unreproduced: derived from the source.
+- **Kind:** defect, security-relevant, high: a version-id delete skips MFA
+  delete (triage estimate CVSS about 8.1). A regression, fixed on main,
+  not on the release branches; not found by us. Unreproduced: derived from
+  the source.
 - **Evidence:** paths are under `src/rgw/`.
   - On a bucket with MFA delete enabled, `RGWDeleteMultiObj::execute` asks
     for a verified MFA token when the request names a version. v19.2.6
@@ -8175,8 +8281,9 @@ Every new entry adds its row to this table, in document order.
     `!i.instance.empty()`; v20.2.1 through v20.2.4 carry the inversion.
   - Squid's backport of conditional delete,
     [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (merged
-    a742f50616e, after v19.2.6), carries it too: the squid branch tests
-    `instance.empty()` (`rgw_op.cc:7071` at a742f50616e).
+    a742f50616e, after v19.2.6), carries it too, as ce98cebb815: the squid
+    branch tests `instance.empty()` (`rgw_op.cc:7071` at a742f50616e). No
+    v19.2.x tag contains ce98cebb815.
   - b703ec465f3, "rgw: fix inverted MFA check in DeleteMultiObj", restores
     the test on main. The tentacle branch (7411a080411, 2026-09-30) and the
     squid branch (a742f50616e) still carry the inversion.
@@ -8186,25 +8293,31 @@ Every new entry adds its row to this table, in document order.
   delete whose every key names a version deletes those versions without
   MFA, which MFA delete exists to prevent; one that names a key without a
   version is refused unless MFA verified, which S3 does not ask for.
-- **Releases:** v20.2.1 through v20.2.4, checked at v20.2.0 and v20.2.4;
-  Squid from the first release after v19.2.6 that carries
-  ceph/ceph#65932. v19.2.6 is not affected.
-- **rgw-go:** checks as v19.2.6 and main do, on both releases. It verifies
-  no MFA token, so it refuses every DeleteObjects naming a version on such
-  a bucket (`internal/op/deleteobjects.go`; `docs/exclusions.md`, "Deletes
-  that need MFA are refused").
+- **Releases:** only Tentacle's v20.2.1 through v20.2.4 (f28f0d9147d is
+  first in v20.2.1), checked at v20.2.0 and v20.2.4; the squid branch after
+  v19.2.6, in no release yet. v19.2.6 is not affected.
+- **rgw-go:** checks as v19.2.6 and main do, on both releases, so on
+  Tentacle it uses main's corrected check. It verifies no MFA token, so it
+  refuses every DeleteObjects naming a version on such a bucket
+  (`internal/op/deleteobjects.go`; `docs/exclusions.md`, "Deletes that
+  need MFA are refused").
 - **Upstream:** [#77869](https://tracker.ceph.com/issues/77869), fixed on
   main by [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821)
-  (merge 8131835af85). Backports to tentacle and squid: pending: sent to
-  rgw-bug-reproduction.
+  (merge 8131835af85). The backport tracker,
+  [#78708](https://tracker.ceph.com/issues/78708), under
+  [#78707](https://tracker.ceph.com/issues/78707), is New with no PR, as
+  rgw-bug-reproduction's triage found it.
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, reading
   `RGWDeleteMultiObj::execute` at both tags; derived from the source, not
   reproduced.
 
 ## radosgw's parse_date writes a NUL one byte past its format buffer
 
-- **Kind:** defect, an out-of-bounds stack write. Unreproduced: derived from
-  the source.
+- **Kind:** defect, security-relevant, low: an out-of-bounds stack write
+  of a fixed NUL at a fixed offset, which a requester cannot steer (triage
+  estimate CVSS about 3.7; up to 7.5 only if a build is shown to crash its
+  worker reliably). Unreproduced: derived from the source; an
+  AddressSanitizer model reports it.
 - **Evidence:** paths are under `src/`.
   - `utime_t::parse_date` (`include/utime.h:397-502` at v19.2.6 and
     v20.2.4, unchanged between them; `include/utime.cc:163` on main
@@ -8216,8 +8329,9 @@ Every new entry adds its row to this table, in document order.
     `fmt + 9`, and a '+' or '-' where they end becomes `%z` through
     `*q = '%'; *(q+1) = 'z'; *(q+2) = 0;`.
   - A time text of "HH:MM:SS." and 21 digits then a sign puts the sign at
-    `fmt[30]`, so `*(q+2) = 0` writes `fmt[32]`, one byte past the array,
-    before strptime runs, so no zone digits are needed. A shorter digit run
+    `fmt[30]`, so `*(q+2) = 0` writes `fmt[32]`, one byte past the array
+    (`include/utime.h:436` at both tags), before strptime runs, so no zone
+    digits are needed. A shorter digit run
     stays inside it; `fmt[31]` is always the NUL strncpy left, so no longer
     run reaches a sign.
 - **Trigger:** a time with a `.`, 21 digits and a sign, such as
@@ -8232,9 +8346,10 @@ Every new entry adds its row to this table, in document order.
     (`RGWDeleteObj_ObjStore_S3::get_params`, `rgw/rgw_rest_s3.cc:3435-3444`
     at v19.2.6, `:3696-3705` at v20.2.4), which
     `RGWDeleteObj::init_processing` reads before any permission check
-    (`rgw/rgw_op.cc:5129-5136` at v19.2.6, `:5519` at v20.2.4), so any
-    requester who can send a DeleteObject reaches it, an anonymous one
-    included;
+    (`rgw/rgw_op.cc:5129-5136` at v19.2.6, `:5519` at v20.2.4;
+    `init_processing` at `rgw/rgw_process.cc:202`, `verify_permission` at
+    `:225`, at both tags), so any requester who can send a DeleteObject
+    reaches it, an anonymous one included;
   - every XML date the request documents decode (`rgw/rgw_xml.cc:421-445`
     at both tags);
   - the JSON decoders of a `utime_t` or `real_time`
@@ -8250,9 +8365,11 @@ Every new entry adds its row to this table, in document order.
   array reaches first. Otherwise it zeroes one byte of padding, or of
   another local of `parse_date`, such as `tm` or the low byte of the
   `subsec` pointer, whose effect is a wrong parse or, for the pointer, a
-  read through a corrupted address. The byte and its offset are fixed, so
-  a requester cannot steer the write. AddressSanitizer would report it.
-  Not observed.
+  read through a corrupted address. On a build whose canary has a nonzero
+  byte there, the stack protector aborts radosgw when `parse_date`
+  returns, once per such request. The byte and its offset are fixed, so a
+  requester cannot steer the write. AddressSanitizer reports it in a model
+  of the function. Not observed on a running gateway.
 - **Releases:** every release checked: v19.2.6, v20.2.4 and main
   7ed73efc1be.
 - **rgw-go:** not affected. Both of its ports read such a value as the
@@ -8263,7 +8380,9 @@ Every new entry adds its row to this table, in document order.
   conversions of the value that radosgw's format would run
   (`docs/exclusions.md`, "A date whose time names a conversion rgw-go does
   not run is refused").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report, and no fix on any branch. The fix would size the format buffer
+  for the `%z` it appends, or bound the digit walk.
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, porting `parse_date`;
   derived from the source, not reproduced.
 - **Found:** phase 1 unit N, Task 3, 2026-10-05, transcribing `parse_date`
@@ -8272,7 +8391,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload
 
-- **Kind:** defect. Unreproduced: derived from the source.
+- **Kind:** defect, security-relevant, medium: a bypass of a bucket's
+  BlockPublicAcls (triage estimate CVSS 5.3-6.6). Unreproduced end to end:
+  derived from the source.
 - **Evidence:** paths are under `src/rgw/`; lines are v19.2.6's unless
   marked.
   - A bucket's BlockPublicAcls is checked in two places only
@@ -8298,8 +8419,13 @@ Every new entry adds its row to this table, in document order.
     CompleteMultipartUpload stores the object under that policy.
 - **Impact:** a bucket owner's BlockPublicAcls does not stop a writer from
   making new objects public, through grant headers on PutObject or any ACL
-  on CopyObject and CreateMultipartUpload; S3 documents the setting as refusing PUT Object calls
-  whose ACL is public.
+  on CopyObject and CreateMultipartUpload; S3 documents the setting as
+  refusing PUT Object calls whose ACL is public. The object is then public
+  in fact where IgnorePublicAcls is off: a read adds the AllUsers grant's
+  permissions unless the bucket ignores public ACLs (`rgw_acl.cc:180-186`
+  at both tags; `rgw_common.cc:1572-1575`, v20.2.4 `:1626-1629`), so an
+  anonymous GET succeeds. The writer is one the owner allows to write but
+  not to publish: another account, a less privileged user or a tenant.
 - **Releases:** checked at v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: PutObject and CopyObject refuse a new
   object's public policy under the block, whatever headers set it
@@ -8307,7 +8433,11 @@ Every new entry adds its row to this table, in document order.
   `docs/exclusions.md`, "A block of public ACLs refuses a public ACL on
   PutObject and CopyObject"). CreateMultipartUpload is to apply the block
   when rgw-go serves it.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. The nearest work covers the canned ACLs alone:
+  [#49135](https://tracker.ceph.com/issues/49135) and its fix,
+  [ceph/ceph#64290](https://github.com/ceph/ceph/pull/64290), "rgw/s3: fix
+  PutObject's canned_acl comparisons for BlockPublicAcls".
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, auditing the write ops'
   public-access checks; derived from the source, not reproduced.
 
@@ -8537,7 +8667,15 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** [#80896](https://tracker.ceph.com/issues/80896) (Fix Under
   Review); the tracker names
   [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103) as its fix.
-  Related: [#75375](https://tracker.ceph.com/issues/75375).
+  Related: [#75375](https://tracker.ceph.com/issues/75375). A review
+  comment on the PR,
+  [ceph/ceph#72103 (comment)](https://github.com/ceph/ceph/pull/72103#issuecomment-6008906564),
+  reports that its replay of a recorded completion sends the completed
+  object's own parts to the GC when an UploadPart races the replay: the
+  replay returns before it fills the set of parts to keep, and the
+  orphan cleanup that follows a lost meta-object removal then queues
+  every part. rgw-go's replay builds that set from the head's manifest
+  (`replayRecorded` in `internal/driver/mp_complete.go`).
 - **Found:** phase 1 unit P, Task 6, 2026-10-05, reading the tracker as the
   task's notes asked; upstream reported it first.
 
@@ -8573,8 +8711,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a leak. Unreproduced:
-  derived from the source.
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a leak, on the omap
+  log's backend only, not security-relevant. Unreproduced: derived from
+  the source.
 - **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - `RGWGC::send_chain` falls back to `cls_rgw_gc_set_entry` on a gc shard
@@ -8592,14 +8731,28 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** on such a shard, every chain but the last sent under a tag is
   never collected, and its objects leak. Only shards still on the omap log
   are affected ("cls_rgw's omap gc log loses an entry due in the same
-  nanosecond as another" says when that is).
+  nanosecond as another" says when that is). The queue, the default
+  backend, keeps every chain, since it enqueues by position, and
+  `RGWGC::initialize` moves every shard to it at startup
+  (`rgw/driver/rados/rgw_gc.cc:39-55`, `:53` at v20.2.4 for
+  `gc_log_init2`), so the leak lives only on a shard not yet moved.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** meets it as radosgw does for a split chain and for the GC
-  entries of one upload's completion and its retries, which it sends with
-  the same class calls (`enqueueGC`, `internal/driver/gc_enqueue.go`). A
+- **rgw-go:** reproduces it on a gc shard still on the omap log, for a
+  split chain and for the GC entries of one upload's completion and its
+  retries, which it sends with the same class calls and the same fallback
+  (`enqueueGC` and `sendGCChain`, `internal/driver/gc_enqueue.go`). It is
+  immune on a queue shard, and moves every shard to the queue at startup
+  as radosgw does (`gcInitialize`, `internal/driver/gc.go`). A
   completion's part history goes in one entry, where radosgw sends one per
   part uploaded again.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; it places the entry in the lineage of the gc work in
+  [ceph/ceph#28421](https://github.com/ceph/ceph/pull/28421),
+  [ceph/ceph#46020](https://github.com/ceph/ceph/pull/46020) and
+  [ceph/ceph#50206](https://github.com/ceph/ceph/pull/50206), and apart from
+  [#68169](https://tracker.ceph.com/issues/68169) and
+  [#77098](https://tracker.ceph.com/issues/77098). The fix would merge the
+  prior chain into the entry on a same-tag update of the omap log.
 - **Found:** phase 1 unit P, Task 6, 2026-10-05, sending a completion's part
   history to the GC; derived from the source, not reproduced.
 
@@ -8679,14 +8832,19 @@ Every new entry adds its row to this table, in document order.
 
 ## Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode
 
-- **Kind:** defect. Unreproduced: derived from the source.
+- **Kind:** defect, unfixed through main: robustness, not
+  security-relevant, since no client request writes these attrs.
+  Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`, at v20.2.4; v19.2.6 has no restore
   attrs and no such code.
   - `RGWGetObj_ObjStore_S3::send_response_data` reads an object's restore
-    state for the `x-amz-restore` header with three bare `decode` calls: the
-    `user.rgw.restore-status` attr, then `user.rgw.restore-type`, then
-    `user.rgw.restore-expiry-date` (`rgw/rgw_rest_s3.cc:588-614`). No
-    `try` surrounds them, unlike the replication and checksum decodes before
+    state for the `x-amz-restore` header with three bare `decode` calls
+    (`rgw/rgw_rest_s3.cc:588-614`): the `user.rgw.restore-status` attr
+    (`:593`), then `user.rgw.restore-type` (`:604`), then the
+    `user.rgw.restore-expiry-date` attr (`:613`), not `restored-at`
+    (`RGW_ATTR_RESTORE_STATUS`, `RGW_ATTR_RESTORE_TYPE` and
+    `RGW_ATTR_RESTORE_EXPIRY_DATE`, `rgw/rgw_common.h:129-132`). No `try`
+    surrounds them, unlike the replication and checksum decodes before
     them (`:512-519`, `:523-527`, `:553-584`).
   - The status and type are one-byte enums, which `denc` decodes with
     `p.copy(sizeof(T), ...)` (`include/denc.h:305-330`), and the expiry date
@@ -8699,7 +8857,9 @@ Every new entry adds its row to this table, in document order.
     (`:2686`).
   - Nothing above catches it. `rgw_process_authenticated` calls
     `op->execute(y)` bare (`rgw/rgw_process.cc:258`), and `process_request`
-    catches only `ceph::crypto::DigestException` (`:417`). The beast
+    catches only `ceph::crypto::DigestException` around the op (`:345` to
+    `:417`) and `rgw::io::Exception` around the request's completion
+    (`:460-467`). The beast
     frontend's connection coroutine rethrows whatever escapes it
     (`rgw/rgw_asio_frontend.cc:1117` and `:1134`), on an `io_context_pool`
     thread that catches nothing (`common/async/context_pool.h:68` and
@@ -8710,21 +8870,33 @@ Every new entry adds its row to this table, in document order.
   and every request it is serving, and does so again on each retry.
 - **Reachability:** radosgw writes the three attrs whole when a restore
   sets them (`rgw/driver/rados/rgw_rados.cc:5635`, `:5656`, `:5664`,
-  `:5692`), and an S3 client's metadata lands under `user.rgw.x-amz-meta-`,
-  so it takes a writer with access to the data pool, or a bug elsewhere that
-  leaves an attr short.
-- **Releases:** v20.2.4. Not checked on main.
+  `:5692`), and an S3 client's metadata lands under `user.rgw.x-amz-meta-`
+  (`RGW_ATTR_META_PREFIX`, `rgw/rgw_common.h:93`); RestoreObject only
+  starts the restore. So it takes a writer with access to the data pool, a
+  corrupted attr, or a bug in the restore machinery that leaves an attr
+  short.
+- **Releases:** v20.2.4 and main e6dd4bc2a2c, whose three decodes are as
+  bare (`rgw/rgw_rest_s3.cc:622`, `:633` and `:642`). v19.2.6 is not
+  affected.
 - **rgw-go:** not affected. Its GET and HEAD handler decodes each attr
   before it writes the header and omits `x-amz-restore` for one that does
   not decode (`internal/s3/getobject.go`; `docs/exclusions.md`, "A restore
   attr that does not decode").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix; only the PRs that built the restore feature touch this
+  code ([ceph/ceph#59311](https://github.com/ceph/ceph/pull/59311),
+  [ceph/ceph#62713](https://github.com/ceph/ceph/pull/62713),
+  [ceph/ceph#67547](https://github.com/ceph/ceph/pull/67547)). The
+  hardening would wrap the block in a `try` that catches `buffer::error`,
+  as the neighbouring decodes do.
 - **Found:** phase 1 unit R, Task 7, 2026-10-05, porting
   `send_response_data`'s headers; derived from the source, not reproduced.
 
 ## radosgw sends the ACL document as a body after the headers of a HEAD ?acl
 
-- **Kind:** defect. Unreproduced: derived from the source.
+- **Kind:** defect, protocol conformance, low: informational, not a
+  request-smuggling vector. Confirmed on the wire by rgw-bug-reproduction;
+  not reproduced here.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - A HEAD with `?acl` runs `RGWGetACLs_ObjStore_S3`, at object scope
@@ -8738,21 +8910,87 @@ Every new entry adds its row to this table, in document order.
     `:786-805`). `acls` holds the policy XML `RGWGetACLs::execute` wrote
     (`rgw_op.cc:5725-5734`, `:6305-6314`).
   - No layer below drops it. The beast frontend's filters buffer a body
-    sent without a length and send it with a `Content-Length` of its size
-    when the request completes (`BufferingFilter::complete_request`,
-    `rgw_client_io_filters.h:221-253` at both), and neither those filters
-    nor the beast client (`rgw_asio_client.cc`) looks at the method.
+    sent without a length (`BufferingFilter::complete_header`,
+    `rgw_client_io_filters.h:208-219` at both) and send it with a
+    `Content-Length` of its size when the request completes
+    (`BufferingFilter::complete_request`, `:221-253` at both), and neither
+    those filters nor the beast client (`rgw_asio_client.cc`) looks at the
+    method.
 - **Impact:** the HEAD response carries the ACL document, without its XML
-  declaration, as a body of the length its `Content-Length` names. A client,
-  which reads no body after a HEAD (RFC 9110, section 9.3.2), takes those
-  bytes for the start of the next response on the connection, so the
-  next request on a kept-alive connection fails or is misread; a proxy that
-  pools connections to radosgw can hand them to another client's request.
+  declaration, as a body of exactly the length its `Content-Length` names,
+  so the framing stays consistent. A peer that reads the body by that
+  length stays in step. One that reads no body after a HEAD, as RFC 9110,
+  section 9.3.2, and RFC 9112, section 6.3, require, finds the bytes left
+  on the connection; mature clients and proxies close such a connection.
+  Only an intermediary that both reads no body and pools the connection
+  without checking for leftover bytes would hand them to another request,
+  which rgw-bug-reproduction's triage judged theoretical and unproven. Any
+  reader of the ACL can send the HEAD, at object and bucket scope.
 - **Releases:** checked at v19.2.6 and v20.2.4.
-- **rgw-go:** not affected: net/http sends no body after a HEAD's headers.
-  rgw-go answers HEAD ?acl with the GET's headers, whose `Content-Length`
-  counts the XML declaration as well (`docs/exclusions.md`, "HEAD ?acl").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **rgw-go:** not affected: it writes no body for a HEAD
+  (`writeDocument`, `internal/s3/objectdocs.go`). rgw-go answers HEAD ?acl
+  with the GET's headers, whose `Content-Length` counts the XML
+  declaration as well (`docs/exclusions.md`, "HEAD ?acl").
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. The fix would guard `dump_body` on a HEAD, as
+  `rgw_flush_formatter` already is.
 - **Found:** phase 1 unit R, Task 7, 2026-10-05, porting
   `RGWGetACLs_ObjStore_S3::send_response`; derived from the source, not
   reproduced.
+
+## radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET
+
+- **Kind:** defect, security-relevant: response-header injection and
+  response splitting (CWE-113), triage estimate CVSS about 6.1. Unfixed
+  at v19.2.6 and v20.2.4. Unreproduced: derived from the source and a
+  model of the code; no cluster.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWPostObj_ObjStore_S3::get_params` reads each form field's body with
+    `read_data` (`rgw_rest_s3.cc:2955`, `:3089`), which looks for the
+    boundary and for no line end: it calls `read_with_boundary` with
+    `check_crlf` false (`rgw_rest.cc:1297-1303` and `:1217-1287`,
+    `:1302-1308` and `:1222-1292`). A field's value keeps every CR and LF
+    inside it.
+  - Each `x-amz-meta-*` field's bytes become the object's attr of that
+    name, with a NUL appended and nothing checked
+    (`rgw_rest_s3.cc:3019-3038`, `:3166-3185`).
+  - A GET or HEAD of the object writes each such attr as a header
+    (`send_response_data`, `rgw_rest_s3.cc:581-585`, `:698-702`) through
+    `dump_header`, whose `rgw_sanitized_hdrval` drops only a trailing NUL
+    (`rgw_rest.cc:359-363` and `rgw_rest.h:29-47` at both tags). Then
+    `ClientIO::send_header` writes the name, `: `, the value and a CRLF as
+    they are (`rgw_asio_client.cc:167-181` at both tags).
+  - The fix for CVE-2020-1760 refuses a control character only in a GET's
+    response-* query parameters (`str_has_cntrl`, `rgw_rest_s3.cc:529`,
+    `:646`). Nothing checks a stored value.
+- **Trigger:** a POST upload whose `x-amz-meta-*` field holds a CR LF and a
+  header line, or a CR LF CR LF and text. The uploader needs only the right
+  to POST to the bucket. A POST policy must name every field in a
+  condition (`match_policy_vars`, `rgw_policy_s3.cc:105-121`, `:108-130`),
+  but a `starts-with` condition passes any value that begins with its
+  prefix, an empty one included (`:64-73`, `:68-77`). A form with no policy
+  runs as the anonymous user (`get_policy`, `rgw_rest_s3.cc:3230-3232`,
+  `:3374-3376`), which a bucket that grants public writes admits.
+- **Impact:** every reader of the object, by GET or HEAD, receives the
+  headers the uploader wrote, such as a `Set-Cookie` or a second
+  `Content-Type`. An empty line ends the header section early, and the
+  uploader's text becomes the start of the body (response splitting). A
+  site that hands its users POST policies so that browsers upload straight
+  to radosgw lets any of those users plant such a response for the others.
+- **Releases:** v19.2.6 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. It serves no POST upload yet, and its GET and
+  HEAD write a stored value through net/http, which rewrites each CR and LF
+  in a header value to a space and trims the value's ends
+  (`net/http/header.go:139` and `:206-207` at Go 1.27.1). So a value that
+  radosgw stored this way reaches the client as one header
+  (`docs/exclusions.md`, "A stored header value's CR and LF go out as
+  spaces").
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix. CVE-2020-1760 is the response-* parameter variant, and
+  its fix does not reach a stored value. The fix would refuse, or strip,
+  control characters in a POST upload's metadata fields.
+- **Found:** phase 1 unit R, Task 7 review, 2026-10-05, tracing a POST
+  upload's metadata to the GET that sends it; confirmed by
+  rgw-bug-reproduction's triage against a model of the code. Not
+  reproduced on a running system.
