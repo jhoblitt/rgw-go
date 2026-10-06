@@ -9,6 +9,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // recorder is a jsonHandler that writes each event as rj.cc does and refuses
@@ -54,7 +56,7 @@ var _ = Describe("jsonReader", func() {
 			Expect(err).NotTo(HaveOccurred(), "line %q", line)
 
 			h := &recorder{refuse: refuse}
-			r := &jsonReader{src: cString(input), h: h}
+			r := &jsonReader{src: rgwtext.CString(input), h: h}
 			result := "OK"
 			if pe := r.parse(); pe != nil {
 				result = pe.Annotation + " @" + strconv.FormatInt(pe.Offset, 10)

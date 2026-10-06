@@ -12,6 +12,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
@@ -194,7 +195,7 @@ func serveListBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 		return err
 	}
 	l := listing{
-		o: o, r: r, encode: strings.EqualFold(cString(o.EncodingType), "url"),
+		o: o, r: r, encode: strings.EqualFold(rgwtext.CString(o.EncodingType), "url"),
 		tentacle: r.Env.Zone != nil && r.Env.Zone.Release() >= denc.Tentacle,
 	}
 	var doc any
@@ -295,7 +296,7 @@ func (l listing) contents(withOwner bool) []listContents {
 
 // quotedETag is dump_format("ETag", "\"%s\"", etag.c_str()).
 func quotedETag(etag string) xmltext.Text {
-	return xmltext.Text(`"` + cString(etag) + `"`)
+	return xmltext.Text(`"` + rgwtext.CString(etag) + `"`)
 }
 
 // v1 is RGWListBucket_ObjStore_S3::send_response's document (:1916-1966).
@@ -441,11 +442,5 @@ func arg(q url.Values, name string) (string, bool) {
 // (rgw_common.cc:1001-1037 at v19.2.6): true only for "true", in any case;
 // "false" and any other value are false.
 func argBool(q url.Values, name string) bool {
-	return strings.EqualFold(cString(q.Get(name)), "true")
-}
-
-// cString is s as C reads it through c_str(): up to its first NUL.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
+	return strings.EqualFold(rgwtext.CString(q.Get(name)), "true")
 }

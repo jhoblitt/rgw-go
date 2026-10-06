@@ -214,7 +214,7 @@ func ParseMaskedIP(s string) (MaskedIP, bool) {
 			return MaskedIP{}, false
 		}
 	}
-	addr = cString(addr)
+	addr = rgwtext.CString(addr)
 	var ok bool
 	if m.V6 {
 		m.Addr, ok = inetPton6(addr)

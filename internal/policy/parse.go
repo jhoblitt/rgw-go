@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // ParseOptions are Policy's constructor arguments
@@ -55,7 +56,7 @@ func Parse(text string, opts ParseOptions) (*Policy, error) {
 		policy:     pol,
 		annotation: "No error?",
 	}
-	r := &jsonReader{src: cString(text), h: h}
+	r := &jsonReader{src: rgwtext.CString(text), h: h}
 	if err := r.parse(); err != nil {
 		return nil, err
 	}
