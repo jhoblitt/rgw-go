@@ -32,6 +32,8 @@ var _ = Describe("ParseValueAndBound", func() {
 		},
 		Entry("above LONG_MAX, whose low 32 bits are -1", "99999999999999999999", -1),
 		Entry("below LONG_MIN, whose low 32 bits are 0", "-99999999999999999999", 0),
+		Entry("LONG_MAX itself, whose low 32 bits are -1", "9223372036854775807", -1),
+		Entry("LONG_MIN itself, whose low 32 bits are 0", "-9223372036854775808", 0),
 	)
 	It("holds the default in a C int too", func() {
 		Expect(op.ParseValueAndBound("", 0, 1000, 1<<32+7)).To(Equal(7))

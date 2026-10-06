@@ -284,6 +284,8 @@ var _ = Describe("ParseHeader", func() {
 		Entry("a lone % ending the side", "k=ab%", tags.Tag{Key: "k", Value: "ab"}),
 		Entry("a value whose escape is not hex read as empty", "k=abc%zz", tags.Tag{Key: "k", Value: ""}),
 		Entry("an escaped NUL kept", "k=%00", tags.Tag{Key: "k", Value: "\x00"}),
+		Entry("a byte above 0x7f after a % read as empty", "k=a%\xc3\xbc", tags.Tag{Key: "k", Value: ""}),
+		Entry("a ? copied from an escape leaves a + alone", "k=%3Fa+b", tags.Tag{Key: "k", Value: "?a+b"}),
 	)
 })
 

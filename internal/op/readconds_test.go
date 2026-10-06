@@ -136,6 +136,10 @@ var _ = Describe("ParseHTTPTime", func() {
 		Entry("a negative fraction, negated as unsigned", "2026-09-28T01:02:03.-5Z", int64(iso2026+4), int64(244967296)),
 		Entry("a fraction carrying past 32 bits of seconds stops at their maximum", "2106-02-07T06:28:14.2000000000Z", int64(math.MaxUint32), int64(0)),
 		Entry("ISO 8601's year 0", "0000-01-01T00:00:00Z", int64(2257376640), int64(0)),
+		Entry("%T's numbers skipping white space", "2026-09-28T 1: 2: 3Z", int64(iso2026), int64(0)),
+		Entry("a NUL ends an RFC date", "Sun, 27 Sep 2026 01:02:03 GMT\x00x", int64(sep2026), int64(0)),
+		Entry("a NUL ends an ISO date", "2026-09-28T01:02:03Z\x00x", int64(iso2026), int64(0)),
+		Entry("a fraction of white space, a sign and digits", "2026-09-28T01:02:03. +5Z", int64(iso2026), int64(5_000_000)),
 	)
 	DescribeTable("rejects the rest with InvalidArgument",
 		func(s string) {

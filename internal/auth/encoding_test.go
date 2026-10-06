@@ -45,6 +45,10 @@ var _ = Describe("radosgw encodings", func() {
 		Entry("encoded slash becomes a slash in the uri", "/k%2Fv", false, "/k/v"),
 		Entry("lowercase hex normalised", "%2f", true, "%2F"),
 		Entry("a plus is no space outside a query, so it is encoded", "a+b", true, "a%2Bb"),
+		Entry("a plus after a literal ? is a space", "/p?a+b", false, "/p%3Fa%20b"),
+		Entry("a truncated escape ends the decode", "/a%4", false, "/a"),
+		Entry("a bad hex digit empties the decode", "/a%zz", false, ""),
+		Entry("a byte above 0x7f in an escape empties the decode", "/a%\xc3\xbc", false, ""),
 	)
 
 	It("trims as rgw_trim_whitespace and collapses as boost::trim_all", func() {
@@ -130,5 +134,7 @@ var _ = Describe("radosgw encodings", func() {
 		Entry("an rfc 850 year of 69 is 1969", "Saturday, 30-Aug-69 12:36:00 GMT", true, time.Date(1969, 8, 30, 12, 36, 0, 0, time.UTC)),
 		Entry("an rfc 850 year of 68 is 2068", "Thursday, 30-Aug-68 12:36:00 GMT", true, time.Date(2068, 8, 30, 12, 36, 0, 0, time.UTC)),
 		Entry("glibc's weekday match runs on past a matched abbreviation", "SunMon, 30 Aug 2015 12:36:00 GMT", true, time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)),
+		Entry("a NUL ends the string as it does in C", "Sun, 30 Aug 2015 12:36:00 GMT\x00x", true, time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)),
+		Entry("a NUL before the zone leaves none", "Sun, 30 Aug 2015 12:36:00 \x00GMT", false, time.Time{}),
 	)
 })

@@ -78,6 +78,11 @@ var _ = Describe("list_bucket and list_bucket_v2", func() {
 		Expect(body).To(ContainSubstring(`<Contents><Key>dir%2Fx</Key>`), "a key's slash is encoded, :1940")
 		Expect(body).NotTo(ContainSubstring("<NextMarker>"), "the listing ends")
 	})
+	It("reads encoding-type and fetch-owner as C strings, up to a NUL", func() {
+		body := get("/plain?list-type=2&prefix=dir/&encoding-type=url%00x&fetch-owner=TRUE%00x").Body.String()
+		Expect(body).To(ContainSubstring(`<Contents><Key>dir%2Fx</Key>`), "encoding-type is url up to its NUL")
+		Expect(body).To(ContainSubstring(`<Owner><ID>alice</ID>`), "fetch-owner is true up to its NUL")
+	})
 	It("renders v2 with KeyCount, the tokens and Owner only when fetched", func() {
 		body := get("/plain?list-type=2&max-keys=2&start-after=_under&fetch-owner=true").Body.String()
 		Expect(body).To(ContainSubstring(`<Contents><Key>a</Key>`))

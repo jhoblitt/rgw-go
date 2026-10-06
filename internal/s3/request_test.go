@@ -93,6 +93,8 @@ var _ = Describe("ParseRequest", func() {
 		Entry("a pair is decoded before it is split at =", "a%3Db=c", url.Values{"a": {"b=c"}}),
 		Entry("a malformed escape empties its pair", "a=%zz&prefix=p", url.Values{"": {""}, "prefix": {"p"}}),
 		Entry("a truncated escape ends its pair", "prefix=ab%4", url.Values{"prefix": {"ab"}}),
+		Entry("a lone percent sign ends its pair", "prefix=ab%", url.Values{"prefix": {"ab"}}),
+		Entry("an escaped NUL is kept", "prefix=a%00b", url.Values{"prefix": {"a\x00b"}}),
 		Entry("an empty pair is an empty key", "acl&", url.Values{"acl": {""}, "": {""}}),
 		Entry("one leading ? is skipped", "?acl", url.Values{"acl": {""}}),
 		Entry("only the exact X-Amz- spelling is lowercased", "X-AMZ-Date=d&Foo-X-Amz-Bar=e", url.Values{"X-AMZ-Date": {"d"}, "foo-x-amz-bar": {"e"}}),
@@ -110,6 +112,8 @@ var _ = Describe("ParseRequest", func() {
 			Entry("a virtual-hosted root is the bucket", "plain.s3.example.com", "/", "plain", ""),
 			Entry("a virtual-hosted key decodes once", "plain.s3.example.com", "/a%2Fb", "plain", "a/b"),
 			Entry("the Host's bucket is decoded along with the path", "my%2Dbucket.s3.example.com", "/k", "my-bucket", "k"),
+			Entry("a plus stays a plus in a virtual-hosted path", "plain.s3.example.com", "/a+b", "plain", "a+b"),
+			Entry("a bad hex digit in the Host's bucket empties the whole URI", "my%zz.s3.example.com", "/k", "", ""),
 		)
 		DescribeTable("records the Host without its port, lowercased",
 			func(ctx SpecContext, header, want string) {
@@ -183,6 +187,8 @@ var _ = Describe("PostAuthInit", func() {
 		Entry("a copy source with nothing after its tenant colon", "/b/k", copySource("/t1:/src"), "", op.ErrInvalidBucketName),
 		Entry("a copy source's bad tenant, whatever the method", "/b/k", copySource("t-1:src/k"), "", op.ErrInvalidTenantName),
 		Entry("a copy source takes the identity's tenant, not the URL's", "/t1:b/k", copySource("src/k"), "t-1", op.ErrInvalidTenantName),
+		Entry("a copy source decoded before it is split", "/b/k", copySource("t%2D1:src/k"), "", op.ErrInvalidTenantName),
+		Entry("a copy source whose escaped slash splits it", "/b/k", copySource("t-1:src%2Fk"), "", op.ErrInvalidTenantName),
 	)
 	DescribeTable("gives the request its tenant",
 		func(ctx SpecContext, target, authTenant, tenant, bucket string) {
@@ -211,5 +217,7 @@ var _ = Describe("PostAuthInit", func() {
 			map[string]string{"X-Amz-Copy-Source": "t-1:src/k", "X-Amz-Copy-Source-Range": "bytes=0-1"}),
 		Entry("a copy source parse_copy_location refuses, which the handler lifecycle answers with 400 before authentication", "/b/k", copySource("t-1:src")),
 		Entry("a copy source with an empty key, refused the same way", "/b/k", copySource("t-1:src/")),
+		Entry("a copy source whose bad hex digit empties it", "/b/k", copySource("t-1:src/k%zz")),
+		Entry("a copy source whose truncated escape leaves the key empty", "/b/k", copySource("t-1:src/%4")),
 	)
 })

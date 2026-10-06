@@ -96,6 +96,9 @@ var _ = Describe("ParseArgs", func() {
 		Entry("overflow is LLONG_MAX, refused", "n=9223372036854775808", int64(0), true),
 		Entry("underflow is LLONG_MIN, kept", "n=-9223372036854775809", int64(-9223372036854775808), false),
 		Entry("text after a NUL is not read", "n=5%00x", int64(5), false),
+		Entry("white space alone, which strtoll leaves unread", "n=%20", int64(0), true),
+		Entry("white space before a sign and digits", "n=%09%0A-3", int64(-3), false),
+		Entry("LLONG_MIN itself", "n=-9223372036854775808", int64(-9223372036854775808), false),
 	)
 	It("reads the unsigned and 32-bit forms as strtoull, strtol and strtoul do, then truncates", func() {
 		a := admin.ParseArgs("max=18446744073709551615&less=18446744073709551614&neg=-1&neg2=-2&i=-5&i33=4294967297&w=4294967295&big=4294967296")
@@ -124,6 +127,39 @@ var _ = Describe("ParseArgs", func() {
 		_, _, err = a.Uint32("neg", 9)
 		Expect(err).To(MatchError(op.ErrInvalidArgument), "ULONG_MAX is refused")
 	})
+	DescribeTable("Uint64 is stringtoull",
+		func(q string, want uint64, wantErr bool) {
+			v, _, err := admin.ParseArgs(q).Uint64("n", 7)
+			if wantErr {
+				Expect(err).To(MatchError(op.ErrInvalidArgument), "%q", q)
+				Expect(v).To(Equal(uint64(7)), "a refused value leaves the default")
+				return
+			}
+			Expect(err).NotTo(HaveOccurred(), "%q", q)
+			Expect(v).To(Equal(want), "%q", q)
+		},
+		Entry("overflow saturates to ULLONG_MAX, refused", "n=99999999999999999999", uint64(0), true),
+		Entry("a negative overflow saturates to ULLONG_MAX, refused", "n=-99999999999999999999", uint64(0), true),
+		Entry("the most negative value that wraps below ULLONG_MAX", "n=-18446744073709551615", uint64(1), false),
+		Entry("empty is zero", "n=", uint64(0), false),
+		Entry("a sign alone", "n=%2B", uint64(0), true),
+		Entry("white space alone", "n=%20", uint64(0), true),
+		Entry("trailing text", "n=1%20", uint64(0), true),
+		Entry("text after a NUL is not read", "n=1%00x", uint64(1), false),
+	)
+	DescribeTable("decodes as url_decode does in a query",
+		func(q, name, want string) {
+			v, ok := admin.ParseArgs(q).Get(name)
+			Expect(ok).To(BeTrue(), "%q", q)
+			Expect(v).To(Equal(want), "%q", q)
+		},
+		Entry("a truncated escape ends the pair", "a=bc%4", "a", "bc"),
+		Entry("a lone % ends the pair", "a=bc%", "a", "bc"),
+		Entry("a bad hex digit empties the pair", "a=b%zz&c=1", "", ""),
+		Entry("a byte above 0x7f is a bad hex digit", "a=b%\xc3\xbc", "", ""),
+		Entry("hex digits in either case", "a=%4a%4A", "a", "JJ"),
+		Entry("an escaped NUL is kept", "a=%00", "a", "\x00"),
+	)
 	DescribeTable("Epoch is utime_t::parse_date",
 		func(in string, want uint64, ok bool) {
 			v, _, err := admin.ParseArgs("start="+url.QueryEscape(in)).Epoch("start", 7)
@@ -154,6 +190,15 @@ var _ = Describe("ParseArgs", func() {
 		Entry("year 0 as internal_timegm counts it", "0000-03-01", uint64(18446744011547602816), true),
 		// sscanf's %d saturates through strtol, then stores an int.
 		Entry("seconds past a long saturate, then truncate to an int", "99999999999999999999.5", uint64(18446744073709551615), true),
+		Entry("seconds and microseconds after white space and signs", " +1348588800. -5", uint64(1348588800), true),
+		Entry("negative seconds wrap through uint64_t", "-1.0", uint64(18446744073709551615), true),
+		Entry("seconds past an int truncate", "4294967297.0", uint64(1), true),
+		Entry("a NUL ends the date", "2012-09-25\x00T16:00:00", uint64(1348531200), true),
+		Entry("a NUL ends the time", "2012-09-25T16:00:00\x00+0200", uint64(1348588800), true),
+		Entry("a conversion in the time the rest of the text does not match", "2012-09-25T16:00:00%a", uint64(0), false),
+		Entry("seconds and a dot alone", "1348588800.", uint64(0), false),
+		Entry("seconds and a sign alone", "1348588800.-", uint64(0), false),
+		Entry("a dot and microseconds alone", ".5", uint64(0), false),
 		Entry("seconds alone", "1348588800", uint64(0), false),
 		Entry("an hour without minutes", "2012-09-25T16", uint64(0), false),
 		Entry("garbage", "yesterday", uint64(0), false),
