@@ -173,7 +173,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | pending | pending |  |
 | [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | pending | pending |  |
 | [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | pending | pending |  |
-| [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | pending | pending |  |
+| [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
 | [radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC](#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc) | pending | pending |  |
 | [radosgw fails every tail-sharing copy on a zero rgw_max_copy_obj_concurrent_io](#radosgw-fails-every-tail-sharing-copy-on-a-zero-rgw_max_copy_obj_concurrent_io) | pending | pending |  |
 | [radosgw's bucket creation retry leaks the abandoned instance and repeats its log layout](#radosgws-bucket-creation-retry-leaks-the-abandoned-instance-and-repeats-its-log-layout) | pending | pending |  |
@@ -7320,7 +7320,8 @@ Every new entry adds its row to this table, in document order.
 
 ## Squid labels a copy to another storage class with its source's class
 
-- **Kind:** defect, fixed in Tentacle. Unreproduced: derived from the
+- **Kind:** defect, fixed in v20.2.3 and v21.0.0, not on squid; prior
+  art, fixed upstream before we met it. Unreproduced: derived from the
   source.
 - **Evidence:** paths are under `src/rgw/`.
   - v19.2.6's `copy_obj` keeps the source's `user.rgw.storage_class` in
@@ -7332,15 +7333,18 @@ Every new entry adds its row to this table, in document order.
     when that is not empty (`_do_write_meta`, `:3220-3262`). A copy into
     a placement's default class, whose rule has an empty class, so keeps
     the source's class, such as COLD, on a head whose data lies in the
-    STANDARD pool.
+    STANDARD pool. A copy of such an object within the default class
+    shares its tails (`:4847-4866`) and keeps the label the same way.
   - GetObject and HeadObject report `x-amz-storage-class` from that attr
     (`rgw_rest.cc:106`, `rgw_rest_s3.cc:544-548` at v19.2.6), while the
     bucket index entry carries the manifest's class, so a listing shows
     STANDARD.
   - v20.2.4 erases the attr from the source's attrs
     (`driver/rados/rgw_rados.cc:5028` at v20.2.4), with commit
-    fdb78c7fb07, "rgw: implement CopyObject for encrypted object" (on
-    tentacle as dbf6b8e4b07).
+    fdb78c7fb07, "rgw: implement CopyObject for encrypted object", first
+    tagged in v21.0.0, and on tentacle as dbf6b8e4b07, first tagged in
+    v20.2.3; v20.2.2 lacks the erase. The squid branch lacks it
+    (a742f50616e, 2026-09-03).
 - **Impact:** a copied object reports the wrong storage class to
   GetObject and HeadObject; its data is right. Its index entry starts with
   the right class, but a listing that repairs the entry rebuilds it from
@@ -7349,10 +7353,19 @@ Every new entry adds its row to this table, in document order.
   same), after which the listing shows the wrong class too,
   and lifecycle, which reads the index entry, can transition the object by
   it.
-- **Releases:** v19.2.6. v20.2.4 is not affected.
-- **rgw-go:** reproduces it on Squid and drops the attr on Tentacle
-  (`copyAttrs`, `internal/driver/copy.go`).
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Releases:** v19.2.6, and Tentacle before v20.2.3. v20.2.4 is not
+  affected.
+- **rgw-go:** works around it on Squid: it drops the source's attr on
+  both releases, as v20.2.4 does, so a copy is labeled with its
+  destination placement's class alone (`copyAttrs`,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy is labeled
+  with its destination's storage class on both releases").
+- **Upstream:** fixed as a side effect of
+  [#23264](https://tracker.ceph.com/issues/23264), server-side encryption
+  for CopyObject, by [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794)
+  and on tentacle by
+  [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277). The issue's
+  Backport field names squid, but the squid branch carries no backport.
 - **Found:** phase 1 unit W, Task 8, 2026-10-05, comparing `copy_obj` at
   both tags; derived from the source, not reproduced.
 
