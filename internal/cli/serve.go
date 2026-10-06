@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jhoblitt/rgw-go/internal/admin"
 	"github.com/jhoblitt/rgw-go/internal/auth"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/driver"
@@ -215,7 +216,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if len(apis.Ignored) > 0 {
 		slog.InfoContext(ctx, "ignoring apis", slog.Any("apis", apis.Ignored))
 	}
-	unserved, s3On, err := unservedAPIs(conf, apis)
+	unserved, adminPath, s3On, err := unservedAPIs(conf, apis)
 	if err != nil {
 		return err
 	}
@@ -261,7 +262,22 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if s3On {
 		s3h = s3.NewHandler(env, verifier, s3cfg)
 	}
-	root := newRouter(s3h, newUnservedHandler(env, s3cfg), s3cfg, unserved)
+	var adminH http.Handler
+	if adminPath != "" {
+		if env.ClusterID, err = cluster.FSID(); err != nil {
+			return fmt.Errorf("reading the cluster fsid: %w", err)
+		}
+		prefix := strings.TrimPrefix(adminPath, "/")
+		adminH = admin.NewHandler(env, verifier, admin.Config{
+			Prefix:        prefix,
+			TransIDSuffix: s3cfg.TransIDSuffix,
+			ServerHeader:  s3cfg.ServerHeader,
+			MaxConcurrent: s3cfg.MaxConcurrent,
+			DNSNames:      s3cfg.DNSNames,
+		})
+		slog.InfoContext(ctx, "admin api mounted", slog.String("prefix", prefix))
+	}
+	root := newRouter(s3h, adminH, adminPath, newUnservedHandler(env, s3cfg), s3cfg, unserved)
 
 	fe, err := frontend.New(spec, frontend.Deadlines(root, spec.RequestTimeout))
 	if err != nil {
@@ -342,40 +358,78 @@ func s3Config(conf *cephconf.Options, zi op.ZoneInfo, instanceID uint64) (s3.Con
 	}, nil
 }
 
-// unservedAPIs lists the paths of the REST managers radosgw registers for an
-// enabled API rgw-go does not serve: Swift at rgw_swift_url_prefix, Swift
-// auth at rgw_swift_auth_entry, the zero API, and the admin API at
-// rgw_admin_entry (rgw_appmain.cc:307-366 at v19.2.6, :316-375 at v20.2.4).
-// s3On reports whether S3 is the default manager: radosgw leaves it out when
-// rgw_swift_url_prefix is "/", which puts Swift at the root.
-func unservedAPIs(conf *cephconf.Options, apis cephconf.APIs) (paths []string, s3On bool, err error) {
-	var swift, swiftAuth, admin string
+// unservedAPIs lays out the REST managers radosgw registers for the enabled
+// APIs other than S3 (rgw_appmain.cc:307-366 at v19.2.6, :316-375 at
+// v20.2.4): Swift at rgw_swift_url_prefix, Swift auth at
+// rgw_swift_auth_entry, the admin API at rgw_admin_entry and the zero API,
+// in that order. paths are where a manager rgw-go does not serve sits, each
+// entry's own and the parents register_resource adds for a nested one;
+// adminPath is where the admin API sits, "" when it is off or a later
+// registration replaced it. s3On reports whether S3 is the default
+// manager: radosgw leaves it out when rgw_swift_url_prefix is "/", which
+// puts Swift at the root.
+func unservedAPIs(conf *cephconf.Options, apis cephconf.APIs) (paths []string, adminPath string, s3On bool, err error) {
+	var swift, swiftAuth, adminEntry string
 	for _, o := range []struct {
 		name string
 		v    *string
-	}{{"rgw_swift_url_prefix", &swift}, {"rgw_swift_auth_entry", &swiftAuth}, {"rgw_admin_entry", &admin}} {
+	}{{"rgw_swift_url_prefix", &swift}, {"rgw_swift_auth_entry", &swiftAuth}, {"rgw_admin_entry", &adminEntry}} {
 		if *o.v, err = conf.String(o.name); err != nil {
-			return nil, false, fmt.Errorf("reading %s: %w", o.name, err)
+			return nil, "", false, fmt.Errorf("reading %s: %w", o.name, err)
 		}
 	}
 	swiftAtRoot := swift == "/"
-	var entries []string
+	var m managers
 	if slices.Contains(apis.Ignored, "swift") && !swiftAtRoot {
-		entries = append(entries, swift)
+		m.register(swift, false)
 	}
 	if slices.Contains(apis.Ignored, "swift_auth") {
-		entries = append(entries, swiftAuth)
+		m.register(swiftAuth, false)
 	}
 	if apis.Admin {
-		entries = append(entries, admin)
+		m.register(adminEntry, true)
 	}
 	if slices.Contains(apis.Ignored, "zero") {
-		entries = append(entries, "zero")
+		m.register("zero", false)
 	}
-	for _, e := range entries {
-		paths = append(paths, resourcePaths(e)...)
+	for _, p := range m.order {
+		if m.isAdmin[p] {
+			adminPath = p
+		} else {
+			paths = append(paths, p)
+		}
 	}
-	return paths, apis.S3 && !swiftAtRoot, nil
+	return paths, adminPath, apis.S3 && !swiftAtRoot, nil
+}
+
+// managers is the top-level resource map RGWRESTMgr::register_resource
+// builds: a path holds the manager registered there last, and a parent
+// path it adds for a nested entry holds a manager with no handler unless
+// one is there already (rgw_rest.cc:1935-1966 at v19.2.6, :1952-1983 at
+// v20.2.4).
+type managers struct {
+	order []string
+	// isAdmin is true where the admin API sits, false where a manager
+	// rgw-go does not serve does.
+	isAdmin map[string]bool
+}
+
+func (m *managers) register(entry string, isAdmin bool) {
+	if m.isAdmin == nil {
+		m.isAdmin = map[string]bool{}
+	}
+	ps := resourcePaths(entry)
+	for i, p := range ps {
+		_, exists := m.isAdmin[p]
+		if !exists {
+			m.order = append(m.order, p)
+		}
+		if i == 0 {
+			m.isAdmin[p] = isAdmin
+		} else if !exists {
+			m.isAdmin[p] = false
+		}
+	}
 }
 
 // resourcePaths are the paths RGWRESTMgr::register_resource puts a manager
@@ -396,36 +450,50 @@ func resourcePaths(entry string) []string {
 }
 
 // router is RGWREST::get_handler's manager lookup (rgw_rest.cc:2276-2304 at
-// v19.2.6, :2298-2326 at v20.2.4): a request whose decoded URI, the path
-// with a virtual-hosted bucket in front, is at or under one of the unserved
-// paths, as RGWRESTMgr::get_resource_mgr matches them (:1974-1997 at
-// v19.2.6, :1991-2014 at v20.2.4), or any request when S3 is off, goes to
-// unserved, and every other one to S3, the default manager.
+// v19.2.6, :2298-2326 at v20.2.4). A request whose decoded URI, the path
+// with a virtual-hosted bucket in front, is at or under the admin API's path
+// or an unserved one goes to the manager at the longest of those paths, as
+// RGWRESTMgr::get_resource_mgr matches them (:1974-1997 at v19.2.6,
+// :1991-2014 at v20.2.4): the admin handler, or unserved. Any other request
+// goes to S3, the default manager, or to unserved when S3 is off.
 type router struct {
-	s3, unserved http.Handler
-	cfg          s3.Config
-	paths        []string
+	s3, admin, unserved http.Handler
+	cfg                 s3.Config
+	adminPath           string
+	paths               []string
 }
 
-func newRouter(s3h, unserved http.Handler, cfg s3.Config, paths []string) http.Handler {
-	return router{s3: s3h, unserved: unserved, cfg: cfg, paths: paths}
+// newRouter routes to s3h, nil when S3 is off, adminH at adminPath, nil when
+// the admin API is off, and unserved at paths.
+func newRouter(s3h, adminH http.Handler, adminPath string, unserved http.Handler, cfg s3.Config, paths []string) http.Handler {
+	return router{s3: s3h, admin: adminH, unserved: unserved, cfg: cfg, adminPath: adminPath, paths: paths}
 }
 
 func (rt router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if rt.s3 == nil || rt.unservedPath(s3.DecodedURI(req, rt.cfg)) {
-		rt.unserved.ServeHTTP(w, req)
-		return
+	uri := s3.DecodedURI(req, rt.cfg)
+	matched, toAdmin := "", false
+	if rt.admin != nil && under(uri, rt.adminPath) {
+		matched, toAdmin = rt.adminPath, true
 	}
-	rt.s3.ServeHTTP(w, req)
-}
-
-func (rt router) unservedPath(path string) bool {
 	for _, p := range rt.paths {
-		if rest, ok := strings.CutPrefix(path, p); ok && (rest == "" || rest[0] == '/') {
-			return true
+		if len(p) > len(matched) && under(uri, p) {
+			matched, toAdmin = p, false
 		}
 	}
-	return false
+	switch {
+	case toAdmin:
+		rt.admin.ServeHTTP(w, req)
+	case matched != "" || rt.s3 == nil:
+		rt.unserved.ServeHTTP(w, req)
+	default:
+		rt.s3.ServeHTTP(w, req)
+	}
+}
+
+// under reports whether path is the resource p or below it.
+func under(path, p string) bool {
+	rest, ok := strings.CutPrefix(path, p)
+	return ok && (rest == "" || rest[0] == '/')
 }
 
 // unservedHandler answers a request no manager rgw-go serves takes as

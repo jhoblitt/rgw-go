@@ -608,6 +608,22 @@ review and verified against the tree.
   rgw/admin package, signs with the unsigned-payload hash and never sends
   the header, so it works against radosgw only because of that fallback.
   rgw-rs's spike chose AWS's behavior; rgw-go must not.
+- **Admin responses carry a Content-Type on every body.** rgw-go renders
+  the admin API in JSON, XML or HTML exactly as radosgw's formatters do,
+  bodies byte for byte, with radosgw's Content-Length and Accept-Ranges
+  headers, but it sets a Content-Type on every body, the format's own or,
+  for the realm, realm-list and period getters, the `application/json`
+  radosgw names there whatever the format; radosgw sends none on a JSON
+  body its flusher started or on the zone configuration. radosgw also
+  fixes a 200 status as soon as an op starts its body, and an op that
+  fails after that still answers 200 with its body cut short: a bucket
+  listing for a uid that does not exist gets a 200 with no document, a
+  bucket index check given `check-objects` without `fix` a 200 that stops
+  after the multipart entries, and a usage or user listing whose RADOS
+  read fails midway a partial one. rgw-go renders the whole body first and
+  answers each of these with the error document and its status. Clients
+  that read the body, go-ceph and Rook among them, see no difference on
+  success; one that inspects the headers does.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the
@@ -1127,23 +1143,24 @@ following.
   `create_bucket` or `delete_bucket`, so `DELETE /b?notification`
   deletes the bucket. rgw-go answers `?notification` with the
   notification op whatever `rgw_enable_apis` names.
-- **The admin, Swift and zero APIs answer 405.** When `rgw_enable_apis`
-  names `admin`, `swift`, `swift_auth` or `zero`, radosgw serves that API
-  at `rgw_admin_entry`, `rgw_swift_url_prefix`, `rgw_swift_auth_entry` or
-  `zero` (`rgw_appmain.cc:307-366` at v19.2.6, `:316-375` at v20.2.4).
-  rgw-go serves none of them. It keeps every path at or under each of
-  those entries, and under each parent `register_resource` adds for a
-  nested entry, from the S3 handler (`rgw_rest.cc:1935-1966` at v19.2.6,
-  `:1952-1983` at v20.2.4), matching them as radosgw does against the path
-  with a virtual-hosted bucket in front (`:2154-2160` and `:2182` at
-  v19.2.6, `:2171-2177` and `:2204` at v20.2.4), so a virtual-hosted key
-  such as `admin/x` stays S3's. It answers each request there as radosgw
-  answers one no handler takes: 405 MethodNotAllowed, or 400
-  InvalidRequest for a NUL in the path (`:2182-2186` and `:2290-2304` at
-  v19.2.6, `:2204-2208` and `:2312-2326` at v20.2.4). With
-  `rgw_swift_url_prefix` set to `/`, radosgw serves no S3 and Swift at
-  every path; rgw-go answers every request 405, as it does when
-  `rgw_enable_apis` names neither `s3` nor `s3website`.
+- **The Swift and zero APIs answer 405.** When `rgw_enable_apis` names
+  `swift`, `swift_auth` or `zero`, radosgw serves that API at
+  `rgw_swift_url_prefix`, `rgw_swift_auth_entry` or `zero`
+  (`rgw_appmain.cc:307-366` at v19.2.6, `:316-375` at v20.2.4). rgw-go
+  serves none of them. It keeps every path at or under each of those
+  entries, and under each parent `register_resource` adds for a nested
+  entry, a nested `rgw_admin_entry`'s included, from the S3 handler
+  (`rgw_rest.cc:1935-1966` at v19.2.6, `:1952-1983` at v20.2.4), matching
+  them as radosgw does against the path with a virtual-hosted bucket in
+  front (`:2154-2160` and `:2182` at v19.2.6, `:2171-2177` and `:2204` at
+  v20.2.4), so a virtual-hosted key such as `swift/x` stays S3's. It
+  answers each request there as radosgw answers one no handler takes: 405
+  MethodNotAllowed, or 400 InvalidRequest for a NUL in the path
+  (`:2182-2186` and `:2290-2304` at v19.2.6, `:2204-2208` and
+  `:2312-2326` at v20.2.4). With `rgw_swift_url_prefix` set to `/`,
+  radosgw serves no S3 and Swift at every path; rgw-go answers 405 to
+  every request outside the admin API, as it does when `rgw_enable_apis`
+  names neither `s3` nor `s3website`.
 - **The CNAME fallback resolves no CNAME and knows no s3website
   hostnames.** When the Host matches none of its hostnames and
   `rgw_resolve_cname` is set (it defaults to false), radosgw looks up the
@@ -1696,6 +1713,15 @@ v20.2.4 tags, rgw-go does the following.
   `rgw_dmclock_async_scheduler.h:176-183` at v19.2.6, `:175-182` at
   v20.2.4), and it has no counterpart to the experimental `dmclock`
   scheduler that `rgw_scheduler_type` selects.
+- **The admin API counts its requests apart from S3's.** radosgw throttles
+  every request, admin or S3, through the frontend's one scheduler:
+  `process_request` calls `schedule_request` once `get_op` has found the
+  op (`rgw_process.cc:330-338` at v19.2.6, `:332-340` at v20.2.4), and the
+  beast frontend holds a single scheduler (`rgw_asio_frontend.cc:470` and
+  `:508-522` at v19.2.6, `:425` and `:460-474` at v20.2.4). rgw-go's admin
+  handler keeps its own count beside the S3 handler's, each refusing past
+  `rgw_max_concurrent_requests` with 503 SlowDown, so with both APIs busy
+  up to twice that many requests run at once.
 - **Go's reason phrases.** net/http writes Go's reason phrase after every
   status code. radosgw writes the phrase its own `http_codes` table gives
   (`rgw_rest.cc:44-88` at v19.2.6 and v20.2.4), so a status line differs
@@ -2531,18 +2557,29 @@ does the following.
   line before its first key. radosgw serves them. The bucket listing makes
   the same refusal for a versioned bucket ("The versions of a bucket whose
   versioning was ever enabled are not listed").
-- **A delete date with a `%` after its seconds is refused.**
-  `utime_t::parse_date` reads `x-amz-delete-if-unmodified-since` by copying
-  the text after the seconds into its `strptime` format
-  (`include/utime.h:406-441` at v19.2.6 and v20.2.4), so a `%` there is a
-  conversion glibc's `strptime` applies to the rest of the value. rgw-go
-  answers such a value with 400 InvalidArgument; radosgw parses it as that
-  conversion directs. A value that reaches the format's 31st byte with a
-  sign also makes radosgw write past the format's end
-  (`docs/ceph-upstream-bugs.md`, "[radosgw's parse_date writes a NUL one
-  byte past its format
+- **A date whose time names a conversion rgw-go does not run is refused.**
+  radosgw reads DeleteObject's `x-amz-delete-if-unmodified-since` and the
+  admin API's date arguments, such as the usage API's `start` and `end`,
+  with `utime_t::parse_date`, which reads the time after the date with a
+  strptime format built from the value's own text
+  (`include/utime.h:406-441` at v19.2.6 and v20.2.4). A `%` there is a
+  conversion glibc's strptime applies to the rest of the value, and a
+  value that reaches the format's 31st byte with a sign also makes radosgw
+  write past the format's end (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  parse_date writes a NUL one byte past its format
   buffer](ceph-upstream-bugs.md#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer)");
   rgw-go parses that value as radosgw's format then reads it.
+  - An admin date: rgw-go runs `%a %A %b %B %h %d %e %H %m %M %S %y %Y %z
+    %n %t %%` as glibc does (`internal/strptime`). It answers 400
+    InvalidArgument for any other character after a `%`, including a flag,
+    width or E/O modifier on a listed conversion, such as `%-d`, `%2S`,
+    `%Od` or `%EY`. glibc runs those modified forms and `%C %D %F %G %I %R
+    %T %U %V %W %X %Z %c %g %j %k %l %p %r %s %u %w %x`, so radosgw reads
+    such a value; a character glibc does not know either, such as `%q` or
+    a trailing `%`, is refused by both.
+  - A delete date: rgw-go answers a value with any `%` after its seconds
+    with 400 InvalidArgument (`internal/op/deleteobject.go`); radosgw
+    parses it as that conversion directs.
 - **An attribute change adds no expirer hint.** rgw-go changes an object's
   attrs as radosgw's `RGWRados::set_attrs` does
   (`driver/rados/rgw_rados.cc:6593-6757` at v19.2.6, `:7393-7593` at

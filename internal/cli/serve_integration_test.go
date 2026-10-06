@@ -292,7 +292,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		Eventually(s).WithTimeout(frontend.DrainTimeout).WithPolling(100 * time.Millisecond).Should(gexec.Exit(0))
 	})
 
-	It("answers 405 on / when rgw_enable_apis leaves S3 out", func(ctx SpecContext) {
+	It("answers 405 on / and serves the admin API when rgw_enable_apis leaves S3 out", func(ctx SpecContext) {
 		addr := freeAddr(ctx)
 		start("beast endpoint="+addr, "", "--rgw-enable-apis=swift,admin")
 		Eventually(func(g Gomega) {
@@ -301,5 +301,14 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			g.Expect(resp.StatusCode).To(Equal(http.StatusMethodNotAllowed))
 			g.Expect(body).To(ContainSubstring("<Code>MethodNotAllowed</Code>"))
 		}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250 * time.Millisecond).Should(Succeed())
+
+		// An anonymous identity holds no info cap: AccessDenied, in the
+		// admin handlers' default format.
+		resp, body, err := fetch(ctx, client, http.MethodGet, "http://"+addr+"/admin/info", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/json"))
+		Expect(body).To(MatchRegexp(`^\{"Code":"AccessDenied","Message":"","RequestId":"tx[0-9a-f]{21}-[0-9a-f]{10}-[0-9]+-%s","HostId":"[0-9]+-%s-%s"\}$`,
+			regexp.QuoteMeta(m.Zone), regexp.QuoteMeta(m.Zone), regexp.QuoteMeta(m.Zonegroup)))
 	})
 })
