@@ -201,6 +201,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last](#radosgw-sends-several-gc-chains-under-one-tag-and-an-omap-era-gc-shard-keeps-only-the-last) | pending | pending |  |
 | [A CompleteMultipartUpload that loses its head write's race leaks its parts](#a-completemultipartupload-that-loses-its-head-writes-race-leaks-its-parts) | pending | pending |  |
 | [radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private](#radosgws-putbucketacl-takes-any-canned-acl-whose-name-holds-bucket-for-private) | pending | pending |  |
+| [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | pending | pending | ✓ |
+| [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -8673,4 +8675,84 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit Z, Task 11, 2026-10-05, transcribing
   `RGWPutACLs::execute` for `BuildACL`; derived from the source, not
+  reproduced.
+
+## Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`, at v20.2.4; v19.2.6 has no restore
+  attrs and no such code.
+  - `RGWGetObj_ObjStore_S3::send_response_data` reads an object's restore
+    state for the `x-amz-restore` header with three bare `decode` calls: the
+    `user.rgw.restore-status` attr, then `user.rgw.restore-type`, then
+    `user.rgw.restore-expiry-date` (`rgw/rgw_rest_s3.cc:588-614`). No
+    `try` surrounds them, unlike the replication and checksum decodes before
+    them (`:512-519`, `:523-527`, `:553-584`).
+  - The status and type are one-byte enums, which `denc` decodes with
+    `p.copy(sizeof(T), ...)` (`include/denc.h:305-330`), and the expiry date
+    is a `real_time` of eight bytes. An empty status or type attr, or an
+    expiry date shorter than eight bytes, throws `buffer::end_of_buffer`.
+  - `send_response_data` runs on every successful GET and HEAD: for a HEAD
+    and for a GET with nothing to read from `RGWGetObj::execute`
+    (`rgw/rgw_op.cc:2668-2669`), and for any other GET from `get_data_cb`
+    (`:2390-2394`) inside `read_op->iterate` (`:2675`) or at the end
+    (`:2686`).
+  - Nothing above catches it. `rgw_process_authenticated` calls
+    `op->execute(y)` bare (`rgw/rgw_process.cc:258`), and `process_request`
+    catches only `ceph::crypto::DigestException` (`:417`). The beast
+    frontend's connection coroutine rethrows whatever escapes it
+    (`rgw/rgw_asio_frontend.cc:1117` and `:1134`), on an `io_context_pool`
+    thread that catches nothing (`common/async/context_pool.h:68` and
+    `:83`), so `std::terminate` ends the process, as in "radosgw terminates
+    on a stored lz4 block too short for its pair table", above.
+- **Impact:** a GET or HEAD of such an object, by anyone allowed to read it,
+  anonymous readers of a public object included, ends the radosgw process
+  and every request it is serving, and does so again on each retry.
+- **Reachability:** radosgw writes the three attrs whole when a restore
+  sets them (`rgw/driver/rados/rgw_rados.cc:5635`, `:5656`, `:5664`,
+  `:5692`), and an S3 client's metadata lands under `user.rgw.x-amz-meta-`,
+  so it takes a writer with access to the data pool, or a bug elsewhere that
+  leaves an attr short.
+- **Releases:** v20.2.4. Not checked on main.
+- **rgw-go:** not affected. Its GET and HEAD handler decodes each attr
+  before it writes the header and omits `x-amz-restore` for one that does
+  not decode (`internal/s3/getobject.go`; `docs/exclusions.md`, "A restore
+  attr that does not decode").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 7, 2026-10-05, porting
+  `send_response_data`'s headers; derived from the source, not reproduced.
+
+## radosgw sends the ACL document as a body after the headers of a HEAD ?acl
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - A HEAD with `?acl` runs `RGWGetACLs_ObjStore_S3`, at object scope
+    (`RGWHandler_REST_Obj_S3::op_head`, `rgw_rest_s3.cc:4823-4831`,
+    `:5380-5388`) and at bucket scope alike.
+  - Its `send_response` ends the header with no length, flushes the
+    formatter through `rgw_flush_formatter`, which skips a HEAD, and then
+    writes the policy with `dump_body(s, acls)`, which does not
+    (`rgw_rest_s3.cc:3605-3614`, `:3888-3897`; `rgw_flush_formatter`,
+    `rgw_rest.cc:316-324` at both; `dump_body`, `rgw_rest.cc:781-800`,
+    `:786-805`). `acls` holds the policy XML `RGWGetACLs::execute` wrote
+    (`rgw_op.cc:5725-5734`, `:6305-6314`).
+  - No layer below drops it. The beast frontend's filters buffer a body
+    sent without a length and send it with a `Content-Length` of its size
+    when the request completes (`BufferingFilter::complete_request`,
+    `rgw_client_io_filters.h:221-253` at both), and neither those filters
+    nor the beast client (`rgw_asio_client.cc`) looks at the method.
+- **Impact:** the HEAD response carries the ACL document, without its XML
+  declaration, as a body of the length its `Content-Length` names. A client,
+  which reads no body after a HEAD (RFC 9110, section 9.3.2), takes those
+  bytes for the start of the next response on the connection, so the
+  next request on a kept-alive connection fails or is misread; a proxy that
+  pools connections to radosgw can hand them to another client's request.
+- **Releases:** checked at v19.2.6 and v20.2.4.
+- **rgw-go:** not affected: net/http sends no body after a HEAD's headers.
+  rgw-go answers HEAD ?acl with the GET's headers, whose `Content-Length`
+  counts the XML declaration as well (`docs/exclusions.md`, "HEAD ?acl").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit R, Task 7, 2026-10-05, porting
+  `RGWGetACLs_ObjStore_S3::send_response`; derived from the source, not
   reproduced.

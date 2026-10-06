@@ -58,7 +58,7 @@ func NewHandler(env *op.Env, auth Authenticator, cfg Config) *Handler {
 	return buildHandler(env, auth, cfg, unitHandlers{
 		service:   serviceHandlers(),
 		bucket:    bucketHandlers(),
-		object:    objectHandlers(),
+		object:    objectHandlers(env),
 		multipart: multipartHandlers(),
 	})
 }
