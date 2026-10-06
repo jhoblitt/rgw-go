@@ -1822,13 +1822,19 @@ v20.2.4 tags, rgw-go does the following.
   `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
   `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
   Header names are case-insensitive (RFC 9110, section 5.1).
-- **A 204 carries no Content-Length.** radosgw's frontend completes a
-  response whose `end_header` named no length with `Content-Length: 0`,
-  whatever its status (`BufferingFilter::complete_request`,
-  `rgw_client_io_filters.h:221-253`, and `ClientIO::send_content_length`,
-  `rgw_asio_client.cc:183-189`, at v19.2.6 and v20.2.4). net/http sends no
-  length with a 204, which RFC 9110, section 8.6, forbids, so rgw-go's
-  DeleteBucket answers 204 without one.
+- **A 204 or 304 carries no Content-Length, whatever
+  rgw_print_prohibited_content_length says.** radosgw's frontend completes
+  a response whose `end_header` named no length with the length of its
+  buffered body (`BufferingFilter::complete_request`,
+  `rgw_client_io_filters.h:221-253`), but the filter beneath it drops that
+  length from a 204 or a 304 unless `rgw_print_prohibited_content_length`
+  is true (`ConLenControllingFilter`, `:323-365`, wired innermost at
+  `rgw_asio_frontend.cc:320-324`; the option, default false,
+  `common/options/rgw.yaml.in:1056-1062` at v19.2.6, `:1115-1121` at
+  v20.2.4; all at both tags). net/http never sends a length with either
+  status (`net/http/server.go:1372-1382`), as RFC 9110, section 8.6,
+  requires, so rgw-go matches radosgw's default and ignores the option set
+  to true.
 
 ### Request authentication differences
 
@@ -2265,10 +2271,11 @@ rgw-go does the following.
   rgw-go's RADOS driver does not yet read accounts, and its account
   lookups answer NotImplemented. So on that driver a grant header naming
   an account id, or an email address that no user holds, answers 501
-  NotImplemented, where radosgw grants the account or answers 404; in an
-  ACL document such a grantee or owner answers radosgw's 400 for an
-  unresolvable one, InvalidArgument or UnresolvableGrantByEmailAddress,
-  where radosgw would grant an account. rgw-go cannot tell an email that
+  NotImplemented, where radosgw grants the account or answers 404; in the
+  ACL document of a PutBucketAcl or PutObjectAcl, when rgw-go serves them,
+  such a grantee or owner answers radosgw's 400 for an unresolvable one,
+  InvalidArgument or UnresolvableGrantByEmailAddress, where radosgw would
+  grant an account. rgw-go cannot tell an email that
   nothing holds from one an account holds, so it reports no miss it has
   not seen.
 
@@ -2546,9 +2553,12 @@ does the following.
   `connection`, `trailer`, `keep-alive`, `upgrade`, `te` or
   `proxy-connection`, rgw-go drops the header the matching object attr,
   such as `user.rgw.content_length` or `user.rgw.trailer`, would give a GET
-  or HEAD, and frames the response itself: these are the framing and
-  hop-by-hop headers net/http reads from a handler's headers, a Trailer
-  among them declaring trailers that would never come. radosgw sends such
+  or HEAD, and frames the response itself. net/http reads four of these
+  names from a handler's headers, Content-Length, Transfer-Encoding,
+  Connection and Trailer, a Trailer declaring trailers that would never
+  come (`net/http/server.go:1360-1408` at Go 1.27.1); it never reads
+  Keep-Alive, Upgrade, TE or Proxy-Connection, which rgw-go drops only as a
+  precaution, since they are hop-by-hop headers. radosgw sends such
   an attr's value as one more header beside the
   framing it writes (`rgw_rest_s3.cc:544-571` and `:617-621` at v19.2.6,
   `:661-688` and `:734-738` at v20.2.4). No PUT through radosgw stores
@@ -2559,11 +2569,28 @@ does the following.
   wrote it. A request's other such headers, Transfer-Encoding and
   Connection among them, do reach the mapping, as `HTTP_TRANSFER_ENCODING`,
   `HTTP_CONNECTION` and the like (`rgw_asio_client.cc:50-65`;
-  `rgw_rest.cc:2258-2265` at v19.2.6, `:2281` at v20.2.4), so under the
-  option a PUT radosgw serves can record them and a later GET sends them
-  back. Every other name a mapped attr
-  shares with a header radosgw sends, such as Content-Type or ETag, is sent
-  twice by both gateways, in radosgw's order.
+  `rgw_rest.cc:2258-2265` at v19.2.6, `:2280-2287` at v20.2.4), so under
+  the option a PUT radosgw serves can record them and a later GET sends
+  them back. Every other name a mapped attr shares with a header radosgw
+  sends, such as Content-Type or ETag, is sent twice by both gateways, in
+  radosgw's order, except Date: radosgw sends a mapped Date and then the
+  current one (`ClientIO::complete_header`, `rgw_asio_client.cc:143-165`
+  at both tags), while net/http adds its own Date only when the handler
+  set none (`net/http/server.go:1494`), so rgw-go sends the stored Date
+  alone.
+- **A stored header value's CR and LF go out as spaces.** radosgw writes a
+  header value from an object's attrs as its bytes, dropping only a
+  trailing NUL (`rgw_sanitized_hdrval`, `rgw_rest.h:29-47`, and
+  `ClientIO::send_header`, `rgw_asio_client.cc:167-181`, at v19.2.6 and
+  v20.2.4). net/http rewrites each CR and LF in a header value to a space
+  and trims the value's ends (`net/http/header.go:139` and `:206-207` at
+  Go 1.27.1). So where a stored value holds CR or LF, rgw-go sends one
+  header with spaces in their place, and radosgw sends the bytes, which
+  start new header lines or end the header section. A radosgw POST upload
+  stores such values from its `x-amz-meta-*` fields
+  (`docs/ceph-upstream-bugs.md`, "[radosgw stores a POST upload's
+  x-amz-meta fields with their CR and LF and sends them raw on
+  GET](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)").
 
 ### Object write differences
 
