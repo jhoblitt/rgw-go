@@ -242,6 +242,33 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 			Expect(rec.Code).To(Equal(404))
 			Expect(rec.Body.String()).To(ContainSubstring("<Code>NoSuchKey</Code>"))
 		})
+		DescribeTable("resolves a grantee to a user or an account, as read_aclowner_by_email and read_owner_display_name do",
+			func(ctx SpecContext, value, id, name string) {
+				store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "carol"}, DisplayName: "Carol", Email: "carol@example.com"})
+				store.AddAccount(meta.AccountInfo{ID: "RGW00000000000000009", Name: "acme", Email: "acme@example.com"})
+				Expect(put("/plain", "", "x-amz-grant-read", value).Code).To(Equal(200))
+				grants := bucketACL(ctx).ACL.Grants
+				Expect(grants).To(HaveLen(1))
+				Expect(grants[0].Grant.ID).To(Equal(id))
+				Expect(grants[0].Grant.Name).To(Equal(name))
+			},
+			Entry("a user's email", `emailAddress="carol@example.com"`, "carol", "Carol"),
+			Entry("an account's email", `emailAddress="acme@example.com"`, "RGW00000000000000009", "acme"),
+			Entry("an account's id", `id="RGW00000000000000009"`, "RGW00000000000000009", "acme"),
+		)
+		It("answers an email nothing holds with radosgw's ENOENT", func() {
+			rec := put("/plain", "", "x-amz-grant-read", `emailAddress="nobody@example.com"`)
+			Expect(rec.Code).To(Equal(404))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NoSuchKey</Code>"))
+		})
+		It("fails closed on a lookup that fails other than by a miss", func() {
+			accounts := &opfakes.FakeAccountStore{}
+			accounts.AccountNameReturns("", op.ErrNotImplemented)
+			env.Accounts = accounts
+			rec := put("/plain", "", "x-amz-grant-read", `id="RGW00000000000000009"`)
+			Expect(rec.Code).To(Equal(501))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+		})
 
 		Describe("on Tentacle", func() {
 			BeforeEach(func() { setup(denc.Tentacle, "ceph-objectstore") })
