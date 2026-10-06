@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
@@ -90,8 +91,10 @@ func (x *xmlFormatter) element(name, text string) {
 	x.newline()
 }
 
-func (x *xmlFormatter) DumpString(name, s string)    { x.element(name, xmltext.Escape(s)) }
-func (x *xmlFormatter) DumpUnquoted(name, s string)  { x.element(name, xmltext.Escape(cString(s))) }
+func (x *xmlFormatter) DumpString(name, s string) { x.element(name, xmltext.Escape(s)) }
+func (x *xmlFormatter) DumpUnquoted(name, s string) {
+	x.element(name, xmltext.Escape(rgwtext.CString(s)))
+}
 func (x *xmlFormatter) DumpInt(name string, v int64) { x.element(name, strconv.FormatInt(v, 10)) }
 func (x *xmlFormatter) DumpUnsigned(name string, v uint64) {
 	x.element(name, strconv.FormatUint(v, 10))

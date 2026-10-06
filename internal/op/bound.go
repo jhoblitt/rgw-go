@@ -1,8 +1,9 @@
 package op
 
 import (
-	"math"
 	"strings"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // cSpace is the white space isspace and strtol accept in the C locale, which
@@ -22,9 +23,9 @@ func ParseValueAndBound(input string, lower, upper, def int64) (int, error) {
 	if input == "" {
 		return int(cInt(def)), nil
 	}
-	s, _, _ := strings.Cut(input, "\x00")
-	v, rest, ok := strtol10(s)
-	if !ok || strings.TrimLeft(rest, cSpace) != "" {
+	s := rgwtext.CString(input)
+	v, end, _ := rgwtext.Strtoll(s)
+	if end == 0 || strings.TrimLeft(s[end:], cSpace) != "" {
 		return 0, ErrInvalidArgument
 	}
 	out := cInt(v)
@@ -35,39 +36,6 @@ func ParseValueAndBound(input string, lower, upper, def int64) (int, error) {
 		out = cInt(lower)
 	}
 	return int(out), nil
-}
-
-// strtol10 is strtol(s, &end, 10) in the C locale: leading white space, an
-// optional sign, then digits, saturating at the int64 limits. rest follows
-// the digits; ok is false when there are none.
-func strtol10(s string) (v int64, rest string, ok bool) {
-	t := strings.TrimLeft(s, cSpace)
-	neg := strings.HasPrefix(t, "-")
-	if neg || strings.HasPrefix(t, "+") {
-		t = t[1:]
-	}
-	n := 0
-	for n < len(t) && '0' <= t[n] && t[n] <= '9' {
-		n++
-	}
-	if n == 0 {
-		return 0, "", false
-	}
-	for i := range n {
-		d := int64(t[i] - '0')
-		if neg {
-			if v < (math.MinInt64+d)/10 {
-				return math.MinInt64, t[n:], true
-			}
-			v = v*10 - d
-			continue
-		}
-		if v > (math.MaxInt64-d)/10 {
-			return math.MaxInt64, t[n:], true
-		}
-		v = v*10 + d
-	}
-	return v, t[n:], true
 }
 
 // cInt is v as a C int holds it once a long is assigned to one: the low 32

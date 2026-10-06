@@ -152,6 +152,65 @@ var _ = Describe("DeleteObject", func() {
 		Expect(p.UnmodifiedSince).To(Equal(time.Date(2026, 9, 27, 1, 2, 3, 0, time.UTC)))
 		Expect(p.IfMatchLastModified).To(Equal(time.Date(2026, 9, 27, 1, 2, 3, 0, time.UTC)))
 	})
+	DescribeTable("reads x-amz-delete-if-unmodified-since as utime_t::parse_date does",
+		func(ctx SpecContext, value string, want time.Time) {
+			stub := &opfakes.FakeObjectStore{}
+			stub.StatObjectReturns(&op.ObjectState{Exists: true}, nil)
+			f.env.Objects = stub
+			Expect(op.Run(ctx, &op.DeleteObject{UnmodifiedSince: new(value)}, f.req(http.MethodDelete, "plain", "small"))).To(Succeed())
+			_, _, _, p := stub.DeleteObjectArgsForCall(0)
+			Expect(p.UnmodifiedSince).To(Equal(want), "%q", value)
+		},
+		Entry("a date alone", "2026-09-27", time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)),
+		Entry("bytes after the date other than a space or T, ignored", "2026-09-27x01:02:03", time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)),
+		Entry("a fraction of up to nine digits", "2026-09-27T01:02:03.123456789123", time.Date(2026, 9, 27, 1, 2, 3, 123456789, time.UTC)),
+		Entry("a short fraction padded with zeros", "2026-09-27 01:02:03.5", time.Date(2026, 9, 27, 1, 2, 3, 500000000, time.UTC)),
+		Entry("an offset with a colon", "2026-09-27T01:02:03.5-01:30", time.Date(2026, 9, 27, 2, 32, 3, 500000000, time.UTC)),
+		Entry("a time whose sixth byte ends the format", "2026-09-27T1:2:3", time.Date(2026, 9, 27, 1, 2, 0, 0, time.UTC)),
+		Entry("numbers in the time skipping white space", "2026-09-27T 1: 2: 3", time.Date(2026, 9, 27, 1, 2, 3, 0, time.UTC)),
+		Entry("a day past the month's end runs on", "2026-02-31", time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)),
+		Entry("a NUL ends the value", "2026-09-27T01:02:03\x00+0100", time.Date(2026, 9, 27, 1, 2, 3, 0, time.UTC)),
+		Entry("seconds and microseconds after white space and signs", " +1790470923. -5", time.Unix(1790470927, 294962296).UTC()),
+		Entry("negative seconds, through utime_t's 32 bits", "-1.0", time.Unix(math.MaxUint32, 0).UTC()),
+		Entry("seconds past a long, saturated then cut to an int", "99999999999999999999.0", time.Unix(math.MaxUint32, 0).UTC()),
+	)
+	DescribeTable("refuses x-amz-delete-if-unmodified-since that parse_date refuses",
+		func(ctx SpecContext, value string) {
+			err := op.Run(ctx, &op.DeleteObject{UnmodifiedSince: new(value)}, f.req(http.MethodDelete, "plain", "small"))
+			Expect(err).To(MatchError(op.ErrInvalidArgument), "%q", value)
+		},
+		Entry("seconds alone", "1790470923"),
+		Entry("seconds and a dot", "1790470923."),
+		Entry("seconds, a dot and a sign", "1790470923.-"),
+		Entry("a dot and microseconds", ".5"),
+		Entry("an hour alone", "2026-09-27T01"),
+		Entry("a time whose separators are not colons", "2026-09-27T01-02-03"),
+		Entry("a conversion after the seconds", "2026-09-27T01:02:03%d"),
+	)
+	DescribeTable("reads x-amz-if-match-size as strict_strtoll does",
+		func(ctx SpecContext, value string, want uint64) {
+			stub := &opfakes.FakeObjectStore{}
+			stub.StatObjectReturns(&op.ObjectState{Exists: true}, nil)
+			f.env.Objects = stub
+			Expect(op.Run(ctx, &op.DeleteObject{IfMatchSize: new(value)}, f.req(http.MethodDelete, "plain", "small"))).To(Succeed())
+			_, _, _, p := stub.DeleteObjectArgsForCall(0)
+			Expect(p.IfMatchSize).To(Equal(new(want)), "%q", value)
+		},
+		Entry("LLONG_MAX", "9223372036854775807", uint64(math.MaxInt64)),
+		Entry("LLONG_MIN, cast to uint64_t", "-9223372036854775808", uint64(1)<<63),
+		Entry("white space and a sign", "\t-0", uint64(0)),
+		Entry("bytes after a NUL", "12\x00x", uint64(12)),
+	)
+	DescribeTable("refuses x-amz-if-match-size that strict_strtoll refuses",
+		func(ctx SpecContext, value string) {
+			err := op.Run(ctx, &op.DeleteObject{IfMatchSize: new(value)}, f.req(http.MethodDelete, "plain", "small"))
+			Expect(err).To(MatchError(op.ErrInvalidArgument), "%q", value)
+		},
+		Entry("below LLONG_MIN", "-9223372036854775809"),
+		Entry("a sign alone", "+"),
+		Entry("white space alone", " "),
+		Entry("trailing white space", "1 "),
+	)
 	DescribeTable("maps the store's outcome as RGWDeleteObj::execute does",
 		func(ctx SpecContext, storeErr, want error) {
 			stub := &opfakes.FakeObjectStore{}

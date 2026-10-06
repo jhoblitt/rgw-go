@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"math"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,24 +8,6 @@ import (
 )
 
 var _ = Describe("radosgw encodings", func() {
-	DescribeTable("urlDecode is rgw_common.cc's url_decode",
-		func(in string, inQuery bool, want string) {
-			Expect(urlDecode(in, inQuery)).To(Equal(want), "%q", in)
-		},
-		Entry("plain", "/a/b", false, "/a/b"),
-		Entry("percent", "/a%2Fb%41", false, "/a/bA"),
-		Entry("plus kept outside a query", "/a+b", false, "/a+b"),
-		Entry("plus is a space in a query", "a+b", true, "a b"),
-		Entry("a ? switches to query mode", "/p+q?r+s", false, "/p+q?r s"),
-		Entry("an escaped ? does not switch to query mode", "/p%3Fq+r", false, "/p?q+r"),
-		Entry("a bad hex digit empties the result", "/a%zzb", false, ""),
-		Entry("a truncated escape stops decoding", "/a%4", false, "/a"),
-	)
-
-	It("takes a byte above 0x7f in an escape as a bad hex digit", func() {
-		Expect(urlDecode("/a%\xc3\xbcb", false)).To(BeEmpty())
-	})
-
 	DescribeTable("aws4URIEncode is aws4_uri_encode",
 		func(in string, slash bool, want string) {
 			Expect(aws4URIEncode(in, slash)).To(Equal(want), "%q", in)
@@ -45,6 +26,10 @@ var _ = Describe("radosgw encodings", func() {
 		Entry("encoded slash becomes a slash in the uri", "/k%2Fv", false, "/k/v"),
 		Entry("lowercase hex normalised", "%2f", true, "%2F"),
 		Entry("a plus is no space outside a query, so it is encoded", "a+b", true, "a%2Bb"),
+		Entry("a plus after a literal ? is a space", "/p?a+b", false, "/p%3Fa%20b"),
+		Entry("a truncated escape ends the decode", "/a%4", false, "/a"),
+		Entry("a bad hex digit empties the decode", "/a%zz", false, ""),
+		Entry("a byte above 0x7f in an escape empties the decode", "/a%\xc3\xbc", false, ""),
 	)
 
 	It("trims as rgw_trim_whitespace and collapses as boost::trim_all", func() {
@@ -60,17 +45,6 @@ var _ = Describe("radosgw encodings", func() {
 		Expect(isBase64Charset("rL0Y20zC+Fzt72VPzMSk2A=!")).To(BeFalse(), "'!' is outside the charset")
 		Expect(isBase64Charset("rL0Y 20zC\t+Fzt")).To(BeTrue(), "isspace is part of is_base64_for_content_md5")
 	})
-
-	DescribeTable("atoll",
-		func(in string, want int64) { Expect(atoll(in)).To(Equal(want), "%q", in) },
-		Entry("digits", "604800", int64(604800)),
-		Entry("trailing junk", "300abc", int64(300)),
-		Entry("leading space and sign", "  -5", int64(-5)),
-		Entry("no digits", "abc", int64(0)),
-		Entry("empty", "", int64(0)),
-		Entry("overflow saturates as strtoll does", "99999999999999999999", int64(math.MaxInt64)),
-		Entry("negative overflow saturates", "-99999999999999999999", int64(math.MinInt64)),
-	)
 
 	DescribeTable("parseISO8601Basic is parse_iso8601 without the extended format",
 		func(in string, ok bool, want time.Time) {
@@ -130,5 +104,7 @@ var _ = Describe("radosgw encodings", func() {
 		Entry("an rfc 850 year of 69 is 1969", "Saturday, 30-Aug-69 12:36:00 GMT", true, time.Date(1969, 8, 30, 12, 36, 0, 0, time.UTC)),
 		Entry("an rfc 850 year of 68 is 2068", "Thursday, 30-Aug-68 12:36:00 GMT", true, time.Date(2068, 8, 30, 12, 36, 0, 0, time.UTC)),
 		Entry("glibc's weekday match runs on past a matched abbreviation", "SunMon, 30 Aug 2015 12:36:00 GMT", true, time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)),
+		Entry("a NUL ends the string as it does in C", "Sun, 30 Aug 2015 12:36:00 GMT\x00x", true, time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)),
+		Entry("a NUL before the zone leaves none", "Sun, 30 Aug 2015 12:36:00 \x00GMT", false, time.Time{}),
 	)
 })

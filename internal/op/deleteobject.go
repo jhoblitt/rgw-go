@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 // DeleteObject is RGWDeleteObj (rgw_op.cc:5129-5327 at v19.2.6, :5519-5726
@@ -87,7 +88,7 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 		o.params.IfMatchLastModified = t
 	}
 	if o.IfMatchSize != nil {
-		v, ok := strictStrtoll(*o.IfMatchSize)
+		v, ok := rgwtext.StrictStrtoll(rgwtext.CString(*o.IfMatchSize))
 		if !ok {
 			return fmt.Errorf("%w: bad size %q", ErrInvalidArgument, *o.IfMatchSize)
 		}
@@ -142,32 +143,14 @@ func (o *DeleteObject) Complete(context.Context, *Request) {}
 // :1119 at v20.2.4).
 func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEnabled != 0 }
 
-// strictStrtoll is ceph's strict_strtoll in base 10 (common/strtol.cc:42-59
-// at v19.2.6 and v20.2.4): strtoll's whitespace, sign and digits, which must
-// end the string and fit an int64.
-func strictStrtoll(s string) (int64, bool) {
-	s = cString(s)
-	n := scanCNumber(s)
-	switch {
-	case n.digits == 0, n.end != len(s), n.overflow:
-		return 0, false
-	case n.neg && n.v > 1<<63, !n.neg && n.v > math.MaxInt64:
-		return 0, false
-	case n.neg:
-		return int64(-n.v), true //nolint:gosec // n.v <= 2^63, whose negation wraps to MinInt64
-	default:
-		return int64(n.v), true //nolint:gosec // n.v <= math.MaxInt64 here
-	}
-}
-
 // parseDate is utime_t::parse_date (include/utime.h:397-502 at v19.2.6 and
 // v20.2.4) turned into the utime_t its caller builds: a date strptime takes
 // as "%Y-%m-%d", alone, with anything but a space or "T" after it ignored,
 // or followed by a space or "T" and a time; otherwise "%d.%d", seconds and
 // microseconds since the epoch, as sscanf reads them.
 func parseDate(date string) (time.Time, bool) {
-	date = cString(date)
-	tm, rest, ok := strptime(date, "%Y-%m-%d")
+	date = rgwtext.CString(date)
+	tm, rest, ok := strptime.Parse(strptime.Tm{}, date, "%Y-%m-%d")
 	if !ok {
 		sec, usec, scanned := scanSecUsec(date)
 		if !scanned {
@@ -181,13 +164,13 @@ func parseDate(date string) (time.Time, bool) {
 		nsec   uint64
 	)
 	if rest != "" && (rest[0] == ' ' || rest[0] == 'T') {
-		var clock cTM
+		var clock strptime.Tm
 		if clock, gmtoff, nsec, ok = parseDateClock(rest[1:]); !ok {
 			return time.Time{}, false
 		}
-		tm.hour, tm.minute, tm.sec = clock.hour, clock.minute, clock.sec
+		tm.Hour, tm.Min, tm.Sec = clock.Hour, clock.Min, clock.Sec
 	}
-	return utimeTime(uint64(internalTimegm(tm))-uint64(gmtoff), nsec), true //nolint:gosec // epoch -= gmtoff in uint64_t
+	return utimeTime(uint64(tm.Timegm().Unix())-uint64(gmtoff), nsec), true //nolint:gosec // epoch -= gmtoff in uint64_t
 }
 
 // parseDateClock is parse_date's time: it copies the first 31 bytes of p
@@ -200,7 +183,7 @@ func parseDate(date string) (time.Time, bool) {
 // (docs/ceph-upstream-bugs.md); the format here has room for it. rgw-go
 // refuses a "%" of p's that reaches the format, which radosgw's strptime
 // would take for a conversion (docs/exclusions.md).
-func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
+func parseDateClock(p string) (clock strptime.Tm, gmtoff int64, nsec uint64, ok bool) {
 	var f [33]byte
 	copy(f[:31], p)
 	copy(f[:5], "%H:%M")
@@ -219,22 +202,13 @@ func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
 	format := string(f[:strings.IndexByte(string(f[:]), 0)])
 	for i := range len(format) {
 		if format[i] == '%' && i != 0 && i != 3 && i != 6 && (!zone || i != q) {
-			return cTM{}, 0, 0, false
+			return strptime.Tm{}, 0, 0, false
 		}
 	}
-	var rest string
-	if zone {
-		// strptime emulates %z as the last conversion only, so the zone is
-		// read from what the format before it leaves.
-		if clock, rest, ok = strptime(p, format[:q]); !ok {
-			return cTM{}, 0, 0, false
-		}
-		if _, gmtoff, ok = zoneOffset(rest); !ok {
-			return cTM{}, 0, 0, false
-		}
-	} else if clock, _, ok = strptime(p, format); !ok {
-		return cTM{}, 0, 0, false
+	if clock, _, ok = strptime.Parse(strptime.Tm{}, p, format); !ok {
+		return strptime.Tm{}, 0, 0, false
 	}
+	gmtoff = int64(clock.Gmtoff)
 	if subsec >= 0 {
 		digits := []byte("000000000")
 		for i := 0; i < 9 && subsec+i < len(p) && isCDigit(p[subsec+i]); i++ {
@@ -247,18 +221,19 @@ func parseDateClock(p string) (clock cTM, gmtoff int64, nsec uint64, ok bool) {
 	return clock, gmtoff, nsec, true
 }
 
-// scanSecUsec is sscanf(date, "%d.%d", &sec, &usec) == 2: each number as
-// glibc's scanf reads a %d, through strtol and then cut to an int.
+// scanSecUsec is sscanf(date, "%d.%d", &sec, &usec) == 2.
 func scanSecUsec(s string) (sec, usec int32, ok bool) {
-	n := scanCNumber(s)
-	if n.digits == 0 || n.end >= len(s) || s[n.end] != '.' {
+	sec, rest, ok := rgwtext.ScanInt(s)
+	if !ok {
 		return 0, 0, false
 	}
-	m := scanCNumber(s[n.end+1:])
-	if m.digits == 0 {
+	if rest, ok = strings.CutPrefix(rest, "."); !ok {
 		return 0, 0, false
 	}
-	return int32(atoll(s[:n.end])), int32(atoll(s[n.end+1:][:m.end])), true //nolint:gosec // scanf stores strtol's long in an int
+	if usec, _, ok = rgwtext.ScanInt(rest); !ok {
+		return 0, 0, false
+	}
+	return sec, usec, true
 }
 
 // utimeTime is utime_t(epoch, nsec).to_real_time(): the epoch cut to 32-bit

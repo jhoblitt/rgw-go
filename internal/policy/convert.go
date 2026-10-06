@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 func hasPrefixFold(s, prefix string) bool {
@@ -202,7 +205,7 @@ func ParseMaskedIP(s string) (MaskedIP, bool) {
 	if !slash {
 		m.Prefix = m.width()
 	} else {
-		v, n := strtoul(prefix)
+		v, n, _ := rgwtext.Strtoull(prefix)
 		if n < len(prefix) && prefix[n] != 0 {
 			return MaskedIP{}, false
 		}
@@ -211,7 +214,7 @@ func ParseMaskedIP(s string) (MaskedIP, bool) {
 			return MaskedIP{}, false
 		}
 	}
-	addr = cString(addr)
+	addr = rgwtext.CString(addr)
 	var ok bool
 	if m.V6 {
 		m.Addr, ok = inetPton6(addr)
@@ -389,38 +392,6 @@ func inetPton6(s string) (a [16]byte, ok bool) {
 		return a, false
 	}
 	return tmp, true
-}
-
-// strtoul is glibc's strtoul(3) in base 10: leading whitespace, an optional
-// sign, a negative value negated modulo 2^64, ULONG_MAX past it. n is the
-// bytes consumed, 0 when there are no digits.
-func strtoul(s string) (v uint64, n int) {
-	i := 0
-	for i < len(s) && isCSpace(s[i]) {
-		i++
-	}
-	neg := false
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		neg = s[i] == '-'
-		i++
-	}
-	start, overflow := i, false
-	for ; i < len(s) && isDigit(s[i]); i++ {
-		d := uint64(s[i] - '0')
-		if v > (math.MaxUint64-d)/10 {
-			overflow = true
-		}
-		v = v*10 + d
-	}
-	switch {
-	case i == start:
-		return 0, 0
-	case overflow:
-		return math.MaxUint64, i
-	case neg:
-		return -v, i
-	}
-	return v, i
 }
 
 // strtod is glibc's strtod(3) in the C locale, as std::stod calls it: f is
@@ -647,7 +618,7 @@ func fromISO8601(s string) (uint64, bool) {
 	}
 	month, day, hour, minute, sec := 1, 1, 0, 0, 0
 	nanos := func(frac int) (uint64, bool) {
-		t := timegm(year, month-1, day, hour, minute, sec)
+		t := strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}.Timegm().Unix()
 		if t == -1 {
 			return 0, false
 		}
@@ -695,35 +666,4 @@ func fromISO8601(s string) (uint64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// daysBeforeMonth is timegm.h's days_from_1jan table, by leap year.
-var daysBeforeMonth = [2][12]int{
-	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334},
-	{0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335},
-}
-
-// timegm is internal_timegm (src/include/timegm.h:54-77 at v19.2.6 and
-// v20.2.4) for a 0-based month: it carries the month into the year and lets
-// every other field run on linearly.
-func timegm(year, month, day, hour, minute, sec int) int64 {
-	if month > 11 {
-		year += month / 12
-		month %= 12
-	} else if month < 0 {
-		back := (-month + 11) / 12
-		year -= back
-		month += 12 * back
-	}
-	leap := 0
-	if year%400 == 0 || year%100 != 0 && year%4 == 0 {
-		leap = 1
-	}
-	days := daysFrom0(year) - daysFrom0(1970) + daysBeforeMonth[leap][month] + day - 1
-	return 86400*int64(days) + int64(3600*hour+60*minute+sec)
-}
-
-func daysFrom0(year int) int {
-	year--
-	return 365*year + year/400 - year/100 + year/4
 }

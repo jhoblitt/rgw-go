@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -101,6 +102,27 @@ var _ = Describe("SigV2", func() {
 			Expect(d.stringToSign).To(Equal("GET\n\n\n1441000000\nx-amz-meta-a:h\nx-amz-meta-z:h\n" +
 				"x-amz-meta-a:1\nx-amz-meta-b:3,2\nx-amz-security-token:tok\n/b/k"))
 		})
+
+	DescribeTable("reads a presigned Expires with atoll and signs it as a C string",
+		func(ctx SpecContext, expires string, wantExpired bool, wantDate string) {
+			target := "http://s3.example.com/b/k?AWSAccessKeyId=AK&Signature=s&Expires=" + url.QueryEscape(expires)
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			d, err := authDataV2(newRequestView(req), &cfg, time.Unix(1440999999, 0))
+			if wantExpired {
+				Expect(err).To(MatchError(op.ErrAccessDenied), "%q", expires)
+				return
+			}
+			Expect(err).NotTo(HaveOccurred(), "%q", expires)
+			Expect(d.stringToSign).To(Equal("GET\n\n\n"+wantDate+"\n/b/k"), "%q", expires)
+		},
+		Entry("digits then text", "1441000000junk", false, "1441000000junk"),
+		Entry("white space and a sign", " +1441000000", false, " +1441000000"),
+		Entry("a value past LLONG_MAX, saturated", "99999999999999999999", false, "99999999999999999999"),
+		Entry("bytes after a NUL, read by neither", "1441000000\x00x", false, "1441000000"),
+		Entry("no digits, which is 0", "abc", true, ""),
+		Entry("the current second", "1440999999", true, ""),
+		Entry("a negative overflow, saturated", "-99999999999999999999", true, ""),
+	)
 
 	DescribeTable("canonicalStringV2 reads the request date as rgw_create_s3_canonical_header does",
 		func(ctx SpecContext, hdr map[string][]string, want time.Time) {

@@ -32,16 +32,25 @@ func daysFrom0(year int) int {
 }
 
 // Timegm is internal_timegm (include/timegm.h:24-77 at v19.2.6 and v20.2.4):
-// calendar arithmetic that never checks the day against the month, so the
-// 31st of April is the 1st of May and second 60 the next minute. strptime
-// leaves the month in range, so its normalization is not needed. It ignores
+// a month outside 0-11 carries into the year, and every other field is
+// calendar arithmetic that is never checked against the month, so the 31st
+// of April is the 1st of May and second 60 the next minute. It ignores
 // Gmtoff, as internal_timegm does.
 func (t Tm) Timegm() time.Time {
+	year, mon := t.Year, t.Mon
+	if mon > 11 {
+		year += mon / 12
+		mon %= 12
+	} else if mon < 0 {
+		back := (-mon + 11) / 12
+		year -= back
+		mon += 12 * back
+	}
 	leap := 0
-	if t.Year%400 == 0 || t.Year%100 != 0 && t.Year%4 == 0 {
+	if year%400 == 0 || year%100 != 0 && year%4 == 0 {
 		leap = 1
 	}
-	days := daysFrom0(t.Year) - daysFrom0(1970) + cumulativeDays[leap][t.Mon] + t.Mday - 1
+	days := daysFrom0(year) - daysFrom0(1970) + cumulativeDays[leap][mon] + t.Mday - 1
 	return time.Unix(int64(days)*86400+int64(3600*t.Hour+60*t.Min+t.Sec), 0).UTC()
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 const (
@@ -176,7 +177,7 @@ func parseV4Query(rv *requestView, now time.Time) (*v4Credentials, error) {
 	if expires == "" {
 		return nil, denied("without an expiry")
 	}
-	exp := atoll(expires)
+	exp := rgwtext.Atoll(expires)
 	if exp < 1 || exp > maxPresignExpires {
 		return nil, denied("with an expiry out of range")
 	}

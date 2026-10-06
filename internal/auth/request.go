@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // aws4Algorithm is AWS4_HMAC_SHA256_STR.
@@ -100,7 +102,7 @@ func (rv *requestView) parseQuery() {
 	}
 	adminAdded := false
 	for piece := range strings.SplitSeq(strings.TrimPrefix(rv.rawQuery, "?"), "&") {
-		name, val, _ := strings.Cut(urlDecode(piece, true), "=")
+		name, val, _ := strings.Cut(rgwtext.URLDecode(piece, true), "=")
 		if strings.Contains(name, "X-Amz-") {
 			name = asciiLower(name)
 		}

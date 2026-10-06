@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // MatchWildcards is match_wildcards (src/rgw/rgw_string.cc:7-22): fnmatch(3)
@@ -13,15 +14,9 @@ import (
 // or ^ negating it; and \ escapes the byte after it. match_wildcards hands
 // fnmatch std::string::data(), so each string ends at its first NUL.
 func MatchWildcards(pattern, input string, caseInsensitive bool) bool {
-	m := fnmatcher{pattern: cString(pattern), input: cString(input), fold: caseInsensitive}
+	m := fnmatcher{pattern: rgwtext.CString(pattern), input: rgwtext.CString(input), fold: caseInsensitive}
 	ok, _, _ := m.match(0, 0, false)
 	return ok
-}
-
-// cString is s read as a C string: up to its first NUL.
-func cString(s string) string {
-	s, _, _ = strings.Cut(s, "\x00")
-	return s
 }
 
 // fnmatcher is the single-byte internal_fnmatch of glibc 2.34

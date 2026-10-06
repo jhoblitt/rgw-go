@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
@@ -35,56 +36,6 @@ func asciiLower(s string) string {
 	return string(b)
 }
 
-// unhex is HexTable::to_num for the hex digits. radosgw indexes the table
-// with a signed char, so a byte above 0x7f reads outside it
-// (rgw_common.cc:1690-1692 at v19.2.6, :1753-1755 at v20.2.4); here such a
-// byte is no hex digit.
-func unhex(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
-}
-
-// urlDecode is url_decode (rgw_common.cc:1701-1734 at v19.2.6, :1764-1797 at
-// v20.2.4): '+' is a space only in query mode, which a literal '?' switches
-// on; a bad hex digit empties the whole result; a truncated escape ends
-// decoding.
-func urlDecode(s string, inQuery bool) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c != '%' {
-			if inQuery && c == '+' {
-				b.WriteByte(' ')
-				continue
-			}
-			if c == '?' {
-				inQuery = true
-			}
-			b.WriteByte(c)
-			continue
-		}
-		if len(s)-i < 3 {
-			break
-		}
-		hi, okHi := unhex(s[i+1])
-		lo, okLo := unhex(s[i+2])
-		if !okHi || !okLo {
-			return ""
-		}
-		b.WriteByte(hi<<4 | lo)
-		i += 2
-	}
-	return b.String()
-}
-
 const upperHex = "0123456789ABCDEF"
 
 // aws4URIEncode is aws4_uri_encode (rgw_auth_s3.h:555-590 at v19.2.6,
@@ -111,7 +62,7 @@ func aws4URIEncode(s string, encodeSlash bool) string {
 // aws4Recode is aws4_uri_recode: url_decode outside query mode, then
 // aws4_uri_encode.
 func aws4Recode(s string, encodeSlash bool) string {
-	return aws4URIEncode(urlDecode(s, false), encodeSlash)
+	return aws4URIEncode(rgwtext.URLDecode(s, false), encodeSlash)
 }
 
 // trimSpace is rgw_trim_whitespace.
@@ -184,13 +135,18 @@ func parseISO8601Basic(s string) (time.Time, bool) {
 // strptime read it, before internal_timegm carries a second 60 into the next
 // year.
 func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
-	fields, rest, ok := strptime.Parse(strptime.Tm{}, cString(s), "%Y%m%dT%H%M%S")
+	fields, rest, ok := strptime.Parse(strptime.Tm{}, rgwtext.CString(s), "%Y%m%dT%H%M%S")
 	if !ok {
 		return time.Time{}, 0, false
 	}
 	rest = trimSpace(rest)
-	if rest != "" && rest != "Z" && (rest[0] != '.' || rest[len(rest)-1] != 'Z' || !stringToULOK(rest[1:len(rest)-1])) {
-		return time.Time{}, 0, false
+	if rest != "" && rest != "Z" {
+		if rest[0] != '.' || rest[len(rest)-1] != 'Z' {
+			return time.Time{}, 0, false
+		}
+		if _, ok := rgwtext.StringToUL(rest[1 : len(rest)-1]); !ok {
+			return time.Time{}, 0, false
+		}
 	}
 	return fields.Timegm(), fields.Year, true
 }
@@ -220,7 +176,7 @@ func parseRFC2616(s string) (time.Time, bool) {
 // rfc2616Date is parseRFC2616 that also returns the year as strptime read it,
 // before internal_timegm's carries and the zone offset move the instant.
 func rfc2616Date(s string) (t time.Time, year int, ok bool) {
-	s = cString(s)
+	s = rgwtext.CString(s)
 	for _, form := range rfc2616Forms {
 		if fields, rest, parsed := strptime.Parse(strptime.Tm{}, s, form.format); parsed && form.end(rest) {
 			return fields.Timegm().Add(-time.Duration(fields.Gmtoff) * time.Second), fields.Year, true
