@@ -742,6 +742,7 @@ var _ = Describe("DeleteBucket aborts in-flight uploads", func() {
 		Expect(c.Object(extraPoolName, "", metaOID(rec, "other", up2.ID))).To(BeNil())
 		Expect(c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", driver.GCShardForTest(s, up1.ID)))).To(HaveLen(1), "the part's stripes wait for the GC worker")
 
+		settle(s) // the aborts' index completions write these shards through the pool, under its lock
 		for i := range 1001 {
 			name := fmt.Sprintf("ghost%04d", i)
 			delete(c.Object(rookIndexPool, "", shardOID(rec, name)).Omap, "_multipart_"+name+".2~x.meta")
