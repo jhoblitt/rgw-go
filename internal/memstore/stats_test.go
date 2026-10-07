@@ -175,17 +175,37 @@ var _ = Describe("stats, quota, usage and metadata", func() {
 		})
 		It("lists a section's keys sorted, paged after a marker", func(ctx SpecContext) {
 			for _, k := range []string{"c", "a", "b"} {
-				Expect(store.Put(ctx, "user", k, op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
+				Expect(store.Put(ctx, "bucket", k, op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
 			}
-			keys, next, more, err := store.List(ctx, "user", "", 2)
+			keys, next, more, err := store.List(ctx, "bucket", "", 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"a", "b"}, "b", true}), "first page")
-			keys, next, more, err = store.List(ctx, "user", next, 2)
+			keys, next, more, err = store.List(ctx, "bucket", next, 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"c"}, "c", false}), "second page")
-			keys, _, more, err = store.List(ctx, "bucket", "", 2)
+			keys, _, more, err = store.List(ctx, "bucket.instance", "", 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{keys, more}).To(Equal([]any{[]string(nil), false}), "an empty section")
+		})
+		It("lists the user section from the users themselves, keyed as their users.uid objects", func(ctx SpecContext) {
+			for _, id := range []meta.UserID{{ID: "bob"}, {Tenant: "t", ID: "carol"}, {ID: "alice"}} {
+				u := meta.NewUserInfo()
+				u.UserID = id
+				store.AddUser(u)
+			}
+			Expect(store.Put(ctx, "user", "ghost", op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
+			keys, next, more, err := store.List(ctx, "user", "", 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"alice", "bob"}, "bob", true}), "first page")
+			keys, next, more, err = store.List(ctx, "user", next, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"t$carol"}, "t$carol", false}), "second page")
+			u, err := store.GetUser(ctx, meta.UserID{ID: "bob"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.RemoveUser(ctx, u)).To(Succeed())
+			keys, _, _, err = store.List(ctx, "user", "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(Equal([]string{"alice", "t$carol"}), "a removed user leaves the section")
 		})
 	})
 })

@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -132,9 +134,40 @@ func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.Obj
 	return op.ErrNotImplemented
 }
 
-// ChownBucket implements op.BucketAdminStore; not implemented yet.
-func (s *Store) ChownBucket(context.Context, *op.BucketRecord, meta.Owner, string) error {
-	return op.ErrNotImplemented
+// ChownBucket implements op.BucketAdminStore as RadosBucket::chown
+// (rgw_sal_rados.cc:699-751 at v19.2.6): the bucket's instance and entry
+// point move to owner, so the old owner's list drops it and the new
+// owner's lists it, and its ACL, when it has one that decodes, loses every
+// grant keyed by the old owner and gains FULL_CONTROL for the new one, who
+// becomes its owner. A memstore write cannot race, so the stored instance
+// is rewritten whatever version rec holds, as adopt_user_bucket's retries
+// end; rec is left at the stored state.
+func (s *Store) ChownBucket(_ context.Context, rec *op.BucketRecord, owner meta.Owner, displayName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.instance(rec)
+	if err != nil {
+		return err
+	}
+	if raw, ok := b.rec.Attrs[meta.AttrACL]; ok {
+		d := denc.NewDecoder(raw)
+		pol := acl.DecodePolicy(d)
+		if d.Err() == nil {
+			pol.ACL.RemoveCanonUserGrant(pol.Owner.ID)
+			pol.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: owner.String(), Name: displayName, Permission: acl.PermFullControl})
+			pol.Owner = acl.Owner{ID: owner.String(), DisplayName: displayName}
+			e := denc.NewEncoder()
+			pol.Encode(e, s.cfg.Release)
+			b.rec.Attrs = applyAttrs(b.rec.Attrs, map[string][]byte{meta.AttrACL: e.Bytes()}, nil)
+		}
+	}
+	b.rec.Info.Owner = cloneOwner(owner)
+	b.rec.EntryPoint.Owner = cloneOwner(owner)
+	b.rec.EntryPoint.Linked = true
+	b.rec.Version.Ver++
+	b.rec.Mtime = s.now()
+	*rec = *copyBucket(&b.rec)
+	return nil
 }
 
 // SyncOwnerStats implements op.BucketAdminStore; not implemented yet.

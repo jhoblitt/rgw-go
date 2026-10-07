@@ -6,6 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -264,6 +266,69 @@ var _ = Describe("memstore admin stores", func() {
 		})
 	})
 
+	Describe("ChownBucket", func() {
+		encodeACL := func(p acl.Policy) []byte {
+			e := denc.NewEncoder()
+			p.Encode(e, denc.Squid)
+			return e.Bytes()
+		}
+		decodeACL := func(b []byte) acl.Policy {
+			GinkgoHelper()
+			d := denc.NewDecoder(b)
+			p := acl.DecodePolicy(d)
+			Expect(d.Err()).NotTo(HaveOccurred())
+			return p
+		}
+		It("moves the bucket to the new owner and swaps the old owner's grant for the new one's", func(ctx SpecContext) {
+			pol := acl.DefaultPolicy(owner("alice"), "Alice")
+			pol.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermRead})
+			rec, err := store.CreateBucket(ctx, op.CreateBucketParams{
+				Name: "b", Owner: owner("alice"), Attrs: map[string][]byte{meta.AttrACL: encodeACL(pol)},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			ver := rec.Version
+			Expect(store.ChownBucket(ctx, rec, meta.AccountOwner(acct1), "acme")).To(Succeed())
+
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(meta.AccountOwner(acct1)), "instance owner")
+			Expect(got.EntryPoint.Owner).To(Equal(meta.AccountOwner(acct1)), "entry point owner, as link() rewrites it")
+			Expect(got.Version.Ver).To(Equal(ver.Ver+1), "the instance was rewritten")
+			Expect(rec.Version).To(Equal(got.Version), "rec follows the write")
+			p := decodeACL(got.Attrs[meta.AttrACL])
+			Expect(p.Owner).To(Equal(acl.Owner{ID: acct1, DisplayName: "acme"}))
+			var grants []string
+			for _, g := range p.ACL.Grants {
+				grants = append(grants, g.Key+"="+g.Grant.Name)
+			}
+			Expect(grants).To(ConsistOf("bob=Bob", acct1+"=acme"), "alice's grant replaced, bob's kept")
+			ents, _, _, err := store.ListUserBuckets(ctx, owner("alice"), "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ents).To(BeEmpty(), "unlinked from the old owner")
+			ents, _, _, err = store.ListUserBuckets(ctx, meta.AccountOwner(acct1), "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ents).To(HaveLen(1), "linked to the new owner")
+		})
+		It("leaves a bucket without an ACL without one, and refuses a missing bucket", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			Expect(store.ChownBucket(ctx, rec, owner("bob"), "Bob")).To(Succeed())
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("bob")))
+			Expect(got.Attrs).NotTo(HaveKey(meta.AttrACL))
+			Expect(store.ChownBucket(ctx, &op.BucketRecord{}, owner("bob"), "Bob")).To(MatchError(op.ErrNoSuchBucket))
+		})
+		It("retries past a version another writer moved, as adopt_user_bucket does", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			stale := *rec
+			Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+			Expect(store.ChownBucket(ctx, &stale, owner("bob"), "Bob")).To(Succeed())
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("bob")))
+		})
+	})
+
 	DescribeTable("answers NotImplemented from the bucket admin store",
 		func(ctx SpecContext, call func(context.Context, *memstore.Store) error) {
 			Expect(call(ctx, store)).To(MatchError(op.ErrNotImplemented))
@@ -287,9 +352,6 @@ var _ = Describe("memstore admin stores", func() {
 		}),
 		Entry("RemoveIndexEntries", func(ctx context.Context, s *memstore.Store) error {
 			return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
-		}),
-		Entry("ChownBucket", func(ctx context.Context, s *memstore.Store) error {
-			return s.ChownBucket(ctx, &op.BucketRecord{}, owner("alice"), "Alice")
 		}),
 		Entry("SyncOwnerStats", func(ctx context.Context, s *memstore.Store) error {
 			return s.SyncOwnerStats(ctx, owner("alice"))
