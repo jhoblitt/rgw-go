@@ -2546,7 +2546,8 @@ differ, rgw-go does the following.
   that try read, a block that does not decode blocking, so a public policy
   whose first write lost to a write that blocks public policies is refused
   with 403 AccessDenied where radosgw stores it.
-- **A PutBucketAcl that loses a race is retried.** radosgw stores a bucket's
+- **A PutBucketAcl that loses a race is retried, and every retried ACL,
+  policy or tagging write is authorized again.** radosgw stores a bucket's
   new ACL once, under the version its request loaded, and answers 200 when
   another write of the bucket landed first, with the new ACL not stored
   (`rgw_op.cc:5920-5927` at v19.2.6, `:6582-6589` at v20.2.4;
@@ -2574,7 +2575,19 @@ differ, rgw-go does the following.
   AccessDenied, writes nothing, and leaves the revoking ACL in place, where
   radosgw would have answered 200 with that ACL in place too. An admin is
   let through a retry's unmarked access denial as Run lets one through the
-  first check, and through nothing else.
+  first check, and through nothing else. Every retried bucket write,
+  PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging and
+  DeleteBucketTagging, is authorized again the same way before each retry,
+  against the bucket that retry read: its ACL, its policy and its
+  public-access block, with the same admin rule. radosgw retries the last
+  four through `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`,
+  `:8110` and `:8204` at v19.2.6, `:1434`, `:1469`, `:9036` and `:9151` at
+  v20.2.4), which reads the bucket again and authorizes nothing, so when the
+  write a try lost to revoked the requester's permission, by an ACL that
+  drops their grant or a policy that denies them, radosgw's retry writes for
+  them anyway, and can replace or remove the very policy that denied them.
+  rgw-go's retry answers 403 AccessDenied, writes nothing, and leaves the
+  revoking ACL or policy in place.
 
 ### Object read differences
 
