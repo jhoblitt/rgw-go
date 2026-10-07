@@ -1076,7 +1076,11 @@ review and verified against the tree.
   algorithm, which fails it with 400 InvalidRequest
   (`rgw_rest_s3.cc:4508-4520`, `permitted_cksum_algo_and_type` in
   `rgw_cksum.h`). CreateMultipartUpload takes an algorithm Tentacle does
-  not know as none, as rgw-go does. Phase 2 adds Tentacle-level checksums.
+  not know as none, as rgw-go does. Tentacle's ListParts also decodes the
+  upload's `user.rgw.cksum` and answers 500 UnknownError, -EIO, when it
+  does not decode (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no
+  checksum there and lists the parts. Phase 2 adds Tentacle-level
+  checksums.
 - **Members of IAM groups are refused until phase 3 evaluates group
   policies.** radosgw loads, with a user's own identity policies, the
   inline and managed policies of every IAM group the user's record lists
@@ -2203,10 +2207,22 @@ rgw-go does the following.
   in radosgw, so a policy that allows or denies the read decides it. A
   grantee of the bucket alone is refused where radosgw copies; a grantee of
   the object alone is refused by both; rgw-go allows no copy radosgw
-  refuses.
-- **A block of public ACLs refuses a public ACL on PutObject and
-  CopyObject.** radosgw enforces a bucket's BlockPublicAcls on PutObject
-  only for the canned ACLs `public-read`, `public-read-write` and
+  refuses. UploadPartCopy's source is checked the other way round: radosgw
+  authorizes it against the source object's ACL. With
+  `rgw_defer_to_bucket_acls` at its default, empty, the bucket's ACL counts
+  only for Swift's READ_OBJS, which no S3 grant holds; that option set lets
+  the bucket's ACL grant first (`check_deferred_bucket_only_acl`,
+  `rgw_common.cc:1567-1570` at v19.2.6, `:1621-1624` at v20.2.4)
+  (`rgw_op.cc:3956-3961` at v19.2.6, `:4165-4170` at v20.2.4;
+  `verify_object_permission_no_policy`, `rgw_common.cc:1560-1608` at
+  v19.2.6, `:1614-1671` at v20.2.4). rgw-go makes the same two checks for
+  UploadPartCopy as for CopyObject, so there a grantee of the object alone
+  is refused where radosgw copies, and a grantee of the bucket alone is
+  refused by both.
+- **A block of public ACLs refuses a public ACL on PutObject, CopyObject,
+  CreateMultipartUpload and UploadPart.** radosgw enforces a bucket's
+  BlockPublicAcls on PutObject and UploadPart, both `RGWPutObj`, only for
+  the canned ACLs `public-read`, `public-read-write` and
   `authenticated-read` (`rgw_op.cc:3903-3909` at v19.2.6, `:4112-4118` at
   v20.2.4), so a public policy built from `x-amz-grant-*` headers is
   stored; CopyObject and CreateMultipartUpload, `RGWOp`s of their own,
@@ -2215,7 +2231,9 @@ rgw-go does the following.
   CopyObject and
   CreateMultipartUpload](ceph-upstream-bugs.md#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload)").
   rgw-go refuses, with 403 AccessDenied before the permission check, a
-  PutObject or CopyObject whose new object's policy grants AllUsers or
+  PutObject or CopyObject whose new object's policy, a
+  CreateMultipartUpload whose upload's policy, which the completed object
+  takes, or an UploadPart whose part's policy grants AllUsers or
   AuthenticatedUsers anything under such a block, as PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
   that does not decode for one that blocks public ACLs in these writes, in
@@ -2225,7 +2243,6 @@ rgw-go does the following.
   radosgw takes it for none; the authorizer refuses such a bucket's
   requests from anyone but an admin ("A public-access block that does not
   decode refuses the request"), so only an admin meets these refusals.
-  CreateMultipartUpload applies the block when rgw-go serves it.
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
   DeleteObject that names a version, and a DeleteObjects any of whose keys
@@ -2866,7 +2883,8 @@ does the following.
   retention and legal-hold checks radosgw makes (`verify_object_lock`,
   `rgw_op.cc:5185-5221` and `:6845-6869` at v19.2.6, `:5576-5610` and
   `:7782-7806` at v20.2.4). rgw-go answers such a write, and any write
-  naming a version, a copy's source included, with 501 NotImplemented
+  naming a version, a copy's source included, CopyObject's and
+  UploadPartCopy's, with 501 NotImplemented
   before it touches the store; DeleteObjects answers it through its status
   line before its first key. radosgw serves them. The bucket listing makes
   the same refusal for a versioned bucket ("The versions of a bucket whose
@@ -2958,6 +2976,75 @@ does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw's
   UploadPartCopy can assemble a part from two versions of its
   source](ceph-upstream-bugs.md#radosgws-uploadpartcopy-can-assemble-a-part-from-two-versions-of-its-source)").
+- **UploadPartCopy checks the copy-source conditions.** radosgw reads
+  `x-amz-copy-source-if-match`, `-if-none-match`, `-if-modified-since` and
+  `-if-unmodified-since` only for CopyObject
+  (`RGWCopyObj_ObjStore_S3::get_params`, `rgw_rest_s3.cc:3511-3514` at
+  v19.2.6, `:3791-3794` at v20.2.4) and ignores them on UploadPartCopy, so a
+  part copies whatever version the source holds. rgw-go checks them on
+  UploadPartCopy as it checks them on CopyObject, against the one state it
+  copies: a failing If-Match or If-Unmodified-Since answers 412
+  PreconditionFailed, a matching If-None-Match or an If-Modified-Since the
+  source has not passed answers 304 NotModified, and a date `parse_time`
+  does not read answers 400 InvalidArgument, each before anything is
+  copied, where radosgw copies the part.
+- **A copy-source range past 2^63 answers 416.** radosgw holds
+  `x-amz-copy-source-range`'s bounds in an `off_t` (`rgw_op.h:1227-1228` at
+  v19.2.6, `:1297-1298` at v20.2.4), so a bound of 2^63 or more turns
+  negative. A first bound that turns negative passes the check that it is
+  not past the last unless the last is lower still, and range_to_ofs then
+  reads the negative offset as a suffix from the source's end, clamped to
+  its first byte, with the source's last byte as the end
+  (`rgw_sal.cc:429-448` at v19.2.6, `:426-445` at v20.2.4); radosgw's copy
+  of such a range is a resource-exhaustion defect
+  (`docs/ceph-upstream-bugs.md`, "[radosgw
+  holds a copy-source range's bounds in an off_t, so a bound past 2^63
+  reads as a
+  suffix](ceph-upstream-bugs.md#radosgw-holds-a-copy-source-ranges-bounds-in-an-off_t-so-a-bound-past-263-reads-as-a-suffix)").
+  rgw-go refuses such a range with 416 InvalidRange before it authorizes,
+  as a range that starts past any object. A range radosgw's check refuses,
+  a last bound that turns negative under a first that does not among them,
+  answers 416 InvalidRange from both.
+- **An upload id holding a "." is NoSuchUpload.** radosgw names an
+  upload's meta object `<key>.<upload id>.meta` and its part prefix
+  `<key>.<upload id>` without checking the id (`RGWMPObj::init`,
+  `services/svc_tier_rados.h:42-55` at v19.2.6 and v20.2.4), so key `a`
+  with upload id `b.2~X` addresses key `a.b`'s upload `2~X`, while the
+  request is authorized as key `a` (`docs/ceph-upstream-bugs.md`,
+  "[radosgw lets an upload id address another key's multipart upload](ceph-upstream-bugs.md#radosgw-lets-an-upload-id-address-another-keys-multipart-upload)").
+  rgw-go answers UploadPart, UploadPartCopy, CompleteMultipartUpload,
+  AbortMultipartUpload and ListParts naming such an id as it answers a
+  missing upload, at the same point and without reading the store: 404
+  NoSuchUpload, and for ListParts the missing-object rule. No gateway makes
+  such an id: radosgw's and rgw-go's are `2~` and gen_rand_alphanumeric's
+  `A-Za-z0-9-_` (`driver/rados/rgw_sal_rados.cc:3281-3283` at v19.2.6,
+  `:4125-4127` at v20.2.4; `common/random_string.cc:48`).
+- **ListParts reads the upload before it authorizes.** radosgw reads only
+  the meta object's ACL before verify_permission (`read_obj_policy`,
+  `rgw_op.cc:398-447` at v19.2.6, `:428-477` at v20.2.4) and decodes the
+  upload's info in execute, where an empty meta object is NoSuchUpload and
+  one that does not decode is -EIO. rgw-go reads and decodes the upload
+  first, so a meta object whose info does not decode answers 500
+  UnknownError to every requester, where radosgw answers a refused one 403
+  AccessDenied, and an empty meta object takes the missing-object rule,
+  404 NoSuchKey or 403 AccessDenied, where radosgw authorizes against its
+  ACL and then answers 404 NoSuchUpload. Only a corrupt upload meets
+  either, and rgw-go lists nothing for it.
+- **UploadPartCopy refuses a cloud-tiered source with a range too.**
+  radosgw refuses a source transitioned to a cloud tier with 403
+  InvalidObjectState only for a copy without `x-amz-copy-source-range`
+  (`rgw_op.cc:4297-4326` at v19.2.6, `:4510-4538` at v20.2.4), and reads a
+  ranged copy's source without that check. rgw-go refuses both.
+- **The multipart ops after CreateMultipartUpload check no storage class.**
+  radosgw reads `x-amz-storage-class` for every S3 request
+  (`rgw_rest_s3.cc:5043-5046` at v19.2.6, `:5603-5606` at v20.2.4) and,
+  while it loads the bucket, refuses one whose class the bucket's
+  placement lacks with 400 InvalidArgument (`rgw_op.cc:576-583` at v19.2.6,
+  `:606-613` at v20.2.4). rgw-go makes that check on CreateMultipartUpload,
+  whose upload keeps the class, and not on UploadPart, UploadPartCopy,
+  CompleteMultipartUpload, AbortMultipartUpload, ListParts or
+  ListMultipartUploads, which take their placement from the upload or need
+  none, so it serves such a request where radosgw refuses it.
 - **An upload without a v2 id keys a part by its canonical number.**
   radosgw registers a part of an upload whose id lacks the `2~` or `2/`
   prefix under `part.` and the part number as the request spelled it

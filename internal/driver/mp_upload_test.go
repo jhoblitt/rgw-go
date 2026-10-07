@@ -178,6 +178,18 @@ var _ = Describe("CreateUpload and GetUpload", func() {
 		_, err := s.GetUpload(ctx, rec, key, "2~nope")
 		Expect(err).To(MatchError(op.ErrNoSuchUpload))
 	})
+	It("answers NoSuchUpload for an id holding a dot, which would name another key's upload, and leaves that upload alone", func(ctx SpecContext) {
+		seedMeta(ctx, c, rec, "a.b", "2~x", meta.PlacementRule{Name: "default-placement"},
+			map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(initiator, "Alice"))}, nil)
+		a := meta.ObjKey{Name: "a"}
+		_, err := s.GetUpload(ctx, rec, a, "b.2~x")
+		Expect(err).To(MatchError(op.ErrNoSuchUpload))
+		Expect(s.Abort(ctx, &op.Upload{ID: "b.2~x", Bucket: rec, Key: a})).To(MatchError(op.ErrNoSuchUpload))
+		_, err = s.ListParts(ctx, &op.Upload{ID: "b.2~x", Bucket: rec, Key: a}, 0, 10)
+		Expect(err).To(MatchError(op.ErrNoSuchUpload))
+		_, err = s.GetUpload(ctx, rec, meta.ObjKey{Name: "a.b"}, "2~x")
+		Expect(err).NotTo(HaveOccurred(), "key a.b's upload is still there")
+	})
 
 	It("encodes Tentacle's version 4 upload info with no checksum", func(ctx SpecContext) {
 		s2 := openPutStore(ctx, c, denc.Tentacle, nil, now)
