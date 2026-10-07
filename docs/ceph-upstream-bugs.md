@@ -216,6 +216,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Removing an account's root user leaves its name in the account's users index](#removing-an-accounts-root-user-leaves-its-name-in-the-accounts-users-index) | pending | pending | ✓ |
 | [radosgw cannot remove an account user whose users index entry is gone](#radosgw-cannot-remove-an-account-user-whose-users-index-entry-is-gone) | pending | pending | ✓ |
 | [radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from](#radosgws-admin-user-info-shows-the-swift-tempurl-keys-to-a-caller-it-withholds-keys-from) | pending | pending | ✓ |
+| [A stale bucket list entry blocks a user's removal for good](#a-stale-bucket-list-entry-blocks-a-users-removal-for-good) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9588,3 +9589,31 @@ Every new entry adds its row to this table, in document order.
   and has not reported a prior-art result.
 - **Found:** phase 1 unit N, Task 4, 2026-10-07, in a security review of
   the admin user document; derived from the source, not reproduced.
+
+## A stale bucket list entry blocks a user's removal for good
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user that can no
+  longer be removed. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of lines
+  is v19.2.6's, then v20.2.4's.
+  - `RadosBucket::remove` deletes the bucket (`rgw_sal_rados.cc:445`;
+    `:462`) before it unlinks it from its owner's bucket list (`:461`;
+    `:482`), so a gateway that stops between the two leaves the list
+    naming a bucket that is gone.
+  - `execute_remove` loads every bucket the list names and returns the
+    load's ENOENT (`rgw_user.cc:1968-1974`; `:1975-1980`), which
+    `RGWUserAdminOp_User::remove` answers as NoSuchUser (`:2488-2492`;
+    `:2494-2498`); without purge-data the entry refuses the removal with
+    EEXIST before any load (`:1964-1967`; `:1970-1973`). The entry stays,
+    so every retry answers the same.
+- **Impact:** the owner can no longer be removed through the admin API or
+  `radosgw-admin user rm`, which answer NoSuchUser for a user that
+  exists, until the list entry is removed by hand.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it. Its bucket delete unlinks the list entry last
+  too (`DeleteBucket`, `internal/driver/bucketops.go`), and its user
+  removal answers a listed bucket that is gone with NoSuchUser
+  (`RemoveUser`, `internal/op/adminuser.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** re-review of phase 1 unit N, Task 4, 2026-10-07, reading the
+  user removal's bucket loop; derived from the source, not reproduced.
