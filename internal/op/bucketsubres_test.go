@@ -2,12 +2,16 @@ package op_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -402,6 +406,195 @@ var _ = Describe("bucket subresource ops", func() {
 				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", ""))).To(MatchError(op.ErrConcurrentModification), o.Name())
 				Expect(buckets.PutBucketAttrsCallCount()).To(Equal(16*(i+1)), o.Name())
 			}
+		})
+	})
+
+	Describe("a retried write, re-authorized against the bucket each retry read", func() {
+		// bobCanWriteACP is alice's ACL with WRITE_ACP, the permission every
+		// retried bucket write maps to, granted to bob.
+		bobCanWriteACP := func() acl.Policy {
+			p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+			p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermWriteACP})
+			return p
+		}
+		// publicWriteACP is alice's ACL with WRITE_ACP granted to AllUsers,
+		// a grant IgnorePublicAcls takes away.
+		publicWriteACP := func() acl.Policy {
+			p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+			p.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermWriteACP})
+			return p
+		}
+		// bobReads is a policy that decides none of bob's bucket writes.
+		const bobReads = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/bob"]},"Action":"s3:GetObject","Resource":"arn:aws:s3:::plain/*"}]}`
+		revokeByACL := func() map[string][]byte {
+			return map[string][]byte{meta.AttrACL: encodedPolicy(acl.DefaultPolicy(f.alice.Owner, "Alice"))}
+		}
+		// denyBobOn is a concurrent change to a policy that denies bob the
+		// actions alone.
+		denyBobOn := func(actions ...string) func() map[string][]byte {
+			return func() map[string][]byte {
+				names, err := json.Marshal(actions)
+				Expect(err).NotTo(HaveOccurred())
+				return map[string][]byte{op.AttrIAMPolicy: fmt.Appendf(nil,
+					`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":{"AWS":["arn:aws:iam:::user/bob"]},"Action":%s,"Resource":"arn:aws:s3:::plain"}]}`,
+					names)}
+			}
+		}
+		ignorePublicACLs := func() map[string][]byte {
+			return map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{IgnorePublicACLs: true})}
+		}
+		keepGrant := func() map[string][]byte {
+			p := bobCanWriteACP()
+			p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermRead})
+			return map[string][]byte{meta.AttrACL: encodedPolicy(p)}
+		}
+		wantedACL := func() acl.Policy {
+			p := bobCanWriteACP()
+			p.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermRead})
+			return p
+		}
+
+		var (
+			buckets *opfakes.FakeBucketStore
+			// raced is the bucket's attrs as the write the first try lost to
+			// left them.
+			raced map[string][]byte
+		)
+		// raceFrom gives plain the ACL start, a policy and a tag set for the
+		// deletes to remove, then makes the first write of the bucket lose to
+		// concurrent, another request's change of the bucket's attrs, and lets
+		// every retry through to the store.
+		raceFrom := func(ctx context.Context, start acl.Policy, concurrent map[string][]byte) {
+			GinkgoHelper()
+			f.env.Authz = authz.New(authz.DefaultConfig(denc.Squid))
+			f.setBucketAttrs(ctx, map[string][]byte{
+				meta.AttrACL: encodedPolicy(start), op.AttrIAMPolicy: []byte(bobReads), tags.Attr: encodeTags(tagSet("k", "v")),
+			})
+			buckets = &opfakes.FakeBucketStore{}
+			buckets.GetBucketStub = f.store.GetBucket
+			buckets.PutBucketAttrsStub = func(ctx context.Context, rec *op.BucketRecord, set map[string][]byte, rm []string) error {
+				if buckets.PutBucketAttrsCallCount() == 1 {
+					f.setBucketAttrs(ctx, concurrent)
+					raced = maps.Clone(bucket(ctx).Attrs)
+				}
+				return f.store.PutBucketAttrs(ctx, rec, set, rm)
+			}
+			f.env.Buckets = buckets
+		}
+		// race is raceFrom with WRITE_ACP granted to bob.
+		race := func(ctx context.Context, concurrent map[string][]byte) {
+			GinkgoHelper()
+			raceFrom(ctx, bobCanWriteACP(), concurrent)
+		}
+		// written is an op's write as bob asks for it, and what it leaves in
+		// the bucket's attrs.
+		type written struct {
+			op    op.Op
+			check func(attrs map[string][]byte)
+		}
+		putACL := func() written {
+			return written{
+				op: &op.PutBucketACL{Build: func(acl.Policy) (acl.Policy, error) { return wantedACL(), nil }},
+				check: func(attrs map[string][]byte) {
+					Expect(attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(wantedACL())))
+				},
+			}
+		}
+		putPolicy := func() written {
+			return written{
+				op: &op.PutBucketPolicy{Policy: &policy.Policy{Text: allowAll}},
+				check: func(attrs map[string][]byte) {
+					Expect(attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(allowAll)))
+				},
+			}
+		}
+		deletePolicy := func() written {
+			return written{
+				op:    &op.DeleteBucketPolicy{},
+				check: func(attrs map[string][]byte) { Expect(attrs).NotTo(HaveKey(op.AttrIAMPolicy)) },
+			}
+		}
+		putTagging := func() written {
+			return written{
+				op: &op.PutBucketTagging{Set: tagSet("k2", "v2")},
+				check: func(attrs map[string][]byte) {
+					Expect(attrs).To(HaveKeyWithValue(tags.Attr, encodeTags(tagSet("k2", "v2"))))
+				},
+			}
+		}
+		deleteTagging := func() written {
+			return written{
+				op:    &op.DeleteBucketTagging{},
+				check: func(attrs map[string][]byte) { Expect(attrs).NotTo(HaveKey(tags.Attr)) },
+			}
+		}
+
+		DescribeTable("refuses the retry once the write it lost to revoked the requester's permission, leaving the revoking bucket",
+			func(ctx SpecContext, write func() written, revoke func() map[string][]byte) {
+				race(ctx, revoke())
+				o := write().op
+				Expect(op.Run(ctx, o, asBob(http.MethodPut))).To(MatchError(op.ErrAccessDenied), o.Name())
+				Expect(buckets.PutBucketAttrsCallCount()).To(Equal(1), "the retry writes nothing")
+				Expect(bucket(ctx).Attrs).To(Equal(raced))
+			},
+			Entry("PutBucketACL under an ACL that drops the grant", putACL, revokeByACL),
+			Entry("PutBucketACL under a policy that denies s3:PutBucketAcl alone", putACL, denyBobOn("s3:PutBucketAcl")),
+			Entry("PutBucketPolicy under an ACL that drops the grant", putPolicy, revokeByACL),
+			Entry("PutBucketPolicy under a policy that denies s3:PutBucketPolicy alone, which it would replace",
+				putPolicy, denyBobOn("s3:PutBucketPolicy")),
+			Entry("DeleteBucketPolicy under an ACL that drops the grant", deletePolicy, revokeByACL),
+			Entry("DeleteBucketPolicy under a policy that denies s3:DeleteBucketPolicy alone, which it would remove",
+				deletePolicy, denyBobOn("s3:DeleteBucketPolicy")),
+			Entry("PutBucketTagging under an ACL that drops the grant", putTagging, revokeByACL),
+			Entry("PutBucketTagging under a policy that denies s3:PutBucketTagging alone", putTagging, denyBobOn("s3:PutBucketTagging")),
+			Entry("DeleteBucketTagging under an ACL that drops the grant", deleteTagging, revokeByACL),
+			Entry("DeleteBucketTagging under a policy that denies s3:PutBucketTagging alone, the action it authorizes",
+				deleteTagging, denyBobOn("s3:PutBucketTagging")),
+		)
+		DescribeTable("refuses the retry once the write it lost to set IgnorePublicAcls, leaving the bucket that block left",
+			func(ctx SpecContext, write func() written) {
+				raceFrom(ctx, publicWriteACP(), ignorePublicACLs())
+				o := write().op
+				Expect(op.Run(ctx, o, asBob(http.MethodPut))).To(MatchError(op.ErrAccessDenied), o.Name())
+				Expect(buckets.PutBucketAttrsCallCount()).To(Equal(1), "the retry writes nothing")
+				Expect(bucket(ctx).Attrs).To(Equal(raced))
+			},
+			Entry("PutBucketACL, which the block of public ACLs it re-checks would not refuse", putACL),
+			Entry("PutBucketPolicy, which the block of public policies it re-checks would not refuse", putPolicy),
+		)
+		DescribeTable("writes on a retry whose requester still holds the permission",
+			func(ctx SpecContext, write func() written, concurrent func() map[string][]byte) {
+				race(ctx, concurrent())
+				w := write()
+				o := w.op
+				Expect(op.Run(ctx, o, asBob(http.MethodPut))).To(Succeed(), o.Name())
+				Expect(buckets.PutBucketAttrsCallCount()).To(Equal(2), "the first try lost, the retry wrote")
+				w.check(bucket(ctx).Attrs)
+			},
+			Entry("PutBucketACL under an ACL that keeps the grant", putACL, keepGrant),
+			Entry("PutBucketPolicy under an ACL that keeps the grant", putPolicy, keepGrant),
+			Entry("DeleteBucketPolicy under an ACL that keeps the grant", deletePolicy, keepGrant),
+			Entry("PutBucketTagging under an ACL that keeps the grant", putTagging, keepGrant),
+			Entry("DeleteBucketTagging under an ACL that keeps the grant", deleteTagging, keepGrant),
+			Entry("PutBucketACL under a policy that denies every other retried action", putACL,
+				denyBobOn("s3:PutBucketPolicy", "s3:DeleteBucketPolicy", "s3:PutBucketTagging")),
+			Entry("PutBucketPolicy under a policy that denies every other retried action", putPolicy,
+				denyBobOn("s3:PutBucketAcl", "s3:DeleteBucketPolicy", "s3:PutBucketTagging")),
+			Entry("DeleteBucketPolicy under a policy that denies every other retried action", deletePolicy,
+				denyBobOn("s3:PutBucketAcl", "s3:PutBucketPolicy", "s3:PutBucketTagging")),
+			Entry("PutBucketTagging under a policy that denies every other retried action", putTagging,
+				denyBobOn("s3:PutBucketAcl", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy")),
+			Entry("DeleteBucketTagging under a policy that denies every action but s3:PutBucketTagging", deleteTagging,
+				denyBobOn("s3:PutBucketAcl", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy")),
+		)
+		It("lets an admin through a retry's refusal, as Run lets one through the first check", func(ctx SpecContext) {
+			race(ctx, revokeByACL())
+			r := asBob(http.MethodPut)
+			r.Identity.Admin = true
+			w := deleteTagging()
+			Expect(op.Run(ctx, w.op, r)).To(Succeed())
+			Expect(buckets.PutBucketAttrsCallCount()).To(Equal(2))
+			w.check(bucket(ctx).Attrs)
 		})
 	})
 })

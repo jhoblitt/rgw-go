@@ -74,6 +74,15 @@ func verifyBucketAction(ctx context.Context, r *Request, o Op) error {
 	return VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
 }
 
+// retryBucketWrite is RetryRacedWriteReauthorized for a write of the bucket:
+// each retry runs o's VerifyPermission, the check Run made, again against
+// the ACL, policy and public-access block of the bucket
+// RetryRacedBucketWrite has just read, so that a retry writes nothing for a
+// requester the write it lost to refused (docs/exclusions.md).
+func retryBucketWrite(ctx context.Context, r *Request, o Op, f func() error) error {
+	return RetryRacedWriteReauthorized(ctx, r, nil, func() error { return o.VerifyPermission(ctx, r) }, f)
+}
+
 // GetBucketACL is RGWGetACLs at bucket scope (rgw_op.cc:5695-5734 at v19.2.6,
 // :6275-6314 at v20.2.4): s->bucket_acl, as BucketACLFor reads it.
 type GetBucketACL struct {
@@ -149,9 +158,9 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // docs/exclusions.md). radosgw answers a lost race with success and leaves
 // the ACL unwritten (:5925-5927; docs/ceph-upstream-bugs.md, "radosgw's
 // PutBucketAcl answers success when its write loses a race"); rgw-go
-// retries it through RetryRacedBucketWrite and makes both checks again
-// against the bucket as each try reads it, so a retry never puts back an
-// owner a concurrent change replaced (docs/exclusions.md).
+// retries it through retryBucketWrite and makes both checks again against
+// the bucket as each try reads it, so a retry never puts back an owner a
+// concurrent change replaced (docs/exclusions.md).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 	existing, err := BucketACLFor(r.BucketRec)
 	if err != nil {
@@ -162,7 +171,7 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	set := map[string][]byte{meta.AttrACL: encodeAt(p, r.Env.Zone.Release())}
-	return RetryRacedBucketWrite(ctx, r, func() error {
+	return retryBucketWrite(ctx, r, o, func() error {
 		current, err := BucketACLFor(r.BucketRec)
 		if err != nil {
 			return err
@@ -266,7 +275,7 @@ func (o *PutBucketPolicy) VerifyPermission(ctx context.Context, r *Request) erro
 
 // Execute is RGWPutBucketPolicy::execute: Params, whose parse refuses a
 // public policy under a block of public policies, then the policy's text
-// written over the bucket through RetryRacedBucketWrite. Each try refuses a
+// written over the bucket through retryBucketWrite. Each try refuses a
 // public policy under the block of the bucket as that try read it, a block
 // that does not decode blocking, and sets the policy over that bucket.
 // radosgw's tries merge the attrs the request started with, so a retry
@@ -282,7 +291,7 @@ func (o *PutBucketPolicy) Execute(ctx context.Context, r *Request) error {
 	}
 	public := o.Policy.IsPublic(policy.SemanticsFor(r.Env.Zone.Release()))
 	set := map[string][]byte{AttrIAMPolicy: []byte(o.Policy.Text)}
-	return RetryRacedBucketWrite(ctx, r, func() error {
+	return retryBucketWrite(ctx, r, o, func() error {
 		if public && blocksPublicPolicy(r.BucketRec) {
 			return fmt.Errorf("%w: a public policy under a block of public policies", ErrAccessDenied)
 		}
@@ -332,13 +341,13 @@ func (o *DeleteBucketPolicy) VerifyPermission(ctx context.Context, r *Request) e
 }
 
 // Execute removes the policy attr, and on Tentacle the remove-self-access
-// flag with it, through RetryRacedBucketWrite.
-func (*DeleteBucketPolicy) Execute(ctx context.Context, r *Request) error {
+// flag with it, through retryBucketWrite.
+func (o *DeleteBucketPolicy) Execute(ctx context.Context, r *Request) error {
 	rm := []string{AttrIAMPolicy}
 	if r.Env.Zone.Release() >= denc.Tentacle {
 		rm = append(rm, attrIAMPolicyRemoveSelfAccess)
 	}
-	return RetryRacedBucketWrite(ctx, r, func() error {
+	return retryBucketWrite(ctx, r, o, func() error {
 		return r.Env.Buckets.PutBucketAttrs(ctx, r.BucketRec, nil, rm)
 	})
 }
@@ -425,7 +434,7 @@ func (o *PutBucketTagging) VerifyPermission(ctx context.Context, r *Request) err
 }
 
 // Execute is RGWPutBucketTags::execute: Params, then the encoded set written
-// over the bucket through RetryRacedBucketWrite.
+// over the bucket through retryBucketWrite.
 func (o *PutBucketTagging) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {
 		if err := o.Params(ctx, o); err != nil {
@@ -433,7 +442,7 @@ func (o *PutBucketTagging) Execute(ctx context.Context, r *Request) error {
 		}
 	}
 	set := map[string][]byte{tags.Attr: encodeAt(o.Set, r.Env.Zone.Release())}
-	return RetryRacedBucketWrite(ctx, r, func() error {
+	return retryBucketWrite(ctx, r, o, func() error {
 		return r.Env.Buckets.PutBucketAttrs(ctx, r.BucketRec, set, nil)
 	})
 }
@@ -464,9 +473,9 @@ func (o *DeleteBucketTagging) VerifyPermission(ctx context.Context, r *Request) 
 	return verifyBucketAction(ctx, r, o)
 }
 
-// Execute removes the tag attr through RetryRacedBucketWrite.
-func (*DeleteBucketTagging) Execute(ctx context.Context, r *Request) error {
-	return RetryRacedBucketWrite(ctx, r, func() error {
+// Execute removes the tag attr through retryBucketWrite.
+func (o *DeleteBucketTagging) Execute(ctx context.Context, r *Request) error {
+	return retryBucketWrite(ctx, r, o, func() error {
 		return r.Env.Buckets.PutBucketAttrs(ctx, r.BucketRec, nil, []string{tags.Attr})
 	})
 }
