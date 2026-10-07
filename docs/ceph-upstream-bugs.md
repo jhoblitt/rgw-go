@@ -215,6 +215,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [RGWOp::read_all_input ignores its allow_chunked argument](#rgwopread_all_input-ignores-its-allow_chunked-argument) | pending | pending | ✓ |
 | [Removing an account's root user leaves its name in the account's users index](#removing-an-accounts-root-user-leaves-its-name-in-the-accounts-users-index) | pending | pending | ✓ |
 | [radosgw cannot remove an account user whose users index entry is gone](#radosgw-cannot-remove-an-account-user-whose-users-index-entry-is-gone) | pending | pending | ✓ |
+| [radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from](#radosgws-admin-user-info-shows-the-swift-tempurl-keys-to-a-caller-it-withholds-keys-from) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9542,3 +9543,48 @@ Every new entry adds its row to this table, in document order.
   `remove_user_info` for the user removal's retry; derived from the
   source, not reproduced.
 
+## radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from
+
+- **Kind:** defect, security-relevant (a cross-user secret disclosure),
+  unfixed at v19.2.6 and v20.2.4 and on ceph main at 7ed73efc1be.
+  Confirmed by rgw-bug-reproduction on 2026-10-07; its triage estimate is
+  CVSS 8.1 (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N), within a range
+  of 6.4 to 8.1.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `user-info-without-keys` is a cap of its own, grantable without
+    `users` (`RGWUserCaps::is_valid_cap_type`, `rgw_common.cc:2099`;
+    `:2162`). `GET /admin/user` admits a caller holding only
+    `user-info-without-keys=read` (`RGWOp_User_Info::check_caps`,
+    `driver/rados/rgw_rest_user.cc:77-83`; the same lines), and sets
+    `dump_keys` only for a caller holding `users=read`, a system request or
+    an admin (`:124-127`; the same lines, `is_admin_of(uid)` at v19.2.6 and
+    `is_admin()` at v20.2.4). The admin ops documentation promises such a
+    caller no keys (`doc/radosgw/adminops.rst:276-278` at v19.2.6).
+  - `dump_user_info` withholds `keys` and `swift_keys` behind
+    `if (dump_keys)` (`driver/rados/rgw_user.cc:145-148`; `:150-153`) but
+    encodes `temp_url_keys` unconditionally (`:162`; `:167`).
+  - Those values are the user's Swift TempURL signing keys: the TempURL
+    engine computes the signature over the request's own method, path and
+    the URL's expiry with each of the owner's `temp_url_keys`, and grants
+    the request on a match (`rgw_swift_auth.cc:366-369`, `:394-406` and
+    `:416-436` at v19.2.6; `:367-370`, `:395-407` and `:417-437` at
+    v20.2.4).
+- **Impact:** a caller trusted to read users without their keys reads
+  every user's TempURL keys. With them it can forge, offline and at no
+  cost, a TempURL for any method, any of the victim's objects and any
+  expiry, which any gateway serving the Swift API honors without further
+  authentication. Only users with TempURL keys set, through Swift account
+  metadata or `radosgw-admin user modify --temp-url-key`, are exposed.
+  The fix is to move the `temp_url_keys` emit inside `if (dump_keys)`.
+- **Releases:** v19.2.6 and v20.2.4; ceph main still encodes
+  `temp_url_keys` outside the `dump_keys` block
+  (`driver/rados/rgw_user.cc:142` at 7ed73efc1be).
+- **rgw-go:** does not reproduce it. Its user document omits
+  `temp_url_keys`, as it omits `keys` and `swift_keys`, when the caller may
+  not see keys (`dumpUserInfo`, `internal/admin/user.go`;
+  `docs/exclusions.md`, "The admin user document withholds the Swift
+  TempURL keys with the other keys").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07
+  and has not reported a prior-art result.
+- **Found:** phase 1 unit N, Task 4, 2026-10-07, in a security review of
+  the admin user document; derived from the source, not reproduced.
