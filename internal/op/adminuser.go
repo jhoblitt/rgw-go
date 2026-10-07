@@ -44,18 +44,29 @@ type UserKeyParams struct {
 	Subuser              string
 	// Active is the key's active flag when the request names one.
 	Active *bool
+	// GenAccess and GenSecret are set_gen_access and set_gen_secret, which
+	// generate the access key or the secret even when the request names one.
+	GenAccess, GenSecret bool
+	// subuserSet is subuser_specified: the request named a subuser, which
+	// may be empty past its "<uid>:".
+	subuserSet bool
 }
 
 // hasKeyOp is RGWUserAdminOpState::has_key_op: set_access_key,
-// set_secret_key and set_generate_key each set key_op.
+// set_secret_key, set_generate_key, set_gen_access and set_gen_secret each
+// set key_op.
 func (p UserKeyParams) hasKeyOp() bool {
-	return p.AccessKey != "" || p.SecretKey != "" || p.GenerateKey
+	return p.AccessKey != "" || p.SecretKey != "" || p.GenerateKey || p.GenAccess || p.GenSecret
 }
 
 // genAccess and genSecret are will_gen_access and will_gen_secret: the
-// request asked for a key and named no access key or no secret.
-func (p UserKeyParams) genAccess() bool { return p.GenerateKey && p.AccessKey == "" }
-func (p UserKeyParams) genSecret() bool { return p.GenerateKey && p.SecretKey == "" }
+// request asked for a key and named no access key or no secret, or asked
+// for a generated one outright.
+func (p UserKeyParams) genAccess() bool { return p.GenAccess || p.GenerateKey && p.AccessKey == "" }
+func (p UserKeyParams) genSecret() bool { return p.GenSecret || p.GenerateKey && p.SecretKey == "" }
+
+// hasSubuser is has_subuser.
+func (p UserKeyParams) hasSubuser() bool { return p.subuserSet || p.Subuser != "" }
 
 // anonymousUser is rgw_user(RGW_USER_ANON_ID).
 var anonymousUser = meta.UserID{ID: AnonymousUserID}
