@@ -232,10 +232,9 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 		res.Err = ErrInvalidArgument
 		return res
 	}
+	// checkRequest refused every key naming a version, whose action would be
+	// s3:DeleteObjectVersion.
 	a := policy.S3DeleteObject
-	if e.Key.Instance != "" {
-		a = policy.S3DeleteObjectVersion
-	}
 	if err := VerifyBucketPermissionIn(ctx, r, a, acl.PermFor(a), r.BucketRec, e.Key); err != nil {
 		// -EACCES whatever the authorizer's reason, which it has logged.
 		res.Err = ErrAccessDenied

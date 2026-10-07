@@ -43,6 +43,13 @@ type CopyObject struct {
 	IfMatch, IfNoneMatch *string
 	IfModifiedSince      *string
 	IfUnmodifiedSince    *string
+	// Params, when set, is the protocol's get_params, which needs the
+	// destination bucket: Init calls it once that bucket is loaded and its
+	// placement checked, before it loads the source, as
+	// RGWCopyObj::init_processing calls get_params (rgw_op.cc:5383-5400 at
+	// v19.2.6, :5949-5966 at v20.2.4). It fills the inputs it reads, the
+	// destination ACL among them.
+	Params func(ctx context.Context, o *CopyObject) error
 
 	ETag      string
 	Mtime     time.Time
@@ -69,9 +76,10 @@ func (o *CopyObject) OpMask() uint32 { return OpTypeWrite }
 // (rgw_op.cc:5376-5405 at v19.2.6, :5942-5971 at v20.2.4), a missing one
 // NoSuchBucket, and reads the source's head with its first chunk, as
 // read_obj_policy reads it with prefetch_data set (:5413-5422 at v19.2.6,
-// :5979-5988 at v20.2.4). A public destination policy under the destination
-// bucket's block of public ACLs is refused here, as PutObject refuses one;
-// radosgw makes no such check for a copy (docs/exclusions.md).
+// :5979-5988 at v20.2.4). Params runs between the two buckets' loads. A
+// public destination policy under the destination bucket's block of public
+// ACLs is refused once Params has run, as PutObject refuses one; radosgw
+// makes no such check for a copy (docs/exclusions.md).
 func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
@@ -80,6 +88,11 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 	r.BucketRec = rec
 	if perr := checkDestPlacement(r, o.StorageClass); perr != nil {
 		return perr
+	}
+	if o.Params != nil {
+		if perr := o.Params(ctx, o); perr != nil {
+			return perr
+		}
 	}
 	if blockPublicACLs(rec) && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
@@ -169,6 +182,9 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 // rgw-go does not serve, and a copy naming a version, are refused first.
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object, o.SrcKey); err != nil {
+		return err
+	}
+	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 		return err
 	}
 	// An admin let through a refusal of a missing source reaches here.

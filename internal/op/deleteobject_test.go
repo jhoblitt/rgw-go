@@ -133,7 +133,7 @@ var _ = Describe("DeleteObject", func() {
 		Entry("a size past int64", &op.DeleteObject{IfMatchSize: new("9223372036854775808")}),
 		Entry("a last-modified time that is no date", &op.DeleteObject{IfMatchLastModified: new("yesterday")}),
 	)
-	It("passes the parsed conditions to the store, an empty one as unset", func(ctx SpecContext) {
+	It("passes the parsed conditions to the store, an absent one as unset", func(ctx SpecContext) {
 		stub := &opfakes.FakeObjectStore{}
 		stub.StatObjectReturns(&op.ObjectState{Exists: true}, nil)
 		f.env.Objects = stub
