@@ -505,6 +505,7 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 				}
 			})
 			Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "the entry went with the object; the stats sync was the first write")
+			Expect(writes).To(Equal(2), "the hook removed the owner object before the unlink, its second write")
 			Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
 		})
 		It("leaves the owner's entry of a bucket re-created between its reads", func(ctx SpecContext) {
