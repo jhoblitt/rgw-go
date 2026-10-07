@@ -63,8 +63,10 @@ func NewHandler(env *op.Env, auth s3.Authenticator, cfg Config) *Handler {
 		}
 		h.routes[name] = unregistered(name)
 	}
-	for name, fn := range infoHandlers() {
-		h.Register(name, fn)
+	for _, routes := range []map[string]HandlerFunc{infoHandlers(), newUserHandlers()} {
+		for name, fn := range routes {
+			h.Register(name, fn)
+		}
 	}
 	return h
 }

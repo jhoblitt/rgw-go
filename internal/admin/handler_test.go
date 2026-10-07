@@ -58,9 +58,11 @@ func newFixture(cfg admin.Config) *fixture {
 func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 	GinkgoHelper()
 	fx := &fixture{metrics: new(opfakes.FakeMetrics)}
+	pools := meta.NewZonePlacementInfo()
+	pools.StorageClasses = meta.ZoneStorageClasses{meta.StorageClassStandard: {}, "FOO": {}}
 	fx.store = memstore.New(memstore.Config{Release: rel, Params: meta.ZoneParams{
 		ID: "zid", Name: "z1", DomainRoot: meta.ParsePool("z1.rgw.meta:root"),
-		PlacementPools: map[string]meta.ZonePlacementInfo{"default-placement": meta.NewZonePlacementInfo()},
+		PlacementPools: map[string]meta.ZonePlacementInfo{"default-placement": pools},
 	}})
 	for _, u := range []struct{ id, caps string }{
 		{"admin", "info=read;zone=read;users=*;buckets=*;usage=read;metadata=*;accounts=*"},
@@ -74,8 +76,9 @@ func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 		fx.store.AddUser(info)
 	}
 	fx.env = &op.Env{
-		Zone: fx.store, Users: fx.store, Usage: fx.store, Metrics: fx.metrics,
-		HostID: hostID, ClusterID: fsid,
+		Zone: fx.store, Users: fx.store, Accounts: fx.store, Buckets: fx.store, Objects: fx.store,
+		Multipart: fx.store, Stats: fx.store, BucketAdmin: fx.store, Metadata: fx.store,
+		Usage: fx.store, Metrics: fx.metrics, HostID: hostID, ClusterID: fsid,
 	}
 	if cfg.Prefix == "" {
 		cfg.Prefix = "admin"
@@ -264,13 +267,13 @@ var _ = Describe("admin handler", func() {
 		Expect(body(res)).To(HavePrefix(`{"Code":"InvalidRequest",`))
 	})
 	It("answers an unregistered route NotImplemented, in the request's format, for a caller its op admits", func() {
-		res := fx.get("/admin/user?uid=admin&format=xml", "admin")
+		res := fx.get("/admin/bucket?bucket=b&format=xml", "admin")
 		Expect(res.StatusCode).To(Equal(501))
 		Expect(body(res)).To(HavePrefix(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code>`))
 	})
 	It("refuses a caller an unregistered route's op would refuse", func() {
-		Expect(fx.get("/admin/user?uid=admin", "").StatusCode).To(Equal(403), "anonymous")
-		res := fx.get("/admin/user?uid=admin", "nocaps")
+		Expect(fx.get("/admin/bucket?bucket=b", "").StatusCode).To(Equal(403), "anonymous")
+		res := fx.get("/admin/bucket?bucket=b", "nocaps")
 		Expect(res.StatusCode).To(Equal(403))
 		Expect(body(res)).To(HavePrefix(`{"Code":"AccessDenied",`))
 		Expect(fx.get("/admin/account?id=RGW00000000000000001", "admin").StatusCode).To(Equal(403),
