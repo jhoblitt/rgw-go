@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"sync"
 	"time"
 
@@ -95,39 +93,17 @@ func (o *DeleteObjects) OpMask() uint32 { return OpTypeDelete }
 // Init is init_permissions, then get_params during init_processing
 // (rgw_op.cc:6758-6766 at v19.2.6, :7697-7705 at v20.2.4; rgw_rest.cc
 // :1660-1674 at v19.2.6): the bucket, NoSuchBucket before the body is
-// touched, then the whole body as read_all_input reads it without chunked
-// input (rgw_rest.cc:1537-1578 at v19.2.6). A request without a
-// Content-Length, which a chunked body is, is MissingContentLength; one over
-// rgw_max_put_param_size is InvalidRange, unread; otherwise the body is read
-// through the authenticator's verifying reader to its final Read, whose
-// error is returned, and a body that ends short is RequestTimeout.
+// touched, then the whole body as ReadParamBody reads it under
+// rgw_max_put_param_size. get_params asks read_all_input for no chunked
+// input, which it ignores, so a chunked body is read too.
 func (o *DeleteObjects) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	if r.ContentLength < 0 || (r.ContentLength == 0 && r.Header.Get("Content-Length") == "") {
-		return ErrMissingContentLength
-	}
-	maxSize := confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize)
-	if uint64(r.ContentLength) > maxSize {
-		return ErrInvalidRange
-	}
-	src := r.Body
-	if src == nil {
-		src = http.NoBody
-	}
-	body, err := io.ReadAll(io.LimitReader(src, r.ContentLength+1))
-	switch {
-	case errors.Is(err, io.ErrUnexpectedEOF):
-		return fmt.Errorf("%w: the body ended short of its length", ErrRequestTimeout)
-	case err != nil:
-		return err
-	}
-	// recv_body reads the length and no more.
-	o.body = body[:min(int64(len(body)), r.ContentLength)]
-	return nil
+	o.body, err = ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
+	return err
 }
 
 // VerifyPermission makes the refusals radosgw makes on the request's bucket

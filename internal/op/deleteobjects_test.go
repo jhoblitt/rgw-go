@@ -259,20 +259,26 @@ var _ = Describe("DeleteObjects", func() {
 		Expect(stub.DeleteObjectCallCount()).To(BeZero())
 		Expect(m.results).To(BeEmpty())
 	})
-	Describe("Init reads the body as read_all_input does without chunked input", func() {
-		DescribeTable("refuses a request without a length as MissingContentLength",
-			func(ctx SpecContext, contentLength int64, header string) {
-				r := f.req(http.MethodPost, "plain", "")
-				r.Body, r.ContentLength = failingReader{}, contentLength
-				if header != "" {
-					r.Header.Set("Content-Length", header)
-				}
-				Expect(op.Run(ctx, m.op(nil, nil), r)).To(MatchError(op.ErrMissingContentLength))
-				Expect(m.events).To(BeEmpty())
-			},
-			Entry("a chunked body", int64(-1), ""),
-			Entry("no Content-Length header", int64(0), ""),
-		)
+	Describe("Init reads the body as read_all_input does, chunked input included", func() {
+		It("refuses a request with no Content-Length that is not chunked as MissingContentLength", func(ctx SpecContext) {
+			r := f.req(http.MethodPost, "plain", "")
+			r.Body, r.ContentLength = failingReader{}, 0
+			Expect(op.Run(ctx, m.op(nil, nil), r)).To(MatchError(op.ErrMissingContentLength))
+			Expect(m.events).To(BeEmpty())
+		})
+		It("reads a chunked body to its end, as read_all_input ignores the allow_chunked its caller passes", func(ctx SpecContext) {
+			r := f.req(http.MethodPost, "plain", "")
+			r.Body, r.ContentLength = strings.NewReader("abc"), -1
+			Expect(op.Run(ctx, m.op(nil, nil), r)).To(Succeed())
+			Expect(m.events[0]).To(Equal("parse abc"))
+		})
+		It("refuses a chunked body past read_all_chunked_input's bound as InvalidRange", func(ctx SpecContext) {
+			f.conf["rgw_max_put_param_size"] = "4"
+			r := f.req(http.MethodPost, "plain", "")
+			r.Body, r.ContentLength = strings.NewReader(strings.Repeat("x", 4096)), -1
+			Expect(op.Run(ctx, m.op(nil, nil), r)).To(MatchError(op.ErrInvalidRange))
+			Expect(m.events).To(BeEmpty())
+		})
 		It("refuses a Content-Length over rgw_max_put_param_size as InvalidRange unread", func(ctx SpecContext) {
 			f.conf["rgw_max_put_param_size"] = "4"
 			r := f.multiReq("12345")

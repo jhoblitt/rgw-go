@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
@@ -69,8 +70,13 @@ func placementExtraPool(pi meta.ZonePlacementInfo) meta.Pool {
 // :3288-3290): "<key>.<uploadID>.meta" in the multipart namespace, placed by
 // the bucket's placement rule, with openRef's errors; a pool that does not
 // exist wraps radosclient.ErrNotFound, which op.FromRADOS makes
-// NoSuchUpload.
+// NoSuchUpload. An upload id holding a "." is NoSuchUpload, as the ops
+// answer it.
 func (s *Store) metaRef(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string) (mpRef, error) {
+	if strings.Contains(uploadID, ".") {
+		// RGWMPObj::init would name another key's upload with it.
+		return mpRef{}, fmt.Errorf("%w: upload id %q holds a dot", op.ErrNoSuchUpload, uploadID)
+	}
 	rule, bucket := rec.Info.PlacementRule, rec.Info.Bucket
 	pool, ok := s.extraPool(rule, bucket)
 	mk := meta.ObjKey{Name: meta.MultipartMetaName(key.Name, uploadID), NS: meta.NSMultipart}
