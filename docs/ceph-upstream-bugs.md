@@ -213,6 +213,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw lets an upload id address another key's multipart upload](#radosgw-lets-an-upload-id-address-another-keys-multipart-upload) | pending | pending | ✓ |
 | [radosgw holds a copy-source range's bounds in an off_t, so a bound past 2^63 reads as a suffix](#radosgw-holds-a-copy-source-ranges-bounds-in-an-off_t-so-a-bound-past-263-reads-as-a-suffix) | none | none | ✓ |
 | [RGWOp::read_all_input ignores its allow_chunked argument](#rgwopread_all_input-ignores-its-allow_chunked-argument) | pending | pending | ✓ |
+| [Removing an account's root user leaves its name in the account's users index](#removing-an-accounts-root-user-leaves-its-name-in-the-accounts-users-index) | pending | pending | ✓ |
+| [radosgw cannot remove an account user whose users index entry is gone](#radosgw-cannot-remove-an-account-user-whose-users-index-entry-is-gone) | pending | pending | ✓ |
+| [radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from](#radosgws-admin-user-info-shows-the-swift-tempurl-keys-to-a-caller-it-withholds-keys-from) | pending | pending | ✓ |
+| [A stale bucket list entry blocks a user's removal for good](#a-stale-bucket-list-entry-blocks-a-users-removal-for-good) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9448,3 +9452,168 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit P, Task 8, 2026-10-07, transcribing
   CompleteMultipartUpload's body read; derived from the source, not
   reproduced.
+
+## Removing an account's root user leaves its name in the account's users index
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a leaked index entry.
+  rgw-bug-reproduction classified it on 2026-10-07.
+- **Evidence:** paths are under `src/rgw/services/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `account_users_link` decides when a user write links the user into
+    its account's `users.<account id>` index, and names every user with
+    an account, the root user included (`svc_user_rados.cc:166-171`;
+    `:148-153`). So creating an account's root user adds its display name
+    to the index (`PutOperation::complete`, `:360-375`; `:340-355`).
+  - `remove_user_info` unlinks the name only `else if (info.type !=
+    TYPE_ROOT)` (`:601-610`; `:575-584`), so removing the root user leaves
+    its entry behind.
+  - The two disagree since ceph commit b6033599726 ("rgw: link account
+    root to account user index"; on Squid its cherry-pick 442ea928483), which
+    dropped the `info->type != TYPE_ROOT` condition from
+    `account_users_link` so that root users would hold off `account rm`,
+    and left the one in `remove_user_info`, which the first account-index
+    commit had added with it.
+- **Impact:** after `radosgw-admin user rm` or the admin API's
+  `DELETE /admin/user` of an account's root user, the entry names a user
+  that is gone, and the durable effect is that the name stays blocked:
+  - `PutOperation::prepare` reads the entry before any add and refuses
+    with EEXIST when it names another uid (`:272-290`; `:251-269`), so no
+    other user of the account can take the name (409 UserAlreadyExists
+    from the admin API's create, BucketAlreadyExists from its modify);
+    only a user with the root's uid overwrites the entry.
+  - `account rm` is not held off: it refuses only while
+    `list_account_users` returns users (`rgw_account.cc:316-319` at both
+    tags), and `list_account_users` drops an id whose user does not load
+    (`driver/rados/rgw_sal_rados.cc:1420-1429` at v19.2.6, `:1959-1968` at
+    v20.2.4).
+  - The entry still counts in the index header, which cls_user compares
+    with the limit callers pass to `account_resource_add`
+    (`src/cls/user/cls_user.cc:545-557` at v19.2.6), so it takes one of
+    the account's user slots.
+  - Tracker #81353, #81348 and #81347
+    ([#81353](https://tracker.ceph.com/issues/81353),
+    [#81348](https://tracker.ceph.com/issues/81348),
+    [#81347](https://tracker.ceph.com/issues/81347)) report distinct
+    sibling defects, not this one.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Removing an account user, the root
+  included, removes its index entry, and a user whose entry is already
+  gone is removed without error (`RemoveUser`, `internal/op/adminuser.go`;
+  `docs/exclusions.md`, "The admin user routes answer store failures, and
+  keep the account users index clean where radosgw leaves entries
+  behind").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07
+  (non-security); no prior art.
+- **Found:** phase 1 unit N, Task 4, 2026-10-07, reading
+  `remove_user_info` for the admin API's user removal; derived from the
+  source, not reproduced.
+
+## radosgw cannot remove an account user whose users index entry is gone
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user that can no
+  longer be removed. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `remove_user_info` removes the key, Swift and email indexes and the
+    group links, each tolerating ENOENT, but unlinks a non-root account
+    user from its account's users index without that tolerance
+    (`services/svc_user_rados.cc:601-610`; `:575-584`), before it removes
+    the uid object.
+  - The uid object's removal is checked against the version the removal
+    read (`RadosUser::remove_user`, `driver/rados/rgw_sal_rados.cc:278-282`;
+    `:295-299`), and a lost race, ECANCELED, is taken as success with the
+    object left (`remove_uid_index`, `services/svc_user_rados.cc:639`;
+    `:614-616`). A modify of the user while `user rm --purge-data` purges
+    its buckets is such a race.
+  - So a removal that loses that race, or fails on the uid object
+    otherwise, leaves the user with its indexes and its account entry
+    gone, and every later removal fails at the unlink with ENOENT, which
+    `RGWUserAdminOp_User::remove` answers as NoSuchUser
+    (`driver/rados/rgw_user.cc:2488-2492`; `:2494-2498`).
+- **Impact:** the user object stays, readable by uid, and neither the
+  admin API nor `radosgw-admin user rm` can remove it; after a lost race
+  radosgw also reported the first removal as a success.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. It takes a missing entry as removed
+  and answers a lost race 409 ConcurrentModification, so a retry removes
+  the user (`RemoveUser`, `internal/op/adminuser.go`; `docs/exclusions.md`,
+  "The admin user routes answer store failures, and keep the account
+  users index clean where radosgw leaves entries behind").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** review of phase 1 unit N, Task 4, 2026-10-07, reading
+  `remove_user_info` for the user removal's retry; derived from the
+  source, not reproduced.
+
+## radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from
+
+- **Kind:** defect, security-relevant (a cross-user secret disclosure),
+  unfixed at v19.2.6 and v20.2.4 and on ceph main at 7ed73efc1be.
+  Confirmed by rgw-bug-reproduction on 2026-10-07; its triage estimate is
+  CVSS 8.1 (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N), within a range
+  of 6.4 to 8.1.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `user-info-without-keys` is a cap of its own, grantable without
+    `users` (`RGWUserCaps::is_valid_cap_type`, `rgw_common.cc:2099`;
+    `:2162`). `GET /admin/user` admits a caller holding only
+    `user-info-without-keys=read` (`RGWOp_User_Info::check_caps`,
+    `driver/rados/rgw_rest_user.cc:77-83`; the same lines), and sets
+    `dump_keys` only for a caller holding `users=read`, a system request or
+    an admin (`:124-127`; the same lines, `is_admin_of(uid)` at v19.2.6 and
+    `is_admin()` at v20.2.4). The admin ops documentation promises such a
+    caller no keys (`doc/radosgw/adminops.rst:276-278` at v19.2.6).
+  - `dump_user_info` withholds `keys` and `swift_keys` behind
+    `if (dump_keys)` (`driver/rados/rgw_user.cc:145-148`; `:150-153`) but
+    encodes `temp_url_keys` unconditionally (`:162`; `:167`).
+  - Those values are the user's Swift TempURL signing keys: the TempURL
+    engine computes the signature over the request's own method, path and
+    the URL's expiry with each of the owner's `temp_url_keys`, and grants
+    the request on a match (`rgw_swift_auth.cc:366-369`, `:394-406` and
+    `:416-436` at v19.2.6; `:367-370`, `:395-407` and `:417-437` at
+    v20.2.4).
+- **Impact:** a caller trusted to read users without their keys reads
+  every user's TempURL keys. With them it can forge, offline and at no
+  cost, a TempURL for any method, any of the victim's objects and any
+  expiry, which any gateway serving the Swift API honors without further
+  authentication. Only users with TempURL keys set, through Swift account
+  metadata or `radosgw-admin user modify --temp-url-key`, are exposed.
+  The fix is to move the `temp_url_keys` emit inside `if (dump_keys)`.
+- **Releases:** v19.2.6 and v20.2.4; ceph main still encodes
+  `temp_url_keys` outside the `dump_keys` block
+  (`driver/rados/rgw_user.cc:142` at 7ed73efc1be).
+- **rgw-go:** does not reproduce it. Its user document omits
+  `temp_url_keys`, as it omits `keys` and `swift_keys`, when the caller may
+  not see keys (`dumpUserInfo`, `internal/admin/user.go`;
+  `docs/exclusions.md`, "The admin user document withholds the Swift
+  TempURL keys with the other keys").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07
+  and has not reported a prior-art result.
+- **Found:** phase 1 unit N, Task 4, 2026-10-07, in a security review of
+  the admin user document; derived from the source, not reproduced.
+
+## A stale bucket list entry blocks a user's removal for good
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user that can no
+  longer be removed. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of lines
+  is v19.2.6's, then v20.2.4's.
+  - `RadosBucket::remove` deletes the bucket (`rgw_sal_rados.cc:445`;
+    `:462`) before it unlinks it from its owner's bucket list (`:461`;
+    `:482`), so a gateway that stops between the two leaves the list
+    naming a bucket that is gone.
+  - `execute_remove` loads every bucket the list names and returns the
+    load's ENOENT (`rgw_user.cc:1968-1974`; `:1975-1980`), which
+    `RGWUserAdminOp_User::remove` answers as NoSuchUser (`:2488-2492`;
+    `:2494-2498`); without purge-data the entry refuses the removal with
+    EEXIST before any load (`:1964-1967`; `:1970-1973`). The entry stays,
+    so every retry answers the same.
+- **Impact:** the owner can no longer be removed through the admin API or
+  `radosgw-admin user rm`, which answer NoSuchUser for a user that
+  exists, until the list entry is removed by hand.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it. Its bucket delete unlinks the list entry last
+  too (`DeleteBucket`, `internal/driver/bucketops.go`), and its user
+  removal answers a listed bucket that is gone with NoSuchUser
+  (`RemoveUser`, `internal/op/adminuser.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** re-review of phase 1 unit N, Task 4, 2026-10-07, reading the
+  user removal's bucket loop; derived from the source, not reproduced.

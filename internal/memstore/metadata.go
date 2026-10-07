@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -64,12 +65,20 @@ func (s *Store) Remove(_ context.Context, section, key string) error {
 }
 
 // List implements op.MetadataStore: the section's keys past marker, sorted,
-// at most maxEntries of them; next is the last key returned.
+// at most maxEntries of them; next is the last key returned. The user
+// section is the stored users, each keyed by its users.uid object's name,
+// the user id's string form, as RGWSI_User_Module lists them
+// (svc_user_rados.cc:32-66 at v19.2.6); the other sections are what Put
+// stored.
 func (s *Store) List(_ context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	all := maps.Keys(s.metadata[section])
+	if section == "user" {
+		all = maps.Keys(s.users)
+	}
 	var after []string
-	for k := range s.metadata[section] {
+	for k := range all {
 		if k > marker {
 			after = append(after, k)
 		}

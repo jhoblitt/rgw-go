@@ -677,6 +677,55 @@ review and verified against the tree.
   answers each of these with the error document and its status. Clients
   that read the body, go-ceph and Rook among them, see no difference on
   success; one that inspects the headers does.
+- **A purging bucket removal checks the index is empty at the end.**
+  Removing a bucket with purge-objects, or a user or account with
+  purge-data, deletes every listed object and then removes the bucket
+  through the same path as S3 DeleteBucket, which refuses a bucket that
+  still holds an object. radosgw removes the bucket at that point without
+  checking, so an object written between its listing and the removal is
+  left without a bucket; rgw-go answers 409 BucketNotEmpty instead, and a
+  retry purges it.
+- **The admin user routes answer store failures, and keep the account
+  users index clean where radosgw leaves entries behind.** On
+  `/admin/user` create, info, modify and remove, rgw-go differs from
+  radosgw's `RGWUser` paths (`driver/rados/rgw_user.cc` at v19.2.6 and
+  v20.2.4) in six ways:
+  - A failed read of a user, of the email index or of the access key
+    index fails the request. radosgw's `RGWUser::init` and its duplicate
+    checks count any failure as "no such user", so a RADOS error there
+    makes radosgw answer NoSuchUser, skip a duplicate check, or go on to
+    create the user.
+  - Removing an account's root user also removes its display name from
+    the account's users index, which radosgw leaves behind
+    (docs/ceph-upstream-bugs.md, "Removing an account's root user leaves
+    its name in the account's users index").
+  - Removing an account user whose users index entry is already gone,
+    root or not, completes, so a removal that failed after the unlink
+    completes on retry. radosgw answers NoSuchUser for a non-root user
+    without its entry, for good, and takes a removal whose uid object lost
+    a version race for success with the user left in place; rgw-go answers
+    that race 409 ConcurrentModification and removes the user on retry
+    (docs/ceph-upstream-bugs.md, "radosgw cannot remove an account user
+    whose users index entry is gone").
+  - radosgw refuses a display name in an account when the users index
+    entry under that name names another user, even one since removed.
+    rgw-go reads the account's users and refuses a name only a live user
+    of the account holds, so a name a stale entry holds is accepted and
+    the entry rewritten.
+  - Removing a user with purge-data leaves a bucket the user's bucket list
+    names when the bucket now belongs to another owner, where radosgw
+    removes the listed bucket whoever owns it.
+  - Until the key admin ops are served, a create or modify that names a
+    Swift key type or a subuser key answers 501 NotImplemented.
+- **The admin user document withholds the Swift TempURL keys with the
+  other keys.** radosgw's user document leaves out `keys` and
+  `swift_keys` for a caller holding only `user-info-without-keys=read`
+  but still writes `temp_url_keys`, the TempURL signing secrets
+  (`driver/rados/rgw_user.cc:145-148` and `:162` at v19.2.6, `:150-153`
+  and `:167` at v20.2.4; docs/ceph-upstream-bugs.md, "radosgw's admin user
+  info shows the Swift TempURL keys to a caller it withholds keys from").
+  rgw-go leaves `temp_url_keys` out too, so such a caller's document lacks
+  the section; a caller that may see keys gets radosgw's document.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the

@@ -49,3 +49,22 @@ func (q Quota) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpInt("max_size_kb", roundedKB(q.MaxSize))
 	f.DumpInt("max_objects", q.MaxObjects)
 }
+
+// DumpAs is encode_json(name, RGWUserCaps), RGWUserCaps::dump(f, name)
+// (rgw_common.cc:2446-2449 and :2016-2043 at v19.2.6, :2508-2511 and
+// :2079-2106 at v20.2.4): an array of "cap" sections in type order, each
+// the type and its permission words.
+func (c Caps) DumpAs(f formatter.Formatter, name string) {
+	f.OpenArraySection(name)
+	for _, typ := range slices.Sorted(maps.Keys(c)) {
+		f.OpenObjectSection("cap")
+		f.DumpString("type", typ)
+		f.DumpString("perm", capPermString(c[typ]))
+		f.CloseSection()
+	}
+	f.CloseSection()
+}
+
+// Dump is RGWUserCaps::dump(f), which names the array "caps"
+// (rgw_common.cc:2002-2005 at v19.2.6, :2065-2068 at v20.2.4).
+func (c Caps) Dump(f formatter.Formatter, _ denc.Release) { c.DumpAs(f, "caps") }
