@@ -228,9 +228,10 @@ const (
 	IdentityRoot     IdentityType = 6
 )
 
-// dumpName is the user_source_type RGWUserInfo::dump writes, which names
-// only some types and calls the rest "none".
-func (t IdentityType) dumpName() string {
+// DumpName is the user_source_type RGWUserInfo::dump and the admin API's
+// dump_user_info write, which name only some types and call the rest "none"
+// (driver/rados/rgw_user.cc:164-185 at v19.2.6).
+func (t IdentityType) DumpName() string {
 	switch t {
 	case IdentityRGW:
 		return "rgw"
@@ -550,7 +551,7 @@ func (u UserInfo) MarshalJSON() ([]byte, error) {
 		BucketQuota:         u.BucketQuota,
 		UserQuota:           u.UserQuota,
 		TempURLKeys:         tempURLKeys,
-		Type:                u.Type.dumpName(),
+		Type:                u.Type.DumpName(),
 		MFAIDs:              nonNil(stringSet(u.MFAIDs)),
 		AccountID:           u.AccountID,
 		Path:                u.Path,

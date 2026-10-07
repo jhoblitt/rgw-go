@@ -38,6 +38,7 @@ func dumpGoldens[T meta.Dumper](typ string, decode func(*denc.Decoder) T) {
 
 var _ = Describe("Dump against the corpus", func() {
 	It("RGWQuotaInfo", func() { dumpGoldens("RGWQuotaInfo", meta.DecodeQuota) })
+	It("RGWUserCaps", func() { dumpGoldens("RGWUserCaps", meta.DecodeCaps) })
 	It("RGWZoneParams", func() { dumpGoldens("RGWZoneParams", meta.DecodeZoneParams) })
 	It("RGWZonePlacementInfo", func() { dumpGoldens("RGWZonePlacementInfo", meta.DecodeZonePlacementInfo) })
 	It("RGWZoneStorageClasses", func() { dumpGoldens("RGWZoneStorageClasses", meta.DecodeZoneStorageClasses) })

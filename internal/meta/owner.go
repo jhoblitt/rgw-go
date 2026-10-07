@@ -39,8 +39,9 @@ const (
 	accountIDLen    = 20
 )
 
-// validAccountID is rgw::account::validate_id.
-func validAccountID(s string) bool {
+// ValidAccountID is rgw::account::validate_id (rgw_account.cc:47-71 at
+// v19.2.6 and v20.2.4): "RGW" and 17 digits.
+func ValidAccountID(s string) bool {
 	if len(s) != accountIDLen || !strings.HasPrefix(s, accountIDPrefix) {
 		return false
 	}
@@ -55,7 +56,7 @@ func validAccountID(s string) bool {
 // ParseOwner is parse_owner: a valid account id is an account, anything else
 // a user in its string form.
 func ParseOwner(s string) Owner {
-	if validAccountID(s) {
+	if ValidAccountID(s) {
 		return AccountOwner(s)
 	}
 	return UserOwner(ParseUserID(s))
