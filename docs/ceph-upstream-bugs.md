@@ -205,6 +205,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get) | none | none | ✓ |
 | [radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload](#radosgws-abortmultipartupload-queues-the-parts-for-the-gc-before-it-removes-the-upload) | [#80896](https://tracker.ceph.com/issues/80896) | none |  |
 | [radosgw's bucket delete aborts each page of multipart uploads again on every later page](#radosgws-bucket-delete-aborts-each-page-of-multipart-uploads-again-on-every-later-page) | pending | pending |  |
+| [radosgw's retried bucket write can land in a bucket re-created under the same name](#radosgws-retried-bucket-write-can-land-in-a-bucket-re-created-under-the-same-name) | pending | pending | ✓ |
+| [radosgw's PutBucketPolicy retry writes back the bucket attrs its request started with](#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with) | [#51572](https://tracker.ceph.com/issues/51572) | none |  |
+| [radosgw's PutBucketAcl answers success when its write loses a race](#radosgws-putbucketacl-answers-success-when-its-write-loses-a-race) | [#16930](https://tracker.ceph.com/issues/16930) | none |  |
+| [Tentacle never stores the confirmation of x-amz-confirm-remove-self-bucket-access](#tentacle-never-stores-the-confirmation-of-x-amz-confirm-remove-self-bucket-access) | pending | pending |  |
+| [radosgw's PutBucketAcl and PutObjectAcl refuse a request without a Content-Length that they mean to accept](#radosgws-putbucketacl-and-putobjectacl-refuse-a-request-without-a-content-length-that-they-mean-to-accept) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4667,8 +4672,9 @@ Every new entry adds its row to this table, in document order.
   with access to the data pool, meets it.
 - **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01,
   `rgw_rest_s3.cc:863` and `:955`, the -EIO at `:881` and `:973`).
-- **rgw-go:** `op.GetObjectTagging` answers 500 UnknownError, the status
-  radosgw's -EIO maps to; `docs/exclusions.md` records the difference.
+- **rgw-go:** `op.GetObjectTagging` and `op.GetBucketTagging` answer 500
+  UnknownError, the status radosgw's -EIO maps to; `docs/exclusions.md`
+  records the difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-04
   found no report or fix of the response ordering. Its symptom was reported
   as [#74917](https://tracker.ceph.com/issues/74917), now resolved, for
@@ -9102,4 +9108,220 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 7, 2026-10-05, reading
   `abort_multiparts` for the bucket delete; derived from the source, not
+  reproduced.
+
+## radosgw's retried bucket write can land in a bucket re-created under the same name
+
+- **Kind:** defect, a race, unfixed at v19.2.6 and v20.2.4; not
+  security-relevant: Low, triage estimate CVSS ≤3.1 (rgw-bug-reproduction).
+  The window cannot be widened or steered by a requester, and the race is of
+  the same by-name class as "radosgw's bucket delete unlinks a bucket
+  re-created under the same name from its owner", above. Unreproduced
+  upstream behaviour: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `retry_raced_bucket_write` runs its write and, while it fails with
+    -ECANCELED, up to fifteen times calls `try_refresh_info` and the write
+    again (`rgw/rgw_op.h:183-196`, `:197-210`). PutBucketPolicy,
+    DeleteBucketPolicy, PutBucketTagging and DeleteBucketTagging write
+    through it (`rgw/rgw_op.cc:8110-8115`, `:8204-8209`, `:1197-1201`,
+    `:1232-1242`; `:9036-9046`, `:9151-9157`, `:1434-1438`, `:1469-1479`),
+    as do other bucket subresource writes.
+  - `try_refresh_info` reads the bucket into `s->bucket`'s info and attrs
+    (`rgw/driver/rados/rgw_sal_rados.cc:780-783`, `:798-801`) through
+    `try_refresh_bucket_info`, which clears the bucket id before it reads
+    (`rgw/driver/rados/rgw_rados.cc:9011-9026`, the clear at `:9017`;
+    `:9956-9971`, the clear at `:9962`), so `RGWBucketCtl::read_bucket_info`
+    resolves the name through the entry point
+    (`rgw/driver/rados/rgw_bucket.cc:3085-3105`, `:3234-3254`, the by-name
+    branch at `:3096` and `:3245`), whatever instance it now names.
+  - The version the request read is passed as `refresh_version`, which
+    `read_bucket_instance_info` uses only to check the bucket-info cache
+    against (`rgw/services/svc_bucket_sobj.cc:272-290` at v19.2.6, the
+    check at `:284-290`; `:224-240` at v20.2.4), not to require the same
+    instance.
+  - A write to an instance that was removed fails with -ECANCELED: the
+    system-object write recreates the object before its `cls_version`
+    check (`rgw/services/svc_sys_obj_core.cc:496-506` at both tags), which
+    reads version 0 from an object without the version attr and fails the
+    `EQ` condition (`cls/version/cls_version.cc:55-66` and `:189-197` at
+    both tags), so the whole op is refused.
+  - So when the bucket is deleted and a bucket of the same name created,
+    by anyone, between the request's load and its write, the retry writes
+    into the new bucket. PutBucketPolicy's retry merges the attrs its
+    request started with, the old bucket's ACL among them, into the new
+    bucket ("radosgw's PutBucketPolicy retry writes back the bucket attrs
+    its request started with", below); DeleteBucketPolicy and
+    DeleteBucketTagging remove the new bucket's policy or tags.
+- **Impact:** in that window a requester authorized on its own bucket can
+  set the policy, and the ACL, of a bucket another owner just created under
+  the name, or remove its policy or tags. The window is short, and needs
+  the requester's bucket to be deleted and the name taken while its write
+  is in flight, which the requester cannot arrange.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. `op.RetryRacedBucketWrite` reads the
+  bucket by name, as radosgw does, and stops with 409 ConcurrentModification,
+  writing nothing, when the name now names another instance
+  (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried bucket
+  write stops when the name names another bucket").
+- **Upstream:** pending: sent to rgw-bug-reproduction, whose triage
+  classified it as above; no prior art.
+- **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
+  `retry_raced_bucket_write`; derived from the source, not reproduced.
+## radosgw's PutBucketPolicy retry writes back the bucket attrs its request started with
+
+- **Kind:** defect, a race, unfixed at v19.2.6 and v20.2.4;
+  security-relevant: it can silently revert a concurrent change of a
+  security control, the bucket's ACL or public-access block. Triage
+  estimate CVSS ~5.0 (rgw-bug-reproduction). Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWPutBucketPolicy::execute` copies `s->bucket_attrs`, the attrs the
+    request loaded, once, before its retried write (`rgw_op.cc:8102`,
+    `:9028`), and each try sets the policy in that copy (`:8111-8112`,
+    `:9037-9038`) and hands it to `merge_and_store_attrs` (`:8113`,
+    `:9044`), inside the retry at `:8110-8115` and `:9036-9046`.
+  - `merge_and_store_attrs` lays every attr of the copy over the bucket's
+    own and stores the result under the bucket's version
+    (`driver/rados/rgw_sal_rados.cc:771-778`, `:789-796`).
+  - A try that lost to another write is retried after `try_refresh_info`
+    has read that write's attrs into the bucket (`rgw_op.h:183-196`,
+    `:197-210`). The copy still holds the values from before it, so the
+    retry stores them over it: an ACL, tag set or public-access block
+    another request changed in that time returns to its old value, while
+    the 2xx of the request that changed it stands.
+  - PutBucketPublicAccessBlock has the same stale snapshot: each try copies
+    `s->bucket_attrs` afresh, but that is still the request-start set
+    (`rgw_op.cc:8656-8660`, `:9637-9641`), so a policy write and a block
+    write that race can each revert the other. PutBucketCors does the same
+    (`:6100-6104` at v19.2.6, the copy at `:6771` at v20.2.4).
+  - PutBucketTagging builds its copy from `s->bucket->get_attrs()` inside
+    the retried write, so each try starts from the refreshed attrs
+    (`rgw_op.cc:1197-1201`, `:1434-1438`).
+- **Impact:** a PutBucketPolicy that races a PutBucketAcl making the bucket
+  private, or a PutPublicAccessBlock changing an existing block, can restore
+  the public ACL or the older block, with both requests told they succeeded;
+  a PutPublicAccessBlock that races a PutBucketPolicy can likewise put back
+  the older policy. The policy's own block check also ran against the block
+  the request started with.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Each try sets only the policy attr over
+  the bucket as last read (`op.PutBucketPolicy`,
+  `internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried
+  PutBucketPolicy keeps what the write it lost to changed"). rgw-go does not
+  serve PutBucketPublicAccessBlock or PutBucketCors yet.
+- **Upstream:** [#51572](https://tracker.ceph.com/issues/51572),
+  "retry_raced_bucket_write() callers not handling attrs correctly", open
+  since 2021-07-07, reports the same mechanism and the same fix, building
+  the attrs from the refreshed bucket inside the retried write; found as
+  prior art by rgw-bug-reproduction's triage. No fix PR.
+- **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
+  `RGWPutBucketPolicy::execute`; derived from the source, not reproduced;
+  reported upstream before us.
+## radosgw's PutBucketAcl answers success when its write loses a race
+
+- **Kind:** quirk: intentional upstream behaviour. Single principal, triage
+  estimate CVSS ~2.7 (rgw-bug-reproduction). Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWPutACLs::execute` (`rgw_op.cc:5821-5928`, `:6467-6590`), which
+    serves PutBucketAcl and PutObjectAcl alike, stores the new ACL once,
+    with no retry: at bucket scope with `merge_and_store_attrs` under the
+    bucket version the request loaded (`:5920-5924`, `:6582-6586`), at
+    object scope with `modify_obj_attrs` (`:5916-5919`, `:6578-6581`).
+  - On -ECANCELED it sets `op_ret = 0`: "lost a race, but it's ok because
+    acls are immutable" (`:5925-5927`, `:6587-6589`).
+  - Those three lines are 6e9a915b565, "rgw: don't fail if lost race when
+    setting acls" (2016-09-30, first in v11.0.1), whose message gives the
+    intent: "Instead of retry, just return success (same effect as if we won
+    and then other writer overwrote us)". `git blame` attributes the lines
+    to it at both tags.
+  - That rationale holds strictly only when the racing write also set an
+    ACL. The -ECANCELED means some other write of the bucket instance, or
+    of the object, landed first: a PutBucketTagging, a PutBucketPolicy, a
+    reshard or a metadata write. Had the two been serialized, last writer
+    wins would have kept the new ACL, so the drop reaches further than its
+    justification.
+- **Impact:** the ACL stays as it was before the request, so nothing becomes
+  more exposed than before; an intended change, a tightening among them,
+  silently does nothing while the client is told 200. S3 clients do not
+  read the ACL back.
+- **Releases:** every release since v11.0.1; checked at v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. `op.PutBucketACL` retries the write
+  through `op.RetryRacedBucketWrite`, checks the owner and the block of
+  public ACLs again against the bucket each try reads, and answers 409
+  ConcurrentModification once the retries are spent
+  (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A PutBucketAcl that
+  loses a race is retried").
+- **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
+  6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
+  when setting acls", which introduced this behaviour on purpose; found by
+  rgw-bug-reproduction's prior-art search. No fix PR, as upstream intends it.
+- **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
+  `RGWPutACLs::execute`; derived from the source, not reproduced; the
+  behaviour is upstream's deliberate choice, so not a finding of ours.
+## Tentacle never stores the confirmation of x-amz-confirm-remove-self-bucket-access
+
+- **Kind:** defect, unfixed at v20.2.4; v19.2.6 has no such header or attr.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4.
+  - Put, Get and DeleteBucketPolicy let the root of the bucket owner's
+    account through before any policy is evaluated, unless the bucket's
+    attrs hold `RGW_ATTR_IAM_POLICY_REMOVE_SELF_ACCESS`
+    (`rgw_op.cc:8983-8986`, `:9069-9072`, `:9126-9129`;
+    `rgw_common.h:177`).
+  - PutBucketPolicy records the confirmation by setting that attr to an
+    empty value when the request carries
+    `x-amz-confirm-remove-self-bucket-access` (`rgw_op.cc:9039-9041`).
+  - The attrs reach RADOS through `rgw_put_system_obj`
+    (`driver/rados/rgw_tools.cc:154-172`) and `RGWSI_SysObj_Core::write`,
+    which skips every attr with an empty value
+    (`services/svc_sys_obj_core.cc:518-526`). Only the caches hold the
+    empty attr, until they drop the bucket.
+  - Without the header the request erases the attr from its own copy only
+    (`rgw_op.cc:9042`), which `merge_and_store_attrs` never removes from
+    the bucket's attrs (`driver/rados/rgw_sal_rados.cc:789-796`).
+- **Impact:** an account root that confirmed it may lose access through the
+  policy it puts gets the root's pass back once the gateway's caches drop
+  the bucket, and at once on any other gateway, so the confirmation does
+  not hold.
+- **Releases:** v20.2.4.
+- **rgw-go:** not affected, as it serves neither the root's pass nor the
+  header (`docs/exclusions.md`, "The account root's pass on the bucket
+  policy ops"). Its DeleteBucketPolicy removes the attr on Tentacle, as
+  radosgw's does.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 11, 2026-10-07, reading Tentacle's
+  `RGWPutBucketPolicy`; derived from the source, not reproduced.
+
+## radosgw's PutBucketAcl and PutObjectAcl refuse a request without a Content-Length that they mean to accept
+
+- **Kind:** defect, low; unfixed at v19.2.6 and v20.2.4. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWPutACLs_ObjStore_S3::get_params` returns 0 for
+    `-ERR_LENGTH_REQUIRED` when `s->length` is set, under the comment "a
+    request body is not required an S3 PutACLs request"
+    (`rgw_rest_s3.cc:3624-3632`, `:3907-3915`).
+  - `RGWOp::read_all_input` calls `rgw_rest_read_all_input` without its
+    `allow_chunked` argument, so chunked input is always allowed
+    (`rgw_op.h:215-227`, `:229-241`; the default, `rgw_op.h:127-129` at
+    v19.2.6). `rgw_rest_read_all_input` then returns
+    `-ERR_LENGTH_REQUIRED` only when `s->length` is null and the request is
+    not chunked (`rgw_rest.cc:1566-1569`, `:1571-1574`), and `s->length` is
+    null exactly when the request carried no Content-Length
+    (`rgw_rest.cc:2203-2238` at v19.2.6), so the condition never holds.
+- **Impact:** an ACL PUT that carries its ACL in `x-amz-acl` or the grant
+  headers and sends neither a Content-Length nor a chunked body, as a
+  client may for a request without a body, is refused 411
+  MissingContentLength.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it for PutBucketAcl (`readParamBody`,
+  `internal/s3/bucket.go`), so both gateways answer such a request alike.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
+  `RGWPutACLs_ObjStore_S3::get_params`; derived from the source, not
   reproduced.
