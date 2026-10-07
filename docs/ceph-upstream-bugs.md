@@ -210,6 +210,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutBucketAcl answers success when its write loses a race](#radosgws-putbucketacl-answers-success-when-its-write-loses-a-race) | [#16930](https://tracker.ceph.com/issues/16930) | none |  |
 | [Tentacle never stores the confirmation of x-amz-confirm-remove-self-bucket-access](#tentacle-never-stores-the-confirmation-of-x-amz-confirm-remove-self-bucket-access) | pending | pending |  |
 | [radosgw's PutBucketAcl and PutObjectAcl refuse a request without a Content-Length that they mean to accept](#radosgws-putbucketacl-and-putobjectacl-refuse-a-request-without-a-content-length-that-they-mean-to-accept) | pending | pending |  |
+| [radosgw lets an upload id address another key's multipart upload](#radosgw-lets-an-upload-id-address-another-keys-multipart-upload) | pending | pending | ✓ |
+| [radosgw holds a copy-source range's bounds in an off_t, so a bound past 2^63 reads as a suffix](#radosgw-holds-a-copy-source-ranges-bounds-in-an-off_t-so-a-bound-past-263-reads-as-a-suffix) | none | none | ✓ |
+| [RGWOp::read_all_input ignores its allow_chunked argument](#rgwopread_all_input-ignores-its-allow_chunked-argument) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -7052,6 +7055,12 @@ Every new entry adds its row to this table, in document order.
   state's write tag guards, so the part holds that version or the copy
   fails (`internal/driver/mp_part.go`;
   `docs/exclusions.md`, "UploadPartCopy reads one version of its source").
+  The UploadPartCopy op checks `x-amz-copy-source-if-match`,
+  `-if-none-match`, `-if-modified-since` and `-if-unmodified-since` against
+  that same state before it copies, as CopyObject checks them, so a client
+  can pin the version it copies (`internal/op/uploadpart.go`;
+  `docs/exclusions.md`, "UploadPartCopy checks the copy-source
+  conditions").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no report or
   fix; it is distinct from the public overwrite reports
   [#80896](https://tracker.ceph.com/issues/80896),
@@ -8435,12 +8444,13 @@ Every new entry adds its row to this table, in document order.
   anonymous GET succeeds. The writer is one the owner allows to write but
   not to publish: another account, a less privileged user or a tenant.
 - **Releases:** checked at v19.2.6 and v20.2.4.
-- **rgw-go:** does not reproduce it: PutObject and CopyObject refuse a new
-  object's public policy under the block, whatever headers set it
-  (`internal/op/putobject.go`, `internal/op/copyobject.go`;
-  `docs/exclusions.md`, "A block of public ACLs refuses a public ACL on
-  PutObject and CopyObject"). CreateMultipartUpload is to apply the block
-  when rgw-go serves it.
+- **rgw-go:** does not reproduce it: PutObject, CopyObject,
+  CreateMultipartUpload and UploadPart refuse a public policy under the
+  block, whatever headers set it (`internal/op/putobject.go`,
+  `internal/op/copyobject.go`, `internal/op/initmultipart.go`,
+  `internal/op/uploadpart.go`; `docs/exclusions.md`, "A block of public
+  ACLs refuses a public ACL on PutObject, CopyObject, CreateMultipartUpload
+  and UploadPart").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix. The nearest work covers the canned ACLs alone:
   [#49135](https://tracker.ceph.com/issues/49135) and its fix,
@@ -9324,4 +9334,117 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
   `RGWPutACLs_ObjStore_S3::get_params`; derived from the source, not
+  reproduced.
+
+## radosgw lets an upload id address another key's multipart upload
+
+- **Kind:** defect, security-relevant (triage estimate CVSS 4.2-7.1):
+  authorization is decided for one key while the op acts on another key's
+  upload. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWMPObj::init` names the meta object `<key>.<upload id>.meta` and the
+    part prefix `<key>.<upload id>` with no check of the id
+    (`services/svc_tier_rados.h:42-55`, the names built at `:52-54`,
+    unchanged at v20.2.4), and `RadosMultipartUpload` builds its `mp_obj`
+    that way (`driver/rados/rgw_sal_rados.h:801`, `:856`).
+  - Nothing else checks it: `RGWMPObj::from_meta` parses a meta name from
+    its end, `<key>` being all before the second-last "." (`:76-87`), and
+    `is_v2_upload_id` checks only the `2~` or `2/` prefix
+    (`rgw_multi.cc:76-82`, both tags).
+  - UploadPart, CompleteMultipartUpload, AbortMultipartUpload and ListParts
+    take the upload id from the query unchecked and pass it with the
+    request's key to `get_multipart_upload` (`rgw_op.cc:4246`, `:6416`,
+    `:6625`, `:6675`; `:4455`, `:7211`, `:7549`, `:7599`); ListParts'
+    policy read does the same (`:414`; `:444`).
+  - Each op authorizes the request's key: `verify_bucket_permission` with
+    `ARN(s->object->get_obj())`, or `verify_object_permission` on
+    `s->object` (`:3982-3985`, `:6354-6357`, `:6601-6604`, `:6658`;
+    `:4191-4194`, `:7030-7033`, `:7525-7528`, `:7582`).
+  - So key `a` with upload id `b.2~X` names exactly key `a.b`'s upload
+    `2~X`, and the request is authorized as key `a`. No gateway makes an id
+    with a ".": radosgw's is `2~` and gen_rand_alphanumeric's
+    `A-Za-z0-9-_` (`driver/rados/rgw_sal_rados.cc:3281-3283`, `:4125-4127`;
+    `common/random_string.cc:48` at both tags).
+- **Impact:** the request is doubly gated: it needs the victim upload's
+  id, a secret that ListMultipartUploads gives only to a principal allowed
+  to list the uploads, and a policy that allows key `a` but denies key `a.b`,
+  whether an exact key or a pattern. Such a principal can list `a.b`'s
+  parts and replace them, so read and tamper, and abort the upload.
+  CompleteMultipartUpload writes the object to the authorized request key,
+  `s->object` (`rgw_op.cc:6483-6485`; `:7367-7369`), not the aliased one,
+  so it assembles the victim's parts into the principal's own object `a`
+  and removes the victim's meta object: the content is taken and the
+  victim's upload is gone.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. UploadPart, UploadPartCopy,
+  CompleteMultipartUpload, AbortMultipartUpload and ListParts answer an
+  upload id holding a "." as a missing upload without reading the store
+  (`aliasedUpload`, `internal/op/uploadpart.go`), and the driver's
+  meta-object reference refuses one too (`metaRef`,
+  `internal/driver/mp_layout.go`; `docs/exclusions.md`, "An upload id
+  holding a "." is NoSuchUpload").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 8 review, 2026-10-07, reading how the
+  multipart ops name their upload; derived from the source, not reproduced.
+
+## radosgw holds a copy-source range's bounds in an off_t, so a bound past 2^63 reads as a suffix
+
+- **Kind:** defect, security-relevant: resource exhaustion (triage
+  estimate CVSS ~7.5, 6.5-8.1). rgw-bug-reproduction's first triage called
+  it a quirk; its re-triage of radosgw's copy loop confirmed the defect.
+  Unreproduced here: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - RGWPutObj holds `x-amz-copy-source-range`'s bounds in `off_t`s
+    (`rgw_op.h:1227-1228`; `:1297-1298`) and fills them with `strtoull`
+    (`rgw_op.cc:3893-3894`; `:4102-4103`), so a bound of 2^63 or more turns
+    negative, and one past 2^64 saturates and turns -1.
+  - The only check is that the first bound is not past the last as `off_t`
+    compares (`:3895-3899`; `:4104-4108`), which a negative first bound
+    passes unless the last is lower still.
+  - `range_to_ofs` reads a negative offset as a suffix from the object's
+    end, clamped to its first byte, with its last byte as the end
+    (`rgw_sal.cc:429-448`; `:426-445`).
+- **Impact:** resource exhaustion, as rgw-bug-reproduction's re-triage
+  confirms. The requester needs s3:PutObject on a destination and
+  s3:GetObject on a source.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: a first bound of 2^63 or more is 416
+  InvalidRange before the op authorizes (`ParseCopySourceRange`,
+  `internal/op/multipartxml.go`; `docs/exclusions.md`, "A copy-source range
+  past 2^63 answers 416").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Its prior-art
+  search names [ceph/ceph#32487](https://github.com/ceph/ceph/pull/32487),
+  which covers only the parse's digit check.
+- **Found:** phase 1 unit P, Task 8, 2026-10-07, transcribing
+  init_processing's range parse; derived from the source, not reproduced.
+
+## RGWOp::read_all_input ignores its allow_chunked argument
+
+- **Kind:** defect, latent and benign (triage estimate CVSS 0): the
+  callers' argument has no effect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp::read_all_input(s, max_len, allow_chunked)` calls
+    `rgw_rest_read_all_input(s, max_len)` without its third argument, whose
+    default is true (`rgw_op.h:215-227` and `:127-129` at v19.2.6,
+    `:229-241` at v20.2.4).
+  - The callers that pass false, among them the ACL, lifecycle, object
+    lock, legal hold and DeleteObjects bodies (`rgw_rest.cc:1474`, `:1482`,
+    `:1489`, `:1496`, `:1672` at v19.2.6; `:1479`, `:1487`, `:1494`,
+    `:1501`, `:1677` at v20.2.4), therefore read a chunked body, up to
+    `rgw_max_put_param_size` as `read_all_chunked_input` bounds it, where
+    they ask for 411 MissingContentLength.
+- **Impact:** none known: those ops accept a chunked request their code
+  means to refuse, and read it within the same bound, which
+  `read_all_chunked_input` still enforces (`rgw_rest.cc:1501-1535`, the
+  check at `:1525`, at v19.2.6; `:1506-1540`, `:1530`, at v20.2.4). A
+  routine upstream cleanup.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it on purpose: `op.ReadParamBody` reads a chunked
+  body for CompleteMultipartUpload and DeleteObjects as radosgw does
+  (`internal/op/parambody.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 8, 2026-10-07, transcribing
+  CompleteMultipartUpload's body read; derived from the source, not
   reproduced.
