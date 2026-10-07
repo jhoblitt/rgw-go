@@ -14,6 +14,24 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
+// AttrBucketEncryption is RGW_ATTR_BUCKET_ENCRYPTION_POLICY (rgw_common.h:174
+// at v19.2.6, :194 at v20.2.4), a bucket's default encryption.
+const AttrBucketEncryption = meta.AttrPrefix + "sse-s3.policy"
+
+// bucketEncryptionUnserved answers 501 NotImplemented for a write into a
+// bucket with a default encryption, which radosgw applies to the write
+// (get_encryption_defaults, rgw_rest_s3.cc:146-264 at v19.2.6, :151-269 at
+// v20.2.4) and which rgw-go cannot apply until phase 2 encrypts. It runs
+// once the requester is authorized, where radosgw's refusal for want of a
+// key server comes, so a refused requester learns nothing of the bucket's
+// configuration (docs/exclusions.md).
+func bucketEncryptionUnserved(rec *BucketRecord) error {
+	if _, ok := rec.Attrs[AttrBucketEncryption]; ok {
+		return fmt.Errorf("%w: the bucket's default encryption is not served yet", ErrNotImplemented)
+	}
+	return nil
+}
+
 // AttrPublicAccess is RGW_ATTR_PUBLIC_ACCESS (rgw_common.h:157 at v19.2.6,
 // :176 at v20.2.4), the bucket attr holding its PublicAccessBlockConfiguration.
 const AttrPublicAccess = meta.AttrPrefix + "public-access"
@@ -48,6 +66,12 @@ type PutObject struct {
 	// IfMatch and IfNoneMatch are the headers' values, nil when absent: a
 	// header present with an empty value is a condition, as radosgw takes it.
 	IfMatch, IfNoneMatch *string
+	// Params, when set, is the protocol's get_params, which needs the
+	// bucket: Init calls it once the bucket is loaded, its placement checked
+	// and a public canned ACL refused, where RGWPutObj::init_processing calls
+	// get_params (rgw_op.cc:3903-3915 at v19.2.6, :4112-4124 at v20.2.4). It
+	// fills the inputs it reads, the ACL among them.
+	Params func(ctx context.Context, o *PutObject) error
 
 	ETag  string
 	Mtime time.Time
@@ -70,8 +94,9 @@ func (o *PutObject) OpMask() uint32 { return OpTypeWrite }
 // bucket, a missing one NoSuchBucket, and checks the destination placement
 // (rgw_op.cc:539-541 and :576-583 at v19.2.6, :569-571 and :606-613 at
 // v20.2.4), and init_processing refuses a public canned ACL under a block of
-// public ACLs (:3903-3909 at v19.2.6, :4112-4118 at v20.2.4). rgw-go also
-// refuses there a public policy from the grant headers, which radosgw stores
+// public ACLs (:3903-3909 at v19.2.6, :4112-4118 at v20.2.4) and then runs
+// get_params, Params here. rgw-go also refuses, once Params has built it, a
+// public policy from the grant headers, which radosgw stores
 // (docs/exclusions.md).
 func (o *PutObject) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
@@ -82,7 +107,16 @@ func (o *PutObject) Init(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err
 	}
-	if blockPublicACLs(rec) && (isPublicCannedACL(o.CannedACL) || o.ACL.IsPublic()) {
+	block := blockPublicACLs(rec)
+	if block && isPublicCannedACL(o.CannedACL) {
+		return fmt.Errorf("%w: a public canned acl under a block of public acls", ErrAccessDenied)
+	}
+	if o.Params != nil {
+		if err := o.Params(ctx, o); err != nil {
+			return err
+		}
+	}
+	if block && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
 	return nil
@@ -103,6 +137,9 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 // at v19.2.6). The write tag is the request id.
 func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
+		return err
+	}
+	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 		return err
 	}
 	if maxPut := confSize(r, "rgw_max_put_size", defaultMaxPutSize); o.Size > int64(maxPut) { //nolint:gosec // verify_params compares in off_t

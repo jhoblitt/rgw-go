@@ -217,6 +217,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw cannot remove an account user whose users index entry is gone](#radosgw-cannot-remove-an-account-user-whose-users-index-entry-is-gone) | pending | pending | ✓ |
 | [radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from](#radosgws-admin-user-info-shows-the-swift-tempurl-keys-to-a-caller-it-withholds-keys-from) | pending | pending | ✓ |
 | [A stale bucket list entry blocks a user's removal for good](#a-stale-bucket-list-entry-blocks-a-users-removal-for-good) | pending | pending | ✓ |
+| [radosgw stores request credentials as object attrs](#radosgw-stores-request-credentials-as-object-attrs) | [#65460](https://tracker.ceph.com/issues/65460) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
+| [radosgw's CopyObject stores an object lock on a bucket without object lock](#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9268,7 +9270,10 @@ Every new entry adds its row to this table, in document order.
   public ACLs again against the bucket each try reads, and answers 409
   ConcurrentModification once the retries are spent
   (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A PutBucketAcl that
-  loses a race is retried").
+  loses a race is retried"). `op.PutObjectACL` does the same through
+  `op.RetryRacedWriteReauthorized`, reading the object's head again and
+  authorizing the requester against it before each retry
+  (`internal/op/objectattrs.go`).
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
   when setting acls", which introduced this behaviour on purpose; found by
@@ -9333,8 +9338,9 @@ Every new entry adds its row to this table, in document order.
   client may for a request without a body, is refused 411
   MissingContentLength.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** reproduces it for PutBucketAcl (`readParamBody`,
-  `internal/s3/bucket.go`), so both gateways answer such a request alike.
+- **rgw-go:** reproduces it for PutBucketAcl and PutObjectAcl
+  (`readParamBody`, `internal/s3/bucket.go`), so both gateways answer such
+  a request alike.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
   `RGWPutACLs_ObjStore_S3::get_params`; derived from the source, not
@@ -9617,3 +9623,105 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** re-review of phase 1 unit N, Task 4, 2026-10-07, reading the
   user removal's bucket loop; derived from the source, not reproduced.
+
+## radosgw stores request credentials as object attrs
+
+- **Kind:** defect, informational: a defense-in-depth gap, not
+  security-relevant across principals. rgw-bug-reproduction's triage found
+  the attrs stored but readable by no principal through S3. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `req_info::init_meta_info` files every header whose name starts with
+    `x-amz-`, and the other meta prefixes, into `x_meta_map`
+    (`rgw_common.cc:413-464`; `:426-477`).
+  - `rgw_get_request_metadata` stores every entry its blocklist does not
+    name as the attr `user.rgw.` and the name (`rgw_op.h:2171-2233`;
+    `:2338-2408`). v19.2.6's blocklist names the three SSE-C headers and
+    `x-amz-storage-class` (`:2177-2182`); v20.2.4's adds the three
+    `x-amz-copy-source-server-side-encryption-customer-*` headers,
+    `x-amz-content-sha256`, `x-amz-checksum-algorithm` and `x-amz-date`
+    (`:2344-2357`). Neither names `x-amz-security-token`.
+  - PutObject stores the attrs it builds so (`rgw_op.cc:4525-4529`;
+    `:4793-4797`), and so does CopyObject (`init_common`, `rgw_op.cc:5523`;
+    `:6089`), whose `copy_obj` keeps the request's attrs under
+    `x-amz-metadata-directive: REPLACE` (`set_copy_attrs`,
+    `driver/rados/rgw_rados.cc:3673-3700` and `:4787`; `:3858-3885` and
+    `:5043`).
+  - So both releases store a request's STS session token,
+    `x-amz-security-token`, as `user.rgw.x-amz-security-token`, and a Squid
+    CopyObject with REPLACE stores its
+    `x-amz-copy-source-server-side-encryption-customer-key`, the customer
+    key of an SSE-C source, as an attr of the copy. Squid refuses an
+    encrypted source before it writes (`driver/rados/rgw_rados.cc:4755-4763`
+    at v19.2.6), so the key is stored when the source is not encrypted.
+  - No S3 read returns those attrs: GET and HEAD render, among the user
+    attrs, only those under `user.rgw.x-amz-meta-` (`rgw_rest_s3.cc:581-585`;
+    `:698-702`); v20.2.4's GetObjectAttributes renders named fields alone
+    (`RGWGetObjAttrs_ObjStore_S3::send_response`, `rgw_rest_s3.cc:3999-4137`
+    at v20.2.4; Squid has no such op); and a notification's metadata keeps
+    only `x-amz-meta-` names (`filter_amz_meta` and
+    `metadata_from_attributes`, `driver/rados/rgw_notify.cc:922-948`;
+    `:936-962`).
+- **Impact:** the token, and on Squid such a customer key, sit in the
+  clear in the object's xattrs, where only a reader of the data pool or of
+  `radosgw-admin object stat` sees them; no S3 principal reads them.
+- **Releases:** v19.2.6 for the copy-source key; v19.2.6 and v20.2.4 for
+  the session token.
+- **rgw-go:** does not reproduce it: it applies v20.2.4's blocklist on both
+  releases and adds `x-amz-security-token` to it (`requestAttrs`,
+  `internal/s3/requestattrs.go`; `docs/exclusions.md`, "Request headers
+  stored as attrs follow Tentacle's blocklist, and the session token is
+  never stored").
+- **Upstream:** [#65460](https://tracker.ceph.com/issues/65460) for the
+  session token. The copy-source SSE-C key left the stored attrs with
+  [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794) on main and its
+  Tentacle backport [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277);
+  it has no Squid backport. Found by rgw-bug-reproduction's prior-art
+  search.
+- **Found:** phase 1 unit W, Task 11, 2026-10-07, transcribing
+  `rgw_get_request_metadata` at both tags; derived from the source, not
+  reproduced; already known upstream, so not a finding of ours.
+
+## radosgw's CopyObject stores an object lock on a bucket without object lock
+
+- **Kind:** defect, not security-relevant (rgw-bug-reproduction's triage
+  estimate CVSS 0). Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - PutObject and CreateMultipartUpload refuse a retention or a legal hold
+    on a bucket without object lock with -ERR_INVALID_REQUEST
+    (`rgw_rest_s3.cc:2669-2673` and `:4021`; `:2830-2834` and `:4502`).
+  - CopyObject's `get_params` parses the same three headers and makes no
+    `obj_lock_enabled()` check (`rgw_rest_s3.cc:3478-3509`; `:3758-3789`),
+    its `execute` adds the retention and the legal hold to the copy's attrs
+    unconditionally (`rgw_op.cc:5584-5593`; `:6150-6159`), and `copy_obj`
+    puts them over the source's under either metadata directive
+    (`driver/rados/rgw_rados.cc:4768-4775`; `:5013-5020`).
+  - The stray attrs are inert while the bucket has no object lock. A
+    delete checks retention and legal hold only when `check_obj_lock =
+    have_instance() && obj_lock_enabled()` (DeleteObject `rgw_op.cc:5186`,
+    DeleteObjects `:6845`; `:5576`, `:7782`), so the copy stays deletable;
+    GetObjectRetention and GetObjectLegalHold answer -ERR_INVALID_REQUEST,
+    "bucket object lock not configured", before they read the attr
+    (`rgw_op.cc:8443-8447` and `:8547-8551`; `:9404-9408` and
+    `:9528-9532`).
+  - They go live only if the owner later enables object lock, which
+    PutObjectLockConfiguration does on a bucket whose versioning is enabled
+    (`rgw_op.cc:8276-8286`; `:9224-9234`).
+- **Impact:** a CopyObject that asks for a retention or a legal hold on a
+  bucket without object lock succeeds where the same request as a
+  PutObject is refused, and stores an attr nothing honours until the
+  bucket's owner enables object lock, a change the owner makes. No
+  principal gains anything across a boundary.
+- **Releases:** v19.2.6 and v20.2.4.
+- **Fix:** gate CopyObject's object-lock headers on `obj_lock_enabled()` in
+  its `get_params`, as PutObject's are.
+- **rgw-go:** does not reproduce it: CopyObject refuses such a request with
+  400 InvalidRequest, as PutObject does (`objectLock`,
+  `internal/s3/putobject.go`; `docs/exclusions.md`, "CopyObject refuses an
+  object lock on a bucket without object lock").
+- **Upstream:** pending: triaged by rgw-bug-reproduction; no tracker issue
+  or pull request yet.
+- **Found:** phase 1 unit W, Task 11, 2026-10-07, comparing PutObject's and
+  CopyObject's `get_params`; derived from the source, not reproduced.

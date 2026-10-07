@@ -56,7 +56,10 @@ type PutParams struct {
 	// Mtime is the object mtime; zero means now.
 	Mtime        time.Time
 	StorageClass string
-	// IfMatch and IfNoneMatch are ETags; "*" matches any object.
+	// IfMatch and IfNoneMatch are ETags; "*" matches any object. "" is
+	// unset, and a header present with an empty value arrives as a single
+	// NUL, which matches no ETag, as radosgw's compare of the empty string
+	// with the ETag matches none (storeCondition).
 	IfMatch, IfNoneMatch string
 	// ETag, when set, is stored instead of the computed MD5 (multipart completion).
 	ETag string
@@ -86,7 +89,9 @@ type PutResult struct {
 type DeleteParams struct {
 	// IfMatch is If-Match: "*" or an ETag the object's must begin with,
 	// unquoted first (check_preconditions, driver/rados/rgw_rados.cc:7287-7306
-	// at v20.2.4); empty means unset.
+	// at v20.2.4); empty means unset, and a header or ETag element present
+	// with an empty value arrives as a single NUL, which matches no ETag
+	// (storeCondition).
 	IfMatch string
 	// Mtime is the delete time; zero means now.
 	Mtime time.Time
@@ -115,7 +120,9 @@ type CopyParams struct {
 	// IfMatch and IfNoneMatch are the x-amz-copy-source-if-match and
 	// -if-none-match conditions, which copy_obj applies to the source's ETag.
 	// The op checks them against the source state before CopyObject; the
-	// RADOS driver does not check them again, while memstore does.
+	// RADOS driver does not check them again, while memstore does. "" is
+	// unset, and a header present with an empty value arrives as a single
+	// NUL (storeCondition).
 	IfMatch, IfNoneMatch string
 	// Tag is the write tag: radosgw passes the request id (rgw_op.cc:5672 at
 	// v19.2.6, :6246 at v20.2.4), under which a copy that shares the source's

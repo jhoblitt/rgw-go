@@ -59,8 +59,17 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 // policy or its owner's default (ObjectACLFor); the refusal of a public
 // policy under a block of public ACLs; and modify_obj_attrs, which writes the
 // object's attrs back whole with the ACL replaced
-// (driver/rados/rgw_sal_rados.cc:2401-2419 at v19.2.6, :2994 at v20.2.4). A lost race is
-// success, "because acls are immutable".
+// (driver/rados/rgw_sal_rados.cc:2401-2419 at v19.2.6, :2994 at v20.2.4).
+// radosgw answers a lost race with success and leaves the ACL unwritten
+// (:5925-5927 at v19.2.6, :6587-6589 at v20.2.4; docs/ceph-upstream-bugs.md,
+// "radosgw's PutBucketAcl answers success when its write loses a race").
+// rgw-go retries it through RetryRacedWriteReauthorized, reading the head
+// again and authorizing the requester against it before each retry, and
+// refuses a new owner and a public policy under a block of public ACLs
+// against the ACL and the bucket each try read, so a retry never writes
+// back an owner a concurrent change replaced, nor writes for a requester a
+// concurrent change refused; once the retries are spent it answers
+// ConcurrentModification (docs/exclusions.md).
 func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
@@ -73,14 +82,59 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	if err != nil {
 		return err
 	}
-	if blockPublicACLs(r.BucketRec) && p.IsPublic() {
-		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
-	err = modifyObjAttr(ctx, r, meta.AttrACL, encodeAt(p, r.Env.Zone.Release()))
-	if errors.Is(err, ErrConcurrentModification) {
+	encoded := encodeAt(p, r.Env.Zone.Release())
+	a := o.Action()
+	reread := func() error {
+		st, err := r.Env.Objects.StatObject(ctx, r.BucketRec, r.Object)
+		if err != nil {
+			return err
+		}
+		r.ObjState = st
 		return nil
 	}
-	return err
+	verify := func() error { return VerifyObjectPermission(ctx, r, a, acl.PermFor(a)) }
+	return RetryRacedWriteReauthorized(ctx, r, reread, verify, func() error {
+		current, err := ObjectACLFor(ctx, r.ObjState, r.BucketRec)
+		if err != nil {
+			return err
+		}
+		if aclOwnerChanged(current.Owner.ID, p.Owner.ID) {
+			return ErrAccessDenied.WithMessage("Cannot modify ACL Owner")
+		}
+		if blockPublicACLs(r.BucketRec) && p.IsPublic() {
+			return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+		}
+		return modifyObjAttr(ctx, r, meta.AttrACL, encoded)
+	})
+}
+
+// RetryRacedWriteReauthorized is RetryRacedBucketWrite with the requester
+// authorized again before every retry. Each retry first runs reread, which
+// reads again whatever the write and its authorization depend on beyond the
+// bucket RetryRacedBucketWrite has just read (an object's head, for an
+// object's write), then verify, the op's permission check against what was
+// read. A refusal ends the write with it, as Run would answer it: an admin
+// is let through an access denial that is not marked BeforeVerify, as Run
+// lets one through. radosgw authorizes a request once, before any retry
+// (retry_raced_bucket_write, rgw_op.h:183-196 at v19.2.6, :197-210 at
+// v20.2.4), so a retry can write for a requester whom the change it lost to
+// refused; rgw-go writes nothing for them (docs/exclusions.md).
+func RetryRacedWriteReauthorized(ctx context.Context, r *Request, reread, verify, f func() error) error {
+	retry := false
+	return RetryRacedBucketWrite(ctx, r, func() error {
+		if retry {
+			if reread != nil {
+				if err := reread(); err != nil {
+					return err
+				}
+			}
+			if err := verify(); err != nil && (IsBeforeVerify(err) || !r.Identity.Admin || !isAccessDenial(err)) {
+				return err
+			}
+		}
+		retry = true
+		return f()
+	})
 }
 
 // Complete does nothing: the handler logs usage once the response is written.
@@ -93,6 +147,11 @@ type PutObjectTagging struct {
 	// the action. Init sets it from the request.
 	Versioned bool
 	Set       tags.Set
+	// Params, when set, is the protocol's get_params, which reads and parses
+	// the body into Set: Execute calls it first, once the requester is
+	// authorized, as RGWPutObjTags::execute calls get_params (rgw_op.cc:1095
+	// at v19.2.6, :1294 at v20.2.4).
+	Params func(ctx context.Context, o *PutObjectTagging) error
 }
 
 var _ Op = (*PutObjectTagging)(nil)
@@ -124,15 +183,23 @@ func (o *PutObjectTagging) VerifyPermission(ctx context.Context, r *Request) err
 	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
 }
 
-// Execute is RGWPutObjTags::execute: modify_obj_attrs with the tag set as
-// get_params encodes it, empty or not, where a lost race is 409
+// Execute is RGWPutObjTags::execute: Params, then modify_obj_attrs with the
+// tag set as get_params encodes it, empty or not, where a lost race is 409
 // OperationAborted (rgw_op.cc:1104-1108 at v19.2.6, :1322-1326 at v20.2.4).
+// A version rgw-go does not serve and a missing object, which radosgw
+// refuses while it reads the object before authorizing, are refused before
+// Params reads the body.
 func (o *PutObjectTagging) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
 	}
 	if r.ObjState == nil || !r.ObjState.Exists {
 		return fmt.Errorf("%w: %s", ErrNoSuchKey, r.Object.Name)
+	}
+	if o.Params != nil {
+		if err := o.Params(ctx, o); err != nil {
+			return err
+		}
 	}
 	err := modifyObjAttr(ctx, r, tags.Attr, encodeAt(o.Set, r.Env.Zone.Release()))
 	if errors.Is(err, ErrConcurrentModification) {

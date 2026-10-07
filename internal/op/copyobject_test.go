@@ -110,6 +110,45 @@ var _ = Describe("CopyObject", func() {
 		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
 		Expect(authz.Invocations()).To(BeEmpty())
 	})
+	Describe("Params", func() {
+		It("runs between the destination's load and the source bucket's, before permissions", func(ctx SpecContext) {
+			authz := &opfakes.FakeAuthorizer{}
+			f.env.Authz = authz
+			o := f.copyOf("src")
+			o.SrcBucket = "nope"
+			r := f.req(http.MethodPut, "plain", "dst")
+			o.Params = func(context.Context, *op.CopyObject) error {
+				Expect(r.BucketRec).NotTo(BeNil(), "init_permissions has loaded the destination")
+				return op.ErrInvalidArgument.WithMessage("Unknown metadata directive.")
+			}
+			err := op.Run(ctx, o, r)
+			Expect(err).To(MatchError(op.ErrInvalidArgument), "get_params refuses before the source bucket's NoSuchBucket")
+			Expect(authz.Invocations()).To(BeEmpty())
+		})
+		It("is not reached for a missing destination or a placement the zone lacks", func(ctx SpecContext) {
+			called := false
+			params := func(context.Context, *op.CopyObject) error { called = true; return nil }
+			o := f.copyOf("src")
+			o.Params = params
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "missing", "dst"))).To(MatchError(op.ErrNoSuchBucket))
+			o = f.copyOf("src")
+			o.Params, o.StorageClass = params, "GLACIAL"
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(called).To(BeFalse())
+		})
+		It("builds the ACL that the block of public ACLs then refuses", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+			stub := &opfakes.FakeObjectStore{}
+			f.env.Objects = stub
+			o := &op.CopyObject{SrcBucket: "plain", SrcKey: meta.ObjKey{Name: "src"}, Params: func(_ context.Context, o *op.CopyObject) error {
+				o.ACL = publicReadOf(f.alice.Owner)
+				return nil
+			}}
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrAccessDenied))
+			Expect(stub.PrefetchObjectCallCount()).To(BeZero())
+			Expect(stub.CopyObjectCallCount()).To(BeZero())
+		})
+	})
 	It("answers a missing source with NoSuchKey", func(ctx SpecContext) {
 		Expect(op.Run(ctx, f.copyOf("missing"), f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrNoSuchKey))
 		Expect(f.stat(ctx, "dst").Exists).To(BeFalse())
