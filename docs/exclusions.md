@@ -1884,6 +1884,18 @@ does the following.
   signs the values the client sent. A request that signs
   `Transfer-Encoding: chunked` in lower case over HTTP/1.1, and signs no
   Trailer header, is authenticated alike.
+- **A chunked body is read whatever the case of its Transfer-Encoding.**
+  radosgw reads a body sent without a Content-Length only when
+  `HTTP_TRANSFER_ENCODING` is exactly `chunked` (`strcmp`,
+  `rgw_rest.cc:1567-1569` at v19.2.6, `:1572-1574` at v20.2.4), while beast
+  decodes the chunked framing in any case and files the value as sent. So
+  for `Transfer-Encoding: Chunked` radosgw answers PutBucketAcl,
+  PutBucketPolicy and PutBucketTagging with 411 MissingContentLength, and
+  CreateBucket leaves the body unread and creates the bucket as if none was
+  sent. rgw-go reads the body in every case, through the payload verifier
+  and after the permission check, since net/http accepts the header in any
+  case and removes it ("A chunked request's Transfer-Encoding reads as
+  `chunked`", above), so the case the client sent cannot be seen.
 - **An empty Host header on HTTP/1.0 is no Host header.** HTTP/1.1
   requires a Host header, so rgw-go takes an empty host on an HTTP/1.1
   request as a Host header sent empty, as beast files it: `HTTP_HOST` set
@@ -2206,9 +2218,9 @@ rgw-go does the following.
   PutObject or CopyObject whose new object's policy grants AllUsers or
   AuthenticatedUsers anything under such a block, as PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
-  that does not decode for one that blocks public ACLs in these writes and,
-  when rgw-go serves them, in PutObjectAcl and PutBucketAcl, and for one
-  that blocks public policies in PutBucketPolicy when it serves that
+  that does not decode for one that blocks public ACLs in these writes, in
+  PutBucketAcl and, when rgw-go serves it, in PutObjectAcl, and for one
+  that blocks public policies in PutBucketPolicy
   (`rgw_op.cc:8103-8108` at v19.2.6, `:9029-9034` at v20.2.4), where
   radosgw takes it for none; the authorizer refuses such a bucket's
   requests from anyone but an admin ("A public-access block that does not
@@ -2272,12 +2284,29 @@ rgw-go does the following.
   lookups answer NotImplemented. So on that driver a grant header naming
   an account id, or an email address that no user holds, answers 501
   NotImplemented, where radosgw grants the account or answers 404; in the
-  ACL document of a PutBucketAcl or PutObjectAcl, when rgw-go serves them,
-  such a grantee or owner answers radosgw's 400 for an unresolvable one,
+  ACL document of a PutBucketAcl, or of a PutObjectAcl when rgw-go serves
+  it, such a grantee or owner answers radosgw's 400 for an unresolvable one,
   InvalidArgument or UnresolvableGrantByEmailAddress, where radosgw would
   grant an account. rgw-go cannot tell an email that
   nothing holds from one an account holds, so it reports no miss it has
   not seen.
+- **The account root's pass on the bucket policy ops.** On Tentacle,
+  radosgw lets the root user of the account that owns a bucket through
+  PutBucketPolicy, GetBucketPolicy and DeleteBucketPolicy before any policy
+  is evaluated, unless the bucket carries the
+  `user.rgw.iam-policy-remove-self-access` attr that a PutBucketPolicy with
+  `x-amz-confirm-remove-self-bucket-access` sets (`rgw_op.cc:8983-8986`,
+  `:9069-9072`, `:9126-9129` and `:9039-9043` at v20.2.4). rgw-go
+  authorizes these ops as Squid does, on both releases, and ignores the
+  header: a root whose bucket policy denies it these actions is refused
+  where Tentacle lets it through, and no request is let through that Squid
+  would refuse. Tentacle never stores the attr, as the system-object write
+  skips an empty attr (`docs/ceph-upstream-bugs.md`, "[Tentacle never
+  stores the confirmation of
+  x-amz-confirm-remove-self-bucket-access](ceph-upstream-bugs.md#tentacle-never-stores-the-confirmation-of-x-amz-confirm-remove-self-bucket-access)"),
+  so its pass holds whatever the header said once its caches drop the
+  bucket. rgw-go's DeleteBucketPolicy removes the attr on Tentacle, as
+  radosgw's does (`:9151-9157` at v20.2.4).
 
 ### Bucket metadata differences
 
@@ -2376,7 +2405,10 @@ differ, rgw-go does the following.
   entry, which radosgw keeps. When it is the same owner's, its link may
   have pointed the shared entry back at the deleted instance, so rgw-go
   links the newer bucket again and the list names the live bucket, as it
-  ends up in radosgw. A failed unlink fails rgw-go's delete with its error;
+  ends up in radosgw. A delete of that newer bucket that completes between
+  the entry-point read and that link leaves the list with an entry for the
+  deleted bucket, an entry of the kind above. A failed unlink fails
+  rgw-go's delete with its error;
   radosgw logs it and answers 204 (`RGWBucketCtl::do_unlink_bucket`,
   `driver/rados/rgw_bucket.cc:3424-3432` at v19.2.6, and the same code
   inline in `RGWBucketCtl::unlink_bucket`, `:3506-3518` at v20.2.4).
@@ -2416,6 +2448,51 @@ differ, rgw-go does the following.
     counted, as radosgw counts the abort it makes of it; the delete goes on
     and leaves its meta object and parts. The emptiness check lets the
     delete reach it only for a head without a visible index entry.
+- **A retried bucket write stops when the name names another bucket.**
+  PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging and
+  DeleteBucketTagging retry a write that lost a race up to fifteen times,
+  each after reading the bucket again by name (`retry_raced_bucket_write`,
+  `rgw_op.h:183-196` at v19.2.6, `:197-210` at v20.2.4), and so does
+  rgw-go's PutBucketAcl ("A PutBucketAcl that loses a race is retried",
+  below). When the bucket
+  was deleted and a bucket of the same name created in between, radosgw
+  writes into the new bucket, another owner's included
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's retried bucket write can land
+  in a bucket re-created under the same
+  name](ceph-upstream-bugs.md#radosgws-retried-bucket-write-can-land-in-a-bucket-re-created-under-the-same-name)").
+  rgw-go reads by name too, and when the name now names another instance it
+  writes nothing and answers 409 ConcurrentModification, the answer both
+  give once the fifteen retries are spent.
+- **A retried PutBucketPolicy keeps what the write it lost to changed.**
+  radosgw's PutBucketPolicy merges the attrs its request loaded into every
+  try, so a retry writes back the ACL, tags or public-access block another
+  write had just changed (`rgw_op.cc:8102` and `:8110-8115` at v19.2.6,
+  `:9028` and `:9036-9046` at v20.2.4; `docs/ceph-upstream-bugs.md`,
+  "[radosgw's PutBucketPolicy retry writes back the bucket attrs its
+  request started
+  with](ceph-upstream-bugs.md#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with)").
+  rgw-go sets only the policy over the bucket as it read it last, as
+  radosgw's PutBucketTagging does with its tags, so the other write's
+  change stays. radosgw judges BlockPublicPolicy once, against the block
+  its request loaded; rgw-go judges it again on each retry against the block
+  that try read, a block that does not decode blocking, so a public policy
+  whose first write lost to a write that blocks public policies is refused
+  with 403 AccessDenied where radosgw stores it.
+- **A PutBucketAcl that loses a race is retried.** radosgw stores a bucket's
+  new ACL once, under the version its request loaded, and answers 200 when
+  another write of the bucket landed first, with the new ACL not stored
+  (`rgw_op.cc:5920-5927` at v19.2.6, `:6582-6589` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketAcl answers success
+  when its write loses a
+  race](ceph-upstream-bugs.md#radosgws-putbucketacl-answers-success-when-its-write-loses-a-race)").
+  rgw-go retries the write as the other bucket writes are retried, up to
+  fifteen times after reading the bucket again, and on each try refuses a
+  new owner, with 403 AccessDenied "Cannot modify ACL Owner", and a public
+  ACL under a block of public ACLs, against the ACL and block that try
+  read; once the retries are spent it answers 409 ConcurrentModification.
+  So where radosgw answers 200 with the old ACL in place, rgw-go stores the
+  new one, refuses it, or answers 409, and a retry never writes back the
+  ACL of an owner a concurrent change replaced.
 
 ### Object read differences
 
@@ -2471,11 +2548,12 @@ does the following.
   compressed block larger than rgw_max_chunk_size](ceph-upstream-bugs.md#radosgw-spins-on-a-ranged-get-of-a-compressed-block-larger-than-rgw_max_chunk_size)").
   When rgw-go writes compressed objects, blocks larger than a coexisting
   radosgw's `rgw_max_chunk_size` would expose that radosgw to the loop.
-- **GetObjectTagging of a tag set that does not decode.** rgw-go answers 500
-  UnknownError when an object's `user.rgw.x-amz-tagging` decodes neither as
-  a tag set nor as the URL-encoded text older objects store. radosgw, by
-  code reading, answers 200 with no body (`rgw_rest_s3.cc:746-773` at
-  v19.2.6, `:829-856` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw
+- **GetObjectTagging and GetBucketTagging of a tag set that does not
+  decode.** rgw-go answers 500 UnknownError when an object's or a bucket's
+  `user.rgw.x-amz-tagging` decodes neither as a tag set nor as the
+  URL-encoded text older objects store. radosgw, by code reading, answers
+  200 with no body (`rgw_rest_s3.cc:746-773` and `:839-866` at v19.2.6,
+  `:829-856` and `:921-948` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw
   answers GetObjectTagging with 200 and no body when the tags do not
   decode](ceph-upstream-bugs.md#radosgw-answers-getobjecttagging-with-200-and-no-body-when-the-tags-do-not-decode)").
 - **NextPartNumberMarker when max-parts is below 1.** For a
@@ -2567,10 +2645,11 @@ does the following.
   such an object (`docs/ceph-upstream-bugs.md`, "[Tentacle's radosgw
   terminates on a GET or HEAD of an object whose restore attr does not
   decode](ceph-upstream-bugs.md#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode)").
-- **HEAD ?acl.** rgw-go answers a HEAD of an object's `?acl` with the
-  headers of the GET, whose Content-Length counts the XML declaration, and
-  no body. radosgw sends the ACL document, without the declaration, as a
-  body after the headers, with a Content-Length of that document
+- **HEAD ?acl.** rgw-go answers a HEAD of an object's or a bucket's `?acl`
+  with the headers of the GET, whose Content-Length counts the XML
+  declaration, and no body. radosgw sends the ACL document, without the
+  declaration, as a body after the headers, with a Content-Length of that
+  document
   (`docs/ceph-upstream-bugs.md`, "[radosgw sends the ACL document as a body
   after the headers of a HEAD
   ?acl](ceph-upstream-bugs.md#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl)").
