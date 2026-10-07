@@ -3,9 +3,19 @@ package s3
 import "github.com/jhoblitt/rgw-go/internal/op"
 
 var (
-	SinkOfForTest          = sinkOf
-	WriteChunkedXMLForTest = writeChunkedXML
+	SinkOfForTest              = sinkOf
+	WriteChunkedXMLForTest     = writeChunkedXML
+	DeleteResultElementForTest = deleteResultElement
+	ParseCopySourceForTest     = parseCopySource
+	ParseDeleteForTest         = parseDelete
+	FormatXattrForTest         = formatXattr
 )
+
+// RequestAttrsForTest is requestAttrs with the generic attrs r's
+// configuration names.
+func RequestAttrsForTest(r *op.Request, query bool) (map[string][]byte, error) {
+	return requestAttrs(r, genericAttrsFor(r.Env.Conf), query)
+}
 
 // UnitHandlersForTest is the four unit maps NewHandler binds, by the scope
 // each map's entries bind to.
