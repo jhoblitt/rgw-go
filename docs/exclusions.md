@@ -1943,11 +1943,13 @@ does the following.
   `rgw_rest.cc:1567-1569` at v19.2.6, `:1572-1574` at v20.2.4), while beast
   decodes the chunked framing in any case and files the value as sent. So
   for `Transfer-Encoding: Chunked` radosgw answers PutBucketAcl,
-  PutBucketPolicy and PutBucketTagging with 411 MissingContentLength, and
-  CreateBucket leaves the body unread and creates the bucket as if none was
-  sent. rgw-go reads the body in every case, through the payload verifier
-  and after the permission check, since net/http accepts the header in any
-  case and removes it ("A chunked request's Transfer-Encoding reads as
+  PutBucketPolicy, PutBucketTagging, PutObjectAcl and PutObjectTagging with
+  411 MissingContentLength, and so PutObject, which makes the same
+  comparison in its `get_params` (`rgw_rest_s3.cc:2599-2604` at v19.2.6,
+  `:2760-2765` at v20.2.4), and CreateBucket leaves the body unread and
+  creates the bucket as if none was sent. rgw-go reads the body in every
+  case, through the payload verifier and after the permission check, since
+  net/http accepts the header in any case and removes it ("A chunked request's Transfer-Encoding reads as
   `chunked`", above), so the case the client sent cannot be seen.
 - **An empty Host header on HTTP/1.0 is no Host header.** HTTP/1.1
   requires a Host header, so rgw-go takes an empty host on an HTTP/1.1
@@ -2286,7 +2288,7 @@ rgw-go does the following.
   AuthenticatedUsers anything under such a block, as PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
   that does not decode for one that blocks public ACLs in these writes, in
-  PutBucketAcl and, when rgw-go serves it, in PutObjectAcl, and for one
+  PutBucketAcl and in PutObjectAcl, and for one
   that blocks public policies in PutBucketPolicy
   (`rgw_op.cc:8103-8108` at v19.2.6, `:9029-9034` at v20.2.4), where
   radosgw takes it for none; the authorizer refuses such a bucket's
@@ -2558,7 +2560,21 @@ differ, rgw-go does the following.
   read; once the retries are spent it answers 409 ConcurrentModification.
   So where radosgw answers 200 with the old ACL in place, rgw-go stores the
   new one, refuses it, or answers 409, and a retry never writes back the
-  ACL of an owner a concurrent change replaced.
+  ACL of an owner a concurrent change replaced. PutObjectAcl, which radosgw
+  serves through the same `RGWPutACLs::execute` and answers 200 the same way
+  (`modify_obj_attrs`, `rgw_op.cc:5916-5919` and `:5925-5927` at v19.2.6,
+  `:6578-6581` and `:6587-6589` at v20.2.4), is retried as PutBucketAcl is:
+  before each retry rgw-go reads the object's head again, makes both checks
+  against the ACL it holds, and authorizes the requester again against that
+  head, its ACL and the bucket's policy, as the first try was authorized.
+  radosgw never retries either ACL write: on a lost race it answers 200 and
+  writes nothing (`rgw_op.cc:5912-5927` at v19.2.6, `:6576-6590` at v20.2.4;
+  tracker #16930). The re-authorization guards rgw-go's own retry: when the
+  write it lost to revoked the requester's WRITE_ACP, the retry answers 403
+  AccessDenied, writes nothing, and leaves the revoking ACL in place, where
+  radosgw would have answered 200 with that ACL in place too. An admin is
+  let through a retry's unmarked access denial as Run lets one through the
+  first check, and through nothing else.
 
 ### Object read differences
 
@@ -2898,7 +2914,11 @@ does the following.
     On a Squid zone, a key whose condition fails is answered with 412
     PreconditionFailed in its result and kept, where v19.2.6, whose parser
     reads only Key and VersionId (`rgw_multi_del.cc:17-36` and `:57-72` at
-    v19.2.6), deletes it.
+    v19.2.6), deletes it. A document whose LastModifiedTime is empty or does
+    not parse, or whose Size is no integer, fails its parse on a Squid zone
+    too, as v20.2.4's parser fails it (`rgw_multi_del.cc:42-58` at
+    v20.2.4), answered with Squid's 400 status line alone, where v19.2.6
+    ignores both elements and deletes the keys.
   - On a Tentacle zone, a delete whose object another writer replaced
     between the delete's read and its removal fails the removal and answers
     204 with the replacement standing, as on Squid. v20.2.4 removes the
@@ -2938,6 +2958,87 @@ does the following.
   line before its first key. radosgw serves them. The bucket listing makes
   the same refusal for a versioned bucket ("The versions of a bucket whose
   versioning was ever enabled are not listed").
+- **Writes that ask for encryption answer 501 until phase 2.** radosgw
+  encrypts a PutObject or CopyObject that sends the SSE-C headers, and
+  fails one that asks for SSE-S3 or SSE-KMS, or that lands in a bucket
+  with a default encryption, when it has no key server
+  (`get_encryption_defaults`, `rgw_rest_s3.cc:146-264` at v19.2.6,
+  `:151-269` at v20.2.4). rgw-go encrypts nothing on the write path in phase
+  1, so it answers 501 NotImplemented, rather than store in the clear what
+  a client asked to have encrypted ("Key management: SSE-KMS and SSE-S3 with
+  every backend"):
+  - before the permission check and before reading the body, to a PutObject
+    or CopyObject carrying any header that radosgw takes for an encryption
+    header once `init_meta_info` has rewritten its meta prefixes to `x-amz-`
+    (`rgw_common.cc:413-464` at v19.2.6, `:426-477` at v20.2.4), so
+    `X-Goog-Server-Side-Encryption-Customer-Key` or
+    `X-Rgw-Server-Side-Encryption` as well as
+    `X-Amz-Server-Side-Encryption`, and to one naming a copy source's SSE-C
+    key under any of those prefixes; and to a PutObject carrying such a query
+    parameter, which `map_qs_metadata` reads (`rgw_rest_s3.cc:2591-2593` at
+    v19.2.6, `:2752-2754` at v20.2.4). No such header is stored as an attr;
+  - once the requester is authorized, to either write into a bucket whose
+    attrs hold a default encryption, so a refused requester gets 403 whatever
+    the bucket holds.
+- **Part uploads, appends and a PUT that names a copy source but is no
+  copy answer 501.** radosgw serves a PUT with `uploadId` as UploadPart or
+  UploadPartCopy, a PUT with `?append` as an append, and a PUT whose
+  `x-amz-copy-source` comes with `x-amz-copy-source-range` and no
+  `uploadId`, or names no bucket, as a PutObject whose data it reads from
+  that source (`RGWPutObj::init_processing` and `execute`, `rgw_op.cc
+  :3806-3918` and `:4297-4336` at v19.2.6, `:4015-4127` at v20.2.4). The
+  PUT route answers all of them with 501 NotImplemented; UploadPart and
+  UploadPartCopy reach their own route once phase 1's multipart handlers
+  register it.
+- **PutObject and CopyObject check their headers before authorizing.**
+  radosgw decodes a PutObject's `Content-MD5` in `execute`, after
+  `verify_permission` (`rgw_op.cc:4184-4198` at v19.2.6, `:4393-4407` at
+  v20.2.4), and builds its attrs, where the three `rgw_max_attr*` limits
+  are checked, only once the body is stored (`:4525-4529`, `:4793-4797`);
+  a CopyObject builds its destination ACL after authorizing
+  (`init_dest_policy`, `:5492` at v19.2.6, `:6058` at v20.2.4) and its
+  attrs in `execute` (`init_common`, `:5523`, `:6089`). rgw-go makes all of
+  these checks where radosgw's `get_params` runs, once the bucket is loaded
+  and before the permission check and the body. So a `Content-MD5` that
+  does not decode to 16 bytes, an attr past a limit, and on a copy an ACL
+  header that names no grantee or a malformed grant, are answered with
+  their error before a refusal of permission, and a PutObject past an attr
+  limit is refused before its body is read rather than after it is stored.
+  Both refuse the request; only which refusal a refused requester sees
+  differs. The `Content-MD5` and attr errors depend on the request alone.
+  A copy's grant headers do not: their grantees are looked up, so a refused
+  requester learns whether a named user or account exists, as radosgw's
+  PutObject already tells one before authorizing, its `create_s3_policy`
+  running in `get_params` during `init_processing` (`rgw_rest_s3.cc
+  :2618-2620` at v19.2.6, `:2779-2781` at v20.2.4).
+- **Request headers stored as attrs follow Tentacle's blocklist, and the
+  session token is never stored.** radosgw stores every `x-amz-` header,
+  and those under its other meta prefixes, as an attr of the object a
+  PutObject or a CopyObject with REPLACE writes, except those its blocklist
+  names (`rgw_get_request_metadata`, `rgw_op.h:2171-2233` at v19.2.6,
+  `:2338-2408` at v20.2.4). rgw-go applies v20.2.4's list on both releases,
+  so on a Squid zone it stores no `x-amz-content-sha256`,
+  `x-amz-checksum-algorithm`, `x-amz-date` or copy-source SSE-C header,
+  which v19.2.6 stores, and on both it also leaves out
+  `x-amz-security-token`, which both store (`docs/ceph-upstream-bugs.md`,
+  "[radosgw stores request credentials as object
+  attrs](ceph-upstream-bugs.md#radosgw-stores-request-credentials-as-object-attrs)").
+  GET and HEAD show only the `x-amz-meta-` attrs, so a client sees no
+  difference.
+- **CopyObject refuses an object lock on a bucket without object lock.**
+  radosgw's CopyObject stores the retention and legal hold its headers ask
+  for on a bucket without object lock, where its PutObject refuses them
+  with 400 InvalidRequest (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  CopyObject stores an object lock on a bucket without object
+  lock](ceph-upstream-bugs.md#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock)").
+  rgw-go refuses the copy as the PutObject is refused. On a bucket with
+  object lock both writes answer 501 ("Writes to a versioned or object-lock
+  bucket answer 501 until versioning is served").
+- **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
+  from the bucket's lifecycle rules on a PutObject's success too
+  (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`
+  at v20.2.4). rgw-go reads no lifecycle configuration until phase 2 ("No
+  x-amz-expiration", above).
 - **A date whose time names a conversion rgw-go does not run is refused.**
   radosgw reads DeleteObject's `x-amz-delete-if-unmodified-since` and the
   admin API's date arguments, such as the usage API's `start` and `end`,
