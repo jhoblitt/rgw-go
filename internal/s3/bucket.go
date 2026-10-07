@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,12 +21,20 @@ import (
 // bucketHandlers is the bucket-scope routes; each entry binds to bucket scope.
 func bucketHandlers() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
-		"list_bucket":         listObjects,
-		"list_bucket_v2":      listObjectsV2,
-		"create_bucket":       createBucket,
-		"delete_bucket":       deleteBucket,
-		"stat_bucket":         statBucket,
-		"get_bucket_location": getBucketLocation,
+		"list_bucket":          listObjects,
+		"list_bucket_v2":       listObjectsV2,
+		"create_bucket":        createBucket,
+		"delete_bucket":        deleteBucket,
+		"stat_bucket":          statBucket,
+		"get_bucket_location":  getBucketLocation,
+		"get_acls":             getBucketACL,
+		"put_acls":             putBucketACL,
+		"get_bucket_policy":    getBucketPolicy,
+		"put_bucket_policy":    putBucketPolicy,
+		"delete_bucket_policy": deleteBucketPolicy,
+		"get_bucket_tags":      getBucketTags,
+		"put_bucket_tags":      putBucketTags,
+		"delete_bucket_tags":   deleteBucketTags,
 	}
 }
 
@@ -84,8 +93,8 @@ func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) 
 		return err
 	}
 	o.ACL = policy
-	body, err := readParamBody(r)
-	if err != nil {
+	body, err := readParamBody(r, invalidRange)
+	if err != nil && !errors.Is(err, op.ErrMissingContentLength) {
 		return err
 	}
 	lc := ""
@@ -106,36 +115,98 @@ func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) 
 	return nil
 }
 
-// readParamBody is read_all_input without chunked input
-// (rgw_rest.cc:1537-1578 at v19.2.6): a body without a Content-Length is
-// not read, which get_params passes over, and one longer than
-// rgw_max_put_param_size is InvalidRange unread. Otherwise the body is read
-// to its end through what authentication left in r.Body, so a payload that
-// fails its check fails the request with that check's error before the body
-// is used; a body that ends short of its length is RequestTimeout.
-func readParamBody(r *op.Request) ([]byte, error) {
-	if r.Body == nil || r.ContentLength <= 0 {
-		return nil, nil
+// readParamBody is RGWOp::read_all_input (rgw_op.h:215-227 at v19.2.6,
+// :229-241 at v20.2.4), which calls rgw_rest_read_all_input with chunked
+// input allowed whatever its caller asks (rgw_rest.cc:1537-1578 at v19.2.6,
+// :1542-1583 at v20.2.4):
+//   - a Content-Length over rgw_max_put_param_size is tooLarge of that limit,
+//     unread, and any other is read to its length;
+//   - a chunked body, which has none, is read whole, and is tooLarge once it
+//     outgrows chunkedReadLimit;
+//   - a request with neither is MissingContentLength, -ERR_LENGTH_REQUIRED,
+//     which CreateBucket's get_params passes over.
+//
+// The body is read through what authentication left in r.Body to its final
+// Read, past its length, so that a payload whose check fails at its end fails
+// the request with that check's error before the body is used; a body that
+// ends short of its length is RequestTimeout.
+func readParamBody(r *op.Request, tooLarge func(limit uint64) error) ([]byte, error) {
+	limit := maxPutParamSize(r)
+	n := r.ContentLength
+	switch {
+	case n < 0:
+		most := chunkedReadLimit(limit)
+		body, err := readBodyUpTo(r, most+1)
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(body)) > most {
+			return nil, tooLarge(limit)
+		}
+		return body, nil
+	case n == 0 && r.Header.Get("Content-Length") == "":
+		return nil, op.ErrMissingContentLength
+	case uint64(n) > limit:
+		return nil, tooLarge(limit)
 	}
-	maxSize := uint64(defaultMaxPutParamSize)
+	body, err := readBodyUpTo(r, n+1)
+	if err != nil {
+		return nil, err
+	}
+	// recv_body reads the length and no more.
+	return body[:min(int64(len(body)), n)], nil
+}
+
+// readBodyUpTo reads r.Body until it ends or n bytes are read.
+func readBodyUpTo(r *op.Request, n int64) ([]byte, error) {
+	src := r.Body
+	if src == nil {
+		src = http.NoBody
+	}
+	body, err := io.ReadAll(io.LimitReader(src, n))
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, op.ErrRequestTimeout
+	}
+	return body, err
+}
+
+// The buffers read_all_chunked_input reads a chunked body into
+// (rgw_rest.cc:1501-1535 at v19.2.6, :1506-1540 at v20.2.4).
+const (
+	chunkedFirstRead = 4096
+	chunkedMaxRead   = 128 << 10
+)
+
+// chunkedReadLimit is the most read_all_chunked_input takes under limit. It
+// reads into a buffer of 4096 bytes, doubling each following buffer up to
+// 128 KiB, and answers -ERANGE when a buffer fills while the buffers before
+// it and it together exceed limit, so a body one byte short of the first
+// such sum is read whole.
+func chunkedReadLimit(limit uint64) int64 {
+	need, total := uint64(chunkedFirstRead), uint64(chunkedFirstRead)
+	for total <= limit && need < chunkedMaxRead {
+		need *= 2
+		total += need
+	}
+	if total <= limit {
+		steps := (limit-total)/need + 1
+		if steps > (math.MaxInt64-total)/need {
+			return math.MaxInt64 - 1
+		}
+		total += steps * need
+	}
+	return int64(total - 1) //nolint:gosec // total is below math.MaxInt64
+}
+
+// maxPutParamSize is rgw_max_put_param_size, its default when it cannot be
+// read.
+func maxPutParamSize(r *op.Request) uint64 {
 	if r.Env.Conf != nil {
 		if v, err := r.Env.Conf.Size("rgw_max_put_param_size"); err == nil {
-			maxSize = v
+			return v
 		}
 	}
-	if uint64(r.ContentLength) > maxSize {
-		return nil, op.ErrInvalidRange
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, int64(min(maxSize, uint64(r.ContentLength)))+1)) //nolint:gosec // at most the positive ContentLength
-	switch {
-	case errors.Is(err, io.ErrUnexpectedEOF):
-		return nil, op.ErrRequestTimeout
-	case err != nil:
-		return nil, err
-	case uint64(len(body)) > maxSize:
-		return nil, op.ErrInvalidRange
-	}
-	return body, nil
+	return defaultMaxPutParamSize
 }
 
 // parseCreateBucketConfiguration reads body as RGWCreateBucketParser does,

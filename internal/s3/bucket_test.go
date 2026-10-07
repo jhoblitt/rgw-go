@@ -143,12 +143,30 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 			Entry("no LocationConstraint", config("")),
 			Entry("a prefixed root", `<s3:CreateBucketConfiguration xmlns:s3="x"><LocationConstraint>ceph-objectstore</LocationConstraint></s3:CreateBucketConfiguration>`),
 		)
-		It("ignores a body sent without a Content-Length", func() {
-			req := httptest.NewRequestWithContext(GinkgoT().Context(), http.MethodPut, "/plain", io.NopCloser(strings.NewReader("nope")))
-			req.ContentLength = -1
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			Expect(rec.Code).To(Equal(200), "read_all_input without chunked input, rgw_rest.cc:1545-1548")
+		It("reads a chunked body whole, as read_all_input allows chunked input whatever its caller asks", func() {
+			chunked := func(body string) *httptest.ResponseRecorder {
+				return serveReq(h, http.MethodPut, "/plain", io.MultiReader(strings.NewReader(body)))
+			}
+			rec := chunked("nope")
+			Expect(rec.Code).To(Equal(400), "rgw_op.h:215-227 at v19.2.6, :229-241 at v20.2.4")
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidArgument</Code>"))
+			rec = chunked(config("<LocationConstraint>zz</LocationConstraint>"))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidLocationConstraint</Code>"))
+			Expect(chunked(config("<LocationConstraint>ceph-objectstore</LocationConstraint>")).Code).To(Equal(200))
+		})
+		It("bounds a chunked body by read_all_chunked_input's buffers, not the limit itself", func() {
+			env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_max_put_param_size": "16"})
+			body := config("<LocationConstraint>ceph-objectstore</LocationConstraint>")
+			chunked := func(n int) *httptest.ResponseRecorder {
+				return serveReq(h, http.MethodPut, "/plain", io.MultiReader(strings.NewReader(body+strings.Repeat(" ", n-len(body)))))
+			}
+			Expect(chunked(4095).Code).To(Equal(200), "the first 4096-byte buffer never fills, rgw_rest.cc:1526-1532 at v20.2.4")
+			rec := chunked(4096)
+			Expect(rec.Code).To(Equal(416), "a full buffer past the limit is -ERANGE")
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidRange</Code>"))
+		})
+		It("creates the bucket for a request with neither a length nor a chunked body", func() {
+			Expect(put("/plain", "").Code).To(Equal(200), "get_params passes over -ERR_LENGTH_REQUIRED, rgw_rest_s3.cc:2491-2494 at v19.2.6")
 		})
 		It("refuses a body past rgw_max_put_param_size as InvalidRange", func() {
 			env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_max_put_param_size": "16"})
