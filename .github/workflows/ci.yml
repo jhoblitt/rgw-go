@@ -95,8 +95,8 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      - name: go vet, go fix, go mod tidy, go generate leave no diff; release pins match
-        run: make vet fix-check tidy-check generate-check release-pins-check
+      - name: go vet, go fix, go mod tidy, go generate leave no diff; release pins and parity options match
+        run: make vet fix-check tidy-check generate-check release-pins-check parity-options-check
 
   govulncheck:
     runs-on: ubuntu-latest
