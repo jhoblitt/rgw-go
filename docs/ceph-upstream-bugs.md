@@ -226,6 +226,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ListParts drops its refusal of an empty upload id](#radosgws-listparts-drops-its-refusal-of-an-empty-upload-id) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload Location has no scheme under a configured domain](#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain) | pending | pending | ✓ |
 | [radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again) | pending | pending | ✓ |
+| [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10178,3 +10179,49 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit X, Task 5, 2026-10-07, re-authorizing
   rgw-go's retried bucket writes; derived from the source, not reproduced.
+
+## radosgw's bucket link overwrites the entry point of the bucket it renames onto
+
+- **Kind:** defect, security-relevant, found by us; unfixed at v19.2.6 and
+  v20.2.4: a name takeover and an orphaned bucket, not a data hijack.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `RGWBucketAdminOp::link` builds the bucket's new key from the uid's
+    tenant and `new-bucket-name` (`rgw_bucket.cc:1081-1091`;
+    `:1232-1242`) and never reads the entry point under that key: no guard
+    asks whether another bucket owns the name.
+  - It writes the instance under the new key exclusively (`:1136-1144`;
+    `:1287-1295`), which succeeds, as that key carries the bucket's own
+    id.
+  - `link_bucket` with `update_entrypoint` adds the owner's list entry
+    (`:3374`; `:3473`) and stores the entry point with `exclusive` false
+    under the `ep_data` tracker (`:3349-3350` and `:3391-3392`;
+    `:3449-3450` and `:3490-3491`), which is at version 0, so the write is
+    unchecked.
+  - So a link whose new key is a name another bucket holds points that
+    name at the linked bucket. A plain link without `new-bucket-name` does
+    the same when the uid's tenant differs from the bucket's and already
+    has a bucket of that name.
+- **Impact:** admin-only, as the route needs `buckets=write`, and
+  deterministic; no request without that cap reaches it. The name now
+  loads the linked bucket, whose own instance and index serve it, so the
+  linked bucket's owner does not reach the victim's data. The victim's
+  bucket, its instance, index and object heads, is orphaned: its owner's
+  requests by name reach the linked bucket and are refused by its ACL, and
+  the bucket comes back only through `radosgw-admin bucket link
+  --bucket-id`. Triage estimate: CVSS 6.5 within a tenant, 8.7 across
+  tenants (S:C).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A link whose bucket ends under a name
+  another bucket's entry point holds answers 409 BucketAlreadyExists
+  before writing anything, rename, cross-tenant link and link by
+  `bucket-id` alike, and the entry point is written under the version
+  read or created exclusively, so a bucket created under the name after
+  that check keeps it (`claimName` and `ChangeBucketOwner`,
+  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  unlink write differently from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08;
+  not yet disclosed.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
