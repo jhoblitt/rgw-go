@@ -280,6 +280,31 @@ var _ = Describe("Verifier identities", func() {
 		Expect(logRecords(buf)).To(BeEmpty(), "an unknown key is not an error to log")
 	})
 
+	DescribeTable("logs a key lookup's store failure once, under the request's id, with its code and none of the request's credentials",
+		func(ctx SpecContext, storeErr error, code string) {
+			const id = "tx000000000000000000001-0068d7a1b2-4155-z"
+			buf := captureLog()
+			users := &opfakes.FakeUserStore{}
+			users.GetUserByAccessKeyReturns(nil, storeErr)
+			req := signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice")
+			_, err := auth.New(cfg, users, nil).Authenticate(op.WithRequestID(ctx, id), req, anyPayload)
+			Expect(err).To(MatchError(op.ErrInvalidAccessKeyID), "LocalEngine::authenticate denies any lookup failure")
+			recs := logRecords(buf)
+			Expect(recs).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("request_id", id),
+				HaveKeyWithValue("code", code),
+			)))
+			_, sig, _ := strings.Cut(req.Header.Get("Authorization"), "Signature=")
+			Expect(sig).NotTo(BeEmpty())
+			Expect(buf.String()).NotTo(ContainSubstring("AKALICE"), "the access key")
+			Expect(buf.String()).NotTo(ContainSubstring(secretOf("alice")), "the secret")
+			Expect(buf.String()).NotTo(ContainSubstring(sig), "the signature")
+		},
+		Entry("a store error naming the key's index object",
+			fmt.Errorf("%w: reading users.keys/AKALICE: rados: timed out", op.ErrServiceUnavailable), "ServiceUnavailable"),
+	)
+
 	It("denies an rgwx-uid user that does not load, and logs a failure other than a missing user without the rgwx-uid", func(ctx SpecContext) {
 		buf := captureLog()
 		rec, err := store.GetUser(ctx, meta.UserID{ID: "carol"})

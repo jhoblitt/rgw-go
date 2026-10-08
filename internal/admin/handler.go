@@ -237,7 +237,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
-		refuseAuth(w, r, q, err)
+		refuseAuth(ctx, w, r, q, err)
 		return
 	}
 	s3.ApplyAuth(r, res)

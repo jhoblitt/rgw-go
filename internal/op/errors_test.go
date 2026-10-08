@@ -145,3 +145,17 @@ var _ = Describe("AsError", func() {
 		Expect(op.AsError(fmt.Errorf("reading: %w", context.DeadlineExceeded))).To(BeIdenticalTo(op.ErrRequestTimedOut))
 	})
 })
+
+var _ = Describe("ErrorCode", func() {
+	DescribeTable("names the code of the error AsError answers, from its sentinel",
+		func(err error, code string) {
+			Expect(op.ErrorCode(err)).To(Equal(code), "%v", err)
+		},
+		Entry("a sentinel's copy carries its sentinel's code", fmt.Errorf("x: %w", op.ErrServiceUnavailable.WithMessage("AKIDEXAMPLE")), "ServiceUnavailable"),
+		Entry("an error without an op.Error", errors.New("users.keys/AKIDEXAMPLE: rados: boom"), "InternalError"),
+		Entry("an S3 error beside a context error is the S3 error", fmt.Errorf("%w: %w", op.ErrNoSuchUser, context.Canceled), "NoSuchUser"),
+	)
+	It("takes no text from a code that is no sentinel's", func() {
+		Expect(op.ErrorCode(&op.Error{Code: "AKIDEXAMPLE", Status: 500})).To(Equal("InternalError"))
+	})
+})

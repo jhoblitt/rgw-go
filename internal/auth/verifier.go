@@ -144,7 +144,7 @@ func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord
 	rec, err := v.creds.GetUserByAccessKey(ctx, accessKey)
 	if err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {
-			slog.ErrorContext(ctx, "access key lookup failed", slog.String("code", errorCode(err)))
+			slog.ErrorContext(ctx, "access key lookup failed", slog.String("code", op.ErrorCode(err)))
 		}
 		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key does not load", op.ErrInvalidAccessKeyID)
 	}
@@ -180,18 +180,4 @@ func (v *Verifier) loadAccount(ctx context.Context, id string) (*meta.AccountInf
 		return nil, err
 	}
 	return &rec.Info, nil
-}
-
-// errorCode is the code of the S3 error err maps to, for a log that must not
-// carry err's text: a store's error names the object it read, and the object
-// a lookup by the request's access key or rgwx-uid reads is named by that
-// value. The code is the sentinel's that errors.Is matches, so nothing of err
-// flows into the log.
-func errorCode(err error) string {
-	for _, s := range op.Errors() {
-		if errors.Is(err, s) {
-			return s.Code
-		}
-	}
-	return op.ErrInternalError.Code
 }

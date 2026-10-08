@@ -219,6 +219,20 @@ func AsError(err error) *Error {
 	return ErrInternalError
 }
 
+// ErrorCode is the code of the S3 error err maps to, for a log that must not
+// carry err's text: a store's error names the object it read, and the object
+// a lookup by a request's access key reads is named by that key. The code is
+// the sentinel's that errors.Is matches, so nothing of err flows into the
+// log; an error matching no sentinel is InternalError.
+func ErrorCode(err error) string {
+	for _, s := range errorSet {
+		if errors.Is(err, s) {
+			return s.Code
+		}
+	}
+	return ErrInternalError.Code
+}
+
 // FromRADOS maps a seam error to the S3 error radosgw's rgw_http_s3_errors
 // table implies for scope: ENOENT is NoSuchBucket in a bucket op, NoSuchKey in
 // an object op, NoSuchUser and NoSuchUpload likewise, and radosgw's own ENOENT

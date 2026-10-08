@@ -50,7 +50,7 @@ func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRe
 	if owner.User == nil {
 		acct, err := v.loadAccount(ctx, owner.Account)
 		if err != nil {
-			slog.ErrorContext(ctx, "rgwx-uid account lookup failed", slog.String("code", errorCode(err)))
+			slog.ErrorContext(ctx, "rgwx-uid account lookup failed", slog.String("code", op.ErrorCode(err)))
 			return op.Identity{}, fmt.Errorf("%w: the rgwx-uid account does not load", op.ErrAccessDenied)
 		}
 		id.Owner, id.Tenant = owner, acct.Tenant
@@ -58,7 +58,7 @@ func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRe
 	}
 	if _, err := v.creds.GetUser(ctx, *owner.User); err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {
-			slog.ErrorContext(ctx, "rgwx-uid user lookup failed", slog.String("code", errorCode(err)))
+			slog.ErrorContext(ctx, "rgwx-uid user lookup failed", slog.String("code", op.ErrorCode(err)))
 		}
 		return op.Identity{}, fmt.Errorf("%w: the rgwx-uid user does not load", op.ErrAccessDenied)
 	}

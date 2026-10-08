@@ -330,7 +330,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
-		refuseAuth(w, r, err)
+		refuseAuth(ctx, w, r, err)
 		return
 	}
 	ApplyAuth(r, res)
@@ -378,12 +378,23 @@ func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error
 	WriteError(ctx, w, r, err)
 }
 
-// refuseAuth answers a failed authentication as refuse does and logs
-// nothing: an authenticator's error can carry what the request's
-// credentials hold, and the authenticator logs its own failures.
-func refuseAuth(w http.ResponseWriter, r *op.Request, err error) {
+// refuseAuth answers a failed authentication as refuse does, after
+// LogAuthError.
+func refuseAuth(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	r.Bucket = ""
+	LogAuthError(ctx, err)
 	writeErrorDocument(w, r, op.AsError(err))
+}
+
+// LogAuthError logs a failed authentication's server error, a store's
+// failure rather than a refusal, by its code alone, as an authenticator's
+// error can carry what the request's credentials hold. It logs no refusal:
+// the verifier logs the failed lookup behind one itself. The admin handler
+// logs its authentication failures through it too.
+func LogAuthError(ctx context.Context, err error) {
+	if op.AsError(err).Status >= http.StatusInternalServerError {
+		slog.ErrorContext(ctx, "authentication failed", slog.String("code", op.ErrorCode(err)))
+	}
 }
 
 // ApplyAuth gives r the authenticated identity and, when the authenticator

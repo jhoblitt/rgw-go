@@ -448,6 +448,23 @@ var _ = Describe("admin handler", func() {
 				return op.ErrInternalError
 			}), "admin route failed after its response started"),
 		)
+		It("logs an authentication's server error once, with the request id and its code and no credential", func() {
+			res := fx.request(http.MethodGet, "/admin/info", "admin", "Authorization", authz, "X-Test-Fail", "1")
+			Expect(res.StatusCode).To(Equal(500))
+			var errs []map[string]any
+			for _, r := range records() {
+				if r["level"] == "ERROR" {
+					errs = append(errs, r)
+				}
+			}
+			Expect(errs).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("msg", "authentication failed"),
+				HaveKeyWithValue("request_id", res.Header.Get("x-amz-request-id")),
+				HaveKeyWithValue("code", "InternalError"),
+			)))
+			Expect(logs.String()).NotTo(ContainSubstring(secret), "the signature")
+			Expect(logs.String()).NotTo(ContainSubstring("AKIDEXAMPLE"), "the access key")
+		})
 		It("never logs credential material an authentication failure carries", func() {
 			res := fx.request(http.MethodGet, "/admin/info", "admin", "Authorization", authz, "X-Test-Fail", "1")
 			Expect(res.StatusCode).To(Equal(500))

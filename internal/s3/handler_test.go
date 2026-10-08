@@ -620,6 +620,63 @@ var _ = Describe("Handler", func() {
 			Expect(logRecords(buf)).To(BeEmpty())
 		})
 	})
+	Describe("an authentication's error", func() {
+		const (
+			keyID  = "AKIAEXAMPLEKEYID0002"
+			secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+			sig    = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+			authz  = "AWS4-HMAC-SHA256 Credential=" + keyID + "/20250927/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=" + sig
+
+			presigned = "/plain/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=" + keyID +
+				"%2F20250927%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-SignedHeaders=host&X-Amz-Signature=" + sig
+		)
+		// failing is an authenticator whose error carries everything the
+		// request's credentials hold, the secret its store read included.
+		failing := func(sentinel *op.Error) s3.Authenticator {
+			return s3.AuthenticatorFunc(func(_ context.Context, r *http.Request, _ op.PayloadForms) (*op.AuthResult, error) {
+				return nil, fmt.Errorf("%w: reading users.keys/%s with secret %s for %q?%s",
+					sentinel, keyID, secret, r.Header.Get("Authorization"), r.URL.RawQuery)
+			})
+		}
+		DescribeTable("logs a server error once, with the request id and its code and none of the request's credentials",
+			func(sentinel *op.Error, target string, hdr ...string) {
+				buf := captureLog()
+				h = newHandler(store, failing(sentinel), s3.Config{})
+				rec := get(target, hdr...)
+				Expect(rec.Code).To(Equal(sentinel.Status))
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>" + sentinel.Code + "</Code>"))
+				Expect(logRecords(buf)).To(ConsistOf(SatisfyAll(
+					HaveKeyWithValue("level", "ERROR"),
+					HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+					HaveKeyWithValue("code", sentinel.Code),
+				)))
+				Expect(buf.String()).NotTo(ContainSubstring(keyID), "the access key")
+				Expect(buf.String()).NotTo(ContainSubstring(secret), "the secret")
+				Expect(buf.String()).NotTo(ContainSubstring(sig), "the signature")
+			},
+			Entry("a store failure, its credentials in the Authorization header", op.ErrServiceUnavailable, "/plain/k", "Authorization", authz),
+			Entry("a store failure, its credentials in a presigned query", op.ErrServiceUnavailable, presigned),
+			Entry("an InternalError", op.ErrInternalError, "/plain/k", "Authorization", authz),
+		)
+		It("logs an authenticator-built code as InternalError, taking no text from it", func() {
+			buf := captureLog()
+			h = newHandler(store, s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+				return nil, &op.Error{Code: keyID, Status: 500}
+			}), s3.Config{})
+			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(500))
+			Expect(logRecords(buf)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("code", "InternalError"),
+			)))
+			Expect(buf.String()).NotTo(ContainSubstring(keyID), "the access key")
+		})
+		It("logs nothing for a refusal", func() {
+			buf := captureLog()
+			h = newHandler(store, failing(op.ErrSignatureDoesNotMatch), s3.Config{})
+			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(403))
+			Expect(logRecords(buf)).To(BeEmpty())
+		})
+	})
 	Describe("the request id", func() {
 		It("is on every line logged while a request is served: the authenticator's, the op layer's and the handler's", func(ctx SpecContext) {
 			buf := captureLogAt(slog.LevelDebug)
