@@ -967,14 +967,7 @@ var _ = Describe("multipart handlers", func() {
 		BeforeEach(func(ctx SpecContext) {
 			id = w.initUpload(w.alice, "/plain/k")
 			Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x").Code).To(Equal(200))
-			w.setBucketInfo(ctx, func(i *meta.BucketInfo) {
-				i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
-				i.Quota = meta.Quota{MaxSize: -1, MaxObjects: 0, Enabled: true}
-			})
-			w.setBucketAttrs(ctx, map[string][]byte{
-				op.AttrBucketEncryption: {1},
-				op.AttrPublicAccess:     encodePublicAccess(acl.PublicAccessBlock{BlockPublicACLs: true}),
-			})
+			w.configureStoredState(ctx)
 		})
 		DescribeTable("is answered 403 AccessDenied, whatever the store holds",
 			func(ctx SpecContext, method string, target func(id string) string, body string, hdr []string) {
