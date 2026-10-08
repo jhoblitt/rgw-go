@@ -239,6 +239,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account removal deletes a name redirect another account holds](#radosgws-account-removal-deletes-a-name-redirect-another-account-holds) | pending | pending | ✓ |
 | [A stopped account removal or rename blocks the name and email for good](#a-stopped-account-removal-or-rename-blocks-the-name-and-email-for-good) | pending | pending | ✓ |
 | [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
+| [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10783,3 +10784,45 @@ Every new entry adds its row to this table, in document order.
 - **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
   admin API's user writes for account membership; derived from the
   source, not reproduced.
+
+## radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: an admin's typo or an
+  oversized value lifts an account limit. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; a line stands at both tags
+  unless a pair is given, v19.2.6's then v20.2.4's.
+  - `RGWOp_Account_Create` and `RGWOp_Account_Modify` read `max-users`,
+    `max-roles`, `max-groups`, `max-access-keys` and `max-buckets` with
+    `RESTArgs::get_int32` into `int32_t`s that start at 0, discard its
+    return, and apply each value whose argument exists
+    (`rgw_rest_account.cc:39-72` and `:131-164`).
+  - `get_int32` sets `*existed` before it parses and, when `stringtol`
+    refuses the value, returns -EINVAL without writing it
+    (`rgw_rest.cc:936-955`; `:941-960`). `stringtol` is `strtol` cast to
+    `int32_t`, refusing only `LONG_MAX` and trailing text, and an empty
+    value parses as 0 (`rgw_string.h:70-84`).
+  - An account's `max_buckets` of 0 is no limit and a negative one refuses
+    every bucket (`check_owner_max_buckets`, `rgw_op.cc:3170-3190`;
+    `:3398-3418`). A negative `max_users`, `max_access_keys`, `max_groups`
+    or `max_roles` is no limit (`rgw_rest_iam_user.cc:175` and `:936`,
+    `rgw_rest_iam_group.cc:175`, `rgw_rest_role.cc:147`).
+- **Impact:**
+  - `max-buckets=abc`, or an empty `max-buckets=`, stores 0: the account
+    may create buckets without limit.
+  - A limit past int32 wraps: `max-users=4294967295` stores -1, no limit,
+    and `max-buckets=4294967297` stores 1.
+  - Each answers 200 with the stored account in the body. Admin-only:
+    create and modify need `accounts=write`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Create and modify answer 400
+  InvalidArgument, after the cap check and storing nothing, for a limit
+  that is empty, that `stringtol` refuses, or that int32 cannot hold
+  (`accountParams`, `internal/admin/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
+  account routes' argument handling; derived from the source, not
+  reproduced.
