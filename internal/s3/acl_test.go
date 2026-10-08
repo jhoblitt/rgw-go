@@ -128,7 +128,7 @@ var _ = Describe("bucket get_acls and put_acls", func() {
 	}
 	storedACL := func(ctx context.Context) acl.Policy {
 		GinkgoHelper()
-		p, err := op.BucketACLFor(w.bucket(ctx))
+		p, err := op.BucketACLFor(ctx, w.bucket(ctx))
 		Expect(err).NotTo(HaveOccurred())
 		return p
 	}

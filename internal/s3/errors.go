@@ -37,8 +37,7 @@ type errorDocument struct {
 func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	e := op.AsError(err)
 	if errors.Is(e, op.ErrInternalError) || errors.Is(e, op.ErrUnknown) {
-		slog.ErrorContext(ctx, "request failed", slog.String("request_id", r.ID),
-			slog.String("code", e.Code), slog.Any("error", err))
+		slog.ErrorContext(ctx, "request failed", slog.String("code", e.Code), slog.Any("error", err))
 	}
 	writeErrorDocument(w, r, e)
 }

@@ -141,6 +141,6 @@ func writeChunkedXML(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 		err = c.flush()
 	}
 	if err != nil {
-		slog.DebugContext(ctx, "chunked response not delivered", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.DebugContext(ctx, "chunked response not delivered", slog.Any("error", err))
 	}
 }

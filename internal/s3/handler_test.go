@@ -70,14 +70,18 @@ func serveReq(h http.Handler, method, target string, body io.Reader, hdr ...stri
 	return rec
 }
 
-// captureLog sends slog's default logger to a buffer as JSON until the spec
-// ends. slog.SetDefault also points the log package at the new handler, and
+// captureLog is captureLogAt at slog's default level, info.
+func captureLog() *bytes.Buffer { return captureLogAt(slog.LevelInfo) }
+
+// captureLogAt sends slog's default logger at level to a buffer as JSON until
+// the spec ends, through the request-id handler the binary installs.
+// slog.SetDefault also points the log package at the new handler, and
 // restoring the old default leaves it there, so log's writer and flags are
 // restored too.
-func captureLog() *bytes.Buffer {
+func captureLogAt(level slog.Level) *bytes.Buffer {
 	var buf bytes.Buffer
 	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level}))))
 	DeferCleanup(func() {
 		slog.SetDefault(oldLogger)
 		log.SetOutput(oldWriter)
@@ -615,6 +619,58 @@ var _ = Describe("Handler", func() {
 			Expect(get("/").Code).To(Equal(404))
 			Expect(logRecords(buf)).To(BeEmpty())
 		})
+	})
+	Describe("the request id", func() {
+		It("is on every line logged while a request is served: the authenticator's, the op layer's and the handler's", func(ctx SpecContext) {
+			buf := captureLogAt(slog.LevelDebug)
+			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+			// A bucket without an ACL makes the op layer warn as it builds one.
+			_, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(alice.Info.UserID)})
+			Expect(err).NotTo(HaveOccurred())
+			as := s3.AuthenticatorFunc(func(actx context.Context, r *http.Request, p op.PayloadForms) (*op.AuthResult, error) {
+				slog.InfoContext(actx, "authenticating")
+				return authAs(alice).Authenticate(actx, r, p)
+			})
+			h = newHandler(store, as, s3.Config{})
+			rec := get("/plain?acl")
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			recs := logRecords(buf)
+			Expect(recs).To(ContainElements(
+				HaveKeyWithValue("msg", "authenticating"),
+				HaveKeyWithValue("msg", "couldn't find acl header for bucket, generating default"),
+				HaveKeyWithValue("msg", "request done"),
+			))
+			for _, r := range recs {
+				Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+			}
+			Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
+		})
+		DescribeTable("is on every line of a request that fails, once",
+			func(route s3.HandlerFunc, method, msg string) {
+				buf := captureLogAt(slog.LevelDebug)
+				if route != nil {
+					h.Register("list_buckets", route)
+				}
+				rec := serveReq(h, method, "/", nil)
+				recs := logRecords(buf)
+				Expect(recs).To(ContainElement(HaveKeyWithValue("msg", msg)))
+				for _, r := range recs {
+					Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+				}
+				Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
+			},
+			Entry("refused before dispatch", nil, "PATCH", "request done"),
+			Entry("a route's InternalError", s3.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request) error {
+				return fmt.Errorf("%w: rados: timed out", op.ErrInternalError)
+			}), http.MethodGet, "request failed"),
+			Entry("a route that panics", s3.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request) error {
+				panic("boom")
+			}), http.MethodGet, "request handler panicked"),
+			Entry("a route that fails after its response started", s3.HandlerFunc(func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+				w.WriteHeader(200)
+				return op.ErrInternalError
+			}), http.MethodGet, "route failed after its response started"),
+		)
 	})
 	Describe("usage logging", func() {
 		It("logs a successful ListBuckets once, with its final status and bytes", func() {

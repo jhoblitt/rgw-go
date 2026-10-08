@@ -70,7 +70,7 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 		err = cx.flush()
 	}
 	if err != nil {
-		slog.DebugContext(ctx, "copy result not delivered", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.DebugContext(ctx, "copy result not delivered", slog.Any("error", err))
 	}
 	return nil
 }

@@ -129,7 +129,7 @@ func putObjectChecks(ctx context.Context, r *op.Request, o *op.PutObject) error 
 // for the bucket-owner canned ACLs the owner of the bucket's ACL,
 // s->bucket_owner. Its errors are mapped through authz.ErrorFor.
 func newObjectACL(ctx context.Context, r *op.Request) (acl.Policy, error) {
-	bucketACL, err := op.BucketACLFor(r.BucketRec)
+	bucketACL, err := op.BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
 		return acl.Policy{}, err
 	}

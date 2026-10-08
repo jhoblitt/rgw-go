@@ -80,11 +80,11 @@ func listBuckets(ctx context.Context, w http.ResponseWriter, r *op.Request) erro
 		return err
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "bucket listing failed after the response started", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.WarnContext(ctx, "bucket listing failed after the response started", slog.Any("error", err))
 	}
 	cx.add("</Buckets></ListAllMyBucketsResult>")
 	if err := cx.flush(); err != nil {
-		slog.DebugContext(ctx, "bucket listing not delivered", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.DebugContext(ctx, "bucket listing not delivered", slog.Any("error", err))
 	}
 	return nil
 }

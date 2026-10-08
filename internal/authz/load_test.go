@@ -1,7 +1,10 @@
 package authz_test
 
 import (
+	"bytes"
 	"errors"
+	"log"
+	"log/slog"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -75,41 +78,58 @@ func resourceAccounts(p *policy.Policy) []string {
 }
 
 var _ = Describe("bucketPolicy", func() {
-	It("is nil for a bucket without a policy", func() {
-		Expect(authz.BucketPolicy(bucketRecord(nil), "t", denc.Squid)).To(BeNil())
-		Expect(authz.BucketPolicy(nil, "t", denc.Squid)).To(BeNil(), "no bucket")
+	It("is nil for a bucket without a policy", func(ctx SpecContext) {
+		Expect(authz.BucketPolicy(ctx, bucketRecord(nil), "t", denc.Squid)).To(BeNil())
+		Expect(authz.BucketPolicy(ctx, nil, "t", denc.Squid)).To(BeNil(), "no bucket")
 	})
 
-	It("parses the stored policy with the tenant given", func() {
+	It("parses the stored policy with the tenant given", func(ctx SpecContext) {
 		rec := bucketRecord(map[string][]byte{attrIAMPolicy: []byte(getObjectPolicy)})
-		p, err := authz.BucketPolicy(rec, "t", denc.Squid)
+		p, err := authz.BucketPolicy(ctx, rec, "t", denc.Squid)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p.Text).To(Equal(getObjectPolicy))
 		Expect(resourceAccounts(p)).To(Equal([]string{"t"}))
 	})
 
-	It("drops an unsupported principal, as a stored policy is parsed", func() {
+	It("drops an unsupported principal, as a stored policy is parsed", func(ctx SpecContext) {
 		rec := bucketRecord(map[string][]byte{attrIAMPolicy: []byte(`{"Version": "2012-10-17", "Statement": [{
 			"Effect": "Allow", "Principal": {"CanonicalUser": "x"}, "Action": "s3:GetObject", "Resource": "*"}]}`)})
-		p, err := authz.BucketPolicy(rec, "", denc.Squid)
+		p, err := authz.BucketPolicy(ctx, rec, "", denc.Squid)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p.Statements).To(HaveLen(1))
 		Expect(p.Statements[0].Principals).To(BeEmpty())
 	})
 
-	It("returns the parse error for a document that does not parse", func() {
+	It("logs a dropped principal under the request's context, so the line carries its id", func(ctx SpecContext) {
+		var buf bytes.Buffer
+		oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+		slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, nil))))
+		DeferCleanup(func() {
+			slog.SetDefault(oldLogger)
+			log.SetOutput(oldWriter)
+			log.SetFlags(oldFlags)
+		})
+		rec := bucketRecord(map[string][]byte{attrIAMPolicy: []byte(`{"Version": "2012-10-17", "Statement": [{
+			"Effect": "Allow", "Principal": {"CanonicalUser": "x"}, "Action": "s3:GetObject", "Resource": "*"}]}`)})
+		_, err := authz.BucketPolicy(op.WithRequestID(ctx, "tx1"), rec, "", denc.Squid)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(buf.String()).To(ContainSubstring(`"msg":"ignored policy principal"`))
+		Expect(buf.String()).To(ContainSubstring(`"request_id":"tx1"`))
+	})
+
+	It("returns the parse error for a document that does not parse", func(ctx SpecContext) {
 		rec := bucketRecord(map[string][]byte{attrIAMPolicy: []byte("{not json")})
-		_, err := authz.BucketPolicy(rec, "t", denc.Squid)
+		_, err := authz.BucketPolicy(ctx, rec, "t", denc.Squid)
 		var pe *policy.ParseError
 		Expect(errors.As(err, &pe)).To(BeTrue(), "got %v", err)
 	})
 
-	It("parses with the release's vocabulary", func() {
+	It("parses with the release's vocabulary", func(ctx SpecContext) {
 		rec := bucketRecord(map[string][]byte{attrIAMPolicy: []byte(`{"Version": "2012-10-17", "Statement": [{
 			"Effect": "Allow", "Principal": "*", "Action": "s3:GetObjectAttributes", "Resource": "*"}]}`)})
-		_, err := authz.BucketPolicy(rec, "", denc.Squid)
+		_, err := authz.BucketPolicy(ctx, rec, "", denc.Squid)
 		Expect(err).To(HaveOccurred(), "squid")
-		_, err = authz.BucketPolicy(rec, "", denc.Tentacle)
+		_, err = authz.BucketPolicy(ctx, rec, "", denc.Tentacle)
 		Expect(err).NotTo(HaveOccurred(), "tentacle")
 	})
 })

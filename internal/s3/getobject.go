@@ -80,14 +80,14 @@ func (g *objectReads) getObject(ctx context.Context, w http.ResponseWriter, r *o
 	o.Sink = sink
 	err := op.Run(ctx, deferredParams{Op: o, err: paramErr}, r)
 	for _, attr := range sink.undecodable {
-		slog.WarnContext(ctx, "omitting x-amz-restore: a restore attr does not decode", slog.String("request_id", r.ID),
+		slog.WarnContext(ctx, "omitting x-amz-restore: a restore attr does not decode",
 			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.String("attr", attr))
 	}
 	switch {
 	case err == nil:
 		return nil
 	case sink.wrote:
-		slog.WarnContext(ctx, "object read failed after the response started", slog.String("request_id", r.ID),
+		slog.WarnContext(ctx, "object read failed after the response started",
 			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.Any("error", err))
 		// What was written goes out first, as radosgw's has, and the abort
 		// then ends the connection where the body stopped.

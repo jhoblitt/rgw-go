@@ -401,10 +401,53 @@ var _ = Describe("admin handler", func() {
 		BeforeEach(func() {
 			logs = &bytes.Buffer{}
 			old := slog.Default()
-			slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+			slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 			DeferCleanup(func() { slog.SetDefault(old) })
 		})
+		records := func() []map[string]any {
+			GinkgoHelper()
+			var recs []map[string]any
+			for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+				var rec map[string]any
+				Expect(json.Unmarshal([]byte(line), &rec)).To(Succeed(), line)
+				recs = append(recs, rec)
+			}
+			return recs
+		}
 
+		DescribeTable("puts the request id on every line logged while a request is served, once",
+			func(route admin.HandlerFunc, msgs ...string) {
+				fx.handler.Register("get_info", route)
+				res := fx.get("/admin/info", "admin")
+				recs := records()
+				for _, msg := range msgs {
+					Expect(recs).To(ContainElement(HaveKeyWithValue("msg", msg)))
+				}
+				for _, r := range recs {
+					Expect(r).To(HaveKeyWithValue("request_id", res.Header.Get("x-amz-request-id")), "line %q", r["msg"])
+				}
+				Expect(strings.Count(logs.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
+			},
+			Entry("a route and the op layer under it", admin.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *op.Request, _ admin.Request) error {
+				slog.InfoContext(ctx, "serving")
+				_, err := op.BucketACLFor(ctx, &op.BucketRecord{Info: meta.BucketInfo{Bucket: meta.BucketID{Name: "b"}}})
+				if err != nil {
+					return err
+				}
+				admin.WriteEmpty(w, r, http.StatusOK)
+				return nil
+			}), "serving", "couldn't find acl header for bucket, generating default", "admin request done"),
+			Entry("a route's InternalError", admin.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request, admin.Request) error {
+				return fmt.Errorf("%w: rados: timed out", op.ErrInternalError)
+			}), "admin request failed", "admin request done"),
+			Entry("a route that panics", admin.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request, admin.Request) error {
+				panic("boom")
+			}), "admin request handler panicked"),
+			Entry("a route that fails after its response started", admin.HandlerFunc(func(_ context.Context, w http.ResponseWriter, _ *op.Request, _ admin.Request) error {
+				w.WriteHeader(http.StatusOK)
+				return op.ErrInternalError
+			}), "admin route failed after its response started"),
+		)
 		It("never logs credential material an authentication failure carries", func() {
 			res := fx.request(http.MethodGet, "/admin/info", "admin", "Authorization", authz, "X-Test-Fail", "1")
 			Expect(res.StatusCode).To(Equal(500))

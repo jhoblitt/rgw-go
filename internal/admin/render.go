@@ -128,8 +128,7 @@ func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 		e = op.ErrNotImplemented
 	}
 	if errors.Is(e, op.ErrInternalError) || errors.Is(e, op.ErrUnknown) {
-		slog.ErrorContext(ctx, "admin request failed", slog.String("request_id", r.ID),
-			slog.String("code", e.Code), slog.Any("error", err))
+		slog.ErrorContext(ctx, "admin request failed", slog.String("code", e.Code), slog.Any("error", err))
 	}
 	writeErrorDocument(w, r, q, e)
 }

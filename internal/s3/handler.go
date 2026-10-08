@@ -197,10 +197,10 @@ type served struct {
 // refused requests included, as process_request's tail does (:454-462 at
 // v19.2.6, :461-469 at v20.2.4). A panic anywhere before anything was
 // written is answered 500, observed and usage-logged; one after it ends the
-// connection, so a truncated body is never framed as complete.
+// connection, so a truncated body is never framed as complete. Every line
+// logged under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	ctx := req.Context()
 	h.metrics.InFlight(1)
 	defer h.metrics.InFlight(-1)
 
@@ -208,6 +208,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// radosgw draws each request's number at random (StoreDriver::get_new_req_id,
 	// rgw_sal_store.h:27-29 at v19.2.6, :101-103 at v20.2.4).
 	id := op.TransID(rand.Uint64(), now, h.cfg.TransIDSuffix) //nolint:gosec // a request id must be unique, not unpredictable
+	ctx := op.WithRequestID(req.Context(), id)
 	w.Header().Set("x-amz-request-id", id)
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
@@ -228,7 +229,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		elapsed := time.Since(start)
 		h.metrics.Observe(st.route, r.Status, elapsed, r.BytesIn, r.BytesOut)
 		op.LogUsage(ctx, r, st.usage)
-		slog.DebugContext(ctx, "request done", slog.String("request_id", r.ID), slog.String("op", st.route),
+		slog.DebugContext(ctx, "request done", slog.String("op", st.route),
 			slog.Int("status", r.Status), slog.Duration("elapsed", elapsed))
 		if abort {
 			panic(http.ErrAbortHandler)
@@ -243,7 +244,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			abort = true
 			return
 		}
-		slog.ErrorContext(ctx, "request handler panicked", slog.String("request_id", id), slog.String("op", st.route),
+		slog.ErrorContext(ctx, "request handler panicked", slog.String("op", st.route),
 			slog.Any("panic", v), slog.String("stack", string(debug.Stack())))
 		switch {
 		case rw.wrote:
@@ -361,7 +362,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 	}
 	if err := fn(ctx, w, r); err != nil {
 		if w.wrote {
-			slog.WarnContext(ctx, "route failed after its response started", slog.String("request_id", r.ID),
+			slog.WarnContext(ctx, "route failed after its response started",
 				slog.String("op", route.Name), slog.Any("error", err))
 			return
 		}

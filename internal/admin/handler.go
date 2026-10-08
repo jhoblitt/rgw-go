@@ -123,15 +123,16 @@ func (h *Handler) InFlight() int64 { return h.inflight.Load() }
 // written it observes the request; it logs no usage, as radosgw registers
 // the admin managers without set_logging (rgw_appmain.cc:354-361 at
 // v19.2.6). A panic before anything was written is answered 500; one after
-// it ends the connection.
+// it ends the connection. Every line logged under the request's context
+// carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	ctx := req.Context()
 	h.metrics.InFlight(1)
 	defer h.metrics.InFlight(-1)
 
 	now := h.env.Clock()
 	id := op.TransID(rand.Uint64(), now, h.cfg.TransIDSuffix) //nolint:gosec // a request id must be unique, not unpredictable
+	ctx := op.WithRequestID(req.Context(), id)
 	w.Header().Set("x-amz-request-id", id)
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
@@ -162,7 +163,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		elapsed := time.Since(start)
 		h.metrics.Observe(st.route, r.Status, elapsed, r.BytesIn, r.BytesOut)
-		slog.DebugContext(ctx, "admin request done", slog.String("request_id", id), slog.String("op", st.route),
+		slog.DebugContext(ctx, "admin request done", slog.String("op", st.route),
 			slog.Int("status", r.Status), slog.Duration("elapsed", elapsed))
 		if abort {
 			panic(http.ErrAbortHandler)
@@ -177,7 +178,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			abort = true
 			return
 		}
-		slog.ErrorContext(ctx, "admin request handler panicked", slog.String("request_id", id), slog.String("op", st.route),
+		slog.ErrorContext(ctx, "admin request handler panicked", slog.String("op", st.route),
 			slog.Any("panic", v), slog.String("stack", string(debug.Stack())))
 		if rw.wrote {
 			abort = true
@@ -248,7 +249,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	if err := h.routes[route.Name](ctx, w, r, q); err != nil {
 		if w.wrote {
-			slog.WarnContext(ctx, "admin route failed after its response started", slog.String("request_id", r.ID),
+			slog.WarnContext(ctx, "admin route failed after its response started",
 				slog.String("op", route.Name), slog.Any("error", err))
 			return
 		}

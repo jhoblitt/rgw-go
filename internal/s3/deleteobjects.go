@@ -45,7 +45,7 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 	)
 	deliver := func() {
 		if err := cx.flush(); err != nil {
-			slog.DebugContext(ctx, "delete result not delivered", slog.String("request_id", r.ID), slog.Any("error", err))
+			slog.DebugContext(ctx, "delete result not delivered", slog.Any("error", err))
 		}
 	}
 	o := &op.DeleteObjects{
@@ -85,7 +85,7 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 	case cx == nil:
 		return err
 	case err != nil:
-		slog.WarnContext(ctx, "multi-object delete ended after its response started", slog.String("request_id", r.ID), slog.Any("error", err))
+		slog.WarnContext(ctx, "multi-object delete ended after its response started", slog.Any("error", err))
 		return nil
 	}
 	cx.add("</DeleteResult>")

@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
@@ -26,7 +27,7 @@ const (
 // tenant and, as for every stored policy, unsupported principals dropped; nil
 // for a bucket without one. A policy that does not parse is the
 // *policy.ParseError, wrapped.
-func bucketPolicy(rec *op.BucketRecord, tenant string, r denc.Release) (*policy.Policy, error) {
+func bucketPolicy(ctx context.Context, rec *op.BucketRecord, tenant string, r denc.Release) (*policy.Policy, error) {
 	if rec == nil {
 		return nil, nil
 	}
@@ -34,7 +35,7 @@ func bucketPolicy(rec *op.BucketRecord, tenant string, r denc.Release) (*policy.
 	if !ok {
 		return nil, nil
 	}
-	p, err := policy.Parse(string(b), policy.ParseOptions{Tenant: &tenant, Release: r})
+	p, err := policy.Parse(string(b), policy.ParseOptions{Tenant: &tenant, Release: r, Context: ctx})
 	if err != nil {
 		return nil, fmt.Errorf("parsing the policy of bucket %s: %w", rec.Info.Bucket.Name, err)
 	}

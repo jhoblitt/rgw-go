@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cli"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
@@ -48,6 +49,25 @@ var _ = Describe("Run", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.String()).To(Equal(version.String()+"\n"), "version output")
 	})
+	DescribeTable("installs a logger that puts a request's id on the lines logged under its context, and only on those",
+		func(ctx SpecContext, format, inside, outside string) {
+			oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+			DeferCleanup(func() {
+				slog.SetDefault(oldLogger)
+				log.SetOutput(oldWriter)
+				log.SetFlags(oldFlags)
+			})
+			var logs bytes.Buffer
+			Expect(cli.Run(ctx, []string{"--log-format=" + format, "version"}, strings.NewReader(""), io.Discard, &logs)).To(Succeed())
+			slog.InfoContext(op.WithRequestID(ctx, "tx1"), "inside")
+			slog.InfoContext(ctx, "outside")
+			Expect(logs.String()).To(ContainSubstring(inside))
+			Expect(logs.String()).To(ContainSubstring(outside))
+			Expect(strings.Count(logs.String(), "request_id")).To(Equal(1))
+		},
+		Entry("as JSON", "json", `"msg":"inside","request_id":"tx1"}`, `"msg":"outside"}`),
+		Entry("as text", "text", "msg=inside request_id=tx1\n", "msg=outside\n"),
+	)
 })
 
 var _ = Describe("Argv", func() {

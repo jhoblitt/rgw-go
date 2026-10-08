@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
@@ -112,6 +113,6 @@ func setupLogging(v *viper.Viper, w io.Writer) error {
 	default:
 		return fmt.Errorf("unknown log format %q", format)
 	}
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(op.NewLogHandler(handler)))
 	return nil
 }

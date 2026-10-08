@@ -113,7 +113,7 @@ var _ = Describe("bucket ops", func() {
 			Expect(rec.Info.Owner).To(Equal(meta.UserOwner(bob.Info.UserID)))
 			Expect(rec.Info.Zonegroup).To(Equal(zgID))
 			Expect(rec.Info.PlacementRule).To(Equal(meta.PlacementRule{Name: "default-placement"}))
-			got, err := op.BucketACLFor(rec)
+			got, err := op.BucketACLFor(ctx, rec)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(policyOf(bob)))
 			Expect(o.Result.Info.Bucket).To(Equal(rec.Info.Bucket))

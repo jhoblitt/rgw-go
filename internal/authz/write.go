@@ -121,7 +121,7 @@ func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolve
 		}
 		var bacl acl.Policy
 		if r.BucketRec != nil {
-			if bacl, err = op.BucketACLFor(r.BucketRec); err != nil {
+			if bacl, err = op.BucketACLFor(ctx, r.BucketRec); err != nil {
 				return acl.Policy{}, err
 			}
 		}

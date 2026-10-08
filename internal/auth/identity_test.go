@@ -84,13 +84,13 @@ func newGet(ctx context.Context, target string) *http.Request {
 }
 
 // captureLog sends slog's default logger to a buffer as JSON until the spec
-// ends. slog.SetDefault also points the log package at the new handler, and
-// restoring the old default leaves it there, so log's writer and flags are
-// restored too.
+// ends, through the request-id handler the binary installs. slog.SetDefault
+// also points the log package at the new handler, and restoring the old
+// default leaves it there, so log's writer and flags are restored too.
 func captureLog() *bytes.Buffer {
 	var buf bytes.Buffer
 	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, nil))))
 	DeferCleanup(func() {
 		slog.SetDefault(oldLogger)
 		log.SetOutput(oldWriter)

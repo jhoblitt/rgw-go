@@ -319,19 +319,19 @@ var _ = Describe("BucketACLFor", func() {
 		r.Info.Bucket.Name = "b"
 		return r
 	}
-	It("is the bucket's stored ACL", func() {
+	It("is the bucket's stored ACL", func(ctx SpecContext) {
 		stored := acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "dave"}), "Dave")
-		p, err := op.BucketACLFor(rec(map[string][]byte{meta.AttrACL: encodedPolicy(stored)}))
+		p, err := op.BucketACLFor(ctx, rec(map[string][]byte{meta.AttrACL: encodedPolicy(stored)}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p).To(Equal(stored))
 	})
-	It("is FULL_CONTROL to the bucket's owner, with no display name, when the bucket has no ACL", func() {
-		p, err := op.BucketACLFor(rec(nil))
+	It("is FULL_CONTROL to the bucket's owner, with no display name, when the bucket has no ACL", func(ctx SpecContext) {
+		p, err := op.BucketACLFor(ctx, rec(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p).To(Equal(acl.DefaultPolicy(owner(), "")))
 	})
-	It("answers UnknownError, radosgw's -EIO, for an ACL that does not decode", func() {
-		_, err := op.BucketACLFor(rec(map[string][]byte{meta.AttrACL: {}}))
+	It("answers UnknownError, radosgw's -EIO, for an ACL that does not decode", func(ctx SpecContext) {
+		_, err := op.BucketACLFor(ctx, rec(map[string][]byte{meta.AttrACL: {}}))
 		Expect(err).To(MatchError(op.ErrUnknown))
 	})
 })
