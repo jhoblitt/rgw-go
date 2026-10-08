@@ -100,27 +100,12 @@ func (c capturedParts) PutPart(ctx context.Context, up *op.Upload, n int, body i
 	return c.MultipartStore.PutPart(ctx, up, n, body, p)
 }
 
-// lockedCompletions is a multipart store whose Complete of an upload it does
-// not hold answers as the driver's does (internal/driver/mp_complete.go,
-// Complete): the RGWCompleteMultipart lock meets no meta object and no
-// earlier completion, which radosgw answers 500 "This multipart completion is
-// already in progress" (rgw_op.cc:6435-6446 at v19.2.6, :7249-7260 at
-// v20.2.4). memstore answers NoSuchUpload there.
-type lockedCompletions struct{ op.MultipartStore }
-
 // brokenUploads is a multipart store whose uploads' info cannot be read, as
 // a meta object that does not decode reads.
 type brokenUploads struct{ op.MultipartStore }
 
 func (brokenUploads) GetUpload(context.Context, *op.BucketRecord, meta.ObjKey, string) (*op.Upload, error) {
 	return nil, op.ErrUnknown
-}
-
-func (l lockedCompletions) Complete(ctx context.Context, up *op.Upload, parts []op.CompletePart) (*op.PutResult, error) {
-	if _, err := l.GetUpload(ctx, up.Bucket, up.Key, up.ID); err != nil {
-		return nil, op.ErrInternalError.WithMessage("This multipart completion is already in progress")
-	}
-	return l.MultipartStore.Complete(ctx, up, parts)
 }
 
 // expectChunkedXML checks rec is a 200 listing framed as end_header(...,
@@ -894,8 +879,7 @@ var _ = Describe("multipart handlers", func() {
 		Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x", "X-Amz-Storage-Class", "STANDARD").Code).To(Equal(200))
 	})
 
-	It("answers a completion of an upload whose meta object is gone as the driver's lock does, 500 and radosgw's message", func(ctx SpecContext) {
-		w.env.Multipart = lockedCompletions{MultipartStore: w.store}
+	It("answers a completion of a missing upload as the driver's lock does, 500 and radosgw's message", func(ctx SpecContext) {
 		rec := w.send(w.alice, http.MethodPost, "/plain/k?uploadId=2~nope", completion(md5Hex("x")))
 		expectError(rec, 500, "InternalError")
 		Expect(rec.Body.String()).To(ContainSubstring("<Message>This multipart completion is already in progress</Message>"))

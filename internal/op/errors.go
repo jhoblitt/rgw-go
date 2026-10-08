@@ -153,6 +153,13 @@ var (
 // v20.2.4). It is no row of the S3 table, so Errors leaves it out.
 var ErrMetadataNameTooLong = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.ENAMETOOLONG)}
 
+// ErrCompletionInProgress is the answer to a CompleteMultipartUpload whose
+// RGWCompleteMultipart lock cannot be taken, because another completion holds
+// it or because the upload's meta object is gone and no earlier completion
+// explains that (rgw_op.cc:6435-6446 at v19.2.6, :7249-7260 at v20.2.4). It is
+// an InternalError by message only, so it matches ErrInternalError.
+var ErrCompletionInProgress = ErrInternalError.WithMessage("This multipart completion is already in progress")
+
 // Errors returns every sentinel above, for tests and for the ops log's table.
 func Errors() []*Error { return slices.Clone(errorSet) }
 

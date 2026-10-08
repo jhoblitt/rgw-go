@@ -184,13 +184,17 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 // "-" and the part count. up's If-Match and If-None-Match are checked as a
 // PUT's are, and a refused completion leaves the upload in place. The
 // object takes the upload's attrs and up's write tag, and the upload is gone
-// once it lands.
+// once it lands. A missing upload is op.ErrCompletionInProgress, as the
+// driver answers it.
 func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePart) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, err := s.upload(up)
 	if err != nil {
-		return nil, err
+		// radosgw takes the completion lock before it reads the upload, and
+		// the lock of a meta object that is gone fails, so a missing upload
+		// reads as a completion in progress, never NoSuchUpload.
+		return nil, fmt.Errorf("%w: upload %s of %s is gone", op.ErrCompletionInProgress, up.ID, up.Key.Name)
 	}
 	parts = op.SortCompleteParts(parts)
 	uploaded := slices.Sorted(maps.Keys(u.parts))

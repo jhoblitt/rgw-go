@@ -294,8 +294,8 @@ var _ = Describe("CompleteMultipart", func() {
 		repeated := completeDoc(xmlPart("1", "x"), strings.TrimSuffix(strings.TrimPrefix(doc, "<CompleteMultipartUpload>"), "</CompleteMultipartUpload>"))
 		Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, f.bodyReq(http.MethodPost, "k", repeated))).To(Succeed())
 	})
-	It("answers NoSuchUpload for an upload that does not exist", func(ctx SpecContext) {
-		Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: "2~nope"}, f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "x"))))).To(MatchError(op.ErrNoSuchUpload))
+	It("answers a completion in progress for an upload that does not exist, as radosgw's lock does", func(ctx SpecContext) {
+		Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: "2~nope"}, f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "x"))))).To(MatchError(op.ErrCompletionInProgress))
 	})
 
 	Describe("the body, as read_all_input reads it", func() {
