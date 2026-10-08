@@ -238,6 +238,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse](#radosgws-account-quota-set-wraps-a-size-past-2-gib-and-defaults-what-it-cannot-parse) | pending | pending | ✓ |
 | [radosgw's account removal deletes a name redirect another account holds](#radosgws-account-removal-deletes-a-name-redirect-another-account-holds) | pending | pending | ✓ |
 | [A stopped account removal or rename blocks the name and email for good](#a-stopped-account-removal-or-rename-blocks-the-name-and-email-for-good) | pending | pending | ✓ |
+| [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10734,3 +10735,51 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit N, Task 7, 2026-10-08, making the RADOS
   driver's account writes retry-safe; derived from the source, not
   reproduced.
+
+## radosgw's user write can leave an account member out of the account's users index
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user that names an
+  account its removal no longer sees. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/services/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `PutOperation::put` stores the user (`svc_user_rados.cc:295-307`;
+    `:274-287`); only then does `complete` remove the old indexes, the old
+    account users entry among them (`:353-358` and `:444-455`; `:333-338`
+    and `:424-435`), and link the user into `users.<account id>`
+    (`:360-375`; `:340-355`).
+  - `complete` links only when `account_users_link` differs between the
+    old and the new record (`:360-361`; `:340-341`), the account, the
+    path and the display name.
+  - So a write that stops after `put`, on a crash or a failed step, leaves
+    the stored user naming the account with no entry, and no later write
+    adds one: the stored record, now the old one, already has that link.
+    A join, a create into the account and a display name change are all
+    such writes; a change of the name's case removes the old entry, which
+    is the new one's key too, before it links again.
+  - `remove_user_info` unlinks the entry (`:601-610`; `:575-584`) before
+    it removes the user (`remove_uid_index`, `:624`; `:598`), so a removal
+    that stops between leaves a user without its entry the same way.
+  - `rgw::account::remove` refuses an account only while
+    `list_account_users` lists a user (`rgw_account.cc:306-330` at both
+    tags; `driver/rados/rgw_sal_rados.cc:1399-1437`; `:1939-1977`).
+- **Impact:** `account rm`, through `radosgw-admin` or the admin API,
+  removes an account a user still names. The user keeps the account's id,
+  and an account created again with that id, which an admin may name,
+  takes the user back without any write to it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A user write adds the user's entry
+  before it stores the user, on every write of an account member, and
+  removes the old entry after, only when its key changed; a user removal
+  removes the user before its entry (`writeUser` and `RemoveUser`,
+  `internal/op/adminuser.go`; `docs/exclusions.md`, "The admin user routes
+  answer store failures, and keep the account users index clean where
+  radosgw leaves entries behind"). A stop then leaves an entry naming a
+  user that is gone, which every reader skips, or one naming a member
+  under its old name, which holds off only the account's removal its
+  membership holds off anyway.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
+  admin API's user writes for account membership; derived from the
+  source, not reproduced.
