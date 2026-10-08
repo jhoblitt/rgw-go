@@ -236,6 +236,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's beast frontend passes Boost error codes off as errno](#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno) | pending | pending | ✓ |
 | [radosgw's account removal never sees the account's topics](#radosgws-account-removal-never-sees-the-accounts-topics) | pending | pending | ✓ |
 | [radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse](#radosgws-account-quota-set-wraps-a-size-past-2-gib-and-defaults-what-it-cannot-parse) | pending | pending | ✓ |
+| [radosgw's account removal deletes a name redirect another account holds](#radosgws-account-removal-deletes-a-name-redirect-another-account-holds) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10615,3 +10616,66 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the Tentacle
   account quota route; derived from the source, not reproduced.
+
+## radosgw's account removal deletes a name redirect another account holds
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a removal that frees a
+  name a live account holds. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/driver/rados/account.cc` is the same at v19.2.6
+  and v20.2.4 through these lines.
+  - `account::write` checks a new name by reading its redirect object
+    `name.<tenant>$<name>` and refusing one that exists (`:296-310`), then
+    writes the account object (`:328-341`), and only then creates the
+    redirect exclusively; a failure there is logged and ignored
+    (`:353-365`, `write_redirect` at `:148-160`).
+  - So two writes that give two accounts the same name can both pass the
+    check before either creates the redirect: both store the name in
+    their account object, and the redirect names the one whose exclusive
+    create won. A redirect write that fails for any other reason leaves
+    an account holding a name no redirect names, which a later account
+    then takes, the check finding nothing.
+  - `account::remove` deletes the redirect of the name in the account's
+    info without reading it and without a version (`:409-417`), whoever
+    it names. `account::write`'s rename deletes an old redirect only when
+    it names the account, under the version read (`:268-280`, `:343-352`).
+- **Impact:** removing the account that lost the name deletes the redirect
+  of the account that holds it. That account is no longer found by name
+  (`read_by_name`, `:200-217`), and the next account given the name takes
+  it, so two live accounts hold one name. The email redirect is removed
+  the same way (`:418-426`); a user holding the email loses it, as "radosgw
+  lets a user take an account's email and deletes it with the account"
+  records.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver reads the name and
+  the email redirect past the metadata cache before it removes the account
+  object, and removes one only when it named the account, under the
+  version read then, so a create of the same id that claimed it meanwhile
+  keeps it (`RemoveAccount`, `internal/driver/account.go`). Nor do its own
+  writes let two accounts hold one name or email. A create first writes
+  its account object exclusively with no name or email, so a redirect a
+  create claims names an account that already has an object; a create
+  refused a claim gives up the name redirect it claimed, under the version
+  its claim left, before it removes that object, and keeps the object when
+  it cannot. A write then claims its name and email redirects
+  before it writes the whole account, writing one that already names it
+  again under the version read, so a failed claim leaves the account
+  object without that name or email. It takes a redirect over only once a
+  read past the metadata cache shows its account no longer holds it,
+  after writing that account again under the version read, and then
+  removes the redirect under the version it read. A write of that account
+  in flight then fails, and one that claims the redirect again meanwhile
+  fails the removal, after which the takeover reads again (`PutAccount`,
+  `claimRedirect` and `fenceStaleHolder`, `internal/driver/account.go`;
+  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  store differ from radosgw"). What is left: a create that stops, or whose
+  whole-account write a takeover fenced, leaves an account with no name
+  or email. No lookup by name or email finds it; a read by id and
+  radosgw's `metadata list account` do. It refuses a later create of the
+  same caller-supplied id with AccountAlreadyExists, so retrying such a
+  create never succeeds while it stands; one is left per lost race or
+  stopped create, and the 409 names no id, so one with a generated id is
+  found only by listing. The operator removes it by id.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the RADOS
+  driver's account removal; derived from the source, not reproduced.
