@@ -581,7 +581,7 @@ var _ = Describe("admin user ops", func() {
 			Expect(err).To(MatchError(op.ErrInternalError))
 			Expect(err.Error()).NotTo(ContainSubstring("AKIALOOKUP"))
 		})
-		It("completes a removal on retry after the user's removal failed past the index unlink", func(ctx SpecContext) {
+		It("completes a removal on retry after the user's removal failed, its index entry still in place", func(ctx SpecContext) {
 			o := newCreate("member", "", "", "")
 			o.DisplayName, o.AccountID = "member", acct2
 			Expect(run(ctx, o)).To(Succeed())
@@ -591,7 +591,7 @@ var _ = Describe("admin user ops", func() {
 			Expect(run(ctx, d)).To(MatchError(op.ErrConcurrentModification))
 			ids, _, err := store.ListAccountUsers(ctx, acct2, "", 10)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(ids).To(BeEmpty(), "unlinked before the failure")
+			Expect(ids).To(ConsistOf("member"), "the user goes before its entry, so the entry still holds off the account's removal")
 			Expect(run(ctx, d)).To(Succeed(), "the retry")
 			_, err = store.GetUser(ctx, d.UID)
 			Expect(err).To(MatchError(op.ErrNoSuchUser))

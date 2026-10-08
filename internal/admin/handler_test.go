@@ -281,7 +281,7 @@ var _ = Describe("admin handler", func() {
 	})
 	It("admits an accounts holder to the account get on Tentacle, which checks \"accounts\"", func() {
 		fx = newFixtureAt(denc.Tentacle, admin.Config{})
-		Expect(fx.get("/admin/account?id=RGW00000000000000001", "admin").StatusCode).To(Equal(501))
+		Expect(fx.get("/admin/account?id=RGW00000000000000001", "admin").StatusCode).To(Equal(404), "admitted, and no such account")
 		Expect(fx.get("/admin/account?id=RGW00000000000000001", "nocaps").StatusCode).To(Equal(403))
 	})
 	It("hands the authenticator the forms the route's op type accepts", func() {

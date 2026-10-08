@@ -60,6 +60,7 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 		UserEmailPool: meta.ParsePool(store + ".rgw.meta:users.email"),
 		UserSwiftPool: meta.ParsePool(store + ".rgw.meta:users.swift"),
 		AccountPool:   meta.ParsePool(store + ".rgw.meta:accounts"),
+		OIDCPool:      meta.ParsePool(store + ".rgw.meta:oidc"),
 		GCPool:        meta.ParsePool(store + ".rgw.log:gc"),
 		LogPool:       meta.ParsePool(store + ".rgw.log"),
 		UsageLogPool:  meta.ParsePool(store + ".rgw.log:usage"),
