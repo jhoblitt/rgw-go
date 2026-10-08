@@ -13,12 +13,13 @@ import (
 // v19.2.6, :161 at v20.2.4).
 const defaultMaxKeys = 1000
 
-// maxListingResults is rgw_max_listing_results, the bound on max-keys: the
-// option as librados reads it, which under Rook is the cluster's own
-// release's library, and for an Env without options the release's default,
-// 1000 on Squid and 5000 on Tentacle (src/common/options/rgw.yaml.in:3428-3435
-// at v19.2.6, :3613-3620 at v20.2.4).
-func maxListingResults(r *Request) int64 {
+// MaxListingResults is rgw_max_listing_results, the bound on max-keys,
+// max-parts and max-uploads: the option as librados reads it, which under
+// Rook is the cluster's own release's library, and for an Env without
+// options the release's default, 1000 on Squid and 5000 on Tentacle
+// (src/common/options/rgw.yaml.in:3428-3435 at v19.2.6, :3613-3620 at
+// v20.2.4).
+func MaxListingResults(r *Request) int64 {
 	if r.Env.Conf != nil {
 		if v, err := r.Env.Conf.Uint64("rgw_max_listing_results"); err == nil {
 			return int64(v) //nolint:gosec // parse_value_and_bound takes the uint64 option as a long
@@ -97,7 +98,7 @@ func (*ListObjects) Init(ctx context.Context, r *Request) error {
 // whatever the requester may do, then adds the listing's condition keys, and
 // then authorizes the action against the bucket.
 func (o *ListObjects) VerifyPermission(ctx context.Context, r *Request) error {
-	n, err := ParseValueAndBound(o.MaxKeys, 0, maxListingResults(r), defaultMaxKeys)
+	n, err := ParseValueAndBound(o.MaxKeys, 0, MaxListingResults(r), defaultMaxKeys)
 	if err != nil {
 		return err
 	}

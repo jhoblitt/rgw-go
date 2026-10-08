@@ -240,13 +240,11 @@ var _ = Describe("UploadPart", func() {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
 		})
 
-		It("is refused before checking permissions, as init_processing refuses a public canned ACL", func(ctx SpecContext) {
-			authz := &opfakes.FakeAuthorizer{}
-			f.env.Authz = authz
+		It("is refused once the requester is authorized, before the body is read", func(ctx SpecContext) {
 			o := f.partOf(id, 1, "")
 			o.Body, o.ACL = failingReader{}, publicReadOf(f.alice.Owner)
 			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
-			Expect(authz.Invocations()).To(BeEmpty())
+			Expect(f.parts(ctx, "k", id)).To(BeEmpty())
 		})
 		It("lets a private ACL through", func(ctx SpecContext) {
 			Expect(op.Run(ctx, f.partOf(id, 1, "x"), f.req(http.MethodPut, "plain", "k"))).To(Succeed())
@@ -339,13 +337,10 @@ var _ = Describe("UploadPart", func() {
 			Entry("a reversed one", "bytes=10-5", op.ErrInvalidRange),
 			Entry("one past 2^63, which radosgw's comparison passes", "bytes=9223372036854775808-18446744073709551615", op.ErrInvalidRange),
 		)
-		It("refuses a source bucket that does not exist before checking permissions", func(ctx SpecContext) {
-			authz := &opfakes.FakeAuthorizer{}
-			f.env.Authz = authz
+		It("refuses a source bucket that does not exist once the destination allows the request", func(ctx SpecContext) {
 			o := f.copyPartOf(id, 1, "src", "")
 			o.SrcBucket = "nope"
 			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrNoSuchBucket))
-			Expect(authz.Invocations()).To(BeEmpty())
 		})
 		DescribeTable("authorizes the source in its bucket, by both ACLs, then s3:PutObject on the destination",
 			func(ctx SpecContext, instance string, want policy.Action) {
@@ -560,5 +555,107 @@ var _ = Describe("UploadPart", func() {
 				Entry("a grantee of neither is refused", false, false, false),
 			)
 		})
+	})
+	Describe("the protocol's hooks and the checks of stored state", func() {
+		It("refuses a storage class the zone lacks once the requester is authorized", func(ctx SpecContext) {
+			o := f.partOf(id, 1, "x")
+			o.StorageClass = "NOPE"
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
+			r := f.req(http.MethodPut, "plain", "k")
+			r.Identity = f.bob
+			o = f.partOf(id, 1, "x")
+			o.StorageClass = "NOPE"
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+			o = f.partOf(id, 1, "x")
+			o.StorageClass = meta.StorageClassStandard
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed())
+		})
+		It("refuses a storage class the zone lacks ahead of a bucket's default encryption, as init_permissions comes first", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			o := f.partOf(id, 1, "x")
+			o.StorageClass = "NOPE"
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(op.Run(ctx, f.partOf(id, 1, "x"), f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrNotImplemented))
+		})
+		It("returns SourceErr, a parse of the request, before the range and Params, and before checking permissions", func(ctx SpecContext) {
+			authz := &opfakes.FakeAuthorizer{}
+			f.env.Authz = authz
+			o := f.partOf(id, 1, "")
+			o.SourceErr, o.CopySource, o.Range = op.ErrInvalidArgument, true, new("bytes=3-1")
+			o.Params = func(context.Context, *op.UploadPart) error { return op.ErrMissingContentLength }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(authz.Invocations()).To(BeEmpty())
+		})
+		It("runs Params, which reads the request alone, before checking permissions", func(ctx SpecContext) {
+			authz := &opfakes.FakeAuthorizer{}
+			f.env.Authz = authz
+			o := f.partOf(id, 1, "")
+			o.Params = func(context.Context, *op.UploadPart) error { return op.ErrMissingContentLength }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrMissingContentLength))
+			Expect(authz.Invocations()).To(BeEmpty())
+		})
+		It("refuses a public canned ACL under the block once authorized, before Authorized", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+			calls := 0
+			o := f.partOf(id, 1, "")
+			o.Body, o.CannedACL = failingReader{}, "public-read"
+			o.Authorized = func(context.Context, *op.UploadPart) error { calls++; return nil }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
+			Expect(calls).To(BeZero())
+			r := f.req(http.MethodPut, "plain", "k")
+			r.Identity = f.bob
+			o = f.partOf(id, 1, "")
+			o.Body, o.CannedACL = failingReader{}, "public-read"
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+		})
+		It("refuses the public ACL Authorized builds under the block, storing nothing", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+			o := f.partOf(id, 1, "")
+			o.Body = failingReader{}
+			o.Authorized = func(_ context.Context, o *op.UploadPart) error { o.ACL = publicReadOf(f.alice.Owner); return nil }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
+			Expect(f.parts(ctx, "k", id)).To(BeEmpty())
+		})
+		It("refuses a bucket with a default encryption once the requester is authorized, before Authorized, storing nothing", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			calls := 0
+			o := f.partOf(id, 1, "x")
+			o.Authorized = func(context.Context, *op.UploadPart) error { calls++; return nil }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrNotImplemented))
+			Expect(calls).To(BeZero())
+			r := f.req(http.MethodPut, "plain", "k")
+			r.Identity = f.bob
+			Expect(op.Run(ctx, f.partOf(id, 1, "x"), r)).To(MatchError(op.ErrAccessDenied))
+			Expect(f.parts(ctx, "k", id)).To(BeEmpty())
+		})
+		It("runs Authorized only for an authorized requester, before the body is read", func(ctx SpecContext) {
+			calls := 0
+			authorized := func(context.Context, *op.UploadPart) error { calls++; return op.ErrInvalidDigest }
+			r := f.req(http.MethodPut, "plain", "k")
+			r.Identity = f.bob
+			o := f.partOf(id, 1, "")
+			o.Body, o.Authorized = failingReader{}, authorized
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(calls).To(BeZero())
+			o = f.partOf(id, 1, "")
+			o.Body, o.Authorized = failingReader{}, authorized
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidDigest))
+			Expect(calls).To(Equal(1))
+			Expect(f.parts(ctx, "k", id)).To(BeEmpty())
+		})
+		DescribeTable("answers a requester the destination refuses 403 before reading anything of the source",
+			func(ctx SpecContext, srcBucket, srcKey string) {
+				objects := &opfakes.FakeObjectStore{}
+				f.env.Objects = objects
+				r := f.req(http.MethodPut, "plain", "k")
+				r.Identity = f.bob
+				o := &op.UploadPart{UploadID: id, PartNumber: 1, CopySource: true, SrcBucket: srcBucket, SrcKey: meta.ObjKey{Name: srcKey}}
+				Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+				Expect(objects.PrefetchObjectCallCount()).To(BeZero())
+			},
+			Entry("a source bucket that does not exist", "nope", "src"),
+			Entry("a source key that does not exist", "plain", "nope"),
+			Entry("a source that exists", "plain", "src"),
+		)
 	})
 })

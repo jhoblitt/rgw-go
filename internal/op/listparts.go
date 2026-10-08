@@ -28,6 +28,10 @@ type ListParts struct {
 	// StorageClass is the upload's, STANDARD when its placement names none.
 	StorageClass string
 	Result       ListPartsResult
+
+	// loadErr is a failure to read the upload or the object, which Execute
+	// answers once the requester is authorized.
+	loadErr error
 }
 
 var _ Op = (*ListParts)(nil)
@@ -49,7 +53,11 @@ func (o *ListParts) OpMask() uint32 { return OpTypeRead }
 // upload leaves it a missing object, whose answer the authorizer gives as
 // read_obj_policy's rule does (:421-447 at v19.2.6), so a missing upload is
 // never NoSuchUpload there. Without an upload id the policy is the object's
-// own, as radosgw reads it.
+// own, as radosgw reads it. A read that fails otherwise is answered only
+// once the requester is authorized, the state standing for an object whose
+// policy is the bucket owner's default, so that a refused requester gets 403
+// whatever the store holds, where radosgw answers the failure
+// (docs/exclusions.md).
 func (o *ListParts) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
@@ -59,7 +67,7 @@ func (o *ListParts) Init(ctx context.Context, r *Request) error {
 	if o.UploadID == "" {
 		var st *ObjectState
 		if st, err = r.Env.Objects.StatObject(ctx, rec, r.Object); err != nil {
-			return err
+			o.loadErr, st = err, &ObjectState{Bucket: rec, Key: r.Object, Exists: true}
 		}
 		if st == nil {
 			st = &ObjectState{Bucket: rec, Key: r.Object}
@@ -77,7 +85,8 @@ func (o *ListParts) Init(ctx context.Context, r *Request) error {
 		r.ObjState = &ObjectState{Bucket: rec, Key: key}
 		return nil
 	case err != nil:
-		return err
+		o.loadErr, r.ObjState = err, &ObjectState{Bucket: rec, Key: key, Exists: true}
+		return nil //nolint:nilerr // Execute answers it once the requester is authorized
 	}
 	o.Upload = up
 	r.ObjState = &ObjectState{Bucket: rec, Key: key, Exists: true, Attrs: up.Attrs}
@@ -96,6 +105,9 @@ func (o *ListParts) VerifyPermission(ctx context.Context, r *Request) error {
 // whose owner the result names and which is -EIO when it does not decode;
 // the upload's storage class; then the page.
 func (o *ListParts) Execute(ctx context.Context, r *Request) error {
+	if o.loadErr != nil {
+		return o.loadErr
+	}
 	if o.Upload == nil {
 		return fmt.Errorf("%w: upload %q of %s", ErrNoSuchUpload, o.UploadID, r.Object.Name)
 	}

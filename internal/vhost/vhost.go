@@ -62,6 +62,15 @@ func Bucket(host string, names []string) string {
 	return subdomain
 }
 
+// Domain is the configured name RGWREST::preprocess finds host in, a Host as
+// Hostname leaves it, as cut from host with the client's case: the domain
+// preprocess makes s->info.domain (rgw_rest.cc:2163-2165 at v19.2.6,
+// :2180-2182 at v20.2.4). "" when host is in no configured name.
+func Domain(host string, names []string) string {
+	domain, _ := findHostInDomains(host, names)
+	return domain
+}
+
 // findHostInDomains is rgw_find_host_in_domains (rgw_rest.cc:260-287 at
 // v19.2.6 and v20.2.4). radosgw walks its hostname set in sorted order and
 // stops at the first name host equals or ends in after a ".", comparing

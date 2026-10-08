@@ -25,6 +25,13 @@ type InitMultipart struct {
 	Tags *tags.Set
 	// StorageClass is x-amz-storage-class, "" when absent.
 	StorageClass string
+	// Params, when set, is the protocol's get_params, which
+	// RGWInitMultipart::execute runs once the requester is authorized
+	// (rgw_op.cc:6299 at v19.2.6, :6968 at v20.2.4): Execute calls it once a
+	// bucket's default encryption is refused and the placement checked, ahead
+	// of the block of public ACLs. It fills the inputs it reads, the ACL among
+	// them.
+	Params func(ctx context.Context, o *InitMultipart) error
 
 	UploadID string
 	Upload   *Upload
@@ -43,26 +50,16 @@ func (o *InitMultipart) Action() policy.Action { return policy.S3PutObject }
 // OpMask is RGW_OP_TYPE_WRITE.
 func (o *InitMultipart) OpMask() uint32 { return OpTypeWrite }
 
-// Init is init_permissions: the bucket, a missing one NoSuchBucket, and the
-// destination placement, the bucket's rule with the request's storage class,
-// which the zone must have (rgw_op.cc:576-583 at v19.2.6, :606-613 at
-// v20.2.4). A public ACL under the bucket's block of public ACLs is refused
-// here too, as PutObject refuses one; radosgw checks no block for
-// CreateMultipartUpload, whose ACL the completed object takes
-// (docs/exclusions.md).
+// Init is init_permissions' load of the bucket, a missing one NoSuchBucket.
+// Its check of the destination placement waits for the requester to be
+// authorized, as nothing the bucket holds is checked before (Execute;
+// docs/exclusions.md).
 func (o *InitMultipart) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	if err := checkDestPlacement(r, o.StorageClass); err != nil {
-		return err
-	}
-	o.dest = meta.PlacementRule{StorageClass: o.StorageClass}.InheritFrom(rec.Info.PlacementRule)
-	if blockPublicACLs(rec) && o.ACL.IsPublic() {
-		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
 	return nil
 }
 
@@ -73,12 +70,36 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 }
 
 // Execute is RGWInitMultipart::execute (rgw_op.cc:6293-6343 at v19.2.6,
-// :6963-7019 at v20.2.4): the upload's attrs are the request's with the
-// policy and, when the request tags the object with any tag, the tag set,
-// and the upload is created for the requester on the destination placement.
-// radosgw ends a request without a key there with success and no upload,
-// where no S3 route reaches it; rgw-go answers InvalidArgument.
+// :6963-7019 at v20.2.4): the destination placement, the bucket's rule with
+// the request's storage class, must be one the zone has (rgw_op.cc:576-583
+// at v19.2.6, :606-613 at v20.2.4), which radosgw checks before
+// verify_permission and so before anything get_params reads; a bucket with
+// a default encryption is refused, as get_encryption_defaults comes first in
+// get_params; Params runs, and a public ACL
+// under the bucket's block of public ACLs is refused, as PutObject refuses
+// one, where radosgw checks no block for CreateMultipartUpload, whose ACL
+// the completed object takes (docs/exclusions.md). The upload's attrs are
+// the request's with the policy and, when the request tags the object with
+// any tag, the tag set, and the upload is created for the requester on the
+// destination placement. radosgw ends a request without a key there with
+// success and no upload, where no S3 route reaches it; rgw-go answers
+// InvalidArgument.
 func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
+	if err := checkDestPlacement(r, o.StorageClass); err != nil {
+		return err
+	}
+	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
+		return err
+	}
+	o.dest = meta.PlacementRule{StorageClass: o.StorageClass}.InheritFrom(r.BucketRec.Info.PlacementRule)
+	if o.Params != nil {
+		if err := o.Params(ctx, o); err != nil {
+			return err
+		}
+	}
+	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
+		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+	}
 	if r.Object.Name == "" {
 		return ErrInvalidArgument
 	}

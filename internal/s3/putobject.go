@@ -25,17 +25,19 @@ import (
 
 // putObject is put_obj without a copy source (RGWPutObj_ObjStore_S3,
 // get_params :2597-2704, [T] :2758-2865; send_response :2730-2782, [T]
-// :2891-2952). A part upload, a PUT naming a copy source that is no copy and
-// an append are not served yet. The op reads the request's parameters
-// through putObjectParams once the bucket is loaded, as init_processing
-// reads them. The success is send_response's: the ETag, the Content-Length
+// :2891-2952). A request whose uploadId is not empty is a part, which
+// uploadPart serves; RGWPutObj::execute takes an empty one for none
+// (rgw_op.cc:4214 at v19.2.6, :4423 at v20.2.4). A PUT naming a copy source
+// that is no copy and an append are not served yet. The op reads the
+// request's parameters through putObjectParams once the bucket is loaded,
+// as init_processing reads them. The success is send_response's: the ETag, the Content-Length
 // of 0 with Accept-Ranges that dump_content_length sends (:2747, [T] :2911),
 // x-amz-version-id when there is one, Rgwx-Mtime for a system request, and
 // the status rgw_s3_success_create_obj_status names.
 func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	switch {
-	case r.Query.Has("uploadId"):
-		return fmt.Errorf("%w: UploadPart and UploadPartCopy are not served yet", op.ErrNotImplemented)
+	case r.Query.Get("uploadId") != "":
+		return wr.uploadPart(ctx, w, r)
 	case hasHeader(r, "X-Amz-Copy-Source"):
 		return fmt.Errorf("%w: a PUT that names a copy source but is not a copy", op.ErrNotImplemented)
 	case r.Query.Has("append"):
@@ -162,10 +164,29 @@ func refuseEncryption(r *op.Request, query bool) error {
 // refusal of a retention or legal hold for a bucket without object lock,
 // InvalidRequest, follows for a copy too, which radosgw stores on such a
 // bucket (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object
-// lock on a bucket without object lock"; docs/exclusions.md). A bucket with
-// object lock never reaches the write: every write to one answers
-// NotImplemented until versioning is served.
+// lock on a bucket without object lock"; docs/exclusions.md). On a bucket
+// with object lock a PutObject or CopyObject answers NotImplemented once the
+// requester is authorized, and a multipart write naming a retention or a
+// legal hold does (multipartObjectLock), until versioning is served.
 func objectLock(r *op.Request, isCopy bool) error {
+	if err := objectLockHeaders(r, isCopy); err != nil {
+		return err
+	}
+	if namesObjectLock(r) && r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0 {
+		return op.ErrInvalidRequest
+	}
+	return nil
+}
+
+// namesObjectLock reports whether the request names a retention mode or a
+// legal hold, which get_params keeps as obj_retention or obj_legal_hold.
+func namesObjectLock(r *op.Request) bool {
+	return hasHeader(r, "X-Amz-Object-Lock-Mode") || hasHeader(r, "X-Amz-Object-Lock-Legal-Hold")
+}
+
+// objectLockHeaders is objectLock's checks of the headers alone, which read
+// nothing the bucket holds.
+func objectLockHeaders(r *op.Request, isCopy bool) error {
 	mode, hasMode := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Mode")
 	date, hasDate := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Retain-Until-Date")
 	hold, hasHold := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Legal-Hold")
@@ -191,9 +212,6 @@ func objectLock(r *op.Request, isCopy bool) error {
 		if hold = rgwtext.CString(hold); hold != "ON" && hold != "OFF" {
 			return invalid("invalid x-amz-object-lock-legal-hold value")
 		}
-	}
-	if (hasMode || hasHold) && r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0 {
-		return op.ErrInvalidRequest
 	}
 	return nil
 }

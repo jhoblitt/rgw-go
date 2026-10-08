@@ -34,7 +34,26 @@ type UploadPart struct {
 	ACL acl.Policy
 	// ContentMD5 is the decoded Content-MD5, nil when absent.
 	ContentMD5 []byte
+	// StorageClass is x-amz-storage-class, "" when absent: the part keeps the
+	// upload's placement, but the class must be one the zone has.
+	StorageClass string
+	// CannedACL is x-amz-acl, "" when absent.
+	CannedACL string
+	// Params, when set, is the part of the protocol's get_params that reads
+	// the request alone: Init calls it where RGWPutObj::init_processing calls
+	// get_params (rgw_op.cc:3911 at v19.2.6, :4120 at v20.2.4). It fills the
+	// inputs it reads.
+	Params func(ctx context.Context, o *UploadPart) error
+	// Authorized, when set, is the rest of get_params and the checks
+	// radosgw makes in execute, those that read stored state the ACL's
+	// grantees among them: Execute calls it once the requester is authorized,
+	// the bucket's default encryption, the storage class and a public canned
+	// ACL refused. It fills the inputs it reads, the ACL among them.
+	Authorized func(ctx context.Context, o *UploadPart) error
 
+	// SourceErr is the protocol's refusal of an x-amz-copy-source it cannot
+	// parse, which Init returns where init_processing parses the source.
+	SourceErr error
 	// CopySource is set for UploadPartCopy, whose source the next fields name.
 	CopySource           bool
 	SrcTenant, SrcBucket string
@@ -70,41 +89,31 @@ func (o *UploadPart) Action() policy.Action { return policy.S3PutObject }
 func (o *UploadPart) OpMask() uint32 { return OpTypeWrite }
 
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket,
-// then RGWPutObj::init_processing in its order (rgw_op.cc:3806-3918 at
-// v19.2.6, :4015-4127 at v20.2.4): a copy source's bucket, NoSuchBucket when
-// missing, and its range, parsed by ParseCopySourceRange; then the refusal of
-// a public ACL under the bucket's block of public ACLs, which radosgw makes
-// for the canned ACLs and rgw-go, as for PutObject, for any public policy
-// (docs/exclusions.md). The source's head is read with its first chunk, as
-// verify_permission's read_obj_policy reads it with prefetch_data set
-// (:3926-3934 at v19.2.6, :4135-4143 at v20.2.4).
+// then what RGWPutObj::init_processing makes of the request alone
+// (rgw_op.cc:3806-3918 at v19.2.6, :4015-4127 at v20.2.4): SourceErr, the
+// copy source's parse; its range, parsed by ParseCopySourceRange; then
+// Params. The checks of stored state radosgw makes there and in
+// init_permissions wait for the requester to be authorized, so that a
+// refused requester learns nothing of the bucket, the upload or the source:
+// VerifyPermission reads the source once the destination allows the
+// request, and Execute checks the storage class and the block of public
+// ACLs (docs/exclusions.md).
 func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	if o.CopySource {
-		if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
+	if o.SourceErr != nil {
+		return o.SourceErr
+	}
+	if o.CopySource && o.Range != nil {
+		if o.first, o.last, err = ParseCopySourceRange(*o.Range); err != nil {
 			return err
 		}
-		if o.Range != nil {
-			if o.first, o.last, err = ParseCopySourceRange(*o.Range); err != nil {
-				return err
-			}
-		}
 	}
-	if blockPublicACLs(rec) && o.ACL.IsPublic() {
-		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
-	if !o.CopySource {
-		return nil
-	}
-	if o.src, err = r.Env.Objects.PrefetchObject(ctx, o.srcRec, o.SrcKey); err != nil {
-		return err
-	}
-	if o.src == nil {
-		o.src = &ObjectState{Bucket: o.srcRec, Key: o.SrcKey}
+	if o.Params != nil {
+		return o.Params(ctx, o)
 	}
 	return nil
 }
@@ -113,9 +122,13 @@ func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 // v19.2.6, :4129-4197 at v20.2.4): for a copy, read_obj_policy's rule for a
 // missing source and its decode of the source's ACL, then the source's read;
 // then s3:PutObject on the destination. The destination is checked first
-// all the same, so that the refusals radosgw makes on it in
-// init_permissions, before verify_permission and never overridden, come
-// out marked and ahead of every source check; its other refusal comes last.
+// all the same, and a refusal there that Run would not let an admin through
+// is answered before the source is touched. Only then are the source's
+// bucket, NoSuchBucket when missing, and its head read, the head with its
+// first chunk, as read_obj_policy reads it with prefetch_data set
+// (:3926-3934 at v19.2.6, :4135-4143 at v20.2.4), where radosgw loads the
+// source bucket in init_processing (:3854-3866 at v19.2.6, :4063-4075 at
+// v20.2.4) and reads the source before the destination's check.
 //
 // radosgw authorizes the source's read against the object's ACL, the
 // source bucket's ACL taking part only through Swift's READ_OBJS
@@ -127,6 +140,19 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 	destErr := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 	if !o.CopySource || IsBeforeVerify(destErr) {
 		return destErr
+	}
+	if destErr != nil && (!r.Identity.Admin || !isAccessDenial(destErr)) {
+		return destErr
+	}
+	var err error
+	if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
+		return err
+	}
+	if o.src, err = r.Env.Objects.PrefetchObject(ctx, o.srcRec, o.SrcKey); err != nil {
+		return err
+	}
+	if o.src == nil {
+		o.src = &ObjectState{Bucket: o.srcRec, Key: o.SrcKey}
 	}
 	a := policy.S3GetObject
 	if o.SrcKey.Instance != "" {
@@ -157,9 +183,36 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // v19.2.6, :4351-4867 at v20.2.4): the key; the quota for the request's
 // length, unless it is chunked or the request is a system request; then the
 // part, whose head's attrs are the request's with the policy, written under
-// the request id. A copy naming a source version is refused first, until
-// versioning is served.
+// the request id. First come the checks of stored state that radosgw makes
+// before verify_permission, which rgw-go makes once the requester is
+// authorized: the request's storage class must be one the zone has
+// (rgw_op.cc:576-583 at v19.2.6, :606-613 at v20.2.4); a bucket with a
+// default encryption is refused; a public canned ACL under the bucket's
+// block of public ACLs is refused (:3903-3909 at v19.2.6, :4112-4118 at
+// v20.2.4);
+// then Authorized runs, and a public ACL it built from the grant headers is
+// refused too, as PutObject refuses one, where radosgw stores it
+// (docs/exclusions.md). Then a copy naming a source version is refused,
+// until versioning is served.
 func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
+	if err := checkDestPlacement(r, o.StorageClass); err != nil {
+		return err
+	}
+	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
+		return err
+	}
+	block := blockPublicACLs(r.BucketRec)
+	if block && isPublicCannedACL(o.CannedACL) {
+		return fmt.Errorf("%w: a public canned acl under a block of public acls", ErrAccessDenied)
+	}
+	if o.Authorized != nil {
+		if err := o.Authorized(ctx, o); err != nil {
+			return err
+		}
+	}
+	if block && o.ACL.IsPublic() {
+		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+	}
 	if o.CopySource && o.SrcKey.Instance != "" {
 		return fmt.Errorf("%w: copying version %q of %s is not implemented", ErrNotImplemented, o.SrcKey.Instance, o.SrcKey.Name)
 	}

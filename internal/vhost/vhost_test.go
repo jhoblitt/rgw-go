@@ -21,6 +21,16 @@ var _ = Describe("vhost", func() {
 		Entry("empty", "", ""),
 	)
 
+	DescribeTable("Domain is the name rgw_find_host_in_domains matched, as cut from the host",
+		func(host string, names []string, want string) { Expect(Domain(host, names)).To(Equal(want)) },
+		Entry("a subdomain's name, in the Host's case", "bkt.S3.Example.com", []string{"s3.example.com"}, "S3.Example.com"),
+		Entry("the name itself", "s3.example.com", []string{"s3.example.com"}, "s3.example.com"),
+		Entry("the least matching name", "a.b.example.com", []string{"example.com", "b.example.com"}, "b.example.com"),
+		Entry("a CNAME host matches none", "www.example.org", []string{"s3.example.com"}, ""),
+		Entry("no names configured", "s3.example.com", nil, ""),
+		Entry("no host", "", []string{"s3.example.com"}, ""),
+	)
+
 	DescribeTable("Bucket is rgw_find_host_in_domains with the CNAME fallback",
 		func(host string, names []string, want string) { Expect(Bucket(host, names)).To(Equal(want)) },
 		Entry("subdomain", "bkt.s3.example.com", []string{"s3.example.com"}, "bkt"),
