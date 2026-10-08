@@ -228,6 +228,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again) | pending | pending | ✓ |
 | [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
 | [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
+| [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10271,5 +10272,36 @@ Every new entry adds its row to this table, in document order.
   "Bucket link and unlink write differently from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
   (transient; heals on retry); not yet disclosed.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's bucket link to an account moves the bucket out of the account's tenant
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `RGWBucketAdminOpState::set_user_id` ignores an empty uid
+    (`src/rgw/driver/rados/rgw_bucket.h:266-269`; `:258-261`), so a link
+    given `account-id` alone has the empty uid, and `get_tenant` is that
+    uid's empty tenant (`:297`; `:289`).
+  - `RGWBucketAdminOp::link` gives the bucket's key that tenant
+    (`src/rgw/driver/rados/rgw_bucket.cc:1081`; `:1232`), so linking a
+    bucket of a tenanted account, named `tenant/name`, renames it into the
+    empty tenant.
+  - The REST listing of an account user's buckets, the route's one way to
+    an account's buckets, looks each up under the uid's tenant
+    (`rgw_bucket.cc:1670-1671`; `:1836-1837`), and an account's users name
+    buckets in their own tenant, so a tenanted account's users no longer
+    find the bucket under its name.
+- **Impact:** a tenanted account loses the bucket it was given, and the
+  move can take the name of another bucket in the empty tenant ("radosgw's
+  bucket link overwrites the entry point of the bucket it renames onto").
+  Admin-only: the route needs `buckets=write`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: a link to an account gives the bucket
+  the account's tenant (`LinkBucket.Execute`, `internal/op/adminbucket.go`;
+  `docs/exclusions.md`, "Bucket link and unlink write differently from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
