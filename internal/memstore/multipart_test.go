@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -325,6 +326,55 @@ var _ = Describe("multipart", func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: md5Hex([]byte("small"))}, {Number: 2, ETag: tailETag}})
 			Expect(err).To(MatchError(op.ErrEntityTooSmall))
+		})
+		DescribeTable("answers a completion retried after it succeeded as the driver does, per release",
+			func(ctx SpecContext, release denc.Release, wantETag string) {
+				store = memstore.New(memstore.Config{Release: release, Now: (&clock{t: start}).now})
+				rec = mustCreate(ctx, store, "", "b", owner("alice"))
+				var err error
+				up, err = store.CreateUpload(ctx, rec, key, op.UploadParams{})
+				Expect(err).NotTo(HaveOccurred())
+				_, err = store.PutPart(ctx, up, 1, bytes.NewReader(bigPart), op.PutParams{Size: int64(len(bigPart))})
+				Expect(err).NotTo(HaveOccurred())
+				_, err = store.PutPart(ctx, up, 2, strings.NewReader("tail"), op.PutParams{Size: 4})
+				Expect(err).NotTo(HaveOccurred())
+				parts := []op.CompletePart{{Number: 1, ETag: `"` + bigETag + `"`}, {Number: 2, ETag: tailETag}}
+				first, err := store.Complete(ctx, up, parts)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(first.ETag).To(Equal(etagOfETags(bigETag, tailETag)))
+
+				again, err := store.Complete(ctx, up, parts)
+				Expect(err).NotTo(HaveOccurred(), "check_previously_completed finds the key's ETag the parts make")
+				if wantETag == "stored" {
+					wantETag = first.ETag
+				}
+				Expect(again).To(Equal(&op.PutResult{ETag: wantETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}))
+
+				reversed, err := store.Complete(ctx, up, []op.CompletePart{parts[1], parts[0]})
+				Expect(err).NotTo(HaveOccurred(), "the parts are sorted by number before the ETag is recomputed, as std::map orders them")
+				Expect(reversed).To(Equal(again))
+				repeated, err := store.Complete(ctx, up, []op.CompletePart{parts[0], {Number: 2, ETag: "bogus"}, parts[1]})
+				Expect(err).NotTo(HaveOccurred(), "a repeated part keeps its last ETag, as std::map assignment does")
+				Expect(repeated).To(Equal(again))
+
+				_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: bigETag}})
+				Expect(err).To(MatchError(op.ErrCompletionInProgress), "a different part list makes a different ETag")
+				Expect(op.AsError(err).Message).To(Equal("This multipart completion is already in progress"))
+				_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: bigETag}, {Number: 2, ETag: bigETag}})
+				Expect(err).To(MatchError(op.ErrCompletionInProgress), "the same count, other ETags")
+				_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: "bogus"}, {Number: 2, ETag: tailETag}})
+				Expect(err).To(MatchError(op.ErrCompletionInProgress), "an ETag that is not an MD5")
+				st, err := store.StatObject(ctx, rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.ETag).To(Equal(first.ETag), "the object is untouched")
+			},
+			Entry("Squid answers 200 without an ETag (v19.2.6 rgw_op.cc:6438-6441, :6543-6580)", denc.Squid, ""),
+			Entry("Tentacle answers 200 with the stored ETag (v20.2.4 rgw_op.cc:7252-7255, :7472)", denc.Tentacle, "stored"),
+		)
+		It("keeps the 500 for a missing upload when the key holds an object of another ETag", func(ctx SpecContext) {
+			mustPut(ctx, store, rec, "big", "old")
+			_, err := store.Complete(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: key}, []op.CompletePart{{Number: 1, ETag: bigETag}})
+			Expect(err).To(MatchError(op.ErrCompletionInProgress))
 		})
 	})
 	It("completes a single small part", func(ctx SpecContext) {
