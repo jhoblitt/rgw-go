@@ -2386,11 +2386,13 @@ rgw-go does the following.
   public ACL through a block of public ACLs on PutObject's grant headers,
   CopyObject and
   CreateMultipartUpload](ceph-upstream-bugs.md#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload)").
-  rgw-go refuses, with 403 AccessDenied before the permission check, a
-  PutObject or CopyObject whose new object's policy, a
-  CreateMultipartUpload whose upload's policy, which the completed object
-  takes, or an UploadPart whose part's policy grants AllUsers or
-  AuthenticatedUsers anything under such a block, as PutObjectAcl's
+  rgw-go refuses with 403 AccessDenied, before the permission check, a
+  PutObject or CopyObject whose new object's policy, and once the requester
+  is authorized ("The multipart routes authorize a request before they read
+  what the store holds for it"), a CreateMultipartUpload whose upload's
+  policy, which the completed object takes, or an UploadPart whose part's
+  policy grants AllUsers or AuthenticatedUsers anything under such a block,
+  as PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
   that does not decode for one that blocks public ACLs in these writes, in
   PutBucketAcl and in PutObjectAcl, and for one
@@ -3097,17 +3099,31 @@ does the following.
     v19.2.6, `:2752-2754` at v20.2.4). No such header is stored as an attr;
   - once the requester is authorized, to either write into a bucket whose
     attrs hold a default encryption, so a refused requester gets 403 whatever
-    the bucket holds.
-- **Part uploads, appends and a PUT that names a copy source but is no
-  copy answer 501.** radosgw serves a PUT with `uploadId` as UploadPart or
-  UploadPartCopy, a PUT with `?append` as an append, and a PUT whose
+    the bucket holds;
+  - to a CreateMultipartUpload, UploadPart or UploadPartCopy on the same
+    terms, since radosgw's `init_meta_info` rewrites their headers the same
+    way and its `prepare_encryption` reads them: an UploadPart before the
+    permission check, with its query string read too, and an UploadPartCopy
+    also for its source's SSE-C key under any prefix; a CreateMultipartUpload
+    once the requester is authorized, as its `get_params` runs in `execute`,
+    from its headers alone. A refused upload creates no upload, a refused part
+    stores no part, and no such header is stored as an attr.
+- **Appends and a PUT that names a copy source but is no copy answer 501.**
+  radosgw serves a PUT with `?append` as an append, and a PUT whose
   `x-amz-copy-source` comes with `x-amz-copy-source-range` and no
   `uploadId`, or names no bucket, as a PutObject whose data it reads from
   that source (`RGWPutObj::init_processing` and `execute`, `rgw_op.cc
   :3806-3918` and `:4297-4336` at v19.2.6, `:4015-4127` at v20.2.4). The
-  PUT route answers all of them with 501 NotImplemented; UploadPart and
-  UploadPartCopy reach their own route once phase 1's multipart handlers
-  register it.
+  PUT route answers both with 501 NotImplemented. A PUT with a non-empty
+  `uploadId` is UploadPart or UploadPartCopy, which the multipart routes
+  serve. A PUT whose `uploadId` is present but empty is neither:
+  `RGWHandler_REST_S3::init` parses no copy source when `uploadId` is
+  present at all (`rgw_rest_s3.cc:5026-5029` at v19.2.6, `:5586-5589` at
+  v20.2.4), and `RGWPutObj::execute` takes an empty one for none
+  (`rgw_op.cc:4214`, `:4423`), so radosgw serves one naming a copy source
+  as a PutObject whose data it reads from that source, which rgw-go answers
+  with 501 NotImplemented too; both serve one without a copy source as a
+  PutObject.
 - **PutObject and CopyObject check their headers before authorizing.**
   radosgw decodes a PutObject's `Content-MD5` in `execute`, after
   `verify_permission` (`rgw_op.cc:4184-4198` at v19.2.6, `:4393-4407` at
@@ -3128,7 +3144,45 @@ does the following.
   requester learns whether a named user or account exists, as radosgw's
   PutObject already tells one before authorizing, its `create_s3_policy`
   running in `get_params` during `init_processing` (`rgw_rest_s3.cc
-  :2618-2620` at v19.2.6, `:2779-2781` at v20.2.4).
+  :2618-2620` at v19.2.6, `:2779-2781` at v20.2.4). UploadPart decodes
+  `Content-MD5` and builds its attrs once the requester is authorized, as
+  radosgw's `execute` does, but before it reads the body: a part past an
+  attr limit is refused before its body is read rather than after it is
+  stored, and a `Content-MD5` that does not decode is answered ahead of a
+  Content-Length over `rgw_max_put_size`, which radosgw's `verify_params`
+  answers first.
+- **The multipart routes authorize a request before they read what the
+  store holds for it.** radosgw reads stored state before its permission
+  check. `rgw_build_bucket_policies` refuses a storage class the bucket's
+  placement lacks (`rgw_op.cc:576-583` at v19.2.6, `:606-613` at v20.2.4).
+  For UploadPart and UploadPartCopy, `RGWPutObj::init_processing` loads
+  the copy source's bucket and refuses a public canned ACL under the
+  bucket's block of public ACLs (`:3853-3866` and `:3903-3909`;
+  `:4062-4075` and `:4112-4118`), its `get_params` looks up the grantees of
+  the `x-amz-grant-*` headers and refuses a retention or a legal hold on a
+  bucket without object lock (`rgw_rest_s3.cc:2618-2620` and `:2669-2673`;
+  `:2779-2781` and `:2830-2834`), and `RGWPutObj::verify_permission` reads
+  the copy source, a missing one refused, before it checks the destination
+  (`rgw_op.cc:3920-3988`; `:4129-4197`). `read_obj_policy` answers an
+  upload's or an object's policy that cannot be read with its error
+  (`rgw_op.cc:385-447`; `:415-477`). So a refused requester learns from
+  radosgw whether the bucket has such a storage class, a block of public
+  ACLs or object lock, whether a named user or account exists, whether a
+  copy source's bucket or key exists, and whether a stored policy is
+  damaged. rgw-go refuses a request before its permission check only for
+  what the request itself shows, its headers, arguments and declared
+  length, and makes each of those checks once the requester is
+  authorized, so a refused requester gets 403 AccessDenied whatever the
+  bucket, the upload, the users or the source hold. The bucket's own
+  existence, which authorization needs, is answered first, as radosgw
+  answers it. ListParts authorizes against the upload's meta object, as
+  radosgw does, and answers a missing upload by the missing-object rule;
+  an upload or object whose info cannot be read is authorized as one whose
+  policy is the bucket owner's default, and its error is answered only to
+  a requester that passes. CreateMultipartUpload makes all of these checks
+  where radosgw's `get_params` runs, once the requester is authorized
+  (`rgw_op.cc:6299`, `:6968`), but for the storage class, which radosgw
+  checks first.
 - **Request headers stored as attrs follow Tentacle's blocklist, and the
   session token is never stored.** radosgw stores every `x-amz-` header,
   and those under its other meta prefixes, as an attr of the object a
@@ -3218,6 +3272,35 @@ does the following.
   InternalError without registering it. The part head write is a
   non-atomic one without conditions or a create, so no reply from an OSD
   is known to reach this path.
+- **CompleteMultipartUpload's Location finds its domain without CNAME
+  lookups or website hostnames.** rgw-go builds the Location as
+  `compute_domain_uri` does, with no scheme under a configured name
+  (`rgw_rest.h:805-818` at v19.2.6, `:817-830` at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
+  Location has no scheme under a configured
+  domain](ceph-upstream-bugs.md#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain)"),
+  and takes the domain from `rgw_dns_name` and the zonegroup's hostnames
+  alone. radosgw also takes it from the S3 website hostnames while the
+  website API is enabled, and from the name `rgw_resolve_cname` resolves
+  the Host to (`rgw_rest.cc:2070-2077` and `:2086-2126` at v19.2.6,
+  `:2087-2094` and `:2103-2143` at v20.2.4), where rgw-go writes
+  `rgw_dns_name`, or the scheme and the Host. An HTTP/1.0 request that
+  sends its Host empty gets `<HTTP_HOST>`, as one that sends none does:
+  net/http does not tell them apart.
+- **A multipart upload with a retention or a legal hold on a bucket with
+  object lock answers 501.** radosgw keeps the object-lock headers of
+  CreateMultipartUpload and UploadPart on the upload and the parts' heads.
+  rgw-go serves no object lock until versioning is served, so it refuses a
+  request on such a bucket naming `x-amz-object-lock-mode` or
+  `x-amz-object-lock-legal-hold` with 501 NotImplemented once the
+  requester is authorized, where PutObject refuses such a bucket. The
+  headers' values are checked as PutObject checks them, before the
+  permission check on UploadPart, as its `get_params` runs in
+  `init_processing`, and once the requester is authorized on
+  CreateMultipartUpload, as its own runs in `execute`. Their refusal on a
+  bucket without object lock, which reads the bucket, comes once the
+  requester is authorized on both ("The multipart routes authorize a
+  request before they read what the store holds for it").
 - **UploadPart ignores If-Match and If-None-Match.** rgw-go writes a part
   head without the request's write conditions on both releases, as
   v19.2.6's `MultipartObjectProcessor::complete` does
@@ -3303,16 +3386,17 @@ does the following.
   InvalidObjectState only for a copy without `x-amz-copy-source-range`
   (`rgw_op.cc:4297-4326` at v19.2.6, `:4510-4538` at v20.2.4), and reads a
   ranged copy's source without that check. rgw-go refuses both.
-- **The multipart ops after CreateMultipartUpload check no storage class.**
-  radosgw reads `x-amz-storage-class` for every S3 request
+- **The multipart ops after UploadPart check no storage class.** radosgw
+  reads `x-amz-storage-class` for every S3 request
   (`rgw_rest_s3.cc:5043-5046` at v19.2.6, `:5603-5606` at v20.2.4) and,
   while it loads the bucket, refuses one whose class the bucket's
   placement lacks with 400 InvalidArgument (`rgw_op.cc:576-583` at v19.2.6,
   `:606-613` at v20.2.4). rgw-go makes that check on CreateMultipartUpload,
-  whose upload keeps the class, and not on UploadPart, UploadPartCopy,
-  CompleteMultipartUpload, AbortMultipartUpload, ListParts or
-  ListMultipartUploads, which take their placement from the upload or need
-  none, so it serves such a request where radosgw refuses it.
+  whose upload keeps the class, and on UploadPart and UploadPartCopy, whose
+  part keeps the upload's, and not on CompleteMultipartUpload,
+  AbortMultipartUpload, ListParts or ListMultipartUploads, which take their
+  placement from the upload or need none, so it serves such a request
+  where radosgw refuses it.
 - **An upload without a v2 id keys a part by its canonical number.**
   radosgw registers a part of an upload whose id lacks the `2~` or `2/`
   prefix under `part.` and the part number as the request spelled it
