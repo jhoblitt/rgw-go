@@ -231,6 +231,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
+| [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10375,3 +10376,50 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
+
+## radosgw's bucket link by bucket id takes the name from the live bucket
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4: a name
+  takeover, and two owners on one bucket's data after a failed rename.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - With `bucket-id`, `RGWBucket::init` loads that instance by its id
+    (`rgw_bucket.cc:195-196`; `:196-197`), which `RadosBucket::load_bucket`
+    reads without the entry point (`rgw_sal_rados.cc:616-629`;
+    `:634-647`).
+  - `RGWBucketAdminOp::link` keys the bucket by the uid's tenant and the
+    instance's name (`rgw_bucket.cc:1081`; `:1232`) and, without a rename,
+    `link_bucket` writes that name's entry point under the empty `ep_data`
+    tracker, unchecked (`:3349-3350` and `:3391-3392`; `:3449-3450` and
+    `:3490-3491`). Nothing compares the instance with the one the entry
+    point names.
+  - So a link by the id of an instance its name no longer loads points
+    the name at it: a bucket's instance left behind after its name was
+    removed and re-created, or the old instance a failed rename leaves
+    ("radosgw's failed bucket rename leaves the old name to the old
+    owner"). The live bucket under the name is orphaned, as in "radosgw's
+    bucket link overwrites the entry point of the bucket it renames onto";
+    with a failed rename's old instance, both names then reach the one
+    bucket's data, under the owners the two links gave it.
+- **Impact:** admin-only, as the route needs `buckets=write`, and it
+  needs an instance its name no longer loads. The name moves to that
+  instance, and after a failed rename two owners reach one bucket's data.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A link by `bucket-id` first reads
+  every entry point of the bucket metadata section: one under another name
+  that loads the bucket's id is 409 BucketAlreadyExists, and one that loads
+  nothing, any failed read, and a listing that reports the section missing
+  or makes no progress refuse too (`refuseNamedElsewhere`,
+  `internal/op/adminbucket.go`). Then the entry point of the instance's
+  own name is read: one naming another bucket is 409 BucketAlreadyExists,
+  one naming the instance is written under the version read, and a
+  missing one is created exclusively (`claimName`,
+  `internal/driver/bucketadmin.go`). The RADOS driver cannot list the
+  section yet, so there a link by `bucket-id` answers 501 NotImplemented
+  and links nothing (`docs/exclusions.md`, "Bucket link and unlink write
+  differently from radosgw" and "On the RADOS driver, three admin bucket
+  requests answer 501 NotImplemented for now").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
+  the source, not reproduced.
