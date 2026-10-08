@@ -119,7 +119,7 @@ func (s *Store) userFromIndex(ctx context.Context, o sysObj) (*op.UserRecord, er
 	}
 	owner := meta.ParseOwner(string(uid))
 	if owner.User == nil {
-		return nil, fmt.Errorf("index %s/%s names account %s: %w", o.pool, o.oid, uid, op.ErrNoSuchUser)
+		return nil, fmt.Errorf("index %s names account %s: %w", s.sysobj.hidden.name(o.pool, o.oid), uid, op.ErrNoSuchUser)
 	}
 	return s.GetUser(ctx, *owner.User)
 }
@@ -134,7 +134,7 @@ func (s *Store) readIndex(ctx context.Context, o sysObj) (meta.UID, error) {
 	d := denc.NewDecoder(res.data)
 	uid := meta.DecodeUID(d)
 	if err := d.Err(); err != nil {
-		return "", fmt.Errorf("%w: decoding index %s/%s: %w", op.ErrInternalError, o.pool, o.oid, err)
+		return "", fmt.Errorf("%w: decoding index %s: %w", op.ErrInternalError, s.sysobj.hidden.name(o.pool, o.oid), err)
 	}
 	return uid, nil
 }
@@ -242,7 +242,7 @@ func (s *Store) checkKeys(ctx context.Context, id meta.UserID, keys map[string]m
 		}
 		holder, err := s.userFromIndex(ctx, index(key))
 		if err == nil && holder.Info.UserID != id {
-			return fmt.Errorf("key %s of user %s belongs to user %s: %w", key, id, holder.Info.UserID, op.ErrKeyExists)
+			return fmt.Errorf("a key of user %s belongs to user %s: %w", id, holder.Info.UserID, op.ErrKeyExists)
 		}
 	}
 	return nil

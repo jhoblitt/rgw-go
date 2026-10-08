@@ -43,6 +43,7 @@ type sysobjs struct {
 	pools   *poolCache
 	cache   *objectCache
 	notify  *notifier
+	hidden  hiddenPools
 	release denc.Release
 	now     func() time.Time
 }
@@ -55,7 +56,9 @@ type sysobjs struct {
 // rgw_cache_enabled is false, while the notifier still watches and sends
 // (docs/exclusions.md).
 func openSysObj(ctx context.Context, pools *poolCache, params meta.ZoneParams, o options, r denc.Release) (*sysobjs, error) {
+	hidden := newHiddenPools(params)
 	cache := newObjectCache(o.cacheLRUSize, o.cacheExpiry, params.DomainRoot, time.Now)
+	cache.hidden = hidden
 	control, err := pools.get(ctx, params.ControlPool)
 	if err != nil {
 		return nil, err
@@ -65,10 +68,11 @@ func openSysObj(ctx context.Context, pools *poolCache, params meta.ZoneParams, o
 		onEnabled = func(bool) {}
 	}
 	n := newNotifier(control, controlOIDs(o.numControlOIDs), r, o.maxNotifyRetries, cache.onNotify, onEnabled)
+	n.hidden = hidden
 	if err := n.createControlObjects(ctx); err != nil {
 		return nil, err
 	}
-	return &sysobjs{pools: pools, cache: cache, notify: n, release: r, now: time.Now}, nil
+	return &sysobjs{pools: pools, cache: cache, notify: n, hidden: hidden, release: r, now: time.Now}, nil
 }
 
 // readParams says what a read returns. attrs are the user.rgw. xattrs
@@ -115,7 +119,7 @@ func (s *sysobjs) read(ctx context.Context, o sysObj, p readParams) (readResult,
 	info, err := s.cache.get(name, mask)
 	switch {
 	case errors.Is(err, errNegativeEntry):
-		return readResult{}, fmt.Errorf("reading %s/%s: %w", o.pool, o.oid, err)
+		return readResult{}, fmt.Errorf("reading %s: %w", s.hidden.name(o.pool, o.oid), err)
 	case err != nil:
 		if info, err = s.readMiss(ctx, o, name, p); err != nil {
 			return readResult{}, err
@@ -154,7 +158,7 @@ func (s *sysobjs) readMiss(ctx context.Context, o sysObj, name string, p readPar
 		if errors.Is(err, radosclient.ErrNotFound) {
 			s.cache.put(name, cacheInfo{status: -int32(syscall.ENOENT)})
 		}
-		return cacheInfo{}, fmt.Errorf("reading %s/%s: %w", o.pool, o.oid, err)
+		return cacheInfo{}, fmt.Errorf("reading %s: %w", s.hidden.name(o.pool, o.oid), s.hidden.hide(o.pool, err))
 	}
 	s.cache.put(name, info)
 	return info, nil
@@ -252,7 +256,7 @@ func (s *sysobjs) write(ctx context.Context, o sysObj, data []byte, attrs map[st
 	setXattrs(wop, attrs)
 	if err := s.run(ctx, o, wop); err != nil {
 		s.failed(ctx, o, name, err)
-		return time.Time{}, fmt.Errorf("writing %s/%s: %w", o.pool, o.oid, err)
+		return time.Time{}, fmt.Errorf("writing %s: %w", s.hidden.name(o.pool, o.oid), s.hidden.hide(o.pool, err))
 	}
 	if v != nil {
 		v.applyWrite()
@@ -295,7 +299,7 @@ func (s *sysobjs) setAttrs(ctx context.Context, o sysObj, set map[string][]byte,
 	if len(wop.Steps()) > 0 {
 		if err := s.run(ctx, o, wop); err != nil {
 			s.failed(ctx, o, name, err)
-			return fmt.Errorf("setting attrs of %s/%s: %w", o.pool, o.oid, err)
+			return fmt.Errorf("setting attrs of %s: %w", s.hidden.name(o.pool, o.oid), s.hidden.hide(o.pool, err))
 		}
 		if v != nil {
 			v.applyWrite()
@@ -327,7 +331,7 @@ func (s *sysobjs) remove(ctx context.Context, o sysObj, v *objv) error {
 		if contextEnded(err) {
 			s.failed(ctx, o, name, err)
 		}
-		return fmt.Errorf("removing %s/%s: %w", o.pool, o.oid, err)
+		return fmt.Errorf("removing %s: %w", s.hidden.name(o.pool, o.oid), s.hidden.hide(o.pool, err))
 	}
 	s.invalidate(ctx, o, name)
 	return nil
@@ -401,7 +405,7 @@ func contextEnded(err error) bool {
 func (s *sysobjs) distribute(ctx context.Context, o sysObj, name string, info meta.CacheNotifyInfo) {
 	if err := s.notify.distribute(context.WithoutCancel(ctx), name, info); err != nil {
 		slog.ErrorContext(ctx, "distributing a cache notify",
-			slog.String("pool", o.pool.String()), slog.String("oid", o.oid), slog.Any("error", err))
+			slog.String("pool", o.pool.String()), s.hidden.attr(o.pool, o.oid), slog.Any("error", err))
 	}
 }
 

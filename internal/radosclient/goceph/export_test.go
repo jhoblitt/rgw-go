@@ -111,3 +111,8 @@ func ConfiguredOption(ctx context.Context, cfg Config, option string) (string, e
 	vals, err := ConfiguredOptions(ctx, cfg, option)
 	return vals[option], err
 }
+
+// OpName names op on oid as a pool in namespace names it in its errors.
+func OpName(namespace, op, oid string) string {
+	return (&poolState{namespace: namespace}).opName(op, oid)
+}

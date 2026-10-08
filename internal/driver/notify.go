@@ -59,6 +59,7 @@ type notifier struct {
 	maxRetries uint64 // rgw_max_notify_retries
 	handle     func(meta.CacheNotifyInfo)
 	onEnabled  func(bool)
+	hidden     hiddenPools
 
 	backoffMin, backoffMax time.Duration
 	sleep                  func(context.Context, time.Duration) error
@@ -264,7 +265,7 @@ func (n *notifier) distribute(ctx context.Context, key string, info meta.CacheNo
 	retry := encodeAt(meta.CacheNotifyInfo{Op: meta.CacheInvalidateObj, Obj: info.Obj}, n.release)
 	for try := uint64(0); errors.Is(err, radosclient.ErrTimedOut) && try < n.maxRetries; try++ {
 		slog.WarnContext(ctx, "control notify timed out, sending an invalidation",
-			slog.String("oid", oid), slog.String("obj", info.Obj.OID), slog.Uint64("try", try))
+			slog.String("oid", oid), slog.String("obj", n.hidden.name(info.Obj.Pool, info.Obj.OID)), slog.Uint64("try", try))
 		_, err = n.pool.Notify(ctx, oid, retry, 0)
 	}
 	return err

@@ -89,6 +89,7 @@ type objectCache struct {
 
 	expiry     time.Duration // 0 never expires
 	domainRoot meta.Pool
+	hidden     hiddenPools
 	now        func() time.Time
 }
 
@@ -280,7 +281,7 @@ func (c *objectCache) setEnabled(on bool) {
 func (c *objectCache) onNotify(info meta.CacheNotifyInfo) {
 	if info.Op != meta.CacheUpdateObj && info.Op != meta.CacheInvalidateObj {
 		slog.Warn("invalidating for a control notify of an unknown op",
-			slog.Uint64("op", uint64(info.Op)), slog.String("pool", info.Obj.Pool.String()), slog.String("oid", info.Obj.OID))
+			slog.Uint64("op", uint64(info.Op)), slog.String("pool", info.Obj.Pool.String()), c.hidden.attr(info.Obj.Pool, info.Obj.OID))
 	}
 	pool, oid := info.Obj.Pool, info.Obj.OID
 	if oid == "" {

@@ -309,7 +309,7 @@ func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	if err != nil {
 		return 0, err
 	}
-	name := opName("read", oid)
+	name := p.state.opName("read", oid)
 	n := weight(op.Steps())
 	h, err := p.admit(ctx, name, n)
 	if err != nil {
@@ -361,7 +361,7 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	if err != nil {
 		return 0, err
 	}
-	name := opName("write", oid)
+	name := p.state.opName("write", oid)
 	n := weight(op.Steps())
 	h, err := p.admit(ctx, name, n)
 	if err != nil {
@@ -477,7 +477,7 @@ func (p *pool) Watch(ctx context.Context, oid string, fn func(notifyID, notifier
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	name := opName("watch", oid)
+	name := p.state.opName("watch", oid)
 	h, err := p.state.acquire(name, p.locator)
 	if err != nil {
 		return nil, err
@@ -533,7 +533,7 @@ func (w *watch) dispatch(fn func(notifyID, notifierID uint64, payload []byte)) {
 				errs = nil
 				continue
 			}
-			seamErr := toSeamError(opName("watch", w.oid), err)
+			seamErr := toSeamError(w.state.opName("watch", w.oid), err)
 			select {
 			case w.errs <- seamErr:
 			default:
@@ -564,7 +564,7 @@ func (w *watch) Err() <-chan error { return w.errs }
 // Delete.
 func (w *watch) Close() error {
 	w.close.Do(func() {
-		w.err = toSeamError(opName("unwatch", w.oid), w.w.Delete())
+		w.err = toSeamError(w.state.opName("unwatch", w.oid), w.w.Delete())
 		if err := w.state.cluster.conn.WatcherFlush(); err != nil {
 			w.err = errors.Join(w.err, toSeamError("watch flush", err))
 		}
@@ -585,7 +585,7 @@ func (p *pool) Notify(ctx context.Context, oid string, payload []byte, timeout t
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	name := opName("notify", oid)
+	name := p.state.opName("notify", oid)
 	h, err := p.state.acquire(name, p.locator)
 	if err != nil {
 		return nil, err
@@ -639,7 +639,7 @@ func (p *pool) withIOContext(ctx context.Context, op string, fn func(*rados.IOCo
 
 // LockExclusive takes the named exclusive advisory lock on oid.
 func (p *pool) LockExclusive(ctx context.Context, oid, name, cookie, desc string, duration time.Duration, flags radosclient.LockFlags) error {
-	op := opName("lock exclusive", oid)
+	op := p.state.opName("lock exclusive", oid)
 	return p.withIOContext(ctx, op, func(ioctx *rados.IOContext) error {
 		ret, err := ioctx.LockExclusive(oid, name, cookie, desc, duration, lockFlags(flags))
 		return lockResult(op, ret, err)
@@ -648,7 +648,7 @@ func (p *pool) LockExclusive(ctx context.Context, oid, name, cookie, desc string
 
 // LockShared takes the named shared advisory lock on oid under tag.
 func (p *pool) LockShared(ctx context.Context, oid, name, cookie, tag, desc string, duration time.Duration, flags radosclient.LockFlags) error {
-	op := opName("lock shared", oid)
+	op := p.state.opName("lock shared", oid)
 	return p.withIOContext(ctx, op, func(ioctx *rados.IOContext) error {
 		ret, err := ioctx.LockShared(oid, name, cookie, tag, desc, duration, lockFlags(flags))
 		return lockResult(op, ret, err)
@@ -657,7 +657,7 @@ func (p *pool) LockShared(ctx context.Context, oid, name, cookie, tag, desc stri
 
 // Unlock releases this client's named lock on oid held under cookie.
 func (p *pool) Unlock(ctx context.Context, oid, name, cookie string) error {
-	op := opName("unlock", oid)
+	op := p.state.opName("unlock", oid)
 	return p.withIOContext(ctx, op, func(ioctx *rados.IOContext) error {
 		ret, err := ioctx.Unlock(oid, name, cookie)
 		return lockResult(op, ret, err)
@@ -666,7 +666,7 @@ func (p *pool) Unlock(ctx context.Context, oid, name, cookie string) error {
 
 // BreakLock releases another client's named lock on oid.
 func (p *pool) BreakLock(ctx context.Context, oid, name, client, cookie string) error {
-	op := opName("break lock", oid)
+	op := p.state.opName("break lock", oid)
 	return p.withIOContext(ctx, op, func(ioctx *rados.IOContext) error {
 		ret, err := ioctx.BreakLock(oid, name, client, cookie)
 		return lockResult(op, ret, err)
@@ -675,7 +675,7 @@ func (p *pool) BreakLock(ctx context.Context, oid, name, client, cookie string) 
 
 // ListLockers returns the holders of the named lock on oid.
 func (p *pool) ListLockers(ctx context.Context, oid, name string) ([]radosclient.Locker, error) {
-	op := opName("list lockers", oid)
+	op := p.state.opName("list lockers", oid)
 	var out []radosclient.Locker
 	err := p.withIOContext(ctx, op, func(ioctx *rados.IOContext) error {
 		info, err := ioctx.ListLockers(oid, name)

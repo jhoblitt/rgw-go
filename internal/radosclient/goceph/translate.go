@@ -521,7 +521,12 @@ func errnoOf(err error) int32 {
 	return int32(syscall.EIO)
 }
 
-// opName names an operation on oid for the seam's errors.
-func opName(kind, oid string) string {
-	return kind + " " + strconv.Quote(oid)
+// opName names an operation on oid for the seam's errors: by the object's
+// id, or, for an object whose id is a credential or an email
+// (radosclient.HiddenIDKind), by its pool's kind alone.
+func (s *poolState) opName(op, oid string) string {
+	if kind := radosclient.HiddenIDKind(s.namespace); kind != "" {
+		return op + " (" + kind + ")"
+	}
+	return op + " " + strconv.Quote(oid)
 }
