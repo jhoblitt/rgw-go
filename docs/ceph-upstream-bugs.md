@@ -234,6 +234,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
 | [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
 | [radosgw's beast frontend passes Boost error codes off as errno](#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno) | pending | pending | ✓ |
+| [radosgw's account removal never sees the account's topics](#radosgws-account-removal-never-sees-the-accounts-topics) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10524,3 +10525,47 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit X, Task 3, 2026-10-08, reading what radosgw does
   for a client that disconnects; confirmed against the Boost headers in its
   review. Derived from the source, not reproduced.
+
+## radosgw's account removal never sees the account's topics
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: an account removed
+  while it still owns topics. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; a line stands at both tags
+  unless a pair is given, v19.2.6's then v20.2.4's.
+  - A topic an account owns is linked into the account's index object
+    `topics.<account id>`: `rgwrados::topic::write` adds it to
+    `get_topics_obj(zone, *id)` for the owner's `rgw_account_id`
+    (`driver/rados/topic.cc:120-129`), and `topic::remove` takes the
+    tenant it is given for that id, unlinking only when
+    `rgw::account::validate_id(tenant)` holds (`:164-172`).
+  - `RadosStore::list_account_topics` lists the index object of the id it
+    is given (`driver/rados/rgw_sal_rados.cc:1771-1783`; `:2322-2334`).
+  - `rgw::account::remove` passes it the account's tenant, not its id,
+    and so does its `remove_topic_v2` (`rgw_account.cc:434-456`). The
+    tenant is the one the account was created in (`:125-129`), empty by
+    default, not its id. So the listing reads `topics.<tenant>`, which
+    holds none of the account's topics, and the
+    removal's "The account cannot be deleted until all topics are
+    removed." refusal never fires.
+  - The four checks before it list by the account's id: users
+    (`:310-311`), buckets (`:335-337`), roles (`:368-369`) and groups
+    (`:392-393`).
+- **Impact:** `DELETE /admin/account` and `radosgw-admin account rm`
+  remove an account that still owns topics, where every other kind of
+  resource holds them off. The topics stay, owned by an id no account
+  holds, and `topics.<account id>` still names them; an account created
+  again with that id, which an admin may name, inherits them.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver's account removal
+  reads one entry of `topics.<account id>`, as it reads the roles' and the
+  groups' indexes, and refuses with radosgw's 409 BucketNotEmpty and "The
+  account cannot be deleted until all topics are removed." while one
+  remains (`accountResources`, `internal/driver/account.go`;
+  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  store differ from radosgw"). It is stricter than radosgw there: a
+  removal radosgw lets through answers 409.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, reading
+  `rgw::account::remove` for the admin API's account removal; derived from
+  the source, not reproduced.
