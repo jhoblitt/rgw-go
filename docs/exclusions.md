@@ -3299,6 +3299,30 @@ does the following.
   rgw-go omits that metadata header, where radosgw sends the name as stored
   (`ClientIO::send_header`, `rgw_asio_client.cc:167-181` at v19.2.6 and
   v20.2.4).
+- **Tentacle's x-amz-delete-marker is false, or absent, on a missing
+  object.** On Tentacle, radosgw's `read_permissions` adds
+  `x-amz-delete-marker` to a GET or HEAD whose object policies were
+  refused with `-ENOENT`, after it loads the key's state following the
+  olh: `true` when the key's current version is a delete marker, otherwise
+  `false` (`rgw_rest.cc:1936-1945` at v20.2.4; `follow_olh`,
+  `driver/rados/rgw_rados.cc:9760-9764`). That refusal is
+  `read_obj_policy`'s for a missing object, sent to an admin or to a
+  requester who may list the bucket (`rgw_op.cc:453-477` at v20.2.4), and
+  to ListParts of a missing upload, whose policies are its meta object's
+  while the state loaded is the key's (`:441-448`). v19.2.6 adds no such
+  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves it
+  sends the header where Tentacle does, always `false`: a key whose head
+  is an olh answers 501 NotImplemented
+  before any permission check, as every read of one does until versioning
+  is served, so the refusal meets such a key only in ListParts of a
+  missing upload. There rgw-go, which cannot read the olh, sends no
+  `x-amz-delete-marker`, where Tentacle sends `true` or `false`. The
+  object GETs rgw-go does not serve yet, GetObjectRetention,
+  GetObjectLegalHold and `?layout`, answer 501 NotImplemented without
+  the header for a missing object as for any other, where Tentacle
+  answers 404 with `x-amz-delete-marker: false` to a requester who may
+  list the bucket (`RGWHandler_REST_Obj_S3::op_get`,
+  `rgw_rest_s3.cc:5360-5378` at v20.2.4).
 
 ### Object write differences
 
