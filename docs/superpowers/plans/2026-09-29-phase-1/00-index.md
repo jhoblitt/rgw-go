@@ -1,7 +1,7 @@
 # Phase 1 plan set: index
 
 Nine unit plans implement phase 1 of the design spec
-(`docs/superpowers/specs/2026-09-25-rgw-go-design.md`, §9): 105 tasks. Each
+(`docs/superpowers/specs/2026-09-25-rgw-go-design.md`, §9): 107 tasks. Each
 plan argues from the spec; where a plan and the spec disagree, the spec
 governs unless this index records an amendment. Ceph floor: every daemon at
 19.2.6 or later on Squid, 20.2.4 or later on Tentacle (spec §3).
@@ -26,7 +26,7 @@ Each such change is reported so the rgw-rs session is told.
 | Unit | Plan | Tasks | Scope |
 |---|---|---|---|
 | G | `G-gateway-core.md` | 9 | interface freeze (op, policy.Action, cephconf, frontend, memstore, fakes), seam prerequisites, s3 parsing and dispatch, handler, frontend, cephconf startup, metrics, driver skeleton, `cli serve` |
-| T | `T-gates-benchmarks.md` | 15 | seam microbenchmark and cgo answer, s3-tests and admin-suite harnesses and radosgw baselines, derived image, Rook workflow, parity runs, gateway comparison |
+| T | `T-gates-benchmarks.md` | 17 | seam microbenchmark and cgo answer, s3-tests and admin-suite harnesses and radosgw baselines, derived image, Rook workflow, parity runs, the per-pull-request s3-tests check and the s3-tests fork, gateway comparison |
 | A | `A-auth.md` | 10 | SigV4 header, presigned, chunked and trailer payloads; SigV2; anonymous; identity |
 | Z | `Z-authorization.md` | 12 | ACLs, IAM policy evaluation incl. stored user policies, tags, the op.Authorizer |
 | M | `M-metadata-plane.md` | 13 | zone and placement, control watch and cache, users, buckets, listing, stats and quota, usage log, bucket subresources |
@@ -49,8 +49,9 @@ merged the tasks it consumes.
 | 2 | N Tasks 1-12 | M, A (identity caps, account store) |
 | 3 | W | R (`PrefetchObject`, `ObjectState.Head`, `attrs_read.go`, `ReadObject` for copy), M (`AdjustStats`, shard helpers), A (body-EOF rule) |
 | 4 | P | W (writer machinery, `atomic=false` head writes), R, M (`ListObjects` with `NameFilter`) |
+| 4 | T Tasks 11, 12, 16 and 17 (the per-pull-request s3-tests check, spec §9) | M Task 13 (the `driver.Store` assembly) for 11, 12 and 16, beside G, A, Z, R, W and P, already merged; T Tasks 4-5 alone for 17 |
 | 4 | N Task 14, then N Task 13 (N's gate) | W Tasks 4-6 and 9 (`gcChain`, `rawTag`, `newIndexOp`/`prepare`, `deleteObjIndex`, the pools, `gcMaxConcurrentIO`), R Task 3 (`readHead`, `headRef`), P Task 7 (`abortMultiparts`) |
-| 5 | T Tasks 9-15 | per T's own task index |
+| 5 | T Tasks 9, 10 and 13-15 | per T's own task index |
 
 Three tasks edit code that another unit's task creates, and wait for that
 task: M Task 7 fills G's `ListBuckets.Complete` (`internal/op/listbuckets.go`,
@@ -401,8 +402,11 @@ maps them onto its tasks.
   with R and must write what R reads.
 - After W: P.
 - After P's Task 7: N's Task 14, then N's gate.
+- After M's Task 13, beside P and N's last tasks: T-d's s3-tests parity,
+  which the per-pull-request check (T Task 16) runs, so it does not wait
+  for the end.
 - After all: T-c's suite run (the image itself needs only G's binary) and
-  T-d.
+  the rest of T-d.
 
 Why this order, from the data path and the gates:
 

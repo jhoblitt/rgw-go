@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the machinery that judges phase 1's other eight units: the seam microbenchmark that answers the cgo question, the s3-tests and go-ceph rgw/admin harnesses with radosgw's own baseline recorded green before rgw-go is compared, the derived Ceph image with rgw-go as `/usr/bin/radosgw` and its goreleaser release, the nightly Rook workflow running the phase-1 subset of the object suite, the gateway comparison through the elbencho fork, and `docs/benchmarks/`.
+**Goal:** Build the machinery that judges phase 1's other eight units: the seam microbenchmark that answers the cgo question, the s3-tests and go-ceph rgw/admin harnesses with radosgw's own baseline recorded green before rgw-go is compared, the derived Ceph image with rgw-go as `/usr/bin/radosgw` and its goreleaser release, the nightly Rook workflow running the phase-1 subset of the object suite, the s3-tests parity check on every pull request that touches the S3 path with the jhoblitt/s3-tests fork it runs, the gateway comparison through the elbencho fork, and `docs/benchmarks/`.
 
 **Architecture:** Every harness runs against the disposable rooket clusters (`hack/rooket/`) and first against the radosgw those clusters already run, so a later rgw-go failure is unambiguous. The microbenchmark is `testing.B` code over the phase-0 seam in `test/bench/seam`, swept by a shell driver one process per completion mode with `rados bench` from the cluster's own image as the librados-native floor. The s3-tests and admin harnesses are shell around pinned upstream checkouts, with one Go tool, `hack/parity`, turning their junit and `go test -json` output into committed baselines and pass-or-fail comparisons. The image is built as cgo inside a builder stage derived from the target Ceph image and assembled onto that image; goreleaser drives the same build through a `tool:` wrapper. The Rook workflow checks Rook out at a pinned commit, patches the suite down to the phase-1 subset and rewrites the installer's image constant.
 
@@ -22,7 +22,7 @@
 - Parity settings for every timed gateway run, from `docs/exclusions.md`: notifications off, MFA off, SSE off, `rgw_d3n_l1_local_datacache_enabled=false`, `rgw_dynamic_resharding=false`, the same cache setting, the same shard count and stripe and chunk sizes, and the sync, GC and LC workers off (`rgw_run_sync_thread=false`, `rgw_enable_gc_threads=false`, `rgw_enable_lc_threads=false`). Both gateways read them from the mon config store under their own entity names.
 - Load generator: the jhoblitt/elbencho fork, branch `s3-error-counts`, pinned at commit `0637a922cbb71d56625f553750dbfbf12e5f0167` (2026-09-22); one client build drives every gateway.
 - Every GitHub Action `uses:` is pinned to a 40-hex SHA with a `# vX.Y.Z` comment (`GITHUB_TOKEN=$(gh auth token) pinact run` after editing); `actionlint` with shellcheck on `PATH` before committing a workflow; top-level `permissions: contents: read`; `persist-credentials: false` on every checkout; no `${{ }}` inside `run:`, event and matrix values pass through `env:`.
-- Workflows in unit T do not gate pull requests: `integration.yml` and `rook.yml` run nightly and on `workflow_dispatch`.
+- One workflow in unit T gates pull requests: `s3tests.yml` (Task 16) runs on every pull request and on `workflow_dispatch`, and becomes a required check once Task 16's proof is done (spec §9 and §12). `integration.yml` and `rook.yml` do not gate pull requests: they run nightly and on `workflow_dispatch`. There is no s3-tests nightly.
 - The derived image keeps the original radosgw beside rgw-go: `/usr/bin/radosgw.ceph` is Ceph's, `/usr/bin/rgw-go` is ours, `/usr/bin/radosgw` is a symlink to `rgw-go` so `argv[0]` is `radosgw` under Rook. Phase 1 publishes `linux/amd64` only.
 - Documentation of a benchmark result carries the exact commands, the cluster description (release, Ceph version, rooket commit, host CPU and memory, kernel), the gateway's build stamp and the date; a claim about performance without its run directory under `docs/benchmarks/` is not made.
 - Commits are Conventional Commits ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and no `Claude-Session` trailer; every PR opens as a draft assigned to the author and merges on green with a merge commit under the standing authorization. The machine facts in the repository `CLAUDE.md` apply: local cgo builds need `CGO_CFLAGS=-I/home/jhoblitt/github/ceph/src/include` and `CGO_LDFLAGS=-L$HOME/.local/lib/rgw-go`; module downloads need the sandbox disabled.
@@ -34,6 +34,7 @@
 3. **A Rook run that passed against stock Ceph.** If the installer constant's spelling changes, a rewrite that matches nothing leaves the suite pulling `quay.io/ceph/ceph:v19` and passing vacuously. Pinned in Task 10: `set-image.sh` fails when the constant is not found in the expected form, and the workflow asserts after the run that the CephCluster's image is the derived one.
 4. **A baseline from another world.** Comparing rgw-go against a baseline recorded on a different s3-tests commit, Ceph version, release or set of deselect lists would report differences that are drift, not bugs, or, after a list shrinks, silently skip the tests it gave back. Pinned in Task 5: `parity diff` refuses when the metadata differs, with a spec; Task 4's `run.sh` stops on a list line that names no collected test or would deselect one it does not name.
 5. **A derived image that breaks the tools sharing it.** Under Rook the derived image is every daemon's and the toolbox's image, so a rename that clobbers `radosgw-admin`, `ceph` or `rados` breaks the cluster before rgw-go is ever reached. Pinned in Task 8: the image test runs `ceph --version`, `radosgw-admin --version`, `rados --version` and `radosgw.ceph --version` and requires the base image's version string from each.
+6. **A required check that passes without comparing anything.** A path filter that keeps the check from starting leaves it pending forever, and a job skipped because the job it needs failed reports success, so a broken filter could pass every merge. Pinned in Task 16: the filter is a job, not a trigger filter; the required check is a summary job that fails unless the filter succeeded and the parity job either passed or was skipped because no path matched; and the check is proved red on a real regression, a filter failure and a stale known difference before the owner makes it required.
 
 ---
 
@@ -43,7 +44,7 @@ The index's decisions D1, D2, D10 and D11 (`00-index.md`, "Spec ambiguities and 
 
 - **D1, the phase-1 Rook gate** is the subset `zonepools`, `bucket/{owner,policy,quota,rw}`, `user/{caps,keys,opmask,placement,storageclass}`, `cosi` (its non-TLS pass; it skips itself under TLS) and `dependents`, run from a Rook checkout at a pinned commit with `bucket/lifecycle` (phase 2), `topic/kafka` and `notification` (phase 3) removed by `hack/rook/phase1.patch`. Verified at rook `dc7829268`: `runObjectE2ETest` ([`tests/integration/ceph_object_test.go:103-138`](https://github.com/rook/rook/blob/v1.20.7/tests/integration/ceph_object_test.go#L103-L138)) calls them unconditionally. The full suite is the phase-3 gate.
 - **D2, image injection:** `hack/rook/set-image.sh` rewrites `squidTestImage` or `tentacleTestImage` in `tests/framework/installer/ceph_installer.go` (`"quay.io/ceph/ceph:v19"` and `"quay.io/ceph/ceph:v20"` at `dc7829268`, lines 46-47), which `ReturnCephVersion` selects by `CEPH_SUITE_VERSION=squid|tentacle` ([`ceph_installer.go:96-115`](https://github.com/rook/rook/blob/v1.20.7/tests/framework/installer/ceph_installer.go#L96-L115)). The Rook-side override stays deferred.
-- **D10, the s3-tests parity set:** files `s3tests/functional/test_s3.py` and `s3tests/functional/test_headers.py` (the auth groups unit A's gate names live in the latter), at commit `5522d1c351f75bc00ae0f64f742f3f095f5939d9` (master, 2026-05-27; the boto3 tests moved from `s3tests_boto3/` to `s3tests/functional/`, the README lags). Deselected markers, one `-m` expression: `lifecycle lifecycle_expiration lifecycle_transition cloud_transition cloud_restore target_by_bucket versioning delete_marker object_lock object_ownership encryption bucket_encryption sse_s3 s3select s3website s3website_routing_rules s3website_redirect_location bucket_logging bucket_logging_cleanup fails_without_logging_rollover checksum sns appendobject iam_account iam_cross_account iam_tenant iam_user iam_role user_policy role_policy group group_policy session_policy abac_test test_of_sts webidentity_test token_claims_trust_policy_test token_principal_tag_role_policy_test token_request_tag_trust_policy_test token_resource_tags_test token_role_tags_test token_tag_keys_test s3control`. Deselected too, by pytest node id and on both gateways: the tests `hack/s3tests/deselect-phase2.txt` and `hack/s3tests/deselect-phase3.txt` list (Task 4), which call a feature §9 places in phase 2 or 3 and carry none of those markers. The parity files carry no `versioning` or `object_lock` mark at the pinned commit, so those two markers remove nothing there; the lists name the tests one by one, each with the calls that need the feature, every one checked against its body at the pinned commit: bucket versioning 48, object lock 39, POST object 35, CORS with the OPTIONS preflight 16, public access block 10, policy status 6 and Tentacle-level client checksums 1 (phase 2, 155 lines), and the `?usage` extension 1 (phase 3). A list shrinks as its phase lands: the PR that lands a feature deletes its lines and re-records the radosgw baselines, which carry the lists' digest so that `parity diff` refuses a stale one (Task 5). The known-difference lists (Task 12) hold decided differences only; a test out of the phase's reach is deselected, never listed as a difference. At the pinned commit the two files hold 808 tests: the markers remove 259, the lists 156, and 393 run. Kept: `fails_on_rgw` (both gateways must fail alike; Ceph's own QA excludes it, [`qa/tasks/s3tests.py:531`](https://github.com/ceph/ceph/blob/v19.2.6/qa/tasks/s3tests.py#L531)), `fails_on_aws`, `fails_on_dbstore`, `fails_on_dho`, `fails_with_subdomain`, `auth_aws2`, `auth_aws4`, `auth_common`, `bucket_policy`, `copy`, `tagging`, `list_objects_v2`, `storage_class`, and `conditional_write`. `conditional_write` (25 tests: `If-Match` and `If-None-Match` on PUT, which radosgw evaluates in `_do_write_meta`'s `check_preconditions`, and the conditional DELETE and DeleteObjects forms of W-D12) is kept because §9 lists Put without qualification; 17 of its tests enable bucket versioning and are on the phase 2 list, so 8 run, and unit W is told in the report that the parity set holds them.
+- **D10, the s3-tests parity set:** files `s3tests/functional/test_s3.py` and `s3tests/functional/test_headers.py` (the auth groups unit A's gate names live in the latter), at commit `5522d1c351f75bc00ae0f64f742f3f095f5939d9` (master, 2026-05-27; the boto3 tests moved from `s3tests_boto3/` to `s3tests/functional/`, the README lags). Deselected markers, one `-m` expression: `lifecycle lifecycle_expiration lifecycle_transition cloud_transition cloud_restore target_by_bucket versioning delete_marker object_lock object_ownership encryption bucket_encryption sse_s3 s3select s3website s3website_routing_rules s3website_redirect_location bucket_logging bucket_logging_cleanup fails_without_logging_rollover checksum sns appendobject iam_account iam_cross_account iam_tenant iam_user iam_role user_policy role_policy group group_policy session_policy abac_test test_of_sts webidentity_test token_claims_trust_policy_test token_principal_tag_role_policy_test token_request_tag_trust_policy_test token_resource_tags_test token_role_tags_test token_tag_keys_test s3control`. Deselected too, by pytest node id and on both gateways: the tests `hack/s3tests/deselect-phase2.txt` and `hack/s3tests/deselect-phase3.txt` list (Task 4), which call a feature §9 places in phase 2 or 3 and carry none of those markers. The parity files carry no `versioning` or `object_lock` mark at the pinned commit, so those two markers remove nothing there; the lists name the tests one by one, each with the calls that need the feature, every one checked against its body at the pinned commit: bucket versioning 48, object lock 39, POST object 35, CORS with the OPTIONS preflight 16, public access block 10, policy status 6 and Tentacle-level client checksums 1 (phase 2, 155 lines), and the `?usage` extension 1 (phase 3). A list shrinks as its phase lands: the PR that lands a feature deletes its lines and re-records the radosgw baselines, which carry the lists' digest so that `parity diff` refuses a stale one (Task 5). The known-difference lists (Task 12) hold decided differences only; a test out of the phase's reach is deselected, never listed as a difference. At the pinned commit the two files hold 808 tests: the markers remove 259, the lists 156, and 393 run. Kept: `fails_on_rgw` (both gateways must fail alike; Ceph's own QA excludes it, [`qa/tasks/s3tests.py:531`](https://github.com/ceph/ceph/blob/v19.2.6/qa/tasks/s3tests.py#L531)), `fails_on_aws`, `fails_on_dbstore`, `fails_on_dho`, `fails_with_subdomain`, `auth_aws2`, `auth_aws4`, `auth_common`, `bucket_policy`, `copy`, `tagging`, `list_objects_v2`, `storage_class`, and `conditional_write`. `conditional_write` (25 tests: `If-Match` and `If-None-Match` on PUT, which radosgw evaluates in `_do_write_meta`'s `check_preconditions`, and the conditional DELETE and DeleteObjects forms of W-D12) is kept because §9 lists Put without qualification; 17 of its tests enable bucket versioning and are on the phase 2 list, so 8 run, and unit W is told in the report that the parity set holds them. (Amended 2026-10-08: Task 17 moves the harness to the jhoblitt/s3-tests fork, branch `rgw-go`, forked at this commit, and pins a commit on that branch; the set's files, markers and lists are not changed by the move.)
 - **D11:** Squid first on every harness, Tentacle in the same gate.
 - **The cgo question's measurement and threshold.** The microbenchmark reports, per completion mode, shape and concurrency: throughput, submit-to-wake latency p50, p99 and p999, CPU time per operation, and OS threads idle and peak. Its floor is `rados bench` from the cluster's own image, on the same host and pool, at the same object size and concurrency, for the four shapes that mirror it exactly. cgo is **not** a phase-1 bottleneck when, on each release, one of the sync, callback and pipe modes meets both criteria, at 64 and 256 in flight: (a) throughput of `read4k`, `write4k`, `read4m` and `write4m` is at least 0.8 times `rados bench`'s at the same size and concurrency; and (b) their mean latency is at most 1.25 times `rados bench`'s mean. The aims are the lowest latency, the highest throughput and the lowest CPU use, so beside the criteria the report measures, for every mode and against no threshold: CPU per operation, at `read4k` at 256 in flight (among the modes that meet both criteria, the one using the least is preferred; `rados bench` records no CPU, so a floor that records it is the next benchmark's to add); the boundary cost, the part of that CPU a pure-Go client would no longer spend: the submit crossing (`runtime.cgocall`'s Go side, the `_Cfunc_*` stubs, the pinner and cgo's pointer checks) plus the delivery (the `runtime.cgocallback*` frames a callback arrives through, or the pipe goroutine and the read it waits in), counting neither the C those calls run on the Go thread nor the Go completion handler, which a pure-Go client runs too; thread growth, peak minus idle OS threads, which matters only where it costs throughput, latency or CPU; and the share of samples with any cgo frame on the stack, which counts librados's own C work as a cost of the boundary and rises as the Go side gets more efficient. Failing a criterion is the finding, recorded with its margin. (Amended 2026-10-02: every mode is judged, and thread growth and the boundary cost are measured rather than gates.)
 - **Benchmark form:** `testing.B` in `test/bench/seam`, one process per mode from the shell driver, because the Go runtime never destroys an OS thread and the fork's completion notifier is process-wide (`docs/cgo-limitations.md`). Results are one JSON line per cell, rendered by `hack/bench/report`.
@@ -85,11 +86,14 @@ hack/rook/set-image.sh                      rewrites the installer's image const
 hack/rooket/rgw-go-up.sh, rgw-go-down.sh    rgw-go on the host against a rooket cluster
 hack/rooket/populate.sh                     modify: compressed objects on four storage classes
 .github/workflows/rook.yml                  nightly phase-1 subset of TestCephObjectSuite on kind
-.github/workflows/integration.yml           modify: baselines and the quick microbenchmark after the gate
+.github/workflows/integration.yml           modify: the cluster setup through the shared action; the rgw/admin baseline and the quick microbenchmark after the gate
+.github/workflows/s3tests.yml               s3-tests parity against rgw-go on each pull request touching the S3 path, and on demand
+.github/actions/rooket-cluster/action.yml   the cluster setup both cluster workflows run
+test/s3tests/known-differences-squid.txt, known-differences-tentacle.txt   decided differences parity diff skips
 .github/workflows/release.yml               modify: librados for the stamp check
 .github/dependabot.yml                      modify: docker ecosystem for hack/image
 .goreleaser.yaml                            modify: cgo builds through the tool wrapper, dockers per release
-Makefile                                    modify: bench-seam, s3tests, admin-suite, parity-check, image, rgw-go-up, rgw-go-down, bench-gateway
+Makefile                                    modify: bench-seam, s3tests, admin-suite, parity-check, image, rgw-go-up, rgw-go-down, s3tests-parity, s3tests-record, bench-gateway
 .gitignore                                  modify: the harnesses' out/ directories
 docs/cgo-limitations.md                     modify: the measured answer
 docs/benchmarks/README.md                   index; one directory per run
@@ -106,17 +110,21 @@ README.md                                   modify: development section
 | 4 | s3-tests harness | 0 | phase 0 (cluster) |
 | 5 | `hack/parity` and the s3-tests radosgw baselines | 0 | 4 (cluster) |
 | 6 | go-ceph rgw/admin suite runner and baselines | 0 | 5 (cluster) |
-| 7 | Integration workflow: baselines and the quick microbenchmark nightly | 0 | 2, 5, 6 |
+| 7 | Integration workflow: the rgw/admin baseline and the quick microbenchmark nightly | 0 | 2, 5 (`hack/parity`), 6 |
 | 8 | Derived image build | 0 for the mechanics, 2 to serve | none; G's binary to serve a store |
 | 9 | goreleaser and the release workflow | 2 | 8 |
 | 10 | Rook nightly workflow on the phase-1 subset | 2 | 8; green needs G, A, Z, M, R, W, N |
-| 11 | rgw-go on the rooket cluster | 5 | G, M, R, W |
-| 12 | s3-tests parity against rgw-go | 5 | 5, 11, A, Z, P |
+| 11 | rgw-go on the rooket cluster | 4 | G, M (through M Task 13), R, W |
+| 12 | s3-tests parity against rgw-go | 4 | 5, 11, A, Z, P |
 | 13 | Admin suite against rgw-go | 5 | 6, 11, N |
 | 14 | elbencho build and the gateway comparison | 5 | 11 |
 | 15 | The cgo answer and `docs/benchmarks/` | 5 | 2, 14 |
+| 16 | s3-tests workflow and the shared cluster action | 4 | 11, 12; required only after X13, as "Before the check is required" orders |
+| 17 | The jhoblitt/s3-tests fork | 4 | 4, 5; its re-record uses 16's dispatch when 16 has merged |
 
-Tasks 1 to 8 need no gateway and run in wave 0 in parallel with unit G; Tasks 3, 4 and 6 are independent of each other. Tasks 9 and 10 are authored in wave 2 as soon as G's binary starts under Rook's argv; Task 10's first green run is the wave-5 completion of the Rook gate. Tasks 11 to 15 need the data path.
+Tasks 1 to 8 need no gateway and run in wave 0 in parallel with unit G; Tasks 3, 4 and 6 are independent of each other. Tasks 9 and 10 are authored in wave 2 as soon as G's binary starts under Rook's argv; Task 10's first green run is the wave-5 completion of the Rook gate. Tasks 11, 12 and 16 are the per-pull-request s3-tests check (spec §9), which must not wait for wave 5: they run in wave 4 as soon as M Task 13 merges, the last of the code they need (G, A, Z, M, R, W and P's other tasks have merged), and do not wait for N. Task 17 needs no gateway and can run beside them. Tasks 13 to 15 need the data path and N, and keep wave 5.
+
+Order inside wave 4: 11, then 12, then 16; 17 at any point after 5, its re-record through 16's dispatch input once 16 has merged, or locally through `make s3tests-record` (Task 16) before then. Follow-ups X13 (a `VersionId` of `null` on a never-versioned bucket is the plain object, not a 501), X14 (lower-case `x-amz-meta-*` response headers) and X15 (an `Expect` other than `100-continue` no longer answered 417 by net/http) are fixes in their owning units, not tasks of this plan; Task 16, "Before the check is required", orders them against the required check.
 
 ---
 
@@ -499,7 +507,7 @@ The gate round-trips every head's xattrs including `user.rgw.compression` (`meta
 
 **Interfaces:**
 - Consumes: `hack/rooket/lib.sh` (`use_release`, `rgw_daemon`, `rgw_endpoint`, `toolbox`, `admin` pattern from `populate.sh`); for GATEWAY `rgw-go`, the endpoint file Task 11 writes, `hack/rooket/out/<release>/rgw-go.endpoint`.
-- Produces: `hack/s3tests/run.sh RELEASE GATEWAY RUN` writing `hack/s3tests/out/<release>-<gateway>-<run>.xml` (junit), `.log`, and `.conf`; the fixed users below; the marker expression and the deselect lists in one place; `hack/s3tests/run.sh --print-commit` (the pinned s3-tests commit, the one home Tasks 5, 7 and 12 read) and `hack/s3tests/run.sh --print-deselect` (a 12-hex digest of the node ids the lists name, the `deselect` meta key every s3-tests result records).
+- Produces: `hack/s3tests/run.sh RELEASE GATEWAY RUN` writing `hack/s3tests/out/<release>-<gateway>-<run>.xml` (junit), `.log`, and `.conf`; the fixed users below; the marker expression and the deselect lists in one place; `hack/s3tests/run.sh --print-commit` (the pinned s3-tests commit, the one home Tasks 5, 12 and 16 read and Task 17 moves to the fork) and `hack/s3tests/run.sh --print-deselect` (a 12-hex digest of the node ids the lists name, the `deselect` meta key every s3-tests result records).
 
 ```sh
 #!/usr/bin/env bash
@@ -1066,41 +1074,32 @@ Expected: every `TestRadosGWTestSuite/*` present; `TestUsage` passes (it is what
 
 ---
 
-### Task 7: Integration workflow: baselines and the quick microbenchmark nightly
+### Task 7: Integration workflow: the rgw/admin baseline and the quick microbenchmark nightly
 
 **Files:**
 - Modify: `.github/workflows/integration.yml`, `README.md`, `hack/admin/run.sh` (`--print-tag`)
 
 **Interfaces:**
-- Consumes: Tasks 2, 5, 6's Makefile targets and committed baselines.
-- Produces: nightly evidence that radosgw's baselines still hold on the pinned images and pins, and a quick seam sweep as an artifact.
+- Consumes: Tasks 2, 5, 6's Makefile targets, `hack/parity` and the committed rgw/admin baselines; Task 16's `.github/actions/rooket-cluster` when Task 16 has merged first.
+- Produces: nightly evidence that radosgw's rgw/admin baseline still holds on the pinned images and pins, and a quick seam sweep as an artifact.
+
+**Amended 2026-10-08 (spec §9 and §12: there is no s3-tests nightly).** Removed from this task: the `s3-tests against radosgw` step, the `Compare with the recorded s3-tests baseline` step, the s3-tests reports in the artifact upload, and the workflow's reading of `hack/s3tests/run.sh --print-commit` and `--print-deselect`. s3-tests parity is held on every pull request by Task 16, whose manual run also re-records radosgw's baseline; the integration workflow runs no s3-tests at all. The rgw/admin steps and the seam sweep stay. The workflow's cluster setup is not this task's: Task 16 moves it into the shared composite action, and whichever of the two tasks merges second rebases onto the other, these steps following the setup either way.
 
 After the `Phase 0 gate` step, in this order (the gate counts users):
 
 ```yaml
-      # radosgw's own baselines, recorded in test/*/baseline/. A drift here is
-      # a change in the Ceph image, the s3-tests pin or the go-ceph tag, never
-      # an rgw-go bug: re-record on purpose (hack/rooket/README.md).
-      - name: s3-tests against radosgw
-        run: make s3tests "RELEASE=${RELEASE}" GATEWAY=radosgw RUN=nightly
-
-      - name: Compare with the recorded s3-tests baseline
-        run: |
-          go run ./hack/parity record -format junit -suite s3tests -out "${RUNNER_TEMP}/s3tests-nightly.json" \
-            -meta "release=${RELEASE}" -meta "ceph_version=$(jq -r .ceph_version "hack/rooket/out/${RELEASE}/manifest.json")" \
-            -meta "s3tests_commit=$(hack/s3tests/run.sh --print-commit)" -meta "deselect=$(hack/s3tests/run.sh --print-deselect)" \
-            "hack/s3tests/out/${RELEASE}-radosgw-nightly.xml"
-          go run ./hack/parity diff -baseline "test/s3tests/baseline/${RELEASE}.json" -candidate "${RUNNER_TEMP}/s3tests-nightly.json"
-
+      # radosgw's own rgw/admin baseline, recorded in test/admin/baseline/. A
+      # drift here is a change in the Ceph image or the go-ceph tag, never an
+      # rgw-go bug: re-record on purpose (hack/rooket/README.md).
       - name: go-ceph rgw/admin suite against radosgw
         run: make admin-suite "RELEASE=${RELEASE}" GATEWAY=radosgw RUN=nightly
 
       - name: Compare with the recorded rgw/admin baseline
         run: |
-          go run ./hack/parity record -format gotest -suite admin -out "${RUNNER_TEMP}/admin-nightly.json" \
-            -meta "release=${RELEASE}" -meta "ceph_version=$(jq -r .ceph_version "hack/rooket/out/${RELEASE}/manifest.json")" \
-            -meta "go_ceph_tag=$(hack/admin/run.sh --print-tag)" "hack/admin/out/${RELEASE}-radosgw-nightly.jsonl"
-          go run ./hack/parity diff -baseline "test/admin/baseline/${RELEASE}.json" -candidate "${RUNNER_TEMP}/admin-nightly.json"
+          go run ./hack/parity record --format gotest --suite admin --out "${RUNNER_TEMP}/admin-nightly.json" \
+            --meta "release=${RELEASE}" --meta "ceph_version=$(jq -r .ceph_version "hack/rooket/out/${RELEASE}/manifest.json")" \
+            --meta "go_ceph_tag=$(hack/admin/run.sh --print-tag)" "hack/admin/_out/${RELEASE}-radosgw-nightly.jsonl"
+          go run ./hack/parity diff --baseline "test/admin/baseline/${RELEASE}.json" --candidate "${RUNNER_TEMP}/admin-nightly.json"
 
       - name: Seam microbenchmark (quick)
         run: make bench-seam "RELEASE=${RELEASE}" BENCH_QUICK=1
@@ -1111,16 +1110,14 @@ After the `Phase 0 gate` step, in this order (the gate counts users):
         with:
           name: harness-${{ matrix.release }}
           path: |
-            hack/s3tests/out/*.xml
-            hack/s3tests/out/*.log
-            hack/admin/out/*.jsonl
-            hack/admin/out/*.log
+            hack/admin/_out/*.jsonl
+            hack/admin/_out/*.log
             hack/bench/out/
           retention-days: 14
           if-no-files-found: ignore
 ```
 
-`timeout-minutes` rises from 90 to 150. The workflow reads each pin from its one home: `hack/s3tests/run.sh --print-commit` and `--print-deselect` (Task 4), and `hack/admin/run.sh --print-tag`, which this task adds to Task 6's script (it prints `GO_CEPH_TAG` and exits before the release argument is read). A nightly run under lists that changed since the baseline was recorded exits 2 at the comparison, which is the prompt to re-record. python3 with `venv` is on the runner image; nothing to install.
+`hack/parity`'s flags are cobra's double-dash long flags (`hack/parity/internal/parity/cli.go`), and `hack/admin/run.sh` writes under `hack/admin/_out/` (its `outdir`, so `go ./...` skips the checkout). `timeout-minutes` rises from 90 to 150. The workflow reads the go-ceph pin from its one home, `hack/admin/run.sh --print-tag`, which this task adds to Task 6's script (it prints `GO_CEPH_TAG` and exits before the release argument is read). A nightly run under a go-ceph tag that changed since the baseline was recorded exits 2 at the comparison, which is the prompt to re-record.
 
 - [ ] **Step 1: Edit; `actionlint .github/workflows/integration.yml`; `GITHUB_TOKEN=$(gh auth token) pinact run --check .github/workflows/integration.yml`**
 
@@ -1129,11 +1126,11 @@ After the `Phase 0 gate` step, in this order (the gate counts users):
 ```sh
 gh workflow run integration.yml --ref "$(git branch --show-current)"
 ```
-Watch per the CI-watching canon. Expected: both matrix jobs green with the two compare steps exiting 0. A `diff` failure on a fresh baseline means the runner's radosgw differs from the local one (different Ceph patch release in the image, or a flaky test not caught by two local runs): add the test to `unstable` by re-recording with the nightly run as a third input, and say so in the commit.
+Watch per the CI-watching canon. Expected: both matrix jobs green with the rgw/admin compare step exiting 0. A `diff` failure on a fresh baseline means the runner's radosgw differs from the local one (different Ceph patch release in the image, or a flaky test not caught by two local runs): add the test to `unstable` by re-recording with the nightly run as a third input, and say so in the commit.
 
-- [ ] **Step 3: README development section: the three targets and the order; commit**
+- [ ] **Step 3: README development section: the `admin-suite` and `bench-seam` targets and the order after the gate; commit**
 
-`ci: check radosgw's s3-tests and rgw/admin baselines nightly and sweep the seam benchmark`
+`ci: check radosgw's rgw/admin baseline nightly and sweep the seam benchmark`
 
 ---
 
@@ -1575,9 +1572,11 @@ Expected at this stage: the derived image builds and loads, the CephCluster come
 - Create: `hack/rooket/rgw-go-up.sh`, `hack/rooket/rgw-go-down.sh`
 - Modify: `Makefile` (targets `rgw-go-up`, `rgw-go-down`), `hack/rooket/README.md`, `hack/rooket/diag.sh` (collect `rgw-go.log`)
 
+**Wave and dependencies (amended 2026-10-08).** This task is a prerequisite of the per-pull-request s3-tests check (Task 16, spec §9), so it runs in wave 4, not wave 5: it needs G's `cmd/rgw-go`, and M, R and W for a store that serves objects, all merged except M Task 13 (the store assembly, in review), which it waits for. It does not wait for N.
+
 **Interfaces:**
-- Consumes: `cmd/rgw-go` from G (`rgw-go serve -- <radosgw argv>`, `--rados-completions`, `--metrics-addr`); M, R, W for a store that serves objects.
-- Produces: `hack/rooket/out/<release>/rgw-go.endpoint` (`http://127.0.0.1:7481`), `rgw-go.pid`, `rgw-go.log`, `rgw-go.metrics` (`127.0.0.1:9481`), `ceph.client.rgw.rgw-go.keyring`; the parity options set for both gateways' entities.
+- Consumes: `cmd/rgw-go` from G (`rgw-go serve -- <radosgw argv>`, `--rados-completions`, `--metrics-addr`, all in `internal/cli/serve.go`); M (through M Task 13), R, W for a store that serves objects.
+- Produces: `hack/rooket/out/<release>/rgw-go.endpoint` (`http://127.0.0.1:7481`), `rgw-go.pid`, `rgw-go.log`, `rgw-go.metrics` (`127.0.0.1:9481`), `ceph.client.rgw.rgw-go.keyring`; the parity options set for both gateways' entities, before Task 16 records a baseline as well as before rgw-go is compared. Task 16 runs `make rgw-go-up` on a GitHub runner, so the script takes every cgo setting from the environment and assumes nothing of this machine: on the runner, librados-dev comes from the shared cluster action and needs no `CGO_*` at all.
 
 `rgw-go-up.sh RELEASE [rgw-go flags...]`: builds `bin/rgw-go` (`go build "-tags=$GO_TAGS" -o bin/rgw-go ./cmd/rgw-go`, cgo, with the machine's `CGO_*` facts from the environment); creates the entity once, `ceph_cmd auth get-or-create client.rgw.rgw-go mon 'allow rw' osd 'allow rwx'` (radosgw's caps under Rook) into `${out}/ceph.client.rgw.rgw-go.keyring`; sets, for `client.rgw.rgw-go` and for the radosgw pod's entity (Task 6's `entity` derivation, its `config show` check reused from a shared function in `lib.sh`), the parity options: `rgw_dynamic_resharding=false`, `rgw_enable_gc_threads=false`, `rgw_enable_lc_threads=false`, `rgw_run_sync_thread=false`, `rgw_d3n_l1_local_datacache_enabled=false`, and Task 6's three usage options, restarting the radosgw deployment when any value changed (compare `config get` before and after); starts
 
@@ -1612,26 +1611,31 @@ Expected: 200; the head of an object radosgw wrote, served by rgw-go (R's oracle
 
 ### Task 12: s3-tests parity against rgw-go
 
+**Wave and dependencies (amended 2026-10-08).** The per-pull-request check (Task 16) runs this task's target, so this task runs in wave 4, right after Task 11, not in wave 5: it needs Tasks 5 and 11 and the code of A, Z, M (through M Task 13), R, W and P, all merged except M Task 13. It does not wait for N.
+
 **Files:**
-- Create: `test/s3tests/known-differences-squid.txt` (its header and one entry, below) and `test/s3tests/known-differences-tentacle.txt` (its header alone), the known-difference lists `parity diff -known` reads
+- Create: `test/s3tests/known-differences-squid.txt` (its header and the fifteen entries below) and `test/s3tests/known-differences-tentacle.txt` (its header alone), the known-difference lists `parity diff --known` reads
 - Modify: `Makefile` (target `s3tests-parity`), `hack/rooket/README.md`
 
 **Interfaces:**
 - Consumes: Tasks 4, 5, 11; A, Z, M, R, W, P.
-- Produces: `make s3tests-parity RELEASE=<r>`: runs the set against rgw-go, records, diffs against `test/s3tests/baseline/<r>.json`, exit 0 on parity.
+- Produces: `make s3tests-parity RELEASE=<r> [BASELINE=FILE]`: runs the set against rgw-go, records `$(CLUSTER_OUT)/s3tests-rgw-go.json`, diffs it against `BASELINE` (default `test/s3tests/baseline/<r>.json`) under `test/s3tests/known-differences-<r>.txt`, prints one line per difference, and exits with `hack/parity diff`'s status: 0 on parity, 1 on a difference, 2 on a baseline from another s3-tests commit, Ceph version, release or set of deselect lists. Task 16 runs exactly this target, so CI and a local run judge alike; `BASELINE` is the seam Task 16's re-record uses to diff against the baseline it has just recorded.
 
 ```make
+BASELINE ?= test/s3tests/baseline/$(RELEASE).json
 .PHONY: s3tests-parity
 s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and compare with radosgw's recorded baseline
 	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity
-	go run ./hack/parity record -format junit -suite s3tests -out $(CLUSTER_OUT)/s3tests-rgw-go.json \
-	  -meta release=$(RELEASE) -meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) -meta gateway=rgw-go \
-	  -meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) -meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
+	go run ./hack/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
+	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
+	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
-	go run ./hack/parity diff -baseline test/s3tests/baseline/$(RELEASE).json -candidate $(CLUSTER_OUT)/s3tests-rgw-go.json -known test/s3tests/known-differences-$(RELEASE).txt
+	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
 ```
 
-`test/s3tests/known-differences-<release>.txt` is the list of tests whose outcome is expected to differ from radosgw's by a difference the plan set decides and `docs/exclusions.md` records, one regular expression per line over the test ids `hack/parity` records (`classname::name`, so `s3tests.functional.test_s3::<test>`), each under a `#` comment line giving its reason; `parity diff -known` (Task 5) skips them and fails on a stale entry. A test the phase boundary puts out of reach is not a difference: it is on Task 4's deselect list for its phase and runs on neither gateway. `test_versioning_multi_object_delete_with_marker_create` ([s3tests/functional/test_s3.py:8212-8232](https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L8212-L8232) at the pinned commit), which needs bucket versioning and carries only `fails_on_dbstore`, is one of them, on the phase 2 list. Both files open with the same header:
+`manifest.json`, which carries `ceph_version`, is `make populate`'s (`hack/rooket/populate.sh`), so a cluster this target runs on has been populated; Task 16's cluster action populates for that reason.
+
+`test/s3tests/known-differences-<release>.txt` is the list of tests whose outcome is expected to differ from radosgw's by a difference the plan set decides and `docs/exclusions.md` records, one regular expression per line over the test ids `hack/parity` records (`classname::name`, so `s3tests.functional.test_s3::<test>`), each under a `#` comment line giving its reason; `parity diff --known` (Task 5) skips them, and fails on an entry whose test agrees ("known difference no longer differs") and on one that matches no test (`hack/parity/internal/parity/parity.go`, `Diff`). A test the phase boundary puts out of reach is not a difference: it is on Task 4's deselect list for its phase and runs on neither gateway. `test_versioning_multi_object_delete_with_marker_create` ([s3tests/functional/test_s3.py:8212-8232](https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L8212-L8232) at the pinned commit), which needs bucket versioning and carries only `fails_on_dbstore`, is one of them, on the phase 2 list. Both files open with the same header:
 
 ```
 # Tests whose outcome is expected to differ from radosgw's on this release,
@@ -1641,24 +1645,45 @@ s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and 
 # hack/s3tests/deselect-phase<N>.txt removes it on both gateways.
 ```
 
-The Tentacle list is that header alone. The Squid list adds owner decision 11's entry (R-D1 kept), whose difference R Task 7 records in `docs/exclusions.md`:
+The Tentacle list is that header alone. The Squid list carries the fifteen differences the Squid spike of 2026-10-08 classified as already recorded in `docs/exclusions.md` (rgw-go at M13's `d08ecdc` with a throwaway fix for X13's `VersionId=null`, against `test/s3tests/baseline/squid.json` at s3-tests `5522d1c3`, deselect digest `136c2f295daa`; the run's `parity diff` listed 25 differences, these 15 and the 10 of X14 and X15 below). Each group is one decided difference, and each test id is the spike's:
+
+| Difference, by its `docs/exclusions.md` entry | Tests | radosgw 19.2.6 | rgw-go |
+|---|---|---|---|
+| "Write conditions are Tentacle's on Squid too" | `test_put_object_if_match`, `test_put_object_ifmatch_nonexisted_failed`, `test_multipart_put_object_if_match` | failed | passed |
+| "Delete conditions are Tentacle's, and a delete is guarded, on both releases" | `test_delete_object_if_match`, `test_delete_object_if_match_size`, `test_delete_object_if_match_last_modified_time`, `test_delete_objects_if_match`, `test_delete_objects_if_match_size`, `test_delete_objects_if_match_last_modified_time` | failed | passed |
+| "GetObjectAttributes is served on Squid too" (owner decision 11, R-D1 kept) | `test_get_object_attributes`, `test_get_multipart_object_attributes`, `test_get_single_multipart_object_attributes`, `test_get_paginated_multipart_object_attributes` | failed | passed |
+| "Squid clusters get Tentacle's checks outside the policy language" (`x-amz-expected-bucket-owner`) | `test_expected_bucket_owner` | failed | passed |
+| "A PutBucketAcl that loses a race is retried, and every retried ACL, policy or tagging write is authorized again" | `test_bucket_concurrent_set_canned_acl` | passed | failed |
+
+so the Squid list is the header and, one comment line per group naming its entry and one anchored line per test (`^s3tests\.functional\.test_s3::test_put_object_if_match$`, and so on for all fifteen; every one is in `test_s3.py`):
 
 ```
-# a Squid radosgw has no GetObjectAttributes and answers ?attributes with the object body; rgw-go serves GetObjectAttributes on both releases
-^s3tests\.functional\.test_s3::test_get_object_attributes$
+# Tentacle's PUT If-Match and If-None-Match, served on Squid too; Squid's radosgw fails them (exclusions: "Write conditions are Tentacle's on Squid too")
+^s3tests\.functional\.test_s3::test_put_object_if_match$
+...
+# radosgw answers 200 to a PutBucketAcl that lost a race, ACL unstored; rgw-go retries, then answers 409 (exclusions: "A PutBucketAcl that loses a race is retried, ...")
+^s3tests\.functional\.test_s3::test_bucket_concurrent_set_canned_acl$
 ```
 
-A difference that is not decided is a bug for the owning unit, never a new line here; a test that needs a later phase's feature goes on Task 4's list for that phase, never here.
+Fourteen of the fifteen are the Tentacle feature level served on Squid, which a Tentacle radosgw serves too, so they are not expected on Tentacle's list. The PutBucketAcl difference is on both releases by its entry (`rgw_op.cc:5920-5927` at v19.2.6, `:6582-6589` at v20.2.4), so Tentacle's first run (Step 2) is expected to show `test_bucket_concurrent_set_canned_acl`, and its line is added there under the same entry when it does; that run, not this plan, decides Tentacle's list.
+
+The spike's other ten differences are bugs, not entries: X14's eight (`test_object_set_get_metadata_none_to_good`, `_none_to_empty`, `_overwrite_to_empty`, `test_object_copy_retaining_metadata`, `test_object_copy_replacing_metadata`, `test_object_copy_to_itself_with_metadata`, `test_multipart_upload`, `test_multipart_upload_resend_part`: `internal/s3/getobject.go:328` adds each user-metadata header through `http.Header.Add`, which canonicalizes `x-amz-meta-foo` to `X-Amz-Meta-Foo`, and an SDK reads the key back as `Foo`) and X15's two (`test_headers::test_bucket_create_bad_expect_mismatch`, `test_object_create_bad_expect_mismatch`: net/http answers `Expect: 200` with 417 before any handler runs, where radosgw ignores it). Task 16, "Before the check is required", orders them. A difference that is not decided is a bug for the owning unit, never a new line here; a test that needs a later phase's feature goes on Task 4's list for that phase, never here.
 
 - [ ] **Step 1: Run on Squid with rgw-go up** (cluster-backed)
 
 ```sh
-make gate RELEASE=squid && make rgw-go-up RELEASE=squid
+make cluster-up RELEASE=squid && make populate RELEASE=squid && make rgw-go-up RELEASE=squid
+make s3tests RELEASE=squid GATEWAY=radosgw RUN=check && \
+  go run ./hack/parity record --format junit --suite s3tests --out "$TMPDIR/radosgw-check.json" --meta release=squid \
+    --meta ceph_version=$(jq -r .ceph_version hack/rooket/out/squid/manifest.json) \
+    --meta s3tests_commit=$(hack/s3tests/run.sh --print-commit) --meta deselect=$(hack/s3tests/run.sh --print-deselect) \
+    hack/s3tests/out/squid-radosgw-check.xml && \
+  go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json --candidate "$TMPDIR/radosgw-check.json"
 make s3tests-parity RELEASE=squid
 ```
-Expected on the first run: a list of differences, each a test rgw-go passes or fails unlike radosgw; each is a bug report to A, Z, M, R, W or P by test name, filed against the unit (a `test_headers.py` difference is A's, `test_bucket_policy*` Z's, listing M's, `test_object_*` R's or W's, `test_multipart_*` P's). The gate passes when the list is empty on both releases. The unstable list stays what radosgw's runs made it; rgw-go never adds to it.
+First, the radosgw check: `make rgw-go-up` sets Task 11's parity options on radosgw's entity too and restarts it, and the committed baseline was recorded before those options existed (2026-10-01, from two runs without them), so one radosgw run under them is diffed against it; a difference means re-recording with `make s3tests-record` (Task 16) before rgw-go is judged, because spec §10 compares the two gateways under the same configuration. Then expected, with X13 merged: the differences outside the fifteen entries are X14's and X15's ten unless they have merged; any other is a bug report to A, Z, M, R, W or P by test name, filed against the unit (a `test_headers.py` difference is A's or, for the frontend, G's, `test_bucket_policy*` Z's, listing M's, `test_object_*` R's or W's, `test_multipart_*` P's). Without X13 the run shows 389 errors, the spike's mask, and judges nothing. The gate passes when the list is empty on both releases. The unstable list stays what radosgw's runs made it; rgw-go never adds to it.
 
-- [ ] **Step 2: Tentacle**
+- [ ] **Step 2: Tentacle**, adding to its list only a difference `docs/exclusions.md` records (above: the PutBucketAcl entry is expected).
 
 - [ ] **Step 3: Commit** `test(s3tests): compare rgw-go's phase 1 set with radosgw's baseline`, and, when green, add the s3-tests parity line to `docs/benchmarks/README.md`'s gate table with the run's report paths.
 
@@ -1771,9 +1796,132 @@ The index table (date, kind, release, gateway build stamp, cluster, link) for ev
 
 ---
 
+### Task 16: s3-tests workflow and the shared cluster action
+
+Spec §9 makes phase 1's s3-tests parity a required check on every pull request that touches the S3 path, and §12 gives the workflow. This task builds it in wave 4, after Tasks 11 and 12, whose targets it runs.
+
+**Files:**
+- Create: `.github/actions/rooket-cluster/action.yml`, `.github/workflows/s3tests.yml`
+- Modify: `.github/workflows/integration.yml` (its setup steps become the action), `Makefile` (target `s3tests-record`), `hack/rooket/README.md`, `README.md` (the check, and what a pin bump must do); `.github/dependabot.yml` only if the constraint below finds Dependabot does not reach the action
+
+**Interfaces:**
+- Consumes: Task 11's `make rgw-go-up`; Task 12's `make s3tests-parity RELEASE=<r> [BASELINE=FILE]` and known-difference lists; Task 5's `hack/parity`; Task 4's `run.sh --print-commit` and `--print-deselect`.
+- Produces:
+  - `.github/actions/rooket-cluster`, a composite action with one input, `release` (`squid` or `tentacle`). Run after the caller's checkout, it does what `integration.yml`'s steps from "Free up runner disk" to "Populate the cluster" do today, except the checkout: frees disk when the runner is short, installs librados-dev and jq from download.ceph.com under the pinned key fingerprint, kind, kubectl and helm at their pinned versions and sha256s, the iSCSI and LVM tooling, Go from `go.mod`, and rooket at its pinned commit, then runs `make cluster-up` and `make populate` for the release. Every pin now in `integration.yml`'s job and step `env` (`ROOKET_VERSION`, `KIND_*`, `KUBECTL_*`, `HELM_*`, `CEPH_KEY_FPR`) moves into the action, its one home, and the action exports what later steps read (`ROOKET_ENGINE=docker` and rooket's directory, through `GITHUB_ENV` and `GITHUB_PATH`).
+  - The `s3-tests` check: the one job name the ruleset will require.
+  - `make s3tests-record RELEASE=<r> [OUT=FILE]`: runs the set against radosgw twice and records `OUT` (default `test/s3tests/baseline/<r>.json`) with Task 5 Step 4's meta keys (`release`, `ceph_version`, `gateway=radosgw`, `s3tests_commit`, `deselect`, `pytest_freeze`), so a re-record in CI and one on a workstation write the same file. It runs after `make rgw-go-up`, so radosgw records under the parity options Task 11 sets on its entity, the configuration rgw-go is compared under (spec §10).
+
+**Decisions:**
+- **Setup in one composite action; teardown in each caller.** The two cluster workflows bring up the same cluster, and two copies of the setup would drift (spec §12). The checkout stays in each caller, because a local action is read from the checked-out workspace. Diagnostics and teardown stay in each caller as the two steps `integration.yml` has today (`hack/rooket/diag.sh` on failure or cancel, `make cluster-down` always): a composite action has no post step, and teardown must follow the caller's last step. The action populates because Task 12's record reads `ceph_version` from `manifest.json`, which only `make populate` writes, and the integration gate needs the data.
+- **The path filter is a job, not a trigger filter.** A workflow that `on.pull_request.paths` keeps from starting leaves its required check pending, which blocks the merge, so the workflow always starts and decides inside.
+- **Three jobs, the last of them the required check.** A job skipped by its `if:` reports success, and GitHub skips a job whose needed job failed, so requiring the parity job itself would let a broken filter pass the merge. The summary job decides from both results:
+
+```
+changes   pull_request: diff the PR's files against the spec's paths, output run=true|false
+          workflow_dispatch: output run=true without diffing
+parity    needs changes; runs when run == 'true'
+          checkout; rooket-cluster (release); make rgw-go-up;
+          [record-baseline: make s3tests-record OUT=$RUNNER_TEMP/...; BASELINE=that file];
+          make s3tests-parity [BASELINE=...]; upload reports (always); diagnostics (failure or cancel); teardown (always)
+s3-tests  needs [changes, parity]; if: always()
+          success when changes succeeded and either parity succeeded, or run == 'false' and parity was skipped;
+          failure for anything else: a failed or cancelled filter, a failed or cancelled parity run, a skipped parity with run == 'true'
+```
+
+- **The comparison is Task 12's target, unchanged.** The parity job runs `make s3tests-parity`, so it fails on any difference from radosgw's recorded baseline in either direction outside the baseline's unstable set, unless the release's known-difference list names it; on a list entry whose test agrees or matches nothing; and on a baseline whose meta differs. These are spec §9's rule and `hack/parity diff`'s exits 1 and 2. The workflow adds no comparison logic of its own, so a local `make s3tests-parity` and the check judge alike.
+- **Releases.** A pull request runs Squid alone. `workflow_dispatch` takes `release` (a choice, `squid` or `tentacle`, default `squid`), so Tentacle parity runs in CI on demand only (spec §9: it stays the local gate run plus a manual CI run).
+- **The re-record.** `workflow_dispatch` takes `record-baseline` (boolean, default false). When set, the parity job records radosgw's baseline on the runner with `make s3tests-record` into `$RUNNER_TEMP`, uploads it as the artifact `s3tests-baseline-<release>`, and diffs rgw-go against that fresh file rather than the committed one, so the run shows what the committed re-record will make the check report. The workflow never writes to the repository (`contents: read`); the owner commits the artifact in the pull request that needs it. A bump of the s3-tests pin needs one (spec §12): the baseline carries the commit it ran at, and `parity diff` exits 2 on a baseline from another commit (`comparedMeta`, `hack/parity/internal/parity/parity.go`), so the bump's own pull request fails until it carries the re-record.
+
+**The path filter, exactly the spec's** (§12): everything under `internal/` and `cmd/`, `go.mod`, `go.sum`, everything under `hack/s3tests/`, `hack/rooket/` and `hack/parity/`, and the s3-tests test data under `test/s3tests/`. Nothing else starts the run: a change to docs or records skips it. The changed-file list is `git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA"` from a full-history checkout, with `BASE_SHA` and `HEAD_SHA` from `github.event.pull_request.base.sha` and `.head.sha` through `env` (the pair `commitlint.yml` already reads): three dots so only the pull request's own changes count, and `--no-renames` so a file moved out of `internal/` counts by its old path too. The patterns live in that one step. Its cases:
+
+| The pull request changes | run |
+|---|---|
+| `docs/exclusions.md`, `README.md`, a plan or spec | false |
+| `internal/s3/getobject.go` | true |
+| `go.sum` alone | true |
+| `test/s3tests/known-differences-squid.txt` alone | true |
+| `hack/admin/run.sh` alone | false |
+| a file moved from `internal/` to `docs/` | true |
+| `.github/workflows/s3tests.yml` or the action alone | false |
+
+The last row follows from the spec's list, which names no workflow path: a pull request that changes only the workflow or the action proves it by a `workflow_dispatch` run on its branch, which skips the filter, and its description links that run.
+
+**Constraints**, from github-conventions `references/workflows.md`:
+- **Timeouts.** Every job sets `timeout-minutes`: `changes` 5, `s3-tests` 5, `parity` 45, and the diagnostics step 10 as in `integration.yml`. The parity job's scale: `integration.yml`'s nightly job, the same bring-up and populate plus the integration suite and the phase 0 gate, finished in 8 to 9 minutes on each run from 2026-10-01 to 2026-10-08, and the set took 133 s against rgw-go and 235 s against radosgw on the Squid spike; a re-record adds two radosgw runs.
+- **Permissions.** Top-level `permissions: contents: read`, and no job asks for more: the filter diffs the local clone, so it needs no `pull-requests: read`.
+- **Concurrency.** Top-level `group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}` with `cancel-in-progress: true`: keyed by pull request, by ref on a dispatch, and by event so that a dispatch never cancels a pull request's run.
+- **Pinning.** Every `uses:`, in the workflow and in the action, names a 40-hex SHA with its `# vX.Y.Z` comment (`GITHUB_TOKEN=$(gh auth token) pinact run`, then `pinact run --check`); `workflow-lint.yml`'s `pin-check` greps every `uses:` under `.github/`, so it covers the action. Dependabot must reach the action's pins too: the task checks whether the `github-actions` entry's `directory: /` covers `.github/actions/rooket-cluster/action.yml`, and if it does not, adds the directory as github-conventions' "Dependabot" section directs (that file is managed by it).
+- **actionlint** with `shellcheck` on `PATH` on both workflows before each commit. actionlint checks a workflow's call to a local action against that action's inputs; whether actionlint 1.7.7 (the version `workflow-lint.yml` installs) also lints the action's own `run:` steps is checked in Step 1, and if it does not, each of those scripts is run through `shellcheck` by hand.
+- **Checkout credentials.** `persist-credentials: false` on every checkout, the `changes` job's `fetch-depth: 0` one included.
+- **No `${{ }}` inside `run:`.** The event's SHAs, the dispatch inputs and the action's `inputs.release` reach scripts through `env`. `github.event.pull_request.*` is empty on a dispatch, so the `changes` job branches on `github.event_name` before reading it.
+
+- [ ] **Step 1: The composite action, and `integration.yml` on it**
+
+Move the setup into `.github/actions/rooket-cluster/action.yml`; `integration.yml` keeps its checkout, calls the action with its matrix release, and keeps its own steps after it, the diagnostics and the teardown. actionlint, pinact, then push the branch and dispatch `integration.yml`: both releases green, and the job log's tool versions and hashes the same as the last nightly's. Commit: `ci: bring up the rooket cluster through one composite action`.
+
+- [ ] **Step 2: `s3tests-record` and `s3tests.yml`**
+
+Write the target and the workflow. actionlint and pinact. Push the branch and dispatch on it: `release=squid` green, then `release=squid record-baseline=true`, whose artifact holds 393 outcomes and the committed baseline's meta except `recorded`; any outcome that differs from the committed baseline is the runner's radosgw differing from the local one and is reported, not committed silently (Task 7 Step 2's rule).
+
+- [ ] **Step 3: Prove the check fails on a real regression before anyone requires it**
+
+Each proof is a draft pull request opened only to test the check, never merged, closed with its branch deleted once its run is read, and each run's URL goes in Task 16's pull request description:
+1. **Nothing to do.** A docs-only pull request: `s3-tests` green in about a minute, `parity` skipped, no cluster started.
+2. **A real regression.** A test-only pull request whose one commit breaks one endpoint under `internal/`: one operation the baseline passes, made to answer wrongly (a wrong status, or a dropped element of its document). Before pushing, the description names the operation and predicts the tests that exercise it, from the test bodies at the pinned s3-tests commit. Expected: `parity` fails with `hack/parity diff`'s exit 1, its log lists exactly the predicted tests as `baseline passed, candidate failed`, and `s3-tests` is red. A run that lists fewer tests than predicted means the set does not exercise the operation as believed, and is investigated before the check is required.
+3. **A stale known difference.** On the same pull request, a commit that adds a `known-differences-squid.txt` line for a test both gateways pass: `known difference no longer differs`, red.
+4. **A broken filter.** On the same pull request, a commit that makes the `changes` job exit 1: `parity` skipped, and `s3-tests` red, not green.
+
+- [ ] **Step 4: Merge, then the owner's step**
+
+Merge Task 16's pull request on green, then dispatch `s3tests.yml` on `main` with `release=squid` and see it green. Making `s3-tests` a required status check in the repository ruleset is a separate step the owner takes after that run, and only when "Before the check is required" holds; this task does not change the ruleset.
+
+**Before the check is required.** The order, and the reason for each:
+- **X13 merges first.** Without it rgw-go answers DeleteObjects naming `VersionId=null` with 501 on a bucket that was never versioned (`versioningUnserved`, reached from `internal/op/deleteobjects.go`), while its versions listing hands every object of such a bucket out as version `null`. s3-tests' cleanup, `nuke_bucket` (`s3tests/functional/__init__.py:98-139` at `5522d1c3`), deletes exactly that way, so the spike's first failed teardown left a bucket that every later setup failed on: 389 of the 393 tests errored, and a check run in that state judges nothing.
+- **X14 and X15 merge first, or their tests become known differences.** If either is still open when the owner wants the check required, its tests go on `known-differences-squid.txt` (X14's eight and X15's two, Task 12), each group under a `docs/exclusions.md` entry in the same change: X14's under a corrected "Canonical header names" entry, whose premise that net/http sends every header name in canonical case the spike disproved, and X15's under a new frontend entry for `Expect`. The fix's own pull request then deletes the lines, and `parity diff` fails it until it does, since its tests then agree. Task 17's fourth fix lets the `bad_expect_mismatch` tests accept 417, so once the fork's pin lands X15's two tests agree on both gateways whichever way X15 has gone.
+- **Task 17 is not a blocker.** Its first fix keeps a failed cleanup from erroring every later test, which makes a red run easier to read, but the check judges correctly without it.
+- **Step 3's proofs and Step 4's green run on `main` come first**, so the check is known to fail on a real regression before it can block a merge.
+
+---
+
+### Task 17: The jhoblitt/s3-tests fork
+
+Spec §9 puts s3-tests improvements in phase 1's scope: the harness pins the jhoblitt/s3-tests fork, branch `rgw-go`, by commit, as go-ceph is pinned through jhoblitt/go-ceph, and each improvement is also proposed to ceph/s3-tests, each upstream post only with the owner's explicit go-ahead. This task needs no gateway: it depends on Tasks 4 and 5, and runs in wave 4 beside Tasks 11, 12 and 16.
+
+**Files:**
+- External: github.com/jhoblitt/s3-tests, branch `rgw-go`
+- Modify: `hack/s3tests/run.sh` (`S3TESTS_REPO`, `S3TESTS_COMMIT` and its comment), `test/s3tests/baseline/squid.json`, `test/s3tests/baseline/tentacle.json`, `test/s3tests/known-differences-*.txt` (entries the fixes make stale), `hack/rooket/README.md`
+
+**Interfaces:**
+- Consumes: Task 4's `run.sh`, Task 5's baselines; Task 16's `make s3tests-record` and its dispatch input `record-baseline`, when Task 16 has merged.
+- Produces: `run.sh --print-commit` printing a commit on the fork's `rgw-go` branch; baselines recorded at that commit.
+
+**Decisions:**
+- **The fork and its base.** jhoblitt/s3-tests does not exist yet (GitHub answered 404 for it on 2026-10-08); creating it is a write to GitHub the owner authorizes. Branch `rgw-go` starts at `5522d1c351f75bc00ae0f64f742f3f095f5939d9`, the commit `run.sh` pins today, so before the first fix the fork's branch and the pin are the same tree, and the baselines and the deselect lists hold as they are.
+- **Every pinned ref is on `rgw-go`.** The rule the go-ceph fork already follows (the repository `CLAUDE.md`, "rgw-go facts"): `S3TESTS_COMMIT` names only a commit reachable from the fork's `rgw-go` branch, so the pin can never name a commit that a deleted branch would take away. Every change reaches `rgw-go` by pull request into the fork. A fix is a branch from the commit `rgw-go` is based on, merged into `rgw-go` unmodified, so the ceph/s3-tests pull request can carry the same commit; a pull request that is opened upstream and then changed there is merged into `rgw-go` first, unmodified, so the SHAs match. The rule goes in `run.sh`'s comment beside the pin and in `hack/rooket/README.md`; the matching line for the repository `CLAUDE.md` beside the go-ceph one is proposed to the owner in the task's report, not written.
+- **`run.sh` moves to the fork.** `S3TESTS_REPO=https://github.com/jhoblitt/s3-tests`, and `S3TESTS_COMMIT` becomes `rgw-go`'s head after the four fixes, with the comment naming the branch and the date. The fetch already takes a bare commit (`git fetch --depth 1 "$S3TESTS_REPO" "$S3TESTS_COMMIT"`), so nothing else in `run.sh` changes, and the venv is rebuilt because the commit changed.
+
+**The four fixes**, each its own commit on `rgw-go`, each verified by a local run against both gateways on Squid before it merges into the fork. Lines are at `5522d1c3`:
+1. **One failed cleanup no longer fails every later test.** The autouse fixture `setup_teardown` (`s3tests/functional/__init__.py:345-349`) runs `setup()` and `teardown()` around every test, and both call `nuke_prefixed_buckets` over the run's prefix for the main, alt and tenant clients (`:308-320`); it removes every bucket it can and then raises the last error (`:141-161`). So a bucket one test leaves behind errors the setup of every later test. On the spike's first run, two failed teardowns became 387 setup errors. After the fix, setup's cleanup does not raise: it warns for each bucket it cannot remove, and records it. Teardown raises only for a bucket that setup had not already recorded. So a failed cleanup errors exactly one test, the one whose teardown first failed to remove the bucket, and every later test runs.
+2. **Cleanup names no version on a bucket that never had versioning.** `nuke_bucket` (`:98-139`) always lists through ListObjectVersions (`list_versions`, `:82-96`) and deletes each entry by `VersionId` with `BypassGovernanceRetention`, so cleaning up after a test that never used versioning still depends on versioning support. After the fix, when GetBucketVersioning reports no `Status`, the bucket never had versioning: cleanup lists it with ListObjects and deletes each key by name, without a `VersionId`. A bucket whose versioning is Enabled or Suspended is cleaned as now, and so is the object-lock retention wait, since an object-lock bucket always has versioning on.
+3. **`test_bucket_concurrent_set_canned_acl` checks the stored ACL.** The test (`s3tests/functional/test_s3.py:1567-1580`) sends 50 concurrent `public-read` PutBucketAcl calls and asserts only that each returned without an error, so it passes on radosgw, which answers 200 to a call that lost the race and stores nothing for it (`docs/ceph-upstream-bugs.md`, "radosgw's PutBucketAcl answers success when its write loses a race"). After the fix, it also reads GetBucketAcl after the threads join and asserts the AllUsers READ grant, beside the owner's FULL_CONTROL. It still requires every call to succeed: the fix adds a check and relaxes none. When every thread sets the same ACL, any write that lands stores it, so the new check catches a gateway that stores no ACL at all, not a lost update. rgw-go's 409s after its fifteen retries still fail the test, so Task 12's entry for it stays.
+4. **The `bad_expect_mismatch` tests accept 417.** `test_object_create_bad_expect_mismatch` (`s3tests/functional/test_headers.py:185-188`) and `test_bucket_create_bad_expect_mismatch` (`:327-334`) send `Expect: 200` and require success. [RFC 9110 §10.1.1](https://www.rfc-editor.org/rfc/rfc9110#section-10.1.1) lets a server answer 417 (Expectation Failed) to an expectation other than `100-continue`. After the fix, each test accepts either success or a 417, and still fails on any other answer.
+
+**Effects on the baselines and lists.** The new commit changes `s3tests_commit`, so `parity diff` refuses the old baselines (exit 2). The same pull request re-records both releases at the new pin: Squid and Tentacle through Task 16's dispatch with `record-baseline=true` when Task 16 has merged, the artifacts committed; otherwise locally with `make s3tests-record` (Task 16) or Task 5 Step 4's commands. No test is renamed, so the deselect lists, their digest `136c2f295daa` and the 393 collected tests are unchanged; `run.sh`'s list check proves it on the first run. Expected changes against the old baselines: radosgw's outcomes stay as they were for fixes 1 to 3, whose cleanup and ACL paths radosgw already passes. Under fix 4, radosgw still passes the `bad_expect_mismatch` tests, and rgw-go passes them too, whatever X15's state. A known-difference line that a fix makes stale (X15's two, if Task 16's ordering put them there) fails `parity diff` as "known difference no longer differs", so this pull request deletes it.
+
+**The ceph/s3-tests pull requests.** Each fix is also prepared as a pull request against ceph/s3-tests's default branch, from a branch on the fork carrying exactly the commit `rgw-go` merged. Before drafting, search ceph/s3-tests's open and recently closed issues and pull requests for each fix's identifiers (`nuke_prefixed_buckets`, `nuke_bucket`, `list_versions`, `test_bucket_concurrent_set_canned_acl`, `bad_expect_mismatch`), and test the search against a known match first. Follow the project's contribution rules, read at drafting time. This task stops at the drafts: the title, the body and the branch of each go in the task's report. Opening any of them, or any other post upstream, needs the owner's explicit go-ahead for that post.
+
+- [ ] **Step 1: The fork and its base** (after the owner authorizes the fork): `rgw-go` at `5522d1c3`; `run.sh` pointed at the fork at the same commit; a radosgw run on Squid, recorded and diffed against the committed baseline, shows no meta drift and no difference, since `s3tests_commit` is unchanged.
+- [ ] **Step 2: Each fix**, one at a time: write it, run the set against radosgw and rgw-go on Squid, and confirm the effect above. For fix 1, a bucket left behind on purpose by a test errors that one test alone. Merge each fix into `rgw-go` through its own pull request into the fork.
+- [ ] **Step 3: The new pin and the re-record**, as above, on both releases; the known-difference lists purged of stale lines.
+- [ ] **Step 4: Commit as a series and draft the upstream pull requests**
+
+`build(s3tests): run s3-tests from the jhoblitt/s3-tests fork's rgw-go branch`; `test(s3tests): re-record radosgw's baselines at the fork's pin`.
+
+---
+
 ## Self-review
 
-- **Spec coverage.** §9's phase-1 gates: s3-tests parity (Tasks 4, 5, 12; §10's "equal pass and fail set for the phase's groups" is the marker set plus Task 4's per-phase deselect lists, run identically on both gateways), the go-ceph rgw/admin suite (6, 13), the seam microbenchmark answering the cgo question (1, 2, 15), the pipeline baseline's load and attribution (14, 15 over G's handlers), the first gateway comparison (14), the Rook suite on the derived image (8, 10). §11: three benchmarks, the elbencho fork pinned, the recorded quantities (p50/p99/p999, throughput, CPU per request, threads, RSS, errors and retries, GC pauses and a cgo-attributed CPU profile for rgw-go), `docs/benchmarks/` with commands and cluster description (14, 15). §12: the derived image per release with the original beside it, the cgo build in a container stage on the target base, goreleaser kept for tags, archives, checksums, SBOM and signing, the stamp asserted equal to the tag (8, 9); the two non-gating workflows (7, 10). §6's op shapes are Task 1's table with their `rgw_rados.cc` sources. Unit T's population change for R's oracle (`00-index.md`, "The nine units") is Task 3. Decisions D1, D2, D10, D11 are adopted and stated with their evidence.
+- **Spec coverage.** §9's phase-1 gates: s3-tests parity (Tasks 4, 5, 12; §10's "equal pass and fail set for the phase's groups" is the marker set plus Task 4's per-phase deselect lists, run identically on both gateways, less the release's known-difference list), held on every pull request touching the S3 path by Task 16's required check, with the s3-tests improvements on the jhoblitt/s3-tests fork (17), the go-ceph rgw/admin suite (6, 13), the seam microbenchmark answering the cgo question (1, 2, 15), the pipeline baseline's load and attribution (14, 15 over G's handlers), the first gateway comparison (14), the Rook suite on the derived image (8, 10). §11: three benchmarks, the elbencho fork pinned, the recorded quantities (p50/p99/p999, throughput, CPU per request, threads, RSS, errors and retries, GC pauses and a cgo-attributed CPU profile for rgw-go), `docs/benchmarks/` with commands and cluster description (14, 15). §12: the derived image per release with the original beside it, the cgo build in a container stage on the target base, goreleaser kept for tags, archives, checksums, SBOM and signing, the stamp asserted equal to the tag (8, 9); the two non-gating workflows (7, 10) and the s3-tests workflow with its path filter, its always-starting check, the cluster setup shared through one composite action and the manual re-record (16); no s3-tests nightly (7). §6's op shapes are Task 1's table with their `rgw_rados.cc` sources. Unit T's population change for R's oracle (`00-index.md`, "The nine units") is Task 3. Decisions D1, D2, D10, D11 are adopted and stated with their evidence.
 - **Placeholder scan.** The one deliberately open element is the exact `--s3listobj` form in Task 14, confirmed against the pinned build's `--help` and recorded in the run's report, which §11 requires of every command anyway; G declined `--baseline-handler` and pinned the baselines as request shapes instead (G appendix: no-op = anonymous `GET /`, one-round-trip = a signed within-head `GET /<bucket>/<key>`); Task 14's `small-get` is the one-round-trip shape and its `noop` profile (`hack/bench/httpload`, an anonymous `GET /` under the same ladder) is the no-op run; Task 15 reads both from the run directory.
-- **Type consistency.** `seam.Shape`, `seam.Shapes`, `seam.ByName`, `seam.OSThreads`, `seam.CPUTime`, `seam.Summarize`, `seam.NewSampler`, the `Cell` JSON keys, `parity.Record`, `parity.Diff`, `parity.Result`, `parity.FormatJunit`, `parity.FormatGoTest`, the result schema's `meta` keys (`s3tests_commit`, `go_ceph_tag`, `release`, `ceph_version`, `deselect`, `gateway`), `hack/s3tests/run.sh --print-commit`, `hack/s3tests/run.sh --print-deselect`, `hack/s3tests/deselect-phase2.txt`, `hack/s3tests/deselect-phase3.txt`, `hack/admin/run.sh --print-tag`, `RGW_GO_ADMIN_ENDPOINT`, `RGW_GO_CEPH_TAG`, `RGW_GO_ENGINE`, `hack/rooket/out/<release>/rgw-go.endpoint` are spelled the same wherever they appear.
-- **Review Focus.** Each of the five lines names the task whose steps pin it: 1 and 4 in Task 5's specs (4 also in Task 4's list check), 2 in Task 1's flags and Task 2's over-budget cell, 3 in Task 10's `set-image.sh` failure path and post-run assertion, 5 in Task 8's image test.
+- **Type consistency.** `seam.Shape`, `seam.Shapes`, `seam.ByName`, `seam.OSThreads`, `seam.CPUTime`, `seam.Summarize`, `seam.NewSampler`, the `Cell` JSON keys, `parity.Record`, `parity.Diff`, `parity.Result`, `parity.FormatJunit`, `parity.FormatGoTest`, the result schema's `meta` keys (`s3tests_commit`, `go_ceph_tag`, `release`, `ceph_version`, `deselect`, `gateway`), `hack/s3tests/run.sh --print-commit`, `hack/s3tests/run.sh --print-deselect`, `hack/s3tests/deselect-phase2.txt`, `hack/s3tests/deselect-phase3.txt`, `hack/admin/run.sh --print-tag`, `RGW_GO_ADMIN_ENDPOINT`, `RGW_GO_CEPH_TAG`, `RGW_GO_ENGINE`, `hack/rooket/out/<release>/rgw-go.endpoint`, `make s3tests-parity` with `BASELINE`, `make s3tests-record` with `OUT`, `test/s3tests/known-differences-<release>.txt`, `.github/actions/rooket-cluster` and its `release` input, the `s3-tests` check and the dispatch inputs `release` and `record-baseline` are spelled the same wherever they appear.
+- **Review Focus.** Each of the six lines names the task whose steps pin it: 1 and 4 in Task 5's specs (4 also in Task 4's list check), 2 in Task 1's flags and Task 2's over-budget cell, 3 in Task 10's `set-image.sh` failure path and post-run assertion, 5 in Task 8's image test, 6 in Task 16's job layout and Step 3's proofs.
