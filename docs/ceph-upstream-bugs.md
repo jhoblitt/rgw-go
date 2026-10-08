@@ -227,6 +227,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload Location has no scheme under a configured domain](#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain) | pending | pending | ✓ |
 | [radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again) | pending | pending | ✓ |
 | [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
+| [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10223,5 +10224,52 @@ Every new entry adds its row to this table, in document order.
   unlink write differently from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08;
   not yet disclosed.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's failed bucket rename leaves the old name to the old owner
+
+- **Kind:** defect, security-relevant; unfixed at v19.2.6 and v20.2.4: a
+  failure partway through a rename leaves one bucket's data under two
+  owners until the rename is retried. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/` unless named;
+  each pair of lines is v19.2.6's, then v20.2.4's.
+  - A rename writes the new owner and its default ACL only into the
+    instance under the new key (`rgw_bucket.cc:1136-1144`;
+    `:1287-1295`); the old instance keeps the old owner and ACL.
+  - The old entry point and instance are removed only after the new name
+    is linked, and each failure is returned with every earlier write kept
+    (`:1165-1184`; `:1316-1335`). The removals run under the new entry
+    point's tracker, which an unchecked write leaves at version 0
+    (`RGWObjVersionTracker::apply_write`, `rgw_rados.cc:185-197`;
+    `:220-232`), so they are unchecked too.
+  - Between the new entry point's write and the old one's removal, the old
+    name loads the old instance, owned by the old owner, and the new name
+    the new instance, owned by the new owner. Both carry the bucket's
+    marker, so both reach the same index and objects.
+  - A retry of the same rename heals it: its exclusive write of the new
+    instance meets the one the failed try wrote, and
+    `store_bucket_instance_info` turns that -EEXIST into 0
+    (`src/rgw/services/svc_bucket_sobj.cc:548`; `:488`); the rest of the
+    retry is unchecked and succeeds.
+- **Impact:** a cross-user data-access window, which can cross tenants,
+  after a failed rename. It is transient: a retry of the same rename heals
+  it, because the exclusive -EEXIST is turned into 0
+  (`src/rgw/services/svc_bucket_sobj.cc:548` at v19.2.6, `:488` at
+  v20.2.4). Admin-gated: the route needs `buckets=write`, and the window
+  takes a failure between two metadata writes. Triage estimate: CVSS
+  ~5.0-5.5.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A rename secures the new name's entry
+  point before it changes the bucket, writes the new owner into the
+  current instance before a second instance exists, records itself in the
+  bucket's instances, refuses every other link, unlink, chown and bucket
+  removal while that record is live, and completes on a retry by either
+  name, so every name that loads the bucket names one owner at every step
+  (`renameBucket`, `internal/driver/bucketadmin.go`; `docs/exclusions.md`,
+  "Bucket link and unlink write differently from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
+  (transient; heals on retry); not yet disclosed.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
