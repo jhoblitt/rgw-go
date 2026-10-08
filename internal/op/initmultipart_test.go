@@ -111,11 +111,11 @@ var _ = Describe("InitMultipart", func() {
 		Expect(op.Run(ctx, &op.InitMultipart{}, f.req(http.MethodPost, "nope", "k"))).To(MatchError(op.ErrNoSuchBucket))
 		Expect(authz.Invocations()).To(BeEmpty())
 	})
-	It("refuses a storage class the bucket's placement lacks as InvalidArgument before checking permissions", func(ctx SpecContext) {
-		authz := &opfakes.FakeAuthorizer{}
-		f.env.Authz = authz
+	It("refuses a storage class the bucket's placement lacks as InvalidArgument once the requester is authorized", func(ctx SpecContext) {
 		Expect(op.Run(ctx, &op.InitMultipart{StorageClass: "GLACIAL"}, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
-		Expect(authz.Invocations()).To(BeEmpty())
+		r := f.req(http.MethodPost, "plain", "k")
+		r.Identity = f.bob
+		Expect(op.Run(ctx, &op.InitMultipart{StorageClass: "GLACIAL"}, r)).To(MatchError(op.ErrAccessDenied))
 	})
 	It("refuses a key-less request as InvalidArgument and creates nothing", func(ctx SpecContext) {
 		stub := &opfakes.FakeMultipartStore{}
@@ -131,13 +131,10 @@ var _ = Describe("InitMultipart", func() {
 			f.env.Multipart = stub
 		})
 
-		It("refuses a public ACL before checking permissions and creates nothing", func(ctx SpecContext) {
+		It("refuses a public ACL once the requester is authorized and creates nothing", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
-			authz := &opfakes.FakeAuthorizer{}
-			f.env.Authz = authz
 			o := &op.InitMultipart{ACL: publicReadOf(f.alice.Owner)}
 			Expect(op.Run(ctx, o, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
-			Expect(authz.Invocations()).To(BeEmpty())
 			Expect(stub.CreateUploadCallCount()).To(BeZero())
 		})
 		It("refuses a public ACL under a block that does not decode, which fails closed", func(ctx SpecContext) {
@@ -165,5 +162,53 @@ var _ = Describe("InitMultipart", func() {
 		r.Identity = f.bob
 		Expect(op.Run(ctx, &op.InitMultipart{ACL: acl.DefaultPolicy(f.bob.Owner, "Bob")}, r)).To(MatchError(op.ErrAccessDenied))
 		Expect(stub.CreateUploadCallCount()).To(BeZero())
+	})
+	Describe("the protocol's hook and the checks of stored state, all once the requester is authorized", func() {
+		var stub *opfakes.FakeMultipartStore
+		BeforeEach(func() {
+			stub = &opfakes.FakeMultipartStore{}
+			stub.CreateUploadReturns(&op.Upload{ID: "2~x"}, nil)
+			f.env.Multipart = stub
+		})
+
+		It("runs Params only for an authorized requester, and its error ends the request", func(ctx SpecContext) {
+			calls := 0
+			params := func(context.Context, *op.InitMultipart) error { calls++; return op.ErrInvalidRequest }
+			r := f.req(http.MethodPost, "plain", "k")
+			r.Identity = f.bob
+			Expect(op.Run(ctx, &op.InitMultipart{Params: params}, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(calls).To(BeZero())
+			Expect(op.Run(ctx, &op.InitMultipart{Params: params}, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrInvalidRequest))
+			Expect(calls).To(Equal(1))
+			Expect(stub.CreateUploadCallCount()).To(BeZero())
+		})
+		It("refuses the public ACL Params builds under the block, once authorized", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+			params := func(_ context.Context, o *op.InitMultipart) error { o.ACL = publicReadOf(f.alice.Owner); return nil }
+			Expect(op.Run(ctx, &op.InitMultipart{Params: params}, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
+			Expect(stub.CreateUploadCallCount()).To(BeZero())
+		})
+		It("refuses a storage class the zone lacks, then a bucket with a default encryption, before Params", func(ctx SpecContext) {
+			calls := 0
+			params := func(context.Context, *op.InitMultipart) error { calls++; return nil }
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			o := &op.InitMultipart{StorageClass: "NOPE", Params: params}
+			Expect(op.Run(ctx, o, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrInvalidArgument),
+				"init_permissions checks the placement before get_encryption_defaults runs")
+			Expect(op.Run(ctx, &op.InitMultipart{Params: params}, f.req(http.MethodPost, "plain", "k"))).To(MatchError(op.ErrNotImplemented))
+			Expect(calls).To(BeZero())
+			Expect(stub.CreateUploadCallCount()).To(BeZero())
+		})
+		It("answers a refused requester 403 whatever the bucket holds", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{
+				op.AttrBucketEncryption: {1},
+				op.AttrPublicAccess:     publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true}),
+			})
+			r := f.req(http.MethodPost, "plain", "k")
+			r.Identity = f.bob
+			o := &op.InitMultipart{StorageClass: "NOPE", ACL: publicReadOf(f.bob.Owner)}
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(stub.CreateUploadCallCount()).To(BeZero())
+		})
 	})
 })

@@ -59,7 +59,7 @@ func NewHandler(env *op.Env, auth Authenticator, cfg Config) *Handler {
 		service:   serviceHandlers(),
 		bucket:    bucketHandlers(),
 		object:    objectHandlers(env),
-		multipart: multipartHandlers(),
+		multipart: multipartHandlers(env),
 	})
 }
 

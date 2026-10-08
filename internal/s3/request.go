@@ -62,6 +62,8 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 		Time:          now,
 		Method:        req.Method,
 		Host:          strings.ToLower(host),
+		HTTPHost:      httpHost(req),
+		Domain:        vhost.Domain(host, cfg.DNSNames),
 		Path:          req.URL.Path,
 		RawPath:       rawPath,
 		Query:         query,
@@ -90,6 +92,16 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 		r.Object = meta.ObjKey{Name: object, Instance: query.Get("versionId")}
 	}
 	return p, nil
+}
+
+// httpHost is the Host header beast files as HTTP_HOST, nil when the request
+// sent none. net/http refuses an HTTP/1.1 request without one, so an empty
+// Host is one sent empty there, and on HTTP/1.0 is taken for none.
+func httpHost(req *http.Request) *string {
+	if req.Host == "" && !req.ProtoAtLeast(1, 1) {
+		return nil
+	}
+	return &req.Host
 }
 
 // DecodedURI is the path radosgw picks a request's API and bucket by, its

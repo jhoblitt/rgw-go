@@ -285,11 +285,10 @@ var _ = Describe("put_obj", func() {
 		expectError(w.send(w.bob, http.MethodPut, "/plain/k", "x"), 403, "AccessDenied")
 		Expect(w.stat(ctx, "k").Exists).To(BeFalse())
 	})
-	DescribeTable("does not serve a part upload, a PUT naming a copy source that is no copy, or an append",
+	DescribeTable("does not serve a PUT naming a copy source that is no copy, or an append",
 		func(target string, hdr ...string) {
 			expectError(w.send(w.alice, http.MethodPut, target, "x", hdr...), 501, "NotImplemented")
 		},
-		Entry("UploadPart", "/plain/k?uploadId=u&partNumber=1"),
 		Entry("a copy source with a range", "/plain/k", "X-Amz-Copy-Source", "/plain/src", "X-Amz-Copy-Source-Range", "bytes=0-1"),
 		Entry("a copy source with an empty bucket", "/plain/k", "X-Amz-Copy-Source", "//src"),
 		Entry("an append", "/plain/k?append&position=0"),

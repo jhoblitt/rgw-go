@@ -33,6 +33,13 @@ type Request struct {
 	Method string
 	// Host is the Host header without its port, lowercased; "" when absent.
 	Host string
+	// HTTPHost is the Host header as the client sent it, its case and port
+	// kept, radosgw's HTTP_HOST; nil for a request that sent none.
+	HTTPHost *string
+	// Domain is the configured name the Host matched, as cut from the Host,
+	// "" when it matched none: what RGWREST::preprocess sets s->info.domain
+	// to before it falls back to rgw_dns_name.
+	Domain string
 	// Path is the request path decoded once; RawPath is as the client sent it,
 	// which SigV4 canonicalizes.
 	Path    string
