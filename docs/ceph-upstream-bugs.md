@@ -235,6 +235,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
 | [radosgw's beast frontend passes Boost error codes off as errno](#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno) | pending | pending | ✓ |
 | [radosgw's account removal never sees the account's topics](#radosgws-account-removal-never-sees-the-accounts-topics) | pending | pending | ✓ |
+| [radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse](#radosgws-account-quota-set-wraps-a-size-past-2-gib-and-defaults-what-it-cannot-parse) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10569,3 +10570,48 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit N, Task 7, 2026-10-08, reading
   `rgw::account::remove` for the admin API's account removal; derived from
   the source, not reproduced.
+
+## radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse
+
+- **Kind:** defect, unfixed at v20.2.4: a quota stored other than the one
+  asked for, sometimes none. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/` at v20.2.4; v19.2.6 has no
+  account quota op (PUT `/admin/account?quota` runs the plain modify
+  there).
+  - `RGWOp_Account_Quota_Set::execute` reads `max-size` and `max-objects`
+    with `RESTArgs::get_int32` into `int32_t`s that start at 0, and
+    `enabled` with `get_bool` defaulting to false, discarding each return;
+    every value whose argument exists is applied
+    (`rgw_rest_account.cc:276-295`). The fields it fills are
+    `std::optional<int64_t>` (`rgw_account.h:58-59`), which `modify`
+    copies into the quota as they are (`rgw_account.cc:242-258`).
+  - `get_int32` sets `*existed` before it parses, and on a parse failure
+    returns `stringtol`'s -EINVAL without writing the value
+    (`rgw_rest.cc:941-960`). `stringtol` is `strtol` cast to `int32_t`,
+    refusing only `LONG_MAX` and trailing text (`rgw_string.h:70-84`).
+  - `get_bool` writes its default, false here, for a value it cannot
+    parse (`rgw_rest.cc:1007-1037`).
+  - A negative `max_size` or `max_objects` is no limit (`rgw_quota.cc:796`
+    and `:820`).
+- **Impact:**
+  - A `max-size` of 2 GiB or more is stored wrapped to 32 bits:
+    2147483648 to 4294967295 bytes become negative, so a 3 GiB quota is
+    no limit at all, and 5 GiB becomes 1 GiB. go-ceph's
+    `AccountQuotaSpec.MaxSize` is an `int64` and sends such sizes.
+  - An unparsable `max-size` or `max-objects` (`1G`, `10k`) stores 0,
+    which refuses writes under the quota once it is enabled.
+  - An unparsable `enabled` (`ture`) disables the quota.
+  - Each answers 200 with the stored quota in the body.
+- **Releases:** v20.2.4, checked there; the op first shipped in v20.2.2.
+- **rgw-go:** does not reproduce it. The quota op answers 400
+  InvalidArgument, after the cap check and storing nothing, for a
+  `max-size` or `max-objects` that does not parse or lies outside int32,
+  a `max-size` below -1, an unparsable `enabled`, and any `max-size-kb`,
+  which the op does not read (`setAccountQuota`,
+  `internal/admin/account.go`; `ModifyAccount`,
+  `internal/op/adminaccount.go`; `docs/exclusions.md`, "The admin account
+  routes and the RADOS account store differ from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the Tentacle
+  account quota route; derived from the source, not reproduced.
