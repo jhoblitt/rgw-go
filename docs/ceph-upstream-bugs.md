@@ -243,6 +243,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
 | [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 | [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11024,3 +11025,44 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
   review. Derived from the source, not reproduced.
+
+## radosgw's bucket instance metadata put overwrites unguarded on Tentacle
+
+- **Kind:** defect, unfixed at v20.2.4, a regression from v19.2.6: a
+  metadata put of a bucket instance overwrites what another write stored
+  after the put read the instance. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`.
+  - `RGWMetadataManager::put` builds a fresh version tracker and sets only
+    its write version, from the document's `ver` (`rgw/rgw_metadata.cc:316-325`
+    at v20.2.4; `:521-530` at v19.2.6).
+  - Tentacle's `RGWBucketInstanceMetadataHandler::put` reads the stored
+    instance without that tracker (`rgw/driver/rados/rgw_bucket.cc:2863-2871`
+    at v20.2.4), and `put_prepare` copies the tracker, its read version
+    still empty, into the instance it writes (`:2992-2994`).
+  - `store_bucket_instance_info` writes under the instance's tracker
+    (`rgw/services/svc_bucket_sobj.cc:475-476` at v20.2.4), and an empty
+    read version is not checked (`version_for_check`, `rgw/rgw_common.h:974-979`
+    at v20.2.4).
+  - Squid's `put_pre` sets the tracker's read version to the version it
+    read (`rgw/rgw_metadata.cc:255-278` at v19.2.6) and `put_check` copies
+    it into the instance (`rgw/driver/rados/rgw_bucket.cc:2859-2861` at
+    v19.2.6), so Squid's write is checked. Tentacle's entry point and user
+    handlers read into the tracker (`rgw/driver/rados/rgw_bucket.cc:2361-2362`
+    and `rgw/driver/rados/rgw_user.cc:2829-2830` at v20.2.4); only the
+    instance handler lost the check.
+- **Impact:** a bucket instance metadata put, whether `PUT
+  /admin/metadata/bucket.instance`, `radosgw-admin metadata put` or
+  multisite metadata sync, silently undoes a change another request made
+  to the instance between the put's read and its write: an ACL, a
+  versioning or object lock change, a quota, or a reshard's layout. Admin
+  and sync only.
+- **Releases:** v20.2.4; v19.2.6 checks the version it read.
+- **rgw-go:** does not reproduce it. Every metadata put writes under the
+  version it read, or creates the object exclusively
+  (`putInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`,
+  "The metadata sections write only what keeps a user or bucket whole").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 8, 2026-10-08, comparing the two
+  releases' metadata handlers; derived from the source, not reproduced.
