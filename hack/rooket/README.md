@@ -67,13 +67,17 @@ writes the same data and manifest again.
 | `admin.sh`, `endpoint.sh` | `admin.sh <release> <args...>` runs `radosgw-admin` in the toolbox on the site `manifest.json` records and `endpoint.sh <release>` prints the radosgw's URL, for the integration specs (`internal/testutil/cephtest`) |
 | `rgw-go-up.sh`, `rgw-go-down.sh` | build rgw-go, set the parity options for both gateways and run rgw-go on the host against the cluster; stop it |
 | `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers, and the parity options, that the scripts share |
+| `parity-options-check.sh` | `make parity-options-check`: fails when a release's chart values give the radosgw other options than `parity_options` |
 
 The chart values pin `cephImage.tag`, a plain `vX.Y.Z` that is the one place
 a release's Ceph version is set: `up.sh` checks every daemon runs it and
 `populate.sh` records it for the gate. They also turn the dashboard off (with
 it on, Rook creates a `dashboard-admin` user in the zone) and drop the
 chart's block pool and filesystem, which rgw-go does not use. rooket's
-one-worker base already fits the object store's pools to a single OSD. rooket's `rgw` profile is not
+one-worker base already fits the chart's `ceph-objectstore` object store to a
+single OSD; the values' entry for it, which rooket merges onto the base's by
+name, adds only the parity options to its gateway as `rgwConfig` (see
+"Running rgw-go against the cluster"). rooket's `rgw` profile is not
 used: its CephObjectStoreUser and bucket claim would add a user and a bucket
 to the zone the gate counts. `host-network` sits in `config.yaml` rather than
 on the command line because Rook cannot move a running cluster onto host
@@ -235,11 +239,19 @@ stamps the radosgw afresh, makes a stale radosgw look new. And it compares
 the monitors' clock with the manager's, which agree here because every kind
 node shares the host's kernel and its clock.
 
-Rook sets `rgw_run_sync_thread=true` for the radosgw each time it reconciles
-the object store, `make cluster-up` against a running cluster among the
-times, so after a reconcile the next `make rgw-go-up` sets it and restarts
-the radosgw again. The entity and the options stay when rgw-go stops; the
-gate counts neither.
+Each time it reconciles the object store, `make cluster-up` against a
+running cluster among the times, Rook writes its own options for the
+radosgw's entity, `rgw_run_sync_thread=true` among them, before it creates
+or updates the radosgw's deployment. The chart values therefore give the
+object store's gateway the parity options as `rgwConfig`, which Rook writes
+in place of its own (`generateMonConfigOptions` in rook
+pkg/operator/ceph/object/config.go). The radosgw of a fresh cluster starts
+under them, a reconcile leaves them as they are, and `make rgw-go-up`
+leaves the radosgw's options, and the radosgw, alone unless they were
+changed by hand. `make
+parity-options-check`, part of `make check`, fails when the two releases'
+`rgwConfig` and `parity_options` differ. The entity and the options stay
+when rgw-go stops; the gate counts neither.
 
 `rgw-go-down.sh` sends rgw-go `TERM`, under which it drains its requests as
 radosgw does, waits up to 30 s for it to exit and kills it after that, and
