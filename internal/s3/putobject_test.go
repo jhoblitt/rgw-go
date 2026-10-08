@@ -169,11 +169,11 @@ var _ = Describe("put_obj", func() {
 		rec := w.send(w.alice, http.MethodPut, "/plain/k", "hello",
 			"Content-Type", "text/plain", "X-Amz-Meta-Color", "blue", "X-Amz-Tagging", "a=b")
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
-		Expect(rec.Header().Get("ETag")).To(Equal(`"5d41402abc4b2a76b9719d911017c592"`))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"5d41402abc4b2a76b9719d911017c592"`))
 		Expect(rec.Header().Get("Content-Length")).To(Equal("0"), "dump_content_length(s, 0), rgw_rest_s3.cc:2747")
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"))
 		Expect(rec.Header()).NotTo(HaveKey("Content-Type"), "end_header names no type for a PUT")
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Version-Id"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
 		Expect(rec.Body.Len()).To(BeZero())
 		st := w.stat(ctx, "k")
 		Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrContentType, []byte("text/plain\x00")))
@@ -183,8 +183,8 @@ var _ = Describe("put_obj", func() {
 		Expect(st.Attrs).To(HaveKeyWithValue(tags.Attr, encodeTags(set)))
 		Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrACL, encodeACL(acl.DefaultPolicy(meta.UserOwner(w.alice.Info.UserID), "Alice"))))
 		head := w.send(w.alice, http.MethodHead, "/plain/k", "")
-		Expect(head.Header().Get("X-Amz-Meta-Color")).To(Equal("blue"))
-		Expect(head.Header().Get("X-Amz-Tagging-Count")).To(Equal("1"))
+		Expect(exactHeader(head.Header(), "x-amz-meta-color")).To(Equal("blue"))
+		Expect(exactHeader(head.Header(), "x-amz-tagging-count")).To(Equal("1"))
 	})
 	It("builds the ACL of a bucket-owner canned ACL for the bucket's ACL owner", func(ctx SpecContext) {
 		w.grantBob(ctx, acl.PermWrite)
@@ -316,7 +316,7 @@ var _ = Describe("put_obj", func() {
 			w.conf["rgw_s3_success_create_obj_status"] = value
 			rec := w.send(w.alice, http.MethodPut, "/plain/k", "x")
 			Expect(rec.Code).To(Equal(want))
-			Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Hex("x") + `"`))
+			Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Hex("x") + `"`))
 		},
 		Entry("201", "201", 201),
 		Entry("204", "204", 204),
@@ -328,8 +328,8 @@ var _ = Describe("put_obj", func() {
 		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.RequesterPays = true })
 		rec := w.send(w.bob, http.MethodPut, "/plain/k", "x", "X-Amz-Request-Payer", "requester")
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
-		Expect(rec.Header().Get("X-Amz-Request-Charged")).To(Equal("requester"))
-		Expect(w.send(w.alice, http.MethodPut, "/plain/k", "x").Header()).NotTo(HaveKey("X-Amz-Request-Charged"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-charged")).To(Equal("requester"))
+		Expect(w.send(w.alice, http.MethodPut, "/plain/k", "x").Header()).NotTo(haveHeaderAnyCase("x-amz-request-charged"))
 	})
 	It("sends Rgwx-Mtime to a system request", func() {
 		system := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {

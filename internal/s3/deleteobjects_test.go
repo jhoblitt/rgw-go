@@ -28,8 +28,8 @@ func expectStatusLine(rec *httptest.ResponseRecorder, status int) {
 	GinkgoHelper()
 	Expect(rec.Code).To(Equal(status), rec.Body.String())
 	Expect(rec.Body.String()).To(BeEmpty())
-	for _, h := range []string{"Content-Type", "X-Amz-Request-Id", "Server", "Accept-Ranges", "Content-Length"} {
-		Expect(rec.Header()).NotTo(HaveKey(h))
+	for _, h := range []string{"Content-Type", "x-amz-request-id", "Server", "Accept-Ranges", "Content-Length"} {
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase(h))
 	}
 }
 
@@ -52,7 +52,7 @@ var _ = Describe("multi_object_delete", func() {
 				Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 				Expect(rec.Header()).NotTo(HaveKey("Content-Length"))
 				Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"))
-				Expect(rec.Header().Get("X-Amz-Request-Id")).NotTo(BeEmpty())
+				Expect(exactHeader(rec.Header(), "x-amz-request-id")).NotTo(BeEmpty())
 				Expect(rec.Body.String()).To(Equal(deleteResultOpen +
 					"<Deleted><Key>src</Key></Deleted><Deleted><Key>b&amp;c</Key></Deleted><Deleted><Key>missing</Key></Deleted></DeleteResult>"))
 				Expect(w.stat(ctx, "src").Exists).To(BeFalse())

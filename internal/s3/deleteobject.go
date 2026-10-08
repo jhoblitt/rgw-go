@@ -30,10 +30,10 @@ func deleteObject(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 	}
 	h := w.Header()
 	if o.VersionID != "" {
-		h.Set("x-amz-version-id", o.VersionID)
+		SetHeader(h, "x-amz-version-id", o.VersionID)
 	}
 	if o.DeleteMarker {
-		h.Set("x-amz-delete-marker", "true")
+		SetHeader(h, "x-amz-delete-marker", "true")
 	}
 	writeEmpty(w, r, http.StatusNoContent)
 	return nil

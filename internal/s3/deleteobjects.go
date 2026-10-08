@@ -57,7 +57,7 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 		Status: func(err error) {
 			sent = true
 			h := w.Header()
-			h.Del("x-amz-request-id")
+			delete(h, "x-amz-request-id")
 			h.Del("Server")
 			w.WriteHeader(op.AsError(err).Status)
 		},

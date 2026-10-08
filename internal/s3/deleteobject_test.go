@@ -29,8 +29,8 @@ var _ = Describe("delete_obj", func() {
 	It("answers 204 with no body for an existing key, and removes it", func(ctx SpecContext) {
 		rec := w.send(w.alice, http.MethodDelete, "/plain/src", "")
 		expectNoContent(rec)
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Version-Id"))
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Delete-Marker"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-delete-marker"))
 		Expect(w.stat(ctx, "src").Exists).To(BeFalse())
 	})
 	It("answers 204 for a missing key, as send_response turns -ENOENT into success", func() {
@@ -46,7 +46,7 @@ var _ = Describe("delete_obj", func() {
 		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.RequesterPays = true })
 		rec := w.send(w.bob, http.MethodDelete, "/plain/src", "", "X-Amz-Request-Payer", "requester")
 		expectNoContent(rec)
-		Expect(rec.Header().Get("X-Amz-Request-Charged")).To(Equal("requester"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-charged")).To(Equal("requester"))
 	})
 	DescribeTable("refuses a condition that does not parse with InvalidArgument and keeps the object",
 		func(ctx SpecContext, hdr ...string) {

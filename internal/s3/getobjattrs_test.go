@@ -35,7 +35,7 @@ var _ = Describe("get_obj_attrs", func() {
 		Expect(rec.Header().Get("Last-Modified")).To(Equal(readLastModified))
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "end_header names no length, rgw_rest_s3.cc:4014 at v20.2.4")
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Version-Id"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
 		Expect(rec.Body.String()).To(Equal(docHead + `<ETag>` + md5Of(readPayload(1024)) + `</ETag><Checksum></Checksum><ObjectSize>1024</ObjectSize><StorageClass>STANDARD</StorageClass></GetObjectAttributes>`))
 	})
@@ -43,7 +43,7 @@ var _ = Describe("get_obj_attrs", func() {
 		rec := do("GET", "/plain/small?attributes&versionId=null", nil)
 		Expect(rec.Code).To(Equal(200))
 		Expect(rec.Body.String()).To(Equal(docHead + `</GetObjectAttributes>`))
-		Expect(rec.Header().Get("x-amz-version-id")).To(Equal("null"))
+		Expect(exactHeader(rec.Header(), "x-amz-version-id")).To(Equal("null"))
 	})
 	It("escapes the ETag and storage class as XMLFormatter does", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrStorageClass: []byte("A&B<")})
@@ -83,7 +83,7 @@ var _ = Describe("get_obj_attrs", func() {
 		rec := do("HEAD", "/plain/small?attributes", nil)
 		Expect(rec.Code).To(Equal(200))
 		Expect(rec.Header().Get("Content-Length")).To(Equal("1024"))
-		Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
 	})
 	It("files a Squid request under get_obj and a Tentacle one under get_obj_attrs in the usage log", func(ctx SpecContext) {
 		Expect(do("GET", "/plain/small?attributes", nil).Code).To(Equal(200))

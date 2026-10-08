@@ -25,18 +25,11 @@ func nullVersionOf(target string) string {
 // comparableHeaders is rec's headers without those that name the request.
 func comparableHeaders(rec *httptest.ResponseRecorder) http.Header {
 	h := rec.Header().Clone()
-	for _, k := range []string{"X-Amz-Request-Id", "X-Amz-Id-2", "Date"} {
+	delete(h, "x-amz-request-id")
+	for _, k := range []string{"X-Amz-Id-2", "Date"} {
 		h.Del(k)
 	}
 	return h
-}
-
-// headerValues is a header's values holding v, none when v is empty.
-func headerValues(v string) []string {
-	if v == "" {
-		return nil
-	}
-	return []string{v}
 }
 
 // objectView is what a client can learn of st: whether it exists, its size,
@@ -66,8 +59,12 @@ var _ = Describe("a request naming the null version", func() {
 					Expect(want.Code).To(BeNumerically("<", 300), want.Body.String())
 					Expect(got.Code).To(Equal(want.Code), got.Body.String())
 					Expect(got.Body.String()).To(Equal(want.Body.String()))
-					Expect(got.Header().Values("X-Amz-Version-Id")).To(Equal(headerValues(version)))
-					got.Header().Del("X-Amz-Version-Id")
+					if version == "" {
+						Expect(got.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
+					} else {
+						Expect(got.Header()).To(HaveKeyWithValue("x-amz-version-id", []string{version}))
+					}
+					delete(got.Header(), "x-amz-version-id")
 					Expect(comparableHeaders(got)).To(Equal(comparableHeaders(want)))
 					after := objectView(plain.stat(ctx, "src"))
 					Expect(objectView(null.stat(ctx, "src"))).To(Equal(after))

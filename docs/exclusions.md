@@ -1988,6 +1988,17 @@ crypto/tls and net/url ones go1.27.1's.
   (`:637-642` at v19.2.6, `:642-647` at v20.2.4), but rgw-go reads it once
   at startup, where radosgw reads it for every response, so a change made
   while the gateway runs takes effect at rgw-go's next start.
+- **Header lines go out sorted by name.** net/http writes a handler's
+  header lines sorted by name, byte by byte, and then the ones it adds
+  itself, such as Date (`net/http/header.go:167-179` and `:195-205`,
+  `net/http/server.go:1562-1564`). radosgw writes the lines an op dumps in
+  the order it calls `dump_header`: its frontend holds them until the
+  header is complete and then writes them in that order
+  (`ReorderingFilter`, `rgw_client_io_filters.h:373-451`, wired at
+  `rgw_asio_frontend.cc:320-324`, at v19.2.6 and v20.2.4). The values
+  under one name keep their order in both, and clients do not depend on
+  the order of lines with different names, which RFC 9110, section 5.3,
+  makes insignificant.
 
 ### Zone and placement differences
 
@@ -2350,12 +2361,6 @@ v20.2.4 tags, rgw-go does the following.
   is `503 Service Unavailable` from rgw-go and `503 Slow Down` from radosgw
   (`:85`). net/http cannot send another phrase without taking over the
   connection, and clients act on the code.
-- **Canonical header names.** net/http sends every header name rgw-go
-  writes in its canonical case, such as `X-Amz-Request-Id` and `Etag`.
-  radosgw sends each name as its source spells it, such as
-  `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
-  `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
-  Header names are case-insensitive (RFC 9110, section 5.1).
 - **A 204 or 304 carries no Content-Length, whatever
   rgw_print_prohibited_content_length says.** radosgw's frontend completes
   a response whose `end_header` named no length with the length of its
@@ -3283,6 +3288,17 @@ does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw stores a POST upload's
   x-amz-meta fields with their CR and LF and sends them raw on
   GET](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)").
+- **A user metadata name that is not a valid field name is not sent.**
+  A PUT takes `x-amz-meta-*` names from the query string as well as the
+  headers, and radosgw url-decodes a query name before it reads it
+  (`map_qs_metadata`, `rgw_rest_s3.cc:2581-2595`, and `RGWHTTPArgs::parse`,
+  `rgw_common.cc:865`, at v19.2.6; `rgw_rest_s3.cc:2742-2756` and
+  `rgw_common.cc:878` at v20.2.4), so a stored name can hold bytes a header
+  name may not. net/http drops a header whose name is not a valid field
+  name (`net/http/header.go:198-203` at Go 1.27.1), so a GET or HEAD from
+  rgw-go omits that metadata header, where radosgw sends the name as stored
+  (`ClientIO::send_header`, `rgw_asio_client.cc:167-181` at v19.2.6 and
+  v20.2.4).
 
 ### Object write differences
 

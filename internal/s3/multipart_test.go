@@ -136,7 +136,7 @@ var _ = Describe("multipart handlers", func() {
 		p1 := bytes.Repeat([]byte("a"), partFiveMiB)
 		rec = w.sendBytes(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", p1)
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
-		Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Of(p1) + `"`))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Of(p1) + `"`))
 		Expect(rec.Header().Get("Content-Length")).To(Equal("0"), "dump_content_length(s, 0), rgw_rest_s3.cc:2747")
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"))
 		Expect(rec.Header()).NotTo(HaveKey("Content-Type"))
@@ -148,7 +148,7 @@ var _ = Describe("multipart handlers", func() {
 		rec = w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=2", "",
 			"Content-Length", "0", "X-Amz-Copy-Source", "/plain/big", "X-Amz-Copy-Source-Range", "bytes=0-2097151")
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
-		Expect(rec.Header()).NotTo(HaveKey("ETag"), "CopyPartResult carries the ETag in the body")
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("ETag"), "CopyPartResult carries the ETag in the body")
 		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "the copy branch's end_header names no length, rgw_rest_s3.cc:2756")
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Body.String()).To(Equal(xmlDecl + `<CopyPartResult ` + xmlnsS3 + `><LastModified>` + writeMtimeMs +
@@ -176,7 +176,7 @@ var _ = Describe("multipart handlers", func() {
 		w.handler(w.alice).ServeHTTP(rec, req)
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
 		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "send_response's end_header names no length, rgw_rest_s3.cc:4082")
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Version-Id"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
 		Expect(rec.Body.String()).To(MatchRegexp(`^` + regexp.QuoteMeta(xmlDecl+`<CompleteMultipartUploadResult `+xmlnsS3+`>`) +
 			`<Location>http://S3\.Example\.com:7480/plain/k</Location><Bucket>plain</Bucket><Key>k</Key>` +
@@ -315,7 +315,7 @@ var _ = Describe("multipart handlers", func() {
 		id := w.initUpload(w.alice, "/plain/k")
 		rec := w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "hello", "X-Amz-Copy-Source", "")
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
-		Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Hex("hello") + `"`))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Hex("hello") + `"`))
 	})
 
 	It("reads an UploadPartCopy source as init_processing does, decoding the whole value before it splits", func(ctx SpecContext) {
@@ -558,7 +558,7 @@ var _ = Describe("multipart handlers", func() {
 			w.conf["rgw_s3_success_create_obj_status"] = "201"
 			rec := w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x")
 			Expect(rec.Code).To(Equal(201))
-			Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Hex("x") + `"`))
+			Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Hex("x") + `"`))
 			rec = w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=2", "", "Content-Length", "0", "X-Amz-Copy-Source", "/plain/src")
 			Expect(rec.Code).To(Equal(201), "send_response sets the status before either branch, rgw_rest_s3.cc:2734-2740")
 			Expect(rec.Body.String()).To(ContainSubstring("<CopyPartResult"))
@@ -584,7 +584,7 @@ var _ = Describe("multipart handlers", func() {
 			payer := []string{"X-Amz-Request-Payer", "requester"}
 			rec := w.send(w.bob, http.MethodPost, "/plain/k?uploads", "", payer...)
 			Expect(rec.Code).To(Equal(200), rec.Body.String())
-			Expect(rec.Header().Get("X-Amz-Request-Charged")).To(Equal("requester"))
+			Expect(exactHeader(rec.Header(), "x-amz-request-charged")).To(Equal("requester"))
 			id := uploadIDPattern.FindStringSubmatch(rec.Body.String())[1]
 			for _, r := range []*httptest.ResponseRecorder{
 				w.send(w.bob, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x", payer...),
@@ -593,12 +593,12 @@ var _ = Describe("multipart handlers", func() {
 				w.send(w.bob, http.MethodPost, "/plain/k?uploadId="+id, completion(md5Hex("x")), payer...),
 			} {
 				Expect(r.Code).To(Equal(200), r.Body.String())
-				Expect(r.Header().Get("X-Amz-Request-Charged")).To(Equal("requester"))
+				Expect(exactHeader(r.Header(), "x-amz-request-charged")).To(Equal("requester"))
 			}
 			id = w.initUpload(w.bob, "/plain/j", payer...)
 			rec = w.send(w.bob, http.MethodDelete, "/plain/j?uploadId="+id, "", payer...)
 			Expect(rec.Code).To(Equal(204))
-			Expect(rec.Header().Get("X-Amz-Request-Charged")).To(Equal("requester"))
+			Expect(exactHeader(rec.Header(), "x-amz-request-charged")).To(Equal("requester"))
 		})
 	})
 

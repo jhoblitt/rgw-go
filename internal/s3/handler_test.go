@@ -136,18 +136,18 @@ var _ = Describe("Handler", func() {
 	It("stamps x-amz-request-id and Server on every response", func() {
 		const id = `^tx[0-9a-f]{21}-0068d7a1b2-4155-z$`
 		rec := get("/")
-		first := rec.Header().Get("x-amz-request-id")
+		first := exactHeader(rec.Header(), "x-amz-request-id")
 		Expect(first).To(MatchRegexp(id))
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
-		second := get("/").Header().Get("x-amz-request-id")
+		second := exactHeader(get("/").Header(), "x-amz-request-id")
 		Expect(second).To(MatchRegexp(id))
 		Expect(second).NotTo(Equal(first))
 		other := serveReq(newHandler(store, s3.AnonymousOnly{}, s3.Config{}), http.MethodGet, "/", nil)
-		Expect(other.Header().Get("x-amz-request-id")).NotTo(Equal(first),
+		Expect(exactHeader(other.Header(), "x-amz-request-id")).NotTo(Equal(first),
 			"a second handler's first number is drawn at random, as radosgw's get_new_req_id draws it, not counted from the same start")
 		rec = serveReq(h, "PATCH", "/", nil)
 		Expect(rec.Code).To(Equal(405))
-		Expect(rec.Header().Get("x-amz-request-id")).To(MatchRegexp(id), "refused before dispatch")
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(MatchRegexp(id), "refused before dispatch")
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
 	})
 	It("renders radosgw's error document for a route without a handler", func() {
@@ -155,7 +155,7 @@ var _ = Describe("Handler", func() {
 		Expect(rec.Code).To(Equal(501))
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message></Message>` +
-			`<BucketName>plain</BucketName><RequestId>` + rec.Header().Get("x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
+			`<BucketName>plain</BucketName><RequestId>` + exactHeader(rec.Header(), "x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "end_header's error branch sets the length through dump_content_length, rgw_rest.cc:620-624")
 	})
@@ -209,7 +209,7 @@ var _ = Describe("Handler", func() {
 		rec := serveReq(slow, http.MethodGet, "/", nil)
 		Expect(rec.Code).To(Equal(503))
 		Expect(rec.Body.String()).To(ContainSubstring("<Code>SlowDown</Code>"))
-		Expect(rec.Header().Get("x-amz-request-id")).NotTo(BeEmpty())
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).NotTo(BeEmpty())
 		Expect(serveReq(slow, http.MethodGet, "/plain/a%00b", nil).Code).To(Equal(400), "a request refused before dispatch is not counted")
 		name, status, _, _, _ := m.ObserveArgsForCall(0)
 		Expect([]any{name, status}).To(Equal([]any{"list_buckets", 503}), "the cap refuses a dispatched op, which rgw_log_op names")
@@ -519,7 +519,7 @@ var _ = Describe("Handler", func() {
 			h.ServeHTTP(rec, req)
 			Expect(rec.Code).To(Equal(500))
 			Expect(rec.Body.String()).To(ContainSubstring("<Code>InternalError</Code>"))
-			Expect(rec.Header().Get("x-amz-request-id")).To(MatchRegexp(`^tx[0-9a-f]{21}-0068d7a1b2-4155-z$`))
+			Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(MatchRegexp(`^tx[0-9a-f]{21}-0068d7a1b2-4155-z$`))
 			name, status, _, _, _ := m.ObserveArgsForCall(0)
 			Expect([]any{name, status}).To(Equal([]any{"unknown", 500}))
 			Expect(store.Usage()).To(BeEmpty(), "LogUsage drops a request with no identity, as radosgw's flush does")
@@ -589,7 +589,7 @@ var _ = Describe("Handler", func() {
 			rec := get("/plain/k", "Authorization", authz)
 			Expect(rec.Code).To(Equal(500))
 			Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message></Message>` +
-				`<RequestId>` + rec.Header().Get("x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
+				`<RequestId>` + exactHeader(rec.Header(), "x-amz-request-id") + `</RequestId><HostId>4155-z-zg</HostId></Error>`))
 			Expect(buf.String()).NotTo(ContainSubstring(keyID))
 			Expect(buf.String()).NotTo(ContainSubstring(sig))
 		})
@@ -603,7 +603,7 @@ var _ = Describe("Handler", func() {
 				Expect(rec.Code).To(Equal(sentinel.Status))
 				Expect(logRecords(buf)).To(ContainElement(SatisfyAll(
 					HaveKeyWithValue("level", "ERROR"),
-					HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+					HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")),
 					HaveKeyWithValue("code", sentinel.Code),
 					HaveKeyWithValue("error", ContainSubstring("rados: timed out")),
 				)))
@@ -647,7 +647,7 @@ var _ = Describe("Handler", func() {
 				Expect(rec.Body.String()).To(ContainSubstring("<Code>" + sentinel.Code + "</Code>"))
 				Expect(logRecords(buf)).To(ConsistOf(SatisfyAll(
 					HaveKeyWithValue("level", "ERROR"),
-					HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+					HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")),
 					HaveKeyWithValue("code", sentinel.Code),
 				)))
 				Expect(buf.String()).NotTo(ContainSubstring(keyID), "the access key")
@@ -698,7 +698,7 @@ var _ = Describe("Handler", func() {
 				HaveKeyWithValue("msg", "request done"),
 			))
 			for _, r := range recs {
-				Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+				Expect(r).To(HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")), "line %q", r["msg"])
 			}
 			Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
 		})
@@ -712,7 +712,7 @@ var _ = Describe("Handler", func() {
 				recs := logRecords(buf)
 				Expect(recs).To(ContainElement(HaveKeyWithValue("msg", msg)))
 				for _, r := range recs {
-					Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+					Expect(r).To(HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")), "line %q", r["msg"])
 				}
 				Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
 			},
@@ -772,7 +772,7 @@ var _ = Describe("Handler", func() {
 			Expect(recs).To(ContainElement(SatisfyAll(
 				HaveKeyWithValue("level", "DEBUG"),
 				HaveKeyWithValue("msg", "client went away"),
-				HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+				HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")),
 				HaveKeyWithValue("code", code),
 			)))
 			Expect(recs).NotTo(ContainElement(HaveKeyWithValue("level", Not(Equal("DEBUG")))))
@@ -932,7 +932,7 @@ var _ = Describe("response writer", func() {
 	})
 	It("gives a streaming op a sink that merges its headers before the status", func() {
 		rec := serve(func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
-			w.Header().Set("x-amz-request-id", "tx1")
+			s3.SetHeader(w.Header(), "x-amz-request-id", "tx1")
 			sink := s3.SinkOfForTest(w)
 			h := http.Header{"Content-Range": {"bytes 0-1/4"}}
 			s3.SetContentLength(h, 2)
@@ -944,7 +944,7 @@ var _ = Describe("response writer", func() {
 		})
 		Expect(rec.Code).To(Equal(206))
 		Expect(rec.Header().Get("Content-Range")).To(Equal("bytes 0-1/4"))
-		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx1"), "headers the route set first stay")
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(Equal("tx1"), "headers the route set first stay")
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "the op's header map reaches the response whole")
 		Expect(rec.Body.String()).To(Equal("ab"))
 		Expect(rec.Flushed).To(BeTrue(), "Flush reaches the connection through the wrapper")
@@ -971,15 +971,15 @@ var _ = Describe("response writer", func() {
 			return serveReq(h, http.MethodHead, "/plain", nil)
 		}
 		It("is sent to a requester that does not own the requester-pays bucket", func() {
-			Expect(statBucket(bob, nil).Header().Get("x-amz-request-charged")).To(Equal("requester"))
+			Expect(exactHeader(statBucket(bob, nil).Header(), "x-amz-request-charged")).To(Equal("requester"))
 		})
 		It("is not sent to the bucket's owner", func() {
-			Expect(statBucket(alice, nil).Header()).NotTo(HaveKey("X-Amz-Request-Charged"))
+			Expect(statBucket(alice, nil).Header()).NotTo(haveHeaderAnyCase("x-amz-request-charged"))
 		})
 		It("is not sent with an error, which end_header sends only when !is_err()", func() {
 			rec := statBucket(bob, op.ErrAccessDenied)
 			Expect(rec.Code).To(Equal(403))
-			Expect(rec.Header()).NotTo(HaveKey("X-Amz-Request-Charged"))
+			Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-request-charged"))
 		})
 	})
 	Describe("a document sent whole in one chunk", func() {

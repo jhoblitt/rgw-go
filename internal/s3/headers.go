@@ -18,12 +18,23 @@ func SetCommonHeaders(w http.ResponseWriter, r *op.Request) {
 	// dump_trans_id skips an empty id (rgw_rest.cc:579-587 at v19.2.6,
 	// :584-592 at v20.2.4).
 	if r.ID != "" {
-		h.Set("x-amz-request-id", r.ID)
+		SetHeader(h, "x-amz-request-id", r.ID)
 	}
 	if b := r.BucketRec; b != nil && b.Info.RequesterPays && !isOwnerOf(r.Identity, b.Info.Owner) {
-		h.Set("x-amz-request-charged", "requester")
+		SetHeader(h, "x-amz-request-charged", "requester")
 	}
 }
+
+// SetHeader sets name to v under name's own spelling. radosgw's dump_header
+// hands the name to the frontend, which writes its bytes as they are
+// (rgw_rest.cc:347-357, rgw_asio_client.cc:167-178 at v19.2.6 and v20.2.4),
+// and an SDK reads a user metadata key back case and all. http.Header.Set
+// would send net/http's canonical form instead; net/http writes a key set
+// directly as it stands.
+func SetHeader(h http.Header, name, v string) { h[name] = []string{v} }
+
+// addHeader is SetHeader that keeps the values already under name.
+func addHeader(h http.Header, name, v string) { h[name] = append(h[name], v) }
 
 // isOwnerOf is LocalApplier::is_owner_of's match_owner (rgw_auth.cc:67-75 at
 // v19.2.6 and v20.2.4): a user owner is the identity's user, an account

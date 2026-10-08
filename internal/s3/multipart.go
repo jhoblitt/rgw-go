@@ -172,7 +172,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	}
 	SetCommonHeaders(w, r)
 	h := w.Header()
-	h.Set("ETag", `"`+o.ETag+`"`)
+	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(status)

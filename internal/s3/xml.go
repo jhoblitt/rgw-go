@@ -44,7 +44,7 @@ func writeXML(w http.ResponseWriter, r *op.Request, status int, v any, errDoc bo
 	h.Set("Content-Type", "application/xml")
 	n := uint64(len(xmlHeader) + len(body))
 	if errDoc {
-		h.Del("x-amz-request-charged")
+		delete(h, "x-amz-request-charged")
 		SetContentLength(h, n)
 	} else {
 		h.Set("Content-Length", strconv.FormatUint(n, 10))

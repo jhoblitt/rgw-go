@@ -224,18 +224,18 @@ var _ = Describe("get_obj", func() {
 		Expect(hd.Get("Content-Length")).To(Equal("1024"))
 		Expect(hd.Get("Accept-Ranges")).To(Equal("bytes"))
 		Expect(hd.Get("Last-Modified")).To(Equal(readLastModified))
-		Expect(hd.Get("ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
+		Expect(exactHeader(hd, "ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
 		Expect(hd.Get("Content-Type")).To(Equal("text/plain"))
-		Expect(hd.Get("x-amz-meta-color")).To(Equal("blue"), "one trailing NUL stripped")
+		Expect(exactHeader(hd, "x-amz-meta-color")).To(Equal("blue"), "one trailing NUL stripped")
 		Expect(hd.Get("Cache-Control")).To(Equal("no-store"))
-		Expect(hd.Get("x-rgw-object-type")).To(Equal("Normal"))
-		Expect(hd.Get("x-amz-request-id")).To(HavePrefix("tx"))
+		Expect(exactHeader(hd, "x-rgw-object-type")).To(Equal("Normal"))
+		Expect(exactHeader(hd, "x-amz-request-id")).To(HavePrefix("tx"))
 		Expect(hd.Get("Server")).NotTo(BeEmpty())
 		Expect(hd).NotTo(HaveKey("Content-Range"))
-		Expect(hd).NotTo(HaveKey("X-Amz-Version-Id"))
-		Expect(hd).NotTo(HaveKey("X-Amz-Mp-Parts-Count"))
-		Expect(hd).NotTo(HaveKey("X-Amz-Tagging-Count"))
-		Expect(hd).NotTo(HaveKey("X-Amz-Request-Charged"), "the owner is not charged")
+		Expect(hd).NotTo(haveHeaderAnyCase("x-amz-version-id"))
+		Expect(hd).NotTo(haveHeaderAnyCase("x-amz-mp-parts-count"))
+		Expect(hd).NotTo(haveHeaderAnyCase("x-amz-tagging-count"))
+		Expect(hd).NotTo(haveHeaderAnyCase("x-amz-request-charged"), "the owner is not charged")
 		Expect(rec.Body.Bytes()).To(Equal(readPayload(1024)))
 	})
 	It("HEAD: the same headers, no body; a zero-byte object has Content-Length 0", func() {
@@ -243,8 +243,8 @@ var _ = Describe("get_obj", func() {
 		Expect(rec.Code).To(Equal(200))
 		Expect(rec.Header().Get("Content-Length")).To(Equal("1024"))
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "send_response_data's dump_content_length, rgw_rest_s3.cc:459")
-		Expect(rec.Header().Get("ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
-		Expect(rec.Header().Get("x-amz-meta-color")).To(Equal("blue"))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Of(readPayload(1024)) + `"`))
+		Expect(exactHeader(rec.Header(), "x-amz-meta-color")).To(Equal("blue"))
 		Expect(rec.Body.Len()).To(BeZero())
 		Expect(do("HEAD", "/plain/empty", nil).Header().Get("Content-Length")).To(Equal("0"))
 	})
@@ -290,27 +290,27 @@ var _ = Describe("get_obj", func() {
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"), "end_header's error branch, rgw_rest.cc:620-624")
 		Expect(rec.Header()).NotTo(HaveKey("Last-Modified"), "an error skips the object's headers, rgw_rest_s3.cc:403-404")
-		Expect(rec.Header()).NotTo(HaveKey("Etag"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("ETag"))
 		rec = do("GET", "/plain/empty", map[string]string{"Range": "bytes=40-50"})
 		Expect(rec.Code).To(Equal(416))
 	})
 	It("304 carries Last-Modified, ETag, Cache-Control and Expires and no body", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrExpires: []byte("Thu, 01 Oct 2026 00:00:00 GMT\x00")})
-		etag := do("GET", "/plain/small", nil).Header().Get("ETag")
+		etag := exactHeader(do("GET", "/plain/small", nil).Header(), "ETag")
 		rec := do("GET", "/plain/small", map[string]string{"If-None-Match": etag})
 		Expect(rec.Code).To(Equal(304))
-		Expect(rec.Header().Get("ETag")).To(Equal(etag))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(etag))
 		Expect(rec.Header().Get("Last-Modified")).To(Equal(readLastModified))
 		Expect(rec.Header().Get("Cache-Control")).To(Equal("no-store"))
 		Expect(rec.Header().Get("Expires")).To(Equal("Thu, 01 Oct 2026 00:00:00 GMT"))
-		Expect(rec.Header().Get("x-amz-request-id")).To(HavePrefix("tx"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(HavePrefix("tx"))
 		Expect(rec.Body.Len()).To(BeZero())
 		Expect(rec.Header()).NotTo(HaveKey("Content-Type"))
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Meta-Color"), "the 304 branch dumps four headers, rgw_rest_s3.cc:623-638")
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-meta-color"), "the 304 branch dumps four headers, rgw_rest_s3.cc:623-638")
 		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "is_err is false for 304 and end_header gets no length, rgw_rest_s3.cc:623-638")
 		rec = do("GET", "/plain/small", map[string]string{"If-Modified-Since": "Mon, 28 Sep 2026 00:00:00 GMT"})
 		Expect(rec.Code).To(Equal(304))
-		Expect(rec.Header().Get("ETag")).To(Equal(etag))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(etag))
 	})
 	It("412 and 400 for the other conditionals", func() {
 		Expect(do("GET", "/plain/small", map[string]string{"If-Match": `"ABCORZ"`}).Code).To(Equal(412))
@@ -357,9 +357,9 @@ var _ = Describe("get_obj", func() {
 		Expect(hd.Get("Content-Language")).To(Equal("en"))
 		Expect(hd.Get("X-Robots-Tag")).To(Equal("noindex"))
 		Expect(hd.Get("X-Amz-Storage-Class")).To(Equal("COLD"))
-		Expect(hd.Get("x-amz-website-redirect-location")).To(Equal("/other"))
+		Expect(exactHeader(hd, "x-amz-website-redirect-location")).To(Equal("/other"))
 		Expect(hd.Get("Content-Type")).To(Equal("text/html"), "rgw_bl_str drops every trailing NUL")
-		Expect(hd.Get("x-amz-meta-a")).To(Equal("x"))
+		Expect(exactHeader(hd, "x-amz-meta-a")).To(Equal("x"))
 		Expect(hd).NotTo(HaveKey("X-Unrelated-Attr"))
 	})
 	DescribeTable("drops aws-chunked from Content-Encoding",
@@ -382,8 +382,8 @@ var _ = Describe("get_obj", func() {
 	It("reports an appendable object and its next append position", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrAppendPartNum: []byte("3")})
 		hd := do("HEAD", "/plain/small", nil).Header()
-		Expect(hd.Get("x-rgw-object-type")).To(Equal("Appendable"))
-		Expect(hd.Get("x-rgw-next-append-position")).To(Equal("1024"))
+		Expect(exactHeader(hd, "x-rgw-object-type")).To(Equal("Appendable"))
+		Expect(exactHeader(hd, "x-rgw-next-append-position")).To(Equal("1024"))
 	})
 	It("reports the replication status, trace and time", func(ctx SpecContext) {
 		trace := denc.NewEncoder()
@@ -396,20 +396,20 @@ var _ = Describe("get_obj", func() {
 			meta.AttrReplicatedAt:      at.Bytes(),
 		})
 		hd := do("HEAD", "/plain/small", nil).Header()
-		Expect(hd.Get("x-amz-replication-status")).To(Equal("COMPLETED"), "dump_header of a bufferlist drops one NUL")
-		Expect(hd.Values("x-rgw-replicated-from")).To(Equal([]string{"zone-a", "zone-b:key"}))
-		Expect(hd.Get("x-rgw-replicated-at")).To(Equal("Mon, 28 Sep 2026 04:05:06 GMT"))
+		Expect(exactHeader(hd, "x-amz-replication-status")).To(Equal("COMPLETED"), "dump_header of a bufferlist drops one NUL")
+		Expect(hd).To(HaveKeyWithValue("x-rgw-replicated-from", []string{"zone-a", "zone-b:key"}))
+		Expect(exactHeader(hd, "x-rgw-replicated-at")).To(Equal("Mon, 28 Sep 2026 04:05:06 GMT"))
 
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrReplicationTrace: {1, 0, 0, 0, 9}, meta.AttrReplicatedAt: {1}})
 		hd = do("HEAD", "/plain/small", nil).Header()
-		Expect(hd).NotTo(HaveKey("X-Rgw-Replicated-From"), "a trace that does not decode is omitted")
-		Expect(hd).NotTo(HaveKey("X-Rgw-Replicated-At"))
+		Expect(hd).NotTo(haveHeaderAnyCase("x-rgw-replicated-from"), "a trace that does not decode is omitted")
+		Expect(hd).NotTo(haveHeaderAnyCase("x-rgw-replicated-at"))
 	})
 	It("names a static large object's indicator as radosgw does, in place of its user metadata", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrMetaPrefix + "static-large-object": []byte("anything\x00")})
 		hd := do("HEAD", "/plain/small", nil).Header()
 		Expect(hd.Get("X-Object-Meta-Static-Large-Object")).To(Equal("True"))
-		Expect(hd).NotTo(HaveKey("X-Amz-Meta-Static-Large-Object"))
+		Expect(hd).NotTo(haveHeaderAnyCase("x-amz-meta-static-large-object"))
 	})
 	// extended is a handler built with rgw_extended_http_attrs set to names.
 	extended := func(names string) *s3.Handler {
@@ -439,8 +439,9 @@ var _ = Describe("get_obj", func() {
 	})
 	It("sends a mapped etag after dump_etag's quoted one", func() {
 		hd := send(extended("etag"), "GET", "/plain/small", nil).Header()
-		Expect(hd.Values("Etag")).To(Equal([]string{`"` + md5Of(readPayload(1024)) + `"`, md5Of(readPayload(1024))}),
-			"dump_etag at rgw_rest_s3.cc:507-510, response_attrs at :617-621")
+		Expect(hd).To(HaveKeyWithValue("ETag", []string{`"` + md5Of(readPayload(1024)) + `"`}), "dump_etag at rgw_rest_s3.cc:507-510")
+		Expect(hd).To(HaveKeyWithValue("Etag", []string{md5Of(readPayload(1024))}),
+			"response_attrs at :617-621, under camelcase_dash_http_attr's spelling")
 	})
 	It("sends a mapped end_header name ahead of end_header's own value", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrPrefix + "server": []byte("stored")})
@@ -509,7 +510,7 @@ var _ = Describe("get_obj", func() {
 		Expect(rec.Body.String()).To(ContainSubstring("<Message>Invalid partNumber: The option value &apos;99999999999&apos; seems to be invalid</Message>"))
 		rec = do("GET", "/plain/small?partNumber=1", nil)
 		Expect(rec.Code).To(Equal(200), "part 1 of a single-part object is the object")
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Mp-Parts-Count"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-mp-parts-count"))
 		Expect(do("GET", "/plain/small?partNumber=2", nil).Code).To(Equal(400))
 		Expect(do("GET", "/plain/small?partNumber=%201", nil).Code).To(Equal(200), "strtoll skips leading blanks")
 		Expect(do("GET", "/plain/small?partNumber=1%20", nil).Code).To(Equal(400), "and nothing may follow the digits")
@@ -529,14 +530,14 @@ var _ = Describe("get_obj", func() {
 		Expect(set.Add("a", "1", 10)).To(Succeed())
 		Expect(set.Add("b", "2", 10)).To(Succeed())
 		w.setAttrs(ctx, "small", map[string][]byte{tags.Attr: encodeTags(set)})
-		Expect(do("HEAD", "/plain/small", nil).Header().Get("x-amz-tagging-count")).To(Equal("2"))
-		Expect(do("GET", "/plain/small", nil).Header().Get("x-amz-tagging-count")).To(Equal("2"))
-		Expect(do("GET", "/plain/small?versionId=null", nil).Header().Get("x-amz-version-id")).To(Equal("null"))
+		Expect(exactHeader(do("HEAD", "/plain/small", nil).Header(), "x-amz-tagging-count")).To(Equal("2"))
+		Expect(exactHeader(do("GET", "/plain/small", nil).Header(), "x-amz-tagging-count")).To(Equal("2"))
+		Expect(exactHeader(do("GET", "/plain/small?versionId=null", nil).Header(), "x-amz-version-id")).To(Equal("null"))
 	})
 	DescribeTable("counts the tags RGWObjTags::decode's text fallback added before it failed",
 		func(ctx SpecContext, stored, want string) {
 			w.setAttrs(ctx, "small", map[string][]byte{tags.Attr: []byte(stored)})
-			Expect(do("HEAD", "/plain/small", nil).Header().Get("x-amz-tagging-count")).To(Equal(want))
+			Expect(exactHeader(do("HEAD", "/plain/small", nil).Header(), "x-amz-tagging-count")).To(Equal(want))
 		},
 		Entry("text that parses whole", "a=1&b=2\x00", "2"),
 		Entry("text whose third tag has no key", "a=1&b=2&=3&c=4", "2"),
@@ -547,12 +548,12 @@ var _ = Describe("get_obj", func() {
 	It("x-amz-request-charged on a requester-pays bucket for a non-owner", func(ctx SpecContext) {
 		w.plain.Info.RequesterPays = true
 		Expect(w.store.PutBucketInfo(ctx, w.plain)).To(Succeed())
-		Expect(do("GET", "/plain/small", nil).Header()).NotTo(HaveKey("X-Amz-Request-Charged"), "the owner is not charged")
+		Expect(do("GET", "/plain/small", nil).Header()).NotTo(haveHeaderAnyCase("x-amz-request-charged"), "the owner is not charged")
 		bobEnv := w.env(nil)
 		bobEnv.Authz = &opfakes.FakeAuthorizer{}
 		rec := send(w.handler(bobEnv, w.bob), "GET", "/plain/small", nil)
 		Expect(rec.Code).To(Equal(200))
-		Expect(rec.Header().Get("x-amz-request-charged")).To(Equal("requester"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-charged")).To(Equal("requester"))
 	})
 	It("refuses x-amz-server-side-encryption on a read", func() {
 		rec := do("GET", "/plain/small", map[string]string{"x-amz-server-side-encryption": "AES256"})
@@ -619,18 +620,18 @@ var _ = Describe("get_obj", func() {
 		Expect(rec.Body.Len()).To(Equal(10), "no error document after the bytes")
 	})
 	It("Tentacle emits x-amz-mp-parts-count on a plain GET of a multipart object; Squid does not", func(ctx SpecContext) {
-		Expect(send(w.handler(w.env(multipartObjects()), w.alice), "HEAD", "/plain/k", nil).Header()).NotTo(HaveKey("X-Amz-Mp-Parts-Count"))
+		Expect(send(w.handler(w.env(multipartObjects()), w.alice), "HEAD", "/plain/k", nil).Header()).NotTo(haveHeaderAnyCase("x-amz-mp-parts-count"))
 		tw := newReadWorld(ctx, denc.Tentacle)
 		rec := send(tw.handler(tw.env(multipartObjects()), tw.alice), "HEAD", "/plain/k", nil)
-		Expect(rec.Header().Get("x-amz-mp-parts-count")).To(Equal("3"))
+		Expect(exactHeader(rec.Header(), "x-amz-mp-parts-count")).To(Equal("3"))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.FormatUint(goldenManifest("squid-multipart").ObjSize, 10)))
 	})
 	It("serves a part of a multipart object with its length, range and the parts count", func() {
 		rec := send(w.handler(w.env(multipartObjects()), w.alice), "GET", "/plain/k?partNumber=2", nil)
 		Expect(rec.Code).To(Equal(200))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(8 << 20)))
-		Expect(rec.Header().Get("x-amz-mp-parts-count")).To(Equal("3"))
-		Expect(rec.Header().Get("ETag")).To(Equal(`"part"`), "the part head's attrs")
+		Expect(exactHeader(rec.Header(), "x-amz-mp-parts-count")).To(Equal("3"))
+		Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"part"`), "the part head's attrs")
 		Expect(rec.Body.Len()).To(Equal(8 << 20))
 	})
 
@@ -647,7 +648,7 @@ var _ = Describe("get_obj", func() {
 		}
 		It("reports a restore in progress", func(ctx SpecContext) {
 			w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreStatus: {byte(meta.RestoreAlreadyInProgress)}})
-			Expect(do("HEAD", "/plain/small", nil).Header().Get("x-amz-restore")).To(Equal(`ongoing-request="true"`))
+			Expect(exactHeader(do("HEAD", "/plain/small", nil).Header(), "x-amz-restore")).To(Equal(`ongoing-request="true"`))
 		})
 		It("reports a temporary copy's expiry and the cloud tier's storage class", func(ctx SpecContext) {
 			w.setAttrs(ctx, "small", map[string][]byte{
@@ -658,33 +659,33 @@ var _ = Describe("get_obj", func() {
 				meta.AttrStorageClass:          []byte("STANDARD"),
 			})
 			hd := do("GET", "/plain/small", nil).Header()
-			Expect(hd.Get("x-amz-restore")).To(Equal(`ongoing-request="false", expiry-date="Mon, 28 Sep 2026 01:02:03 GMT"`))
+			Expect(exactHeader(hd, "x-amz-restore")).To(Equal(`ongoing-request="false", expiry-date="Mon, 28 Sep 2026 01:02:03 GMT"`))
 			Expect(hd.Get("X-Amz-Storage-Class")).To(Equal("CLOUDTIER"), "rgw_rest_s3.cc:619-624 at v20.2.4")
 		})
 		It("dates a temporary copy without an expiry at the epoch, and says nothing of a permanent one", func(ctx SpecContext) {
 			w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreStatus: {byte(meta.CloudRestored)}, meta.AttrRestoreType: {1}})
-			Expect(do("HEAD", "/plain/small", nil).Header().Get("x-amz-restore")).To(Equal(`ongoing-request="false", expiry-date="Thu, 01 Jan 1970 00:00:00 GMT"`))
+			Expect(exactHeader(do("HEAD", "/plain/small", nil).Header(), "x-amz-restore")).To(Equal(`ongoing-request="false", expiry-date="Thu, 01 Jan 1970 00:00:00 GMT"`))
 			w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreType: {2}, meta.AttrCloudTierStorageClass: []byte("CLOUDTIER")})
 			hd := do("HEAD", "/plain/small", nil).Header()
-			Expect(hd).NotTo(HaveKey("X-Amz-Restore"))
+			Expect(hd).NotTo(haveHeaderAnyCase("x-amz-restore"))
 			Expect(hd).NotTo(HaveKey("X-Amz-Storage-Class"))
 		})
 		It("omits the header for a restore attr that does not decode, where radosgw terminates", func(ctx SpecContext) {
 			w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreStatus: {}})
 			rec := do("HEAD", "/plain/small", nil)
 			Expect(rec.Code).To(Equal(200))
-			Expect(rec.Header()).NotTo(HaveKey("X-Amz-Restore"))
+			Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-restore"))
 			w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreStatus: {byte(meta.CloudRestored)}, meta.AttrRestoreType: {1}, meta.AttrRestoreExpiryDate: {1, 2}})
 			rec = do("HEAD", "/plain/small", nil)
 			Expect(rec.Code).To(Equal(200))
-			Expect(rec.Header()).NotTo(HaveKey("X-Amz-Restore"))
+			Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-restore"))
 		})
 	})
 	It("ignores the restore attrs on Squid", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrRestoreStatus: {byte(meta.RestoreAlreadyInProgress)}})
 		rec := do("HEAD", "/plain/small", nil)
 		Expect(rec.Code).To(Equal(200))
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Restore"))
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-restore"))
 	})
 })
 

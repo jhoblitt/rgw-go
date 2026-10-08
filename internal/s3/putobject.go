@@ -58,10 +58,10 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 	}
 	SetCommonHeaders(w, r)
 	h := w.Header()
-	h.Set("ETag", `"`+o.ETag+`"`)
+	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
 	if o.VersionID != "" {
-		h.Set("x-amz-version-id", o.VersionID)
+		SetHeader(h, "x-amz-version-id", o.VersionID)
 	}
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(successStatus(r))

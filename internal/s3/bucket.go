@@ -350,19 +350,19 @@ func statBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) error
 	}
 	h := w.Header()
 	if o.ReadStats {
-		h.Set("X-RGW-Object-Count", strconv.FormatUint(o.Stats.NumObjects, 10))
-		h.Set("X-RGW-Bytes-Used", strconv.FormatUint(o.Stats.Size, 10))
+		SetHeader(h, "X-RGW-Object-Count", strconv.FormatUint(o.Stats.NumObjects, 10))
+		SetHeader(h, "X-RGW-Bytes-Used", strconv.FormatUint(o.Stats.Size, 10))
 	}
 	if u := r.Identity.User; u != nil && isOwnerOf(r.Identity, r.BucketRec.Info.Owner) {
 		bq := r.BucketRec.Info.Quota
-		h.Set("X-RGW-Quota-Max-Buckets", strconv.FormatInt(int64(u.MaxBuckets), 10))
+		SetHeader(h, "X-RGW-Quota-Max-Buckets", strconv.FormatInt(int64(u.MaxBuckets), 10))
 		if !tentacle || u.UserQuota.Enabled {
-			h.Set("X-RGW-Quota-User-Size", strconv.FormatInt(u.UserQuota.MaxSize, 10))
-			h.Set("X-RGW-Quota-User-Objects", strconv.FormatInt(u.UserQuota.MaxObjects, 10))
+			SetHeader(h, "X-RGW-Quota-User-Size", strconv.FormatInt(u.UserQuota.MaxSize, 10))
+			SetHeader(h, "X-RGW-Quota-User-Objects", strconv.FormatInt(u.UserQuota.MaxObjects, 10))
 		}
 		if !tentacle || bq.Enabled {
-			h.Set("X-RGW-Quota-Bucket-Size", strconv.FormatInt(bq.MaxSize, 10))
-			h.Set("X-RGW-Quota-Bucket-Objects", strconv.FormatInt(bq.MaxObjects, 10))
+			SetHeader(h, "X-RGW-Quota-Bucket-Size", strconv.FormatInt(bq.MaxSize, 10))
+			SetHeader(h, "X-RGW-Quota-Bucket-Objects", strconv.FormatInt(bq.MaxObjects, 10))
 		}
 	}
 	writeEmpty(w, r, http.StatusOK)
@@ -385,7 +385,7 @@ func getBucketLocation(ctx context.Context, w http.ResponseWriter, r *op.Request
 	SetCommonHeaders(w, r)
 	h := w.Header()
 	if r.Env.Zone.Release() >= denc.Tentacle {
-		h.Set("x-rgw-bucket-placement-target", r.BucketRec.Info.PlacementRule.Name)
+		SetHeader(h, "x-rgw-bucket-placement-target", r.BucketRec.Info.PlacementRule.Name)
 		h.Set("Content-Type", "application/xml")
 	} else {
 		h["Content-Type"] = nil

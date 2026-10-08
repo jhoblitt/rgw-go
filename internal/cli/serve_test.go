@@ -190,7 +190,7 @@ var _ = Describe("the router", func() {
 	It("answers 405 MethodNotAllowed with the error document and headers radosgw sends", func() {
 		rec := serve(cli.NewRouter(s3h, env, cfg, []string{"/swift"}), http.MethodGet, "/swift/v1")
 		Expect(rec.Code).To(Equal(http.StatusMethodNotAllowed))
-		id := rec.Header().Get("x-amz-request-id")
+		id := exactHeader(rec.Header(), "x-amz-request-id")
 		Expect(id).To(MatchRegexp(`^tx[0-9a-f]{21}-0066f00000-4107-zone-a$`))
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
@@ -211,8 +211,8 @@ var _ = Describe("the router", func() {
 
 	It("draws each answer's request id at random, as radosgw does", func() {
 		h := cli.NewRouter(nil, env, cfg, nil)
-		first := serve(h, http.MethodGet, "/").Header().Get("x-amz-request-id")
-		Expect(serve(h, http.MethodGet, "/").Header().Get("x-amz-request-id")).NotTo(Equal(first))
+		first := exactHeader(serve(h, http.MethodGet, "/").Header(), "x-amz-request-id")
+		Expect(exactHeader(serve(h, http.MethodGet, "/").Header(), "x-amz-request-id")).NotTo(Equal(first))
 	})
 
 	It("observes the answer under the op radosgw's log names unknown", func() {
@@ -460,3 +460,14 @@ var _ = Describe("radosgw's module defaults", func() {
 		}))
 	})
 })
+
+// exactHeader is the first value the handler's header map h holds under
+// exactly name, or "" when there is none. net/http writes a key as the
+// handler spelled it; http.Header.Get would look up the canonical spelling
+// instead.
+func exactHeader(h http.Header, name string) string {
+	if v := h[name]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
