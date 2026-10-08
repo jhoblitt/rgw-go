@@ -355,8 +355,9 @@ const maxRemoveRetries = 20
 // an abort that fails. It then reads the entry point afresh,
 // as remove's new tracker does, and leaves it when the read fails or it
 // names another instance; otherwise it removes it under the version read,
-// and a failure there, a lost race included, is returned before anything
-// else is removed; the op answers that race. The instance follows, under
+// and a failure there is returned before anything else is removed, a lost
+// race as op.ErrRemovalRaced once the removal's claim is cleared
+// (releaseRemoval). The instance follows, under
 // the version read, then the index of the generation that read names, whose
 // failure is logged, and last the owner's list entry, whose failure is
 // returned.
@@ -394,6 +395,9 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 			slog.WarnContext(ctx, "aborted incomplete multipart uploads", slog.String("bucket", b.Name), slog.Int("count", n))
 		}
 	}
+	if cur, lerr = s.claimRemoval(ctx, cur); lerr != nil {
+		return lerr
+	}
 	e, err := s.readEntryPoint(ctx, b.Tenant, b.Name)
 	switch {
 	case err != nil:
@@ -403,7 +407,7 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 	case b.ID != "" && e.ep.Bucket.ID != b.ID:
 	default:
 		if rerr := s.removeEntryPoint(ctx, b.Tenant, b.Name, &objv{read: e.v.read}); rerr != nil {
-			return rerr
+			return s.releaseRemoval(ctx, cur, rerr)
 		}
 	}
 	if cur, err = s.removeCurrentInstance(ctx, cur); err != nil {

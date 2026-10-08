@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 
@@ -68,14 +69,19 @@ func (s *Store) Remove(_ context.Context, section, key string) error {
 // at most maxEntries of them; next is the last key returned. The user
 // section is the stored users, each keyed by its users.uid object's name,
 // the user id's string form, as RGWSI_User_Module lists them
-// (svc_user_rados.cc:32-66 at v19.2.6); the other sections are what Put
-// stored.
+// (svc_user_rados.cc:32-66 at v19.2.6); the bucket section is the stored
+// buckets, each keyed by its entry point's metadata key, the name or
+// "tenant/name" (RGWSI_Bucket::get_entrypoint_meta_key, svc_bucket.cc:9-19
+// at both tags); the other sections are what Put stored.
 func (s *Store) List(_ context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	all := maps.Keys(s.metadata[section])
-	if section == "user" {
+	switch section {
+	case "user":
 		all = maps.Keys(s.users)
+	case "bucket":
+		all = s.bucketMetadataKeys()
 	}
 	var after []string
 	for k := range all {
@@ -89,4 +95,20 @@ func (s *Store) List(_ context.Context, section, marker string, maxEntries int) 
 		return nil, marker, len(after) > 0, nil
 	}
 	return slices.Clip(keys), keys[len(keys)-1], len(after) > len(keys), nil
+}
+
+// bucketMetadataKeys are the stored buckets' entry point metadata keys.
+func (s *Store) bucketMetadataKeys() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for _, b := range s.buckets {
+			id := b.rec.Info.Bucket
+			k := id.Name
+			if id.Tenant != "" {
+				k = id.Tenant + "/" + id.Name
+			}
+			if !yield(k) {
+				return
+			}
+		}
+	}
 }

@@ -87,6 +87,14 @@ type BucketAdminStore interface {
 	// FULL_CONTROL grant for the new owner and the owner itself; other grants
 	// stay. ECANCELED is retried up to 10 times (adopt_user_bucket, rgw_user.cc:1681-1712).
 	ChownBucket(ctx context.Context, rec *BucketRecord, owner meta.Owner, displayName string) error
+	// RemoveDanglingEntryPoint removes the entry point of tenant/name when
+	// the instance it names does not exist and no live rename claims the
+	// name, under the version read; nothing else is written but, for a name
+	// a rename reserved, a guarded rewrite of that rename's old instance,
+	// which a rename resuming concurrently then fails on. A name without an
+	// entry point is ErrNoSuchBucket; a live rename's, or one that changed
+	// meanwhile, ErrConcurrentModification.
+	RemoveDanglingEntryPoint(ctx context.Context, tenant, name string) error
 	// SyncOwnerStats is rgw_sync_all_stats (rgw_user.cc:16-55), what
 	// user info's sync=true runs: every bucket of owner resynced into the
 	// owner's stats, then the sync completed.

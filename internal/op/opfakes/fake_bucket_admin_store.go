@@ -93,6 +93,19 @@ type FakeBucketAdminStore struct {
 	rebuildIndexReturnsOnCall map[int]struct {
 		result1 error
 	}
+	RemoveDanglingEntryPointStub        func(context.Context, string, string) error
+	removeDanglingEntryPointMutex       sync.RWMutex
+	removeDanglingEntryPointArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	removeDanglingEntryPointReturns struct {
+		result1 error
+	}
+	removeDanglingEntryPointReturnsOnCall map[int]struct {
+		result1 error
+	}
 	RemoveIndexEntriesStub        func(context.Context, *op.BucketRecord, []meta.ObjKey) error
 	removeIndexEntriesMutex       sync.RWMutex
 	removeIndexEntriesArgsForCall []struct {
@@ -517,6 +530,69 @@ func (fake *FakeBucketAdminStore) RebuildIndexReturnsOnCall(i int, result1 error
 		})
 	}
 	fake.rebuildIndexReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPoint(arg1 context.Context, arg2 string, arg3 string) error {
+	fake.removeDanglingEntryPointMutex.Lock()
+	ret, specificReturn := fake.removeDanglingEntryPointReturnsOnCall[len(fake.removeDanglingEntryPointArgsForCall)]
+	fake.removeDanglingEntryPointArgsForCall = append(fake.removeDanglingEntryPointArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RemoveDanglingEntryPointStub
+	fakeReturns := fake.removeDanglingEntryPointReturns
+	fake.recordInvocation("RemoveDanglingEntryPoint", []interface{}{arg1, arg2, arg3})
+	fake.removeDanglingEntryPointMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPointCallCount() int {
+	fake.removeDanglingEntryPointMutex.RLock()
+	defer fake.removeDanglingEntryPointMutex.RUnlock()
+	return len(fake.removeDanglingEntryPointArgsForCall)
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPointCalls(stub func(context.Context, string, string) error) {
+	fake.removeDanglingEntryPointMutex.Lock()
+	defer fake.removeDanglingEntryPointMutex.Unlock()
+	fake.RemoveDanglingEntryPointStub = stub
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPointArgsForCall(i int) (context.Context, string, string) {
+	fake.removeDanglingEntryPointMutex.RLock()
+	defer fake.removeDanglingEntryPointMutex.RUnlock()
+	argsForCall := fake.removeDanglingEntryPointArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPointReturns(result1 error) {
+	fake.removeDanglingEntryPointMutex.Lock()
+	defer fake.removeDanglingEntryPointMutex.Unlock()
+	fake.RemoveDanglingEntryPointStub = nil
+	fake.removeDanglingEntryPointReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeBucketAdminStore) RemoveDanglingEntryPointReturnsOnCall(i int, result1 error) {
+	fake.removeDanglingEntryPointMutex.Lock()
+	defer fake.removeDanglingEntryPointMutex.Unlock()
+	fake.RemoveDanglingEntryPointStub = nil
+	if fake.removeDanglingEntryPointReturnsOnCall == nil {
+		fake.removeDanglingEntryPointReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.removeDanglingEntryPointReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

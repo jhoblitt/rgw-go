@@ -831,6 +831,226 @@ review and verified against the tree.
   info shows the Swift TempURL keys to a caller it withholds keys from").
   rgw-go leaves `temp_url_keys` out too, so such a caller's document lacks
   the section; a caller that may see keys gets radosgw's document.
+- **The admin bucket info reports a bucket named tenant/name whatever the
+  uid's tenant.** `GET /admin/bucket?bucket=tenant/name` loads the tenanted
+  bucket in both. radosgw's `bucket_stats` then looks the whole name up
+  again under the uid's tenant (`driver/rados/rgw_bucket.cc:1655` at
+  v19.2.6, `:1821` at v20.2.4). Without a uid, or with one in the empty
+  tenant, that is the same entry point, as `rgw_bucket::get_key` keys
+  `("", "t/n")` and `("t", "n")` alike (`rgw_basic_types.cc:62-79` at
+  both tags), so radosgw reports the bucket, as it reports every tenanted
+  bucket in `GET /admin/bucket?stats=true`. With a uid that names a tenant,
+  such as `uid=t2$u`, radosgw finds nothing after its flusher has started
+  and answers 200 with no document (docs/ceph-upstream-bugs.md, "radosgw's
+  admin bucket info answers nothing for a tenant/name bucket when the uid
+  names a tenant"); rgw-go reports the bucket it loaded.
+- **Bucket link and unlink write differently from radosgw.** On `PUT
+  /admin/bucket` (link, with or without `new-bucket-name`), `POST
+  /admin/bucket` (unlink) and the bucket adoption a user's move into an
+  account runs (`RGWBucketAdminOp::link` and `::unlink`,
+  `driver/rados/rgw_bucket.cc:999-1187` at v19.2.6, `:1150-1338` at
+  v20.2.4; `RadosBucket::chown`, `driver/rados/rgw_sal_rados.cc:699-751`
+  at v19.2.6, `:717-769` at v20.2.4), rgw-go keeps to one rule: no failure
+  of an rgw-go request between two of its writes, followed by any later
+  rgw-go admin or S3 request, leaves two owners reaching one bucket's data,
+  a live bucket without its name, or an instance object carrying a live
+  bucket's id that no entry point names. Only while a rename or a link of
+  a bucket is unfinished can its owner's list lack it. An unfinished
+  rename can also leave its old owner's list naming it, which grants no
+  access; the rename's retry, the one change the bucket then admits, puts
+  both lists right. A link without a rename that fails at the instance
+  write after its unlink leaves the bucket its old owner's, in neither
+  list and with no record, as radosgw's own link does; a retry of that
+  link, or any other link of the bucket, puts it in its owner's list. And
+  no rgw-go link names an instance whose id another entry point already
+  loads, so what radosgw's own failed rename leaves is not turned into a
+  second owner either.
+  - A link whose bucket ends under a name another bucket's entry point
+    holds answers 409 BucketAlreadyExists before writing anything: a
+    rename onto that name, a link across tenants, and a link by
+    `bucket-id` of an instance whose name now belongs to a re-created
+    bucket. radosgw overwrites that entry point (docs/ceph-upstream-bugs.md,
+    "radosgw's bucket link overwrites the entry point of the bucket it
+    renames onto" and
+    "radosgw's bucket link by bucket id takes the name from the live
+    bucket"). The entry point a link writes is written under the version
+    it read, or created exclusively when there was none; radosgw writes it
+    unchecked. A link by `bucket-id` answers a wrong id 404 NoSuchKey, as
+    radosgw does.
+  - A link by `bucket-id` first reads every entry point of the bucket
+    metadata section, page by page, and answers 409 BucketAlreadyExists
+    when one under another name loads the bucket's id, and 409
+    ConcurrentModification when a listed entry point loads nothing; a
+    listing or a read that fails answers the store's error, 500
+    InternalError, or 501 NotImplemented from a store that cannot list; a
+    listing that reports the section missing answers 404 NotFound, and one
+    that makes no progress 500 InternalError: radosgw's own failed rename
+    leaves an instance carrying the live bucket's id that no entry point
+    names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
+    (docs/ceph-upstream-bugs.md, "radosgw's bucket link by bucket id takes
+    the name from the live bucket"). Each such link reads every bucket. The
+    RADOS driver cannot list the section yet, so there it answers 501
+    NotImplemented and links nothing until unit N's metadata task lists it
+    ("On the RADOS driver, three admin bucket requests answer 501
+    NotImplemented for now"). Until then, recovering a bucket whose entry
+    point was lost takes `radosgw-admin bucket link --bucket-id`, with
+    radosgw's hazard: check first that no other name loads that id. One
+    unfinished rename whose new name's entry point names an instance not
+    yet written makes that listed name load nothing, so every by-id link of
+    the zone answers 409 until that rename is retried, which fails closed:
+    retry the rename, then the link.
+  - A rename records itself in the bucket's instances while it runs, in an
+    xattr of radosgw's attr namespace, `user.rgw.rgw-go-rename`, which
+    radosgw carries and never reads. Until the rename completes, rgw-go
+    answers every other link, unlink or chown of the bucket 409
+    ConcurrentModification, and so do an S3 DeleteBucket and an admin
+    bucket removal, with or without `purge-objects` or `bypass-gc`, by
+    either name, before they delete anything, as both names share the
+    bucket's index. Only a retry of the same rename, by the old name, or by
+    the new one once the old name is gone, goes on, and completes it. When
+    a bucket has since been created under the old name, the identical retry
+    loads that bucket and answers 409 BucketAlreadyExists; only a retry
+    through the new name, `bucket=<new name>` with the same uid and no
+    `new-bucket-name`, completes the rename then. A record whose new name
+    another bucket took is void. radosgw and radosgw-admin do not honor the
+    record: a radosgw or radosgw-admin link of the bucket while an rgw-go
+    rename is unfinished can still split it between two owners, and a
+    radosgw or radosgw-admin removal of either name, `radosgw-admin bucket
+    rm` or radosgw's S3 DeleteBucket, purges the index both names share.
+    Retry a failed rgw-go rename before running radosgw or radosgw-admin on
+    that bucket.
+  - A removal and a rename of one bucket never both change it. The RADOS
+    driver's removal starts by rewriting the bucket's instance, under the
+    version it read and only while no live rename record is there, with an
+    xattr `user.rgw.rgw-go-removing`: a rename that read the instance
+    before fails its guarded write of the record, having changed nothing
+    of the bucket, a rename that reads it after refuses the bucket with 409
+    ConcurrentModification, and a rename record written first fails the
+    removal's write and is then found. A purge, by `purge-objects` or
+    `bypass-gc`, deletes the bucket's objects before that first write, so a
+    rename that records itself during the purge goes on with the objects
+    the purge deleted gone, and the removal then refuses. Each removal
+    writes a value of its own into the xattr. A removal that loses the
+    bucket's entry point to another write after its first write answers
+    409 ConcurrentModification, an S3 DeleteBucket included, as the bucket
+    stays, and clears the xattr under the version it wrote; when the
+    winner rewrote the instance too, as a link or a chown does, it reads
+    the instance again and clears the xattr under that version while it
+    still holds its own value, so the winner's write is kept and later
+    renames are not refused. radosgw removes the bucket's entry point
+    first and its owner's list entry last, and a removal that loses the
+    entry point returns before anything else goes
+    (`driver/rados/rgw_rados.cc:5279-5284` at v19.2.6, `:5993-5998` at
+    v20.2.4; `driver/rados/rgw_sal_rados.cc:444` and `:461` at v19.2.6,
+    `:462` and `:482` at v20.2.4), yet its S3 DeleteBucket answers that
+    race 204 (`rgw_op.cc:3793-3796` at v19.2.6, `:4002-4005` at v20.2.4),
+    having removed nothing (docs/ceph-upstream-bugs.md, "radosgw's bucket
+    delete answers success when its instance removal loses a race"). A
+    removal that fails otherwise after its first write leaves the xattr,
+    and renames of the bucket are refused until the removal is retried.
+    radosgw neither writes nor reads the xattr.
+  - The rename writes in another order than radosgw: the new name's entry
+    point is created first, which secures the name; the instance under the
+    old name gets the new owner, a default ACL and the record, under the
+    version read, so a rename that loses that write to a removal or to the
+    freeing of its claim below has changed nothing of the bucket; the old
+    owners' list entries go, those the record names too; the instance
+    under the new name is written; the owner's list gains the new name;
+    the old instance goes, then the old entry point, while it names the
+    bucket and under the version read; last the record goes.
+    radosgw writes the new instance before its entry point, gives the new
+    owner only to the new instance and removes the old entry point before
+    the old instance (docs/ceph-upstream-bugs.md, "radosgw's failed bucket
+    rename leaves the old name to the old owner"). So every instance
+    carrying the bucket's id is named by an entry point naming that id
+    while it exists, and radosgw-admin's `bucket stale-instances rm` never
+    meets one of rgw-go's (docs/ceph-upstream-bugs.md, "radosgw's
+    stale-instance cleanup purges a live bucket's index"). A failure can
+    leave the new name's entry point naming an instance not yet written, or
+    the old name's naming one already removed; that name then loads nothing
+    and a bucket cannot be created under it. A failure right after the
+    first write leaves the bucket unchanged but the new name reserved that
+    way. A retry of the rename completes either. Without one, `DELETE
+    /admin/bucket?bucket=<name>` frees such a name: it removes an entry
+    point naming an instance that does not exist, under the version read,
+    and nothing else, unless the rename that reserved it, which the claim
+    records in the new name's entry point, is live, which answers 409
+    ConcurrentModification. It first rewrites that rename's old instance,
+    when one is left, under the version read, so a retry of the rename that
+    read it before fails, having changed nothing of the bucket. The old
+    name's entry point carries no claim, so it is freed even while the
+    rename's record is live: that is the rename's own next step, and a
+    retry through the new name completes the rename. radosgw answers
+    NoSuchBucket for such a name and frees nothing.
+  - A rename that loses its new name to a bucket created after its check
+    answers 409 BucketAlreadyExists having written nothing, and one that
+    loses its first instance write answers 409 ConcurrentModification
+    having written only its claim of the new name: the bucket
+    keeps its old name, its owner, its ACL and its owner's list entry, and
+    carries no record, so a later request is not refused.
+  - The owners' bucket list entries a link removes are the ACL owner's and
+    the instance owner's when it differs, each only while it names the
+    bucket's instance, and a failure is returned; radosgw removes the ACL
+    owner's entry by name and logs a failure. An unlink removes the named
+    owner's entry by name, as radosgw does, and returns a failure that
+    radosgw logs and skips.
+  - Linking a bucket to an account gives it the account's tenant; radosgw
+    gives it the empty tenant, moving it out of the account's
+    (docs/ceph-upstream-bugs.md, "radosgw's bucket link to an account
+    moves the bucket out of the account's tenant").
+  - The adoption reads the bucket by its name each round, writes the entry
+    point under the version it read, and starts the round over when
+    another write moved it; a name that now loads another instance is
+    refused. radosgw loads the instance the owner's list entry names by its
+    id (`driver/rados/buckets.cc:119-130` and `rgw_user.cc:1714-1741` at
+    v19.2.6) and points the name at it unchecked.
+- **The admin bucket routes refuse a boolean argument they cannot parse.**
+  On `DELETE /admin/bucket`, a `purge-objects` or `bypass-gc` that is
+  empty, bare, or other than `true` or `false` in any case, `1` or `0`
+  answers 400 InvalidArgument after the cap check, and nothing is removed;
+  so does an unparsable `enabled` on `PUT /admin/bucket?quota`. radosgw
+  takes an unparsable value as the default, false for the two removal
+  flags and the current value for `enabled`, and an empty or bare one as
+  true, so `purge-objects=` purges (`driver/rados/rgw_rest_bucket.cc:232-233`
+  and `:319` at v19.2.6 and v20.2.4; docs/ceph-upstream-bugs.md, "radosgw's
+  admin API takes an unparsable boolean argument as its default"). An
+  empty `enabled=` reads as true, as in radosgw: it enables a limit. The
+  bucket quota set holds the user quota set's rules for `max-objects`,
+  `max-size` and `max-size-kb`: an unparsable value, a `max-size-kb`
+  whose size in bytes overflows, and a maximum size below 0 other than -1,
+  `max-size-kb=-1` among them, answer 400 and store nothing, with or
+  without a body. The read-only `stats` of `GET /admin/bucket` keeps
+  radosgw's reading.
+- **The other admin bucket routes differ from radosgw in three ways.**
+  - `DELETE /admin/bucket?object` and `GET /admin/bucket?policy&object=`
+    answer 404 NoSuchKey for an object name no object can carry, empty,
+    longer than 1024 bytes or not UTF-8, without reading RADOS. radosgw
+    hands the name to RADOS, which answers ENOENT, radosgw's 404, for most
+    such names and refuses one of over about 2000 bytes as too long.
+  - `GET /admin/bucket` without a uid answers a failure to list the
+    bucket metadata section with its error; radosgw ends its listing
+    there and answers 200 with what it listed.
+  - `DELETE /admin/bucket` refuses a bucket of another zonegroup with 301
+    PermanentRedirect whatever the request carries. radosgw means to skip
+    that check for a request another zone forwarded, which it recognizes
+    by an `rgwx-zonegroup` argument its parser files where the check
+    cannot see it (docs/ceph-upstream-bugs.md, "radosgw's admin bucket
+    removal never recognizes a forwarded request"); rgw-go forwards
+    nothing (Multisite).
+- **On the RADOS driver, three admin bucket requests answer 501
+  NotImplemented for now.** `GET /admin/bucket` without a uid, with or
+  without `stats`, and `PUT /admin/bucket` with a `bucket-id` list the
+  bucket metadata section, which the driver's metadata store cannot list
+  yet; both answer 501 until the metadata task of unit N implements that
+  listing, the link by `bucket-id` having written nothing. Rook's
+  CephObjectStore deletion calls the first of them, `GET /admin/bucket`
+  without a uid (`ListBuckets` in `getBucketDependents`,
+  `pkg/operator/ceph/object/dependents.go:128` at rook ee40ef51f), so on
+  the RADOS driver the deletion's dependents check fails, and the object
+  store's deletion with it, until then. `DELETE /admin/bucket?bypass-gc=true`
+  answers 501 until unit N's bypass-gc task implements the driver's
+  data pass, and removes nothing; `purge-objects=true` without `bypass-gc`
+  works. The memstore serves both.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the

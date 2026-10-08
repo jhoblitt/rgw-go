@@ -289,16 +289,6 @@ var _ = Describe("the driver", func() {
 				return s.TrimUsage(ctx, "alice", "", 0, ^uint64(0))
 			}),
 
-			Entry("IndexStats", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.IndexStats(ctx, &op.BucketRecord{})
-				return err
-			}),
-			Entry("ChangeBucketOwner", func(ctx context.Context, s *driver.Store) error {
-				return s.ChangeBucketOwner(ctx, &op.BucketRecord{}, meta.UserOwner(meta.UserID{ID: "alice"}), "Alice", nil)
-			}),
-			Entry("UnlinkBucketOwner", func(ctx context.Context, s *driver.Store) error {
-				return s.UnlinkBucketOwner(ctx, &op.BucketRecord{}, meta.UserOwner(meta.UserID{ID: "alice"}))
-			}),
 			Entry("CheckIndex", func(ctx context.Context, s *driver.Store) error {
 				_, _, err := s.CheckIndex(ctx, &op.BucketRecord{})
 				return err
@@ -308,12 +298,6 @@ var _ = Describe("the driver", func() {
 			}),
 			Entry("RemoveIndexEntries", func(ctx context.Context, s *driver.Store) error {
 				return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
-			}),
-			Entry("ChownBucket", func(ctx context.Context, s *driver.Store) error {
-				return s.ChownBucket(ctx, &op.BucketRecord{}, meta.AccountOwner("RGW00000000000000001"), "acme")
-			}),
-			Entry("SyncOwnerStats", func(ctx context.Context, s *driver.Store) error {
-				return s.SyncOwnerStats(ctx, meta.UserOwner(meta.UserID{ID: "alice"}))
 			}),
 			Entry("PurgeBypassGC", func(ctx context.Context, s *driver.Store) error {
 				return s.PurgeBypassGC(ctx, &op.BucketRecord{})

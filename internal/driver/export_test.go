@@ -565,3 +565,9 @@ func (s *Store) PartLayoutForTest(ctx context.Context, rec *op.BucketRecord, des
 func AbortMultipartsForTest(s *Store, ctx context.Context, rec *op.BucketRecord) (int, error) {
 	return s.abortMultiparts(ctx, rec)
 }
+
+// CategoryName is categoryName for the external specs.
+var CategoryName = categoryName
+
+// ShardString is shardString for the external specs.
+var ShardString = shardString

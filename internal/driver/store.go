@@ -281,21 +281,6 @@ func (s *Store) TrimUsage(context.Context, string, string, uint64, uint64) error
 	return op.ErrNotImplemented
 }
 
-// IndexStats implements op.BucketAdminStore.
-func (s *Store) IndexStats(context.Context, *op.BucketRecord) (op.BucketIndexStats, error) {
-	return op.BucketIndexStats{}, op.ErrNotImplemented
-}
-
-// ChangeBucketOwner implements op.BucketAdminStore.
-func (s *Store) ChangeBucketOwner(context.Context, *op.BucketRecord, meta.Owner, string, *meta.BucketID) error {
-	return op.ErrNotImplemented
-}
-
-// UnlinkBucketOwner implements op.BucketAdminStore.
-func (s *Store) UnlinkBucketOwner(context.Context, *op.BucketRecord, meta.Owner) error {
-	return op.ErrNotImplemented
-}
-
 // CheckIndex implements op.BucketAdminStore.
 func (s *Store) CheckIndex(context.Context, *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
 	return nil, nil, op.ErrNotImplemented
@@ -308,16 +293,6 @@ func (s *Store) RebuildIndex(context.Context, *op.BucketRecord) error {
 
 // RemoveIndexEntries implements op.BucketAdminStore.
 func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.ObjKey) error {
-	return op.ErrNotImplemented
-}
-
-// ChownBucket implements op.BucketAdminStore.
-func (s *Store) ChownBucket(context.Context, *op.BucketRecord, meta.Owner, string) error {
-	return op.ErrNotImplemented
-}
-
-// SyncOwnerStats implements op.BucketAdminStore.
-func (s *Store) SyncOwnerStats(context.Context, meta.Owner) error {
 	return op.ErrNotImplemented
 }
 

@@ -226,6 +226,13 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ListParts drops its refusal of an empty upload id](#radosgws-listparts-drops-its-refusal-of-an-empty-upload-id) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload Location has no scheme under a configured domain](#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain) | pending | pending | ✓ |
 | [radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again) | pending | pending | ✓ |
+| [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
+| [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
+| [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
+| [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
+| [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
+| [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
+| [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9977,6 +9984,15 @@ Every new entry adds its row to this table, in document order.
     in `suspended=true` leaves the user unsuspended, and on a user modify,
     which applies `suspended` whenever it exists (`:385-386`; `:392-393`),
     lifts a suspension the user already has.
+  - The admin bucket removal reads `purge-objects` and `bypass-gc` the
+    same way, defaulting to false, and the bucket quota set reads
+    `enabled` defaulting to the current value
+    (`driver/rados/rgw_rest_bucket.cc:232-233` and `:319` at both tags).
+    An unparsable value there keeps the bucket, but an empty or bare
+    `purge-objects=` is true and purges it; rgw-go refuses both
+    (`removeBucket`, `internal/admin/bucket.go`; `docs/exclusions.md`,
+    "The admin bucket routes refuse a boolean argument they cannot
+    parse").
 - **Impact:** an operator's typo in an `active=false` revocation leaves
   the key active, and the 200 hides it. Admin-only: every route needs
   `users=write`.
@@ -10178,3 +10194,281 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit X, Task 5, 2026-10-07, re-authorizing
   rgw-go's retried bucket writes; derived from the source, not reproduced.
+
+## radosgw's bucket link overwrites the entry point of the bucket it renames onto
+
+- **Kind:** defect, security-relevant, found by us; unfixed at v19.2.6 and
+  v20.2.4: a name takeover and an orphaned bucket, not a data hijack.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `RGWBucketAdminOp::link` builds the bucket's new key from the uid's
+    tenant and `new-bucket-name` (`rgw_bucket.cc:1081-1091`;
+    `:1232-1242`) and never reads the entry point under that key: no guard
+    asks whether another bucket owns the name.
+  - It writes the instance under the new key exclusively (`:1136-1144`;
+    `:1287-1295`), which succeeds, as that key carries the bucket's own
+    id.
+  - `link_bucket` with `update_entrypoint` adds the owner's list entry
+    (`:3374`; `:3473`) and stores the entry point with `exclusive` false
+    under the `ep_data` tracker (`:3349-3350` and `:3391-3392`;
+    `:3449-3450` and `:3490-3491`), which is at version 0, so the write is
+    unchecked.
+  - So a link whose new key is a name another bucket holds points that
+    name at the linked bucket. A plain link without `new-bucket-name` does
+    the same when the uid's tenant differs from the bucket's and already
+    has a bucket of that name.
+- **Impact:** admin-only, as the route needs `buckets=write`, and
+  deterministic; no request without that cap reaches it. The name now
+  loads the linked bucket, whose own instance and index serve it, so the
+  linked bucket's owner does not reach the victim's data. The victim's
+  bucket, its instance, index and object heads, is orphaned: its owner's
+  requests by name reach the linked bucket and are refused by its ACL, and
+  the bucket comes back only through `radosgw-admin bucket link
+  --bucket-id`. Triage estimate: CVSS 6.5 within a tenant, 8.7 across
+  tenants (S:C).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A link whose bucket ends under a name
+  another bucket's entry point holds answers 409 BucketAlreadyExists
+  before writing anything, rename, cross-tenant link and link by
+  `bucket-id` alike, and the entry point is written under the version
+  read or created exclusively, so a bucket created under the name after
+  that check keeps it (`claimName` and `ChangeBucketOwner`,
+  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  unlink write differently from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08;
+  not yet disclosed.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's failed bucket rename leaves the old name to the old owner
+
+- **Kind:** defect, security-relevant; unfixed at v19.2.6 and v20.2.4: a
+  failure partway through a rename leaves one bucket's data under two
+  owners until the rename is retried. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/driver/rados/` unless named;
+  each pair of lines is v19.2.6's, then v20.2.4's.
+  - A rename writes the new owner and its default ACL only into the
+    instance under the new key (`rgw_bucket.cc:1136-1144`;
+    `:1287-1295`); the old instance keeps the old owner and ACL.
+  - The old entry point and instance are removed only after the new name
+    is linked, and each failure is returned with every earlier write kept
+    (`:1165-1184`; `:1316-1335`). The removals run under the new entry
+    point's tracker, which an unchecked write leaves at version 0
+    (`RGWObjVersionTracker::apply_write`, `rgw_rados.cc:185-197`;
+    `:220-232`), so they are unchecked too.
+  - Between the new entry point's write and the old one's removal, the old
+    name loads the old instance, owned by the old owner, and the new name
+    the new instance, owned by the new owner. Both carry the bucket's
+    marker, so both reach the same index and objects.
+  - A retry of the same rename heals it: its exclusive write of the new
+    instance meets the one the failed try wrote, and
+    `store_bucket_instance_info` turns that -EEXIST into 0
+    (`src/rgw/services/svc_bucket_sobj.cc:548`; `:488`); the rest of the
+    retry is unchecked and succeeds.
+- **Impact:** a cross-user data-access window, which can cross tenants,
+  after a failed rename. It is transient: a retry of the same rename heals
+  it, because the exclusive -EEXIST is turned into 0
+  (`src/rgw/services/svc_bucket_sobj.cc:548` at v19.2.6, `:488` at
+  v20.2.4). Admin-gated: the route needs `buckets=write`, and the window
+  takes a failure between two metadata writes. Triage estimate: CVSS
+  ~5.0-5.5.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A rename secures the new name's entry
+  point before it changes the bucket, writes the new owner into the
+  current instance before a second instance exists, records itself in the
+  bucket's instances, refuses every other link, unlink, chown and bucket
+  removal while that record is live, and completes on a retry by either
+  name, so every name that loads the bucket names one owner at every step
+  (`renameBucket`, `internal/driver/bucketadmin.go`; `docs/exclusions.md`,
+  "Bucket link and unlink write differently from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
+  (transient; heals on retry); not yet disclosed.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's bucket link to an account moves the bucket out of the account's tenant
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `RGWBucketAdminOpState::set_user_id` ignores an empty uid
+    (`src/rgw/driver/rados/rgw_bucket.h:266-269`; `:258-261`), so a link
+    given `account-id` alone has the empty uid, and `get_tenant` is that
+    uid's empty tenant (`:297`; `:289`).
+  - `RGWBucketAdminOp::link` gives the bucket's key that tenant
+    (`src/rgw/driver/rados/rgw_bucket.cc:1081`; `:1232`), so linking a
+    bucket of a tenanted account, named `tenant/name`, renames it into the
+    empty tenant.
+  - The REST listing of an account user's buckets, the route's one way to
+    an account's buckets, looks each up under the uid's tenant
+    (`rgw_bucket.cc:1670-1671`; `:1836-1837`), and an account's users name
+    buckets in their own tenant, so a tenanted account's users no longer
+    find the bucket under its name.
+- **Impact:** a tenanted account loses the bucket it was given, and the
+  move can take the name of another bucket in the empty tenant ("radosgw's
+  bucket link overwrites the entry point of the bucket it renames onto").
+  Admin-only: the route needs `buckets=write`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: a link to an account gives the bucket
+  the account's tenant (`LinkBucket.Execute`, `internal/op/adminbucket.go`;
+  `docs/exclusions.md`, "Bucket link and unlink write differently from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant
+
+- **Kind:** defect, non-security; unfixed at v19.2.6 and v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RGWBucket::init` splits `bucket=tenant/name` and loads that bucket
+    (`driver/rados/rgw_bucket.cc:186-197`; `:187-198`).
+  - `RGWBucketAdminOp::info` then starts its flusher, which sends the 200,
+    and calls `bucket_stats` with the uid's tenant and the unsplit name
+    (`:1650-1658`; `:1816-1824`).
+  - `rgw_bucket::get_key` keys `("", "t/n")` and `("t", "n")` both as
+    `t/n` (`rgw_basic_types.cc:62-79` at both tags), so without a uid,
+    which `set_user_id` leaves empty (`driver/rados/rgw_bucket.h:266-269`;
+    `:258-261`), or with one in the empty tenant, `bucket_stats` finds the
+    bucket, and the listing reports every tenanted bucket.
+  - With a uid that names a tenant, such as `uid=t2$u`, the key is
+    `t2/t/n`; `bucket_stats` finds no bucket and returns before writing
+    anything (`driver/rados/rgw_bucket.cc:1358-1363`; `:1521-1525`), so
+    the request answers 200 with no document.
+- **Impact:** an admin client that names both a tenanted bucket and a
+  tenanted uid gets a 200 with no body.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: it reports the bucket the name loaded
+  (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/exclusions.md`,
+  "The admin bucket info reports a bucket named tenant/name whatever the
+  uid's tenant").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's admin bucket removal never recognizes a forwarded request
+
+- **Kind:** defect, non-security, multisite only; unfixed at v19.2.6 and
+  v20.2.4. Unreproduced: derived from the source.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `RGWOp_Bucket_Remove::execute` takes a request as forwarded when
+    `s->info.args.exists("rgwx-zonegroup")`
+    (`src/rgw/driver/rados/rgw_rest_bucket.cc:242` at both tags).
+  - `RGWHTTPArgs::append` files every argument named `rgwx-...` in
+    `sys_val_map` (`src/rgw/rgw_common.cc:920-921`; `:933-934`), and
+    `exists` reads only `val_map` (`src/rgw/rgw_common.h:402-404`;
+    `:426-428`), so the test is always false.
+  - `remove_bucket` therefore refuses another zonegroup's bucket with
+    PermanentRedirect even for the forwarded request it means to let
+    through (`src/rgw/driver/rados/rgw_bucket.cc:1296-1301`;
+    `:1458-1463`).
+- **Impact:** in a multi-zonegroup realm, a bucket removal forwarded to
+  the zonegroup that holds the bucket is refused there.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected: multisite is excluded, and rgw-go refuses
+  another zonegroup's bucket whatever the request carries
+  (`RemoveBucketAdmin.Execute`, `internal/op/adminbucket.go`;
+  `docs/exclusions.md`, "The other admin bucket routes differ from radosgw
+  in three ways").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's bucket link by bucket id takes the name from the live bucket
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4: a name
+  takeover, and two owners on one bucket's data after a failed rename.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - With `bucket-id`, `RGWBucket::init` loads that instance by its id
+    (`rgw_bucket.cc:195-196`; `:196-197`), which `RadosBucket::load_bucket`
+    reads without the entry point (`rgw_sal_rados.cc:616-629`;
+    `:634-647`).
+  - `RGWBucketAdminOp::link` keys the bucket by the uid's tenant and the
+    instance's name (`rgw_bucket.cc:1081`; `:1232`) and, without a rename,
+    `link_bucket` writes that name's entry point under the empty `ep_data`
+    tracker, unchecked (`:3349-3350` and `:3391-3392`; `:3449-3450` and
+    `:3490-3491`). Nothing compares the instance with the one the entry
+    point names.
+  - So a link by the id of an instance its name no longer loads points
+    the name at it: a bucket's instance left behind after its name was
+    removed and re-created, or the old instance a failed rename leaves
+    ("radosgw's failed bucket rename leaves the old name to the old
+    owner"). The live bucket under the name is orphaned, as in "radosgw's
+    bucket link overwrites the entry point of the bucket it renames onto";
+    with a failed rename's old instance, both names then reach the one
+    bucket's data, under the owners the two links gave it.
+- **Impact:** admin-only, as the route needs `buckets=write`, and it
+  needs an instance its name no longer loads. The name moves to that
+  instance, and after a failed rename two owners reach one bucket's data.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A link by `bucket-id` first reads
+  every entry point of the bucket metadata section: one under another name
+  that loads the bucket's id is 409 BucketAlreadyExists, and one that loads
+  nothing, any failed read, and a listing that reports the section missing
+  or makes no progress refuse too (`refuseNamedElsewhere`,
+  `internal/op/adminbucket.go`). Then the entry point of the instance's
+  own name is read: one naming another bucket is 409 BucketAlreadyExists,
+  one naming the instance is written under the version read, and a
+  missing one is created exclusively (`claimName`,
+  `internal/driver/bucketadmin.go`). The RADOS driver cannot list the
+  section yet, so there a link by `bucket-id` answers 501 NotImplemented
+  and links nothing (`docs/exclusions.md`, "Bucket link and unlink write
+  differently from radosgw" and "On the RADOS driver, three admin bucket
+  requests answer 501 NotImplemented for now").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
+  the source, not reproduced.
+
+## radosgw's stale-instance cleanup purges a live bucket's index
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4: data
+  loss through an operator command. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `get_stale_instances` takes an instance listed under a bucket name as
+    stale when the name loads no bucket, or one with another id
+    (`driver/rados/rgw_bucket.cc:1745-1834`; `:1911-2000`, the cases at
+    `:1783` and `:1800`; `:1949` and `:1966`).
+  - `clear_stale_instances`, `radosgw-admin bucket stale-instances rm`,
+    calls `purge_instance` on each (`:1905-1927`; `:2071-2093`), which
+    removes every index shard of the instance's current layout
+    (`driver/rados/rgw_sal_rados.cc:828-848`; `:848-868`).
+  - The index shards are named by the bucket id
+    (`services/svc_bi_rados.cc:88-89`; `:96-97`), and a rename keeps the
+    id, so an instance a rename leaves under the old name shares the live
+    bucket's index.
+  - radosgw's own rename leaves one: a failure at the old instance's
+    removal, its last write, after the old entry point is gone
+    (`driver/rados/rgw_bucket.cc:1165-1184`; `:1316-1335`), or a failure
+    after the new instance's write and before the new entry point's
+    (`:1144` and `:1159`; `:1295` and `:1310`), leaves an instance its
+    name does not load.
+- **Impact:** after a failed admin rename, the documented stale-instance
+  cleanup removes the renamed bucket's index: its object heads and data
+  stay, but no listing reaches them, and quota stats are lost. Admin-only.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected by its own renames, which name every instance
+  carrying a bucket's id by an entry point naming that id while it exists
+  (`renameBucket`, `internal/driver/bucketadmin.go`). For radosgw's own
+  leftovers: one from a failure before the old entry point's removal goes
+  when the rename is retried by its old name, which still loads the bucket;
+  one from a failure at the last write cannot be retried by name, as
+  RGWBucket::init loads the old name and its entry point is gone
+  (`driver/rados/rgw_bucket.cc:195-200`; `:196-201`). That instance must
+  be removed without its index before `bucket stale-instances rm` runs:
+  at v19.2.6 `radosgw-admin metadata rm bucket.instance:<old name>:<id>`
+  removes the instance object alone (`:2707-2724`), while at v20.2.4 the
+  metadata removal leaves it (`:3062-3080`), so there the instance object
+  is removed from the zone's domain root pool with `rados rm`
+  (`docs/exclusions.md`, "Bucket link and unlink write differently from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
+  the source, not reproduced.
