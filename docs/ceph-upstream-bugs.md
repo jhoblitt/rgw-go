@@ -230,6 +230,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
 | [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
+| [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10334,6 +10335,34 @@ Every new entry adds its row to this table, in document order.
   (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/exclusions.md`,
   "The admin bucket info reports a bucket named tenant/name whatever the
   uid's tenant").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's admin bucket removal never recognizes a forwarded request
+
+- **Kind:** defect, non-security, multisite only; unfixed at v19.2.6 and
+  v20.2.4. Unreproduced: derived from the source.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - `RGWOp_Bucket_Remove::execute` takes a request as forwarded when
+    `s->info.args.exists("rgwx-zonegroup")`
+    (`src/rgw/driver/rados/rgw_rest_bucket.cc:242` at both tags).
+  - `RGWHTTPArgs::append` files every argument named `rgwx-...` in
+    `sys_val_map` (`src/rgw/rgw_common.cc:920-921`; `:933-934`), and
+    `exists` reads only `val_map` (`src/rgw/rgw_common.h:402-404`;
+    `:426-428`), so the test is always false.
+  - `remove_bucket` therefore refuses another zonegroup's bucket with
+    PermanentRedirect even for the forwarded request it means to let
+    through (`src/rgw/driver/rados/rgw_bucket.cc:1296-1301`;
+    `:1458-1463`).
+- **Impact:** in a multi-zonegroup realm, a bucket removal forwarded to
+  the zonegroup that holds the bucket is refused there.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected: multisite is excluded, and rgw-go refuses
+  another zonegroup's bucket whatever the request carries
+  (`RemoveBucketAdmin.Execute`, `internal/op/adminbucket.go`;
+  `docs/exclusions.md`, "The other admin bucket routes differ from radosgw
+  in three ways").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
