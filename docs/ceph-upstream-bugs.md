@@ -223,6 +223,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's quota set stores garbage for an unparsable max-size-kb](#radosgws-quota-set-stores-garbage-for-an-unparsable-max-size-kb) | pending | pending | ✓ |
 | [radosgw's admin API takes an unparsable boolean argument as its default](#radosgws-admin-api-takes-an-unparsable-boolean-argument-as-its-default) | pending | pending | ✓ |
 | [radosgw lets another user take an inactive access key's id](#radosgw-lets-another-user-take-an-inactive-access-keys-id) | pending | pending | ✓ |
+| [radosgw's ListParts drops its refusal of an empty upload id](#radosgws-listparts-drops-its-refusal-of-an-empty-upload-id) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload Location has no scheme under a configured domain](#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9934,3 +9936,75 @@ Every new entry adds its row to this table, in document order.
   (benign, non-security); no prior art.
 - **Found:** review of phase 1 unit N, Task 5, 2026-10-07; derived from
   the source, not reproduced.
+
+## radosgw's ListParts drops its refusal of an empty upload id
+
+- **Kind:** defect, not security-relevant: the answer to a malformed
+  request changes, and the request is still authorized first. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWListMultipart_ObjStore::get_params` sets `op_ret = -ENOTSUP` for an
+    empty `uploadId` and does not return; it then reads
+    `part-number-marker` and assigns `op_ret` the result of
+    `parse_value_and_bound` for `max-parts`, 0 for any well-formed value,
+    and returns that (`rgw_rest.cc:1601-1619`; `:1606-1624`).
+  - `RGWListMultipart::execute` goes on when `get_params` returns 0, and
+    `get_info` reads the meta object `<key>..meta`, which no upload has, so
+    the request answers 404 NoSuchUpload (`rgw_op.cc:6669-6694`;
+    `:7593-7633`). The -ENOTSUP the code meant, an errno no S3 error row
+    names, would have been 500 UnknownError, as CompleteMultipartUpload's
+    matching check answers (`rgw_rest.cc:1584-1587`; `:1589-1592`).
+  - `read_obj_policy` skips the meta object for an empty upload id and
+    authorizes the request against the object's own ACL (`rgw_op.cc:411`;
+    `:441`), so the request is authorized either way.
+- **Impact:** a ListParts with `uploadId=` answers 404 NoSuchUpload, or the
+  missing-object rule's answer when the key has no object, instead of 500.
+  No principal gains anything.
+- **Releases:** v19.2.6 and v20.2.4.
+- **Fix:** return after setting -ENOTSUP, as
+  `RGWCompleteMultipart_ObjStore::get_params` does.
+- **rgw-go:** reproduces it: op.ListParts authorizes an empty upload id
+  against the object's own ACL and then answers NoSuchUpload
+  (`internal/op/listparts.go`), and the s3 handler reads `max-parts`
+  without regard to the upload id (`listParts`, `internal/s3/multipart.go`).
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit P, Task 9, 2026-10-08, transcribing
+  `RGWListMultipart_ObjStore::get_params`; derived from the source, not
+  reproduced.
+
+## radosgw's CompleteMultipartUpload Location has no scheme under a configured domain
+
+- **Kind:** defect, not security-relevant: a malformed URI in a response
+  document. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWCompleteMultipart_ObjStore_S3::send_response` writes Location as
+    `compute_domain_uri(s)` followed by `/<bucket>/<key>`, or
+    `/<tenant>:<bucket>/<key>` (`rgw_rest_s3.cc:4086-4101`; `:4616-4631`).
+  - `compute_domain_uri` returns `s->info.domain` as it is when it is not
+    empty, and adds `http://` or `https://` only in its fallback, which
+    takes `SERVER_NAME`, which beast never sets, or `HTTP_HOST`, or the
+    literal `<HTTP_HOST>` when the request sent no Host
+    (`rgw_rest.h:805-818`; `:817-830`).
+  - `RGWREST::preprocess` sets `s->info.domain` to the configured hostname
+    the Host matched, as cut from the Host, and otherwise to `rgw_dns_name`
+    as configured (`rgw_rest.cc:2163-2165` and `:2178-2180`; `:2180-2182`
+    and `:2200-2202`). `rgw_dns_name` may list several names, which
+    `rgw_rest_init` splits at commas and spaces for matching
+    (`rgw_rest.cc:215-218`; `:215-218`), so the fallback writes the whole
+    list.
+- **Impact:** on any gateway with `rgw_dns_name` or a zonegroup hostname,
+  every CompleteMultipartUpload's Location is a scheme-less reference such
+  as `s3.example.com/bucket/key`, or `a.example.com, b.example.com/bucket/key`
+  for a list, and a request without a Host gets `http://<HTTP_HOST>/...`.
+  S3's Location is an absolute URI; a client that follows it fails. No
+  principal gains anything.
+- **Releases:** v19.2.6 and v20.2.4.
+- **Fix:** prefix the scheme in `compute_domain_uri`'s domain branch, and
+  use the matched name rather than the raw `rgw_dns_name` list.
+- **rgw-go:** reproduces it, so both gateways write the same document
+  (`completeLocation`, `internal/s3/multipart.go`).
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit P, Task 9, 2026-10-08, transcribing
+  `compute_domain_uri`; derived from the source, not reproduced.
