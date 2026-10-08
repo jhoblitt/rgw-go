@@ -244,6 +244,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 | [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11066,3 +11067,45 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, comparing the two
   releases' metadata handlers; derived from the source, not reproduced.
+
+## radosgw's bucket instance metadata put drops the bucket's object lock rule
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed on main: a
+  bucket instance's metadata document has no object lock configuration, so
+  writing one back loses the bucket's default retention. Classification
+  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - `RGWBucketInfo::dump` writes no `obj_lock`, and `decode_json` reads
+    none (`rgw/rgw_common.cc:2515-2542` and `:2544-2585`; `:2577-2604` and
+    `:2606-2647`), so a decoded instance holds `RGWObjectLock`'s default,
+    enabled with no rule (`rgw/rgw_object_lock.h:98` at both tags).
+  - `RGWBucketInfo::encode` writes `obj_lock` whenever the flags carry
+    `BUCKET_OBJ_LOCK_ENABLED` (`rgw/rgw_common.cc:2300-2301`; `:2363-2364`),
+    and the instance handler stores the decoded instance whole
+    (`RGWMetadataHandlerPut_BucketInstance::put_checked`,
+    `rgw/driver/rados/rgw_bucket.cc:2866-2887`; `RGWBucketInstanceMetadataHandler::put`,
+    `:2858-2893`), so the stored rule is replaced by none.
+  - The document's `flags` are written as given, so a document without
+    `BUCKET_OBJ_LOCK_ENABLED` turns object lock off, which S3 never allows
+    once it is on.
+  - main writes and reads `obj_lock` in the bucket instance's JSON
+    (commit c2d235788c4, "rgw/multisite: sync bucket obj_lock. add json
+    encoding/decoding to members"); neither release has it.
+- **Impact:** a metadata get and put of a bucket instance, through
+  `radosgw-admin metadata get` and `put`, the admin API's metadata routes,
+  or multisite metadata sync to another zone, removes the bucket's default
+  retention mode and period: objects written afterwards get no default
+  retention, while the bucket still reports object lock enabled. Admin and
+  sync only; it weakens a WORM bucket.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A put over a stored instance keeps
+  its object lock configuration, and one that would turn object lock off
+  answers 400 InvalidArgument (`keepInstance`, `internal/driver/metadata.go`;
+  `docs/exclusions.md`, "The metadata sections write only what keeps a user
+  or bucket whole"). A new instance a put creates gets the default
+  configuration, as radosgw's.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 8, 2026-10-08, writing the bucket
+  instance's JSON decoder; derived from the source, not reproduced.
