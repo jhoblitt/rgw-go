@@ -18,8 +18,11 @@ import (
 // [T] :3758-3831; send_partial_response and send_response :3566-3603, [T]
 // :3846-3886). The source is x-amz-copy-source as parse_copy_location and
 // postauth_init read it; the four x-amz-copy-source-if-* conditions are
-// their headers' last values, nil when absent; the rest of get_params runs
-// through copyObjectParams once the destination bucket is loaded.
+// their headers' last values, nil when absent; the part of get_params that
+// reads the request alone runs through copyObjectParams once the destination
+// bucket is loaded, and the checks of stored state through copyObjectChecks
+// once the destination and the source allow the request, so that a refused
+// requester learns nothing the store holds (docs/exclusions.md).
 //
 // The success is framed as radosgw frames it: send_partial_response(0)
 // sends the common headers and application/xml without a length, so that
@@ -44,7 +47,8 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 		IfModifiedSince:   headerPtr(r, "X-Amz-Copy-Source-If-Modified-Since"),
 		IfUnmodifiedSince: headerPtr(r, "X-Amz-Copy-Source-If-Unmodified-Since"),
 	}
-	o.Params = func(ctx context.Context, o *op.CopyObject) error { return wr.copyObjectParams(ctx, r, o) }
+	o.Params = func(_ context.Context, o *op.CopyObject) error { return wr.copyObjectParams(r, o) }
+	o.Authorized = func(ctx context.Context, o *op.CopyObject) error { return copyObjectChecks(ctx, r, o) }
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
@@ -71,17 +75,17 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 	return nil
 }
 
-// copyObjectParams is get_params in its order, then init_dest_policy and
-// init_common's attrs, which radosgw makes after authorizing
-// (docs/exclusions.md): the object-lock headers (objectLock, with the
-// messages a copy sets); x-amz-metadata-directive, COPY or REPLACE in any
-// case and anything else InvalidArgument, "Unknown metadata directive."; the
-// storage-class check of a copy onto itself that does not replace the
-// metadata (need_to_check_storage_class); a request that asks for encryption
-// refused (refuseEncryption); the destination ACL; and the attrs, the
-// headers' alone (requestAttrs).
-func (wr *objectWrites) copyObjectParams(ctx context.Context, r *op.Request, o *op.CopyObject) error {
-	if err := objectLock(r, true); err != nil {
+// copyObjectParams is the part of get_params that reads the request alone,
+// in its order, then init_common's attrs, which radosgw builds after
+// authorizing (docs/exclusions.md): the object-lock headers' values
+// (objectLockHeaders, with the messages a copy sets);
+// x-amz-metadata-directive, COPY or REPLACE in any case and anything else
+// InvalidArgument, "Unknown metadata directive."; the storage-class check of
+// a copy onto itself that does not replace the metadata
+// (need_to_check_storage_class); a request that asks for encryption refused
+// (refuseEncryption); and the attrs, the headers' alone (requestAttrs).
+func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error {
+	if err := objectLockHeaders(r, true); err != nil {
 		return err
 	}
 	if d, ok := op.HeaderValue(r.Header, "X-Amz-Metadata-Directive"); ok {
@@ -98,13 +102,26 @@ func (wr *objectWrites) copyObjectParams(ctx context.Context, r *op.Request, o *
 	if err := refuseEncryption(r, false); err != nil {
 		return err
 	}
+	var err error
+	o.Attrs, err = requestAttrs(r, wr.generic, false)
+	return err
+}
+
+// copyObjectChecks is, once the destination and the source allow the
+// request, the refusal of a retention or a legal hold on a bucket without
+// object lock (objectLock), which radosgw's copy does not make, then
+// init_dest_policy's ACL (rgw_op.cc:5492 at v19.2.6, :6058 at v20.2.4),
+// create_s3_policy's for the requester, whose grantees are looked up.
+func copyObjectChecks(ctx context.Context, r *op.Request, o *op.CopyObject) error {
+	if err := objectLock(r); err != nil {
+		return err
+	}
 	p, err := newObjectACL(ctx, r)
 	if err != nil {
 		return err
 	}
 	o.ACL = p
-	o.Attrs, err = requestAttrs(r, wr.generic, false)
-	return err
+	return nil
 }
 
 // parseCopySource is RGWCopyObj::parse_copy_location (rgw_op.cc:5329-5374 at

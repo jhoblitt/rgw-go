@@ -43,13 +43,18 @@ type CopyObject struct {
 	IfMatch, IfNoneMatch *string
 	IfModifiedSince      *string
 	IfUnmodifiedSince    *string
-	// Params, when set, is the protocol's get_params, which needs the
-	// destination bucket: Init calls it once that bucket is loaded and its
-	// placement checked, before it loads the source, as
-	// RGWCopyObj::init_processing calls get_params (rgw_op.cc:5383-5400 at
-	// v19.2.6, :5949-5966 at v20.2.4). It fills the inputs it reads, the
-	// destination ACL among them.
+	// Params, when set, is the part of the protocol's get_params that reads
+	// the request alone: Init calls it once the destination bucket is loaded,
+	// as RGWCopyObj::init_processing calls get_params before it loads the
+	// source bucket (rgw_op.cc:5383-5400 at v19.2.6, :5949-5966 at v20.2.4).
+	// It fills the inputs it reads.
 	Params func(ctx context.Context, o *CopyObject) error
+	// Authorized, when set, is the rest of get_params and init_dest_policy,
+	// the checks that read stored state, the destination ACL's grantees among
+	// them: Execute calls it once the destination and the source allow the
+	// request and the placement is checked. It fills the inputs it reads, the
+	// destination ACL among them.
+	Authorized func(ctx context.Context, o *CopyObject) error
 
 	ETag      string
 	Mtime     time.Time
@@ -71,40 +76,21 @@ func (o *CopyObject) Action() policy.Action { return policy.S3PutObject }
 // OpMask is RGW_OP_TYPE_WRITE.
 func (o *CopyObject) OpMask() uint32 { return OpTypeWrite }
 
-// Init loads the destination bucket and checks its placement as
-// init_permissions does, loads the source bucket as init_processing does
-// (rgw_op.cc:5376-5405 at v19.2.6, :5942-5971 at v20.2.4), a missing one
-// NoSuchBucket, and reads the source's head with its first chunk, as
-// read_obj_policy reads it with prefetch_data set (:5413-5422 at v19.2.6,
-// :5979-5988 at v20.2.4). Params runs between the two buckets' loads. A
-// public destination policy under the destination bucket's block of public
-// ACLs is refused once Params has run, as PutObject refuses one; radosgw
-// makes no such check for a copy (docs/exclusions.md).
+// Init is init_permissions' load of the destination bucket, a missing one
+// NoSuchBucket, then Params. The checks of what the buckets hold that radosgw
+// makes there and in init_processing wait for the requester to be
+// authorized, so that a refused requester learns nothing of the destination
+// or the source: VerifyPermission checks the storage class and reads the
+// source once the destination and the op mask allow the request, and
+// Execute checks the rest (docs/exclusions.md).
 func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	if perr := checkDestPlacement(r, o.StorageClass); perr != nil {
-		return perr
-	}
 	if o.Params != nil {
-		if perr := o.Params(ctx, o); perr != nil {
-			return perr
-		}
-	}
-	if blockPublicACLs(rec) && o.ACL.IsPublic() {
-		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
-	if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
-		return err
-	}
-	if o.src, err = r.Env.Objects.PrefetchObject(ctx, o.srcRec, o.SrcKey); err != nil {
-		return err
-	}
-	if o.src == nil {
-		o.src = &ObjectState{Bucket: o.srcRec, Key: o.SrcKey}
+		return o.Params(ctx, o)
 	}
 	return nil
 }
@@ -113,10 +99,18 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // v19.2.6, :5973-6064 at v20.2.4) in its order: read_obj_policy's rule for a
 // missing source and its decode of the source's ACL, check_storage_class
 // for a copy onto itself, the source's read, then s3:PutObject on the
-// destination. The destination is checked first all the same, so that the
-// refusals radosgw makes on it in init_permissions, before verify_permission
-// and never overridden (rgw_process.cc:174-177 and :225-237 at v19.2.6), come
-// out marked and ahead of every source check; its other refusal comes last.
+// destination. The destination is checked first all the same, and a refusal
+// there that Run would not let an admin through is answered before the
+// source is touched. Then come the op mask, which radosgw checks before
+// verify_permission (rgw_process.cc:208 at v19.2.6 and v20.2.4), and the
+// request's storage class on the destination's placement, which
+// init_permissions checks first (rgw_op.cc:576-583 at v19.2.6, :606-613 at
+// v20.2.4). Only then are the source's bucket, NoSuchBucket when missing,
+// and its head read, the head with its first chunk, as read_obj_policy reads
+// it with prefetch_data set (:5413-5422 at v19.2.6, :5979-5988 at v20.2.4),
+// where radosgw loads the source bucket in init_processing (:5392-5400,
+// :5958-5966), before the op mask, and reads the source before the
+// destination's check.
 //
 // radosgw authorizes the source's read against its bucket's ACL alone and
 // reads the object's ACL without using it (docs/ceph-upstream-bugs.md,
@@ -131,8 +125,24 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	}
 	perm := acl.PermFor(a)
 	destErr := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
-	if IsBeforeVerify(destErr) {
+	if destErr != nil && (IsBeforeVerify(destErr) || !r.Identity.Admin || !isAccessDenial(destErr)) {
 		return destErr
+	}
+	if err := verifyOpMask(o, r); err != nil {
+		return err
+	}
+	if err := checkDestPlacement(r, o.StorageClass); err != nil {
+		return err
+	}
+	var err error
+	if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
+		return err
+	}
+	if o.src, err = r.Env.Objects.PrefetchObject(ctx, o.srcRec, o.SrcKey); err != nil {
+		return err
+	}
+	if o.src == nil {
+		o.src = &ObjectState{Bucket: o.srcRec, Key: o.SrcKey}
 	}
 	if !o.src.Exists {
 		if err := VerifyObjectPermissionIn(ctx, r, a, perm, o.srcRec, o.src); err != nil {
@@ -178,9 +188,20 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 // the destination's quota unless the request is a system request, then
 // copy_obj, whose read of the source applies the conditions (Read::prepare,
 // driver/rados/rgw_rados.cc:4742-4754 at v19.2.6) before it copies under the
-// request id as its tag. A destination whose versioning or object lock
-// rgw-go does not serve, and a copy naming a version, are refused first.
+// request id as its tag. First Authorized runs, and a public destination
+// policy under the destination's block of public ACLs is refused, as
+// PutObject refuses one, where radosgw makes no such check for a copy
+// (docs/exclusions.md). Then a destination whose versioning or object lock
+// rgw-go does not serve, and a copy naming a version, are refused.
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
+	if o.Authorized != nil {
+		if err := o.Authorized(ctx, o); err != nil {
+			return err
+		}
+	}
+	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
+		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+	}
 	if err := versioningUnserved(r.BucketRec, r.Object, o.SrcKey); err != nil {
 		return err
 	}

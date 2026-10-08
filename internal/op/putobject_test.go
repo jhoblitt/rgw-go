@@ -177,12 +177,21 @@ var _ = Describe("PutObject", func() {
 		Expect(op.Run(ctx, &op.PutObject{Body: failingReader{}, Size: 1}, f.req(http.MethodPut, "nope", "k"))).To(MatchError(op.ErrNoSuchBucket))
 		Expect(authz.Invocations()).To(BeEmpty())
 	})
-	It("refuses a storage class the bucket's placement lacks as InvalidArgument before checking permissions", func(ctx SpecContext) {
+	It("refuses a storage class the bucket's placement lacks as InvalidArgument once the requester is authorized", func(ctx SpecContext) {
 		authz := &opfakes.FakeAuthorizer{}
 		f.env.Authz = authz
 		o := &op.PutObject{Body: failingReader{}, Size: 1, StorageClass: "GLACIAL"}
 		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
-		Expect(authz.Invocations()).To(BeEmpty())
+		Expect(authz.VerifyBucketCallCount()).To(Equal(1), "the placement is checked once the requester is authorized")
+		f.env.Authz = op.OwnerOnly{}
+		r := f.req(http.MethodPut, "plain", "k")
+		r.Identity = f.bob
+		Expect(op.Run(ctx, &op.PutObject{Body: failingReader{}, Size: 1, StorageClass: "GLACIAL"}, r)).To(MatchError(op.ErrAccessDenied))
+	})
+	It("refuses a storage class the bucket's placement lacks ahead of the bucket's default encryption, as init_permissions comes first", func(ctx SpecContext) {
+		f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+		o := &op.PutObject{Body: failingReader{}, Size: 1, StorageClass: "GLACIAL"}
+		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
 	})
 	It("takes the bucket's placement and STANDARD for a storage class it names", func(ctx SpecContext) {
 		o := &op.PutObject{Body: strings.NewReader("x"), Size: 1, StorageClass: meta.StorageClassStandard}
@@ -243,14 +252,19 @@ var _ = Describe("PutObject", func() {
 		Expect(f.stat(ctx, "k").Exists).To(BeFalse())
 	})
 	Describe("a public canned ACL", func() {
-		DescribeTable("under a block of public ACLs is refused before permissions",
+		DescribeTable("under a block of public ACLs is refused once the requester is authorized",
 			func(ctx SpecContext, canned string) {
 				f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
 				authz := &opfakes.FakeAuthorizer{}
 				f.env.Authz = authz
-				o := &op.PutObject{Body: failingReader{}, Size: 1, CannedACL: canned}
+				calls := 0
+				o := &op.PutObject{Body: failingReader{}, Size: 1, CannedACL: canned, Authorized: func(context.Context, *op.PutObject) error {
+					calls++
+					return nil
+				}}
 				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
-				Expect(authz.Invocations()).To(BeEmpty(), "init_processing refuses it")
+				Expect(authz.VerifyBucketCallCount()).To(Equal(1), "init_processing refuses it before verify_permission; rgw-go authorizes first")
+				Expect(calls).To(BeZero(), "init_processing refuses it before get_params")
 			},
 			Entry("public-read", "public-read"),
 			Entry("public-read-write", "public-read-write"),
@@ -292,37 +306,70 @@ var _ = Describe("PutObject", func() {
 		})
 	})
 	Describe("Params", func() {
-		It("runs once the bucket is loaded, before permissions, and its ACL is checked against the block", func(ctx SpecContext) {
+		It("runs once the bucket is loaded, before permissions and ahead of every check of what the bucket holds", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{
+				op.AttrPublicAccess:     publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true}),
+				op.AttrBucketEncryption: {1},
+			})
+			f.setBucketFlags(ctx, meta.BucketObjLockEnabled|meta.BucketVersioned)
+			authz := &opfakes.FakeAuthorizer{}
+			f.env.Authz = authz
+			r := f.req(http.MethodPut, "plain", "k")
+			o := &op.PutObject{Body: failingReader{}, Size: 1, StorageClass: "NOPE", CannedACL: "public-read", Params: func(context.Context, *op.PutObject) error {
+				Expect(r.BucketRec).NotTo(BeNil(), "init_permissions has loaded the bucket")
+				return op.ErrInvalidDigest
+			}}
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrInvalidDigest))
+			Expect(authz.Invocations()).To(BeEmpty(), "a refusal of the request alone comes before verify_permission")
+		})
+		It("is not reached for a missing bucket", func(ctx SpecContext) {
+			called := false
+			params := func(context.Context, *op.PutObject) error { called = true; return nil }
+			Expect(op.Run(ctx, &op.PutObject{Size: 1, Params: params}, f.req(http.MethodPut, "missing", "k"))).To(MatchError(op.ErrNoSuchBucket))
+			Expect(called).To(BeFalse())
+		})
+	})
+	Describe("Authorized", func() {
+		It("runs only for an authorized requester, before the body is read", func(ctx SpecContext) {
+			calls := 0
+			authorized := func(context.Context, *op.PutObject) error { calls++; return op.ErrInvalidArgument }
+			r := f.req(http.MethodPut, "plain", "k")
+			r.Identity = f.bob
+			Expect(op.Run(ctx, &op.PutObject{Body: failingReader{}, Size: 1, Authorized: authorized}, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(calls).To(BeZero())
+			Expect(op.Run(ctx, &op.PutObject{Body: failingReader{}, Size: 1, Authorized: authorized}, f.req(http.MethodPut, "plain", "k"))).
+				To(MatchError(op.ErrInvalidArgument))
+			Expect(calls).To(Equal(1))
+			Expect(f.stat(ctx, "k").Exists).To(BeFalse())
+		})
+		It("runs after the placement check, as get_params follows init_permissions", func(ctx SpecContext) {
+			calls := 0
+			o := &op.PutObject{Body: failingReader{}, Size: 1, StorageClass: "NOPE", Authorized: func(context.Context, *op.PutObject) error {
+				calls++
+				return op.ErrInvalidDigest
+			}}
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(calls).To(BeZero())
+		})
+		It("runs ahead of the refusals of a versioned bucket and a default encryption, which execute makes", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			f.setBucketFlags(ctx, meta.BucketObjLockEnabled|meta.BucketVersioned)
+			o := &op.PutObject{Body: failingReader{}, Size: 1, Authorized: func(context.Context, *op.PutObject) error { return op.ErrInvalidRequest }}
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidRequest))
+		})
+		It("builds the ACL that the block of public ACLs then refuses, writing nothing", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
 			authz := &opfakes.FakeAuthorizer{}
 			f.env.Authz = authz
 			stub := &opfakes.FakeObjectStore{}
 			f.env.Objects = stub
-			r := f.req(http.MethodPut, "plain", "k")
-			o := &op.PutObject{Body: failingReader{}, Size: 1, Params: func(_ context.Context, o *op.PutObject) error {
-				Expect(r.BucketRec).NotTo(BeNil(), "init_permissions has loaded the bucket")
+			o := &op.PutObject{Body: failingReader{}, Size: 1, Authorized: func(_ context.Context, o *op.PutObject) error {
 				o.ACL = publicReadOf(f.alice.Owner)
 				return nil
 			}}
-			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
-			Expect(authz.Invocations()).To(BeEmpty(), "init_processing runs get_params before verify_permission")
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
+			Expect(authz.VerifyBucketCallCount()).To(Equal(1))
 			Expect(stub.PutObjectCallCount()).To(BeZero())
-		})
-		It("returns its error before permissions", func(ctx SpecContext) {
-			authz := &opfakes.FakeAuthorizer{}
-			f.env.Authz = authz
-			o := &op.PutObject{Body: failingReader{}, Size: 1, Params: func(context.Context, *op.PutObject) error { return op.ErrInvalidDigest }}
-			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidDigest))
-			Expect(authz.Invocations()).To(BeEmpty())
-		})
-		It("is not reached for a missing bucket, a placement the zone lacks or a public canned ACL under a block", func(ctx SpecContext) {
-			called := false
-			params := func(context.Context, *op.PutObject) error { called = true; return nil }
-			Expect(op.Run(ctx, &op.PutObject{Size: 1, Params: params}, f.req(http.MethodPut, "missing", "k"))).To(MatchError(op.ErrNoSuchBucket))
-			Expect(op.Run(ctx, &op.PutObject{Size: 1, StorageClass: "NOPE", Params: params}, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
-			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
-			Expect(op.Run(ctx, &op.PutObject{Size: 1, CannedACL: "public-read", Params: params}, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrAccessDenied))
-			Expect(called).To(BeFalse(), "init_processing refuses a public canned ACL before get_params (rgw_op.cc:3903-3911 at v19.2.6)")
 		})
 	})
 	DescribeTable("passes If-Match and If-None-Match to the store, which applies v20.2.4's conditions on both releases",

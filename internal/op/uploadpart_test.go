@@ -643,6 +643,28 @@ var _ = Describe("UploadPart", func() {
 			Expect(calls).To(Equal(1))
 			Expect(f.parts(ctx, "k", id)).To(BeEmpty())
 		})
+		It("refuses a copy's storage class the zone lacks before reading the source, as init_permissions checks it", func(ctx SpecContext) {
+			objects := &opfakes.FakeObjectStore{}
+			f.env.Objects = objects
+			o := f.copyPartOf(id, 1, "src", "")
+			o.SrcBucket, o.StorageClass = "nope", "NOPE"
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(objects.PrefetchObjectCallCount()).To(BeZero())
+		})
+		DescribeTable("answers a requester whose op mask refuses the write an identical 403 before reading anything of the source, as verify_op_mask precedes read_obj_policy",
+			func(ctx SpecContext, srcBucket, srcKey string) {
+				r, loaded, objects := f.opMaskRefusesSources(ctx, "k")
+				o := f.copyPartOf(id, 1, srcKey, "")
+				o.SrcBucket = srcBucket
+				Expect(op.AsError(op.Run(ctx, o, r))).To(Equal(op.ErrAccessDenied))
+				Expect(*loaded).To(Equal([]string{"plain"}), "only the destination is loaded")
+				Expect(objects.PrefetchObjectCallCount()).To(BeZero())
+			},
+			Entry("a source bucket that does not exist", "nope", "src"),
+			Entry("a source key that does not exist", "plain", "nope"),
+			Entry("a source that exists", "plain", "src"),
+			Entry("a source whose bucket policy does not parse", "badpol", "src"),
+		)
 		DescribeTable("answers a requester the destination refuses 403 before reading anything of the source",
 			func(ctx SpecContext, srcBucket, srcKey string) {
 				objects := &opfakes.FakeObjectStore{}

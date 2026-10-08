@@ -32,6 +32,43 @@ func (f *writeFixture) putAttrs(ctx context.Context, key, data string, attrs map
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// countingBuckets is a bucket store that records the name of each bucket it
+// loads.
+type countingBuckets struct {
+	op.BucketStore
+	loaded *[]string
+}
+
+func (c countingBuckets) GetBucket(ctx context.Context, tenant, name string) (*op.BucketRecord, error) {
+	*c.loaded = append(*c.loaded, name)
+	return c.BucketStore.GetBucket(ctx, tenant, name)
+}
+
+// opMaskRefusesSources sets up a requester whose op mask refuses the write,
+// on a destination that allows it, under the policy evaluator: alice's bucket
+// "badpol", whose policy does not parse and which holds "src", is created,
+// the store's bucket loads are recorded and its objects are a fake. It
+// returns the request, the loads and the fake.
+func (f *writeFixture) opMaskRefusesSources(ctx context.Context, key string) (*op.Request, *[]string, *opfakes.FakeObjectStore) {
+	GinkgoHelper()
+	f.env.Authz = authz.New(authz.DefaultConfig(denc.Squid))
+	rec, err := f.store.CreateBucket(ctx, op.CreateBucketParams{
+		Name: "badpol", Owner: f.alice.Owner, Placement: meta.PlacementRule{Name: "default-placement"},
+		Attrs: map[string][]byte{meta.AttrACL: f.aliceACL, meta.AttrPrefix + "iam-policy": []byte("{")},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.store.PutObject(ctx, rec, meta.ObjKey{Name: "src"}, strings.NewReader("x"),
+		op.PutParams{Size: 1, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}})
+	Expect(err).NotTo(HaveOccurred())
+	loaded := &[]string{}
+	f.env.Buckets = countingBuckets{BucketStore: f.store, loaded: loaded}
+	objects := &opfakes.FakeObjectStore{}
+	f.env.Objects = objects
+	r := f.req(http.MethodPut, "plain", key)
+	r.Identity.OpMask = op.OpTypeRead
+	return r, loaded, objects
+}
+
 // copyOf is a copy of plain's key under alice's default ACL.
 func (f *writeFixture) copyOf(key string) *op.CopyObject {
 	return &op.CopyObject{SrcBucket: "plain", SrcKey: meta.ObjKey{Name: key}, ACL: acl.DefaultPolicy(f.alice.Owner, "Alice")}
@@ -94,21 +131,110 @@ var _ = Describe("CopyObject", func() {
 		Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrMetaPrefix+"n", []byte("w\x00")))
 		Expect(st.Attrs).NotTo(HaveKey(meta.AttrMetaPrefix + "k"))
 	})
-	It("refuses a source bucket that does not exist before checking permissions", func(ctx SpecContext) {
+	It("refuses a source bucket that does not exist once the destination allows the request", func(ctx SpecContext) {
 		authz := &opfakes.FakeAuthorizer{}
 		f.env.Authz = authz
 		o := f.copyOf("src")
 		o.SrcBucket = "nope"
 		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrNoSuchBucket))
-		Expect(authz.Invocations()).To(BeEmpty())
+		Expect(authz.VerifyBucketCallCount()).To(Equal(1), "the destination is authorized before the source bucket is loaded")
 	})
-	It("refuses a destination storage class the placement lacks as InvalidArgument before checking permissions", func(ctx SpecContext) {
+	It("refuses a destination storage class the placement lacks as InvalidArgument once the requester is authorized", func(ctx SpecContext) {
 		authz := &opfakes.FakeAuthorizer{}
 		f.env.Authz = authz
 		o := f.copyOf("src")
 		o.StorageClass = "GLACIAL"
 		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
-		Expect(authz.Invocations()).To(BeEmpty())
+		Expect(authz.VerifyBucketCallCount()).To(Equal(1))
+		Expect(authz.VerifyObjectInCallCount()).To(BeZero(), "init_permissions checks the placement before the source is read")
+		f.env.Authz = op.OwnerOnly{}
+		r := f.req(http.MethodPut, "plain", "dst")
+		r.Identity = f.bob
+		o = f.copyOf("src")
+		o.StorageClass = "GLACIAL"
+		Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+	})
+	It("refuses a destination storage class the placement lacks ahead of the bucket's default encryption, as init_permissions comes first", func(ctx SpecContext) {
+		f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+		o := f.copyOf("src")
+		o.StorageClass = "GLACIAL"
+		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
+	})
+	DescribeTable("answers a requester the destination refuses 403 before reading anything of the source",
+		func(ctx SpecContext, srcBucket, srcKey string) {
+			objects := &opfakes.FakeObjectStore{}
+			f.env.Objects = objects
+			r := f.req(http.MethodPut, "plain", "dst")
+			r.Identity = f.bob
+			o := f.copyOf(srcKey)
+			o.SrcBucket = srcBucket
+			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(objects.PrefetchObjectCallCount()).To(BeZero())
+		},
+		Entry("a source bucket that does not exist", "nope", "src"),
+		Entry("a source key that does not exist", "plain", "nope"),
+		Entry("a source that exists", "plain", "src"),
+	)
+	DescribeTable("answers a requester whose op mask refuses the write an identical 403 before reading anything of the source, as verify_op_mask precedes read_obj_policy",
+		func(ctx SpecContext, srcBucket, srcKey string) {
+			r, loaded, objects := f.opMaskRefusesSources(ctx, "dst")
+			o := f.copyOf(srcKey)
+			o.SrcBucket = srcBucket
+			Expect(op.AsError(op.Run(ctx, o, r))).To(Equal(op.ErrAccessDenied))
+			Expect(*loaded).To(Equal([]string{"plain"}), "only the destination is loaded")
+			Expect(objects.PrefetchObjectCallCount()).To(BeZero())
+		},
+		Entry("a source bucket that does not exist", "nope", "src"),
+		Entry("a source key that does not exist", "plain", "nope"),
+		Entry("a source that exists", "plain", "src"),
+		Entry("a source whose bucket policy does not parse", "badpol", "src"),
+	)
+	It("lets an admin refused the destination through to the source, as Run lets an admin through an access denial", func(ctx SpecContext) {
+		r := f.req(http.MethodPut, "plain", "dst")
+		r.Identity = f.bob
+		r.Identity.Admin = true
+		Expect(op.Run(ctx, f.copyOf("src"), r)).To(Succeed())
+		Expect(f.stat(ctx, "dst").Exists).To(BeTrue())
+	})
+	Describe("Authorized", func() {
+		It("runs only once the destination and the source allow the request", func(ctx SpecContext) {
+			fake := &opfakes.FakeAuthorizer{}
+			fake.VerifyObjectInReturns(op.ErrAccessDenied)
+			f.env.Authz = fake
+			calls := 0
+			authorized := func(context.Context, *op.CopyObject) error { calls++; return op.ErrInvalidRequest }
+			o := f.copyOf("src")
+			o.Authorized = authorized
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrAccessDenied))
+			Expect(calls).To(BeZero())
+			f.env.Authz = op.OwnerOnly{}
+			o = f.copyOf("src")
+			o.Authorized = authorized
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidRequest))
+			Expect(calls).To(Equal(1))
+		})
+		It("runs after the placement check and ahead of the refusals of a versioned bucket and a default encryption", func(ctx SpecContext) {
+			calls := 0
+			o := f.copyOf("src")
+			o.StorageClass = "GLACIAL"
+			o.Authorized = func(context.Context, *op.CopyObject) error { calls++; return op.ErrInvalidRequest }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
+			Expect(calls).To(BeZero())
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			f.setBucketFlags(ctx, meta.BucketObjLockEnabled|meta.BucketVersioned)
+			o = f.copyOf("src")
+			o.Authorized = func(context.Context, *op.CopyObject) error { calls++; return op.ErrInvalidRequest }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidRequest))
+		})
+		It("builds the ACL that the block of public ACLs then refuses, copying nothing", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+			o := &op.CopyObject{SrcBucket: "plain", SrcKey: meta.ObjKey{Name: "src"}, Authorized: func(_ context.Context, o *op.CopyObject) error {
+				o.ACL = publicReadOf(f.alice.Owner)
+				return nil
+			}}
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrAccessDenied))
+			Expect(f.stat(ctx, "dst").Exists).To(BeFalse())
+		})
 	})
 	Describe("Params", func() {
 		It("runs between the destination's load and the source bucket's, before permissions", func(ctx SpecContext) {
@@ -125,28 +251,22 @@ var _ = Describe("CopyObject", func() {
 			Expect(err).To(MatchError(op.ErrInvalidArgument), "get_params refuses before the source bucket's NoSuchBucket")
 			Expect(authz.Invocations()).To(BeEmpty())
 		})
-		It("is not reached for a missing destination or a placement the zone lacks", func(ctx SpecContext) {
+		It("is not reached for a missing destination", func(ctx SpecContext) {
 			called := false
-			params := func(context.Context, *op.CopyObject) error { called = true; return nil }
 			o := f.copyOf("src")
-			o.Params = params
+			o.Params = func(context.Context, *op.CopyObject) error { called = true; return nil }
 			Expect(op.Run(ctx, o, f.req(http.MethodPut, "missing", "dst"))).To(MatchError(op.ErrNoSuchBucket))
-			o = f.copyOf("src")
-			o.Params, o.StorageClass = params, "GLACIAL"
-			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrInvalidArgument))
 			Expect(called).To(BeFalse())
 		})
-		It("builds the ACL that the block of public ACLs then refuses", func(ctx SpecContext) {
+		It("runs ahead of every check of what the buckets hold", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
-			stub := &opfakes.FakeObjectStore{}
-			f.env.Objects = stub
-			o := &op.CopyObject{SrcBucket: "plain", SrcKey: meta.ObjKey{Name: "src"}, Params: func(_ context.Context, o *op.CopyObject) error {
-				o.ACL = publicReadOf(f.alice.Owner)
-				return nil
-			}}
-			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrAccessDenied))
-			Expect(stub.PrefetchObjectCallCount()).To(BeZero())
-			Expect(stub.CopyObjectCallCount()).To(BeZero())
+			objects := &opfakes.FakeObjectStore{}
+			f.env.Objects = objects
+			o := f.copyOf("src")
+			o.StorageClass, o.ACL = "GLACIAL", publicReadOf(f.alice.Owner)
+			o.Params = func(context.Context, *op.CopyObject) error { return op.ErrNotImplemented }
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(MatchError(op.ErrNotImplemented))
+			Expect(objects.PrefetchObjectCallCount()).To(BeZero())
 		})
 	})
 	It("answers a missing source with NoSuchKey", func(ctx SpecContext) {
