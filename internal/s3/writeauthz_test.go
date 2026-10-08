@@ -18,6 +18,37 @@ import (
 // public.
 const allUsersURI = `uri="http://acs.amazonaws.com/groups/global/AllUsers"`
 
+// addBucket creates the bucket name for owner with attrs, holding each key of
+// objs under the ACL bytes it maps to.
+func (w *writeWorld) addBucket(ctx context.Context, name string, owner meta.Owner, attrs, objs map[string][]byte) *op.BucketRecord {
+	GinkgoHelper()
+	rec, err := w.store.CreateBucket(ctx, op.CreateBucketParams{
+		Name: name, Owner: owner, Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	for key, objACL := range objs {
+		_, err = w.store.PutObject(ctx, rec, meta.ObjKey{Name: key}, strings.NewReader("data"),
+			op.PutParams{Size: 4, Attrs: map[string][]byte{meta.AttrACL: objACL}})
+		Expect(err).NotTo(HaveOccurred())
+	}
+	return rec
+}
+
+// configureStoredState gives plain everything a refusal could depend on: object
+// lock, versioning, a quota no write fits, a default encryption and a block of
+// public ACLs.
+func (w *writeWorld) configureStoredState(ctx context.Context) {
+	GinkgoHelper()
+	w.setBucketInfo(ctx, func(i *meta.BucketInfo) {
+		i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
+		i.Quota = meta.Quota{MaxSize: -1, MaxObjects: 0, Enabled: true}
+	})
+	w.setBucketAttrs(ctx, map[string][]byte{
+		op.AttrBucketEncryption: {1},
+		op.AttrPublicAccess:     encodePublicAccess(acl.PublicAccessBlock{BlockPublicACLs: true}),
+	})
+}
+
 var _ = Describe("the object writes' authorization order", func() {
 	var w *writeWorld
 	BeforeEach(func(ctx SpecContext) {
@@ -26,30 +57,8 @@ var _ = Describe("the object writes' authorization order", func() {
 		// does not decode.
 		bob := meta.UserOwner(w.bob.Info.UserID)
 		bobACL := encodeACL(acl.DefaultPolicy(bob, "Bob"))
-		rec, err := w.store.CreateBucket(ctx, op.CreateBucketParams{
-			Name: "bobs", Owner: bob, Placement: meta.PlacementRule{Name: "default-placement"},
-			Attrs: map[string][]byte{meta.AttrACL: bobACL},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		for key, objACL := range map[string][]byte{"src": bobACL, "broken": {0xff}} {
-			_, err = w.store.PutObject(ctx, rec, meta.ObjKey{Name: key}, strings.NewReader("bobs"),
-				op.PutParams{Size: 4, Attrs: map[string][]byte{meta.AttrACL: objACL}})
-			Expect(err).NotTo(HaveOccurred())
-		}
+		w.addBucket(ctx, "bobs", bob, map[string][]byte{meta.AttrACL: bobACL}, map[string][]byte{"src": bobACL, "broken": {0xff}})
 	})
-	// configure gives plain everything a refusal could depend on: object lock,
-	// versioning, a quota no write fits, a default encryption and a block of
-	// public ACLs.
-	configure := func(ctx context.Context) {
-		w.setBucketInfo(ctx, func(i *meta.BucketInfo) {
-			i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
-			i.Quota = meta.Quota{MaxSize: -1, MaxObjects: 0, Enabled: true}
-		})
-		w.setBucketAttrs(ctx, map[string][]byte{
-			op.AttrBucketEncryption: {1},
-			op.AttrPublicAccess:     encodePublicAccess(acl.PublicAccessBlock{BlockPublicACLs: true}),
-		})
-	}
 	copyFrom := func(src string, hdr ...string) []string { return append([]string{"X-Amz-Copy-Source", src}, hdr...) }
 
 	DescribeTable("answers a requester the destination refuses 403 AccessDenied, whatever the store holds, writing nothing",
@@ -58,7 +67,7 @@ var _ = Describe("the object writes' authorization order", func() {
 			By("on a bucket that holds no configuration")
 			expectError(w.send(w.bob, http.MethodPut, target, body, hdr...), 403, "AccessDenied")
 			By("on a bucket with object lock, versioning, a quota, a default encryption and a block of public ACLs")
-			configure(ctx)
+			w.configureStoredState(ctx)
 			expectError(w.send(w.bob, http.MethodPut, target, body, hdr...), 403, "AccessDenied")
 			Expect(w.stat(ctx, "k").Exists).To(BeFalse())
 			Expect(w.stat(ctx, "dst").Exists).To(BeFalse())
@@ -94,7 +103,7 @@ var _ = Describe("the object writes' authorization order", func() {
 			expectError(w.send(w.bob, http.MethodPost, "/plain", "x", "Content-Type", "multipart/form-data; boundary=b"), 501, "NotImplemented")
 		}
 		post()
-		configure(ctx)
+		w.configureStoredState(ctx)
 		post()
 	})
 
