@@ -448,6 +448,68 @@ var _ = Describe("admin handler", func() {
 				return op.ErrInternalError
 			}), "admin route failed after its response started"),
 		)
+		// serveGone serves GET /admin/info as admin through h under rctx, which
+		// the spec cancels as net/http cancels a request's context once its
+		// connection is gone, and expects the connection to end with nothing
+		// written.
+		serveGone := func(rctx context.Context, h http.Handler) *httptest.ResponseRecorder {
+			GinkgoHelper()
+			req := httptest.NewRequestWithContext(rctx, http.MethodGet, "/admin/info", nil)
+			req.Header.Set("X-Test-User", "admin")
+			rec := httptest.NewRecorder()
+			Expect(func() { h.ServeHTTP(rec, req) }).To(PanicWith(http.ErrAbortHandler), "net/http then sends nothing of its own")
+			Expect(rec.Body.Len()).To(BeZero())
+			Expect(rec.Header()).NotTo(HaveKey("Content-Type"), "no error document")
+			return rec
+		}
+		goneLine := func(rec *httptest.ResponseRecorder, status int, code string) {
+			GinkgoHelper()
+			Expect(fx.metrics.ObserveCallCount()).To(Equal(1))
+			_, observed, _, _, _ := fx.metrics.ObserveArgsForCall(0)
+			Expect(observed).To(Equal(status))
+			recs := records()
+			Expect(recs).To(ContainElement(SatisfyAll(
+				HaveKeyWithValue("level", "DEBUG"),
+				HaveKeyWithValue("msg", "client went away"),
+				HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+				HaveKeyWithValue("code", code),
+			)))
+			Expect(recs).NotTo(ContainElement(HaveKeyWithValue("level", Not(Equal("DEBUG")))))
+		}
+		It("answers a client that went away with nothing, ends the connection and logs it at debug by its code alone", func(ctx SpecContext) {
+			rctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			fx.handler.Register("get_info", func(ctx context.Context, _ http.ResponseWriter, _ *op.Request, _ admin.Request) error {
+				cancel()
+				// A store's error names the index object it read, here the key.
+				return op.FromRADOS(fmt.Errorf("reading default.rgw.meta/AKIDGONE: %w", ctx.Err()), op.ScopeUser)
+			})
+			goneLine(serveGone(rctx, fx.handler), 408, "RequestTimeout")
+			Expect(logs.String()).NotTo(ContainSubstring("AKIDGONE"), "the access key the lookup read")
+		})
+		It("ends a request whose client went away during authentication, answering nothing", func(ctx SpecContext) {
+			rctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			h := admin.NewHandler(fx.env, s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+				cancel()
+				return nil, fmt.Errorf("%w: the request's access key does not load: %w", op.ErrInvalidAccessKeyID, context.Canceled)
+			}), admin.Config{Prefix: "admin"})
+			goneLine(serveGone(rctx, h), 403, "InvalidAccessKeyId")
+		})
+
+		It("logs a route's failure after its response started by its code alone", func() {
+			fx.handler.Register("get_info", func(_ context.Context, w http.ResponseWriter, _ *op.Request, _ admin.Request) error {
+				w.WriteHeader(http.StatusOK)
+				// A store's error names the index object it read, here the key.
+				return fmt.Errorf("%w: reading default.rgw.meta/AKAFTERSTART: rados: EIO", op.ErrInternalError)
+			})
+			Expect(fx.get("/admin/info", "admin").StatusCode).To(Equal(200))
+			Expect(records()).To(ContainElement(SatisfyAll(
+				HaveKeyWithValue("msg", "admin route failed after its response started"),
+				HaveKeyWithValue("code", "InternalError"),
+			)))
+			Expect(logs.String()).NotTo(ContainSubstring("AKAFTERSTART"))
+		})
 		It("logs an authentication's server error once, with the request id and its code and no credential", func() {
 			res := fx.request(http.MethodGet, "/admin/info", "admin", "Authorization", authz, "X-Test-Fail", "1")
 			Expect(res.StatusCode).To(Equal(500))

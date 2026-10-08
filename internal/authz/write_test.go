@@ -394,6 +394,26 @@ var _ = Describe("the write-side helpers", func() {
 				_, err := failing.OwnerByEmail(ctx, secret)
 				expectFailure(err, op.ErrNotImplemented)
 			})
+			DescribeTable("keeps the context error that ended a lookup, and none of its text",
+				func(ctx SpecContext, ended error, lookup func(context.Context, authz.UserResolver) error) {
+					cause := op.FromRADOS(fmt.Errorf("reading users.email/%s: %w", secret, ended), op.ScopeUser)
+					users.GetUserByEmailReturns(nil, cause)
+					users.GetUserReturns(nil, cause)
+					err := lookup(ctx, failing)
+					expectFailure(err, op.ErrRequestTimedOut)
+					Expect(err).To(MatchError(ended), "a client that went away ends its request")
+				},
+				Entry("an email lookup its client's departure canceled", context.Canceled,
+					func(ctx context.Context, r authz.UserResolver) error {
+						_, err := r.OwnerByEmail(ctx, secret)
+						return err
+					}),
+				Entry("a user lookup whose deadline passed", context.DeadlineExceeded,
+					func(ctx context.Context, r authz.UserResolver) error {
+						_, err := r.DisplayName(ctx, userOwner("", "bob"))
+						return err
+					}),
+			)
 			It("renders a failure without an S3 error as InternalError", func(ctx SpecContext) {
 				users.GetUserReturns(nil, errors.New("rados: "+secret))
 				_, err := failing.DisplayName(ctx, userOwner("", "bob"))

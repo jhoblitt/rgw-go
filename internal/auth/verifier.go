@@ -144,9 +144,9 @@ func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord
 	rec, err := v.creds.GetUserByAccessKey(ctx, accessKey)
 	if err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {
-			slog.ErrorContext(ctx, "access key lookup failed", slog.String("code", op.ErrorCode(err)))
+			slog.Log(ctx, lookupLevel(ctx, err), "access key lookup failed", slog.String("code", op.ErrorCode(err)))
 		}
-		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key does not load", op.ErrInvalidAccessKeyID)
+		return nil, meta.AccessKey{}, nil, refusal(ctx, err, fmt.Errorf("%w: the request's access key does not load", op.ErrInvalidAccessKeyID))
 	}
 	key, ok := rec.Info.AccessKeys[accessKey]
 	if !ok {
@@ -158,8 +158,10 @@ func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord
 	var account *meta.AccountInfo
 	if rec.Info.AccountID != "" {
 		if account, err = v.loadAccount(ctx, rec.Info.AccountID); err != nil {
-			slog.ErrorContext(ctx, "account lookup failed", slog.String("account_id", rec.Info.AccountID), slog.Any("error", err))
-			return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the account of user %s does not load", op.ErrAccessDenied, rec.Info.UserID)
+			slog.Log(ctx, lookupLevel(ctx, err), "account lookup failed",
+				slog.String("account_id", rec.Info.AccountID), slog.Any("error", err))
+			return nil, meta.AccessKey{}, nil, refusal(ctx, err,
+				fmt.Errorf("%w: the account of user %s does not load", op.ErrAccessDenied, rec.Info.UserID))
 		}
 	}
 	return rec, key, account, nil
@@ -180,4 +182,24 @@ func (v *Verifier) loadAccount(ctx context.Context, id string) (*meta.AccountInf
 		return nil, err
 	}
 	return &rec.Info, nil
+}
+
+// lookupLevel is the level a failed lookup behind a refusal is logged at:
+// debug when the client went away (op.ClientGone), as the store did nothing
+// wrong, and error otherwise.
+func lookupLevel(ctx context.Context, err error) slog.Level {
+	if op.ClientGone(ctx, err) {
+		return slog.LevelDebug
+	}
+	return slog.LevelError
+}
+
+// refusal is refused, wrapping the cancellation as well when cause ended a
+// request whose client went away, so the protocol handler ends that request
+// instead of answering it. Nothing of cause is kept.
+func refusal(ctx context.Context, cause, refused error) error {
+	if op.ClientGone(ctx, cause) {
+		return fmt.Errorf("%w: %w", refused, context.Canceled)
+	}
+	return refused
 }

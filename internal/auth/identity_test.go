@@ -303,7 +303,24 @@ var _ = Describe("Verifier identities", func() {
 		},
 		Entry("a store error naming the key's index object",
 			fmt.Errorf("%w: reading users.keys/AKALICE: rados: timed out", op.ErrServiceUnavailable), "ServiceUnavailable"),
+		Entry("a bare expired deadline, radosgw's RequestTimeout", context.DeadlineExceeded, "RequestTimeout"),
 	)
+
+	It("refuses a key lookup its client's departure cut short as a gone client's, logging no error", func(ctx SpecContext) {
+		buf := captureLog()
+		rctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		users := &opfakes.FakeUserStore{}
+		users.GetUserByAccessKeyStub = func(ctx context.Context, _ string) (*op.UserRecord, error) {
+			cancel() // net/http cancels a request's context once its connection is gone
+			return nil, fmt.Errorf("reading users.keys/AKALICE: %w", ctx.Err())
+		}
+		_, err := auth.New(cfg, users, nil).Authenticate(rctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice"), anyPayload)
+		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID))
+		Expect(err).To(MatchError(context.Canceled), "the protocol handler ends the request instead of answering it")
+		Expect(err.Error()).NotTo(ContainSubstring("AKALICE"))
+		Expect(logRecords(buf)).To(BeEmpty(), "logged at debug: the store did nothing wrong")
+	})
 
 	It("denies an rgwx-uid user that does not load, and logs a failure other than a missing user without the rgwx-uid", func(ctx SpecContext) {
 		buf := captureLog()

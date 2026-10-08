@@ -123,8 +123,10 @@ func (h *Handler) InFlight() int64 { return h.inflight.Load() }
 // written it observes the request; it logs no usage, as radosgw registers
 // the admin managers without set_logging (rgw_appmain.cc:354-361 at
 // v19.2.6). A panic before anything was written is answered 500; one after
-// it ends the connection. Every line logged under the request's context
-// carries its transaction id.
+// it ends the connection, as does a request whose authentication or route
+// fails because its client went away (op.EndForGoneClient), with nothing
+// more written. Every line logged
+// under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	h.metrics.InFlight(1)
@@ -165,7 +167,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		h.metrics.Observe(st.route, r.Status, elapsed, r.BytesIn, r.BytesOut)
 		slog.DebugContext(ctx, "admin request done", slog.String("op", st.route),
 			slog.Int("status", r.Status), slog.Duration("elapsed", elapsed))
-		if abort {
+		if abort || st.gone {
 			panic(http.ErrAbortHandler)
 		}
 	}()
@@ -190,10 +192,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // served is how far the request got: its parse, JSON until the handler has
-// selected the format, and its route, "unknown" until one is dispatched.
+// selected the format, its route, "unknown" until one is dispatched, and
+// whether the client went away.
 type served struct {
 	q     Request
 	route string
+	gone  bool
 }
 
 // serve is process_request's order for an admin request: preprocess's
@@ -237,6 +241,10 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
 		refuseAuth(ctx, w, r, q, err)
 		return
 	}
@@ -248,9 +256,15 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 	}
 
 	if err := h.routes[route.Name](ctx, w, r, q); err != nil {
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
 		if w.wrote {
+			// An admin route's error can name an index object a lookup by
+			// access key or email read, so only its code is logged.
 			slog.WarnContext(ctx, "admin route failed after its response started",
-				slog.String("op", route.Name), slog.Any("error", err))
+				slog.String("op", route.Name), slog.String("code", op.ErrorCode(err)))
 			return
 		}
 		WriteError(ctx, w, r, q, err)

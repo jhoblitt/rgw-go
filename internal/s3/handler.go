@@ -182,11 +182,11 @@ func usageName(route string, rel denc.Release) string {
 
 // served is how far the request got: the route's name and radosgw's op name,
 // both "unknown" until a route is dispatched, as rgw_log_op names a request
-// no op serves (rgw_log.cc:556), and whether postauth_init has named its
-// bucket.
+// no op serves (rgw_log.cc:556), whether postauth_init has named its bucket,
+// and whether the client went away.
 type served struct {
 	route, usage string
-	named        bool
+	named, gone  bool
 }
 
 // ServeHTTP runs radosgw's process_request (rgw_process.cc:298-412 at
@@ -197,8 +197,11 @@ type served struct {
 // refused requests included, as process_request's tail does (:454-462 at
 // v19.2.6, :461-469 at v20.2.4). A panic anywhere before anything was
 // written is answered 500, observed and usage-logged; one after it ends the
-// connection, so a truncated body is never framed as complete. Every line
-// logged under the request's context carries its transaction id.
+// connection, so a truncated body is never framed as complete. A request
+// whose authentication or route fails because its client went away
+// (op.EndForGoneClient) is observed and usage-logged, and then its
+// connection ends with nothing more written.
+// Every line logged under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	h.metrics.InFlight(1)
@@ -231,7 +234,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		op.LogUsage(ctx, r, st.usage)
 		slog.DebugContext(ctx, "request done", slog.String("op", st.route),
 			slog.Int("status", r.Status), slog.Duration("elapsed", elapsed))
-		if abort {
+		if abort || st.gone {
 			panic(http.ErrAbortHandler)
 		}
 	}()
@@ -330,6 +333,11 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
+		r.Bucket = ""
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
 		refuseAuth(ctx, w, r, err)
 		return
 	}
@@ -361,6 +369,10 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		return
 	}
 	if err := fn(ctx, w, r); err != nil {
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
 		if w.wrote {
 			slog.WarnContext(ctx, "route failed after its response started",
 				slog.String("op", route.Name), slog.Any("error", err))

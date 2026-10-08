@@ -729,6 +729,114 @@ var _ = Describe("Handler", func() {
 			}), http.MethodGet, "route failed after its response started"),
 		)
 	})
+	Describe("a context error", func() {
+		DescribeTable("is the 408 RequestTimeout to a client still there, and not logged as a server error",
+			func(cause error) {
+				buf := captureLog()
+				h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error {
+					return fmt.Errorf("listing buckets: %w", cause)
+				})
+				rec := get("/")
+				Expect(rec.Code).To(Equal(408))
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>RequestTimeout</Code>"))
+				Expect(logRecords(buf)).To(BeEmpty())
+			},
+			Entry("an expired deadline", context.DeadlineExceeded),
+			Entry("a canceled context other than the request's", context.Canceled),
+		)
+		// serveGone serves GET / through a handler whose authenticator is as and
+		// whose list_buckets route is route, both handed a cancel that stands
+		// in for net/http's on a connection that is gone. It returns the
+		// recorder, the metrics and the log, at debug.
+		serveGone := func(ctx context.Context, as func(cancel func()) s3.Authenticator, route func(cancel func()) s3.HandlerFunc) (*httptest.ResponseRecorder, *opfakes.FakeMetrics, *bytes.Buffer) {
+			GinkgoHelper()
+			buf := captureLogAt(slog.LevelDebug)
+			m := &opfakes.FakeMetrics{}
+			env := testEnv(store)
+			env.Metrics = m
+			rctx, cancel := context.WithCancel(ctx)
+			DeferCleanup(cancel)
+			gone := s3.NewHandler(env, as(cancel), testConfig(s3.Config{}))
+			if route != nil {
+				gone.Register("list_buckets", route(cancel))
+			}
+			rec := httptest.NewRecorder()
+			Expect(func() { gone.ServeHTTP(rec, httptest.NewRequestWithContext(rctx, http.MethodGet, "/", nil)) }).
+				To(PanicWith(http.ErrAbortHandler), "net/http then sends nothing of its own")
+			Expect(rec.Header()).NotTo(HaveKey("Content-Type"), "no error document")
+			return rec, m, buf
+		}
+		goneLine := func(rec *httptest.ResponseRecorder, buf *bytes.Buffer, code string) {
+			GinkgoHelper()
+			recs := logRecords(buf)
+			Expect(recs).To(ContainElement(SatisfyAll(
+				HaveKeyWithValue("level", "DEBUG"),
+				HaveKeyWithValue("msg", "client went away"),
+				HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+				HaveKeyWithValue("code", code),
+			)))
+			Expect(recs).NotTo(ContainElement(HaveKeyWithValue("level", Not(Equal("DEBUG")))))
+		}
+		DescribeTable("writes nothing more to a client that went away, ends the connection and logs it at debug",
+			func(ctx SpecContext, started bool, status int, body string, successful uint64) {
+				alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+				rec, m, buf := serveGone(ctx, func(func()) s3.Authenticator { return authAs(alice) },
+					func(cancel func()) s3.HandlerFunc {
+						return func(ctx context.Context, w http.ResponseWriter, _ *op.Request) error {
+							if started {
+								w.WriteHeader(200)
+								if _, err := w.Write([]byte(body)); err != nil {
+									return err
+								}
+							}
+							cancel()
+							return fmt.Errorf("listing buckets: %w", ctx.Err())
+						}
+					})
+				Expect(rec.Body.String()).To(Equal(body))
+				Expect(m.ObserveCallCount()).To(Equal(1))
+				route, observed, _, _, _ := m.ObserveArgsForCall(0)
+				Expect(route).To(Equal("list_buckets"))
+				Expect(observed).To(Equal(status))
+				Expect(store.Usage()).To(Equal([]op.UsageEntry{{
+					Owner: meta.UserOwner(alice.Info.UserID), Time: time.Unix(0x68d7a1b2, 0), Category: "list_buckets",
+					BytesSent: uint64(len(body)), Ops: 1, SuccessfulOps: successful,
+				}}), "the usage log files the request under the status it was observed with")
+				goneLine(rec, buf, "RequestTimeout")
+			},
+			Entry("before anything was written: observed and usage-logged as the 408 it would have been", false, 408, "", uint64(0)),
+			Entry("after the response started: observed and usage-logged as what was sent", true, 200, "<partial", uint64(1)),
+		)
+		DescribeTable("logs a gone client's end by its code alone, naming nothing the lookup it cut short read",
+			func(ctx SpecContext, secret string) {
+				rec, _, buf := serveGone(ctx, func(func()) s3.Authenticator { return s3.AnonymousOnly{} },
+					func(cancel func()) s3.HandlerFunc {
+						return func(ctx context.Context, _ http.ResponseWriter, _ *op.Request) error {
+							cancel()
+							// A store's error names the index object it read.
+							return op.FromRADOS(fmt.Errorf("reading default.rgw.meta/%s: %w", secret, ctx.Err()), op.ScopeUser)
+						}
+					})
+				goneLine(rec, buf, "RequestTimeout")
+				Expect(buf.String()).NotTo(ContainSubstring(secret))
+			},
+			Entry("a lookup by access key", "AKIDEXAMPLE"),
+			Entry("a lookup by email", "alice@example.com"),
+		)
+		It("ends a request whose client went away during authentication, logging it at debug and answering nothing", func(ctx SpecContext) {
+			rec, m, buf := serveGone(ctx, func(cancel func()) s3.Authenticator {
+				return s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+					cancel()
+					return nil, fmt.Errorf("%w: the request's access key does not load: %w", op.ErrInvalidAccessKeyID, context.Canceled)
+				})
+			}, nil)
+			Expect(rec.Body.Len()).To(BeZero())
+			Expect(m.ObserveCallCount()).To(Equal(1))
+			_, observed, _, _, _ := m.ObserveArgsForCall(0)
+			Expect(observed).To(Equal(403))
+			goneLine(rec, buf, "InvalidAccessKeyId")
+		})
+	})
 	Describe("usage logging", func() {
 		It("logs a successful ListBuckets once, with its final status and bytes", func() {
 			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
