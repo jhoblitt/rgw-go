@@ -9982,6 +9982,15 @@ Every new entry adds its row to this table, in document order.
     in `suspended=true` leaves the user unsuspended, and on a user modify,
     which applies `suspended` whenever it exists (`:385-386`; `:392-393`),
     lifts a suspension the user already has.
+  - The admin bucket removal reads `purge-objects` and `bypass-gc` the
+    same way, defaulting to false, and the bucket quota set reads
+    `enabled` defaulting to the current value
+    (`driver/rados/rgw_rest_bucket.cc:232-233` and `:319` at both tags).
+    An unparsable value there keeps the bucket, but an empty or bare
+    `purge-objects=` is true and purges it; rgw-go refuses both
+    (`removeBucket`, `internal/admin/bucket.go`; `docs/exclusions.md`,
+    "The admin bucket routes refuse a boolean argument they cannot
+    parse").
 - **Impact:** an operator's typo in an `active=false` revocation leaves
   the key active, and the 200 hides it. Admin-only: every route needs
   `users=write`.
