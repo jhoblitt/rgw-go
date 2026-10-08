@@ -70,6 +70,17 @@ func fetch(ctx context.Context, c *http.Client, method, url string, h http.Heade
 	return resp, string(body), errors.Join(err, resp.Body.Close())
 }
 
+// metricLine is series's sample line in a text-format scrape, "" when the
+// scrape has none.
+func metricLine(scrape, series string) string {
+	for l := range strings.Lines(scrape) {
+		if strings.HasPrefix(l, series+" ") {
+			return strings.TrimSuffix(l, "\n")
+		}
+	}
+	return ""
+}
+
 // writeSelfSigned writes a self-signed certificate for 127.0.0.1 and its key
 // to one PEM file, as Rook lays a TLS secret out for radosgw, and returns
 // the certificate.
@@ -218,7 +229,15 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			Expect(body).To(ContainSubstring(`rgw_go_requests_total{op="list_buckets",status="2xx"}`))
-			Expect(body).To(ContainSubstring(`rgw_go_rados_ops_in_flight{mode="callback"} 0`))
+			// The gc worker's first pass over the gc shards starts with serve
+			// and may have a read in the limiter at any one scrape; an
+			// operation that leaked would hold the gauge above 0 on every one.
+			Eventually(func(g Gomega) string {
+				_, scrape, scrapeErr := fetch(ctx, client, http.MethodGet, metricsBase+"/metrics", nil)
+				g.Expect(scrapeErr).NotTo(HaveOccurred())
+				return metricLine(scrape, `rgw_go_rados_ops_in_flight{mode="callback"}`)
+			}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(100 * time.Millisecond).
+				Should(Equal(`rgw_go_rados_ops_in_flight{mode="callback"} 0`))
 
 			resp, body, err = fetch(ctx, client, http.MethodGet, metricsBase+"/debug/pprof/heap?debug=1", nil)
 			Expect(err).NotTo(HaveOccurred())
