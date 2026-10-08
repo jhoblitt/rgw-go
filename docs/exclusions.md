@@ -2692,7 +2692,10 @@ differ, rgw-go does the following.
   v20.2.4), which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
-  them anyway, and can replace or remove the very policy that denied them.
+  them anyway, and can replace or remove the very policy that denied them
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's retried bucket writes are not
+  authorized
+  again](ceph-upstream-bugs.md#radosgws-retried-bucket-writes-are-not-authorized-again)").
   rgw-go's retry answers 403 AccessDenied, writes nothing, and leaves the
   revoking ACL or policy in place.
 
