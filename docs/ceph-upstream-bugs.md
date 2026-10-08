@@ -3238,15 +3238,17 @@ Every new entry adds its row to this table, in document order.
   NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:93`).
 - **Releases:** every release with accounts, from v19.1.0; checked at
   v19.2.6, v20.2.4 and main 06adccc.
-- **rgw-go:** mirrors it on purpose, so that both gateways answer alike on a
-  shared zone. The memstore keeps one email index for users and accounts; a
-  user's write repoints an account's entry, and `RemoveAccount` deletes the
-  entry whoever holds it. The spec "lets a user take an account's email,
-  which the account's removal then drops, as radosgw does"
-  (`internal/memstore/admin_test.go`) pins it. The RADOS driver's account
-  and user stores are not written yet and are to follow radosgw too.
-  Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
-  for it.
+- **rgw-go:** reproduces the takeover, so that both gateways answer alike
+  on a shared zone, and on the RADOS driver not the deletion. A user's
+  write repoints an account's email entry as radosgw's does, in the
+  memstore and the RADOS driver alike. The RADOS driver's account removal
+  deletes the email entry only while it names the account, under the
+  version it read, so the user keeps the email (`RemoveAccount`,
+  `internal/driver/account.go`; `docs/exclusions.md`, "The admin account
+  routes and the RADOS account store differ from radosgw"). The memstore's
+  `RemoveAccount` still deletes the entry whoever holds it, which the spec
+  "lets a user take an account's email, which the account's removal then
+  drops, as radosgw does" (`internal/memstore/admin_test.go`) pins.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
@@ -4816,9 +4818,10 @@ Every new entry adds its row to this table, in document order.
   are unaffected.
 - **Releases:** v19.2.6, v20.2.0, v20.2.1 and origin/squid (a742f50616e);
   fixed in v20.2.2 and main.
-- **rgw-go:** its `/admin/account` handlers are phase 1 work not yet
-  written; the task that writes them reproduces Squid's refusal or records
-  the difference in `docs/exclusions.md`.
+- **rgw-go:** reproduces it. The account get and delete check `account`
+  on Squid and `accounts` on Tentacle, so on Squid only an admin or a
+  system identity gets past them (`GetAccountInfo` and `RemoveAccount`,
+  `internal/op/adminaccount.go`; `accountCaps`, `internal/admin/dispatch.go`).
   `test/admin/baseline/squid.json` holds both calls' subtests as skipped,
   and `tentacle.json` as passed.
 - **Upstream:** fixed upstream before this entry; not found by us.
