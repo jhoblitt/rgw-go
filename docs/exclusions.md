@@ -3156,6 +3156,20 @@ v19.2.6 and v20.2.4 tags, and queues an overwritten object's tails for the
 GC as `complete_atomic_modification` does. Where the two differ, rgw-go
 does the following.
 
+- **A body cut short is 400 RequestTimeout.** When a client closes its
+  connection before it has sent the body its Content-Length promised,
+  rgw-go answers 400 RequestTimeout, the answer radosgw's short-body branch
+  intends for such a body (`!chunked_upload && ofs != s->content_length`,
+  `rgw_op.cc:4430-4431` at v19.2.6, `:4662-4663` at v20.2.4; `bodyErr`,
+  `internal/driver/stripe.go`). A chunked body cut short, which that branch
+  exempts, gets the same 400 from rgw-go, as net/http reports either cut as
+  `io.ErrUnexpectedEOF` (`net/http/internal/chunked.go:113-161` at
+  go1.27.1). radosgw answers both 404 NoSuchKey: beast reports either cut
+  as its own `partial_message` code, 2, which radosgw takes for an errno,
+  ENOENT
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's beast frontend passes Boost
+  error codes off as errno](ceph-upstream-bugs.md#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno)").
+
 - **A GC chain object too large for one entry is queued alone.** rgw-go
   splits an overwritten object's tails into GC entries whose estimated
   encoding stays within `rgw_max_chunk_size`, as `send_split_chain` does
