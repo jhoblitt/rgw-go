@@ -506,7 +506,7 @@ var _ = Describe("StatsStore", func() {
 		})
 
 		It("skips an account whose info does not load, as get_owner_tenant fails", func(ctx SpecContext) {
-			var logs bytes.Buffer
+			var logs syncBuffer
 			DeferCleanup(driver.CaptureLog(&logs))
 			acct := meta.NewAccountInfo()
 			acct.ID, acct.Name = "RGW00000000000000002", "other"
