@@ -97,7 +97,9 @@ var _ = Describe("multipart", func() {
 		_, err = store.ListParts(ctx, up, 0, 10)
 		Expect(err).To(MatchError(op.ErrNoSuchUpload), "listing an aborted upload's parts")
 		_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1}})
-		Expect(err).To(MatchError(op.ErrNoSuchUpload), "completing an aborted upload")
+		Expect(err).To(MatchError(op.ErrCompletionInProgress), "completing an aborted upload, whose lock fails as the driver's does")
+		Expect(op.AsError(err).Message).To(Equal("This multipart completion is already in progress"))
+		Expect(err).NotTo(MatchError(op.ErrNoSuchUpload))
 		Expect(store.Abort(ctx, up)).To(MatchError(op.ErrNoSuchUpload), "aborting twice")
 	})
 	It("stores a part under its MD5, replacing one of the same number", func(ctx SpecContext) {

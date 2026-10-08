@@ -33,10 +33,6 @@ const maxMetaDeleteRetries = 15
 // partHeadStats bounds the part head stats a completion has in flight.
 const partHeadStats = 16
 
-// inProgress is the answer to a completion whose lock is held or lost
-// (:6443-6444).
-var inProgress = op.ErrInternalError.WithMessage("This multipart completion is already in progress")
-
 // multipartETag is the ETag complete computes: the hex MD5 of the parts'
 // 16-byte MD5s, "-" and the part count (rgw_sal_rados.cc:3503-3505 and
 // :3579-3585). An ETag that is not 32 hex digits is ErrInvalidPart, where
@@ -317,7 +313,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 				return res, nil
 			}
 		}
-		return nil, fmt.Errorf("%w: locking upload %s: %w", inProgress, up.ID, err)
+		return nil, fmt.Errorf("%w: locking upload %s: %w", op.ErrCompletionInProgress, up.ID, err)
 	}
 	ctx = context.WithoutCancel(ctx)
 	res, released, err := s.completeLocked(ctx, up, ref, parts)
@@ -367,7 +363,7 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, pa
 	}
 	tag := cmp.Or(up.WriteTag, s.w.randTag())
 	if lerr := s.renewAndRecord(ctx, ref, tag); lerr != nil {
-		return nil, false, fmt.Errorf("%w: renewing the lock of upload %s: %w", inProgress, up.ID, lerr)
+		return nil, false, fmt.Errorf("%w: renewing the lock of upload %s: %w", op.ErrCompletionInProgress, up.ID, lerr)
 	}
 	attrs := maps.Clone(ms.attrs)
 	if attrs == nil {
