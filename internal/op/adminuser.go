@@ -303,18 +303,30 @@ func foldEqual(a, b string) bool {
 // non-exclusively whether it creates or modifies (driver/rados/rgw_user.cc:1500
 // at v19.2.6, :1505 at v20.2.4), so the uid object and every index object
 // are overwritten as radosgw overwrites them, and a modify is checked
-// against the version it read. The account users index is kept as
-// PutOperation keeps it: a display name another user of the account holds
-// refuses the write with exists, radosgw's EEXIST as the op translates it;
-// the old entry goes and the new one comes when the account, path or name
-// changed (svc_user_rados.cc:272-290, :352-375 and :444-455 at v19.2.6).
-// Nothing is undone on a failure: a create that fails after the uid object
-// is written leaves the user as radosgw leaves it. Every error is
+// against the version it read. A display name another user of the account
+// holds refuses the write with exists, radosgw's EEXIST as the op
+// translates it (svc_user_rados.cc:272-290 at v19.2.6).
+//
+// The account users index is written around the user, in an order a write
+// that stops anywhere leaves safe and a later write completes: the user's
+// entry is added before the user is stored, on every write that leaves it
+// in an account, and the old entry is removed after, only when its key,
+// the display name lower-cased, changed. So an account member always has
+// an entry, which holds off the account's removal, and a retry, or any
+// later write of the user, adds a missing one. radosgw links the user
+// after storing it and only when the link changed (:295 and :360-375;
+// :274 and :340-355 at v20.2.4), so
+// a write that stops between leaves a member without an entry for good
+// (docs/ceph-upstream-bugs.md, "radosgw's user write can leave an account
+// member out of the account's users index"). A stop between the user's
+// store and the old entry's removal leaves that entry naming the user
+// under its old name; it holds nothing off but the account's removal,
+// which the user's membership holds off anyway, and every reader skips it
+// once the user is gone. Nothing is undone on a failure. Every error is
 // storeErr's.
 func writeUser(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInfo, exists *Error) error {
 	newLink, oldLink := linkOf(&rec.Info), linkOf(old)
-	relink := newLink != (accountLink{}) && newLink != oldLink
-	if relink {
+	if newLink != (accountLink{}) {
 		taken, err := accountNameTaken(ctx, env, &rec.Info)
 		if err != nil {
 			return err
@@ -322,22 +334,22 @@ func writeUser(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInf
 		if taken {
 			return exists
 		}
+		if err := env.Accounts.AddAccountUser(ctx, rec.Info.AccountID, rec.Info); err != nil {
+			return storeErr(err)
+		}
 	}
 	var opts PutUserOptions
 	if old != nil {
 		opts.IfVersion = &rec.Version
 	}
-	err := env.Users.PutUser(ctx, rec, opts)
-	if err == nil && oldLink != (accountLink{}) && oldLink != newLink {
-		if err = env.Accounts.RemoveAccountUser(ctx, old.AccountID, old.DisplayName); errors.Is(err, ErrNoSuchKey) {
-			err = nil
-		}
-	}
-	if err == nil && relink {
-		err = env.Accounts.AddAccountUser(ctx, rec.Info.AccountID, rec.Info)
-	}
-	if err != nil {
+	if err := env.Users.PutUser(ctx, rec, opts); err != nil {
 		return storeErr(err)
+	}
+	if oldLink != (accountLink{}) && (oldLink.account != newLink.account || !foldEqual(oldLink.name, newLink.name)) {
+		err := env.Accounts.RemoveAccountUser(ctx, old.AccountID, old.DisplayName)
+		if err != nil && !errors.Is(err, ErrNoSuchKey) {
+			return storeErr(err)
+		}
 	}
 	return nil
 }
@@ -869,12 +881,12 @@ func (o *RemoveUser) VerifyPermission(_ context.Context, r *Request) error {
 // buckets of the user's own list refuse the removal with radosgw's EEXIST,
 // the 409 BucketAlreadyExists, unless PurgeData, which removes each with
 // its objects first. A bucket the list names that another owner now holds
-// is left alone. The account users index loses the user's entry, then the
-// user goes. Each step is done again or found done by a retry: an entry
-// already gone from the account users index, which radosgw's
-// remove_user_info refuses (svc_user_rados.cc:601-610 at v19.2.6, :575-584
-// at v20.2.4), is taken as removed, so a removal that failed later
-// completes.
+// is left alone. Then the user goes, and after it the user's entry in the
+// account users index, an entry already gone taken as removed. radosgw
+// unlinks the entry first (svc_user_rados.cc:601-610 before :624 at
+// v19.2.6, :575-584 before :598 at v20.2.4), so a removal that stops
+// between leaves a user its account's removal no longer sees; here a stop
+// leaves only an entry naming a gone user, which every reader skips.
 func (o *RemoveUser) Execute(ctx context.Context, r *Request) error {
 	env := r.Env
 	uid := opUserID(o.UID)
@@ -892,14 +904,14 @@ func (o *RemoveUser) Execute(ctx context.Context, r *Request) error {
 	if err := eachUserBucket(ctx, env, rec.Info.UserID, o.removeBuckets(ctx, env, rec.Info.UserID)); err != nil {
 		return err
 	}
+	if err := env.Users.RemoveUser(ctx, rec); err != nil {
+		return storeErr(err)
+	}
 	if rec.Info.AccountID != "" {
 		err := env.Accounts.RemoveAccountUser(ctx, rec.Info.AccountID, rec.Info.DisplayName)
 		if err != nil && !errors.Is(err, ErrNoSuchKey) {
 			return storeErr(err)
 		}
-	}
-	if err := env.Users.RemoveUser(ctx, rec); err != nil {
-		return storeErr(err)
 	}
 	return nil
 }

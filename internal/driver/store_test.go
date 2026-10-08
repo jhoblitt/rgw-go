@@ -248,39 +248,6 @@ var _ = Describe("the driver", func() {
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
 			},
-			Entry("GetAccount", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetAccount(ctx, "RGW00000000000000001")
-				return err
-			}),
-			Entry("AccountName", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.AccountName(ctx, "RGW00000000000000001")
-				return err
-			}),
-			Entry("GetAccountByName", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetAccountByName(ctx, "", "acme")
-				return err
-			}),
-			Entry("GetAccountByEmail", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetAccountByEmail(ctx, "ops@acme.example")
-				return err
-			}),
-			Entry("PutAccount", func(ctx context.Context, s *driver.Store) error {
-				return s.PutAccount(ctx, &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001", Name: "acme"}}, nil, op.PutAccountOptions{Exclusive: true})
-			}),
-			Entry("RemoveAccount", func(ctx context.Context, s *driver.Store) error {
-				return s.RemoveAccount(ctx, &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001"}})
-			}),
-			Entry("AddAccountUser", func(ctx context.Context, s *driver.Store) error {
-				return s.AddAccountUser(ctx, "RGW00000000000000001", meta.UserInfo{UserID: meta.UserID{ID: "alice"}, DisplayName: "Alice"})
-			}),
-			Entry("RemoveAccountUser", func(ctx context.Context, s *driver.Store) error {
-				return s.RemoveAccountUser(ctx, "RGW00000000000000001", "Alice")
-			}),
-			Entry("ListAccountUsers", func(ctx context.Context, s *driver.Store) error {
-				_, _, err := s.ListAccountUsers(ctx, "RGW00000000000000001", "", 1000)
-				return err
-			}),
-
 			Entry("ReadUsage", func(ctx context.Context, s *driver.Store) error {
 				_, _, err := s.ReadUsage(ctx, "alice", "", 0, ^uint64(0), 1000, &op.UsageIter{})
 				return err

@@ -689,7 +689,7 @@ review and verified against the tree.
   users index clean where radosgw leaves entries behind.** On
   `/admin/user` create, info, modify and remove, rgw-go differs from
   radosgw's `RGWUser` paths (`driver/rados/rgw_user.cc` at v19.2.6 and
-  v20.2.4) in five ways:
+  v20.2.4) in seven ways:
   - A failed read of a user, of the email index or of the access key
     index fails the request. radosgw's `RGWUser::init` and its duplicate
     checks count any failure as "no such user", so a RADOS error there
@@ -699,9 +699,35 @@ review and verified against the tree.
     the account's users index, which radosgw leaves behind
     (docs/ceph-upstream-bugs.md, "Removing an account's root user leaves
     its name in the account's users index").
+  - A write of an account member adds the user's users index entry
+    before it stores the user, whether or not the account, the path or
+    the display name changed, and removes the old entry after it, only
+    when the display name's lower-cased key changed. radosgw links the
+    user after storing it and only when the link changed, so a write that
+    stops between leaves a member without an entry for good, and an
+    account removal then succeeds while the user names the account
+    (docs/ceph-upstream-bugs.md, "radosgw's user write can leave an
+    account member out of the account's users index"). A write that stops
+    in rgw-go leaves at most an entry naming the user under its old name.
+    On a zone shared with radosgw, that entry blocks the old display name
+    for any other user radosgw stores in the account, and adds one to
+    `count_account_users` toward `max_users`, for as long as the entry
+    lasts, which the member's removal does not end; while the member
+    lives, IAM ListUsers lists it twice (`services/svc_user_rados.cc:283-290`
+    at v19.2.6 and `:260-267` at v20.2.4, `rgw_rest_iam_user.cc:175-189`,
+    and `driver/rados/rgw_sal_rados.cc:1426-1429` and `:1966-1969`, which
+    skip a gone user). rgw-go's display name check compares each entry's
+    user's current display name, so the entry blocks no name there, and
+    rgw-go counts no entries toward a limit.
+    Every write of an account member reads the account's users for the
+    display name check, which radosgw does only when the link changed.
+  - A user removal removes the user before its users index entry, where
+    radosgw unlinks the entry first (`services/svc_user_rados.cc:601-610`
+    and `:624` at v19.2.6, `:575-584` and `:598` at v20.2.4). A removal
+    that stops between leaves only an entry naming a gone user, which the
+    account's removal and the display name check skip.
   - Removing an account user whose users index entry is already gone,
-    root or not, completes, so a removal that failed after the unlink
-    completes on retry. radosgw answers NoSuchUser for a non-root user
+    root or not, completes. radosgw answers NoSuchUser for a non-root user
     without its entry, for good, and takes a removal whose uid object lost
     a version race for success with the user left in place; rgw-go answers
     that race 409 ConcurrentModification and removes the user on retry
@@ -1051,6 +1077,106 @@ review and verified against the tree.
   answers 501 until unit N's bypass-gc task implements the driver's
   data pass, and removes nothing; `purge-objects=true` without `bypass-gc`
   works. The memstore serves both.
+- **The admin account routes and the RADOS account store differ from
+  radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
+  `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's
+  account store (`driver/rados/account.cc` and `users.cc`):
+  - A name or email redirect whose account is gone, or no longer holds
+    that name or email, is stale. A lookup through it answers
+    NoSuchEntity, where radosgw returns the account it names, under its
+    new name for one a rename left behind: 404 NoSuchKey from the admin
+    API, and from S3 a grant by that email answers 400
+    UnresolvableGrantByEmailAddress in an ACL document or 404 NoSuchKey
+    in a grant header, where radosgw grants the account
+    (`internal/authz/write.go`). A create or rename takes a stale redirect over,
+    where radosgw takes any redirect that reads for a holder and refuses
+    the name or email with EEXIST for good (docs/ceph-upstream-bugs.md, "A
+    stopped account removal or rename blocks the name and email for
+    good"). An email redirect naming a user whose id has an account id's
+    shape, which only a metadata put can store, reads as an account's,
+    and is stale when no such account exists.
+  - A create first writes its account object exclusively with no name
+    or email, and writes the whole account last, under the version that
+    write left, so a created account is at version 2 where radosgw's is
+    at 1 (`rgw_account.cc:164`, one exclusive write under a new write
+    version, at v19.2.6 and v20.2.4). A write claims the redirects of the name and email it
+    holds, changed or not, before it writes the whole account, writing one
+    that already names it again unchanged under the version read; radosgw
+    writes them after, only for a changed name or email, and ignores
+    their failure, so one failure there leaves two accounts holding one
+    name (docs/ceph-upstream-bugs.md, "radosgw's account removal deletes a
+    name redirect another account holds"). A failed claim leaves the
+    account object without that name or email. A create whose claim fails
+    gives up the name redirect it claimed, then removes its nameless
+    object, each under the version it wrote, and keeps the object when the
+    redirect's removal fails, so a redirect it claimed never names an
+    account with no object. A claim another
+    account holds, read past the metadata cache, answers 409,
+    AccountAlreadyExists on create and BucketAlreadyExists on modify, even
+    on a modify that changes neither, so an account whose name or email
+    another account holds cannot be modified until it changes them; an
+    account object stored without a version holds its redirects. A stale
+    redirect naming an existing account is taken over only after that
+    account's object is written again unchanged under the version read,
+    and is then removed under the version read: a write of that account
+    in flight fails 409 ConcurrentModification, and one that claims the
+    redirect again meanwhile fails the removal, after which the takeover
+    reads again. So rgw-go's own writes never leave two accounts holding
+    one name or email. A create that stops, or whose whole-account write
+    a takeover fenced, which answers 409 ConcurrentModification, leaves an
+    account with no name or email. No lookup by name or email finds it; a
+    read by id and radosgw's `metadata list account` do. It refuses a
+    later create of the same caller-supplied id with 409
+    AccountAlreadyExists, so retrying such a create never succeeds while
+    it stands. One is left per lost race or stopped create, and the 409
+    names no id, so one with a generated id is found only by listing. The
+    operator removes it by id.
+  - An account removal reads its name and email redirects past the
+    metadata cache before it removes the account object, a failed read
+    refusing it with nothing removed, and then removes each only when it
+    named the account, under the version read then, so a create of the
+    same id that claimed one meanwhile keeps it. radosgw removes
+    both unread, freeing a name another account holds or an email a user
+    took (docs/ceph-upstream-bugs.md, "radosgw's account removal deletes a
+    name redirect another account holds" and "radosgw lets a user take an
+    account's email and deletes it with the account"). The memstore keeps
+    radosgw's removal.
+  - A redirect step that fails is logged and the write goes on, as in
+    radosgw, but the log names the account and the kind of redirect, not
+    the object, which an email redirect is named by.
+  - An account object stored without a version, which radosgw never
+    writes, is written over only as a create, so a modify answers 409
+    BucketAlreadyExists, and its removal answers 409
+    ConcurrentModification; radosgw writes and removes it unchecked.
+  - Create and modify answer 400 InvalidArgument after the cap check,
+    storing nothing, for a `max-users`, `max-roles`, `max-groups`,
+    `max-access-keys` or `max-buckets` that is empty, does not parse, or
+    lies outside int32. radosgw stores 0 for an empty or unparsable one,
+    which for `max-buckets` is no limit, and wraps one past int32, a
+    negative limit being no limit for all but `max-buckets`
+    (docs/ceph-upstream-bugs.md, "radosgw's account create and modify
+    store an unparsable or wrapped limit, which can mean no limit").
+  - On Tentacle, `PUT /admin/account?quota` answers 400 InvalidArgument
+    after the cap check, storing nothing, for a `max-size` or
+    `max-objects` that is empty, does not parse or lies outside int32, a
+    `max-size` below -1, an `enabled` that does not parse, and any
+    `max-size-kb`, which the op does not read. radosgw stores 0 for an
+    empty or unparsable size or count, wraps one past int32, so that 3 GiB
+    becomes no limit, disables the quota for an unparsable `enabled`, and
+    ignores `max-size-kb` (docs/ceph-upstream-bugs.md, "radosgw's account
+    quota set wraps a size past 2 GiB and defaults what it cannot parse").
+    An empty `enabled=` keeps radosgw's reading as true.
+  - An account removal on the RADOS driver refuses with radosgw's 409
+    BucketNotEmpty and "The account cannot be deleted until all ... are
+    removed." while an entry of the account's `roles.<id>`, `groups.<id>`
+    or `topics.<id>` index remains, or the oidc pool holds an OpenID
+    Connect provider of the account, as radosgw refuses for roles, groups
+    and providers (`rgw_account.cc:366-432`). radosgw lists the topics of
+    the account's tenant instead, so it removes an account that still
+    owns topics, which rgw-go refuses (docs/ceph-upstream-bugs.md,
+    "radosgw's account removal never sees the account's topics"). A
+    failure to read an index or to list the pool refuses the removal. The
+    memstore holds none of these resources.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the
@@ -2691,26 +2817,6 @@ rgw-go does the following.
   - The repair is outside rgw-go's S3 surface: radosgw-admin, or a radosgw
     gateway serving the same cluster, which ignores the attr, can rewrite or
     remove it, or remove the policy that names the tag.
-- **An account grantee does not resolve on the RADOS driver until its
-  account store lands.** radosgw resolves a grantee named by `id` through
-  `read_owner_display_name`, which loads a user or, for an account id, the
-  account (`load_account_by_id`), and one named by `emailAddress` through
-  `read_aclowner_by_email`, which reads the email index users and accounts
-  share and then the owner it names (`rgw_acl_s3.cc:300-337`, called from
-  `parse_grantee_str` at `:356-371` and `resolve_grant` at `:504-518`, all
-  at v19.2.6 and v20.2.4; `load_owner_by_email`,
-  `driver/rados/rgw_sal_rados.cc:1296-1309` at v19.2.6, `:1835-1848` at
-  v20.2.4). A miss is radosgw's -ENOENT, 404 NoSuchKey from a grant header.
-  rgw-go's RADOS driver does not yet read accounts, and its account
-  lookups answer NotImplemented. So on that driver a grant header naming
-  an account id, or an email address that no user holds, answers 501
-  NotImplemented, where radosgw grants the account or answers 404; in the
-  ACL document of a PutBucketAcl, or of a PutObjectAcl when rgw-go serves
-  it, such a grantee or owner answers radosgw's 400 for an unresolvable one,
-  InvalidArgument or UnresolvableGrantByEmailAddress, where radosgw would
-  grant an account. rgw-go cannot tell an email that
-  nothing holds from one an account holds, so it reports no miss it has
-  not seen.
 - **The account root's pass on the bucket policy ops.** On Tentacle,
   radosgw lets the root user of the account that owns a bucket through
   PutBucketPolicy, GetBucketPolicy and DeleteBucketPolicy before any policy

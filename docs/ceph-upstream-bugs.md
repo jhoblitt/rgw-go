@@ -234,6 +234,12 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
 | [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
 | [radosgw's beast frontend passes Boost error codes off as errno](#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno) | pending | pending | ✓ |
+| [radosgw's account removal never sees the account's topics](#radosgws-account-removal-never-sees-the-accounts-topics) | pending | pending | ✓ |
+| [radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse](#radosgws-account-quota-set-wraps-a-size-past-2-gib-and-defaults-what-it-cannot-parse) | pending | pending | ✓ |
+| [radosgw's account removal deletes a name redirect another account holds](#radosgws-account-removal-deletes-a-name-redirect-another-account-holds) | pending | pending | ✓ |
+| [A stopped account removal or rename blocks the name and email for good](#a-stopped-account-removal-or-rename-blocks-the-name-and-email-for-good) | pending | pending | ✓ |
+| [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
+| [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3234,15 +3240,17 @@ Every new entry adds its row to this table, in document order.
   NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:93`).
 - **Releases:** every release with accounts, from v19.1.0; checked at
   v19.2.6, v20.2.4 and main 06adccc.
-- **rgw-go:** mirrors it on purpose, so that both gateways answer alike on a
-  shared zone. The memstore keeps one email index for users and accounts; a
-  user's write repoints an account's entry, and `RemoveAccount` deletes the
-  entry whoever holds it. The spec "lets a user take an account's email,
-  which the account's removal then drops, as radosgw does"
-  (`internal/memstore/admin_test.go`) pins it. The RADOS driver's account
-  and user stores are not written yet and are to follow radosgw too.
-  Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
-  for it.
+- **rgw-go:** reproduces the takeover, so that both gateways answer alike
+  on a shared zone, and on the RADOS driver not the deletion. A user's
+  write repoints an account's email entry as radosgw's does, in the
+  memstore and the RADOS driver alike. The RADOS driver's account removal
+  deletes the email entry only while it names the account, under the
+  version it read, so the user keeps the email (`RemoveAccount`,
+  `internal/driver/account.go`; `docs/exclusions.md`, "The admin account
+  routes and the RADOS account store differ from radosgw"). The memstore's
+  `RemoveAccount` still deletes the entry whoever holds it, which the spec
+  "lets a user take an account's email, which the account's removal then
+  drops, as radosgw does" (`internal/memstore/admin_test.go`) pins.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
@@ -4812,9 +4820,10 @@ Every new entry adds its row to this table, in document order.
   are unaffected.
 - **Releases:** v19.2.6, v20.2.0, v20.2.1 and origin/squid (a742f50616e);
   fixed in v20.2.2 and main.
-- **rgw-go:** its `/admin/account` handlers are phase 1 work not yet
-  written; the task that writes them reproduces Squid's refusal or records
-  the difference in `docs/exclusions.md`.
+- **rgw-go:** reproduces it. The account get and delete check `account`
+  on Squid and `accounts` on Tentacle, so on Squid only an admin or a
+  system identity gets past them (`GetAccountInfo` and `RemoveAccount`,
+  `internal/op/adminaccount.go`; `accountCaps`, `internal/admin/dispatch.go`).
   `test/admin/baseline/squid.json` holds both calls' subtests as skipped,
   and `tentacle.json` as passed.
 - **Upstream:** fixed upstream before this entry; not found by us.
@@ -10524,3 +10533,296 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit X, Task 3, 2026-10-08, reading what radosgw does
   for a client that disconnects; confirmed against the Boost headers in its
   review. Derived from the source, not reproduced.
+
+## radosgw's account removal never sees the account's topics
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: an account removed
+  while it still owns topics. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; a line stands at both tags
+  unless a pair is given, v19.2.6's then v20.2.4's.
+  - A topic an account owns is linked into the account's index object
+    `topics.<account id>`: `rgwrados::topic::write` adds it to
+    `get_topics_obj(zone, *id)` for the owner's `rgw_account_id`
+    (`driver/rados/topic.cc:120-129`), and `topic::remove` takes the
+    tenant it is given for that id, unlinking only when
+    `rgw::account::validate_id(tenant)` holds (`:164-172`).
+  - `RadosStore::list_account_topics` lists the index object of the id it
+    is given (`driver/rados/rgw_sal_rados.cc:1771-1783`; `:2322-2334`).
+  - `rgw::account::remove` passes it the account's tenant, not its id,
+    and so does its `remove_topic_v2` (`rgw_account.cc:434-456`). The
+    tenant is the one the account was created in (`:125-129`), empty by
+    default, not its id. So the listing reads `topics.<tenant>`, which
+    holds none of the account's topics, and the
+    removal's "The account cannot be deleted until all topics are
+    removed." refusal never fires.
+  - The four checks before it list by the account's id: users
+    (`:310-311`), buckets (`:335-337`), roles (`:368-369`) and groups
+    (`:392-393`).
+- **Impact:** `DELETE /admin/account` and `radosgw-admin account rm`
+  remove an account that still owns topics, where every other kind of
+  resource holds them off. The topics stay, owned by an id no account
+  holds, and `topics.<account id>` still names them; an account created
+  again with that id, which an admin may name, inherits them.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver's account removal
+  reads one entry of `topics.<account id>`, as it reads the roles' and the
+  groups' indexes, and refuses with radosgw's 409 BucketNotEmpty and "The
+  account cannot be deleted until all topics are removed." while one
+  remains (`accountResources`, `internal/driver/account.go`;
+  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  store differ from radosgw"). It is stricter than radosgw there: a
+  removal radosgw lets through answers 409.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, reading
+  `rgw::account::remove` for the admin API's account removal; derived from
+  the source, not reproduced.
+
+## radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse
+
+- **Kind:** defect, unfixed at v20.2.4: a quota stored other than the one
+  asked for, sometimes none. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/` at v20.2.4; v19.2.6 has no
+  account quota op (PUT `/admin/account?quota` runs the plain modify
+  there).
+  - `RGWOp_Account_Quota_Set::execute` reads `max-size` and `max-objects`
+    with `RESTArgs::get_int32` into `int32_t`s that start at 0, and
+    `enabled` with `get_bool` defaulting to false, discarding each return;
+    every value whose argument exists is applied
+    (`rgw_rest_account.cc:276-295`). The fields it fills are
+    `std::optional<int64_t>` (`rgw_account.h:58-59`), which `modify`
+    copies into the quota as they are (`rgw_account.cc:242-258`).
+  - `get_int32` sets `*existed` before it parses, and on a parse failure
+    returns `stringtol`'s -EINVAL without writing the value
+    (`rgw_rest.cc:941-960`). `stringtol` is `strtol` cast to `int32_t`,
+    refusing only `LONG_MAX` and trailing text (`rgw_string.h:70-84`).
+  - `get_bool` writes its default, false here, for a value it cannot
+    parse (`rgw_rest.cc:1007-1037`).
+  - A negative `max_size` or `max_objects` is no limit (`rgw_quota.cc:796`
+    and `:820`).
+- **Impact:**
+  - A `max-size` of 2 GiB or more is stored wrapped to 32 bits:
+    2147483648 to 4294967295 bytes become negative, so a 3 GiB quota is
+    no limit at all, and 5 GiB becomes 1 GiB. go-ceph's
+    `AccountQuotaSpec.MaxSize` is an `int64` and sends such sizes.
+  - An unparsable `max-size` or `max-objects` (`1G`, `10k`) stores 0,
+    which refuses writes under the quota once it is enabled.
+  - An unparsable `enabled` (`ture`) disables the quota.
+  - Each answers 200 with the stored quota in the body.
+- **Releases:** v20.2.4, checked there; the op first shipped in v20.2.2.
+- **rgw-go:** does not reproduce it. The quota op answers 400
+  InvalidArgument, after the cap check and storing nothing, for a
+  `max-size` or `max-objects` that does not parse or lies outside int32,
+  a `max-size` below -1, an unparsable `enabled`, and any `max-size-kb`,
+  which the op does not read (`setAccountQuota`,
+  `internal/admin/account.go`; `ModifyAccount`,
+  `internal/op/adminaccount.go`; `docs/exclusions.md`, "The admin account
+  routes and the RADOS account store differ from radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the Tentacle
+  account quota route; derived from the source, not reproduced.
+
+## radosgw's account removal deletes a name redirect another account holds
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a removal that frees a
+  name a live account holds. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/driver/rados/account.cc` is the same at v19.2.6
+  and v20.2.4 through these lines.
+  - `account::write` checks a new name by reading its redirect object
+    `name.<tenant>$<name>` and refusing one that exists (`:296-310`), then
+    writes the account object (`:328-341`), and only then creates the
+    redirect exclusively; a failure there is logged and ignored
+    (`:353-365`, `write_redirect` at `:148-160`).
+  - So two writes that give two accounts the same name can both pass the
+    check before either creates the redirect: both store the name in
+    their account object, and the redirect names the one whose exclusive
+    create won. A redirect write that fails for any other reason leaves
+    an account holding a name no redirect names, which a later account
+    then takes, the check finding nothing.
+  - `account::remove` deletes the redirect of the name in the account's
+    info without reading it and without a version (`:409-417`), whoever
+    it names. `account::write`'s rename deletes an old redirect only when
+    it names the account, under the version read (`:268-280`, `:343-352`).
+- **Impact:** removing the account that lost the name deletes the redirect
+  of the account that holds it. That account is no longer found by name
+  (`read_by_name`, `:200-217`), and the next account given the name takes
+  it, so two live accounts hold one name. The email redirect is removed
+  the same way (`:418-426`); a user holding the email loses it, as "radosgw
+  lets a user take an account's email and deletes it with the account"
+  records.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver reads the name and
+  the email redirect past the metadata cache before it removes the account
+  object, and removes one only when it named the account, under the
+  version read then, so a create of the same id that claimed it meanwhile
+  keeps it (`RemoveAccount`, `internal/driver/account.go`). Nor do its own
+  writes let two accounts hold one name or email. A create first writes
+  its account object exclusively with no name or email, so a redirect a
+  create claims names an account that already has an object; a create
+  refused a claim gives up the name redirect it claimed, under the version
+  its claim left, before it removes that object, and keeps the object when
+  it cannot. A write then claims its name and email redirects
+  before it writes the whole account, writing one that already names it
+  again under the version read, so a failed claim leaves the account
+  object without that name or email. It takes a redirect over only once a
+  read past the metadata cache shows its account no longer holds it,
+  after writing that account again under the version read, and then
+  removes the redirect under the version it read. A write of that account
+  in flight then fails, and one that claims the redirect again meanwhile
+  fails the removal, after which the takeover reads again (`PutAccount`,
+  `claimRedirect` and `fenceStaleHolder`, `internal/driver/account.go`;
+  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  store differ from radosgw"). What is left: a create that stops, or whose
+  whole-account write a takeover fenced, leaves an account with no name
+  or email. No lookup by name or email finds it; a read by id and
+  radosgw's `metadata list account` do. It refuses a later create of the
+  same caller-supplied id with AccountAlreadyExists, so retrying such a
+  create never succeeds while it stands; one is left per lost race or
+  stopped create, and the 409 names no id, so one with a generated id is
+  found only by listing. The operator removes it by id.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the RADOS
+  driver's account removal; derived from the source, not reproduced.
+
+## A stopped account removal or rename blocks the name and email for good
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a name or email no
+  account can take again. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/driver/rados/account.cc` is the same at v19.2.6
+  and v20.2.4 through these lines.
+  - `account::remove` deletes the account object first, then the name and
+    email redirects, logging and ignoring each redirect's failure
+    (`:401-426`). `account::write` writes the account object first, then
+    removes the old redirects and creates the new ones, with the same
+    tolerance (`:328-389`). A removal or rename that stops after the
+    account object, on a crash or a failed redirect step, leaves a
+    redirect that names a missing account, or an account that no longer
+    holds that name or email.
+  - `account::write` refuses a new name or email whose redirect reads,
+    whatever it names (`:296-326`); it does not compare the id the
+    redirect holds with anything. So no account can take the leftover's
+    name or email, the renamed account itself included, which reads its
+    own old redirect as taken.
+  - A retried rename does not finish either: the account object already
+    holds the new name, so `same_name` holds (`:255-257`) and the write
+    touches no redirect, leaving the new name with none.
+  - `read_by_name` and `read_by_email` follow the redirect without
+    checking that the account still holds the name or email (`:200-239`),
+    so the old name finds the renamed account; one naming a removed
+    account answers ENOENT. Only deleting the object by hand, with
+    `rados rm`, frees the name; neither `radosgw-admin` nor the admin API
+    removes a redirect without its account.
+- **Impact:** after one failed or interrupted removal or rename, the name
+  or email cannot be given to any account, and a renamed account is found
+  by its old name and not by its new one.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver claims a write's
+  name and email redirects before the account object and drops the old
+  ones after it, so a stop leaves only redirects that name an account not
+  holding the name or email. Such a redirect is stale: lookups through it
+  answer NoSuchEntity, and a create or rename takes it over once a read
+  past the metadata cache shows it stale. Every account write claims the
+  redirects of the name and email it holds, changed or not, so retrying a
+  rename that stopped finishes it unless another account claimed the name
+  meanwhile, when the retry answers 409 AccountAlreadyExists and the
+  account keeps its old name (`PutAccount`, `GetAccountByName`,
+  `GetAccountByEmail`, `internal/driver/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, making the RADOS
+  driver's account writes retry-safe; derived from the source, not
+  reproduced.
+
+## radosgw's user write can leave an account member out of the account's users index
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user that names an
+  account its removal no longer sees. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/services/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `PutOperation::put` stores the user (`svc_user_rados.cc:295-307`;
+    `:274-287`); only then does `complete` remove the old indexes, the old
+    account users entry among them (`:353-358` and `:444-455`; `:333-338`
+    and `:424-435`), and link the user into `users.<account id>`
+    (`:360-375`; `:340-355`).
+  - `complete` links only when `account_users_link` differs between the
+    old and the new record (`:360-361`; `:340-341`), the account, the
+    path and the display name.
+  - So a write that stops after `put`, on a crash or a failed step, leaves
+    the stored user naming the account with no entry, and no later write
+    adds one: the stored record, now the old one, already has that link.
+    A join, a create into the account and a display name change are all
+    such writes; a change of the name's case removes the old entry, which
+    is the new one's key too, before it links again.
+  - `remove_user_info` unlinks the entry (`:601-610`; `:575-584`) before
+    it removes the user (`remove_uid_index`, `:624`; `:598`), so a removal
+    that stops between leaves a user without its entry the same way.
+  - `rgw::account::remove` refuses an account only while
+    `list_account_users` lists a user (`rgw_account.cc:306-330` at both
+    tags; `driver/rados/rgw_sal_rados.cc:1399-1437`; `:1939-1977`).
+- **Impact:** `account rm`, through `radosgw-admin` or the admin API,
+  removes an account a user still names. The user keeps the account's id,
+  and an account created again with that id, which an admin may name,
+  takes the user back without any write to it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A user write adds the user's entry
+  before it stores the user, on every write of an account member, and
+  removes the old entry after, only when its key changed; a user removal
+  removes the user before its entry (`writeUser` and `RemoveUser`,
+  `internal/op/adminuser.go`; `docs/exclusions.md`, "The admin user routes
+  answer store failures, and keep the account users index clean where
+  radosgw leaves entries behind"). A stop then leaves an entry naming a
+  user that is gone, which every reader skips, or one naming a member
+  under its old name, which holds off only the account's removal its
+  membership holds off anyway.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
+  admin API's user writes for account membership; derived from the
+  source, not reproduced.
+
+## radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: an admin's typo or an
+  oversized value lifts an account limit. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; a line stands at both tags
+  unless a pair is given, v19.2.6's then v20.2.4's.
+  - `RGWOp_Account_Create` and `RGWOp_Account_Modify` read `max-users`,
+    `max-roles`, `max-groups`, `max-access-keys` and `max-buckets` with
+    `RESTArgs::get_int32` into `int32_t`s that start at 0, discard its
+    return, and apply each value whose argument exists
+    (`rgw_rest_account.cc:39-72` and `:131-164`).
+  - `get_int32` sets `*existed` before it parses and, when `stringtol`
+    refuses the value, returns -EINVAL without writing it
+    (`rgw_rest.cc:936-955`; `:941-960`). `stringtol` is `strtol` cast to
+    `int32_t`, refusing only `LONG_MAX` and trailing text, and an empty
+    value parses as 0 (`rgw_string.h:70-84`).
+  - An account's `max_buckets` of 0 is no limit and a negative one refuses
+    every bucket (`check_owner_max_buckets`, `rgw_op.cc:3170-3190`;
+    `:3398-3418`). A negative `max_users`, `max_access_keys`, `max_groups`
+    or `max_roles` is no limit (`rgw_rest_iam_user.cc:175` and `:936`,
+    `rgw_rest_iam_group.cc:175`, `rgw_rest_role.cc:147`).
+- **Impact:**
+  - `max-buckets=abc`, or an empty `max-buckets=`, stores 0: the account
+    may create buckets without limit.
+  - A limit past int32 wraps: `max-users=4294967295` stores -1, no limit,
+    and `max-buckets=4294967297` stores 1.
+  - Each answers 200 with the stored account in the body. Admin-only:
+    create and modify need `accounts=write`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Create and modify answer 400
+  InvalidArgument, after the cap check and storing nothing, for a limit
+  that is empty, that `stringtol` refuses, or that int32 cannot hold
+  (`accountParams`, `internal/admin/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
+  account routes' argument handling; derived from the source, not
+  reproduced.

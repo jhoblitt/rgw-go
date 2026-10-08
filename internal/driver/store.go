@@ -226,51 +226,6 @@ func (s *Store) Period() meta.Period { return s.zone.Period }
 // is not in the period.
 func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
 
-// GetAccount implements op.AccountStore.
-func (s *Store) GetAccount(context.Context, string) (*op.AccountRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// AccountName implements op.AccountStore.
-func (s *Store) AccountName(context.Context, string) (string, error) {
-	return "", op.ErrNotImplemented
-}
-
-// GetAccountByName implements op.AccountStore.
-func (s *Store) GetAccountByName(context.Context, string, string) (*op.AccountRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// GetAccountByEmail implements op.AccountStore.
-func (s *Store) GetAccountByEmail(context.Context, string) (*op.AccountRecord, error) {
-	return nil, op.ErrNotImplemented
-}
-
-// PutAccount implements op.AccountStore.
-func (s *Store) PutAccount(context.Context, *op.AccountRecord, *meta.AccountInfo, op.PutAccountOptions) error {
-	return op.ErrNotImplemented
-}
-
-// RemoveAccount implements op.AccountStore.
-func (s *Store) RemoveAccount(context.Context, *op.AccountRecord) error {
-	return op.ErrNotImplemented
-}
-
-// AddAccountUser implements op.AccountStore.
-func (s *Store) AddAccountUser(context.Context, string, meta.UserInfo) error {
-	return op.ErrNotImplemented
-}
-
-// RemoveAccountUser implements op.AccountStore.
-func (s *Store) RemoveAccountUser(context.Context, string, string) error {
-	return op.ErrNotImplemented
-}
-
-// ListAccountUsers implements op.AccountStore.
-func (s *Store) ListAccountUsers(context.Context, string, string, uint32) (ids []string, next string, err error) {
-	return nil, "", op.ErrNotImplemented
-}
-
 // ReadUsage implements op.UsageReader.
 func (s *Store) ReadUsage(context.Context, string, string, uint64, uint64, uint32, *op.UsageIter) (recs []op.UsageRecord, truncated bool, err error) {
 	return nil, false, op.ErrNotImplemented

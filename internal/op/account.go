@@ -38,15 +38,26 @@ type AccountStore interface {
 	//   - a name (in its tenant) or an email that differs from old's and that
 	//     any index entry holds is ErrAccountAlreadyExists, whoever the entry
 	//     names: another account, a user (users and accounts share the email
-	//     index, account.cc:102-114), or this account when old does not list it;
+	//     index, account.cc:102-114), or this account when old does not list it.
+	//     The RADOS driver takes an entry naming an account that no longer
+	//     holds that name or email for none, and refuses the name and email
+	//     rec holds, changed or not, when another holds them; it claims them
+	//     before it writes the account, and a create first writes the account
+	//     with neither, which it removes on a refused claim (docs/exclusions.md);
 	//   - Exclusive over a stored id is ErrAccountAlreadyExists;
 	//   - a non-zero rec.Version that differs from the stored version is
-	//     ErrConcurrentModification; a zero one is not checked.
-	// The write leaves rec.Version at {1, a fresh tag} for a new account and at
-	// {Ver+1, the same tag} over a stored one, as cls_version_inc counts, and
+	//     ErrConcurrentModification; a zero one is not checked by the
+	//     memstore and writes only as a create on the RADOS driver.
+	// The write leaves rec.Version at {1, a fresh tag} for a new account, {2, a
+	// fresh tag} on the RADOS driver, and at {Ver+1, the same tag} over a
+	// stored one, as cls_version_inc counts, and
 	// drops old's name and email entries only where they still name this account.
 	PutAccount(ctx context.Context, rec *AccountRecord, old *meta.AccountInfo, opts PutAccountOptions) error
-	// RemoveAccount is account.cc:394-438.
+	// RemoveAccount is account.cc:394-438. The RADOS driver refuses with
+	// ErrBucketNotEmpty and radosgw's message while the account has a role,
+	// a group, an OpenID Connect provider or a topic, and refuses a zero
+	// rec.Version or a name or email redirect it cannot read; the memstore
+	// holds none of those resources.
 	RemoveAccount(ctx context.Context, rec *AccountRecord) error
 	// The users index "users.<account>" (driver/rados/users.cc): AddAccountUser
 	// is add with exclusive=false and no limit, keyed by the display name;

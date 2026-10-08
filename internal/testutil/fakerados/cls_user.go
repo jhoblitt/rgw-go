@@ -3,6 +3,7 @@ package fakerados
 import (
 	"maps"
 	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/user"
@@ -10,9 +11,12 @@ import (
 )
 
 // UserWriteMethods are the methods UserClass emulates that the user class
-// registers with CLS_METHOD_WR (cls_user.cc:739-747 at v19.2.6 and
+// registers with CLS_METHOD_WR (cls_user.cc:739-762 at v19.2.6 and
 // v20.2.4), which RegisterClass takes with UserClass.
-var UserWriteMethods = []string{"set_buckets_info", "complete_stats_sync", "remove_bucket", "reset_user_stats2"}
+var UserWriteMethods = []string{
+	"set_buckets_info", "complete_stats_sync", "remove_bucket", "reset_user_stats2",
+	"account_resource_add", "account_resource_rm",
+}
 
 // userMaxEntries is the class's MAX_ENTRIES, the most entries list_buckets
 // and reset_user_stats2 read in one call.
@@ -22,8 +26,9 @@ const userMaxEntries = 1000
 // v20.2.4, which do not differ) over the object's omap: one encoded
 // cls_user_bucket_entry per bucket name, and the cls_user_header in the omap
 // header. It runs set_buckets_info, remove_bucket, list_buckets,
-// get_header, complete_stats_sync and reset_user_stats2, reading the entries
-// and the header from the stored object, as the class's
+// get_header, complete_stats_sync and reset_user_stats2, and on an account
+// index object account_resource_add, _get, _rm and _list, reading the
+// entries and the header from the stored object, as the class's
 // cls_cxx_map_get_val and cls_cxx_map_read_header do. A request that does
 // not decode is EINVAL, and a stored entry or header that does not decode
 // is EIO, except that list_buckets drops an entry it cannot decode.
@@ -61,6 +66,14 @@ func UserClass() ClassFunc {
 			return nil, 0
 		case "reset_user_stats2":
 			return userResetStats2(call)
+		case "account_resource_add":
+			return nil, accountResourceAdd(call)
+		case "account_resource_get":
+			return accountResourceGet(call)
+		case "account_resource_rm":
+			return nil, accountResourceRm(call)
+		case "account_resource_list":
+			return accountResourceList(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
@@ -282,6 +295,155 @@ func userResetStats2(call *ClassCall) (out []byte, rval int32) {
 	}
 	if len(keys) > 0 {
 		ret.Marker = keys[len(keys)-1]
+	}
+	return encodeSquid(ret), 0
+}
+
+// accountMaxEntries is account_resource_list's cap on the entries one call
+// reads (cls_user.cc:678).
+const accountMaxEntries = 1000
+
+// resourceKey is resource_key (cls_user.cc:509-518): the name with each byte
+// through std::tolower in the C locale, which lower-cases ASCII letters
+// alone.
+func resourceKey(name string) string {
+	b := []byte(name)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// accountHeader is read_header for an account index object: the stored
+// cls_user_account_header, the zero header when the object has none.
+func accountHeader(call *ClassCall) (h user.AccountHeader, rval int32) {
+	if call.Stored == nil || len(call.Stored.OmapHdr) == 0 {
+		return user.AccountHeader{}, 0
+	}
+	d := denc.NewDecoder(call.Stored.OmapHdr)
+	h = user.DecodeAccountHeader(d)
+	if d.Err() != nil {
+		return user.AccountHeader{}, -int32(syscall.EIO)
+	}
+	return h, 0
+}
+
+// storedEntry is cls_cxx_map_get_val of key: the stored value and whether
+// the object holds it.
+func storedEntry(call *ClassCall, key string) ([]byte, bool) {
+	if call.Stored == nil {
+		return nil, false
+	}
+	b, ok := call.Stored.Omap[key]
+	return b, ok
+}
+
+// accountResourceAdd is cls_account_resource_add (cls_user.cc:520-579): an
+// existing entry is overwritten, or EEXIST with exclusive; a new one is
+// EUSERS once the header counts limit entries, and otherwise raises the
+// count.
+func accountResourceAdd(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, user.DecodeAccountResourceAddOp)
+	if rval < 0 {
+		return rval
+	}
+	key := resourceKey(op.Entry.Name)
+	_, exists := storedEntry(call, key)
+	var hdr *user.AccountHeader
+	switch {
+	case !exists:
+		h, rval := accountHeader(call)
+		if rval < 0 {
+			return rval
+		}
+		if h.Count >= op.Limit {
+			return -int32(syscall.EUSERS)
+		}
+		h.Count++
+		hdr = &h
+	case op.Exclusive:
+		return -int32(syscall.EEXIST)
+	}
+	obj := call.Create()
+	obj.Omap[key] = encodeSquid(op.Entry)
+	if hdr != nil {
+		obj.OmapHdr = encodeSquid(*hdr)
+	}
+	return 0
+}
+
+// accountResourceGet is cls_account_resource_get (cls_user.cc:581-614):
+// ENOENT for a name the index lacks, EIO for an entry that does not decode.
+func accountResourceGet(call *ClassCall) (out []byte, rval int32) {
+	op, rval := decodeRequest(call.In, user.DecodeAccountResourceGetOp)
+	if rval < 0 {
+		return nil, rval
+	}
+	b, ok := storedEntry(call, resourceKey(op.Name))
+	if !ok {
+		return nil, -int32(syscall.ENOENT)
+	}
+	d := denc.NewDecoder(b)
+	entry := user.DecodeAccountResource(d)
+	if d.Err() != nil {
+		return nil, -int32(syscall.EIO)
+	}
+	return encodeSquid(user.AccountResourceGetRet{Entry: entry}), 0
+}
+
+// accountResourceRm is cls_account_resource_rm (cls_user.cc:616-661):
+// ENOENT for a name the index lacks; otherwise the entry goes and the
+// header's count drops by one, never below zero.
+func accountResourceRm(call *ClassCall) int32 {
+	op, rval := decodeRequest(call.In, user.DecodeAccountResourceRmOp)
+	if rval < 0 {
+		return rval
+	}
+	key := resourceKey(op.Name)
+	if _, ok := storedEntry(call, key); !ok {
+		return -int32(syscall.ENOENT)
+	}
+	h, rval := accountHeader(call)
+	if rval < 0 {
+		return rval
+	}
+	if h.Count > 0 {
+		h.Count--
+	}
+	obj := call.Create()
+	delete(obj.Omap, key)
+	obj.OmapHdr = encodeSquid(h)
+	return 0
+}
+
+// accountResourceList is cls_account_resource_list (cls_user.cc:663-720):
+// at most min(max, 1000) raw entries after the marker, those whose path
+// starts with the prefix returned, an entry that does not decode failing
+// the call with EIO. The reply's marker is the last raw key read, the
+// truncation the omap read's.
+func accountResourceList(call *ClassCall) (out []byte, rval int32) {
+	op, rval := decodeRequest(call.In, user.DecodeAccountResourceListOp)
+	if rval < 0 {
+		return nil, rval
+	}
+	var omap map[string][]byte
+	if call.Stored != nil {
+		omap = call.Stored.Omap
+	}
+	page, truncated := omapPage(omap, op.Marker, "", uint64(min(op.MaxEntries, accountMaxEntries)))
+	ret := user.AccountResourceListRet{Truncated: truncated}
+	for _, k := range slices.Sorted(maps.Keys(page)) {
+		d := denc.NewDecoder(page[k])
+		entry := user.DecodeAccountResource(d)
+		if d.Err() != nil {
+			return nil, -int32(syscall.EIO)
+		}
+		if strings.HasPrefix(entry.Path, op.PathPrefix) {
+			ret.Entries = append(ret.Entries, entry)
+		}
+		ret.Marker = k
 	}
 	return encodeSquid(ret), 0
 }
