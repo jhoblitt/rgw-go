@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -38,8 +44,21 @@ import (
 )
 
 // serveManifest is the part of populate.sh's manifest.json these specs read:
-// the realm, zonegroup and zone Rook created.
-type serveManifest struct{ Realm, Zonegroup, Zone string }
+// the realm, zonegroup and zone Rook created, and the users and buckets
+// populate.sh wrote.
+type serveManifest struct {
+	Realm, Zonegroup, Zone string
+	Users                  []manifestUser
+	Buckets                []struct{ Name, Owner string }
+}
+
+// manifestUser is a user populate.sh created, with its S3 keys.
+type manifestUser struct {
+	UID       string `json:"uid"`
+	Tenant    string `json:"tenant"`
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+}
 
 // emptyListing is radosgw's answer to an anonymous GET /, Rook's probe.
 const emptyListing = `<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
@@ -167,6 +186,40 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250 * time.Millisecond).Should(Succeed())
 	}
 
+	// alice is the manifest's untenanted user, who owns plain.
+	alice := func() manifestUser {
+		GinkgoHelper()
+		i := slices.IndexFunc(m.Users, func(u manifestUser) bool { return u.Tenant == "" && u.UID == "alice" })
+		Expect(i).To(BeNumerically(">=", 0), "the manifest lists no user alice")
+		return m.Users[i]
+	}
+
+	// s3Client signs as u, path-style, against base.
+	s3Client := func(base string, u manifestUser) *awss3.Client {
+		return awss3.New(awss3.Options{
+			Region:           "us-east-1",
+			BaseEndpoint:     aws.String(base),
+			UsePathStyle:     true,
+			Credentials:      credentials.NewStaticCredentialsProvider(u.AccessKey, u.SecretKey, ""),
+			HTTPClient:       client,
+			RetryMaxAttempts: 1,
+		})
+	}
+
+	// presignListBuckets presigns u's GET / on base for 300 seconds over
+	// UNSIGNED-PAYLOAD, as aws-sdk-go-v2's S3 presign client signs the
+	// operations it presigns; it has no PresignListBuckets.
+	presignListBuckets := func(ctx context.Context, base string, u manifestUser) string {
+		GinkgoHelper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/?X-Amz-Expires=300", nil)
+		Expect(err).NotTo(HaveOccurred())
+		signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
+		creds := aws.Credentials{AccessKeyID: u.AccessKey, SecretAccessKey: u.SecretKey}
+		presigned, _, err := signer.PresignHTTP(ctx, creds, req, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Now())
+		Expect(err).NotTo(HaveOccurred())
+		return presigned
+	}
+
 	Context("on a plain endpoint with the metrics listener", Ordered, func() {
 		var base, metricsBase string
 
@@ -205,6 +258,50 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
 			Expect(body).To(ContainSubstring("<Code>InvalidAccessKeyId</Code>"))
+		})
+
+		It("lists a user's buckets, with the user as their owner, for its SigV4-signed GET /", func(ctx SpecContext) {
+			u := alice()
+			out, err := s3Client(base, u).ListBuckets(ctx, &awss3.ListBucketsInput{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(awsmiddleware.GetRawResponse(out.ResultMetadata)).To(HaveField("StatusCode", http.StatusOK))
+			Expect(aws.ToString(out.Owner.ID)).To(Equal(u.UID))
+			var owned, listed []string
+			for _, b := range m.Buckets {
+				if b.Owner == u.UID {
+					owned = append(owned, b.Name)
+				}
+			}
+			for _, b := range out.Buckets {
+				listed = append(listed, aws.ToString(b.Name))
+			}
+			Expect(listed).To(ConsistOf(owned), "the buckets populate.sh created for %s", u.UID)
+		})
+
+		It("answers 200 for a presigned GET /", func(ctx SpecContext) {
+			u := alice()
+			resp, body, err := fetch(ctx, client, http.MethodGet, presignListBuckets(ctx, base, u), nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK), body)
+			Expect(body).To(ContainSubstring("<Owner><ID>" + u.UID + "</ID>"))
+		})
+
+		It("answers 403 SignatureDoesNotMatch for a presigned GET / whose signature is changed", func(ctx SpecContext) {
+			signed := presignListBuckets(ctx, base, alice())
+			presigned, err := url.Parse(signed)
+			Expect(err).NotTo(HaveOccurred())
+			sig := presigned.Query().Get("X-Amz-Signature")
+			Expect(sig).To(HaveLen(64), "the presigned URL's X-Amz-Signature")
+			changed := sig[:63] + "0"
+			if sig[63] == '0' {
+				changed = sig[:63] + "1"
+			}
+			tampered := strings.Replace(signed, "X-Amz-Signature="+sig, "X-Amz-Signature="+changed, 1)
+			Expect(tampered).NotTo(Equal(signed))
+			resp, body, err := fetch(ctx, client, http.MethodGet, tampered, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+			Expect(body).To(ContainSubstring("<Code>SignatureDoesNotMatch</Code>"))
 		})
 
 		It("answers 405 for POST /", func(ctx SpecContext) {
