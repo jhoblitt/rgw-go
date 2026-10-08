@@ -223,18 +223,20 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 }
 
 // deleteOne is handle_individual_object (rgw_op.cc:6818-6910 at v19.2.6,
-// :7743-7855 at v20.2.4): the key, its permission, checked in the request's
-// bucket with the request's public-access block, and the delete with the
-// entry's conditions, where a missing key is success.
+// :7743-7855 at v20.2.4): the key, its permission, s3:DeleteObjectVersion for
+// a key naming any version, the null one included (:6829-6831, :7766-7768),
+// checked in the request's bucket with the request's public-access block, and
+// the delete with the entry's conditions, where a missing key is success.
 func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry) DeleteResult {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {
 		res.Err = ErrInvalidArgument
 		return res
 	}
-	// checkRequest refused every key naming a version, whose action would be
-	// s3:DeleteObjectVersion.
 	a := policy.S3DeleteObject
+	if e.Key.Instance != "" {
+		a = policy.S3DeleteObjectVersion
+	}
 	if err := VerifyBucketPermissionIn(ctx, r, a, acl.PermFor(a), r.BucketRec, e.Key); err != nil {
 		// -EACCES whatever the authorizer's reason, which it has logged.
 		res.Err = ErrAccessDenied

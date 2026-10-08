@@ -3447,6 +3447,41 @@ does the following.
   line before its first key. radosgw serves them. The bucket listing makes
   the same refusal for a versioned bucket ("The versions of a bucket whose
   versioning was ever enabled are not listed").
+
+  The exception is `versionId=null` on a bucket whose versioning was never
+  enabled, which rgw-go takes to be one whose flags hold none of
+  `BUCKET_VERSIONED`, `BUCKET_VERSIONS_SUSPENDED` and
+  `BUCKET_OBJ_LOCK_ENABLED`. radosgw tests `BUCKET_VERSIONED` alone, and
+  never writes either of the others without it: suspending versioning keeps
+  it set (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4), and
+  object lock is enabled only with versioning (`driver/rados/rgw_rados.cc:2392`
+  and `rgw_op.cc:8232` at v19.2.6, `:2497` and `:9180` at v20.2.4). On such a
+  bucket radosgw takes the null version for the plain object: its head is
+  the plain key's (`rgw_obj_key::get_oid`, `rgw_obj_types.h:226-254` at both
+  releases), and the delete and the attr writes clear the instance before
+  they reach the index (`driver/rados/rgw_rados.cc:5768-5770` and
+  `:6601-6603` at v19.2.6, `:6456-6458` and `:7401-7403` at v20.2.4), the
+  delete taking the unversioned path (`:5774`, `:6462`), as it does for
+  each key of a DeleteObjects (`rgw_op.cc:6889` at v19.2.6, `:7826` at
+  v20.2.4). rgw-go serves a DeleteObject, a DeleteObjects key,
+  PutObjectAcl, PutObjectTagging and DeleteObjectTagging naming it as the
+  same request naming no version, but authorizes each for the version's
+  action, `s3:DeleteObjectVersion` and the rest, as radosgw authorizes any
+  key naming a version (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6,
+  `:5535-5537` and `:7766-7768` at v20.2.4); the reads naming it were served
+  already. A PutObject or CopyObject naming the null version, as its
+  destination or its source, still answers 501: radosgw writes such a head
+  at the plain key's oid but files it in the index under the instance
+  `null`, apart from the plain key's entry (`driver/rados/rgw_rados.cc:9473`
+  and `:7133` at v19.2.6, `:10405` and `:7984` at v20.2.4;
+  `encode_obj_index_key`, `cls/rgw/cls_rgw.cc:339-346` at v19.2.6,
+  `:389-396` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw indexes a
+  PutObject naming versionId=null on an unversioned bucket under the null
+  instance](ceph-upstream-bugs.md#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance)"),
+  and copies from a source naming it without the checks of a copy onto
+  itself (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
+  An UploadPartCopy whose source names it answers 501 too, as one whose
+  source names any version does: the exception does not reach that refusal.
 - **Writes that ask for encryption answer 501 until phase 2.** radosgw
   encrypts a PutObject or CopyObject that sends the SSE-C headers, and
   fails one that asks for SSE-S3 or SSE-KMS, or that lands in a bucket

@@ -21,17 +21,17 @@ var _ = Describe("DeleteObject", func() {
 	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
 
 	DescribeTable("is radosgw's delete_obj, a delete of the action the instance selects",
-		func(ctx SpecContext, instance string, want policy.Action) {
+		func(ctx SpecContext, instance string, want policy.Action, wantErr error) {
 			authz := &opfakes.FakeAuthorizer{}
 			f.env.Authz = authz
 			o := &op.DeleteObject{}
 			r := f.req(http.MethodDelete, "plain", "small")
 			r.Object.Instance = instance
 			err := op.Run(ctx, o, r)
-			if instance == "" {
+			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
-				Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
+				Expect(err).To(MatchError(wantErr))
 			}
 			Expect(o.Name()).To(Equal("delete_obj"))
 			Expect(o.OpMask()).To(Equal(op.OpTypeDelete))
@@ -41,8 +41,9 @@ var _ = Describe("DeleteObject", func() {
 			Expect(a).To(Equal(want))
 			Expect(perm).To(Equal(acl.PermFor(want)))
 		},
-		Entry("no instance", "", policy.S3DeleteObject),
-		Entry("the null instance", "null", policy.S3DeleteObjectVersion),
+		Entry("no instance", "", policy.S3DeleteObject, nil),
+		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3DeleteObjectVersion, nil),
+		Entry("a version, which is not served yet", "v1", policy.S3DeleteObjectVersion, op.ErrNotImplemented),
 	)
 	It("deletes the object, answering nil for radosgw's 204, and logs no usage", func(ctx SpecContext) {
 		o := &op.DeleteObject{}

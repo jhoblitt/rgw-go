@@ -114,6 +114,23 @@ var _ = Describe("DeleteObject", func() {
 		Expect(c.Object(testDataPool, "", tail)).NotTo(BeNil(), "tails wait for the GC worker")
 	})
 
+	DescribeTable("takes a key naming the null version for the plain key, removing its head and its plain index entry",
+		func(ctx SpecContext, rel denc.Release) {
+			setup(ctx, rel)
+			Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k", Instance: "null"}, op.DeleteParams{})).To(Succeed())
+			Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
+			writes := indexWrites()
+			Expect(writes).To(HaveLen(2), "the prepare and complete_del")
+			Expect(execIn(writes[0], 2, "bucket_prepare_op", rgwcls.DecodePrepareOp).Key).To(Equal(rgwcls.ObjKey{Name: "k"}),
+				"delete_obj clears the null instance, rgw_rados.cc:5768-5770 at v19.2.6, :6456-6458 at v20.2.4")
+			Expect(execIn(writes[1], 2, "bucket_complete_op", rgwcls.DecodeCompleteOp).Key).To(Equal(rgwcls.ObjKey{Name: "k"}))
+			_, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeFalse())
+			Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeZero())
+		},
+		Entry("on Squid", denc.Squid),
+		Entry("on Tentacle", denc.Tentacle),
+	)
 	It("adjusts the quota cache by one object and the accounted size", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 6 << 20, SizeRounded: 6 << 20, NumObjects: 1}), "the PUT")

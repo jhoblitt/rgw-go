@@ -364,6 +364,7 @@ var _ = Describe("DeleteObjects", func() {
 			Expect(key).To(Equal(meta.ObjKey{Name: "small", Instance: instance}))
 		},
 		Entry("no version", "", policy.S3DeleteObject),
+		Entry("the null version, which radosgw authorizes as any version", "null", policy.S3DeleteObjectVersion),
 	)
 	DescribeTable("checks each entry's ETag, Size and LastModifiedTime on both releases",
 		func(ctx SpecContext, release denc.Release, e op.DeleteObjectsEntry, want error) {

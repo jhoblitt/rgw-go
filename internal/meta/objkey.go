@@ -14,9 +14,10 @@ type ObjKey struct {
 	NS       string `json:"ns"`
 }
 
-// nullInstance is the version instance of an object written while versioning
-// was suspended; it never appears in an object name.
-const nullInstance = "null"
+// NullInstance is the version instance of an object written while versioning
+// was suspended, and the one a request names an unversioned object by; it
+// never appears in an object name.
+const NullInstance = "null"
 
 // escapeName prepends "_" to a name that starts with one, so that it cannot
 // be mistaken for a namespaced name.
@@ -63,7 +64,7 @@ func ParseIndexKeyName(name string) (k ObjKey, ok bool) {
 
 // encodesInstance is rgw_obj_key::need_to_encode_instance.
 func (k ObjKey) encodesInstance() bool {
-	return k.Instance != "" && k.Instance != nullInstance
+	return k.Instance != "" && k.Instance != NullInstance
 }
 
 // OID is rgw_obj_key::get_oid, the key's part of its head object name: the
