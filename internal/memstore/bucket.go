@@ -113,7 +113,9 @@ func (s *Store) DeleteBucket(_ context.Context, rec *op.BucketRecord) error {
 	return nil
 }
 
-// PutBucketInfo implements op.BucketStore, leaving rec at the new version.
+// PutBucketInfo implements op.BucketStore: the instance rewritten from
+// rec.Info with rec.Attrs, as put_info writes the bucket's attrs, leaving rec
+// at the new version.
 func (s *Store) PutBucketInfo(_ context.Context, rec *op.BucketRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -122,12 +124,14 @@ func (s *Store) PutBucketInfo(_ context.Context, rec *op.BucketRecord) error {
 		return err
 	}
 	b.rec.Info = cloneBucketInfo(rec.Info)
+	b.rec.Attrs = cloneAttrs(rec.Attrs)
 	s.bumpInstance(b, rec)
 	return nil
 }
 
-// PutBucketAttrs implements op.BucketStore: set, then rm. It leaves rec with
-// the resulting attrs at the new version.
+// PutBucketAttrs implements op.BucketStore: set laid over rec.Attrs, then rm
+// removed, as merge_and_store_attrs edits the bucket's attrs before
+// put_info. It leaves rec with the resulting attrs at the new version.
 func (s *Store) PutBucketAttrs(_ context.Context, rec *op.BucketRecord, set map[string][]byte, rm []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +139,7 @@ func (s *Store) PutBucketAttrs(_ context.Context, rec *op.BucketRecord, set map[
 	if err != nil {
 		return err
 	}
-	b.rec.Attrs = applyAttrs(b.rec.Attrs, set, rm)
+	b.rec.Attrs = applyAttrs(rec.Attrs, set, rm)
 	s.bumpInstance(b, rec)
 	rec.Attrs = cloneAttrs(b.rec.Attrs)
 	return nil
@@ -258,18 +262,23 @@ func (s *Store) listObjects(rec *op.BucketRecord, p op.ListObjectsParams) (op.Li
 }
 
 // aclOwner is the owner of an object's stored ACL, the owner radosgw writes
-// into its index entry, and nothing for an object without one or with one
-// that does not decode.
+// into its index entry, and nothing for an object without one or whose
+// owner does not decode. It reads the owner alone, as RGWRados::decode_policy
+// does for the index entries check_disk_state and set_attrs write
+// (rgw_rados.cc:1754-1768 at v19.2.6, :1857-1871 at v20.2.4), so a policy
+// whose grants do not decode still names its owner.
 func aclOwner(b []byte) (owner meta.Owner, displayName string) {
 	if b == nil {
 		return meta.Owner{}, ""
 	}
 	d := denc.NewDecoder(b)
-	pol := acl.DecodePolicy(d)
-	if d.Err() != nil || pol.Owner.ID == "" {
+	h := d.BeginStructLegacy(2, 2, 2, 0)
+	o := acl.DecodeOwner(d)
+	d.EndStruct(h)
+	if d.Err() != nil || o.ID == "" {
 		return meta.Owner{}, ""
 	}
-	return meta.ParseOwner(pol.Owner.ID), pol.Owner.DisplayName
+	return meta.ParseOwner(o.ID), o.DisplayName
 }
 
 // pager is the per-name logic of list_objects_ordered once a name is past

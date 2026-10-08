@@ -262,7 +262,8 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid, every release through v19.2.6.
 - **rgw-go:** follows the cluster's release. Its Tentacle-level listing guards
   its suggestions; its Squid-level listing matches radosgw and does not.
-  `docs/exclusions.md` states the guard per release.
+  `docs/exclusions.md` states the guard per release. Realized in
+  `internal/driver` (`list.go`'s `suggest`).
 - **Upstream:** [#81000](https://tracker.ceph.com/issues/81000), which we
   filed, requests the squid backport of 461be1cd3d5, which came with
   [ceph/ceph#59609](https://github.com/ceph/ceph/pull/59609). The backport,
@@ -558,7 +559,9 @@ Every new entry adds its row to this table, in document order.
   zero `rgw_gc_max_objs` (GC worker, unit W), and a zero or negative
   `rgw_lc_max_objs` and `rgw_usage_max_shards` (metadata and lifecycle path,
   unit M), at startup rather than faulting on first use, and never divides
-  by a shard count without guarding it.
+  by a shard count without guarding it. Realized in `internal/driver`
+  (`shards.go`'s `floorShards`, and its `shardMod` for the usage log) and
+  `internal/meta` (`ShardsMod`, rgw_shards_mod, for the GC).
 - **Upstream:** [#80991](https://tracker.ceph.com/issues/80991), which we
   filed. Its fix, [ceph/ceph#72160](https://github.com/ceph/ceph/pull/72160),
   opened in response by the maintainer Matthew Heler (mheler) and not a
@@ -1706,6 +1709,7 @@ Every new entry adds its row to this table, in document order.
   notify as an invalidate-and-reread and never apply the notify payload as
   truth, and must keep its cephx caps on the control pool narrow.
   `docs/exclusions.md` records cache invalidation as a coexistence obligation.
+  Realized in `internal/driver` (`cache.go`'s `onNotify`).
 - **Upstream:** not filed; the behaviour is radosgw's design.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-017); verified 2026-09-27.
 
@@ -1735,6 +1739,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** phase 1's driver control-watch re-registration (unit M) must back
   off between attempts and retry without ever aborting the process, and must
   not count re-registration failures unboundedly over the process lifetime.
+  Realized in `internal/driver` (`notify.go`'s `watchLoop`).
 - **Upstream:** [#80992](https://tracker.ceph.com/issues/80992).
   [ceph/ceph#68207](https://github.com/ceph/ceph/pull/68207) (2026-04) reset
   the counter on success, among other reinit fixes, but the stale bot closed

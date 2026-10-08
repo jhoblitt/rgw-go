@@ -86,14 +86,16 @@ var (
 )
 
 // Open connects the driver to cluster: it detects the release, resolves the
-// zone the gateway serves from the root pools, reads the options, creates
-// the control objects in the zone's control pool, initializes the gc shards
-// as RGWGC::initialize does, refusing a gc pool it cannot open, and logs the
-// zone and the options that ask for a worker it does not run. The control watches, which keep the metadata
-// cache coherent with every other gateway, run as Run's control-watch
-// worker, the retries of bucket index completions a reshard refused as its
-// index-completions worker, and with rgw_enable_gc_threads the garbage
-// collector as its gc worker.
+// zone the gateway serves from the root pools, then reads the options,
+// creates the control objects in the zone's control pool, initializes the
+// gc shards as RGWGC::initialize does, refusing a gc pool it cannot open,
+// and logs the zone and the options that ask for a worker it does not run.
+// The control watches, which keep the metadata cache coherent with every
+// other gateway, run as Run's control-watch worker, the retries of bucket
+// index completions a reshard refused as its index-completions worker, with
+// rgw_enable_gc_threads the garbage collector as its gc worker, with
+// rgw_enable_quota_threads the stats syncs as its quota workers, and with
+// rgw_enable_usage_log the usage log's flushes as its usage-flush worker.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {

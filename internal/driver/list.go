@@ -547,23 +547,36 @@ func (s *Store) sweepParts(rec *op.BucketRecord, st *op.ObjectState) error {
 // with trailing NULs trimmed.
 func blStr(b []byte) string { return strings.TrimRight(string(b), "\x00") }
 
-// aclOwner is RGWRados::decode_policy (:1754-1768), which decodes only the
-// owner of the head's ACL: an ACL that does not decode leaves the owner
-// empty with a warning, as no ACL does.
+// aclOwner is check_disk_state's RGWRados::decode_policy (:1754-1768),
+// which decodes only the owner of the head's ACL: an ACL that does not
+// decode leaves the owner empty with a warning, as no ACL does.
 func aclOwner(ctx context.Context, b []byte, rec *op.BucketRecord, key meta.ObjKey) acl.Owner {
+	o, err := policyOwner(b)
+	if err != nil {
+		slog.WarnContext(ctx, "could not decode policy for object", slog.String("bucket", rec.Info.Bucket.Name),
+			slog.String("key", key.Name), slog.Any("error", err))
+	}
+	return o
+}
+
+// policyOwner is RGWRados::decode_policy (driver/rados/rgw_rados.cc:1754-1768
+// at v19.2.6, :1857-1871 at v20.2.4) through
+// RGWAccessControlPolicy::decode_owner: the owner of an encoded ACL, its
+// grants skipped undecoded, so a policy whose grants do not decode still
+// names its owner. No ACL is no owner; one whose owner does not decode is no
+// owner and the decode's error.
+func policyOwner(b []byte) (acl.Owner, error) {
 	if b == nil {
-		return acl.Owner{}
+		return acl.Owner{}, nil
 	}
 	d := denc.NewDecoder(b)
 	h := d.BeginStructLegacy(2, 2, 2, 0)
 	o := acl.DecodeOwner(d)
 	d.EndStruct(h)
 	if err := d.Err(); err != nil {
-		slog.WarnContext(ctx, "could not decode policy for object", slog.String("bucket", rec.Info.Bucket.Name),
-			slog.String("key", key.Name), slog.Any("error", err))
-		return acl.Owner{}
+		return acl.Owner{}, err
 	}
-	return o
+	return o, nil
 }
 
 // parseIndexKey is rgw_obj_key::parse_index_key (rgw_obj_types.h:125-146 at

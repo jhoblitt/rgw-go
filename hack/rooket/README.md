@@ -60,6 +60,7 @@ writes the same data and manifest again.
 | `populate.sh` | writes the data set through the radosgw and records it in `manifest.json` |
 | `down.sh` | `rooket down --delete-disks` and removes `out/<release>/`, even when rooket fails |
 | `diag.sh` | collects pod logs, Rook status and Ceph's view for CI, with no admin keyring or S3 secret key, each call bounded by a timeout |
+| `admin.sh`, `endpoint.sh` | `admin.sh <release> <args...>` runs `radosgw-admin` in the toolbox on the site `manifest.json` records and `endpoint.sh <release>` prints the radosgw's URL, for the integration specs (`internal/testutil/cephtest`) |
 | `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers the scripts share |
 
 The chart values pin `cephImage.tag`, a plain `vX.Y.Z` that is the one place

@@ -459,59 +459,9 @@ func admin(ctx context.Context, m gate.Manifest, args ...string) []byte {
 // "[]" segment standing for every element of an array.
 func expectSameJSON(what string, v, want any, absent ...string) {
 	GinkgoHelper()
-	b, err := json.Marshal(v)
-	Expect(err).NotTo(HaveOccurred(), "marshaling %s", what)
-	got := canonical(b)
-	for _, path := range absent {
-		Expect(dropPath(got, strings.Split(path, "."))).To(BeNumerically(">", 0),
-			"%s lacks %s, which only an older dump omits", what, path)
-	}
-	diff := jsonDiff(what, got, want)
+	diff, err := gate.DiffJSON(what, v, want, absent...)
+	Expect(err).NotTo(HaveOccurred())
 	Expect(diff).To(BeEmpty(), "%s differs from radosgw-admin", what)
-}
-
-// dropPath deletes the key at path from every object it reaches and returns
-// how many it deleted.
-func dropPath(v any, path []string) int {
-	if len(path) == 0 {
-		return 0
-	}
-	if path[0] == "[]" {
-		arr, ok := v.([]any)
-		if !ok {
-			return 0
-		}
-		n := 0
-		for _, e := range arr {
-			n += dropPath(e, path[1:])
-		}
-		return n
-	}
-	obj, ok := v.(map[string]any)
-	if !ok {
-		return 0
-	}
-	if len(path) == 1 {
-		if _, ok := obj[path[0]]; !ok {
-			return 0
-		}
-		delete(obj, path[0])
-		return 1
-	}
-	return dropPath(obj[path[0]], path[1:])
-}
-
-// squidZoneDumpLacks are the RGWZoneParams::dump keys v20.2.4 added:
-// v19.2.6's dump in src/rgw/rgw_zone.cc writes none of these pools.
-var squidZoneDumpLacks = []string{"dedup_pool", "bucket_logging_pool", "restore_pool"}
-
-// squidZoneGroupDumpLacks are the RGWZoneGroupPlacementTier::dump keys
-// v20.2.4 added: v19.2.6's dump writes only tier_type, storage_class,
-// retain_head_object and s3.
-var squidZoneGroupDumpLacks = []string{
-	"placement_targets.[].tier_targets.[].val.allow_read_through",
-	"placement_targets.[].tier_targets.[].val.read_through_restore_days",
-	"placement_targets.[].tier_targets.[].val.restore_storage_class",
 }
 
 // xattrU64 and xattrU32 decode an xattr holding one little-endian integer
@@ -1533,7 +1483,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 		// zone get and zonegroup get print the root pool objects.
 		var zoneAbsent, zoneGroupAbsent []string
 		if release == denc.Squid {
-			zoneAbsent, zoneGroupAbsent = squidZoneDumpLacks, squidZoneGroupDumpLacks
+			zoneAbsent, zoneGroupAbsent = gate.SquidZoneDumpLacks, gate.SquidZoneGroupDumpLacks
 		}
 		expectSameJSON("zone get", zone, canonical(admin(ctx, m, "zone", "get")), zoneAbsent...)
 		t["zone get"]++

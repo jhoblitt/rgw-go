@@ -20,9 +20,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// DrainTimeout bounds Serve's graceful shutdown; Rook's default termination
-// grace period is 30 s.
-const DrainTimeout = 30 * time.Second
+// DrainTimeout bounds Serve's graceful shutdown. Rook sets no termination
+// grace period on a radosgw pod, so Kubernetes' default of 30 s applies, and
+// the driver's workers stop only after the drain, the usage log's last
+// flush taking up to 10 s more: the two together fit inside the grace.
+const DrainTimeout = 20 * time.Second
 
 // Server is every listener one beast spec asks for, serving one handler.
 type Server struct {

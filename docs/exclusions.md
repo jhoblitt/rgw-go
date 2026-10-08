@@ -1914,29 +1914,28 @@ crypto/tls and net/url ones go1.27.1's.
   "A malformed percent-escape in the path makes radosgw serve another
   path").
 - **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
-  requests in flight finish for up to 30 s, Rook's default termination
-  grace period, before it closes every connection and ends the requests
-  still running. radosgw closes every connection at once
-  (`AsioFrontend::stop`, `:1226-1245` at v19.2.6); Tentacle waits for the
-  requests in flight first only when `rgw_graceful_stop` is set, and it
-  defaults to false (`:1139-1171` at v20.2.4). rgw-go reads neither
-  `rgw_graceful_stop` nor `rgw_exit_timeout_secs`.
-- **Usage logged at shutdown.** With `rgw_enable_usage_log` set, rgw-go's
-  usage-log worker makes its last flush as soon as shutdown begins, while
-  the frontend is still draining. Until the shutdown order is fixed, so that
-  the drain ends before the driver's workers stop, the usage of requests
-  that finish during the drain is lost, unless they push the log past
-  `rgw_usage_log_flush_threshold`. Tentacle's radosgw with
-  `rgw_graceful_stop` set waits for the requests in flight before it
-  finalizes its usage logger (`AsioFrontend::stop`,
-  `rgw_asio_frontend.cc:1139-1171`; `rgw_appmain.cc:624` and `:628` at
-  v20.2.4), so it logs them. Without it, and at v19.2.6
-  (`rgw_appmain.cc:589` and `:593`), radosgw closes the connections first,
-  and a request that reaches `log_usage` after the finalize finds no usage
-  logger and is not logged (`rgw_log.cc:189-201`). rgw-go's last flush also
-  gives up 10 s after shutdown begins, as does a tick flush still writing
+  requests in flight finish for up to 20 s, before it closes every
+  connection and ends the requests still running. radosgw closes every
+  connection at once (`AsioFrontend::stop`, `:1226-1245` at v19.2.6);
+  Tentacle waits for the requests in flight first only when
+  `rgw_graceful_stop` is set, and it defaults to false (`:1139-1171` at
+  v20.2.4). rgw-go reads neither `rgw_graceful_stop` nor
+  `rgw_exit_timeout_secs`.
+- **The usage log's last flush is bounded.** With `rgw_enable_usage_log`
+  set, rgw-go's usage-log worker makes its last flush once the frontend has
+  drained, as radosgw finalizes its usage logger only after it stops its
+  frontends (`rgw_appmain.cc:589` and `:593` at v19.2.6, `:624` and `:628`
+  at v20.2.4), so the requests the drain lets finish are logged. That flush
+  gives up 10 s after the drain ends, as does a tick flush still writing
   then, and their entries are lost; radosgw's `~UsageLogger` waits for its
-  flush without bound (`rgw_log.cc:128-133`).
+  flush without bound (`rgw_log.cc:128-133` at both tags). The 20 s drain
+  and the 10 s flush together fit the 30 s termination grace period a
+  radosgw pod gets under Rook, which sets none and so leaves Kubernetes'
+  default (rook v1.20.7 sets `TerminationGracePeriodSeconds` only for the
+  exporter, `pkg/operator/ceph/cluster/nodedaemon/exporter.go:142`). Where
+  the operator gives the pod a shorter grace period than the drain and the
+  flush need, a drain that reaches its limit is SIGKILLed before the flush,
+  and the usage logged since the last tick is lost.
 - **Ports and endpoints parse strictly.** rgw-go refuses port 0 and a
   port with anything but digits. radosgw reads a port with `strtoul` and
   refuses it only above 65535 or when `strtoul` reads no digits at all
@@ -3803,6 +3802,14 @@ does the following.
   404 NoSuchKey or 403 AccessDenied, where radosgw authorizes against its
   ACL and then answers 404 NoSuchUpload. Only a corrupt upload meets
   either, and rgw-go lists nothing for it.
+- **ListParts names the owner of an ACL whose grants do not decode.**
+  radosgw's ListParts decodes the meta object's whole ACL and answers 500
+  UnknownError, -EIO, when it does not decode (`RGWListMultipart::execute`,
+  `rgw_op.cc:6680-6688` at v19.2.6, `:7604-7612` at v20.2.4). rgw-go reads
+  the owner alone, as `decode_policy` does for the index entries
+  `set_attrs` and the listing's reconciliation write, so it lists the parts
+  under the owner a policy names even when its grants do not decode, and
+  under no owner when its owner does not. No S3 op writes such an ACL.
 - **UploadPartCopy refuses a cloud-tiered source with a range too.**
   radosgw refuses a source transitioned to a cloud tier with 403
   InvalidObjectState only for a copy without `x-amz-copy-source-range`
@@ -4165,6 +4172,40 @@ following.
   `:1835-1848`, `:1949-1956` and `:2058-2060` at v20.2.4). These serve
   multisite sync, which rgw-go excludes, and rgw-go renders a system
   user's listing as any other user's.
+- **rgw-go creates no realm, zonegroup or zone, and writes none back.**
+  radosgw resolves its zone at startup in `rgw::SiteConfig::load`, which on
+  both floors creates a zone and a zonegroup named `default` when `rgw_zone`
+  or `rgw_zonegroup` is unset and no realm exists
+  (`driver/rados/rgw_zone.cc`, `read_or_create_default_zone` and
+  `read_or_create_default_zonegroup`); a Squid radosgw's zone service
+  creates them again for an unnamed or explicitly `default` zonegroup and
+  zone (`svc_zone.cc:214`, `:240` at v19.2.6); and both releases write a
+  zonegroup with one zone and no master back with that zone as master
+  (`svc_zone.cc:513-533` and `:595-601` at v19.2.6, `:349-369` and
+  `:399-405` at v20.2.4). rgw-go only reads: a missing zone, zonegroup or
+  name object stops it at startup with an error naming the object. Rook
+  never reaches radosgw's bootstrap: rook v1.20.7 passes `rgw realm`,
+  `rgw zonegroup` and `rgw zone` to every gateway
+  (`pkg/operator/ceph/object/spec.go:440-442`) and creates the zonegroup
+  and zone with `--master` before it starts one (`objectstore.go:470`,
+  `:475`; for a zone declared through CephObjectZoneGroup and
+  CephObjectZone, `zonegroup/controller.go:257-260` and
+  `zone/controller.go:360-363`). A gateway started by hand against a
+  cluster without them needs `radosgw-admin realm create`,
+  `zonegroup create --master` and `zone create --master` first.
+- **rgw-go creates no pool.** radosgw opens its zone's pools with
+  `rgw_init_ioctx`'s create flag, so a missing pool is created and tagged
+  with the `rgw` application (`driver/rados/rgw_tools.cc:23-98` at
+  v19.2.6): the root pool through the configuration store, the domain-root,
+  GC, lifecycle, log, reshard and notification pools at startup
+  (`RGWRados::init_complete`), and the other metadata, bucket-index and
+  data pools on first use. rgw-go never creates one: a missing root,
+  control or GC pool stops it at startup with an error naming the pool,
+  and a request that needs another missing pool fails with an error naming
+  it. Rook creates every pool a store names, or refuses a store whose
+  named pools do not exist, before it starts a gateway (rook v1.20.7
+  `pkg/operator/ceph/object/controller.go:620-654`,
+  `objectstore.go:799-823`).
 
 ## Pending
 

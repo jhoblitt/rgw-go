@@ -141,7 +141,11 @@ func (s *Store) readMeta(ctx context.Context, ref mpRef) (*metaState, error) {
 
 // uploadFromMeta is the upload a read of its meta object describes: the
 // owner its ACL names, which ListParts renders; its mtime as the time the
-// upload was initiated; the destination placement it stores; its attrs.
+// upload was initiated; the destination placement it stores; its attrs. The
+// owner is decoded alone, as entryOwner decodes it; radosgw's ListParts
+// decodes the whole policy and answers -EIO for one that does not decode
+// (docs/exclusions.md, "ListParts names the owner of an ACL whose grants do
+// not decode").
 func uploadFromMeta(rec *op.BucketRecord, key meta.ObjKey, uploadID string, st *metaState) *op.Upload {
 	ownerID, display := entryOwner(st.attrs)
 	return &op.Upload{

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -83,21 +82,21 @@ type headResult struct {
 // now is the gateway's clock, which stamps a write without an mtime.
 func (s *Store) now() time.Time { return s.sysobj.now() }
 
-// entryOwner is the index entry's owner: the object's ACL owner, as set_attrs
-// derives it (rgw_rados.cc:6700-6706); PUT and COPY hand the driver an ACL
-// whose owner is the requester, so this equals radosgw's s->owner. A missing
-// or undecodable ACL gives no owner.
+// entryOwner is the owner of the ACL in attrs, decoded as set_attrs decodes
+// it for the index entry, through decode_policy, which reads the owner alone
+// (driver/rados/rgw_rados.cc:6694-6700 at v19.2.6, :7494-7500 at v20.2.4):
+// a policy whose grants do not decode still names its owner, and a missing
+// ACL or one whose owner does not decode names none. A PUT or COPY's index
+// entry takes radosgw's request owner instead (obj_op.meta.owner,
+// driver/rados/rgw_putobj_processor.cc:382, :522 and :743 at v19.2.6, :412,
+// :558 and :787 at v20.2.4), the owner the ACL the ops hand the driver is
+// built with, so both read alike.
 func entryOwner(attrs map[string][]byte) (id, displayName string) {
-	b, ok := attrs[meta.AttrACL]
-	if !ok {
+	o, err := policyOwner(attrs[meta.AttrACL])
+	if err != nil {
 		return "", ""
 	}
-	d := denc.NewDecoder(b)
-	p := acl.DecodePolicy(d)
-	if d.Err() != nil {
-		return "", ""
-	}
-	return p.Owner.ID, p.Owner.DisplayName
+	return o.ID, o.DisplayName
 }
 
 // rawTag is the stored user.rgw.idtag or tail_tag bytes, NUL included, as

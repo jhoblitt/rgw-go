@@ -212,6 +212,15 @@ func hijackNoDelay(got chan<- int) http.HandlerFunc {
 	}
 }
 
+var _ = Describe("the drain", func() {
+	It("lasts at most 20 s by default, so that it and the store's 10 s last usage flush fit Rook's 30 s grace", func() {
+		s, err := frontend.New(frontend.Spec{Endpoints: []string{"127.0.0.1:0"}}, echoMethod)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(frontend.DrainOf(s)).To(Equal(20 * time.Second))
+		Expect(frontend.DrainTimeout).To(Equal(20 * time.Second))
+	})
+})
+
 var _ = Describe("Server", func() {
 	It("listens on each endpoint and serves its handler", func(ctx SpecContext) {
 		s := start(frontend.Spec{Endpoints: []string{"127.0.0.1:0"}}, echoMethod)
