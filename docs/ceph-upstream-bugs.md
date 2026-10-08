@@ -240,6 +240,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A stopped account removal or rename blocks the name and email for good](#a-stopped-account-removal-or-rename-blocks-the-name-and-email-for-good) | pending | pending | ✓ |
 | [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
 | [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
+| [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10831,3 +10832,51 @@ Every new entry adds its row to this table, in document order.
 - **Found:** review of phase 1 unit N, Task 7, 2026-10-08, reading the
   account routes' argument handling; derived from the source, not
   reproduced.
+
+## radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a write leaves the
+  bucket index out of step with the head it wrote. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - The request's key takes `versionId` verbatim as its instance
+    (`rgw/rgw_rest_s3.cc:4946-4955`; `:5506-5515`). `RGWPutObj::execute`
+    replaces the instance only when the bucket's versioning is enabled
+    (`rgw/rgw_op.cc:4278-4285`; `:4491-4498`), so on an unversioned bucket
+    the key keeps `null`.
+  - The head lands at the plain key's oid: `rgw_obj_key::get_oid` never
+    encodes the instance `null` (`rgw/rgw_obj_types.h:234-254` at both
+    tags).
+  - The index prepare and complete are keyed `{name, "null"}`
+    (`cls_obj_prepare_op` and `UpdateIndex::complete`,
+    `rgw/driver/rados/rgw_rados.cc:9473` and `:7133`; `:10405` and
+    `:7984`). cls_rgw files a key with a non-empty instance under the
+    `0x80` instance namespace without normalizing `null`
+    (`encode_obj_index_key`, `cls/rgw/cls_rgw.cc:339-346`; `:389-396`), a
+    namespace a plain listing skips (`get_obj_vals`, `:188-200`;
+    `:238-250`).
+  - radosgw states the invariant this breaks, "bi expects empty instance
+    for the entries created when bucket versioning is not enabled or
+    suspended", and clears `null` on its cloud-transition and restore paths
+    (`rgw/driver/rados/rgw_rados.cc:5150-5154` at v19.2.6; `:5455-5459` and
+    `:5515-5520` at v20.2.4), but not in `RGWPutObj`.
+- **Impact:** after a PutObject naming `versionId=null` on a bucket whose
+  versioning was never enabled:
+  - the plain key's index entry, when there is one, keeps its old size and
+    ETag over the new head, and a fresh key is missing from the listing
+    while its data reads back;
+  - the bucket's stats count both entries;
+  - a later delete naming no version removes the head and the plain entry
+    and leaves the `null` instance entry behind.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A PutObject or CopyObject naming the
+  null version answers 501 NotImplemented on every bucket
+  (`newHeadVersioningUnserved`, `internal/op/putobject.go`;
+  `docs/exclusions.md`, "Writes to a versioned or object-lock bucket answer
+  501 until versioning is served").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
+  with `versionId=null` on a bucket never versioned; confirmed in its
+  review. Derived from the source, not reproduced.

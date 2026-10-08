@@ -146,7 +146,7 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if block && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
-	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
+	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
@@ -213,18 +213,52 @@ func blockPublicACLs(rec *BucketRecord) bool {
 }
 
 // versioningUnserved answers 501 NotImplemented for a bucket whose versioning
-// is enabled or suspended or that has object lock, and for a request that
-// names a version of any of keys. Every write rgw-go serves takes radosgw's
-// unversioned path, which on such a bucket would overwrite or remove a
-// version's head beside the bucket's olh, under an index entry for the plain
-// key, without the retention and legal-hold checks radosgw makes for a
-// versioned delete on a lock bucket (verify_object_lock, rgw_op.cc:5185-5221
-// and :6845-6869 at v19.2.6, :5576-5610 and :7782-7806 at v20.2.4). Writes
-// to such a bucket wait for versioning (docs/exclusions.md).
+// is or was enabled or that has object lock, and for a request that names a
+// version of any of keys, which are objects of rec's that the request removes
+// or changes in place. Every write rgw-go serves takes radosgw's unversioned
+// path, which on such a bucket would overwrite or remove a version's head
+// beside the bucket's olh, under an index entry for the plain key, without
+// the retention and legal-hold checks radosgw makes for a versioned delete on
+// a lock bucket (verify_object_lock, rgw_op.cc:5185-5221 and :6845-6869 at
+// v19.2.6, :5576-5610 and :7782-7806 at v20.2.4). Writes to such a bucket
+// wait for versioning (docs/exclusions.md).
+//
+// On a bucket whose versioning was never enabled, a key naming the null
+// version names the plain object: its head is the plain key's
+// (rgw_obj_key::get_oid, rgw_obj_types.h:226-254 at v19.2.6 and v20.2.4),
+// the delete and the attr writes clear the instance before they reach the
+// index (RGWRados::Object::Delete::delete_obj,
+// driver/rados/rgw_rados.cc:5768-5770 at v19.2.6, :6456-6458 at v20.2.4;
+// RGWRados::set_attrs, :6601-6603 and :7401-7403), and the delete takes the
+// unversioned path whenever the bucket's flags lack BUCKET_VERSIONED (:5774,
+// :6462), which RGWDeleteMultiObj passes for each key (rgw_op.cc:6889 at
+// v19.2.6, :7826 at v20.2.4).
 func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
-	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
-		return fmt.Errorf("%w: writes to bucket %s, which is versioned or has object lock, are not implemented",
+	if !neverVersioned(rec) {
+		return fmt.Errorf("%w: writes to bucket %s, which is or was versioned or has object lock, are not implemented",
 			ErrNotImplemented, rec.Info.Bucket.Name)
+	}
+	for _, k := range keys {
+		if k.Instance != "" && k.Instance != meta.NullInstance {
+			return fmt.Errorf("%w: writes naming version %q of %s are not implemented", ErrNotImplemented, k.Instance, k.Name)
+		}
+	}
+	return nil
+}
+
+// newHeadVersioningUnserved is versioningUnserved for a write that creates a
+// head, whose keys may not name even the null version. radosgw writes the
+// head of a PutObject or CopyObject naming it at the plain key's oid but
+// files it in the index under the instance (cls_obj_prepare_op and
+// UpdateIndex::complete, driver/rados/rgw_rados.cc:9473 and :7133 at
+// v19.2.6, :10405 and :7984 at v20.2.4), which cls_rgw keeps apart from the
+// plain key's entry (encode_obj_index_key, cls/rgw/cls_rgw.cc:339-346 at
+// v19.2.6, :389-396 at v20.2.4); and it copies from a source naming it
+// without the checks of a copy onto itself (rgw_rest_s3.cc:3541-3548 at
+// v19.2.6, :3821-3828 at v20.2.4; copy_obj, rgw_rados.cc:4890 and :5150).
+func newHeadVersioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
+	if err := versioningUnserved(rec); err != nil {
+		return err
 	}
 	for _, k := range keys {
 		if k.Instance != "" {
@@ -232,6 +266,18 @@ func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 		}
 	}
 	return nil
+}
+
+// neverVersioned reports whether rec's versioning was never enabled.
+// Enabling versioning sets BUCKET_VERSIONED and suspending it keeps it set
+// (RGWSetBucketVersioning::execute, rgw_op.cc:2837-2843 at v19.2.6,
+// :3069-3075 at v20.2.4); object lock is enabled only with versioning
+// (driver/rados/rgw_rados.cc:2392 and rgw_op.cc:8232 at v19.2.6, :2497 and
+// :9180 at v20.2.4). The suspended flag without it, which radosgw never
+// writes, leaves the state unknown, and an unknown state is taken for a
+// versioned one.
+func neverVersioned(rec *BucketRecord) bool {
+	return rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) == 0
 }
 
 // emptyCondition is how a condition header present with an empty value

@@ -202,7 +202,7 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
-	if err := versioningUnserved(r.BucketRec, r.Object, o.SrcKey); err != nil {
+	if err := newHeadVersioningUnserved(r.BucketRec, r.Object, o.SrcKey); err != nil {
 		return err
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {

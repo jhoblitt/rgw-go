@@ -31,17 +31,17 @@ var _ = Describe("PutObjectACL", func() {
 	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
 
 	DescribeTable("is radosgw's put_acls at object scope, a write of the action the instance selects",
-		func(ctx SpecContext, instance string, want policy.Action) {
+		func(ctx SpecContext, instance string, want policy.Action, wantErr error) {
 			fake := &opfakes.FakeAuthorizer{}
 			f.env.Authz = fake
 			o := &op.PutObjectACL{Build: func(p acl.Policy) (acl.Policy, error) { return p, nil }}
 			r := f.req(http.MethodPut, "plain", "small")
 			r.Object.Instance = instance
 			err := op.Run(ctx, o, r)
-			if instance == "" {
+			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
-				Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
+				Expect(err).To(MatchError(wantErr))
 			}
 			Expect(o.Name()).To(Equal("put_acls"))
 			Expect(o.OpMask()).To(Equal(op.OpTypeWrite))
@@ -50,8 +50,9 @@ var _ = Describe("PutObjectACL", func() {
 			Expect(a).To(Equal(want))
 			Expect(perm).To(Equal(acl.PermFor(want)))
 		},
-		Entry("no instance", "", policy.S3PutObjectAcl),
-		Entry("the null instance", "null", policy.S3PutObjectVersionAcl),
+		Entry("no instance", "", policy.S3PutObjectAcl, nil),
+		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3PutObjectVersionAcl, nil),
+		Entry("a version, which is not served yet", "v1", policy.S3PutObjectVersionAcl, op.ErrNotImplemented),
 	)
 	It("builds the new policy from the stored one and stores it, keeping every other attr", func(ctx SpecContext) {
 		before := f.stat(ctx, "small")
@@ -257,17 +258,17 @@ var _ = Describe("PutObjectTagging", func() {
 	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
 
 	DescribeTable("is radosgw's put_obj_tags, a write of the action the instance selects",
-		func(ctx SpecContext, instance string, want policy.Action) {
+		func(ctx SpecContext, instance string, want policy.Action, wantErr error) {
 			fake := &opfakes.FakeAuthorizer{}
 			f.env.Authz = fake
 			o := &op.PutObjectTagging{}
 			r := f.req(http.MethodPut, "plain", "small")
 			r.Object.Instance = instance
 			err := op.Run(ctx, o, r)
-			if instance == "" {
+			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
-				Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
+				Expect(err).To(MatchError(wantErr))
 			}
 			Expect(o.Name()).To(Equal("put_obj_tags"))
 			Expect(o.OpMask()).To(Equal(op.OpTypeWrite))
@@ -276,8 +277,9 @@ var _ = Describe("PutObjectTagging", func() {
 			Expect(a).To(Equal(want))
 			Expect(perm).To(Equal(acl.PermFor(want)))
 		},
-		Entry("no instance", "", policy.S3PutObjectTagging),
-		Entry("the null instance", "null", policy.S3PutObjectVersionTagging),
+		Entry("no instance", "", policy.S3PutObjectTagging, nil),
+		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3PutObjectVersionTagging, nil),
+		Entry("a version, which is not served yet", "v1", policy.S3PutObjectVersionTagging, op.ErrNotImplemented),
 	)
 	It("stores the tag set and keeps every other attr", func(ctx SpecContext) {
 		before := f.stat(ctx, "small")
@@ -359,17 +361,17 @@ var _ = Describe("DeleteObjectTagging", func() {
 	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
 
 	DescribeTable("is radosgw's delete_obj_tags, a delete of the action the instance selects",
-		func(ctx SpecContext, instance string, want policy.Action) {
+		func(ctx SpecContext, instance string, want policy.Action, wantErr error) {
 			fake := &opfakes.FakeAuthorizer{}
 			f.env.Authz = fake
 			o := &op.DeleteObjectTagging{}
 			r := f.req(http.MethodDelete, "plain", "small")
 			r.Object.Instance = instance
 			err := op.Run(ctx, o, r)
-			if instance == "" {
+			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
-				Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
+				Expect(err).To(MatchError(wantErr))
 			}
 			Expect(o.Name()).To(Equal("delete_obj_tags"))
 			Expect(o.OpMask()).To(Equal(op.OpTypeDelete))
@@ -378,8 +380,9 @@ var _ = Describe("DeleteObjectTagging", func() {
 			Expect(a).To(Equal(want))
 			Expect(perm).To(Equal(acl.PermFor(want)))
 		},
-		Entry("no instance", "", policy.S3DeleteObjectTagging),
-		Entry("the null instance", "null", policy.S3DeleteObjectVersionTagging),
+		Entry("no instance", "", policy.S3DeleteObjectTagging, nil),
+		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3DeleteObjectVersionTagging, nil),
+		Entry("a version, which is not served yet", "v1", policy.S3DeleteObjectVersionTagging, op.ErrNotImplemented),
 	)
 	It("removes the tag attr and logs no usage", func(ctx SpecContext) {
 		set := tags.Set{}
