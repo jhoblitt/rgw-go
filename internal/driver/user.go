@@ -177,8 +177,9 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		return err
 	}
 
-	// prepare (:234-241; v20.2.4 :213-220): a read version with a tag moves
-	// on by one under it; without one the write version is fresh. A read
+	// prepare (:234-241; v20.2.4 :213-220): a write version given with a tag
+	// is written; otherwise a read version with a tag moves on by one under
+	// it, and without one the write version is fresh. A read
 	// version of 0 is not checked (version_for_check, rgw_common.h:950-955;
 	// v20.2.4 :974-979).
 	v := &objv{write: newWriteVersion()}
@@ -187,6 +188,9 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		if v.read.Tag != "" {
 			v.write = meta.ObjVersion{Ver: v.read.Ver + 1, Tag: v.read.Tag}
 		}
+	}
+	if opts.WriteVersion.Tag != "" {
+		v.write = opts.WriteVersion
 	}
 	data := encodeAt(meta.UserObject{UID: meta.UID(id.String()), Info: rec.Info}, s.release)
 	mtime, err := s.sysobj.write(ctx, s.userObj(id), data, rec.Attrs, opts.Exclusive, opts.Mtime, v)

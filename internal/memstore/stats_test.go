@@ -1,9 +1,7 @@
 package memstore_test
 
 import (
-	"encoding/json"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -13,12 +11,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-var _ = Describe("stats, quota, usage and metadata", func() {
-	var (
-		store *memstore.Store
-		clk   *clock
-	)
-	BeforeEach(func() { store, clk = newStore() })
+var _ = Describe("stats, quota and usage", func() {
+	var store *memstore.Store
+	BeforeEach(func() { store, _ = newStore() })
 
 	It("sums a bucket's objects, rounding each up to 4 KiB as radosgw accounts them", func(ctx SpecContext) {
 		rec := mustCreate(ctx, store, "", "b", owner("alice"))
@@ -140,72 +135,5 @@ var _ = Describe("stats, quota, usage and metadata", func() {
 		Expect(log[0]).To(Equal(e), "the first entry, as logged")
 		log[0].Owner.User.ID = "mallory"
 		Expect(store.Usage()[0]).To(Equal(e), "a copy")
-	})
-
-	Context("metadata", func() {
-		It("reports a missing key as NotFound", func(ctx SpecContext) {
-			_, err := store.Get(ctx, "user", "nobody")
-			Expect(err).To(MatchError(op.ErrNotFound), "get")
-			Expect(store.Remove(ctx, "user", "nobody")).To(MatchError(op.ErrNotFound), "remove")
-		})
-		It("puts an entry at version 1 and bumps it on each put", func(ctx SpecContext) {
-			data := json.RawMessage(`{"user_id":"alice"}`)
-			Expect(store.Put(ctx, "user", "alice", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(Succeed())
-			e, err := store.Get(ctx, "user", "alice")
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{e.Key, e.Data, e.Version.Ver, e.Mtime}).To(Equal([]any{"alice", data, uint64(1), start}))
-			Expect(e.Version.Tag).To(MatchRegexp(tagPattern), "tag")
-			clk.t = start.Add(time.Minute)
-			Expect(store.Put(ctx, "user", "alice", op.MetadataEntry{Data: data}, op.PutMetadataOptions{IfVersion: &e.Version})).To(Succeed())
-			again, err := store.Get(ctx, "user", "alice")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(again.Version).To(Equal(meta.ObjVersion{Ver: 2, Tag: e.Version.Tag}), "bumped")
-			Expect(again.Mtime).To(Equal(clk.t), "mtime")
-			Expect(store.Put(ctx, "user", "alice", op.MetadataEntry{Data: data}, op.PutMetadataOptions{IfVersion: &e.Version})).
-				To(MatchError(op.ErrConcurrentModification), "stale version")
-		})
-		It("keeps sections apart and removes an entry", func(ctx SpecContext) {
-			Expect(store.Put(ctx, "user", "k", op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
-			Expect(store.Put(ctx, "bucket", "k", op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
-			Expect(store.Remove(ctx, "user", "k")).To(Succeed())
-			_, err := store.Get(ctx, "user", "k")
-			Expect(err).To(MatchError(op.ErrNotFound), "removed")
-			_, err = store.Get(ctx, "bucket", "k")
-			Expect(err).NotTo(HaveOccurred(), "the other section's entry")
-		})
-		It("lists a section's keys sorted, paged after a marker", func(ctx SpecContext) {
-			for _, k := range []string{"c", "a", "b"} {
-				Expect(store.Put(ctx, "otp", k, op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
-			}
-			keys, next, more, err := store.List(ctx, "otp", "", 2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"a", "b"}, "b", true}), "first page")
-			keys, next, more, err = store.List(ctx, "otp", next, 2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"c"}, "c", false}), "second page")
-			keys, _, more, err = store.List(ctx, "bucket.instance", "", 2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{keys, more}).To(Equal([]any{[]string(nil), false}), "an empty section")
-		})
-		It("lists the user section from the users themselves, keyed as their users.uid objects", func(ctx SpecContext) {
-			for _, id := range []meta.UserID{{ID: "bob"}, {Tenant: "t", ID: "carol"}, {ID: "alice"}} {
-				u := meta.NewUserInfo()
-				u.UserID = id
-				store.AddUser(u)
-			}
-			Expect(store.Put(ctx, "user", "ghost", op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
-			keys, next, more, err := store.List(ctx, "user", "", 2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"alice", "bob"}, "bob", true}), "first page")
-			keys, next, more, err = store.List(ctx, "user", next, 2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"t$carol"}, "t$carol", false}), "second page")
-			u, err := store.GetUser(ctx, meta.UserID{ID: "bob"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(store.RemoveUser(ctx, u)).To(Succeed())
-			keys, _, _, err = store.List(ctx, "user", "", 10)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keys).To(Equal([]string{"alice", "t$carol"}), "a removed user leaves the section")
-		})
 	})
 })

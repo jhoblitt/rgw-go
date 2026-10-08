@@ -45,4 +45,7 @@ var _ = Describe("Dump against the corpus", func() {
 	It("RGWZoneStorageClasses", func() { dumpGoldens("RGWZoneStorageClasses", meta.DecodeZoneStorageClasses) })
 	It("RGWZoneStorageClass", func() { dumpGoldens("RGWZoneStorageClass", meta.DecodeZoneStorageClass) })
 	It("rgw_bucket", func() { dumpGoldens("rgw_bucket", meta.DecodeBucketID) })
+	It("RGWUserInfo", func() { dumpGoldens("RGWUserInfo", meta.DecodeUserInfo) })
+	It("RGWBucketEntryPoint", func() { dumpGoldens("RGWBucketEntryPoint", meta.DecodeBucketEntryPoint) })
+	It("RGWBucketInfo", func() { dumpGoldens("RGWBucketInfo", meta.DecodeBucketInfo) })
 })

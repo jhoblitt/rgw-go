@@ -69,7 +69,8 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 // Exclusive) did not already hold active, is ErrKeyExists before anything is
 // written (:257-270). IfVersion is checked unless its Ver is 0, and the
 // version written is IfVersion's plus one under its tag, or a fresh one
-// without IfVersion or its tag (:234-241; rgw_common.h:950-955). The mtime
+// without IfVersion or its tag, unless WriteVersion has a tag, which is
+// written as given (:234-241; rgw_common.h:950-955). The mtime
 // stored is opts.Mtime, or the clock's time when that is zero.
 func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	s.mu.Lock()
@@ -101,6 +102,9 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 	next := meta.ObjVersion{Ver: 1, Tag: s.newTag()}
 	if opts.IfVersion != nil && opts.IfVersion.Tag != "" {
 		next = meta.ObjVersion{Ver: opts.IfVersion.Ver + 1, Tag: opts.IfVersion.Tag}
+	}
+	if opts.WriteVersion.Tag != "" {
+		next = opts.WriteVersion
 	}
 	rec.Version = next
 	rec.Mtime = opts.Mtime

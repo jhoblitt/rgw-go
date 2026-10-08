@@ -201,8 +201,8 @@ func generateKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyPa
 // index, so the users are read one by one through the metadata listing,
 // every page of it: one GetUser per stored user. The index check stands
 // alone where the users cannot be listed: an Env without a MetadataStore,
-// a listing that answers ErrNotImplemented, as the RADOS driver's does
-// until it lists users, or ErrNotFound, a listing with no user section. A
+// a listing that answers ErrNotImplemented, or ErrNotFound, a listing with
+// no user section. A
 // user gone between the listing and its read, ErrNoSuchUser, is skipped;
 // any other failure refuses the key, as storeErr's error.
 func refuseHeldKey(ctx context.Context, env *Env, self meta.UserID, id string) error {

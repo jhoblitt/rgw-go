@@ -29,6 +29,11 @@ type PutUserOptions struct {
 	// every admin write, since RadosUser::store_user passes none
 	// (rgw_sal_rados.cc:269-276 at v19.2.6, :286-293 at v20.2.4).
 	Mtime time.Time
+	// WriteVersion, when its Tag is not empty, is the version written in
+	// place of the one PutUser computes, as a tracker's write version is
+	// (PutOperation::prepare, svc_user_rados.cc:234-241 at v19.2.6, :213-220
+	// at v20.2.4): a metadata put's document version.
+	WriteVersion meta.ObjVersion
 }
 
 //counterfeiter:generate . UserStore

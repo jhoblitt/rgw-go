@@ -289,21 +289,6 @@ var _ = Describe("the driver", func() {
 			Entry("PutPeriodConfig", func(ctx context.Context, s *driver.Store) error {
 				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
 			}),
-
-			Entry("metadata Get", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.Get(ctx, "user", "alice")
-				return err
-			}),
-			Entry("metadata Put", func(ctx context.Context, s *driver.Store) error {
-				return s.Put(ctx, "user", "alice", op.MetadataEntry{Key: "alice"}, op.PutMetadataOptions{})
-			}),
-			Entry("metadata Remove", func(ctx context.Context, s *driver.Store) error {
-				return s.Remove(ctx, "user", "alice")
-			}),
-			Entry("metadata List", func(ctx context.Context, s *driver.Store) error {
-				_, _, _, err := s.List(ctx, "user", "", 1000)
-				return err
-			}),
 		)
 
 		It("gives an Env whose every store is itself and whose options are Open's", func() {

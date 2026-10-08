@@ -591,6 +591,52 @@ benchmark was re-run.
   derived image stays one per release, because under Rook it is the Ceph
   image every daemon runs.
 
+### go-ceph cuts object names at a NUL byte
+
+- **Evidence:** librados's C API takes every object, pool, namespace and
+  xattr name as a NUL-terminated `const char *`
+  (`rados_write_op_operate`, `rados_read_op_operate`,
+  include/rados/librados.h:3193-3196 and :3616-3619 at v19.2.6, :3194 and
+  :3617 at v20.2.4), and go-ceph passes each Go string through
+  `C.CString`, which the C side reads only up to the first NUL (go-ceph
+  cbf97f85fcf5 rados/write_op.go:48, read_op.go:43,
+  rados_write_op_setxattr.go:22, ioctx.go:134 for the namespace,
+  conn.go:112 for the pool, and every other name argument in rados/). A Go
+  string holding a NUL therefore names the object its first part names,
+  silently. librados's C++ API, which radosgw uses, takes the name as a
+  `std::string` (`IoCtx::operate`, include/rados/librados.hpp:1170 at
+  v19.2.6, :1191 at v20.2.4) and keeps the whole name, so radosgw stores
+  an object under a name holding a NUL where rgw-go would read or write
+  another one.
+- **Class:** inherent in the C API; go-ceph could refuse such a name with
+  an error rather than cut it, which is an upstream candidate for
+  ceph/go-ceph.
+- **Status:** worked around where rgw-go has checked. Every name that
+  reaches go-ceph from user bytes needs a NUL check above it:
+  - The S3 and admin handlers refuse a NUL in the decoded path, as
+    radosgw's `ERR_ZERO_IN_URL` does (`internal/s3/request.go`,
+    `internal/admin/handler.go`, `internal/cli/serve.go`), which covers a
+    bucket name and an object key given in the path.
+  - The metadata sections refuse a NUL in the key on every get, put and
+    remove (400 InvalidRequest), and in a document's bucket id, marker,
+    entry point or instance owner, which names the owner's bucket list,
+    explicit placement pool, attr name, user id, email, account id, which
+    names the account's object, and access or Swift key id (400
+    InvalidArgument; `op.RefuseNULKey` and `op.RefuseNUL`,
+    `internal/op/metadata.go`; docs/exclusions.md, "The metadata sections
+    write only what keeps a user or bucket whole").
+  - A grep for `strings.IndexByte(..., 0)` finds no check on these, which
+    carry user bytes into an object, index or holder name and have not
+    been traced for a format check that would refuse a NUL first: the S3
+    `x-amz-copy-source` header, decoded into a bucket and key; the
+    `uploadId` query argument, which names a multipart upload's meta and
+    part objects; the `versionId` query argument, which names an object
+    instance; the admin user routes' `uid`, `access-key`, `email` and
+    `subuser` arguments; the admin bucket routes' `bucket`, `bucket-id`
+    and `new-bucket-name`; and the admin account routes' `id`, `name` and
+    `email`.
+- **Found:** N Task 8 re-review, 2026-10-08.
+
 ## RADOS semantics that shape the client
 
 These come from the OSD, not from cgo, so a pure-Go client has them too.

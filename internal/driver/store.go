@@ -282,23 +282,3 @@ func (s *Store) GetPeriodConfig(context.Context, string) (meta.PeriodConfig, err
 func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) error {
 	return op.ErrNotImplemented
 }
-
-// Get implements op.MetadataStore.
-func (s *Store) Get(context.Context, string, string) (op.MetadataEntry, error) {
-	return op.MetadataEntry{}, op.ErrNotImplemented
-}
-
-// Put implements op.MetadataStore.
-func (s *Store) Put(context.Context, string, string, op.MetadataEntry, op.PutMetadataOptions) error {
-	return op.ErrNotImplemented
-}
-
-// Remove implements op.MetadataStore.
-func (s *Store) Remove(context.Context, string, string) error {
-	return op.ErrNotImplemented
-}
-
-// List implements op.MetadataStore.
-func (s *Store) List(context.Context, string, string, int) (keys []string, next string, more bool, err error) {
-	return nil, "", false, op.ErrNotImplemented
-}

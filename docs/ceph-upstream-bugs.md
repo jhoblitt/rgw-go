@@ -10178,10 +10178,8 @@ Every new entry adds its row to this table, in document order.
   (`src/rgw/services/svc_user_rados.cc:257-270`; `:236-249`). The worst case
   is that an admin cannot reactivate an id another user took.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** reproduces it on the RADOS driver until N8; refuses it where
-  the store can list users. The driver's user listing answers
-  ErrNotImplemented, so there only the active-key index is checked, as in
-  radosgw; where the store lists users (memstore), a key create, a user
+- **rgw-go:** does not reproduce it. On the memstore and on the RADOS
+  driver, which lists the user metadata section, a key create, a user
   create or modify naming a key, or a key modify that leaves the key
   active answers 409 KeyExists for an id another user holds, active or
   not, and writes nothing (`refuseHeldKey`,
@@ -10559,11 +10557,8 @@ Every new entry adds its row to this table, in document order.
   own name is read: one naming another bucket is 409 BucketAlreadyExists,
   one naming the instance is written under the version read, and a
   missing one is created exclusively (`claimName`,
-  `internal/driver/bucketadmin.go`). The RADOS driver cannot list the
-  section yet, so there a link by `bucket-id` answers 501 NotImplemented
-  and links nothing (`docs/exclusions.md`, "Bucket link and unlink write
-  differently from radosgw" and "On the RADOS driver, three admin bucket
-  requests answer 501 NotImplemented for now").
+  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  unlink write differently from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
   the source, not reproduced.

@@ -309,6 +309,11 @@ func (s *Store) linkEntryPoint(ctx context.Context, cur *op.BucketRecord, owner 
 //     version step 7 read;
 //  9. the record is removed from the instance under dst.
 //
+// Before step 2 the bucket's metadata claim is moved to dst, keeping src
+// as its old name, and after step 9 the old name is dropped from it
+// (moveClaim and settleClaim, bucketclaim.go), so the metadata sections
+// answer for the bucket under either name while the rename runs.
+//
 // Every instance carrying the bucket's id gets the new owner before a
 // second one exists, and each is named by an entry point naming the id
 // while it exists, so no two owners reach the bucket's data, and radosgw's
@@ -339,6 +344,9 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 	cur := withOwner(rec, owner, displayName, s.release)
 	cur.Attrs[op.RenameIntentAttr] = intent.Encode()
 
+	if err := s.moveClaim(ctx, src, dst); err != nil {
+		return err
+	}
 	ep := meta.NewBucketEntryPoint()
 	ep.Bucket, ep.Owner, ep.CreationTime, ep.Linked = dst, owner, cur.Info.CreationTime, true
 	claim := map[string][]byte{op.RenameIntentAttr: intent.Encode()}
@@ -373,6 +381,7 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 	if err := s.PutBucketInfo(ctx, &cur); err != nil {
 		return err
 	}
+	s.settleClaim(ctx, dst)
 	*rec = cur
 	return nil
 }
