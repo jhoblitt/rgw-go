@@ -1581,6 +1581,13 @@ review and verified against the tree.
   does not decode (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no
   checksum there and lists the parts. Phase 2 adds Tentacle-level
   checksums.
+  A retried CompleteMultipartUpload that a Tentacle radosgw answers 200
+  from an object it completed with a checksum (`user.rgw.cksum`) carries
+  the `<Checksum*>` and `<ChecksumType>` elements in its response
+  (`rgw_rest_s3.cc:4635-4639`, the checksum decoded at `rgw_op.cc:7474-7501`
+  in `check_previously_completed`, where a decode failure is logged and
+  still answers 200, `:7498-7500`, all at v20.2.4); rgw-go's driver and
+  memstore answer the same 200 without them.
 - **Members of IAM groups are refused until phase 3 evaluates group
   policies.** radosgw loads, with a user's own identity policies, the
   inline and managed policies of every IAM group the user's record lists
