@@ -232,6 +232,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
 | [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
+| [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10420,6 +10421,54 @@ Every new entry adds its row to this table, in document order.
   and links nothing (`docs/exclusions.md`, "Bucket link and unlink write
   differently from radosgw" and "On the RADOS driver, three admin bucket
   requests answer 501 NotImplemented for now").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
+  the source, not reproduced.
+
+## radosgw's stale-instance cleanup purges a live bucket's index
+
+- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4: data
+  loss through an operator command. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `get_stale_instances` takes an instance listed under a bucket name as
+    stale when the name loads no bucket, or one with another id
+    (`driver/rados/rgw_bucket.cc:1745-1834`; `:1911-2000`, the cases at
+    `:1783` and `:1800`; `:1949` and `:1966`).
+  - `clear_stale_instances`, `radosgw-admin bucket stale-instances rm`,
+    calls `purge_instance` on each (`:1905-1927`; `:2071-2093`), which
+    removes every index shard of the instance's current layout
+    (`driver/rados/rgw_sal_rados.cc:828-848`; `:848-868`).
+  - The index shards are named by the bucket id
+    (`services/svc_bi_rados.cc:88-89`; `:96-97`), and a rename keeps the
+    id, so an instance a rename leaves under the old name shares the live
+    bucket's index.
+  - radosgw's own rename leaves one: a failure at the old instance's
+    removal, its last write, after the old entry point is gone
+    (`driver/rados/rgw_bucket.cc:1165-1184`; `:1316-1335`), or a failure
+    after the new instance's write and before the new entry point's
+    (`:1144` and `:1159`; `:1295` and `:1310`), leaves an instance its
+    name does not load.
+- **Impact:** after a failed admin rename, the documented stale-instance
+  cleanup removes the renamed bucket's index: its object heads and data
+  stay, but no listing reaches them, and quota stats are lost. Admin-only.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** unaffected by its own renames, which name every instance
+  carrying a bucket's id by an entry point naming that id while it exists
+  (`renameBucket`, `internal/driver/bucketadmin.go`). For radosgw's own
+  leftovers: one from a failure before the old entry point's removal goes
+  when the rename is retried by its old name, which still loads the bucket;
+  one from a failure at the last write cannot be retried by name, as
+  RGWBucket::init loads the old name and its entry point is gone
+  (`driver/rados/rgw_bucket.cc:195-200`; `:196-201`). That instance must
+  be removed without its index before `bucket stale-instances rm` runs:
+  at v19.2.6 `radosgw-admin metadata rm bucket.instance:<old name>:<id>`
+  removes the instance object alone (`:2707-2724`), while at v20.2.4 the
+  metadata removal leaves it (`:3062-3080`), so there the instance object
+  is removed from the zone's domain root pool with `rados rm`
+  (`docs/exclusions.md`, "Bucket link and unlink write differently from
+  radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
   the source, not reproduced.
