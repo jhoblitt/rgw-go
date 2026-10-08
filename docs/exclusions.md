@@ -689,7 +689,7 @@ review and verified against the tree.
   users index clean where radosgw leaves entries behind.** On
   `/admin/user` create, info, modify and remove, rgw-go differs from
   radosgw's `RGWUser` paths (`driver/rados/rgw_user.cc` at v19.2.6 and
-  v20.2.4) in six ways:
+  v20.2.4) in five ways:
   - A failed read of a user, of the email index or of the access key
     index fails the request. radosgw's `RGWUser::init` and its duplicate
     checks count any failure as "no such user", so a RADOS error there
@@ -715,8 +715,113 @@ review and verified against the tree.
   - Removing a user with purge-data leaves a bucket the user's bucket list
     names when the bucket now belongs to another owner, where radosgw
     removes the listed bucket whoever owns it.
-  - Until the key admin ops are served, a create or modify that names a
-    Swift key type or a subuser key answers 501 NotImplemented.
+- **The admin key, subuser, caps and quota routes differ from radosgw in
+  seven ways.** On `/admin/user?key`, `?subuser`, `?caps` and `?quota`
+  (`driver/rados/rgw_rest_user.cc` and `driver/rados/rgw_user.cc` at
+  v19.2.6 and v20.2.4), and, for the key checks, on `/admin/user` create
+  and modify, which add keys through the same code:
+  - A failed read of a user or of the access key index fails the request,
+    as on the other user routes; that includes `generate_key`'s check that
+    no other user holds an access key the request names, which radosgw
+    passes on any failure (`rgw_user.cc:572-575` at v19.2.6, `:577-580` at
+    v20.2.4).
+  - No user is found and no key checked through the Swift key index, which
+    rgw-go's user store does not read. radosgw's `RGWUser::init` finds the
+    user by a Swift key when the request names `key-type=swift`, an access
+    key and no uid of an existing user (`rgw_user.cc:1427-1430` at v19.2.6,
+    `:1432-1435` at v20.2.4); rgw-go answers such a request as one that
+    names no user, 400 InvalidArgument without a uid and 404 NoSuchUser
+    with one. radosgw also refuses with 409 KeyExists a Swift key create
+    whose `access-key` another user holds as a Swift key, an id it then
+    discards for `<uid>:<subuser>` (`:566-569`; `:571-574`); rgw-go does
+    not check it. A `<uid>:<subuser>` another user holds is refused with
+    radosgw's 409 KeyExists by the user store's write.
+  - A key change modifies the stored key in place. radosgw rebuilds a
+    Swift key from its id and subuser alone, so rotating its secret
+    through the subuser routes, or creating the subuser again, makes a
+    deactivated key active and drops its creation date, and a key create
+    with `generate-key=false` and no `secret-key` stores it without a
+    secret (docs/ceph-upstream-bugs.md, "radosgw's Swift key modify
+    rebuilds the key"). rgw-go keeps the key's active flag, which changes
+    only when the request names `active`, and its creation date, and
+    answers 400 InvalidSecretKey, radosgw's answer to an empty secret on
+    a new key (`rgw_user.cc:589-592` at v19.2.6, `:594-597` at v20.2.4),
+    to any change that would leave a key without a secret, storing
+    nothing.
+  - radosgw checks an access key id another user holds only through its
+    key index, which lists active keys, so it lets a second user take a
+    deactivated key's id (docs/ceph-upstream-bugs.md, "radosgw lets
+    another user take an inactive access key's id"). rgw-go refuses an id
+    another user holds inactive only on a store that lists users. rgw-go's
+    RADOS driver does not list them yet (`List` answers ErrNotImplemented),
+    so there, as in radosgw, only the active-key index is checked and
+    another user can take a deactivated key's id, until the user store
+    gains a lookup of a key id across users. Where the check runs it reads
+    every user, one read per user, on each new key, whether from a key
+    create, a subuser create or a user create or modify, that names an
+    access key, active or not, and on each modify of an existing key whose
+    result is active, an active key's rotation by its own holder included;
+    it answers 409 KeyExists and stores nothing. A modify that leaves the
+    key inactive, and a key removal, read no users and are never refused.
+    The check is not atomic with the write: two concurrent requests that
+    name one id no user holds yet can both pass the check, and both store
+    the key when at least one leaves it inactive. The memstore's PutUser
+    refuses only a newly active key whose id its index gives another user,
+    under one lock, so of two active keys the second is refused, but an
+    inactive key, which it does not index, is stored beside either. The
+    RADOS driver's PutUser checks the active-key index and then writes it
+    without exclusion (`internal/driver/user.go`), as radosgw's
+    `PutOperation` does (`services/svc_user_rados.cc:257-270` and
+    `:329-339` at v19.2.6, `:236-249` and `:309-319` at v20.2.4), so there
+    two concurrent requests can both store the key even when both leave it
+    active. A lookup of every key id, written exclusively, would close
+    this; it is left for the user store's seam.
+  - A new key gets the `active` the request names. radosgw's
+    `generate_key` never reads it and makes every new key active
+    (`rgw_user.cc:536-639` at v19.2.6, `:541-644` at v20.2.4), so
+    `active=false` on a new key is ignored there.
+  - A quota set by arguments answers 400 InvalidArgument and stores
+    nothing when `max-objects`, `max-size` or `max-size-kb` does not
+    parse, when `max-size-kb` in bytes does not fit in 64 bits, and when
+    the maximum size it would store is negative other than -1, radosgw's
+    "no limit", so `max-size-kb=-1`, which stores -1024 bytes, answers
+    400 InvalidArgument: use `max-size=-1` for no limit. The rule applies
+    to the size the request leaves in place too: on a user whose stored
+    `max_size` is negative other than -1, as radosgw stores for
+    `max-size-kb=-1`, every later quota set that gives arguments but no
+    `max-size` or `max-size-kb`, `max-objects=100` alone among them,
+    answers 400 until the request also sets the size. A quota body is held
+    to the same two size rules. radosgw
+    stores -1, no limit, for an unparsable `max-objects` or `max-size`, an
+    uninitialized value times 1024 for an unparsable `max-size-kb`, the
+    wrapped product of an overflowing one, and any negative size, which
+    it enforces as no limit (`rgw_quota.cc:775` and `:820` at v19.2.6,
+    `:796` and `:841` at v20.2.4); each answers 200
+    (docs/ceph-upstream-bugs.md, "radosgw's quota set stores garbage for
+    an unparsable max-size-kb").
+  - A quota set's JSON body is read with Go's JSON grammar, where radosgw
+    uses json_spirit's (`src/json_spirit` at both tags), which also takes
+    a stray comma in an object or an array and C white space such as a
+    form feed; rgw-go answers such a body 400 InvalidArgument. Both read
+    only the body's first value, and radosgw takes a lone number, `true`,
+    `false` or `null` only when it is the whole body as json_spirit writes
+    it back: rgw-go compares the body as sent, so it takes `1.0` or `-0`,
+    which radosgw refuses.
+- **The admin user routes refuse a boolean argument they cannot parse.**
+  On `/admin/user` create, modify and remove and on the key, subuser and
+  quota routes, a value for `generate-key`, `active`, `suspended`,
+  `system`, `account-root`, `exclusive`, `purge-data`, `generate-secret`,
+  `gen-access-key`, `purge-keys` or `enabled` other than an empty value,
+  `true` or `false` in any case, `1` or `0` answers 400 InvalidArgument
+  after the cap check, and nothing is stored; so does an empty `active=`.
+  radosgw's `RESTArgs::get_bool` writes the caller's default for such a
+  value and returns an error the bodies discard, and reads an empty
+  value as true (`rgw_rest.cc:1002-1032` at v19.2.6, `:1007-1037` at
+  v20.2.4), so `active=flase` or `active=` on a key create makes the key
+  active (docs/ceph-upstream-bugs.md, "radosgw's admin API takes an
+  unparsable boolean argument as its default"). Other flags keep
+  radosgw's reading of an empty value as true. User info's read-only
+  `stats` and `sync` keep radosgw's reading.
 - **The admin user document withholds the Swift TempURL keys with the
   other keys.** radosgw's user document leaves out `keys` and
   `swift_keys` for a caller holding only `user-info-without-keys=read`

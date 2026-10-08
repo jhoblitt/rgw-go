@@ -25,14 +25,69 @@ func newUserHandlers() map[string]HandlerFunc {
 	}
 }
 
-// boolArg is RESTArgs::get_bool as the RGWOp_User_* bodies call it: they
-// never check its error, so a value it refuses is def.
-func boolArg(a Args, name string, def bool) (v, present bool) {
-	v, present, err := a.Bool(name, def)
+// boolArg is RESTArgs::get_bool as the read-only RGWOp_User_Info calls it,
+// unchecked, so a value it refuses is def.
+func boolArg(a Args, name string, def bool) bool {
+	v, _, err := a.Bool(name, def)
 	if err != nil {
-		return def, present
+		return def
 	}
-	return v, present
+	return v
+}
+
+// flags reads the boolean arguments of a route that changes something.
+// radosgw's RESTArgs::get_bool takes a value it cannot parse as its default
+// and the bodies never check it (rgw_rest.cc:1002-1032 at v19.2.6, :1007-1037
+// at v20.2.4), so "active=flase" reactivates a key and "suspended=ture"
+// lifts a suspension (docs/ceph-upstream-bugs.md, "radosgw's admin API takes
+// an unparsable boolean argument as its default"). flags records the first
+// such argument instead, which the route answers with ErrInvalidArgument
+// after the op's permission check (runChecked).
+type flags struct {
+	a   Args
+	err error
+}
+
+// get is the argument's value, def when absent or unparsable.
+func (f *flags) get(name string, def bool) bool {
+	v, _ := f.present(name, def)
+	return v
+}
+
+// present is get and whether the request names the argument.
+func (f *flags) present(name string, def bool) (v, ok bool) {
+	v, ok, err := f.a.Bool(name, def)
+	if err != nil && f.err == nil {
+		f.err = err
+	}
+	return v, ok
+}
+
+// ptr is the argument's value when the request names it, nil otherwise.
+func (f *flags) ptr(name string) *bool {
+	v, ok := f.present(name, false)
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+// refused is an op whose arguments were refused: its permission check runs,
+// so a caller radosgw refuses is refused first, then argErr is the answer.
+type refused struct {
+	op.Op
+	argErr error
+}
+
+func (o refused) Execute(context.Context, *op.Request) error { return o.argErr }
+
+// runChecked is op.Run, answering argErr in place of o's execution when it
+// is not nil.
+func runChecked(ctx context.Context, o op.Op, r *op.Request, argErr error) error {
+	if argErr != nil {
+		o = refused{Op: o, argErr: argErr}
+	}
+	return op.Run(ctx, o, r)
 }
 
 // int32Arg is RESTArgs::get_int32 as the bodies call it, unchecked too.
@@ -59,20 +114,22 @@ func createUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	o.DisplayName, _ = a.String("display-name", "")
 	o.Email, _ = a.String("email", "")
 	o.Caps, _ = a.String("user-caps", "")
-	readKey(a, &o.Key, true)
+	fl := &flags{a: a}
+	readKey(a, fl, &o.Key, true)
 	def := op.DefaultMaxBuckets(r.Env)
 	if mb, _ := int32Arg(a, "max-buckets", def); mb != def {
 		o.MaxBuckets = new(max(mb, -1))
 	}
-	o.Suspended = presentBool(a, "suspended")
-	o.System = presentBool(a, "system")
-	o.AccountRoot = presentBool(a, "account-root")
+	o.Suspended = fl.ptr("suspended")
+	o.System = fl.ptr("system")
+	o.AccountRoot = fl.ptr("account-root")
+	fl.get("exclusive", false)
 	o.UserOpMask = opMask(a)
 	o.DefaultPlacement = placement(a, r.Env.Zone.Release())
 	o.PlacementTags = placementTags(a)
 	o.AccountID, _ = a.String("account-id", "")
 	o.Path, _ = a.String("path", "")
-	if err := op.Run(ctx, o, r); err != nil {
+	if err := runChecked(ctx, o, r, fl.err); err != nil {
 		return err
 	}
 	rel := r.Env.Zone.Release()
@@ -92,19 +149,20 @@ func modifyUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	if email, ok := a.String("email", ""); ok {
 		o.Email = &email
 	}
-	readKey(a, &o.Key, false)
+	fl := &flags{a: a}
+	readKey(a, fl, &o.Key, false)
 	if mb, ok := int32Arg(a, "max-buckets", meta.DefaultMaxBuckets); ok {
 		o.MaxBuckets = new(max(mb, -1))
 	}
-	o.Suspended = presentBool(a, "suspended")
-	o.System = presentBool(a, "system")
-	o.AccountRoot = presentBool(a, "account-root")
+	o.Suspended = fl.ptr("suspended")
+	o.System = fl.ptr("system")
+	o.AccountRoot = fl.ptr("account-root")
 	o.UserOpMask = opMask(a)
 	o.DefaultPlacement = placement(a, r.Env.Zone.Release())
 	o.PlacementTags = placementTags(a)
 	o.AccountID, _ = a.String("account-id", "")
 	o.Path, _ = a.String("path", "")
-	if err := op.Run(ctx, o, r); err != nil {
+	if err := runChecked(ctx, o, r, fl.err); err != nil {
 		return err
 	}
 	rel := r.Env.Zone.Release()
@@ -119,8 +177,8 @@ func getUserInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Re
 	uid, _ := a.String("uid", "")
 	o.UID = meta.ParseUserID(uid)
 	o.AccessKey, _ = a.String("access-key", "")
-	o.FetchStats, _ = boolArg(a, "stats", false)
-	o.SyncStats, _ = boolArg(a, "sync", false)
+	o.FetchStats = boolArg(a, "stats", false)
+	o.SyncStats = boolArg(a, "sync", false)
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
@@ -134,8 +192,9 @@ func removeUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	o := op.NewRemoveUser()
 	uid, _ := q.Args.String("uid", "")
 	o.UID = meta.ParseUserID(uid)
-	o.PurgeData, _ = boolArg(q.Args, "purge-data", false)
-	if err := op.Run(ctx, o, r); err != nil {
+	fl := &flags{a: q.Args}
+	o.PurgeData = fl.get("purge-data", false)
+	if err := runChecked(ctx, o, r, fl.err); err != nil {
 		return err
 	}
 	WriteEmpty(w, r, http.StatusOK)
@@ -144,22 +203,13 @@ func removeUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 
 // readKey reads the key arguments create and modify share: the access and
 // secret keys, key-type when non-empty, and generate-key with its default.
-func readKey(a Args, k *op.UserKeyParams, genDefault bool) {
+func readKey(a Args, fl *flags, k *op.UserKeyParams, genDefault bool) {
 	k.AccessKey, _ = a.String("access-key", "")
 	k.SecretKey, _ = a.String("secret-key", "")
 	if t, _ := a.String("key-type", ""); t != "" {
 		k.Type = op.ParseKeyType(t)
 	}
-	k.GenerateKey, _ = boolArg(a, "generate-key", genDefault)
-}
-
-// presentBool is a flag the bodies apply only when s->info.args.exists it.
-func presentBool(a Args, name string) *bool {
-	v, ok := boolArg(a, name, false)
-	if !ok {
-		return nil
-	}
-	return &v
+	k.GenerateKey = fl.get("generate-key", genDefault)
 }
 
 // opMask is the op-mask argument through rgw_parse_op_type_list, when

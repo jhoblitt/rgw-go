@@ -219,6 +219,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A stale bucket list entry blocks a user's removal for good](#a-stale-bucket-list-entry-blocks-a-users-removal-for-good) | pending | pending | ✓ |
 | [radosgw stores request credentials as object attrs](#radosgw-stores-request-credentials-as-object-attrs) | [#65460](https://tracker.ceph.com/issues/65460) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
 | [radosgw's CopyObject stores an object lock on a bucket without object lock](#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock) | pending | pending | ✓ |
+| [radosgw's Swift key modify rebuilds the key](#radosgws-swift-key-modify-rebuilds-the-key) | pending | pending | ✓ |
+| [radosgw's quota set stores garbage for an unparsable max-size-kb](#radosgws-quota-set-stores-garbage-for-an-unparsable-max-size-kb) | pending | pending | ✓ |
+| [radosgw's admin API takes an unparsable boolean argument as its default](#radosgws-admin-api-takes-an-unparsable-boolean-argument-as-its-default) | pending | pending | ✓ |
+| [radosgw lets another user take an inactive access key's id](#radosgw-lets-another-user-take-an-inactive-access-keys-id) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9725,3 +9729,208 @@ Every new entry adds its row to this table, in document order.
   or pull request yet.
 - **Found:** phase 1 unit W, Task 11, 2026-10-07, comparing PutObject's and
   CopyObject's `get_params`; derived from the source, not reproduced.
+
+## radosgw's Swift key modify rebuilds the key
+
+- **Kind:** defect, security-relevant: a revoked Swift credential comes
+  back, and a Swift key can be stored with an empty secret that an empty
+  `X-Auth-Key` matches. Unfixed at v19.2.6 and v20.2.4 and on ceph main.
+  rgw-bug-reproduction confirmed it on 2026-10-07; its triage estimates
+  are CVSS 6.5 for the revival and about 6.5 (9.1 in theory) for the
+  empty secret.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's, and the code is the same at both.
+  - `RGWAccessKeyPool::modify_key` copies an S3 key it modifies from the
+    user's map, but for a Swift key starts from a fresh `RGWAccessKey`
+    holding only the id and the subuser
+    (`driver/rados/rgw_user.cc:673-683`; `:678-688`), whose members default
+    to an empty secret, `active = true` and no creation date
+    (`rgw_acl_types.h:44-49`; the same lines).
+  - It then sets the secret only when one is named or generated, skipping
+    an empty one (`rgw_user.cc:685-695`; `:690-700`), and the active flag
+    only when the request names one (`:696-698`; `:701-703`), which only
+    `RGWOp_Key_Create` can do (`driver/rados/rgw_rest_user.cc:709`;
+    `:719`).
+  - `modify_key` runs whenever a key op meets a Swift key the user holds:
+    `PUT /admin/user?key` naming the subuser; `POST /admin/user?subuser`
+    with `secret-key` or `generate-secret`; and `PUT /admin/user?subuser`
+    for a subuser that exists, which always adds a key
+    (`rgw_user.cc:1019-1025` and `:1074-1076`; `:1024-1030` and
+    `:1079-1081`).
+  - A Swift key is reachable for authentication through its `users.swift`
+    index, which `PutOperation::complete` writes only for an active key
+    and `remove_old_indexes` removes when a key stops being active
+    (`services/svc_user_rados.cc:341-352` and `:434-442`; `:321-332` and
+    `:414-422`).
+  - An empty secret cannot be created: `generate_key` refuses one
+    (`rgw_user.cc:589-592`; `:594-597`) and a subuser create generates one
+    when none is named (`:1074-1076`; `:1079-1081`). It can be stored only
+    through this modify path.
+  - `RGW_SWIFT_Auth_Get::execute` refuses a request only when the
+    `X-Auth-Key` header is absent (`rgw_swift_auth.cc:763`; `:764`), then
+    compares the stored secret with it (`:781`; `:782`) with no guard for
+    an empty one, so a present but empty `X-Auth-Key` matches an empty
+    secret.
+  - The Swift branch was left as it was when ceph commit 463f463d50943c6f
+    ("rgw/user: add 'active' flag to RGWAccessKey", tracker #59186; on
+    Squid its cherry-pick d3ee2d34fb4) added the active flag.
+- **Impact:** a Swift key changed through the admin API or radosgw-admin's
+  equivalents:
+  - comes back active. A Swift key deactivated with `PUT
+    /admin/user?key&active=false` is re-indexed, so rotating its secret
+    through the subuser routes, or creating the subuser again, makes the
+    revoked credential usable again; it also loses its creation date.
+  - is left with an empty secret when `PUT /admin/user?key` names the
+    subuser with `generate-key=false` and no `secret-key`. Storing it needs
+    a `users=write` caller; once stored, anyone who knows
+    `<uid>:<subuser>` authenticates to the Swift API with an empty
+    `X-Auth-Key`.
+  - The upstream fix is to seed `modify_key` from the stored Swift key,
+    as its S3 branch does, and to refuse an empty key in Swift
+    authentication.
+- **Releases:** v19.2.6 and v20.2.4; ceph main is affected too.
+- **rgw-go:** not affected. It changes a key in place, keeping a
+  deactivated key deactivated and its creation date, and refuses any
+  change that would leave a key without a secret (`modifyKey`,
+  `internal/op/adminuser_sub.go`; `docs/exclusions.md`, "The admin key,
+  subuser, caps and quota routes differ from radosgw in seven ways"). It
+  serves no Swift authentication in phase 1 (`docs/exclusions.md`, "Swift
+  API and Swift authentication"); a later phase that adds it must refuse
+  an empty key.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07.
+- **Found:** phase 1 unit N, Task 5, 2026-10-07, transcribing
+  `RGWAccessKeyPool` for the admin key and subuser routes; derived from
+  the source, and confirmed by rgw-bug-reproduction.
+
+## radosgw's quota set stores garbage for an unparsable max-size-kb
+
+- **Kind:** defect, non-security and fail-open: input radosgw cannot
+  read, or a size that overflows, sets an unintended or unlimited quota
+  and answers 200. Unfixed at v19.2.6 and v20.2.4. rgw-bug-reproduction
+  triaged it on 2026-10-07 (CVSS 0: reachable only through the
+  `users=write` admin quota route, crossing no privilege boundary).
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RGWOp_Quota_Set::execute`, setting one quota from the arguments,
+    reads them with `RESTArgs::get_int64` and `get_bool` and checks no
+    return (`driver/rados/rgw_rest_user.cc:1103-1111`; `:1113-1121`).
+  - `get_int64` sets `*existed` and then hands the argument to
+    `stringtoll` (`rgw_rest.cc:894-913`; `:899-918`), which returns EINVAL
+    without writing its output for trailing text or a value that
+    saturates at LLONG_MAX (`rgw_string.h:38-52` at both tags).
+  - `max_size_kb` is a local declared without a value (`:1105`; `:1115`),
+    and `has_max_size_kb` is set because the argument exists, so an
+    unparsable `max-size-kb` multiplies an uninitialized value by 1024
+    into the stored `max_size` (`:1108-1110`; `:1118-1120`).
+  - An unparsable `max-objects` or `max-size` leaves the field the
+    `RGWQuotaInfo()` constructor gave it, -1, unlimited
+    (`rgw_quota_types.h:38-43` at both tags), and the request succeeds.
+  - The same product, `max_size_kb * 1024`, has no overflow guard on the
+    argument path (`rgw_rest_user.cc:1109`; `:1119`) nor in
+    `RGWQuotaInfo::decode_json` for a JSON body (`rgw_quota.cc:1061`;
+    `:1059`). A `max-size-kb` of 2^53 or more is signed overflow, undefined
+    behaviour, which in practice wraps, 2^53 to INT64_MIN; a negative
+    `max_size` is enforced as no limit (`rgw_quota.cc:775` and `:820`;
+    `:796` and `:841`).
+- **Impact:** `PUT /admin/user?quota&quota-type=user&max-size-kb=1.5`, or
+  any value with a unit such as `10G`, stores an arbitrary maximum size,
+  which can block every write to the user's buckets once the quota is
+  enabled; `max-objects=10k` or `max-size=1G` silently removes the limit,
+  and so does a `max-size-kb` of 2^53. Each answers 200.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** answers 400 InvalidArgument to an unparsable value and to an
+  overflowing one, on the arguments and in a body, and stores nothing
+  (`setQuotaInfo`, `internal/admin/user_sub.go`; `SetUserQuota`,
+  `internal/op/adminuser_sub.go`; `Quota.UnmarshalJSON`,
+  `internal/meta/quota_json.go`; `docs/exclusions.md`, "The admin key,
+  subuser, caps and quota routes differ from radosgw in seven ways").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07
+  (non-security, fail-open); no prior art.
+- **Found:** phase 1 unit N, Task 5, 2026-10-07, transcribing the quota
+  set's argument handling; the overflow in the task's review; derived
+  from the source, not reproduced.
+
+## radosgw's admin API takes an unparsable boolean argument as its default
+
+- **Kind:** defect, non-security: informational hardening on admin-only
+  routes. Unfixed at v19.2.6 and v20.2.4. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RESTArgs::get_bool` sets `*existed` when the argument is present. It
+    takes an empty value, `true` in any case or `1` as true and `false` in
+    any case or `0` as false; for anything else it writes the caller's
+    default and returns -EINVAL (`rgw_rest.cc:1002-1032`; `:1007-1037`).
+  - The admin user bodies call it as bare statements and discard that
+    return (`driver/rados/rgw_rest_user.cc:183-188`, `:330-336`, `:464`,
+    `:521-522`, `:592`, `:649`, `:701-702` and `:1111`; `:184-189`,
+    `:336-342`, `:474`, `:531-532`, `:602`, `:659`, `:711-712` and
+    `:1121`).
+  - `RGWOp_Key_Create` defaults `active` to true and sets
+    `access_key_active` whenever the argument exists (`:702` and
+    `:708-710`; `:712` and `:718-720`). So `active=flase` makes the key
+    active, the only flag whose typo fails open on a credential; it
+    overlaps "radosgw's Swift key modify rebuilds the key". An empty
+    `active=` is true too.
+  - `generate-key` on user and key create and `purge-keys` default to
+    true, so a typo there generates a key or purges keys, which is mild;
+    on user modify `generate-key` defaults to false (`:330`; `:336`). `suspended`, `system`,
+    `exclusive`, `purge-data` and `account-root` default to false. A typo
+    in `suspended=true` leaves the user unsuspended, and on a user modify,
+    which applies `suspended` whenever it exists (`:385-386`; `:392-393`),
+    lifts a suspension the user already has.
+- **Impact:** an operator's typo in an `active=false` revocation leaves
+  the key active, and the 200 hides it. Admin-only: every route needs
+  `users=write`.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Those routes answer 400
+  InvalidArgument for a boolean argument they cannot parse, after the cap
+  check, and store nothing, on every flag, which is stricter than radosgw
+  in both directions; an empty `active=` is refused the same way rather
+  than read as true (`flags` and `runChecked`, `internal/admin/user.go`;
+  `createKey`, `internal/admin/user_sub.go`; `docs/exclusions.md`, "The
+  admin user routes refuse a boolean argument they cannot parse").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** review of phase 1 unit N, Task 5, 2026-10-07, reading the key
+  create's argument handling; derived from the source, not reproduced.
+
+## radosgw lets another user take an inactive access key's id
+
+- **Kind:** defect, non-security (rgw-bug-reproduction: BENIGN), unfixed
+  at v19.2.6 and v20.2.4: a key id whose holder cannot reactivate it.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of lines is v19.2.6's, then v20.2.4's.
+  - An access key's `users.keys` index object exists only while the key
+    is active: `PutOperation::complete` writes it for active keys
+    (`src/rgw/services/svc_user_rados.cc:329-339`; `:309-319`) and
+    `remove_old_indexes` removes it when the key stops being active
+    (`:424-432`; `:404-412`).
+  - Both duplicate checks read that index: `generate_key`'s
+    (`src/rgw/driver/rados/rgw_user.cc:572-575`; `:577-580`) and
+    `PutOperation::prepare`'s (`src/rgw/services/svc_user_rados.cc:257-270`;
+    `:236-249`).
+  - So another user can create a key with a deactivated key's id; the
+    index then names that user, and the first holder's reactivation fails
+    `prepare` with EEXIST.
+- **Impact:** no impersonation and no secret exposure. A different user
+  can create a key with a deactivated key's id, with its own secret. S3
+  authentication resolves the id through the index to that one user and
+  verifies that user's secret (`src/rgw/rgw_rest_s3.cc:6325` and `:6347-6363` at
+  v19.2.6; `:6896` and `:6918` at v20.2.4), so neither user can act as the
+  other, and `PutOperation::prepare` refuses a second active holder
+  (`src/rgw/services/svc_user_rados.cc:257-270`; `:236-249`). The worst case
+  is that an admin cannot reactivate an id another user took.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it on the RADOS driver until N8; refuses it where
+  the store can list users. The driver's user listing answers
+  ErrNotImplemented, so there only the active-key index is checked, as in
+  radosgw; where the store lists users (memstore), a key create, a user
+  create or modify naming a key, or a key modify that leaves the key
+  active answers 409 KeyExists for an id another user holds, active or
+  not, and writes nothing (`refuseHeldKey`,
+  `internal/op/adminuser_sub.go`; `docs/exclusions.md`, "The admin key,
+  subuser, caps and quota routes differ from radosgw in seven ways").
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
+  (benign, non-security); no prior art.
+- **Found:** review of phase 1 unit N, Task 5, 2026-10-07; derived from
+  the source, not reproduced.
