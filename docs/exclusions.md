@@ -1914,29 +1914,28 @@ crypto/tls and net/url ones go1.27.1's.
   "A malformed percent-escape in the path makes radosgw serve another
   path").
 - **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
-  requests in flight finish for up to 30 s, Rook's default termination
-  grace period, before it closes every connection and ends the requests
-  still running. radosgw closes every connection at once
-  (`AsioFrontend::stop`, `:1226-1245` at v19.2.6); Tentacle waits for the
-  requests in flight first only when `rgw_graceful_stop` is set, and it
-  defaults to false (`:1139-1171` at v20.2.4). rgw-go reads neither
-  `rgw_graceful_stop` nor `rgw_exit_timeout_secs`.
-- **Usage logged at shutdown.** With `rgw_enable_usage_log` set, rgw-go's
-  usage-log worker makes its last flush as soon as shutdown begins, while
-  the frontend is still draining. Until the shutdown order is fixed, so that
-  the drain ends before the driver's workers stop, the usage of requests
-  that finish during the drain is lost, unless they push the log past
-  `rgw_usage_log_flush_threshold`. Tentacle's radosgw with
-  `rgw_graceful_stop` set waits for the requests in flight before it
-  finalizes its usage logger (`AsioFrontend::stop`,
-  `rgw_asio_frontend.cc:1139-1171`; `rgw_appmain.cc:624` and `:628` at
-  v20.2.4), so it logs them. Without it, and at v19.2.6
-  (`rgw_appmain.cc:589` and `:593`), radosgw closes the connections first,
-  and a request that reaches `log_usage` after the finalize finds no usage
-  logger and is not logged (`rgw_log.cc:189-201`). rgw-go's last flush also
-  gives up 10 s after shutdown begins, as does a tick flush still writing
+  requests in flight finish for up to 20 s, before it closes every
+  connection and ends the requests still running. radosgw closes every
+  connection at once (`AsioFrontend::stop`, `:1226-1245` at v19.2.6);
+  Tentacle waits for the requests in flight first only when
+  `rgw_graceful_stop` is set, and it defaults to false (`:1139-1171` at
+  v20.2.4). rgw-go reads neither `rgw_graceful_stop` nor
+  `rgw_exit_timeout_secs`.
+- **The usage log's last flush is bounded.** With `rgw_enable_usage_log`
+  set, rgw-go's usage-log worker makes its last flush once the frontend has
+  drained, as radosgw finalizes its usage logger only after it stops its
+  frontends (`rgw_appmain.cc:589` and `:593` at v19.2.6, `:624` and `:628`
+  at v20.2.4), so the requests the drain lets finish are logged. That flush
+  gives up 10 s after the drain ends, as does a tick flush still writing
   then, and their entries are lost; radosgw's `~UsageLogger` waits for its
-  flush without bound (`rgw_log.cc:128-133`).
+  flush without bound (`rgw_log.cc:128-133` at both tags). The 20 s drain
+  and the 10 s flush together fit the 30 s termination grace period a
+  radosgw pod gets under Rook, which sets none and so leaves Kubernetes'
+  default (rook v1.20.7 sets `TerminationGracePeriodSeconds` only for the
+  exporter, `pkg/operator/ceph/cluster/nodedaemon/exporter.go:142`). Where
+  the operator gives the pod a shorter grace period than the drain and the
+  flush need, a drain that reaches its limit is SIGKILLed before the flush,
+  and the usage logged since the last tick is lost.
 - **Ports and endpoints parse strictly.** rgw-go refuses port 0 and a
   port with anything but digits. radosgw reads a port with `strtoul` and
   refuses it only above 65535 or when `strtoul` reads no digits at all

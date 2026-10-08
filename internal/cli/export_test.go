@@ -15,6 +15,7 @@ var (
 	ResourcePaths   = resourcePaths
 	S3Config        = s3Config
 	ServeMetrics    = serveMetrics
+	ServeAndRun     = serveAndRun
 	WatchRADOS      = watchRADOS
 	ErrNoStats      = errNoStats
 	WatchSignals    = watchSignals

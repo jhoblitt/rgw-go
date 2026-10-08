@@ -118,6 +118,19 @@ use_site() {
 		die "the radosgw reports no realm, zonegroup or zone: ${rgw}"
 }
 
+# use_manifest_site sets realm, zonegroup and zone to the site manifest.json
+# records, which admin names. Unlike use_site it reads no service map, so it
+# answers at once while a restarted radosgw's old entry lingers there.
+use_manifest_site() {
+	local manifest=${out}/manifest.json
+	[[ -f "${manifest}" ]] || die "no ${manifest}; run make populate RELEASE=${release} first"
+	realm=$(jq -r '.realm // empty' "${manifest}")
+	zonegroup=$(jq -r '.zonegroup // empty' "${manifest}")
+	zone=$(jq -r '.zone // empty' "${manifest}")
+	[[ -n "${realm}" && -n "${zonegroup}" && -n "${zone}" ]] ||
+		die "${manifest} names no realm, zonegroup or zone"
+}
+
 # Without the site options radosgw-admin works in a zone named default, which
 # it creates on first use and the radosgw never serves.
 admin() {

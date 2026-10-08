@@ -10,11 +10,8 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cls/gc"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 )
-
-// rgwShardsMax is rgw_shards_max(), RGW_SHARDS_PRIME_1 (rgw_tools.h:40-43
-// at v19.2.6, :57-60 at v20.2.4).
-const rgwShardsMax = 65521
 
 // reshardWait is RGWReshardWait's default duration, the pause between two
 // reads of a resharding shard's status (rgw_reshard.h:266 at v19.2.6, :275
@@ -52,7 +49,7 @@ type writeOptions struct {
 	stripeSize         uint64 // rgw_obj_stripe_size, 4 MiB
 	chunkSize          uint64 // rgw_max_chunk_size, 4 MiB
 	maxPutSize         uint64 // rgw_max_put_size, 5 GiB
-	gcMaxObjs          uint32 // rgw_gc_max_objs, 32: floored to 1, then capped at rgwShardsMax as RGWGC::initialize caps it
+	gcMaxObjs          uint32 // rgw_gc_max_objs, 32: floored to 1, then capped at meta.ShardsMax as RGWGC::initialize caps it
 	gcObjMinWait       int64  // rgw_gc_obj_min_wait, 7200 s; 7200 s when negative, and saturated per enqueue by gcExpiration
 	gcProcessorMaxTime int32  // rgw_gc_processor_max_time, 3600 s, narrowed as RGWGC::process's int reads it
 	gcProcessorPeriod  int32  // rgw_gc_processor_period, 3600 s, narrowed as GCWorker::entry's int reads it
@@ -102,7 +99,7 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	if r.err != nil {
 		return writeOptions{}, fmt.Errorf("reading the write options: %w", r.err)
 	}
-	o.gcMaxObjs = min(floorShards("rgw_gc_max_objs", gcObjs), rgwShardsMax)
+	o.gcMaxObjs = min(floorShards("rgw_gc_max_objs", gcObjs), meta.ShardsMax)
 	if minWait < 0 {
 		slog.Error("gc object wait is negative; using the default of 7200 seconds",
 			slog.String("option", "rgw_gc_obj_min_wait"), slog.Int64("value", minWait))

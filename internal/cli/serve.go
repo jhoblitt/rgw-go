@@ -302,8 +302,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return fe.Serve(gctx) })
-	g.Go(func() error { return store.Run(gctx) })
+	serveAndRun(gctx, g, fe.Serve, store.Run)
 	if metricsLn != nil {
 		serveMetrics(gctx, g, metricsLn, reg)
 	}
@@ -318,6 +317,22 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	slog.InfoContext(ctx, "serving", slog.Any("addrs", addrs), slog.String("metrics_addr", metricsAddr),
 		slog.String("zone", zone.Name), slog.String("release", store.Release().String()))
 	return g.Wait()
+}
+
+// serveAndRun starts the frontend's serve and the store's run in g. run's
+// context ends once serve has returned, not with gctx: radosgw stops its
+// frontends before it finalizes the usage logger and closes the store
+// (AppMain::shutdown, rgw_appmain.cc:589, :593 and :604 at v19.2.6, :624,
+// :628 and :644 at v20.2.4), so the workers, the usage log's last flush
+// among them, outlive the drain. A run that fails ends gctx, and with it
+// serve.
+func serveAndRun(gctx context.Context, g *errgroup.Group, serve, run func(context.Context) error) {
+	runCtx, stopRun := context.WithCancel(context.WithoutCancel(gctx))
+	g.Go(func() error {
+		defer stopRun()
+		return serve(gctx)
+	})
+	g.Go(func() error { return run(runCtx) })
 }
 
 // errNoStats is a RADOS client without the stats the rgw_go_rados_* metrics

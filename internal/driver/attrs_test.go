@@ -173,6 +173,18 @@ var _ = Describe("SetObjectAttrs", func() {
 		Expect(en.Meta.ETag).To(Equal("e"), "rgw_bl_str")
 	})
 
+	It("names the owner of an ACL whose grants do not decode, as decode_policy reads the owner alone", func(ctx SpecContext) {
+		setup(ctx, denc.Squid)
+		e := denc.NewEncoder()
+		f := e.BeginStruct(2, 2)
+		acl.Owner{ID: "alice", DisplayName: "Alice"}.Encode(e, denc.Squid)
+		e.Raw([]byte{0xff, 0xff})
+		e.EndStruct(f)
+		Expect(s.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: e.Bytes()}, nil)).To(Succeed())
+		en := entry()
+		Expect([]string{en.Meta.Owner, en.Meta.OwnerDisplayName}).To(Equal([]string{"alice", "Alice"}), "rgw_rados.cc:6696 and :1754-1768")
+	})
+
 	It("still retags a guarded head for a change that sets nothing", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		Expect(s.SetObjectAttrs(ctx, st, map[string][]byte{"user.rgw.empty": {}}, nil)).To(Succeed())

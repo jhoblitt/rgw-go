@@ -119,13 +119,18 @@ populate: need-release ## Write the fixed data set through the RELEASE cluster's
 
 # Every package but the gate, which make gate runs on its own. The label
 # filter assumes every test package is a Ginkgo suite; a plain testing
-# package would reject the flag.
+# package would reject the flag. ./test/integration runs in a go test of its
+# own after the others, never beside them: its specs link extra buckets to
+# the populated user alice and sync her stats, while internal/cls/user's
+# specs pin alice's bucket list and header to the population.
 .PHONY: integration
 integration: need-release ## Run the integration specs against the RELEASE cluster
 	@tags="$(GO_TAGS),integration"; \
-	pkgs=$$(go list "-tags=$$tags" ./... | grep -Ev '/test/gate(/|$$)') || exit 1; \
+	pkgs=$$(go list "-tags=$$tags" ./... | grep -Ev '/test/(gate|integration)(/|$$)') || exit 1; \
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
-	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration
+	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration && \
+	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	  go test "-tags=$$tags" -race -count=1 ./test/integration -ginkgo.label-filter=integration
 
 .PHONY: gate
 gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster

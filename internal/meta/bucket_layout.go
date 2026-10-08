@@ -422,11 +422,29 @@ func (l BucketLayout) MarshalJSON() ([]byte, error) {
 	return json.Marshal(p)
 }
 
-// The rgw_shards_mod primes, RGW_SHARDS_PRIME_0 and RGW_SHARDS_PRIME_1.
-const (
-	shardsPrime0 = 7877
-	shardsPrime1 = 65521
-)
+// shardsPrime0 is RGW_SHARDS_PRIME_0, the smaller rgw_shards_mod prime
+// (driver/rados/rgw_tools.h:35 at v19.2.6, :52 at v20.2.4).
+const shardsPrime0 = 7877
+
+// ShardsMax is rgw_shards_max(), RGW_SHARDS_PRIME_1: the larger
+// rgw_shards_mod prime, and the most shards a sharded log may have
+// (driver/rados/rgw_tools.h:36-43 at v19.2.6, :53-60 at v20.2.4).
+const ShardsMax = 65521
+
+// ShardsMod is rgw_shards_mod (driver/rados/rgw_tools.h:46-55 at v19.2.6,
+// :63-72 at v20.2.4): the hash reduced by RGW_SHARDS_PRIME_0, or ShardsMax
+// above that many shards, then by the count. A count of 0 answers 0 rather
+// than dividing; rgw_shards_mod answers -1, which its GC caller then uses
+// as an index (docs/ceph-upstream-bugs.md, tracker #80991).
+func ShardsMod(hval, maxShards uint32) uint32 {
+	if maxShards == 0 {
+		return 0
+	}
+	if maxShards <= shardsPrime0 {
+		return hval % shardsPrime0 % maxShards
+	}
+	return hval % ShardsMax % maxShards
+}
 
 // StrHashLinux is ceph_str_hash_linux.
 func StrHashLinux(s string) uint32 {
@@ -450,8 +468,5 @@ func IndexShard(key string, numShards uint32) (shard uint32, ok bool) {
 	}
 	h := StrHashLinux(key)
 	h ^= (h & 0xff) << 24
-	if numShards <= shardsPrime0 {
-		return h % shardsPrime0 % numShards, true
-	}
-	return h % shardsPrime1 % numShards, true
+	return ShardsMod(h, numShards), true
 }

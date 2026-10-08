@@ -1,6 +1,7 @@
 package cephtest_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -62,4 +63,17 @@ var _ = Describe("ReadManifest", func() {
 		cephtest.ReadManifest(filepath.Join(dir, "ceph.conf"), &m)
 		Expect(m.Release).To(Equal("squid"))
 	})
+})
+
+var _ = Describe("RadosgwAdmin", func() {
+	DescribeTable("refuses a manifest that names no cluster of the harness's, running nothing",
+		func(ctx context.Context, manifest string) {
+			dir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600)).To(Succeed())
+			_, err := cephtest.RadosgwAdmin(ctx, filepath.Join(dir, "ceph.conf"), "user", "list")
+			Expect(err).To(MatchError(ContainSubstring("not a hack/rooket cluster")))
+		},
+		Entry("another rooket cluster", `{"release":"squid","rooket_name":"prod"}`),
+		Entry("a release the harness has no cluster for", `{"release":"reef","rooket_name":"rgw-go-reef"}`),
+	)
 })

@@ -26,24 +26,15 @@ import (
 // gcSeed is RGWGC::seed (rgw_gc.h:27).
 const gcSeed = 8675309
 
-// shardsMod is rgw_shards_mod (rgw_tools.h:46-55 at v19.2.6, :63-72 at
-// v20.2.4) for a positive shard count. Its hval parameter is an unsigned
-// int, so the 64-bit XXH64 that RGWGC::tag_index passes reaches the modulo
-// as its low 32 bits.
-func shardsMod(h uint64, shards uint32) int {
-	hv := uint32(h) //nolint:gosec // rgw_shards_mod(unsigned hval, ...) keeps the low 32 bits
-	if shards <= 7877 {
-		return int(hv % 7877 % shards)
-	}
-	return int(hv % rgwShardsMax % shards)
-}
-
 // gcShard is RGWGC::tag_index (:63-66): XXH64 of the tag's bytes, NUL
-// included, under RGWGC::seed, reduced by rgw_shards_mod.
+// included, under RGWGC::seed, reduced by rgw_shards_mod. Its hval
+// parameter is an unsigned int, so the 64-bit hash reaches the modulo as
+// its low 32 bits.
 func (w *writer) gcShard(tag string) int {
 	d := xxhash.NewWithSeed(gcSeed)
 	_, _ = d.WriteString(tag) //nolint:errcheck // a Digest's writes never fail
-	return shardsMod(d.Sum64(), w.opts.gcMaxObjs)
+	hval := uint32(d.Sum64()) //nolint:gosec // rgw_shards_mod(unsigned hval, ...) keeps the low 32 bits
+	return int(meta.ShardsMod(hval, w.opts.gcMaxObjs))
 }
 
 // gcChain is update_gc_chain (rgw_rados.cc:5409-5421; v20.2.4 :6132-6144):

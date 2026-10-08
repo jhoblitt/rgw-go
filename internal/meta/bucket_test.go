@@ -168,6 +168,10 @@ var _ = Describe("BucketInfo index shards", func() {
 		_, ok := meta.IndexShard("small.bin", 0)
 		Expect(ok).To(BeFalse())
 	})
+	It("reduces by no count rather than dividing by zero, where rgw_shards_mod answers -1", func() {
+		Expect(meta.ShardsMod(4060103410, 0)).To(BeZero())
+		Expect(meta.ShardsMod(4060103410, 7877)).To(BeEquivalentTo(6161))
+	})
 	It("hashes as ceph_str_hash_linux", func() {
 		Expect(meta.StrHashLinux("a")).To(BeEquivalentTo(17138))
 	})

@@ -1,95 +1,23 @@
 package gate_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"maps"
-	"slices"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
-// canonical decodes JSON into maps, slices, strings, bools, nil and
-// json.Numbers, so two documents compare equal exactly when they hold the
-// same values of the same JSON types whatever their key order and whitespace.
+// canonical is gate.Canonical failing the spec on a document that does not
+// decode.
 func canonical(b []byte) any {
 	GinkgoHelper()
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.UseNumber()
-	var v any
-	Expect(d.Decode(&v)).To(Succeed(), "decoding %s", b)
+	v, err := gate.Canonical(b)
+	Expect(err).NotTo(HaveOccurred())
 	return v
 }
 
-// jsonType names a canonical value's JSON type.
-func jsonType(v any) string {
-	switch v.(type) {
-	case nil:
-		return "null"
-	case bool:
-		return "bool"
-	case json.Number:
-		return "number"
-	case string:
-		return "string"
-	case []any:
-		return "array"
-	case map[string]any:
-		return "object"
-	default:
-		return fmt.Sprintf("%T", v)
-	}
-}
-
-// jsonDiff lists the paths at which two canonical documents differ, in type
-// or in value. Numbers compare by their text, as both sides print integers.
-func jsonDiff(path string, got, want any) []string {
-	mismatch := []string{fmt.Sprintf("%s: got %s %v, want %s %v", path, jsonType(got), got, jsonType(want), want)}
-	switch w := want.(type) {
-	case map[string]any:
-		g, ok := got.(map[string]any)
-		if !ok {
-			return mismatch
-		}
-		var out []string
-		for _, k := range slices.Sorted(maps.Keys(w)) {
-			if _, ok := g[k]; !ok {
-				out = append(out, fmt.Sprintf("%s.%s: missing, radosgw-admin has %v", path, k, w[k]))
-				continue
-			}
-			out = append(out, jsonDiff(path+"."+k, g[k], w[k])...)
-		}
-		for _, k := range slices.Sorted(maps.Keys(g)) {
-			if _, ok := w[k]; !ok {
-				out = append(out, fmt.Sprintf("%s.%s: extra, rgw-go has %v", path, k, g[k]))
-			}
-		}
-		return out
-	case []any:
-		g, ok := got.([]any)
-		if !ok {
-			return mismatch
-		}
-		if len(g) != len(w) {
-			return []string{fmt.Sprintf("%s: got %d elements %v, want %d %v", path, len(g), got, len(w), want)}
-		}
-		var out []string
-		for i := range w {
-			out = append(out, jsonDiff(fmt.Sprintf("%s[%d]", path, i), g[i], w[i])...)
-		}
-		return out
-	default:
-		if jsonType(got) != jsonType(want) {
-			return mismatch
-		}
-		if got != want {
-			return []string{fmt.Sprintf("%s: got %v, want %v", path, got, want)}
-		}
-		return nil
-	}
-}
+// jsonDiff is gate.JSONDiff.
+var jsonDiff = gate.JSONDiff
 
 var _ = Describe("jsonDiff", func() {
 	diff := func(got, want string) []string {
@@ -114,5 +42,21 @@ var _ = Describe("jsonDiff", func() {
 			ContainSubstring("$.x: extra"),
 		))
 		Expect(diff(`[1]`, `[1,2]`)).To(ConsistOf(ContainSubstring("got 1 elements")))
+	})
+})
+
+var _ = Describe("DiffJSON", func() {
+	type doc struct {
+		A    int   `json:"a"`
+		Pool *bool `json:"pool,omitempty"`
+	}
+
+	It("drops the keys an older dump omits before comparing", func() {
+		Expect(gate.DiffJSON("d", doc{A: 1, Pool: new(true)}, canonical([]byte(`{"a":1}`)), "pool")).To(BeEmpty())
+	})
+
+	It("reports an absent path rgw-go's document does not hold, so a stale list fails", func() {
+		Expect(gate.DiffJSON("d", doc{A: 1}, canonical([]byte(`{"a":1}`)), "pool")).To(ConsistOf(
+			ContainSubstring("d lacks pool, which only an older dump omits")))
 	})
 })
