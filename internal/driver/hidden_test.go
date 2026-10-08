@@ -1,7 +1,6 @@
 package driver_test
 
 import (
-	"bytes"
 	"context"
 	"net/http/httptest"
 	"strconv"
@@ -28,10 +27,10 @@ var _ = Describe("Credential index objects", func() {
 	var (
 		c    *fakerados.Cluster
 		s    *driver.Store
-		logs *bytes.Buffer
+		logs *syncBuffer
 	)
 	BeforeEach(func(ctx SpecContext) {
-		logs = &bytes.Buffer{}
+		logs = &syncBuffer{}
 		DeferCleanup(driver.CaptureLog(logs))
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
