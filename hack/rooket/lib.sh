@@ -8,6 +8,15 @@
 readonly rook_version=v1.20.7
 readonly rooket=${ROOKET:-rooket}
 
+# The usage-log options go-ceph's CI sets (testing/containers/micro-osd.sh),
+# which its rgw/admin suite's TestUsage needs, as option=value.
+readonly usage_options=(rgw_enable_usage_log=true rgw_usage_log_tick_interval=1 rgw_usage_log_flush_threshold=1)
+# What both gateways run with when they are compared, as option=value: no
+# background worker beside the requests, no local read cache between the
+# gateway and RADOS, and the usage options.
+readonly parity_options=(rgw_dynamic_resharding=false rgw_enable_gc_threads=false rgw_enable_lc_threads=false
+	rgw_run_sync_thread=false rgw_d3n_l1_local_datacache_enabled=false "${usage_options[@]}")
+
 die() {
 	echo "${script}: $*" >&2
 	exit 1
@@ -135,6 +144,26 @@ use_manifest_site() {
 # it creates on first use and the radosgw never serves.
 admin() {
 	toolbox radosgw-admin "$@" --rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}"
+}
+
+# rgw_entity prints the config entity of the radosgw whose service map entry
+# is $1. Rook runs the radosgw as client.rgw. and its deployment's name past
+# rook-ceph-rgw, dashes mapped to dots (generateCephXUser in rook
+# pkg/operator/ceph/object/config.go), and the service map's id is that name
+# past client.rgw. config show answers only for a section a running daemon
+# reads, with the frontends that daemon reports, so a wrong name stops here
+# rather than setting options nothing reads.
+rgw_entity() {
+	local rgw=$1 id entity frontends want
+	id=$(jq -r '.metadata.id // empty' <<<"${rgw}")
+	[[ -n "${id}" ]] || die "the radosgw reports no id: ${rgw}"
+	entity=client.rgw.${id}
+	frontends=$(ceph_cmd config show "${entity}" rgw_frontends) ||
+		die "no running daemon reads the config section ${entity}"
+	want=$(jq -r '.metadata["frontend_config#0"] // empty' <<<"${rgw}")
+	[[ -n "${frontends}" && "${frontends}" == "${want}" ]] ||
+		die "${entity} reports the frontends '${frontends}', the radosgw '${want}'"
+	echo "${entity}"
 }
 
 # rgw_endpoint prints the URL the host reaches the radosgw rgw_daemon printed
