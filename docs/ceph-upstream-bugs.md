@@ -229,6 +229,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
 | [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
 | [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
+| [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10302,6 +10303,37 @@ Every new entry adds its row to this table, in document order.
   the account's tenant (`LinkBucket.Execute`, `internal/op/adminbucket.go`;
   `docs/exclusions.md`, "Bucket link and unlink write differently from
   radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
+  routes; derived from the source, not reproduced.
+
+## radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant
+
+- **Kind:** defect, non-security; unfixed at v19.2.6 and v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `RGWBucket::init` splits `bucket=tenant/name` and loads that bucket
+    (`driver/rados/rgw_bucket.cc:186-197`; `:187-198`).
+  - `RGWBucketAdminOp::info` then starts its flusher, which sends the 200,
+    and calls `bucket_stats` with the uid's tenant and the unsplit name
+    (`:1650-1658`; `:1816-1824`).
+  - `rgw_bucket::get_key` keys `("", "t/n")` and `("t", "n")` both as
+    `t/n` (`rgw_basic_types.cc:62-79` at both tags), so without a uid,
+    which `set_user_id` leaves empty (`driver/rados/rgw_bucket.h:266-269`;
+    `:258-261`), or with one in the empty tenant, `bucket_stats` finds the
+    bucket, and the listing reports every tenanted bucket.
+  - With a uid that names a tenant, such as `uid=t2$u`, the key is
+    `t2/t/n`; `bucket_stats` finds no bucket and returns before writing
+    anything (`driver/rados/rgw_bucket.cc:1358-1363`; `:1521-1525`), so
+    the request answers 200 with no document.
+- **Impact:** an admin client that names both a tenanted bucket and a
+  tenanted uid gets a 200 with no body.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it: it reports the bucket the name loaded
+  (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/exclusions.md`,
+  "The admin bucket info reports a bucket named tenant/name whatever the
+  uid's tenant").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
