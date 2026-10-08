@@ -237,6 +237,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account removal never sees the account's topics](#radosgws-account-removal-never-sees-the-accounts-topics) | pending | pending | ✓ |
 | [radosgw's account quota set wraps a size past 2 GiB and defaults what it cannot parse](#radosgws-account-quota-set-wraps-a-size-past-2-gib-and-defaults-what-it-cannot-parse) | pending | pending | ✓ |
 | [radosgw's account removal deletes a name redirect another account holds](#radosgws-account-removal-deletes-a-name-redirect-another-account-holds) | pending | pending | ✓ |
+| [A stopped account removal or rename blocks the name and email for good](#a-stopped-account-removal-or-rename-blocks-the-name-and-email-for-good) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10679,3 +10680,54 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the RADOS
   driver's account removal; derived from the source, not reproduced.
+
+## A stopped account removal or rename blocks the name and email for good
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a name or email no
+  account can take again. Classification pending: rgw-bug-reproduction
+  will classify it. Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/driver/rados/account.cc` is the same at v19.2.6
+  and v20.2.4 through these lines.
+  - `account::remove` deletes the account object first, then the name and
+    email redirects, logging and ignoring each redirect's failure
+    (`:401-426`). `account::write` writes the account object first, then
+    removes the old redirects and creates the new ones, with the same
+    tolerance (`:328-389`). A removal or rename that stops after the
+    account object, on a crash or a failed redirect step, leaves a
+    redirect that names a missing account, or an account that no longer
+    holds that name or email.
+  - `account::write` refuses a new name or email whose redirect reads,
+    whatever it names (`:296-326`); it does not compare the id the
+    redirect holds with anything. So no account can take the leftover's
+    name or email, the renamed account itself included, which reads its
+    own old redirect as taken.
+  - A retried rename does not finish either: the account object already
+    holds the new name, so `same_name` holds (`:255-257`) and the write
+    touches no redirect, leaving the new name with none.
+  - `read_by_name` and `read_by_email` follow the redirect without
+    checking that the account still holds the name or email (`:200-239`),
+    so the old name finds the renamed account; one naming a removed
+    account answers ENOENT. Only deleting the object by hand, with
+    `rados rm`, frees the name; neither `radosgw-admin` nor the admin API
+    removes a redirect without its account.
+- **Impact:** after one failed or interrupted removal or rename, the name
+  or email cannot be given to any account, and a renamed account is found
+  by its old name and not by its new one.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The RADOS driver claims a write's
+  name and email redirects before the account object and drops the old
+  ones after it, so a stop leaves only redirects that name an account not
+  holding the name or email. Such a redirect is stale: lookups through it
+  answer NoSuchEntity, and a create or rename takes it over once a read
+  past the metadata cache shows it stale. Every account write claims the
+  redirects of the name and email it holds, changed or not, so retrying a
+  rename that stopped finishes it unless another account claimed the name
+  meanwhile, when the retry answers 409 AccountAlreadyExists and the
+  account keeps its old name (`PutAccount`, `GetAccountByName`,
+  `GetAccountByEmail`, `internal/driver/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, 2026-10-08, making the RADOS
+  driver's account writes retry-safe; derived from the source, not
+  reproduced.
