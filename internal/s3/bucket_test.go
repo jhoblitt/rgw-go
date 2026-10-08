@@ -81,7 +81,7 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 		GinkgoHelper()
 		rec, err := store.GetBucket(ctx, "", "plain")
 		Expect(err).NotTo(HaveOccurred())
-		p, err := op.BucketACLFor(rec)
+		p, err := op.BucketACLFor(ctx, rec)
 		Expect(err).NotTo(HaveOccurred())
 		return p
 	}

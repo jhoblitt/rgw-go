@@ -202,7 +202,7 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 		return err
 	default:
 		r.BucketRec = &BucketRecord{Info: meta.BucketInfo{RequesterPays: existing.Info.RequesterPays}}
-		if cerr := o.checkExisting(r, existing, bucketZG.ID, rule); cerr != nil {
+		if cerr := o.checkExisting(ctx, r, existing, bucketZG.ID, rule); cerr != nil {
 			return cerr
 		}
 	}
@@ -324,7 +324,7 @@ func selectBucketPlacement(zg meta.ZoneGroup, user *meta.UserInfo, rule meta.Pla
 // a system request, its placement, or its ACL, each refusal
 // BucketAlreadyExists with radosgw's message. An ACL that does not decode is
 // not compared.
-func (o *CreateBucket) checkExisting(r *Request, existing *BucketRecord, zonegroup string, rule meta.PlacementRule) error {
+func (o *CreateBucket) checkExisting(ctx context.Context, r *Request, existing *BucketRecord, zonegroup string, rule meta.PlacementRule) error {
 	info := &existing.Info
 	if !r.Identity.System && zonegroup != info.Zonegroup {
 		return ErrBucketAlreadyExists.WithMessage("Cannot modify existing bucket's zonegroup")
@@ -332,7 +332,7 @@ func (o *CreateBucket) checkExisting(r *Request, existing *BucketRecord, zonegro
 	if rule.Name != info.PlacementRule.Name || rule.CanonicalStorageClass() != info.PlacementRule.CanonicalStorageClass() {
 		return ErrBucketAlreadyExists.WithMessage("Cannot modify existing bucket's placement rule")
 	}
-	if old, err := BucketACLFor(existing); err == nil && !samePolicy(old, o.ACL) {
+	if old, err := BucketACLFor(ctx, existing); err == nil && !samePolicy(old, o.ACL) {
 		return ErrBucketAlreadyExists.WithMessage("Cannot modify existing access control policy")
 	}
 	return nil

@@ -169,10 +169,10 @@ func (o *GetObjectACL) Complete(context.Context, *Request) {}
 // The policy's Owner is radosgw's s->bucket_owner, which names the owner of
 // any default policy radosgw builds for an object without an ACL of its own.
 // The bucket-scope ACL ops render the policy itself.
-func BucketACLFor(rec *BucketRecord) (acl.Policy, error) {
+func BucketACLFor(ctx context.Context, rec *BucketRecord) (acl.Policy, error) {
 	b, ok := rec.Attrs[meta.AttrACL]
 	if !ok {
-		slog.Warn("couldn't find acl header for bucket, generating default", slog.String("bucket", rec.Info.Bucket.Name))
+		slog.WarnContext(ctx, "couldn't find acl header for bucket, generating default", slog.String("bucket", rec.Info.Bucket.Name))
 		return acl.DefaultPolicy(rec.Info.Owner, ""), nil
 	}
 	return decodeACL(b, "bucket "+rec.Info.Bucket.Name)
@@ -203,7 +203,7 @@ func ObjectACLFor(ctx context.Context, st *ObjectState, bucket *BucketRecord) (a
 		slog.WarnContext(ctx, "couldn't find acl header for object, generating default",
 			slog.String("bucket", bucket.Info.Bucket.Name), slog.String("key", st.Key.Name))
 	}
-	bucketACL, err := BucketACLFor(bucket)
+	bucketACL, err := BucketACLFor(ctx, bucket)
 	if err != nil {
 		return acl.Policy{}, err
 	}

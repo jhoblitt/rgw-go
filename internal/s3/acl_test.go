@@ -2,7 +2,9 @@ package s3_test
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -128,7 +130,7 @@ var _ = Describe("bucket get_acls and put_acls", func() {
 	}
 	storedACL := func(ctx context.Context) acl.Policy {
 		GinkgoHelper()
-		p, err := op.BucketACLFor(w.bucket(ctx))
+		p, err := op.BucketACLFor(ctx, w.bucket(ctx))
 		Expect(err).NotTo(HaveOccurred())
 		return p
 	}
@@ -236,5 +238,41 @@ var _ = Describe("bucket get_acls and put_acls", func() {
 			Expect(rec.Body.String()).To(ContainSubstring("<Code>XAmzContentSHA256Mismatch</Code>"))
 			Expect(storedACL(ctx)).To(Equal(private()))
 		})
+	})
+})
+
+// goneEmails is a user store whose email lookup ends as a client's
+// departure ends it: cancel runs, and the error names the email's index
+// object, as a store's read error does.
+type goneEmails struct {
+	*memstore.Store
+	cancel func()
+}
+
+func (g goneEmails) GetUserByEmail(ctx context.Context, email string) (*op.UserRecord, error) {
+	g.cancel()
+	return nil, op.FromRADOS(fmt.Errorf("reading default.rgw.meta/%s: %w", email, ctx.Err()), op.ScopeUser)
+}
+
+var _ = Describe("a grant's email lookup cut short", func() {
+	It("ends the request of a client that went away, logging none of the email", func(ctx SpecContext) {
+		const email = "gone.secret@example.com"
+		buf := captureLogAt(slog.LevelDebug)
+		w := newSubresWorld(ctx, denc.Squid)
+		rctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		w.env.Users = goneEmails{Store: w.store, cancel: cancel}
+		req := httptest.NewRequestWithContext(rctx, http.MethodPut, "/plain?acl", nil)
+		req.Header.Set("x-amz-grant-read", `emailAddress="`+email+`"`)
+		req.Header.Set("Content-Length", "0")
+		rec := httptest.NewRecorder()
+		h := s3.NewHandler(w.env, authAs(w.alice), testConfig(s3.Config{}))
+		Expect(func() { h.ServeHTTP(rec, req) }).To(PanicWith(http.ErrAbortHandler), "the gone-client path, not a 408")
+		Expect(rec.Body.Len()).To(BeZero())
+		Expect(logRecords(buf)).To(ContainElement(SatisfyAll(
+			HaveKeyWithValue("msg", "client went away"),
+			HaveKeyWithValue("code", "RequestTimeout"),
+		)))
+		Expect(buf.String()).NotTo(ContainSubstring("gone.secret"))
 	})
 })

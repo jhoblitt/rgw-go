@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
@@ -423,6 +424,22 @@ var _ = Describe("Parse", func() {
 			Expect(principals(stmt(`"Principal": {"Service": "s3.amazonaws.com"}`), opts)).To(BeEmpty(), "a service on squid")
 			Expect(principals(stmt(`"Principal": {"AWS": ["arn:aws:iam::t:group/g", "arn:aws:iam::t:user/u"]}`), opts)).
 				To(Equal([]policy.Principal{policy.UserPrincipal("t", "u")}), "a group beside a user")
+		})
+		It("logs a dropped principal under the parse's context, so a request's line carries its id", func(ctx SpecContext) {
+			var buf bytes.Buffer
+			oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+			slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, nil))))
+			DeferCleanup(func() {
+				slog.SetDefault(oldLogger)
+				log.SetOutput(oldWriter)
+				log.SetFlags(oldFlags)
+			})
+			opts := squid
+			opts.RejectInvalidPrincipals = false
+			opts.Context = op.WithRequestID(ctx, "tx1")
+			Expect(principals(stmt(`"Principal": {"CanonicalUser": "abc"}`), opts)).To(BeEmpty())
+			Expect(buf.String()).To(ContainSubstring(`"msg":"ignored policy principal"`))
+			Expect(buf.String()).To(ContainSubstring(`"request_id":"tx1"`))
 		})
 
 		// radosgw's flat_set keeps the first of two principals equal in kind,

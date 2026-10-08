@@ -106,7 +106,7 @@ var _ = Describe("bucket subresource ops", func() {
 		}
 		storedACL := func(ctx context.Context) acl.Policy {
 			GinkgoHelper()
-			p, err := op.BucketACLFor(bucket(ctx))
+			p, err := op.BucketACLFor(ctx, bucket(ctx))
 			Expect(err).NotTo(HaveOccurred())
 			return p
 		}

@@ -110,7 +110,7 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 // v19.2.6, :1498-1514 at v20.2.4) against r.BucketRec for the key r names,
 // after the refusals init_permissions makes on the request's bucket.
 func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
-	ids, b, rule, err := e.requestPrelude(r)
+	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
 		return e.decided(ctx, a, rule, err)
 	}
@@ -126,7 +126,7 @@ func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 // an object ACL that does not decode, and read_obj_policy's rule for a
 // missing object (rgw_op.cc:385-447 at v19.2.6, :415-477 at v20.2.4).
 func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
-	ids, b, rule, err := e.requestPrelude(r)
+	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
 		return e.decided(ctx, a, rule, err)
 	}
@@ -160,7 +160,7 @@ func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Ac
 // unmarked, as radosgw reads a source inside verify_permission; a source
 // policy that does not parse is refused marked, and for every requester.
 func (e *Evaluator) VerifyBucketIn(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, bucket *op.BucketRecord, key meta.ObjKey) error {
-	ids, b, reqBlock, rule, err := e.explicitPrelude(r, bucket)
+	ids, b, reqBlock, rule, err := e.explicitPrelude(ctx, r, bucket)
 	if err != nil {
 		return e.decided(ctx, a, rule, err)
 	}
@@ -177,7 +177,7 @@ func (e *Evaluator) VerifyBucketIn(ctx context.Context, r *op.Request, a policy.
 // one owned by bucket's owner. A missing object takes read_obj_policy's rule
 // on bucket, unmarked.
 func (e *Evaluator) VerifyObjectIn(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, bucket *op.BucketRecord, obj *op.ObjectState) error {
-	ids, b, reqBlock, rule, err := e.explicitPrelude(r, bucket)
+	ids, b, reqBlock, rule, err := e.explicitPrelude(ctx, r, bucket)
 	if err != nil {
 		return e.decided(ctx, a, rule, err)
 	}
@@ -227,7 +227,7 @@ func (e *Evaluator) identityPolicies(r *op.Request) ([]*policy.Policy, error) {
 // requestPrelude is what VerifyBucket and VerifyObject read before the
 // object: the identity's policies and the request's bucket, each refusal
 // marked, with the rule that refused.
-func (e *Evaluator) requestPrelude(r *op.Request) ([]*policy.Policy, bucketInputs, string, error) {
+func (e *Evaluator) requestPrelude(ctx context.Context, r *op.Request) ([]*policy.Policy, bucketInputs, string, error) {
 	ids, err := e.identityPolicies(r)
 	if err != nil {
 		return nil, bucketInputs{}, "identity refused", err
@@ -235,7 +235,7 @@ func (e *Evaluator) requestPrelude(r *op.Request) ([]*policy.Policy, bucketInput
 	if r.BucketRec == nil {
 		return nil, bucketInputs{}, "request names no bucket", op.ErrAccessDenied
 	}
-	b, err := e.requestBucket(r)
+	b, err := e.requestBucket(ctx, r)
 	if err != nil {
 		return nil, bucketInputs{}, "request bucket refused", err
 	}
@@ -246,7 +246,7 @@ func (e *Evaluator) requestPrelude(r *op.Request) ([]*policy.Policy, bucketInput
 // object: the identity's policies, the explicit bucket, and the request's
 // bucket's public-access block, which refuses unmarked when it does not
 // decode.
-func (e *Evaluator) explicitPrelude(r *op.Request, bucket *op.BucketRecord) ([]*policy.Policy, bucketInputs, *acl.PublicAccessBlock, string, error) {
+func (e *Evaluator) explicitPrelude(ctx context.Context, r *op.Request, bucket *op.BucketRecord) ([]*policy.Policy, bucketInputs, *acl.PublicAccessBlock, string, error) {
 	ids, err := e.identityPolicies(r)
 	if err != nil {
 		return nil, bucketInputs{}, nil, "identity refused", err
@@ -254,7 +254,7 @@ func (e *Evaluator) explicitPrelude(r *op.Request, bucket *op.BucketRecord) ([]*
 	if bucket == nil {
 		return nil, bucketInputs{}, nil, "no bucket", op.ErrAccessDenied
 	}
-	b, err := e.explicitBucket(r, bucket)
+	b, err := e.explicitBucket(ctx, r, bucket)
 	if err != nil {
 		return nil, bucketInputs{}, nil, "explicit bucket refused", err
 	}
@@ -286,10 +286,10 @@ func suspended(rec *op.BucketRecord) bool { return rec.Info.Flags&meta.BucketSus
 // not decode is refused the same way (docs/exclusions.md). For an admin the
 // failed policy or block is none. A suspended bucket refuses all but an admin
 // (read_bucket_policy, :366-370 at v19.2.6, :396-400 at v20.2.4).
-func (e *Evaluator) requestBucket(r *op.Request) (bucketInputs, error) {
+func (e *Evaluator) requestBucket(ctx context.Context, r *op.Request) (bucketInputs, error) {
 	rec := r.BucketRec
 	admin := r.Identity.Admin
-	bp, perr := bucketPolicy(rec, rec.Info.Bucket.Tenant, e.cfg.Release)
+	bp, perr := bucketPolicy(ctx, rec, rec.Info.Bucket.Tenant, e.cfg.Release)
 	block, berr := publicAccess(rec)
 	if err := errors.Join(perr, berr); err != nil && !admin {
 		return bucketInputs{}, op.BeforeVerify(fmt.Errorf("%w: %w", op.ErrAccessDenied, err))
@@ -303,7 +303,7 @@ func (e *Evaluator) requestBucket(r *op.Request) (bucketInputs, error) {
 	if suspended(rec) && !admin {
 		return bucketInputs{}, op.BeforeVerify(fmt.Errorf("%w: bucket %s", op.ErrUserSuspended, rec.Info.Bucket.Name))
 	}
-	bacl, err := op.BucketACLFor(rec)
+	bacl, err := op.BucketACLFor(ctx, rec)
 	if err != nil {
 		return bucketInputs{}, op.BeforeVerify(err)
 	}
@@ -318,11 +318,11 @@ func (e *Evaluator) requestBucket(r *op.Request) (bucketInputs, error) {
 // system request whose bucket policy does not parse"); rgw-go refuses the
 // request for every requester instead, marked. An ACL or block that does not
 // decode is refused unmarked.
-func (e *Evaluator) explicitBucket(r *op.Request, rec *op.BucketRecord) (bucketInputs, error) {
+func (e *Evaluator) explicitBucket(ctx context.Context, r *op.Request, rec *op.BucketRecord) (bucketInputs, error) {
 	if suspended(rec) && !r.Identity.Admin {
 		return bucketInputs{}, fmt.Errorf("%w: bucket %s", op.ErrUserSuspended, rec.Info.Bucket.Name)
 	}
-	bp, err := bucketPolicy(rec, rec.Info.Bucket.Tenant, e.cfg.Release)
+	bp, err := bucketPolicy(ctx, rec, rec.Info.Bucket.Tenant, e.cfg.Release)
 	if err != nil {
 		return bucketInputs{}, op.BeforeVerify(fmt.Errorf("%w: %w", op.ErrAccessDenied, err))
 	}
@@ -330,7 +330,7 @@ func (e *Evaluator) explicitBucket(r *op.Request, rec *op.BucketRecord) (bucketI
 	if err != nil {
 		return bucketInputs{}, err
 	}
-	bacl, err := op.BucketACLFor(rec)
+	bacl, err := op.BucketACLFor(ctx, rec)
 	if err != nil {
 		return bucketInputs{}, err
 	}

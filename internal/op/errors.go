@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"syscall"
 
@@ -209,6 +210,12 @@ var byErrno = func() map[int]*Error {
 // AsError returns the *Error in err's chain. An error that carries none is a
 // bug in an op and renders as InternalError; a context error renders as the
 // 408 RequestTimeout, which is what a client that is still connected sees.
+// A context deadline is a store call timing out, which radosgw meets as
+// librados's -ETIMEDOUT (Objecter.cc:2323 at v19.2.6, :2391 at v20.2.4,
+// with rados_osd_op_timeout set), that row (rgw_common.cc:112 at v19.2.6,
+// :113 at v20.2.4); ERR_REQUEST_TIMEOUT's RequestTimeout is a 400 (:73, :74)
+// radosgw answers a PutObject body shorter than its Content-Length with
+// (rgw_op.cc:4430-4431 at v19.2.6, :4662-4663 at v20.2.4).
 func AsError(err error) *Error {
 	if e, ok := errors.AsType[*Error](err); ok {
 		return e
@@ -217,6 +224,52 @@ func AsError(err error) *Error {
 		return ErrRequestTimedOut
 	}
 	return ErrInternalError
+}
+
+// ClientGone reports whether err ends a request whose client went away: a
+// canceled context, while ctx, the request's own, is canceled too. net/http
+// cancels a request's context once a read on its connection fails, which it
+// takes for a dead connection (net/http/server.go:803-821 at go1.27.1), or
+// once the drain closes the connection, so a response would reach no one.
+// radosgw notices such a client only when a read or write on its socket
+// fails; it logs a failed write and goes on (dump_status, rgw_rest.cc:289-301
+// at v19.2.6 and v20.2.4), then ends the connection (rgw_asio_frontend.cc:350-355
+// at v19.2.6, :360-365 at v20.2.4).
+func ClientGone(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled)
+}
+
+// ErrorCode is the code of the S3 error AsError maps err to, a context error
+// included, for a log that must not carry err's text: a store's error names
+// the object it read, and the object a lookup by a request's access key reads
+// is named by that key. The code is the sentinel's that the error matches,
+// so nothing of err flows into the log; an error matching no sentinel is
+// InternalError.
+func ErrorCode(err error) string {
+	e := AsError(err)
+	for _, s := range errorSet {
+		if e.Is(s) {
+			return s.Code
+		}
+	}
+	return ErrInternalError.Code
+}
+
+// EndForGoneClient reports whether err ends a request whose client went away
+// (ClientGone), and then records the status err maps to on r unless the
+// response has started, and logs the end at debug under the route's name and
+// err's code alone: a store's error names the object it read, which for a
+// lookup by access key or email is that key or email. After it reports true
+// the protocol handler writes nothing more and ends the connection.
+func EndForGoneClient(ctx context.Context, r *Request, started bool, route string, err error) bool {
+	if !ClientGone(ctx, err) {
+		return false
+	}
+	if !started {
+		r.Status = AsError(err).Status
+	}
+	slog.DebugContext(ctx, "client went away", slog.String("op", route), slog.String("code", ErrorCode(err)))
+	return true
 }
 
 // FromRADOS maps a seam error to the S3 error radosgw's rgw_http_s3_errors

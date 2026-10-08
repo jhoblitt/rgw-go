@@ -70,14 +70,18 @@ func serveReq(h http.Handler, method, target string, body io.Reader, hdr ...stri
 	return rec
 }
 
-// captureLog sends slog's default logger to a buffer as JSON until the spec
-// ends. slog.SetDefault also points the log package at the new handler, and
+// captureLog is captureLogAt at slog's default level, info.
+func captureLog() *bytes.Buffer { return captureLogAt(slog.LevelInfo) }
+
+// captureLogAt sends slog's default logger at level to a buffer as JSON until
+// the spec ends, through the request-id handler the binary installs.
+// slog.SetDefault also points the log package at the new handler, and
 // restoring the old default leaves it there, so log's writer and flags are
 // restored too.
-func captureLog() *bytes.Buffer {
+func captureLogAt(level slog.Level) *bytes.Buffer {
 	var buf bytes.Buffer
 	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level}))))
 	DeferCleanup(func() {
 		slog.SetDefault(oldLogger)
 		log.SetOutput(oldWriter)
@@ -614,6 +618,223 @@ var _ = Describe("Handler", func() {
 			})
 			Expect(get("/").Code).To(Equal(404))
 			Expect(logRecords(buf)).To(BeEmpty())
+		})
+	})
+	Describe("an authentication's error", func() {
+		const (
+			keyID  = "AKIAEXAMPLEKEYID0002"
+			secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+			sig    = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+			authz  = "AWS4-HMAC-SHA256 Credential=" + keyID + "/20250927/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=" + sig
+
+			presigned = "/plain/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=" + keyID +
+				"%2F20250927%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-SignedHeaders=host&X-Amz-Signature=" + sig
+		)
+		// failing is an authenticator whose error carries everything the
+		// request's credentials hold, the secret its store read included.
+		failing := func(sentinel *op.Error) s3.Authenticator {
+			return s3.AuthenticatorFunc(func(_ context.Context, r *http.Request, _ op.PayloadForms) (*op.AuthResult, error) {
+				return nil, fmt.Errorf("%w: reading users.keys/%s with secret %s for %q?%s",
+					sentinel, keyID, secret, r.Header.Get("Authorization"), r.URL.RawQuery)
+			})
+		}
+		DescribeTable("logs a server error once, with the request id and its code and none of the request's credentials",
+			func(sentinel *op.Error, target string, hdr ...string) {
+				buf := captureLog()
+				h = newHandler(store, failing(sentinel), s3.Config{})
+				rec := get(target, hdr...)
+				Expect(rec.Code).To(Equal(sentinel.Status))
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>" + sentinel.Code + "</Code>"))
+				Expect(logRecords(buf)).To(ConsistOf(SatisfyAll(
+					HaveKeyWithValue("level", "ERROR"),
+					HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+					HaveKeyWithValue("code", sentinel.Code),
+				)))
+				Expect(buf.String()).NotTo(ContainSubstring(keyID), "the access key")
+				Expect(buf.String()).NotTo(ContainSubstring(secret), "the secret")
+				Expect(buf.String()).NotTo(ContainSubstring(sig), "the signature")
+			},
+			Entry("a store failure, its credentials in the Authorization header", op.ErrServiceUnavailable, "/plain/k", "Authorization", authz),
+			Entry("a store failure, its credentials in a presigned query", op.ErrServiceUnavailable, presigned),
+			Entry("an InternalError", op.ErrInternalError, "/plain/k", "Authorization", authz),
+		)
+		It("logs an authenticator-built code as InternalError, taking no text from it", func() {
+			buf := captureLog()
+			h = newHandler(store, s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+				return nil, &op.Error{Code: keyID, Status: 500}
+			}), s3.Config{})
+			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(500))
+			Expect(logRecords(buf)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("code", "InternalError"),
+			)))
+			Expect(buf.String()).NotTo(ContainSubstring(keyID), "the access key")
+		})
+		It("logs nothing for a refusal", func() {
+			buf := captureLog()
+			h = newHandler(store, failing(op.ErrSignatureDoesNotMatch), s3.Config{})
+			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(403))
+			Expect(logRecords(buf)).To(BeEmpty())
+		})
+	})
+	Describe("the request id", func() {
+		It("is on every line logged while a request is served: the authenticator's, the op layer's and the handler's", func(ctx SpecContext) {
+			buf := captureLogAt(slog.LevelDebug)
+			alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+			// A bucket without an ACL makes the op layer warn as it builds one.
+			_, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(alice.Info.UserID)})
+			Expect(err).NotTo(HaveOccurred())
+			as := s3.AuthenticatorFunc(func(actx context.Context, r *http.Request, p op.PayloadForms) (*op.AuthResult, error) {
+				slog.InfoContext(actx, "authenticating")
+				return authAs(alice).Authenticate(actx, r, p)
+			})
+			h = newHandler(store, as, s3.Config{})
+			rec := get("/plain?acl")
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			recs := logRecords(buf)
+			Expect(recs).To(ContainElements(
+				HaveKeyWithValue("msg", "authenticating"),
+				HaveKeyWithValue("msg", "couldn't find acl header for bucket, generating default"),
+				HaveKeyWithValue("msg", "request done"),
+			))
+			for _, r := range recs {
+				Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+			}
+			Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
+		})
+		DescribeTable("is on every line of a request that fails, once",
+			func(route s3.HandlerFunc, method, msg string) {
+				buf := captureLogAt(slog.LevelDebug)
+				if route != nil {
+					h.Register("list_buckets", route)
+				}
+				rec := serveReq(h, method, "/", nil)
+				recs := logRecords(buf)
+				Expect(recs).To(ContainElement(HaveKeyWithValue("msg", msg)))
+				for _, r := range recs {
+					Expect(r).To(HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")), "line %q", r["msg"])
+				}
+				Expect(strings.Count(buf.String(), `"request_id"`)).To(Equal(len(recs)), "one request_id a line")
+			},
+			Entry("refused before dispatch", nil, "PATCH", "request done"),
+			Entry("a route's InternalError", s3.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request) error {
+				return fmt.Errorf("%w: rados: timed out", op.ErrInternalError)
+			}), http.MethodGet, "request failed"),
+			Entry("a route that panics", s3.HandlerFunc(func(context.Context, http.ResponseWriter, *op.Request) error {
+				panic("boom")
+			}), http.MethodGet, "request handler panicked"),
+			Entry("a route that fails after its response started", s3.HandlerFunc(func(_ context.Context, w http.ResponseWriter, _ *op.Request) error {
+				w.WriteHeader(200)
+				return op.ErrInternalError
+			}), http.MethodGet, "route failed after its response started"),
+		)
+	})
+	Describe("a context error", func() {
+		DescribeTable("is the 408 RequestTimeout to a client still there, and not logged as a server error",
+			func(cause error) {
+				buf := captureLog()
+				h.Register("list_buckets", func(context.Context, http.ResponseWriter, *op.Request) error {
+					return fmt.Errorf("listing buckets: %w", cause)
+				})
+				rec := get("/")
+				Expect(rec.Code).To(Equal(408))
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>RequestTimeout</Code>"))
+				Expect(logRecords(buf)).To(BeEmpty())
+			},
+			Entry("an expired deadline", context.DeadlineExceeded),
+			Entry("a canceled context other than the request's", context.Canceled),
+		)
+		// serveGone serves GET / through a handler whose authenticator is as and
+		// whose list_buckets route is route, both handed a cancel that stands
+		// in for net/http's on a connection that is gone. It returns the
+		// recorder, the metrics and the log, at debug.
+		serveGone := func(ctx context.Context, as func(cancel func()) s3.Authenticator, route func(cancel func()) s3.HandlerFunc) (*httptest.ResponseRecorder, *opfakes.FakeMetrics, *bytes.Buffer) {
+			GinkgoHelper()
+			buf := captureLogAt(slog.LevelDebug)
+			m := &opfakes.FakeMetrics{}
+			env := testEnv(store)
+			env.Metrics = m
+			rctx, cancel := context.WithCancel(ctx)
+			DeferCleanup(cancel)
+			gone := s3.NewHandler(env, as(cancel), testConfig(s3.Config{}))
+			if route != nil {
+				gone.Register("list_buckets", route(cancel))
+			}
+			rec := httptest.NewRecorder()
+			Expect(func() { gone.ServeHTTP(rec, httptest.NewRequestWithContext(rctx, http.MethodGet, "/", nil)) }).
+				To(PanicWith(http.ErrAbortHandler), "net/http then sends nothing of its own")
+			Expect(rec.Header()).NotTo(HaveKey("Content-Type"), "no error document")
+			return rec, m, buf
+		}
+		goneLine := func(rec *httptest.ResponseRecorder, buf *bytes.Buffer, code string) {
+			GinkgoHelper()
+			recs := logRecords(buf)
+			Expect(recs).To(ContainElement(SatisfyAll(
+				HaveKeyWithValue("level", "DEBUG"),
+				HaveKeyWithValue("msg", "client went away"),
+				HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+				HaveKeyWithValue("code", code),
+			)))
+			Expect(recs).NotTo(ContainElement(HaveKeyWithValue("level", Not(Equal("DEBUG")))))
+		}
+		DescribeTable("writes nothing more to a client that went away, ends the connection and logs it at debug",
+			func(ctx SpecContext, started bool, status int, body string, successful uint64) {
+				alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+				rec, m, buf := serveGone(ctx, func(func()) s3.Authenticator { return authAs(alice) },
+					func(cancel func()) s3.HandlerFunc {
+						return func(ctx context.Context, w http.ResponseWriter, _ *op.Request) error {
+							if started {
+								w.WriteHeader(200)
+								if _, err := w.Write([]byte(body)); err != nil {
+									return err
+								}
+							}
+							cancel()
+							return fmt.Errorf("listing buckets: %w", ctx.Err())
+						}
+					})
+				Expect(rec.Body.String()).To(Equal(body))
+				Expect(m.ObserveCallCount()).To(Equal(1))
+				route, observed, _, _, _ := m.ObserveArgsForCall(0)
+				Expect(route).To(Equal("list_buckets"))
+				Expect(observed).To(Equal(status))
+				Expect(store.Usage()).To(Equal([]op.UsageEntry{{
+					Owner: meta.UserOwner(alice.Info.UserID), Time: time.Unix(0x68d7a1b2, 0), Category: "list_buckets",
+					BytesSent: uint64(len(body)), Ops: 1, SuccessfulOps: successful,
+				}}), "the usage log files the request under the status it was observed with")
+				goneLine(rec, buf, "RequestTimeout")
+			},
+			Entry("before anything was written: observed and usage-logged as the 408 it would have been", false, 408, "", uint64(0)),
+			Entry("after the response started: observed and usage-logged as what was sent", true, 200, "<partial", uint64(1)),
+		)
+		DescribeTable("logs a gone client's end by its code alone, naming nothing the lookup it cut short read",
+			func(ctx SpecContext, secret string) {
+				rec, _, buf := serveGone(ctx, func(func()) s3.Authenticator { return s3.AnonymousOnly{} },
+					func(cancel func()) s3.HandlerFunc {
+						return func(ctx context.Context, _ http.ResponseWriter, _ *op.Request) error {
+							cancel()
+							// A store's error names the index object it read.
+							return op.FromRADOS(fmt.Errorf("reading default.rgw.meta/%s: %w", secret, ctx.Err()), op.ScopeUser)
+						}
+					})
+				goneLine(rec, buf, "RequestTimeout")
+				Expect(buf.String()).NotTo(ContainSubstring(secret))
+			},
+			Entry("a lookup by access key", "AKIDEXAMPLE"),
+			Entry("a lookup by email", "alice@example.com"),
+		)
+		It("ends a request whose client went away during authentication, logging it at debug and answering nothing", func(ctx SpecContext) {
+			rec, m, buf := serveGone(ctx, func(cancel func()) s3.Authenticator {
+				return s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+					cancel()
+					return nil, fmt.Errorf("%w: the request's access key does not load: %w", op.ErrInvalidAccessKeyID, context.Canceled)
+				})
+			}, nil)
+			Expect(rec.Body.Len()).To(BeZero())
+			Expect(m.ObserveCallCount()).To(Equal(1))
+			_, observed, _, _, _ := m.ObserveArgsForCall(0)
+			Expect(observed).To(Equal(403))
+			goneLine(rec, buf, "InvalidAccessKeyId")
 		})
 	})
 	Describe("usage logging", func() {

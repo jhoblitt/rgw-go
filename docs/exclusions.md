@@ -2213,6 +2213,31 @@ v20.2.4 tags, rgw-go does the following.
   status (`net/http/server.go:1372-1382`), as RFC 9110, section 8.6,
   requires, so rgw-go matches radosgw's default and ignores the option set
   to true.
+- **A client that went away gets nothing more.** radosgw notices such a
+  client only when a read or write on its socket fails: an op that reads
+  no more of the request runs to its end, and the response it then writes
+  fails, is logged and ends the connection (`dump_status`,
+  `rgw_rest.cc:289-301` at v19.2.6 and v20.2.4; `rgw_asio_frontend.cc:350-355`
+  at v19.2.6, `:360-365` at v20.2.4). net/http cancels a request's context
+  as soon as a read on its connection fails, which it takes for a dead
+  connection (`net/http/server.go:803-821` at go1.27.1), and rgw-go's store
+  calls stop with that context. When a request fails with that
+  cancellation, the S3 and admin handlers write nothing more, log it at
+  debug and end the connection. Three things differ:
+  - **The op's effect.** An op the cancellation stops leaves its effect
+    undone, where radosgw runs it to its end: a DeleteObject whose client
+    leaves while its head is still being read removes nothing, as that read
+    runs under the request's context, though once its removal starts it runs
+    to its end (`readHead` and `removeHead`, `internal/driver/delete.go`).
+    PutObject is not one: once its body is read, its write and its second
+    quota check go on under a context detached from the request's
+    (`internal/driver/put.go`), and the multipart writes detach the same way.
+  - **The usage log and the metrics.** They file the request under the 408
+    RequestTimeout a context error maps to when nothing was sent yet, so the
+    usage entry counts no successful op, and under the status sent
+    otherwise. radosgw files the status of its op's own result.
+  - **A client that half-closed its connection and still reads** gets no
+    answer, where radosgw would answer its op.
 
 ### Request authentication differences
 
@@ -3130,6 +3155,20 @@ rgw-go writes an object's tails, head and bucket index entry as radosgw's
 v19.2.6 and v20.2.4 tags, and queues an overwritten object's tails for the
 GC as `complete_atomic_modification` does. Where the two differ, rgw-go
 does the following.
+
+- **A body cut short is 400 RequestTimeout.** When a client closes its
+  connection before it has sent the body its Content-Length promised,
+  rgw-go answers 400 RequestTimeout, the answer radosgw's short-body branch
+  intends for such a body (`!chunked_upload && ofs != s->content_length`,
+  `rgw_op.cc:4430-4431` at v19.2.6, `:4662-4663` at v20.2.4; `bodyErr`,
+  `internal/driver/stripe.go`). A chunked body cut short, which that branch
+  exempts, gets the same 400 from rgw-go, as net/http reports either cut as
+  `io.ErrUnexpectedEOF` (`net/http/internal/chunked.go:113-161` at
+  go1.27.1). radosgw answers both 404 NoSuchKey: beast reports either cut
+  as its own `partial_message` code, 2, which radosgw takes for an errno,
+  ENOENT
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's beast frontend passes Boost
+  error codes off as errno](ceph-upstream-bugs.md#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno)").
 
 - **A GC chain object too large for one entry is queued alone.** rgw-go
   splits an overwritten object's tails into GC entries whose estimated

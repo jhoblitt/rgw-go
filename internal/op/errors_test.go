@@ -145,3 +145,37 @@ var _ = Describe("AsError", func() {
 		Expect(op.AsError(fmt.Errorf("reading: %w", context.DeadlineExceeded))).To(BeIdenticalTo(op.ErrRequestTimedOut))
 	})
 })
+
+var _ = Describe("ClientGone", func() {
+	DescribeTable("is a canceled context under a request whose own context is canceled",
+		func(ctx SpecContext, err error, requestCanceled, want bool) {
+			rctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			if requestCanceled {
+				cancel()
+			}
+			Expect(op.ClientGone(rctx, err)).To(Equal(want), "%v", err)
+		},
+		Entry("a canceled read under a canceled request", fmt.Errorf("reading: %w", context.Canceled), true, true),
+		Entry("a canceled read under a live request: some other context's", context.Canceled, false, false),
+		Entry("an expired deadline under a canceled request", context.DeadlineExceeded, true, false),
+		Entry("a store's own error under a canceled request", op.ErrServiceUnavailable, true, false),
+	)
+})
+
+var _ = Describe("ErrorCode", func() {
+	DescribeTable("names the code of the error AsError answers, from its sentinel",
+		func(err error, code string) {
+			Expect(op.ErrorCode(err)).To(Equal(code), "%v", err)
+		},
+		Entry("a bare expired deadline is radosgw's RequestTimeout", context.DeadlineExceeded, "RequestTimeout"),
+		Entry("a bare canceled context is RequestTimeout too", context.Canceled, "RequestTimeout"),
+		Entry("a wrapped expired deadline", fmt.Errorf("reading users.keys: %w", context.DeadlineExceeded), "RequestTimeout"),
+		Entry("a sentinel's copy carries its sentinel's code", fmt.Errorf("x: %w", op.ErrServiceUnavailable.WithMessage("AKIDEXAMPLE")), "ServiceUnavailable"),
+		Entry("an error without an op.Error", errors.New("users.keys/AKIDEXAMPLE: rados: boom"), "InternalError"),
+		Entry("an S3 error beside a context error is the S3 error", fmt.Errorf("%w: %w", op.ErrNoSuchUser, context.Canceled), "NoSuchUser"),
+	)
+	It("takes no text from a code that is no sentinel's", func() {
+		Expect(op.ErrorCode(&op.Error{Code: "AKIDEXAMPLE", Status: 500})).To(Equal("InternalError"))
+	})
+})

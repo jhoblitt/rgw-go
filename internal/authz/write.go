@@ -86,9 +86,17 @@ func (u UserResolver) OwnerByEmail(ctx context.Context, email string) (acl.Owner
 }
 
 // lookupFailed is the S3 error err maps to, without its message, described
-// by the lookup that failed.
+// by the lookup that failed, and the context error that ended the lookup,
+// if one did, so a request whose client went away ends as one; none of
+// err's text, which can name the grantee, is kept.
 func lookupFailed(lookup string, err error) error {
-	return fmt.Errorf("%w: the grantee's %s lookup failed", op.AsError(err).WithMessage(""), lookup)
+	failed := fmt.Errorf("%w: the grantee's %s lookup failed", op.AsError(err).WithMessage(""), lookup)
+	for _, ended := range []error{context.Canceled, context.DeadlineExceeded} {
+		if errors.Is(err, ended) {
+			return fmt.Errorf("%w: %w", failed, ended)
+		}
+	}
+	return failed
 }
 
 // BuildACL is RGWPutACLs::execute's derivation and validation of the new
@@ -121,7 +129,7 @@ func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolve
 		}
 		var bacl acl.Policy
 		if r.BucketRec != nil {
-			if bacl, err = op.BucketACLFor(r.BucketRec); err != nil {
+			if bacl, err = op.BucketACLFor(ctx, r.BucketRec); err != nil {
 				return acl.Policy{}, err
 			}
 		}

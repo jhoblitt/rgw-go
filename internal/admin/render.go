@@ -128,16 +128,15 @@ func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 		e = op.ErrNotImplemented
 	}
 	if errors.Is(e, op.ErrInternalError) || errors.Is(e, op.ErrUnknown) {
-		slog.ErrorContext(ctx, "admin request failed", slog.String("request_id", r.ID),
-			slog.String("code", e.Code), slog.Any("error", err))
+		slog.ErrorContext(ctx, "admin request failed", slog.String("code", e.Code), slog.Any("error", err))
 	}
 	writeErrorDocument(w, r, q, e)
 }
 
-// refuseAuth answers a failed authentication with err's S3 error and logs
-// nothing: an authenticator's error can carry what the request's
-// credentials hold, and the authenticator logs its own failures.
-func refuseAuth(w http.ResponseWriter, r *op.Request, q Request, err error) {
+// refuseAuth answers a failed authentication with err's S3 error, after
+// s3.LogAuthError logs a server error by its code alone.
+func refuseAuth(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request, err error) {
+	s3.LogAuthError(ctx, err)
 	writeErrorDocument(w, r, q, op.AsError(err))
 }
 

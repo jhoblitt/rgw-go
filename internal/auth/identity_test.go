@@ -84,13 +84,13 @@ func newGet(ctx context.Context, target string) *http.Request {
 }
 
 // captureLog sends slog's default logger to a buffer as JSON until the spec
-// ends. slog.SetDefault also points the log package at the new handler, and
-// restoring the old default leaves it there, so log's writer and flags are
-// restored too.
+// ends, through the request-id handler the binary installs. slog.SetDefault
+// also points the log package at the new handler, and restoring the old
+// default leaves it there, so log's writer and flags are restored too.
 func captureLog() *bytes.Buffer {
 	var buf bytes.Buffer
 	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	slog.SetDefault(slog.New(op.NewLogHandler(slog.NewJSONHandler(&buf, nil))))
 	DeferCleanup(func() {
 		slog.SetDefault(oldLogger)
 		log.SetOutput(oldWriter)
@@ -278,6 +278,48 @@ var _ = Describe("Verifier identities", func() {
 		_, err = authenticate(ctx, signWith(ctx, newGet(ctx, "http://s3.example.com/"), "AKNOBODY", "x", fixedNow()))
 		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID))
 		Expect(logRecords(buf)).To(BeEmpty(), "an unknown key is not an error to log")
+	})
+
+	DescribeTable("logs a key lookup's store failure once, under the request's id, with its code and none of the request's credentials",
+		func(ctx SpecContext, storeErr error, code string) {
+			const id = "tx000000000000000000001-0068d7a1b2-4155-z"
+			buf := captureLog()
+			users := &opfakes.FakeUserStore{}
+			users.GetUserByAccessKeyReturns(nil, storeErr)
+			req := signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice")
+			_, err := auth.New(cfg, users, nil).Authenticate(op.WithRequestID(ctx, id), req, anyPayload)
+			Expect(err).To(MatchError(op.ErrInvalidAccessKeyID), "LocalEngine::authenticate denies any lookup failure")
+			recs := logRecords(buf)
+			Expect(recs).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("request_id", id),
+				HaveKeyWithValue("code", code),
+			)))
+			_, sig, _ := strings.Cut(req.Header.Get("Authorization"), "Signature=")
+			Expect(sig).NotTo(BeEmpty())
+			Expect(buf.String()).NotTo(ContainSubstring("AKALICE"), "the access key")
+			Expect(buf.String()).NotTo(ContainSubstring(secretOf("alice")), "the secret")
+			Expect(buf.String()).NotTo(ContainSubstring(sig), "the signature")
+		},
+		Entry("a store error naming the key's index object",
+			fmt.Errorf("%w: reading users.keys/AKALICE: rados: timed out", op.ErrServiceUnavailable), "ServiceUnavailable"),
+		Entry("a bare expired deadline, radosgw's RequestTimeout", context.DeadlineExceeded, "RequestTimeout"),
+	)
+
+	It("refuses a key lookup its client's departure cut short as a gone client's, logging no error", func(ctx SpecContext) {
+		buf := captureLog()
+		rctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		users := &opfakes.FakeUserStore{}
+		users.GetUserByAccessKeyStub = func(ctx context.Context, _ string) (*op.UserRecord, error) {
+			cancel() // net/http cancels a request's context once its connection is gone
+			return nil, fmt.Errorf("reading users.keys/AKALICE: %w", ctx.Err())
+		}
+		_, err := auth.New(cfg, users, nil).Authenticate(rctx, signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice"), anyPayload)
+		Expect(err).To(MatchError(op.ErrInvalidAccessKeyID))
+		Expect(err).To(MatchError(context.Canceled), "the protocol handler ends the request instead of answering it")
+		Expect(err.Error()).NotTo(ContainSubstring("AKALICE"))
+		Expect(logRecords(buf)).To(BeEmpty(), "logged at debug: the store did nothing wrong")
 	})
 
 	It("denies an rgwx-uid user that does not load, and logs a failure other than a missing user without the rgwx-uid", func(ctx SpecContext) {

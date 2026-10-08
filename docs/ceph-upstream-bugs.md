@@ -233,6 +233,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
 | [radosgw's bucket link by bucket id takes the name from the live bucket](#radosgws-bucket-link-by-bucket-id-takes-the-name-from-the-live-bucket) | pending | pending | ✓ |
 | [radosgw's stale-instance cleanup purges a live bucket's index](#radosgws-stale-instance-cleanup-purges-a-live-buckets-index) | pending | pending | ✓ |
+| [radosgw's beast frontend passes Boost error codes off as errno](#radosgws-beast-frontend-passes-boost-error-codes-off-as-errno) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10472,3 +10473,54 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
   the source, not reproduced.
+
+## radosgw's beast frontend passes Boost error codes off as errno
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source and the Boost headers.
+- **Evidence:** paths are under `src/rgw/` and hold at v19.2.6 and v20.2.4
+  unless a second line number is given.
+  - The beast frontend's `write_data` and `recv_body` throw
+    `rgw::io::Exception(ec.value(), std::system_category())` on a failed
+    write or read (`rgw_asio_frontend.cc:147` and `:171`).
+    `rgw::io::Exception` is `std::system_error`, documented as "containing
+    errno" (`rgw_client_io.h:23` and `:43`), but `ec` there is in
+    whichever category asio or beast reported it: beast's `http::error`
+    (`end_of_stream` 1, `partial_message` 2, and on up the enum), asio's
+    misc errors (`eof` 2) or its ssl errors. Only its value crosses, read
+    as an errno.
+  - When a client closes its connection mid-body, beast's parser turns the
+    end of stream into `partial_message` for a message with a
+    Content-Length or chunked body that is not complete
+    (`boost/beast/http/impl/basic_parser.ipp:245-251` at Boost 1.82, the
+    floor v19.2.6's `CMakeLists.txt:709` requires; the enum, in
+    `boost/beast/http/error.hpp`, is the same at 1.83; v20.2.4 requires
+    1.87, `CMakeLists.txt:754`, whose headers were not checked here).
+  - `recv_body` returns the value negated, -2 (`rgw_rest.cc:819-820` at
+    v19.2.6, `:824-825` at v20.2.4), `RGWPutObj_ObjStore::get_data`
+    passes it up (`rgw_rest.cc:1085-1087` at v19.2.6, `:1090-1092` at
+    v20.2.4), and `RGWPutObj::execute` takes it as `op_ret`
+    (`rgw_op.cc:4402` at v19.2.6, `:4634` at v20.2.4): -ENOENT, which
+    the S3 error table answers 404 NoSuchKey (`rgw_common.cc:97` at
+    v19.2.6, `:98` at v20.2.4). The short-body branch below it, which
+    answers ERR_REQUEST_TIMEOUT's 400 RequestTimeout (`rgw_op.cc:4430-4431`
+    at v19.2.6, `:4662-4663` at v20.2.4), is never reached.
+  - Other codes map wrongly too: any beast or asio code the read or write
+    meets becomes whatever errno shares its value.
+- **Impact:** a PutObject whose body is cut short is answered, logged in the
+  ops log and filed in the usage log as 404 NoSuchKey rather than 400
+  RequestTimeout; a client that only half-closed its connection reads that
+  answer. A write failure's log text names the wrong error, while the
+  connection is still ended on the code the frontend keeps
+  (`rgw_asio_frontend.cc:350-355` at v19.2.6, `:360-365` at v20.2.4). No
+  stored data is affected.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. net/http reports a body cut short as
+  `io.ErrUnexpectedEOF`, which rgw-go answers 400 RequestTimeout
+  (`bodyErr`, `internal/driver/stripe.go`; `docs/exclusions.md`, "A body
+  cut short is 400 RequestTimeout").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit X, Task 3, 2026-10-08, reading what radosgw does
+  for a client that disconnects; confirmed against the Boost headers in its
+  review. Derived from the source, not reproduced.

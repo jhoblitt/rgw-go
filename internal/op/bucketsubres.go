@@ -111,8 +111,8 @@ func (o *GetBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 }
 
 // Execute takes the bucket's ACL.
-func (o *GetBucketACL) Execute(_ context.Context, r *Request) error {
-	p, err := BucketACLFor(r.BucketRec)
+func (o *GetBucketACL) Execute(ctx context.Context, r *Request) error {
+	p, err := BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // the bucket as each try reads it, so a retry never puts back an owner a
 // concurrent change replaced (docs/exclusions.md).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
-	existing, err := BucketACLFor(r.BucketRec)
+	existing, err := BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 	}
 	set := map[string][]byte{meta.AttrACL: encodeAt(p, r.Env.Zone.Release())}
 	return retryBucketWrite(ctx, r, o, func() error {
-		current, err := BucketACLFor(r.BucketRec)
+		current, err := BucketACLFor(ctx, r.BucketRec)
 		if err != nil {
 			return err
 		}

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -25,6 +26,10 @@ type ParseOptions struct {
 	// Release selects the actions a policy may name (Known) and the release's
 	// parse rules (Semantics).
 	Release denc.Release
+	// Context is what a dropped principal is logged under, the request's
+	// when a request's authorization parses the policy; nil logs outside
+	// any request.
+	Context context.Context
 }
 
 // ParseError is PolicyParseException (src/rgw/rgw_iam_policy.h:563-579 at
@@ -423,7 +428,7 @@ func (p *parser) str(s string) bool {
 		case p.opts.RejectInvalidPrincipals:
 			return p.refuse(errmsg)
 		default:
-			slog.Warn("ignored policy principal", slog.String("principal", s), slog.String("reason", errmsg))
+			slog.WarnContext(p.opts.Context, "ignored policy principal", slog.String("principal", s), slog.String("reason", errmsg))
 		}
 	default:
 		// v20.2.4 asserts a statement exists before this branch and aborts

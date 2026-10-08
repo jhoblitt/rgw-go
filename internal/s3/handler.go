@@ -182,11 +182,11 @@ func usageName(route string, rel denc.Release) string {
 
 // served is how far the request got: the route's name and radosgw's op name,
 // both "unknown" until a route is dispatched, as rgw_log_op names a request
-// no op serves (rgw_log.cc:556), and whether postauth_init has named its
-// bucket.
+// no op serves (rgw_log.cc:556), whether postauth_init has named its bucket,
+// and whether the client went away.
 type served struct {
 	route, usage string
-	named        bool
+	named, gone  bool
 }
 
 // ServeHTTP runs radosgw's process_request (rgw_process.cc:298-412 at
@@ -197,10 +197,13 @@ type served struct {
 // refused requests included, as process_request's tail does (:454-462 at
 // v19.2.6, :461-469 at v20.2.4). A panic anywhere before anything was
 // written is answered 500, observed and usage-logged; one after it ends the
-// connection, so a truncated body is never framed as complete.
+// connection, so a truncated body is never framed as complete. A request
+// whose authentication or route fails because its client went away
+// (op.EndForGoneClient) is observed and usage-logged, and then its
+// connection ends with nothing more written.
+// Every line logged under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	ctx := req.Context()
 	h.metrics.InFlight(1)
 	defer h.metrics.InFlight(-1)
 
@@ -208,6 +211,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// radosgw draws each request's number at random (StoreDriver::get_new_req_id,
 	// rgw_sal_store.h:27-29 at v19.2.6, :101-103 at v20.2.4).
 	id := op.TransID(rand.Uint64(), now, h.cfg.TransIDSuffix) //nolint:gosec // a request id must be unique, not unpredictable
+	ctx := op.WithRequestID(req.Context(), id)
 	w.Header().Set("x-amz-request-id", id)
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
@@ -228,9 +232,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		elapsed := time.Since(start)
 		h.metrics.Observe(st.route, r.Status, elapsed, r.BytesIn, r.BytesOut)
 		op.LogUsage(ctx, r, st.usage)
-		slog.DebugContext(ctx, "request done", slog.String("request_id", r.ID), slog.String("op", st.route),
+		slog.DebugContext(ctx, "request done", slog.String("op", st.route),
 			slog.Int("status", r.Status), slog.Duration("elapsed", elapsed))
-		if abort {
+		if abort || st.gone {
 			panic(http.ErrAbortHandler)
 		}
 	}()
@@ -243,7 +247,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			abort = true
 			return
 		}
-		slog.ErrorContext(ctx, "request handler panicked", slog.String("request_id", id), slog.String("op", st.route),
+		slog.ErrorContext(ctx, "request handler panicked", slog.String("op", st.route),
 			slog.Any("panic", v), slog.String("stack", string(debug.Stack())))
 		switch {
 		case rw.wrote:
@@ -329,7 +333,12 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	res, err := h.auth.Authenticate(ctx, req, route.Payloads)
 	if err != nil {
-		refuseAuth(w, r, err)
+		r.Bucket = ""
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
+		refuseAuth(ctx, w, r, err)
 		return
 	}
 	ApplyAuth(r, res)
@@ -360,8 +369,12 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		return
 	}
 	if err := fn(ctx, w, r); err != nil {
+		if op.EndForGoneClient(ctx, r, w.wrote, route.Name, err) {
+			st.gone = true
+			return
+		}
 		if w.wrote {
-			slog.WarnContext(ctx, "route failed after its response started", slog.String("request_id", r.ID),
+			slog.WarnContext(ctx, "route failed after its response started",
 				slog.String("op", route.Name), slog.Any("error", err))
 			return
 		}
@@ -377,12 +390,23 @@ func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error
 	WriteError(ctx, w, r, err)
 }
 
-// refuseAuth answers a failed authentication as refuse does and logs
-// nothing: an authenticator's error can carry what the request's
-// credentials hold, and the authenticator logs its own failures.
-func refuseAuth(w http.ResponseWriter, r *op.Request, err error) {
+// refuseAuth answers a failed authentication as refuse does, after
+// LogAuthError.
+func refuseAuth(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	r.Bucket = ""
+	LogAuthError(ctx, err)
 	writeErrorDocument(w, r, op.AsError(err))
+}
+
+// LogAuthError logs a failed authentication's server error, a store's
+// failure rather than a refusal, by its code alone, as an authenticator's
+// error can carry what the request's credentials hold. It logs no refusal:
+// the verifier logs the failed lookup behind one itself. The admin handler
+// logs its authentication failures through it too.
+func LogAuthError(ctx context.Context, err error) {
+	if op.AsError(err).Status >= http.StatusInternalServerError {
+		slog.ErrorContext(ctx, "authentication failed", slog.String("code", op.ErrorCode(err)))
+	}
 }
 
 // ApplyAuth gives r the authenticated identity and, when the authenticator
