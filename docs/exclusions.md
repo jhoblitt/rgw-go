@@ -3802,6 +3802,14 @@ does the following.
   404 NoSuchKey or 403 AccessDenied, where radosgw authorizes against its
   ACL and then answers 404 NoSuchUpload. Only a corrupt upload meets
   either, and rgw-go lists nothing for it.
+- **ListParts names the owner of an ACL whose grants do not decode.**
+  radosgw's ListParts decodes the meta object's whole ACL and answers 500
+  UnknownError, -EIO, when it does not decode (`RGWListMultipart::execute`,
+  `rgw_op.cc:6680-6688` at v19.2.6, `:7604-7612` at v20.2.4). rgw-go reads
+  the owner alone, as `decode_policy` does for the index entries
+  `set_attrs` and the listing's reconciliation write, so it lists the parts
+  under the owner a policy names even when its grants do not decode, and
+  under no owner when its owner does not. No S3 op writes such an ACL.
 - **UploadPartCopy refuses a cloud-tiered source with a range too.**
   radosgw refuses a source transitioned to a cloud tier with 403
   InvalidObjectState only for a copy without `x-amz-copy-source-range`
@@ -4164,6 +4172,40 @@ following.
   `:1835-1848`, `:1949-1956` and `:2058-2060` at v20.2.4). These serve
   multisite sync, which rgw-go excludes, and rgw-go renders a system
   user's listing as any other user's.
+- **rgw-go creates no realm, zonegroup or zone, and writes none back.**
+  radosgw resolves its zone at startup in `rgw::SiteConfig::load`, which on
+  both floors creates a zone and a zonegroup named `default` when `rgw_zone`
+  or `rgw_zonegroup` is unset and no realm exists
+  (`driver/rados/rgw_zone.cc`, `read_or_create_default_zone` and
+  `read_or_create_default_zonegroup`); a Squid radosgw's zone service
+  creates them again for an unnamed or explicitly `default` zonegroup and
+  zone (`svc_zone.cc:214`, `:240` at v19.2.6); and both releases write a
+  zonegroup with one zone and no master back with that zone as master
+  (`svc_zone.cc:513-533` and `:595-601` at v19.2.6, `:349-369` and
+  `:399-405` at v20.2.4). rgw-go only reads: a missing zone, zonegroup or
+  name object stops it at startup with an error naming the object. Rook
+  never reaches radosgw's bootstrap: rook v1.20.7 passes `rgw realm`,
+  `rgw zonegroup` and `rgw zone` to every gateway
+  (`pkg/operator/ceph/object/spec.go:440-442`) and creates the zonegroup
+  and zone with `--master` before it starts one (`objectstore.go:470`,
+  `:475`; for a zone declared through CephObjectZoneGroup and
+  CephObjectZone, `zonegroup/controller.go:257-260` and
+  `zone/controller.go:360-363`). A gateway started by hand against a
+  cluster without them needs `radosgw-admin realm create`,
+  `zonegroup create --master` and `zone create --master` first.
+- **rgw-go creates no pool.** radosgw opens its zone's pools with
+  `rgw_init_ioctx`'s create flag, so a missing pool is created and tagged
+  with the `rgw` application (`driver/rados/rgw_tools.cc:23-98` at
+  v19.2.6): the root pool through the configuration store, the domain-root,
+  GC, lifecycle, log, reshard and notification pools at startup
+  (`RGWRados::init_complete`), and the other metadata, bucket-index and
+  data pools on first use. rgw-go never creates one: a missing root,
+  control or GC pool stops it at startup with an error naming the pool,
+  and a request that needs another missing pool fails with an error naming
+  it. Rook creates every pool a store names, or refuses a store whose
+  named pools do not exist, before it starts a gateway (rook v1.20.7
+  `pkg/operator/ceph/object/controller.go:620-654`,
+  `objectstore.go:799-823`).
 
 ## Pending
 
