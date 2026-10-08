@@ -14,6 +14,8 @@ make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
 make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
 make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw, after the gate
+make rgw-go-up RELEASE=squid      # rgw-go on the host at http://127.0.0.1:7481, under the parity settings
+make rgw-go-down RELEASE=squid
 make cluster-down RELEASE=squid
 
 make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.20.7
@@ -22,6 +24,8 @@ make integration RELEASE=tentacle
 make gate RELEASE=tentacle
 make s3tests RELEASE=tentacle
 make admin-suite RELEASE=tentacle
+make rgw-go-up RELEASE=tentacle
+make rgw-go-down RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
 
@@ -58,10 +62,11 @@ writes the same data and manifest again.
 | `squid/`, `tentacle/` | rooket configuration homes, recorded with the cluster: the `host-network` profile and the chart values |
 | `up.sh` | `rooket up --wait`, then checks every Ceph pod runs the pinned image, creates the `rgw-go-test` pool the integration specs use, runs `rooket ceph-config`, and checks the host reaches the radosgw |
 | `populate.sh` | writes the data set through the radosgw and records it in `manifest.json` |
-| `down.sh` | `rooket down --delete-disks` and removes `out/<release>/`, even when rooket fails |
+| `down.sh` | stops the release's rgw-go, then `rooket down --delete-disks`, and removes `out/<release>/`, even when rooket fails |
 | `diag.sh` | collects pod logs, Rook status and Ceph's view for CI, with no admin keyring or S3 secret key, each call bounded by a timeout |
 | `admin.sh`, `endpoint.sh` | `admin.sh <release> <args...>` runs `radosgw-admin` in the toolbox on the site `manifest.json` records and `endpoint.sh <release>` prints the radosgw's URL, for the integration specs (`internal/testutil/cephtest`) |
-| `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers the scripts share |
+| `rgw-go-up.sh`, `rgw-go-down.sh` | build rgw-go, set the parity options for both gateways and run rgw-go on the host against the cluster; stop it |
+| `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers, and the parity options, that the scripts share |
 
 The chart values pin `cephImage.tag`, a plain `vX.Y.Z` that is the one place
 a release's Ceph version is set: `up.sh` checks every daemon runs it and
@@ -108,6 +113,10 @@ long dropped any that stopped.
   the id, marker and index shard count `radosgw-admin bucket stats` reports,
   and the objects in `plain`, a compressed one with its `storage_class` and
   `compression`.
+- `ceph.client.rgw.rgw-go.keyring`, `rgw-go.log`, `rgw-go.pid`,
+  `rgw-go.endpoint` and `rgw-go.metrics`, from `rgw-go-up.sh`: rgw-go's key,
+  its JSON log, its process, its S3 URL and its metrics address.
+  `rgw-go-down.sh` removes the last three.
 
 ## Population
 
@@ -169,6 +178,76 @@ rooket k -n rook-ceph exec deploy/rook-ceph-tools -- rados -p ceph-objectstore.r
 index pool holds eleven `.dir.<bucket id>.<n>` shards per bucket.
 
 ## Running rgw-go against the cluster
+
+```sh
+make rgw-go-up RELEASE=squid      # build bin/rgw-go and start it
+make rgw-go-up RELEASE=squid RGW_GO_FLAGS=--rados-completions=pipe
+make s3tests RELEASE=squid GATEWAY=rgw-go RUN=try1
+make rgw-go-down RELEASE=squid
+```
+
+`rgw-go-up.sh <release> [flags...]` builds `bin/rgw-go` with cgo, taking
+`CGO_CFLAGS` and `CGO_LDFLAGS` from the environment, and runs it on the host,
+beside the cluster's radosgw and on the site that radosgw serves, as
+`rgw-go serve --metrics-addr=127.0.0.1:9481 [flags...] -- <radosgw's options>`.
+radosgw's options name rgw-go's entity, keyring and `ceph.conf`, the realm,
+zonegroup and zone, and `--rgw-frontends="beast endpoint=127.0.0.1:7481"`,
+so that rgw-go listens on the loopback address only. Each release has its
+own ports, so both clusters can have an rgw-go at once: 7481 and 9481 for
+Squid, 7482 and 9482 for Tentacle. `RGW_GO_PORT` and `RGW_GO_METRICS_PORT`
+override them. It restarts an rgw-go it started, and stops before changing
+anything when something else answers on the port. Once rgw-go answers the
+anonymous `GET /` with 200, as Rook's probe expects of radosgw, the script
+writes `out/<release>/rgw-go.endpoint`, which `make s3tests` and `make
+admin-suite` read for `GATEWAY=rgw-go`.
+
+rgw-go runs as its own cephx entity, `client.rgw.rgw-go`, with radosgw's caps
+under Rook, `mon 'allow rw' osd 'allow rwx'`. The script creates it on its
+first run and fetches its key into `ceph.client.rgw.rgw-go.keyring` on each
+run. It then sets the parity options in the monitors' config store, for that
+entity and for the radosgw's (`client.rgw.ceph.objectstore.a`, checked as
+under "go-ceph's rgw/admin suite" below), so that both gateways run alike:
+`rgw_dynamic_resharding`, `rgw_enable_gc_threads`, `rgw_enable_lc_threads`
+and `rgw_run_sync_thread` false, so that no background worker runs beside
+the requests; `rgw_d3n_l1_local_datacache_enabled` false, so that no read
+cache sits between the gateway and RADOS; and the three usage options the
+rgw/admin suite needs. `parity_options` in `lib.sh` lists them.
+
+None of them is a startup-only option to the monitors, so `ceph config set`
+reaches the running radosgw at once and `ceph config show` reports the new
+value straight away. But radosgw reads the GC, LC, sync and reshard settings
+only when it builds its store, at startup and at each realm reload, and
+`config show` cannot tell whether it has done so since. The script therefore
+compares the time each parity option last changed, from `ceph config log`,
+in any section the radosgw reads (`global`, `client`, `client.rgw` and on to
+its own, masked or not), with the `start_stamp` of the radosgw's service map
+entry, which the manager stamps when that instance registers, after it has
+built its store. When an option changed later, this run or an earlier one
+that stopped before restarting the radosgw, it restarts the radosgw's
+deployment, which interrupts any other client of the radosgw, and waits
+until the service map lists a radosgw started after every change. Otherwise
+it leaves the radosgw alone.
+
+The check has three limits. A change made by hand while the radosgw starts,
+after it has read its options but before the manager stamps it, looks older
+than the start and is missed. A manager that loses its service map, or
+stamps the radosgw afresh, makes a stale radosgw look new. And it compares
+the monitors' clock with the manager's, which agree here because every kind
+node shares the host's kernel and its clock.
+
+Rook sets `rgw_run_sync_thread=true` for the radosgw each time it reconciles
+the object store, `make cluster-up` against a running cluster among the
+times, so after a reconcile the next `make rgw-go-up` sets it and restarts
+the radosgw again. The entity and the options stay when rgw-go stops; the
+gate counts neither.
+
+`rgw-go-down.sh` sends rgw-go `TERM`, under which it drains its requests as
+radosgw does, waits up to 30 s for it to exit and kills it after that, and
+fails when rgw-go was killed or ended with an error. It keeps `rgw-go.log`,
+which `diag.sh` collects with the rest of `out/<release>/`. `make
+cluster-down` runs it first, and goes on when no rgw-go is running.
+
+### By hand
 
 rgw-go runs on the host against a populated cluster with the command line Rook
 gives radosgw. Named `radosgw`, the binary takes its whole command line as
@@ -430,7 +509,7 @@ the options cannot land in a section no daemon reads. They persist in the
 monitors' config store. When the script changes one, it restarts the
 radosgw's deployment, which interrupts any other client of the radosgw, and
 it then checks that the running radosgw reports all three. For
-`GATEWAY=rgw-go`, whoever starts rgw-go sets them.
+`GATEWAY=rgw-go`, `make rgw-go-up` sets them, for both gateways.
 
 Each run leaves `hack/admin/_out/<release>-<gateway>-<run>.jsonl`, the
 `go test -json` stream `hack/parity` reads, with `.log`, go test's stderr,

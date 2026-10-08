@@ -165,6 +165,17 @@ parity-check: ## Compare a candidate result with a baseline: make parity-check B
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
 	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) hack/bench/seam.sh $(RELEASE)
 
+# Extra rgw-go serve flags for rgw-go-up, such as --rados-completions=pipe.
+RGW_GO_FLAGS ?=
+
+.PHONY: rgw-go-up
+rgw-go-up: need-release ## Build rgw-go and run it on the host against the RELEASE cluster under the parity settings
+	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) hack/rooket/rgw-go-up.sh $(RELEASE) $(RGW_GO_FLAGS)
+
+.PHONY: rgw-go-down
+rgw-go-down: need-release ## Stop the rgw-go that rgw-go-up started against the RELEASE cluster
+	ROOKET=$(ROOKET_BIN) hack/rooket/rgw-go-down.sh $(RELEASE)
+
 .PHONY: cluster-down
 cluster-down: need-release ## Remove the RELEASE cluster, its disks and its output
 	ROOKET=$(ROOKET_BIN) hack/rooket/down.sh $(RELEASE)

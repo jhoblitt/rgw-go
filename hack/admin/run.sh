@@ -138,21 +138,7 @@ reset_fixtures() {
 }
 
 if [[ "${gateway}" == radosgw ]]; then
-	rgw_id=$(jq -r '.metadata.id // empty' <<<"${rgw}")
-	[[ -n "${rgw_id}" ]] || die "the radosgw reports no id: ${rgw}"
-	# Rook runs the radosgw as client.rgw. and its deployment's name past
-	# rook-ceph-rgw, dashes mapped to dots (generateCephXUser in rook
-	# pkg/operator/ceph/object/config.go), and the service map's id is that
-	# name past client.rgw. config show answers only for a section a running
-	# daemon reads, with the frontends that daemon reports, so a wrong name
-	# stops here rather than setting options nothing reads.
-	entity=client.rgw.${rgw_id}
-	frontends=$(ceph_cmd config show "${entity}" rgw_frontends) ||
-		die "no running daemon reads the config section ${entity}"
-	want=$(jq -r '.metadata["frontend_config#0"] // empty' <<<"${rgw}")
-	[[ -n "${frontends}" && "${frontends}" == "${want}" ]] ||
-		die "${entity} reports the frontends '${frontends}', the radosgw '${want}'"
-	readonly usage_options=(rgw_enable_usage_log=true rgw_usage_log_tick_interval=1 rgw_usage_log_flush_threshold=1)
+	entity=$(rgw_entity "${rgw}")
 	changed=0
 	for kv in "${usage_options[@]}"; do
 		[[ "$(ceph_cmd config get "${entity}" "${kv%%=*}")" != "${kv#*=}" ]] || continue
