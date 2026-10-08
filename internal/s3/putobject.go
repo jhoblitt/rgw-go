@@ -30,7 +30,10 @@ import (
 // (rgw_op.cc:4214 at v19.2.6, :4423 at v20.2.4). A PUT naming a copy source
 // that is no copy and an append are not served yet. The op reads the
 // request's parameters through putObjectParams once the bucket is loaded,
-// as init_processing reads them. The success is send_response's: the ETag, the Content-Length
+// as init_processing reads them, and makes the checks of stored state
+// through putObjectChecks once the requester is authorized, so that a
+// refused requester learns nothing the store holds (docs/exclusions.md).
+// The success is send_response's: the ETag, the Content-Length
 // of 0 with Accept-Ranges that dump_content_length sends (:2747, [T] :2911),
 // x-amz-version-id when there is one, Rgwx-Mtime for a system request, and
 // the status rgw_s3_success_create_obj_status names.
@@ -48,7 +51,8 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"),
 		IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
 	}
-	o.Params = func(ctx context.Context, o *op.PutObject) error { return wr.putObjectParams(ctx, r, o) }
+	o.Params = func(_ context.Context, o *op.PutObject) error { return wr.putObjectParams(r, o) }
+	o.Authorized = func(ctx context.Context, o *op.PutObject) error { return putObjectChecks(ctx, r, o) }
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
@@ -64,30 +68,25 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 	return nil
 }
 
-// putObjectParams is get_params in its order, and then the two checks
-// RGWPutObj::execute makes of the request alone: a body without a
-// Content-Length that is not chunked is MissingContentLength; a request
-// that asks for encryption is refused (refuseEncryption); the ACL is
-// create_s3_policy's for the requester, its bucket-owner grants naming the
-// bucket's ACL owner; x-amz-tagging that set_from_string refuses is
+// putObjectParams is the part of get_params that reads the request alone,
+// in its order, and then the two checks RGWPutObj::execute makes of the
+// request alone: a body without a Content-Length that is not chunked is
+// MissingContentLength; a request that asks for encryption is refused
+// (refuseEncryption); x-amz-tagging that set_from_string refuses is
 // InvalidArgument, as radosgw answers any such refusal on a PUT (:2626-2637,
-// [T] :2787-2798); the object-lock headers are checked (objectLock); a
-// Content-MD5 that ceph_unarmor does not decode to 16 bytes is InvalidDigest
-// (rgw_op.cc:4184-4198 at v19.2.6, :4393-4407 at v20.2.4); and the attrs are
-// requestAttrs'. radosgw checks the last two after authorizing, and the attrs
-// once the body is stored (docs/exclusions.md).
-func (wr *objectWrites) putObjectParams(ctx context.Context, r *op.Request, o *op.PutObject) error {
+// [T] :2787-2798); the object-lock headers' values are checked
+// (objectLockHeaders); a Content-MD5 that ceph_unarmor does not decode to 16
+// bytes is InvalidDigest (rgw_op.cc:4184-4198 at v19.2.6, :4393-4407 at
+// v20.2.4); and the attrs are requestAttrs'. radosgw checks the last two
+// after authorizing, and the attrs once the body is stored
+// (docs/exclusions.md).
+func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return op.ErrMissingContentLength
 	}
 	if err := refuseEncryption(r, true); err != nil {
 		return err
 	}
-	p, err := newObjectACL(ctx, r)
-	if err != nil {
-		return err
-	}
-	o.ACL = p
 	if v, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
 		set, terr := tags.ParseHeader(v, tags.MaxObjectTags)
 		if terr != nil {
@@ -95,8 +94,8 @@ func (wr *objectWrites) putObjectParams(ctx context.Context, r *op.Request, o *o
 		}
 		o.Tags = &set
 	}
-	if lockErr := objectLock(r, false); lockErr != nil {
-		return lockErr
+	if err := objectLockHeaders(r, false); err != nil {
+		return err
 	}
 	if v, ok := op.HeaderValue(r.Header, "Content-MD5"); ok {
 		sum, ok := cephUnarmor(rgwtext.CString(v))
@@ -105,8 +104,24 @@ func (wr *objectWrites) putObjectParams(ctx context.Context, r *op.Request, o *o
 		}
 		o.ContentMD5 = sum
 	}
+	var err error
 	o.Attrs, err = requestAttrs(r, wr.generic, true)
 	return err
+}
+
+// putObjectChecks is the rest of get_params in its order, once the requester
+// is authorized: the ACL is create_s3_policy's for the requester, whose
+// grantees are looked up and whose bucket-owner grants name the bucket's ACL
+// owner (:2618-2620, [T] :2779-2781); then a retention or a legal hold on a
+// bucket without object lock is refused (objectLock). radosgw makes both
+// before verify_permission (docs/exclusions.md).
+func putObjectChecks(ctx context.Context, r *op.Request, o *op.PutObject) error {
+	p, err := newObjectACL(ctx, r)
+	if err != nil {
+		return err
+	}
+	o.ACL = p
+	return objectLock(r)
 }
 
 // newObjectACL is create_s3_policy for a new object or copy
@@ -155,23 +170,17 @@ func refuseEncryption(r *op.Request, query bool) error {
 	return nil
 }
 
-// objectLock is get_params' check of the three object-lock headers
-// (:2639-2673, [T] :2800-2834; RGWCopyObj_ObjStore_S3::get_params
-// :3480-3509, [T] :3760-3789): a mode with a retain-until date that
-// from_iso_8601 reads as later than now, the mode GOVERNANCE or COMPLIANCE;
-// a mode or a date alone; a legal hold of ON or OFF; each other value
-// InvalidArgument, with the message a copy sets when isCopy is set. PutObject's
-// refusal of a retention or legal hold for a bucket without object lock,
-// InvalidRequest, follows for a copy too, which radosgw stores on such a
+// objectLock is PutObject's get_params refusal of a retention or legal hold
+// for a bucket without object lock, InvalidRequest (:2669-2673, [T]
+// :2830-2834), which a copy makes too, where radosgw stores them on such a
 // bucket (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object
-// lock on a bucket without object lock"; docs/exclusions.md). On a bucket
-// with object lock a PutObject or CopyObject answers NotImplemented once the
-// requester is authorized, and a multipart write naming a retention or a
-// legal hold does (multipartObjectLock), until versioning is served.
-func objectLock(r *op.Request, isCopy bool) error {
-	if err := objectLockHeaders(r, isCopy); err != nil {
-		return err
-	}
+// lock on a bucket without object lock"; docs/exclusions.md). The callers
+// make it once the requester is authorized, so that a refused requester
+// learns nothing of the bucket's configuration. On a bucket with object lock
+// a PutObject or CopyObject answers NotImplemented, and a multipart write
+// naming a retention or a legal hold does (multipartObjectLock), until
+// versioning is served.
+func objectLock(r *op.Request) error {
 	if namesObjectLock(r) && r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0 {
 		return op.ErrInvalidRequest
 	}
@@ -184,8 +193,13 @@ func namesObjectLock(r *op.Request) bool {
 	return hasHeader(r, "X-Amz-Object-Lock-Mode") || hasHeader(r, "X-Amz-Object-Lock-Legal-Hold")
 }
 
-// objectLockHeaders is objectLock's checks of the headers alone, which read
-// nothing the bucket holds.
+// objectLockHeaders is get_params' check of the three object-lock headers
+// (:2639-2668, [T] :2800-2829; RGWCopyObj_ObjStore_S3::get_params
+// :3480-3509, [T] :3760-3789), which reads nothing the bucket holds: a mode
+// with a retain-until date that from_iso_8601 reads as later than now, the
+// mode GOVERNANCE or COMPLIANCE; a mode or a date alone; a legal hold of ON
+// or OFF; each other value InvalidArgument, with the message a copy sets
+// when isCopy is set.
 func objectLockHeaders(r *op.Request, isCopy bool) error {
 	mode, hasMode := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Mode")
 	date, hasDate := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Retain-Until-Date")

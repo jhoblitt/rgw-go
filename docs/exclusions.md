@@ -2386,13 +2386,14 @@ rgw-go does the following.
   public ACL through a block of public ACLs on PutObject's grant headers,
   CopyObject and
   CreateMultipartUpload](ceph-upstream-bugs.md#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload)").
-  rgw-go refuses with 403 AccessDenied, before the permission check, a
-  PutObject or CopyObject whose new object's policy, and once the requester
-  is authorized ("The multipart routes authorize a request before they read
-  what the store holds for it"), a CreateMultipartUpload whose upload's
-  policy, which the completed object takes, or an UploadPart whose part's
-  policy grants AllUsers or AuthenticatedUsers anything under such a block,
-  as PutObjectAcl's
+  rgw-go refuses with 403 AccessDenied, once the requester is authorized
+  ("PutObject and CopyObject authorize a request before they read what the
+  store holds for it"; "The multipart routes authorize a request before
+  they read what the store holds for it"), a PutObject or CopyObject whose
+  new object's policy, a CreateMultipartUpload whose upload's policy, which
+  the completed object takes, or an UploadPart whose part's policy grants
+  AllUsers or AuthenticatedUsers anything under such a block, as
+  PutObjectAcl's
   `is_public` check does (`:5905-5910` at v19.2.6). It also takes a block
   that does not decode for one that blocks public ACLs in these writes, in
   PutBucketAcl and in PutObjectAcl, and for one
@@ -3132,22 +3133,23 @@ does the following.
   `verify_permission` (`rgw_op.cc:4184-4198` at v19.2.6, `:4393-4407` at
   v20.2.4), and builds its attrs, where the three `rgw_max_attr*` limits
   are checked, only once the body is stored (`:4525-4529`, `:4793-4797`);
-  a CopyObject builds its destination ACL after authorizing
-  (`init_dest_policy`, `:5492` at v19.2.6, `:6058` at v20.2.4) and its
-  attrs in `execute` (`init_common`, `:5523`, `:6089`). rgw-go makes all of
-  these checks where radosgw's `get_params` runs, once the bucket is loaded
-  and before the permission check and the body. So a `Content-MD5` that
-  does not decode to 16 bytes, an attr past a limit, and on a copy an ACL
-  header that names no grantee or a malformed grant, are answered with
-  their error before a refusal of permission, and a PutObject past an attr
-  limit is refused before its body is read rather than after it is stored.
-  Both refuse the request; only which refusal a refused requester sees
-  differs. The `Content-MD5` and attr errors depend on the request alone.
-  A copy's grant headers do not: their grantees are looked up, so a refused
-  requester learns whether a named user or account exists, as radosgw's
-  PutObject already tells one before authorizing, its `create_s3_policy`
-  running in `get_params` during `init_processing` (`rgw_rest_s3.cc
-  :2618-2620` at v19.2.6, `:2779-2781` at v20.2.4). UploadPart decodes
+  a CopyObject builds its attrs in `execute` (`init_common`, `:5523` at
+  v19.2.6, `:6089` at v20.2.4). rgw-go makes these checks where radosgw's
+  `get_params` runs, once the bucket is loaded and before the permission
+  check and the body. So a `Content-MD5` that does not decode to 16 bytes
+  and an attr past a limit are answered with their error before a refusal
+  of permission, and a PutObject past an attr limit is refused before its
+  body is read rather than after it is stored. Both refuse the request;
+  only which refusal a refused requester sees differs, and both errors
+  depend on the request alone. Neither write builds its ACL before
+  authorizing, as the grant headers' grantees are looked up: a malformed
+  grant or one naming no user is answered once the requester is
+  authorized, as radosgw's CopyObject answers it (`init_dest_policy`,
+  `rgw_op.cc:5492` at v19.2.6, `:6058` at v20.2.4), where radosgw's
+  PutObject answers it before authorizing, its `create_s3_policy` running
+  in `get_params` during `init_processing` (`rgw_rest_s3.cc:2618-2620` at
+  v19.2.6, `:2779-2781` at v20.2.4; "PutObject and CopyObject authorize a
+  request before they read what the store holds for it"). UploadPart decodes
   `Content-MD5` and builds its attrs once the requester is authorized, as
   radosgw's `execute` does, but before it reads the body: a part past an
   attr limit is refused before its body is read rather than after it is
@@ -3178,7 +3180,15 @@ does the following.
   authorized, so a refused requester gets 403 AccessDenied whatever the
   bucket, the upload, the users or the source hold. The bucket's own
   existence, which authorization needs, is answered first, as radosgw
-  answers it. ListParts authorizes against the upload's meta object, as
+  answers it. UploadPartCopy reads its source only once the destination
+  allows the request and the requester's op mask allows the write, and
+  checks the storage class before it reads the source, as radosgw's
+  `init_permissions` checks it first. So a requester whose op mask refuses
+  the write gets 403 AccessDenied for a missing source bucket, where
+  radosgw, which loads the source bucket in `init_processing` before
+  `verify_op_mask` (`rgw_process.cc:202` and `:208` at v19.2.6 and
+  v20.2.4), answers 404 NoSuchBucket. ListParts authorizes against the
+  upload's meta object, as
   radosgw does, and answers a missing upload by the missing-object rule;
   an upload or object whose info cannot be read is authorized as one whose
   policy is the bucket owner's default, and its error is answered only to
@@ -3186,6 +3196,49 @@ does the following.
   where radosgw's `get_params` runs, once the requester is authorized
   (`rgw_op.cc:6299`, `:6968`), but for the storage class, which radosgw
   checks first.
+- **PutObject and CopyObject authorize a request before they read what the
+  store holds for it.** radosgw reads stored state before its permission
+  check on these writes too. `rgw_build_bucket_policies` refuses a storage
+  class the bucket's placement lacks (`rgw_op.cc:576-583` at v19.2.6,
+  `:606-613` at v20.2.4). For PutObject, `RGWPutObj::init_processing`
+  refuses a public canned ACL under the bucket's block of public ACLs
+  (`:3903-3909`; `:4112-4118`), and its `get_params` looks up the grantees
+  of the `x-amz-grant-*` headers and refuses a retention or a legal hold on
+  a bucket without object lock (`rgw_rest_s3.cc:2618-2620` and
+  `:2669-2673`; `:2779-2781` and `:2830-2834`). For CopyObject,
+  `RGWCopyObj::init_processing` loads the source's bucket, a missing one
+  refused (`rgw_op.cc:5392-5400`; `:5958-5966`), and
+  `RGWCopyObj::verify_permission` reads the source, answers a missing one
+  by the missing-object rule, decodes its ACL and refuses a copy onto
+  itself that changes nothing, all before it checks the destination
+  (`:5413-5462` and `:5487-5490`; `:5979-6028` and `:6053-6056`). So a
+  refused requester learns from radosgw whether the bucket has such a
+  storage class, a block of public ACLs or object lock, whether a named
+  user or account exists, whether a copy source's bucket or key exists,
+  whether its stored ACL is damaged, and whether its storage class is the
+  one a copy onto itself names. rgw-go refuses these writes before the
+  permission check only for what the request itself shows, its headers,
+  arguments and declared length, and for the destination bucket's
+  existence, which authorization needs. It reads a copy's source only
+  once the destination allows the request and the requester's op mask
+  allows the write, and makes every other check once the requester is
+  authorized, so a requester the destination refuses, or whose op mask
+  refuses the write, gets 403 AccessDenied whatever the buckets, the users
+  or the source hold. For the op mask this differs from radosgw on a
+  missing source bucket: radosgw loads it in `init_processing`, before
+  `verify_op_mask` (`rgw_process.cc:202` and `:208` at v19.2.6 and
+  v20.2.4), and answers 404 NoSuchBucket. The destination's storage class
+  is checked before the source is read, as `init_permissions` checks it.
+  The checks of stored state keep radosgw's order among themselves, but
+  each now follows the request's own refusals: an authorized requester
+  sending a `Content-MD5` that does not decode and a storage class the
+  placement lacks is answered 400 InvalidDigest, where radosgw answers 400
+  InvalidArgument for the storage class, and one sending an
+  `x-amz-server-side-encryption` header with a public canned ACL under a
+  block is answered 501 NotImplemented, where radosgw answers 403
+  AccessDenied. rgw-go serves no POST-object: it answers every
+  authenticated requester 501 NotImplemented without reading the bucket,
+  once a failed authentication and a suspended user have been refused.
 - **Request headers stored as attrs follow Tentacle's blocklist, and the
   session token is never stored.** radosgw stores every `x-amz-` header,
   and those under its other meta prefixes, as an attr of the object a
@@ -3206,9 +3259,10 @@ does the following.
   with 400 InvalidRequest (`docs/ceph-upstream-bugs.md`, "[radosgw's
   CopyObject stores an object lock on a bucket without object
   lock](ceph-upstream-bugs.md#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock)").
-  rgw-go refuses the copy as the PutObject is refused. On a bucket with
-  object lock both writes answer 501 ("Writes to a versioned or object-lock
-  bucket answer 501 until versioning is served").
+  rgw-go refuses the copy as the PutObject is refused, once the requester
+  is authorized. On a bucket with object lock both writes answer 501
+  ("Writes to a versioned or object-lock bucket answer 501 until
+  versioning is served").
 - **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
   from the bucket's lifecycle rules on a PutObject's success too
   (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`

@@ -95,9 +95,10 @@ func (o *UploadPart) OpMask() uint32 { return OpTypeWrite }
 // Params. The checks of stored state radosgw makes there and in
 // init_permissions wait for the requester to be authorized, so that a
 // refused requester learns nothing of the bucket, the upload or the source:
-// VerifyPermission reads the source once the destination allows the
-// request, and Execute checks the storage class and the block of public
-// ACLs (docs/exclusions.md).
+// VerifyPermission checks a copy's storage class and reads its source once
+// the destination and the op mask allow the request, and Execute checks the
+// storage class of a part with a body and the block of public ACLs
+// (docs/exclusions.md).
 func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
@@ -123,12 +124,16 @@ func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 // missing source and its decode of the source's ACL, then the source's read;
 // then s3:PutObject on the destination. The destination is checked first
 // all the same, and a refusal there that Run would not let an admin through
-// is answered before the source is touched. Only then are the source's
-// bucket, NoSuchBucket when missing, and its head read, the head with its
-// first chunk, as read_obj_policy reads it with prefetch_data set
-// (:3926-3934 at v19.2.6, :4135-4143 at v20.2.4), where radosgw loads the
-// source bucket in init_processing (:3854-3866 at v19.2.6, :4063-4075 at
-// v20.2.4) and reads the source before the destination's check.
+// is answered before the source is touched. For a copy, the op mask comes
+// next, which radosgw checks before verify_permission (rgw_process.cc:208 at
+// v19.2.6 and v20.2.4), then the request's storage class, which
+// init_permissions checks first (rgw_op.cc:576-583 at v19.2.6, :606-613 at
+// v20.2.4). Only then are the source's bucket, NoSuchBucket when missing,
+// and its head read, the head with its first chunk, as read_obj_policy reads
+// it with prefetch_data set (:3926-3934 at v19.2.6, :4135-4143 at v20.2.4),
+// where radosgw loads the source bucket in init_processing (:3854-3866 at
+// v19.2.6, :4063-4075 at v20.2.4), before the op mask, and reads the source
+// before the destination's check.
 //
 // radosgw authorizes the source's read against the object's ACL, the
 // source bucket's ACL taking part only through Swift's READ_OBJS
@@ -143,6 +148,12 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 	}
 	if destErr != nil && (!r.Identity.Admin || !isAccessDenial(destErr)) {
 		return destErr
+	}
+	if err := verifyOpMask(o, r); err != nil {
+		return err
+	}
+	if err := checkDestPlacement(r, o.StorageClass); err != nil {
+		return err
 	}
 	var err error
 	if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
@@ -186,7 +197,8 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // the request id. First come the checks of stored state that radosgw makes
 // before verify_permission, which rgw-go makes once the requester is
 // authorized: the request's storage class must be one the zone has
-// (rgw_op.cc:576-583 at v19.2.6, :606-613 at v20.2.4); a bucket with a
+// (rgw_op.cc:576-583 at v19.2.6, :606-613 at v20.2.4), which VerifyPermission
+// has checked for a copy before it read the source; a bucket with a
 // default encryption is refused; a public canned ACL under the bucket's
 // block of public ACLs is refused (:3903-3909 at v19.2.6, :4112-4118 at
 // v20.2.4);
@@ -195,8 +207,10 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // (docs/exclusions.md). Then a copy naming a source version is refused,
 // until versioning is served.
 func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
-	if err := checkDestPlacement(r, o.StorageClass); err != nil {
-		return err
+	if !o.CopySource {
+		if err := checkDestPlacement(r, o.StorageClass); err != nil {
+			return err
+		}
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 		return err

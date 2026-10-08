@@ -66,12 +66,16 @@ type PutObject struct {
 	// IfMatch and IfNoneMatch are the headers' values, nil when absent: a
 	// header present with an empty value is a condition, as radosgw takes it.
 	IfMatch, IfNoneMatch *string
-	// Params, when set, is the protocol's get_params, which needs the
-	// bucket: Init calls it once the bucket is loaded, its placement checked
-	// and a public canned ACL refused, where RGWPutObj::init_processing calls
-	// get_params (rgw_op.cc:3903-3915 at v19.2.6, :4112-4124 at v20.2.4). It
-	// fills the inputs it reads, the ACL among them.
+	// Params, when set, is the part of the protocol's get_params that reads
+	// the request alone: Init calls it once the bucket is loaded, where
+	// RGWPutObj::init_processing calls get_params (rgw_op.cc:3911 at v19.2.6,
+	// :4120 at v20.2.4). It fills the inputs it reads.
 	Params func(ctx context.Context, o *PutObject) error
+	// Authorized, when set, is the rest of get_params, the checks that read
+	// stored state, the ACL's grantees among them: Execute calls it once the
+	// requester is authorized, the placement checked and a public canned ACL
+	// refused. It fills the inputs it reads, the ACL among them.
+	Authorized func(ctx context.Context, o *PutObject) error
 
 	ETag  string
 	Mtime time.Time
@@ -90,34 +94,19 @@ func (o *PutObject) Action() policy.Action { return policy.S3PutObject }
 // OpMask is RGW_OP_TYPE_WRITE.
 func (o *PutObject) OpMask() uint32 { return OpTypeWrite }
 
-// Init is what radosgw does before verify_op_mask: init_permissions loads the
-// bucket, a missing one NoSuchBucket, and checks the destination placement
-// (rgw_op.cc:539-541 and :576-583 at v19.2.6, :569-571 and :606-613 at
-// v20.2.4), and init_processing refuses a public canned ACL under a block of
-// public ACLs (:3903-3909 at v19.2.6, :4112-4118 at v20.2.4) and then runs
-// get_params, Params here. rgw-go also refuses, once Params has built it, a
-// public policy from the grant headers, which radosgw stores
-// (docs/exclusions.md).
+// Init is init_permissions' load of the bucket, a missing one NoSuchBucket
+// (rgw_op.cc:539-541 at v19.2.6, :569-571 at v20.2.4), then Params. The
+// checks of what the bucket holds that radosgw makes there and in
+// init_processing wait for the requester to be authorized, so that a refused
+// requester learns nothing of the bucket (Execute; docs/exclusions.md).
 func (o *PutObject) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	if err := checkDestPlacement(r, o.StorageClass); err != nil {
-		return err
-	}
-	block := blockPublicACLs(rec)
-	if block && isPublicCannedACL(o.CannedACL) {
-		return fmt.Errorf("%w: a public canned acl under a block of public acls", ErrAccessDenied)
-	}
 	if o.Params != nil {
-		if err := o.Params(ctx, o); err != nil {
-			return err
-		}
-	}
-	if block && o.ACL.IsPublic() {
-		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+		return o.Params(ctx, o)
 	}
 	return nil
 }
@@ -128,14 +117,35 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 }
 
-// Execute is RGWPutObj_ObjStore::verify_params (rgw_rest.cc:1049-1059 at
-// v19.2.6 and v20.2.4), which runs after verify_permission, then
-// RGWPutObj::execute in its order (rgw_op.cc:4142-4574 at v19.2.6,
-// :4351-4867 at v20.2.4): the key, the quota for a body of known length, and
-// the write, whose attrs gain the policy and, when the request tags the
-// object with any tag, the tag set (encode_obj_tags_attr, rgw_op.h:2247-2255
-// at v19.2.6). The write tag is the request id.
+// Execute first makes, in radosgw's order, the checks of stored state that
+// radosgw makes before verify_permission: the request's storage class on the
+// bucket's placement must be one the zone has (rgw_op.cc:576-583 at v19.2.6,
+// :606-613 at v20.2.4); a public canned ACL under the bucket's block of
+// public ACLs is refused (:3903-3909, :4112-4118); then Authorized runs, and
+// a public policy it built from the grant headers is refused too, which
+// radosgw stores (docs/exclusions.md). Then come
+// RGWPutObj_ObjStore::verify_params (rgw_rest.cc:1049-1059 at v19.2.6 and
+// v20.2.4) and RGWPutObj::execute in its order (rgw_op.cc:4142-4574 at
+// v19.2.6, :4351-4867 at v20.2.4): the key, the quota for a body of known
+// length, and the write, whose attrs gain the policy and, when the request
+// tags the object with any tag, the tag set (encode_obj_tags_attr,
+// rgw_op.h:2247-2255 at v19.2.6). The write tag is the request id.
 func (o *PutObject) Execute(ctx context.Context, r *Request) error {
+	if err := checkDestPlacement(r, o.StorageClass); err != nil {
+		return err
+	}
+	block := blockPublicACLs(r.BucketRec)
+	if block && isPublicCannedACL(o.CannedACL) {
+		return fmt.Errorf("%w: a public canned acl under a block of public acls", ErrAccessDenied)
+	}
+	if o.Authorized != nil {
+		if err := o.Authorized(ctx, o); err != nil {
+			return err
+		}
+	}
+	if block && o.ACL.IsPublic() {
+		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
+	}
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
 	}

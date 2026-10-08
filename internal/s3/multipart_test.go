@@ -875,6 +875,11 @@ var _ = Describe("multipart handlers", func() {
 			func() *op.UserRecord { return w.bob }, nil, func(id string) (string, string, string, []string) {
 				return http.MethodPut, "/plain/k?uploadId=" + id + "&partNumber=1", "x", []string{"X-Amz-Object-Lock-Legal-Hold", "on"}
 			}, 400, "InvalidArgument"),
+		Entry("an UploadPartCopy's storage class the zone lacks, checked before the source is read, as init_permissions checks it (rgw_op.cc:576-583)",
+			func() *op.UserRecord { return w.alice }, nil, func(id string) (string, string, string, []string) {
+				return http.MethodPut, "/plain/k?uploadId=" + id + "&partNumber=1", "",
+					[]string{"Content-Length", "0", "X-Amz-Copy-Source", "/nope/src", "X-Amz-Storage-Class", "NOPE"}
+			}, 400, "InvalidArgument"),
 		Entry("an UploadPartCopy source init_processing cannot parse, refused before a public canned ACL",
 			func() *op.UserRecord { return w.alice }, func(ctx context.Context) {
 				w.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: encodePublicAccess(acl.PublicAccessBlock{BlockPublicACLs: true})})
@@ -1001,9 +1006,9 @@ var _ = Describe("multipart handlers", func() {
 	})
 })
 
-// storedStateHeaders are headers that make a multipart write consult the
-// bucket, the grantees or the source, none of them refused by the request
-// alone.
+// storedStateHeaders are headers that make an object write, a multipart one,
+// PutObject or CopyObject, consult the bucket, the grantees or the source,
+// none of them refused by the request alone.
 func storedStateHeaders() []string {
 	return []string{
 		"X-Amz-Object-Lock-Legal-Hold", "ON", "X-Amz-Storage-Class", "NOPE", "X-Amz-Acl", "public-read",
