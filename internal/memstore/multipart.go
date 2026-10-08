@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // a multipart ETag is an MD5 of MD5s
-	"encoding/hex"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
-	"strconv"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -185,24 +184,31 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 // PUT's are, and a refused completion leaves the upload in place. The
 // object takes the upload's attrs and up's write tag, and the upload is gone
 // once it lands. A missing upload is op.ErrCompletionInProgress, as the
-// driver answers it.
+// driver answers it, unless the key's object carries the ETag the parts make:
+// a completion retried after it succeeded is answered 200 as radosgw's
+// check_previously_completed answers it (previouslyCompleted).
 func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePart) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	parts = op.SortCompleteParts(parts)
 	u, err := s.upload(up)
 	if err != nil {
 		// radosgw takes the completion lock before it reads the upload, and
 		// the lock of a meta object that is gone fails, so a missing upload
-		// reads as a completion in progress, never NoSuchUpload.
+		// reads as a completion in progress, never NoSuchUpload, unless the
+		// key already carries the ETag the parts make: a completion retried
+		// after it succeeded.
+		if res, ok := s.previouslyCompleted(up, parts); ok {
+			return res, nil
+		}
 		return nil, fmt.Errorf("%w: upload %s of %s is gone", op.ErrCompletionInProgress, up.ID, up.Key.Name)
 	}
-	parts = op.SortCompleteParts(parts)
 	uploaded := slices.Sorted(maps.Keys(u.parts))
 	if len(uploaded) != len(parts) {
 		return nil, fmt.Errorf("%d parts listed of %d uploaded: %w", len(parts), len(uploaded), op.ErrInvalidPart)
 	}
 	var data bytes.Buffer
-	digests := md5.New() //nolint:gosec // a multipart ETag is an MD5 of MD5s
+	etags := make([]string, 0, len(parts))
 	for i, cp := range parts {
 		pt := u.parts[uploaded[i]]
 		if i < len(parts)-1 && pt.Size < minPartSize {
@@ -211,18 +217,17 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 		if cp.Number != pt.Number || unquote(cp.ETag) != pt.ETag {
 			return nil, fmt.Errorf("part %d: %w", cp.Number, op.ErrInvalidPart)
 		}
-		raw, hexErr := hex.DecodeString(pt.ETag)
-		if hexErr != nil {
-			return nil, fmt.Errorf("part %d's etag %q: %w", pt.Number, pt.ETag, op.ErrInvalidPart)
-		}
-		digests.Write(raw)
+		etags = append(etags, pt.ETag)
 		data.Write(pt.data)
+	}
+	etag, err := op.MultipartETag(etags)
+	if err != nil {
+		return nil, err
 	}
 	b, ok := s.instances[u.bucketID]
 	if !ok {
 		return nil, fmt.Errorf("bucket of upload %s: %w", u.up.ID, op.ErrNoSuchBucket)
 	}
-	etag := hex.EncodeToString(digests.Sum(nil)) + "-" + strconv.Itoa(len(parts))
 	k := objKey(u.up.Key)
 	if err := checkWrite(b.objects[k], up.IfMatch, up.IfNoneMatch); err != nil {
 		return nil, err
@@ -234,6 +239,36 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	b.objects[k] = o
 	delete(s.uploads, uploadKey(u.bucketID, u.up.Key.Name, u.up.ID))
 	return putResult(o), nil
+}
+
+// previouslyCompleted is RGWCompleteMultipart::check_previously_completed
+// and the answer to its success (rgw_op.cc:6438-6441 and :6543-6580 at
+// v19.2.6; :7252-7255 and :7433-7504 at v20.2.4): the key's current object
+// carries the ETag the parts make, and the retried completion is a 200 for
+// that object, with the stored ETag on Tentacle and none on Squid, where
+// only Tentacle's check sets the ETag the response sends (:7472). The
+// caller holds s.mu.
+func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op.PutResult, bool) {
+	if up.Bucket == nil {
+		return nil, false
+	}
+	b, ok := s.instances[up.Bucket.Info.Bucket.ID]
+	if !ok {
+		return nil, false
+	}
+	o, ok := b.objects[objKey(up.Key)]
+	if !ok {
+		return nil, false
+	}
+	want, err := op.CompleteETag(parts)
+	if err != nil || o.state.ETag != want {
+		return nil, false
+	}
+	res := putResult(o)
+	if s.cfg.Release < denc.Tentacle {
+		res.ETag = ""
+	}
+	return res, true
 }
 
 // Abort implements op.MultipartStore.

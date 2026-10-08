@@ -2,9 +2,13 @@ package op
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // a multipart ETag is the MD5 of the parts' MD5s
+	"encoding/hex"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -155,6 +159,33 @@ func SortCompleteParts(parts []CompletePart) []CompletePart {
 		out = append(out, CompletePart{Number: n, ETag: byNum[n]})
 	}
 	return out
+}
+
+// MultipartETag is the ETag complete computes: the hex MD5 of the parts'
+// 16-byte MD5s, "-" and the part count (rgw_sal_rados.cc:3503-3505 and
+// :3579-3585 at v19.2.6). An ETag that is not 32 hex digits is
+// ErrInvalidPart, where radosgw's hex_to_buf hashes whatever it decodes.
+func MultipartETag(etags []string) (string, error) {
+	h := md5.New() //nolint:gosec // a multipart ETag is the MD5 of the parts' MD5s
+	for _, e := range etags {
+		b, err := hex.DecodeString(e)
+		if err != nil || len(b) != md5.Size {
+			return "", fmt.Errorf("%w: the part ETag %q is not an MD5", ErrInvalidPart, e)
+		}
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil)) + "-" + strconv.Itoa(len(etags)), nil
+}
+
+// CompleteETag is the ETag the object of a completion's parts carries, as
+// check_previously_completed recomputes it (rgw_op.cc:6557-6571 at
+// v19.2.6): MultipartETag of the parts' unquoted ETags.
+func CompleteETag(parts []CompletePart) (string, error) {
+	etags := make([]string, len(parts))
+	for i, p := range parts {
+		etags[i] = Unquote(p.ETag)
+	}
+	return MultipartETag(etags)
 }
 
 //counterfeiter:generate . MultipartStore

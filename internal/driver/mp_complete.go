@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/md5" //nolint:gosec // a multipart ETag is the MD5 of the parts' MD5s
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
-	"strconv"
 
 	"golang.org/x/sync/errgroup"
 
@@ -32,22 +29,6 @@ const maxMetaDeleteRetries = 15
 
 // partHeadStats bounds the part head stats a completion has in flight.
 const partHeadStats = 16
-
-// multipartETag is the ETag complete computes: the hex MD5 of the parts'
-// 16-byte MD5s, "-" and the part count (rgw_sal_rados.cc:3503-3505 and
-// :3579-3585). An ETag that is not 32 hex digits is ErrInvalidPart, where
-// radosgw's hex_to_buf hashes whatever it decodes.
-func multipartETag(etags []string) (string, error) {
-	h := md5.New() //nolint:gosec // a multipart ETag is the MD5 of the parts' MD5s
-	for _, e := range etags {
-		b, err := hex.DecodeString(e)
-		if err != nil || len(b) != md5.Size {
-			return "", fmt.Errorf("%w: the part ETag %q is not an MD5", op.ErrInvalidPart, e)
-		}
-		h.Write(b)
-	}
-	return hex.EncodeToString(h.Sum(nil)) + "-" + strconv.Itoa(len(etags)), nil
-}
 
 // mergeCompression is complete's cs_info handling for the handled-th part
 // (rgw_sal_rados.cc:3531-3566): after the first part, one that differs from
@@ -135,7 +116,7 @@ func (s *Store) assemble(key meta.ObjKey, uploadID string, stored []meta.UploadP
 			break
 		}
 	}
-	etag, err := multipartETag(etags)
+	etag, err := op.MultipartETag(etags)
 	if err != nil {
 		return nil, err
 	}
@@ -227,11 +208,7 @@ func (s *Store) checkPreviouslyCompleted(ctx context.Context, rec *op.BucketReco
 	if err != nil || !st.Exists {
 		return nil, false
 	}
-	etags := make([]string, len(parts))
-	for i, p := range parts {
-		etags[i] = op.Unquote(p.ETag)
-	}
-	want, err := multipartETag(etags)
+	want, err := op.CompleteETag(parts)
 	return st, err == nil && st.ETag == want
 }
 
@@ -427,11 +404,7 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 		slog.InfoContext(ctx, "not completing an upload whose earlier completion did not take effect or was replaced", slog.String("upload", up.ID))
 		return nil, false, refused
 	}
-	etags := make([]string, len(parts))
-	for i, p := range parts {
-		etags[i] = op.Unquote(p.ETag)
-	}
-	if want, eerr := multipartETag(etags); eerr != nil || cur.ETag != want {
+	if want, eerr := op.CompleteETag(parts); eerr != nil || cur.ETag != want {
 		return nil, false, fmt.Errorf("%w: upload %s already completed %s with other parts", op.ErrNoSuchUpload, up.ID, up.Key.Name)
 	}
 	stored, err := s.listAllParts(ctx, ref, up.ID)
