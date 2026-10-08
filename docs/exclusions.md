@@ -1913,6 +1913,30 @@ crypto/tls and net/url ones go1.27.1's.
   request for the key `k%` acts on the key `k` (`docs/ceph-upstream-bugs.md`,
   "A malformed percent-escape in the path makes radosgw serve another
   path").
+- **Expectations other than 100-continue.** net/http answers `417
+  Expectation Failed`, with `Connection: close`, no body and before any
+  handler runs, a request whose `Expect` holds anything but a
+  `100-continue`, such as the `Expect: 200` s3-tests sends
+  (`server.go:2104-2116`, `sendExpectationFailed` at `:2260-2276`). RFC
+  9110 §10.1.1 allows it: a server that receives an Expect field value
+  containing a member other than 100-continue MAY respond with 417.
+  radosgw ignores such a header and serves the request: beast reads
+  `Expect` only to note a `100-continue` (`rgw_asio_frontend.cc:291` at
+  both tags), and radosgw sends `100 Continue` only when
+  `rgw_print_continue`, true by default, is set and the whole value is
+  `100-continue`, compared ASCII case-insensitively
+  (`rgw_rest.cc:2268-2269` at v19.2.6, `:2290-2291` at v20.2.4); rgw-go
+  does not read `rgw_print_continue`. rgw-go keeps the 417: net/http has
+  no hook between reading a request and this check, so serving the
+  request would take rewriting each request on the connection before
+  net/http reads it, a second HTTP parser in front of net/http's whose
+  framing could disagree with it, which is how requests are smuggled. net/http finds `100-continue` as any token of a list
+  (`request.go:1536-1538`, `hasToken` at `header.go:240-270`), so a
+  value such as `100-continue, 200` gets its `100 Continue` once the
+  handler reads the body, where radosgw sends none and serves the request
+  once the client sends the body unasked. s3-tests'
+  `test_bucket_create_bad_expect_mismatch` and
+  `test_object_create_bad_expect_mismatch` fail on the 417.
 - **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
   requests in flight finish for up to 30 s, Rook's default termination
   grace period, before it closes every connection and ends the requests

@@ -245,6 +245,45 @@ var _ = Describe("Server", func() {
 		Expect(readResponse(bufio.NewReader(c))).To(HaveHTTPStatus(http.StatusOK))
 	})
 
+	It("answers an expectation other than 100-continue with 417 before its handler runs, where radosgw ignores it", func(ctx SpecContext) {
+		served := make(chan struct{}, 1)
+		s := start(frontend.Spec{Endpoints: []string{"127.0.0.1:0"}}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			served <- struct{}{}
+		}))
+		serve(ctx, s)
+		c := dial(ctx, s.Addrs()[0].String())
+		send(c, "PUT /b HTTP/1.1\r\nHost: s3\r\nExpect: 200\r\nContent-Length: 0\r\n\r\n")
+		r := bufio.NewReader(c)
+		res := readResponse(r)
+		Expect(res).To(And(HaveHTTPStatus(http.StatusExpectationFailed), HaveHTTPBody(BeEmpty())))
+		Expect(res.Close).To(BeTrue(), "the 417 carries Connection: close")
+		closedWithin(c, r, time.Second)
+		Expect(served).NotTo(Receive())
+	})
+
+	It("answers 100-continue once its handler reads the body, and hands it the body as it arrives", func(ctx SpecContext) {
+		head := make(chan string, 1)
+		s := start(frontend.Spec{Endpoints: []string{"127.0.0.1:0"}}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer GinkgoRecover()
+			buf := make([]byte, 3)
+			_, err := io.ReadFull(r.Body, buf)
+			Expect(err).NotTo(HaveOccurred())
+			head <- string(buf)
+			rest, err := io.ReadAll(r.Body)
+			Expect(err).NotTo(HaveOccurred())
+			fmt.Fprintf(w, "%s%s", buf, rest)
+		}))
+		serve(ctx, s)
+		c := dial(ctx, s.Addrs()[0].String())
+		r := bufio.NewReader(c)
+		send(c, "PUT /b/o HTTP/1.1\r\nHost: s3\r\nExpect: 100-continue\r\nContent-Length: 6\r\n\r\n")
+		Expect(readResponse(r)).To(HaveHTTPStatus(http.StatusContinue))
+		send(c, "foo")
+		Eventually(head).WithTimeout(time.Second).WithPolling(poll).Should(Receive(Equal("foo")))
+		send(c, "bar")
+		Expect(readResponse(r)).To(And(HaveHTTPStatus(http.StatusOK), HaveHTTPBody("foobar")))
+	})
+
 	It("listens on a port in both address families, as beast opens a listener for each", func(ctx SpecContext) {
 		requireIPv6(ctx)
 		port := freePort(ctx)
