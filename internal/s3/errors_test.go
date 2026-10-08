@@ -31,13 +31,13 @@ var _ = Describe("WriteError", func() {
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
 		Expect(rec.Header().Get("Accept-Ranges")).To(Equal("bytes"))
-		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx1"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(Equal("tx1"))
 	})
 	It("leaves out an empty code, bucket and request id but always writes the message and host id", func(ctx SpecContext) {
 		rec := write(ctx, &op.Request{Env: env}, &op.Error{Status: 400})
 		Expect(rec.Code).To(Equal(400))
 		Expect(rec.Body.String()).To(Equal(header + `<Error><Message></Message><HostId>4155-z-zg</HostId></Error>`))
-		Expect(rec.Header()).NotTo(HaveKey("X-Amz-Request-Id"), "dump_trans_id skips an empty id")
+		Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-request-id"), "dump_trans_id skips an empty id")
 	})
 	It("escapes every field as dump_string does", func(ctx SpecContext) {
 		rec := write(ctx, &op.Request{ID: "tx'1", Bucket: "a&b", Env: &op.Env{HostID: `h"1`}}, op.ErrNoSuchKey.WithMessage("k\x01<"))
@@ -60,6 +60,6 @@ var _ = Describe("WriteError", func() {
 		Expect(rec.Body.Len()).To(BeZero(), "rgw_err::is_err is false for 200-399, so end_header dumps no error")
 		Expect(rec.Header()).NotTo(HaveKey("Content-Type"))
 		Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"))
-		Expect(rec.Header().Get("x-amz-request-id")).To(Equal("tx1"))
+		Expect(exactHeader(rec.Header(), "x-amz-request-id")).To(Equal("tx1"))
 	})
 })

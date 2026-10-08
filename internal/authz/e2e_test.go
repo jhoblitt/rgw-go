@@ -58,7 +58,7 @@ var _ = Describe("the authorizer behind the S3 handler", func() {
 		GinkgoHelper()
 		Expect(rec.Code).To(Equal(403))
 		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message></Message>` +
-			`<RequestId>` + rec.Header().Get("x-amz-request-id") + `</RequestId><HostId>` + hostID + `</HostId></Error>`))
+			`<RequestId>` + exactHeader(rec.Header(), "x-amz-request-id") + `</RequestId><HostId>` + hostID + `</HostId></Error>`))
 	}
 	expectListed := func(rec *httptest.ResponseRecorder) {
 		GinkgoHelper()
@@ -90,3 +90,14 @@ var _ = Describe("the authorizer behind the S3 handler", func() {
 		})
 	})
 })
+
+// exactHeader is the first value the handler's header map h holds under
+// exactly name, or "" when there is none. net/http writes a key as the
+// handler spelled it; http.Header.Get would look up the canonical spelling
+// instead.
+func exactHeader(h http.Header, name string) string {
+	if v := h[name]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}

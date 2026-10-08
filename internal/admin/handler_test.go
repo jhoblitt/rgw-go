@@ -471,7 +471,7 @@ var _ = Describe("admin handler", func() {
 			Expect(recs).To(ContainElement(SatisfyAll(
 				HaveKeyWithValue("level", "DEBUG"),
 				HaveKeyWithValue("msg", "client went away"),
-				HaveKeyWithValue("request_id", rec.Header().Get("x-amz-request-id")),
+				HaveKeyWithValue("request_id", exactHeader(rec.Header(), "x-amz-request-id")),
 				HaveKeyWithValue("code", code),
 			)))
 			Expect(recs).NotTo(ContainElement(HaveKeyWithValue("level", Not(Equal("DEBUG")))))
@@ -591,3 +591,14 @@ var _ = Describe("admin handler", func() {
 		Expect(fx.handler.InFlight()).To(BeZero())
 	})
 })
+
+// exactHeader is the first value the handler's header map h holds under
+// exactly name, or "" when there is none. net/http writes a key as the
+// handler spelled it; http.Header.Get would look up the canonical spelling
+// instead.
+func exactHeader(h http.Header, name string) string {
+	if v := h[name]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}

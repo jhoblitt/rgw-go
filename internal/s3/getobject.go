@@ -233,7 +233,7 @@ type getObjectSink struct {
 // endHeaderNames are the headers end_header sends after
 // send_response_data's own (rgw_rest.cc:589-642 at v19.2.6), which the
 // handler has already set on the writer.
-var endHeaderNames = [...]string{"X-Amz-Request-Id", "X-Amz-Request-Charged", "Server"}
+var endHeaderNames = [...]string{"x-amz-request-id", "x-amz-request-charged", "Server"}
 
 // WriteHeader is the op's headers-only path: a HEAD or nothing to read. A
 // name an object's attr shares with end_header's headers carries the attr's
@@ -261,13 +261,15 @@ func (s *getObjectSink) Write(p []byte) (int, error) {
 func (s *getObjectSink) Flush() error { return s.w.Flush() }
 
 // headers renders send_response_data's success headers (:406-644; [T]
-// :417-760) for the op's results in the order radosgw sends them: the range,
-// the length, the dates and version, the object type, replication, the parts
-// count, the ETag, Tentacle's restore state, the user metadata and tagging
-// count, then response_attrs, the response-* overrides and the mapped attrs
-// in its std::map's order, and last end_header's content type. A name sent
-// twice keeps both values in that order. A mapped attr never sets the
-// response's framing headers (docs/exclusions.md).
+// :417-760) for the op's results, adding them in the order radosgw dumps
+// them: the range, the length, the dates and version, the object type,
+// replication, the parts count, the ETag, Tentacle's restore state, the user
+// metadata and tagging count, then response_attrs, the response-* overrides
+// and the mapped attrs in its std::map's order, and last end_header's
+// content type. net/http writes the lines sorted by name ("Header lines go
+// out sorted by name", docs/exclusions.md), so only the values under one
+// name keep radosgw's order. A mapped attr never sets the response's framing
+// headers (docs/exclusions.md).
 func (s *getObjectSink) headers() http.Header {
 	o, r, st := s.o, s.r, s.o.State
 	h := http.Header{}
@@ -277,17 +279,17 @@ func (s *getObjectSink) headers() http.Header {
 	SetContentLength(h, o.Length)
 	h.Add("Last-Modified", httpDate(st.Mtime))
 	if o.VersionID != "" {
-		h.Add("x-amz-version-id", o.VersionID)
+		addHeader(h, "x-amz-version-id", o.VersionID)
 	}
 	if _, ok := st.Attrs[meta.AttrAppendPartNum]; ok {
-		h.Add("x-rgw-object-type", "Appendable")
-		h.Add("x-rgw-next-append-position", strconv.FormatUint(o.ObjSize, 10))
+		addHeader(h, "x-rgw-object-type", "Appendable")
+		addHeader(h, "x-rgw-next-append-position", strconv.FormatUint(o.ObjSize, 10))
 	} else {
-		h.Add("x-rgw-object-type", "Normal")
+		addHeader(h, "x-rgw-object-type", "Normal")
 	}
 	setReplicationHeaders(h, st.Attrs)
 	if o.PartsCount != nil {
-		h.Add("x-amz-mp-parts-count", strconv.Itoa(*o.PartsCount))
+		addHeader(h, "x-amz-mp-parts-count", strconv.Itoa(*o.PartsCount))
 	}
 	setETag(h, st.Attrs)
 	attrs := st.Attrs
@@ -325,14 +327,14 @@ func (s *getObjectSink) headers() http.Header {
 		case name == attrSLOIndicator:
 			h.Add("X-Object-Meta-Static-Large-Object", "True")
 		case strings.HasPrefix(name, meta.AttrMetaPrefix):
-			h.Add(strings.TrimPrefix(name, meta.AttrPrefix), sanitizedHdrval(v))
+			addHeader(h, strings.TrimPrefix(name, meta.AttrPrefix), sanitizedHdrval(v))
 		case name == tags.Attr:
-			h.Add("x-amz-tagging-count", strconv.Itoa(taggingCount(v)))
+			addHeader(h, "x-amz-tagging-count", strconv.Itoa(taggingCount(v)))
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(responseAttrs)) {
 		if !framingHeaders[textproto.CanonicalMIMEHeaderKey(name)] {
-			h.Add(name, responseAttrs[name])
+			addHeader(h, name, responseAttrs[name])
 		}
 	}
 	if !typed {
@@ -365,7 +367,7 @@ func (s *getObjectSink) setRestoreHeader(h http.Header, attrs map[string][]byte)
 		return attrs
 	}
 	if meta.RestoreStatus(status[0]) == meta.RestoreAlreadyInProgress {
-		h.Add("x-amz-restore", `ongoing-request="true"`)
+		addHeader(h, "x-amz-restore", `ongoing-request="true"`)
 		return attrs
 	}
 	typ, ok := attrs[meta.AttrRestoreType]
@@ -388,7 +390,7 @@ func (s *getObjectSink) setRestoreHeader(h http.Header, attrs map[string][]byte)
 			return attrs
 		}
 	}
-	h.Add("x-amz-restore", `ongoing-request="false", expiry-date="`+httpDate(expiry)+`"`)
+	addHeader(h, "x-amz-restore", `ongoing-request="false", expiry-date="`+httpDate(expiry)+`"`)
 	class, ok := attrs[meta.AttrCloudTierStorageClass]
 	if !ok {
 		return attrs
@@ -431,7 +433,7 @@ func setETag(h http.Header, attrs map[string][]byte) {
 	if !ok || len(v) == 0 {
 		return
 	}
-	h.Add("ETag", `"`+rgwtext.CString(string(v))+`"`)
+	addHeader(h, "ETag", `"`+rgwtext.CString(string(v))+`"`)
 }
 
 // sanitizedHdrval is rgw_sanitized_hdrval (rgw_rest.h:29-47 at v19.2.6), what
@@ -459,7 +461,7 @@ func withoutAWSChunked(v string) string {
 // the replication time when it decodes.
 func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 	if v, ok := attrs[meta.AttrReplicationStatus]; ok {
-		h.Add("x-amz-replication-status", sanitizedHdrval(v))
+		addHeader(h, "x-amz-replication-status", sanitizedHdrval(v))
 	}
 	if v, ok := attrs[meta.AttrReplicationTrace]; ok {
 		// rgw_zone_set_entry encodes as the string to_str gives, which
@@ -468,7 +470,7 @@ func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 		zones := denc.DecodeSlice(d, func(d *denc.Decoder) string { return d.String() })
 		if d.Err() == nil {
 			for _, z := range zones {
-				h.Add("x-rgw-replicated-from", z)
+				addHeader(h, "x-rgw-replicated-from", z)
 			}
 		}
 	}
@@ -476,7 +478,7 @@ func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 		d := denc.NewDecoder(v)
 		t := d.Time()
 		if d.Err() == nil {
-			h.Add("x-rgw-replicated-at", httpDate(t))
+			addHeader(h, "x-rgw-replicated-at", httpDate(t))
 		}
 	}
 }

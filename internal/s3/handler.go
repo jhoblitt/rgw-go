@@ -212,7 +212,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// rgw_sal_store.h:27-29 at v19.2.6, :101-103 at v20.2.4).
 	id := op.TransID(rand.Uint64(), now, h.cfg.TransIDSuffix) //nolint:gosec // a request id must be unique, not unpredictable
 	ctx := op.WithRequestID(req.Context(), id)
-	w.Header().Set("x-amz-request-id", id)
+	SetHeader(w.Header(), "x-amz-request-id", id)
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
 	}

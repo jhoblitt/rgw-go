@@ -2350,12 +2350,6 @@ v20.2.4 tags, rgw-go does the following.
   is `503 Service Unavailable` from rgw-go and `503 Slow Down` from radosgw
   (`:85`). net/http cannot send another phrase without taking over the
   connection, and clients act on the code.
-- **Canonical header names.** net/http sends every header name rgw-go
-  writes in its canonical case, such as `X-Amz-Request-Id` and `Etag`.
-  radosgw sends each name as its source spells it, such as
-  `x-amz-request-id` and `x-amz-request-charged` (`rgw_rest.cc:585` and
-  `:600` at v19.2.6, `:590` and `:605` at v20.2.4) and `ETag` (`dump_etag`).
-  Header names are case-insensitive (RFC 9110, section 5.1).
 - **A 204 or 304 carries no Content-Length, whatever
   rgw_print_prohibited_content_length says.** radosgw's frontend completes
   a response whose `end_header` named no length with the length of its

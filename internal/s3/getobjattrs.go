@@ -33,7 +33,7 @@ func getObjectAttrs(ctx context.Context, w http.ResponseWriter, r *op.Request) e
 	h := w.Header()
 	h.Set("Last-Modified", httpDate(o.State.Mtime))
 	if o.VersionID != "" {
-		h.Set("x-amz-version-id", o.VersionID)
+		SetHeader(h, "x-amz-version-id", o.VersionID)
 	}
 	h.Set("Content-Type", "application/xml")
 	doc := objectAttrsDocument(o)
