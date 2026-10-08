@@ -378,6 +378,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 				slog.String("op", route.Name), slog.Any("error", err))
 			return
 		}
+		setMissingDeleteMarker(ctx, w.Header(), r, err)
 		WriteError(ctx, w, r, err)
 	}
 }

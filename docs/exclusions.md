@@ -3299,6 +3299,30 @@ does the following.
   rgw-go omits that metadata header, where radosgw sends the name as stored
   (`ClientIO::send_header`, `rgw_asio_client.cc:167-181` at v19.2.6 and
   v20.2.4).
+- **Tentacle's x-amz-delete-marker is false, or absent, on a missing
+  object.** On Tentacle, radosgw's `read_permissions` adds
+  `x-amz-delete-marker` to a GET or HEAD whose object policies were
+  refused with `-ENOENT`, after it loads the key's state following the
+  olh: `true` when the key's current version is a delete marker, otherwise
+  `false` (`rgw_rest.cc:1936-1945` at v20.2.4; `follow_olh`,
+  `driver/rados/rgw_rados.cc:9760-9764`). That refusal is
+  `read_obj_policy`'s for a missing object, sent to an admin or to a
+  requester who may list the bucket (`rgw_op.cc:453-477` at v20.2.4), and
+  to ListParts of a missing upload, whose policies are its meta object's
+  while the state loaded is the key's (`:441-448`). v19.2.6 adds no such
+  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves it
+  sends the header where Tentacle does, always `false`: a key whose head
+  is an olh answers 501 NotImplemented
+  before any permission check, as every read of one does until versioning
+  is served, so the refusal meets such a key only in ListParts of a
+  missing upload. There rgw-go, which cannot read the olh, sends no
+  `x-amz-delete-marker`, where Tentacle sends `true` or `false`. The
+  object GETs rgw-go does not serve yet, GetObjectRetention,
+  GetObjectLegalHold and `?layout`, answer 501 NotImplemented without
+  the header for a missing object as for any other, where Tentacle
+  answers 404 with `x-amz-delete-marker: false` to a requester who may
+  list the bucket (`RGWHandler_REST_Obj_S3::op_get`,
+  `rgw_rest_s3.cc:5360-5378` at v20.2.4).
 
 ### Object write differences
 
@@ -3528,6 +3552,35 @@ does the following.
   itself (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
   An UploadPartCopy whose source names it answers 501 too, as one whose
   source names any version does: the exception does not reach that refusal.
+- **CompleteMultipartUpload sends no x-amz-version-id.** radosgw's
+  completion sends `x-amz-version-id` whenever its `version_id` is not
+  empty, on an error as on a success (`dump_header_if_nonempty`,
+  `rgw_rest_s3.cc:4081` at v19.2.6, `:4609` at v20.2.4). For an ordinary
+  request that is the instance it generates on a bucket whose versioning
+  is enabled and not suspended (`rgw_op.cc:6459-6466` at v19.2.6,
+  `:7284-7291` at v20.2.4; `versioning_enabled`, `rgw_common.h:1076` at
+  v19.2.6, `:1118` at v20.2.4), a completion rgw-go answers with 501
+  ("Writes to a versioned or object-lock bucket answer 501 until
+  versioning is served"); on an unversioned or suspended bucket radosgw
+  sends none either. The other source is a system request's
+  `rgwx-version-id`, which `get_system_versioning_params` reads into
+  `version_id` whatever the bucket's versioning (`rgw_op.cc:6378` and
+  `rgw_op.h:2113-2139` at v19.2.6, `:7174` and `:2280-2306` at v20.2.4),
+  so radosgw echoes it from an unversioned bucket's completion. rgw-go
+  reads neither it nor `rgwx-versioned-epoch` on any write, and serves
+  such a request as one without them, where radosgw's PutObject,
+  DeleteObject and CopyObject read both as well (`rgw_op.cc:4177`,
+  `:5273` and `:5387` at v19.2.6, `:4386`, `:5662` and `:5953` at
+  v20.2.4): PutObject echoes the version id as the completion does
+  (`rgw_rest_s3.cc:2748` at v19.2.6, `:2912` at v20.2.4), and CopyObject
+  gives its destination the instance named whatever the bucket's
+  versioning (`rgw_op.cc:5573-5574` at v19.2.6, `:6139-6140` at
+  v20.2.4). A system request whose `rgwx-versioned-epoch` does not
+  parse as a number fails all four with -EINVAL, 400 InvalidArgument
+  (`rgw_op.h:2121-2130` at v19.2.6, `:2288-2297` at v20.2.4;
+  `rgw_common.cc:61` at v19.2.6, `:62` at v20.2.4), where rgw-go
+  serves it. No radosgw component sends either parameter at either
+  release; they belong to multisite, which is excluded.
 - **Writes that ask for encryption answer 501 until phase 2.** radosgw
   encrypts a PutObject or CopyObject that sends the SSE-C headers, and
   fails one that asks for SSE-S3 or SSE-KMS, or that lands in a bucket
