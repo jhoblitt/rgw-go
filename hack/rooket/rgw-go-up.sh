@@ -77,9 +77,10 @@ converge() {
 }
 
 converge "${rgw_go_entity}"
-# Rook sets rgw_run_sync_thread=true for its radosgw each time it reconciles
-# the object store (rook pkg/operator/ceph/object/config.go), so a reconcile
-# after this undoes that one option until the next run.
+# The chart values' rgwConfig has Rook write the same options for its radosgw
+# at each reconcile, in place of its own rgw_run_sync_thread=true (rook
+# pkg/operator/ceph/object/config.go), so this finds them set unless they were
+# changed by hand.
 converge "${radosgw_entity}"
 
 # The mons' config log entries and the service map's start_stamp are both

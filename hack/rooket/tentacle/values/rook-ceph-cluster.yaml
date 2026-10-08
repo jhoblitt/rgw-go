@@ -12,3 +12,24 @@ cephClusterSpec:
 # add pools, an MDS and CPU requests to the one worker.
 cephBlockPools: []
 cephFileSystems: []
+# rooket merges this entry by name onto the base's copy of the chart's
+# ceph-objectstore, so it carries only what it adds.
+cephObjectStores:
+  - name: ceph-objectstore
+    spec:
+      gateway:
+        # The parity options, lib.sh's parity_options; make check fails when
+        # the two differ. At every reconcile, before it creates or updates the
+        # radosgw's deployment, Rook writes these to the radosgw's config
+        # entity in place of the keys it generates, rgw_run_sync_thread=true
+        # among them, so the radosgw starts under them and a reconcile cannot
+        # reset one.
+        rgwConfig:
+          rgw_dynamic_resharding: "false"
+          rgw_enable_gc_threads: "false"
+          rgw_enable_lc_threads: "false"
+          rgw_run_sync_thread: "false"
+          rgw_d3n_l1_local_datacache_enabled: "false"
+          rgw_enable_usage_log: "true"
+          rgw_usage_log_tick_interval: "1"
+          rgw_usage_log_flush_threshold: "1"

@@ -91,8 +91,12 @@ goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podma
 release-pins-check: ## Fail when .goreleaser.yaml's Ceph images or build tags differ from their homes
 	@hack/image/release-pins-check.sh
 
+.PHONY: parity-options-check
+parity-options-check: ## Fail when a release's chart values start radosgw under other options than hack/rooket/lib.sh's parity_options
+	@hack/rooket/parity-options-check.sh
+
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
