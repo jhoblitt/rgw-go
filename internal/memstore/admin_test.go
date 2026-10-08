@@ -333,16 +333,6 @@ var _ = Describe("memstore admin stores", func() {
 		func(ctx SpecContext, call func(context.Context, *memstore.Store) error) {
 			Expect(call(ctx, store)).To(MatchError(op.ErrNotImplemented))
 		},
-		Entry("IndexStats", func(ctx context.Context, s *memstore.Store) error {
-			_, err := s.IndexStats(ctx, &op.BucketRecord{})
-			return err
-		}),
-		Entry("ChangeBucketOwner", func(ctx context.Context, s *memstore.Store) error {
-			return s.ChangeBucketOwner(ctx, &op.BucketRecord{}, owner("alice"), "Alice", nil)
-		}),
-		Entry("UnlinkBucketOwner", func(ctx context.Context, s *memstore.Store) error {
-			return s.UnlinkBucketOwner(ctx, &op.BucketRecord{}, owner("alice"))
-		}),
 		Entry("CheckIndex", func(ctx context.Context, s *memstore.Store) error {
 			_, _, err := s.CheckIndex(ctx, &op.BucketRecord{})
 			return err
@@ -353,13 +343,137 @@ var _ = Describe("memstore admin stores", func() {
 		Entry("RemoveIndexEntries", func(ctx context.Context, s *memstore.Store) error {
 			return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
 		}),
-		Entry("SyncOwnerStats", func(ctx context.Context, s *memstore.Store) error {
-			return s.SyncOwnerStats(ctx, owner("alice"))
-		}),
-		Entry("PurgeBypassGC", func(ctx context.Context, s *memstore.Store) error {
-			return s.PurgeBypassGC(ctx, &op.BucketRecord{})
-		}),
 	)
+
+	Describe("bucket administration", func() {
+		withACL := func(ctx context.Context, name string, o meta.Owner, display string) *op.BucketRecord {
+			GinkgoHelper()
+			e := denc.NewEncoder()
+			acl.DefaultPolicy(o, display).Encode(e, denc.Squid)
+			rec, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: name, Owner: o, Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}})
+			Expect(err).NotTo(HaveOccurred())
+			return rec
+		}
+		policyOf := func(rec *op.BucketRecord) acl.Policy {
+			GinkgoHelper()
+			d := denc.NewDecoder(rec.Attrs[meta.AttrACL])
+			p := acl.DecodePolicy(d)
+			Expect(d.Err()).NotTo(HaveOccurred())
+			return p
+		}
+		names := func(ctx context.Context, o meta.Owner) []string {
+			GinkgoHelper()
+			ents, _, _, err := store.ListUserBuckets(ctx, o, "", 100)
+			Expect(err).NotTo(HaveOccurred())
+			var out []string
+			for _, e := range ents {
+				out = append(out, e.Bucket.Name)
+			}
+			return out
+		}
+		It("sums the objects into the Main category with radosgw's shard strings", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			st, err := store.IndexStats(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Categories).To(BeEmpty())
+			mustPut(ctx, store, rec, "k1", "hello")
+			mustPut(ctx, store, rec, "k2", "abc")
+			st, err = store.IndexStats(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Categories).To(Equal(map[string]op.CategoryStats{"rgw.main": {Size: 8, SizeRounded: 8192, SizeUtilized: 8, NumObjects: 2}}))
+			Expect(st.Ver).To(MatchRegexp(`^0#[1-9][0-9]*$`))
+			Expect(st.MasterVer).To(Equal("0#0"))
+			Expect(st.MaxMarker).To(Equal("0#"))
+			rec.Info.Layout.Current.Layout.Normal.NumShards = 3
+			st, err = store.IndexStats(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.MasterVer).To(Equal("0#0,1#0,2#0"))
+			Expect(st.MaxMarker).To(Equal("0#,1#,2#"))
+			_, err = store.IndexStats(ctx, &op.BucketRecord{})
+			Expect(err).To(MatchError(op.ErrNoSuchBucket))
+		})
+		It("changes the owner: ACL, instance owner, entry point and the owners' lists", func(ctx SpecContext) {
+			rec := withACL(ctx, "b", owner("alice"), "Alice")
+			Expect(store.ChangeBucketOwner(ctx, rec, owner("bob"), "Bob", nil)).To(Succeed())
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("bob")))
+			Expect(got.EntryPoint.Owner).To(Equal(owner("bob")))
+			Expect(got.EntryPoint.Linked).To(BeTrue())
+			Expect(policyOf(got).Owner).To(Equal(acl.Owner{ID: "bob", DisplayName: "Bob"}))
+			Expect(policyOf(got).ACL.Grants).To(HaveLen(1), "a default ACL replaces the old one")
+			Expect(names(ctx, owner("bob"))).To(ConsistOf("b"))
+			Expect(names(ctx, owner("alice"))).To(BeEmpty())
+			Expect(rec.Version).To(Equal(got.Version))
+		})
+		It("renames, keeping the instance id and marker, and refuses a name another bucket holds", func(ctx SpecContext) {
+			rec := withACL(ctx, "old", owner("alice"), "Alice")
+			id := rec.Info.Bucket.ID
+			taken := mustCreate(ctx, store, "", "taken", owner("carol"))
+			Expect(store.ChangeBucketOwner(ctx, rec, owner("alice"), "Alice", &meta.BucketID{Name: "taken"})).To(MatchError(op.ErrBucketAlreadyExists))
+			got, err := store.GetBucket(ctx, "", "taken")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Bucket.ID).To(Equal(taken.Info.Bucket.ID))
+			Expect(store.ChangeBucketOwner(ctx, rec, owner("alice"), "Alice", &meta.BucketID{Tenant: "t", Name: "new"})).To(Succeed())
+			_, err = store.GetBucket(ctx, "", "old")
+			Expect(err).To(MatchError(op.ErrNoSuchBucket))
+			got, err = store.GetBucket(ctx, "t", "new")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Bucket.ID).To(Equal(id))
+			Expect(got.Info.Bucket.Marker).To(Equal(rec.Info.Bucket.Marker))
+			Expect(rec.Info.Bucket).To(Equal(got.Info.Bucket))
+		})
+		It("refuses a bucket without an ACL", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			Expect(store.ChangeBucketOwner(ctx, rec, owner("bob"), "Bob", nil)).To(MatchError(op.ErrInvalidArgument))
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("alice")))
+		})
+		It("unlinks: linked=false, and the entry point's other owner refused", func(ctx SpecContext) {
+			rec := withACL(ctx, "b", owner("alice"), "Alice")
+			Expect(store.UnlinkBucketOwner(ctx, rec, owner("bob"))).To(MatchError(op.ErrInvalidArgument), "do_unlink_bucket's owner mismatch")
+			Expect(store.UnlinkBucketOwner(ctx, rec, owner("alice"))).To(Succeed())
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.EntryPoint.Linked).To(BeFalse())
+			Expect(store.UnlinkBucketOwner(ctx, rec, owner("bob"))).To(Succeed(), "an unlinked entry point is done")
+		})
+		It("purges every object and upload with bypass-gc and leaves the bucket", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			mustPut(ctx, store, rec, "k1", "x")
+			_, err := store.CreateUpload(ctx, rec, meta.ObjKey{Name: "up"}, op.UploadParams{})
+			Expect(err).NotTo(HaveOccurred())
+			other := mustCreate(ctx, store, "", "other", owner("alice"))
+			mustPut(ctx, store, other, "keep", "x")
+			Expect(store.PurgeBypassGC(ctx, rec)).To(Succeed())
+			res, err := store.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(BeEmpty())
+			res, err = store.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10, NS: "multipart"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(BeEmpty())
+			Expect(store.DeleteBucket(ctx, rec)).To(Succeed())
+			res, err = store.ListObjects(ctx, other, op.ListObjectsParams{MaxKeys: 10})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(HaveLen(1))
+		})
+		It("syncs owner stats as a no-op, its stats being always current", func(ctx SpecContext) {
+			Expect(store.SyncOwnerStats(ctx, owner("alice"))).To(Succeed())
+		})
+		It("lists the bucket metadata section by radosgw's keys", func(ctx SpecContext) {
+			mustCreate(ctx, store, "", "b1", owner("alice"))
+			mustCreate(ctx, store, "t", "b2", owner("alice"))
+			keys, next, more, err := store.List(ctx, "bucket", "", 1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(Equal([]string{"b1"}))
+			Expect(more).To(BeTrue())
+			keys, _, more, err = store.List(ctx, "bucket", next, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(Equal([]string{"t/b2"}))
+			Expect(more).To(BeFalse())
+		})
+	})
 
 	Describe("realms and periods", func() {
 		var (

@@ -175,12 +175,12 @@ var _ = Describe("stats, quota, usage and metadata", func() {
 		})
 		It("lists a section's keys sorted, paged after a marker", func(ctx SpecContext) {
 			for _, k := range []string{"c", "a", "b"} {
-				Expect(store.Put(ctx, "bucket", k, op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
+				Expect(store.Put(ctx, "otp", k, op.MetadataEntry{}, op.PutMetadataOptions{})).To(Succeed())
 			}
-			keys, next, more, err := store.List(ctx, "bucket", "", 2)
+			keys, next, more, err := store.List(ctx, "otp", "", 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"a", "b"}, "b", true}), "first page")
-			keys, next, more, err = store.List(ctx, "bucket", next, 2)
+			keys, next, more, err = store.List(ctx, "otp", next, 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]any{keys, next, more}).To(Equal([]any{[]string{"c"}, "c", false}), "second page")
 			keys, _, more, err = store.List(ctx, "bucket.instance", "", 2)

@@ -478,7 +478,7 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 				oid := ".bucket.meta.plain:" + rec.Info.Bucket.ID
 				raced := false
 				c.BeforeWrite(rookMetaPool, rookRoot, oid, func(o *fakerados.Object) {
-					if !raced && o != nil {
+					if !raced && o != nil && o.Xattrs[op.RemovingAttr] != nil {
 						raced = true
 						o.Xattrs[version.XattrName] = encode(version.ObjVersion{Ver: 9, Tag: "other"})
 					}
@@ -486,7 +486,7 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 				before := writesTo(oid)
 				Expect(st.DeleteBucket(ctx, rec)).To(Succeed())
 				Expect(raced).To(BeTrue())
-				Expect(writesTo(oid)-before).To(Equal(2), "the first removal lost to the change and the second, under the version read again, removed it")
+				Expect(writesTo(oid)-before).To(Equal(3), "the removal's claim, then the first removal lost to the change and the second, under the version read again, removed it")
 				Expect(instances("plain")).To(BeEmpty())
 				Expect(shards()).To(BeEmpty())
 				Expect(linked(ctx, st, aliceOwner)).To(BeEmpty())

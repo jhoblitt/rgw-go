@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -104,19 +105,117 @@ func (s *Store) TrimUsage(_ context.Context, user, bucket string, start, end uin
 	return nil
 }
 
-// IndexStats implements op.BucketAdminStore; not implemented yet.
-func (s *Store) IndexStats(context.Context, *op.BucketRecord) (op.BucketIndexStats, error) {
-	return op.BucketIndexStats{}, op.ErrNotImplemented
+// IndexStats implements op.BucketAdminStore over the bucket's objects, all
+// in the Main category, sized as the bucket index sizes them; the store
+// keeps no index header, so shard 0's version is the bucket's newest object
+// epoch and every other value is zero or empty, one entry per shard.
+func (s *Store) IndexStats(_ context.Context, rec *op.BucketRecord) (op.BucketIndexStats, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, err := s.instance(rec)
+	if err != nil {
+		return op.BucketIndexStats{}, err
+	}
+	st := op.BucketIndexStats{Categories: map[string]op.CategoryStats{}}
+	var ver uint64
+	if len(b.objects) > 0 {
+		var main op.CategoryStats
+		for _, o := range b.objects {
+			main.Size += o.state.Size
+			main.SizeRounded += roundedObjSize(o.state.Size)
+			main.NumObjects++
+			ver = max(ver, o.state.Epoch)
+		}
+		main.SizeUtilized = main.Size
+		st.Categories["rgw.main"] = main
+	}
+	shards := max(rec.Info.Layout.Current.Layout.Normal.NumShards, 1)
+	vers, masters, markers := make([]string, shards), make([]string, shards), make([]string, shards)
+	for i := range shards {
+		vers[i], masters[i], markers[i] = shardValue(i, 0), shardValue(i, 0), strconv.FormatUint(uint64(i), 10)+"#"
+	}
+	vers[0] = shardValue(0, ver)
+	st.Ver, st.MasterVer, st.MaxMarker = strings.Join(vers, ","), strings.Join(masters, ","), strings.Join(markers, ",")
+	return st, nil
 }
 
-// ChangeBucketOwner implements op.BucketAdminStore; not implemented yet.
-func (s *Store) ChangeBucketOwner(context.Context, *op.BucketRecord, meta.Owner, string, *meta.BucketID) error {
-	return op.ErrNotImplemented
+// shardValue is one "<shard>#<value>" item of BucketIndexShardsManager::to_string.
+func shardValue(shard uint32, v uint64) string {
+	return strconv.FormatUint(uint64(shard), 10) + "#" + strconv.FormatUint(v, 10)
 }
 
-// UnlinkBucketOwner implements op.BucketAdminStore; not implemented yet.
-func (s *Store) UnlinkBucketOwner(context.Context, *op.BucketRecord, meta.Owner) error {
-	return op.ErrNotImplemented
+// ChangeBucketOwner implements op.BucketAdminStore with the driver's
+// checks and ACL edit: a bucket without an ACL is ErrInvalidArgument, one
+// whose ACL does not decode ErrUnknown, and a new name another bucket holds
+// ErrBucketAlreadyExists, each before anything changes; so is the bucket's
+// own name when another bucket holds it, as for an instance loaded by its id
+// after its name was re-created. The bucket then gets
+// a default ACL for owner, owner in its instance and entry point, linked,
+// and under newName its new key, with its id and marker; the owners' lists
+// follow the instance's owner.
+func (s *Store) ChangeBucketOwner(_ context.Context, rec *op.BucketRecord, owner meta.Owner, displayName string, newName *meta.BucketID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.instance(rec)
+	if err != nil {
+		return err
+	}
+	raw, ok := b.rec.Attrs[meta.AttrACL]
+	if !ok {
+		return op.ErrInvalidArgument
+	}
+	d := denc.NewDecoder(raw)
+	acl.DecodePolicy(d)
+	if d.Err() != nil {
+		return op.ErrUnknown
+	}
+	oldKey := bucketKey(b.rec.Info.Bucket.Tenant, b.rec.Info.Bucket.Name)
+	newKey := oldKey
+	if newName != nil {
+		newKey = bucketKey(newName.Tenant, newName.Name)
+	}
+	if other, ok := s.buckets[newKey]; ok && other != b {
+		return fmt.Errorf("bucket %s: %w", newKey, op.ErrBucketAlreadyExists)
+	}
+	e := denc.NewEncoder()
+	acl.DefaultPolicy(owner, displayName).Encode(e, s.cfg.Release)
+	b.rec.Attrs = applyAttrs(b.rec.Attrs, map[string][]byte{meta.AttrACL: e.Bytes()}, []string{op.RenameIntentAttr})
+	b.rec.Info.Owner = cloneOwner(owner)
+	if newKey != oldKey {
+		if s.buckets[oldKey] == b {
+			delete(s.buckets, oldKey)
+		}
+		b.rec.Info.Bucket.Tenant, b.rec.Info.Bucket.Name = newName.Tenant, newName.Name
+	}
+	s.buckets[newKey] = b
+	b.rec.EntryPoint.Bucket = b.rec.Info.Bucket
+	b.rec.EntryPoint.Owner = cloneOwner(owner)
+	b.rec.EntryPoint.Linked = true
+	b.rec.Version.Ver++
+	b.rec.EPVersion.Ver++
+	b.rec.Mtime = s.now()
+	*rec = *copyBucket(&b.rec)
+	return nil
+}
+
+// UnlinkBucketOwner implements op.BucketAdminStore as do_unlink_bucket's
+// entry point step: an entry point that is gone or already unlinked is
+// done, one another owner holds is ErrInvalidArgument, and otherwise it is
+// unlinked. The owners' lists follow the instance's owner, so the bucket
+// stays in its owner's.
+func (s *Store) UnlinkBucketOwner(_ context.Context, rec *op.BucketRecord, owner meta.Owner) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.buckets[bucketKey(rec.Info.Bucket.Tenant, rec.Info.Bucket.Name)]
+	switch {
+	case !ok || !b.rec.EntryPoint.Linked:
+		return nil
+	case b.rec.EntryPoint.Owner.String() != owner.String():
+		return op.ErrInvalidArgument
+	}
+	b.rec.EntryPoint.Linked = false
+	b.rec.EPVersion.Ver++
+	return nil
 }
 
 // CheckIndex implements op.BucketAdminStore; not implemented yet.
@@ -170,14 +269,34 @@ func (s *Store) ChownBucket(_ context.Context, rec *op.BucketRecord, owner meta.
 	return nil
 }
 
-// SyncOwnerStats implements op.BucketAdminStore; not implemented yet.
-func (s *Store) SyncOwnerStats(context.Context, meta.Owner) error {
-	return op.ErrNotImplemented
+// RemoveDanglingEntryPoint implements op.BucketAdminStore: the store keeps
+// an entry point only with its bucket, so no name is dangling.
+func (s *Store) RemoveDanglingEntryPoint(_ context.Context, tenant, name string) error {
+	return fmt.Errorf("bucket %s: %w", bucketKey(tenant, name), op.ErrNoSuchBucket)
 }
 
-// PurgeBypassGC implements op.BucketAdminStore; not implemented yet.
-func (s *Store) PurgeBypassGC(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
+// SyncOwnerStats implements op.BucketAdminStore: the store computes an
+// owner's stats from its buckets on every read, so there is nothing to
+// sync.
+func (s *Store) SyncOwnerStats(context.Context, meta.Owner) error { return nil }
+
+// PurgeBypassGC implements op.BucketAdminStore as remove_bypass_gc's data
+// pass: every object of the bucket and every upload in flight goes, there
+// being no GC to bypass, and the bucket stays for the purge that follows.
+func (s *Store) PurgeBypassGC(_ context.Context, rec *op.BucketRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.instance(rec)
+	if err != nil {
+		return err
+	}
+	clear(b.objects)
+	for k, u := range s.uploads {
+		if u.bucketID == rec.Info.Bucket.ID {
+			delete(s.uploads, k)
+		}
+	}
+	return nil
 }
 
 // GetRealm implements op.RealmStore over the seeded realm: by id, else by

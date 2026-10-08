@@ -377,12 +377,20 @@ func (o *DeleteBucket) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
 }
 
-// Execute removes the bucket. A ConcurrentModification from the store, a
-// delete that lost a race for the entry point, is success, as radosgw makes
-// it (rgw_op.cc:3792-3797; v20.2.4 :4001-4006).
+// Execute removes the bucket. A plain ConcurrentModification from the
+// store is success, as radosgw makes it (rgw_op.cc:3792-3797; v20.2.4
+// :4001-4006); ErrRemovalRaced, a removal that lost the entry point after
+// claiming the bucket, which stays, and ErrRenamePending are the 409s they
+// are. A bucket an unfinished admin rename marks is refused with
+// ConcurrentModification first, as its other name shares the index
+// (docs/exclusions.md, "Bucket link and unlink write differently from
+// radosgw").
 func (*DeleteBucket) Execute(ctx context.Context, r *Request) error {
+	if err := refuseUnfinishedRename(ctx, r.Env, r.BucketRec); err != nil {
+		return err
+	}
 	err := r.Env.Buckets.DeleteBucket(ctx, r.BucketRec)
-	if errors.Is(err, ErrConcurrentModification) {
+	if errors.Is(err, ErrConcurrentModification) && !errors.Is(err, ErrRenamePending) && !errors.Is(err, ErrRemovalRaced) {
 		return nil
 	}
 	return err

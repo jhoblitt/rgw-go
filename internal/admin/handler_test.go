@@ -267,13 +267,13 @@ var _ = Describe("admin handler", func() {
 		Expect(body(res)).To(HavePrefix(`{"Code":"InvalidRequest",`))
 	})
 	It("answers an unregistered route NotImplemented, in the request's format, for a caller its op admits", func() {
-		res := fx.get("/admin/bucket?bucket=b&format=xml", "admin")
+		res := fx.get("/admin/bucket?index&bucket=b&format=xml", "admin")
 		Expect(res.StatusCode).To(Equal(501))
 		Expect(body(res)).To(HavePrefix(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code>`))
 	})
 	It("refuses a caller an unregistered route's op would refuse", func() {
-		Expect(fx.get("/admin/bucket?bucket=b", "").StatusCode).To(Equal(403), "anonymous")
-		res := fx.get("/admin/bucket?bucket=b", "nocaps")
+		Expect(fx.get("/admin/bucket?index&bucket=b", "").StatusCode).To(Equal(403), "anonymous")
+		res := fx.get("/admin/bucket?index&bucket=b", "nocaps")
 		Expect(res.StatusCode).To(Equal(403))
 		Expect(body(res)).To(HavePrefix(`{"Code":"AccessDenied",`))
 		Expect(fx.get("/admin/account?id=RGW00000000000000001", "admin").StatusCode).To(Equal(403),
