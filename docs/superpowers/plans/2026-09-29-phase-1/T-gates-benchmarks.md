@@ -1832,7 +1832,7 @@ s3-tests  needs [changes, parity]; if: always()
 - **Releases.** A pull request runs Squid alone. `workflow_dispatch` takes `release` (a choice, `squid` or `tentacle`, default `squid`), so Tentacle parity runs in CI on demand only (spec §9: it stays the local gate run plus a manual CI run).
 - **The re-record.** `workflow_dispatch` takes `record-baseline` (boolean, default false). When set, the parity job records radosgw's baseline on the runner with `make s3tests-record` into `$RUNNER_TEMP`, uploads it as the artifact `s3tests-baseline-<release>`, and diffs rgw-go against that fresh file rather than the committed one, so the run shows what the committed re-record will make the check report. The workflow never writes to the repository (`contents: read`); the owner commits the artifact in the pull request that needs it. A bump of the s3-tests pin needs one (spec §12): the baseline carries the commit it ran at, and `parity diff` exits 2 on a baseline from another commit (`comparedMeta`, `hack/parity/internal/parity/parity.go`), so the bump's own pull request fails until it carries the re-record.
 
-**The path filter, exactly the spec's** (§12): everything under `internal/` and `cmd/`, `go.mod`, `go.sum`, everything under `hack/s3tests/`, `hack/rooket/` and `hack/parity/`, and the s3-tests test data under `test/s3tests/`. Nothing else starts the run: a change to docs or records skips it. The changed-file list is `git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA"` from a full-history checkout, with `BASE_SHA` and `HEAD_SHA` from `github.event.pull_request.base.sha` and `.head.sha` through `env` (the pair `commitlint.yml` already reads): three dots so only the pull request's own changes count, and `--no-renames` so a file moved out of `internal/` counts by its old path too. The patterns live in that one step. Its cases:
+**The path filter, exactly the spec's** (§12): everything under `internal/` and `cmd/`, `go.mod`, `go.sum`, everything under `hack/s3tests/`, `hack/rooket/` and `hack/parity/`, the s3-tests test data under `test/s3tests/`, and the check's own workflow and cluster action, `.github/workflows/s3tests.yml` and everything under `.github/actions/rooket-cluster/`. Nothing else starts the run: a change to docs or records skips it. The changed-file list is `git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA"` from a full-history checkout, with `BASE_SHA` and `HEAD_SHA` from `github.event.pull_request.base.sha` and `.head.sha` through `env` (the pair `commitlint.yml` already reads): three dots so only the pull request's own changes count, and `--no-renames` so a file moved out of `internal/` counts by its old path too. The patterns live in that one step. Its cases:
 
 | The pull request changes | run |
 |---|---|
@@ -1842,9 +1842,9 @@ s3-tests  needs [changes, parity]; if: always()
 | `test/s3tests/known-differences-squid.txt` alone | true |
 | `hack/admin/run.sh` alone | false |
 | a file moved from `internal/` to `docs/` | true |
-| `.github/workflows/s3tests.yml` or the action alone | false |
+| `.github/workflows/s3tests.yml` or the action alone | true |
 
-The last row follows from the spec's list, which names no workflow path: a pull request that changes only the workflow or the action proves it by a `workflow_dispatch` run on its branch, which skips the filter, and its description links that run.
+The last row follows from the spec's list, which names the workflow and the action: a pull request that changes only the check's own machinery runs the check, so a broken workflow cannot merge green.
 
 **Constraints**, from github-conventions `references/workflows.md`:
 - **Timeouts.** Every job sets `timeout-minutes`: `changes` 5, `s3-tests` 5, `parity` 45, and the diagnostics step 10 as in `integration.yml`. The parity job's scale: `integration.yml`'s nightly job, the same bring-up and populate plus the integration suite and the phase 0 gate, finished in 8 to 9 minutes on each run from 2026-10-01 to 2026-10-08, and the set took 133 s against rgw-go and 235 s against radosgw on the Squid spike; a re-record adds two radosgw runs.

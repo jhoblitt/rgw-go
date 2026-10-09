@@ -450,8 +450,9 @@ runs the object suite on kind.
 The third, an s3-tests workflow on pull requests and on demand, is the
 required check of section 9. Its path filter is the S3 path: all of
 `internal/` and `cmd/`, `go.mod` and `go.sum`, the s3-tests, rooket and
-parity harnesses in `hack/s3tests`, `hack/rooket` and `hack/parity`, and
-the s3-tests test data. Every internal package can change what the S3 path
+parity harnesses in `hack/s3tests`, `hack/rooket` and `hack/parity`, the
+s3-tests test data, and the check's own workflow and cluster action, so a
+change to the check itself runs it. Every internal package can change what the S3 path
 answers, so only changes to docs and records skip the check. The check
 always starts, and reports success without work when a
 pull request leaves those paths untouched, because a required check that a
