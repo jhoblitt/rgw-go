@@ -7,6 +7,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/ceph/go-ceph/rados"
@@ -164,6 +165,9 @@ func translateRead(b readBuilder, op *radosclient.ReadOp) ([]finisher, error) {
 			if err != nil {
 				return nil, err
 			}
+			if err := cString("xattr name", s.Name); err != nil {
+				return nil, err
+			}
 			b.CmpXattr(s.Name, cmp, s.Value)
 		case *radosclient.ReadStep:
 			fs = append(fs, readStep(b, s))
@@ -175,12 +179,18 @@ func translateRead(b readBuilder, op *radosclient.ReadOp) ([]finisher, error) {
 			fs = append(fs, getXattrsStep(b, s, idx))
 			idx++
 		case *radosclient.OmapGetValsStep:
+			if err := errors.Join(cString("omap start key", s.StartAfter), cString("omap key prefix", s.FilterPrefix)); err != nil {
+				return nil, err
+			}
 			fs = append(fs, omapGetValsStep(b, s, idx))
 			idx++
 		case *radosclient.OmapGetValsByKeysStep:
 			fs = append(fs, omapGetValsByKeysStep(b, s, idx))
 			idx++
 		case *radosclient.OmapGetKeysStep:
+			if err := cString("omap start key", s.StartAfter); err != nil {
+				return nil, err
+			}
 			fs = append(fs, omapGetKeysStep(b, s, idx))
 			idx++
 		case *radosclient.ExecStep:
@@ -350,6 +360,9 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 			if err != nil {
 				return nil, err
 			}
+			if err := cString("xattr name", s.Name); err != nil {
+				return nil, err
+			}
 			b.CmpXattr(s.Name, cmp, s.Value)
 		case *radosclient.StepFlagsStep:
 			// librados asserts that an action precedes the flags, which
@@ -382,8 +395,14 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 		case *radosclient.TruncateStep:
 			b.Truncate(s.Offset)
 		case *radosclient.SetXattrStep:
+			if err := cString("xattr name", s.Name); err != nil {
+				return nil, err
+			}
 			b.SetXattr(s.Name, s.Value)
 		case *radosclient.RmXattrStep:
+			if err := cString("xattr name", s.Name); err != nil {
+				return nil, err
+			}
 			b.RmXattr(s.Name)
 		case *radosclient.OmapSetStep:
 			b.SetOmap(s.Values)
@@ -412,6 +431,16 @@ func translateWrite(b writeBuilder, op *radosclient.WriteOp) ([]finisher, error)
 		}
 	}
 	return fs, nil
+}
+
+// cString refuses s, a name or a bound go-ceph hands librados as a C string,
+// when it holds a NUL, where that string would end. Values, omap keys set,
+// removed, compared or read by key go with their lengths.
+func cString(what, s string) error {
+	if strings.IndexByte(s, 0) >= 0 {
+		return fmt.Errorf("goceph: %s holds a NUL byte: %w", what, radosclient.ErrNULName)
+	}
+	return nil
 }
 
 // stepFlagsMask is every step flag the seam defines.

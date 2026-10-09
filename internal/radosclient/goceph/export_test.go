@@ -116,3 +116,13 @@ func ConfiguredOption(ctx context.Context, cfg Config, option string) (string, e
 func OpName(namespace, op, oid string) string {
 	return (&poolState{namespace: namespace}).opName(op, oid)
 }
+
+// DetachedPool is a Pool on no cluster, in namespace and with locator set, for
+// specs of what a Pool refuses before an operation reaches librados.
+func DetachedPool(namespace, locator string) radosclient.Pool {
+	return &pool{state: &poolState{name: "detached", namespace: namespace}, locator: locator}
+}
+
+// DetachedCluster is a Cluster with no connection, for specs of what it
+// refuses before it reaches librados.
+func DetachedCluster() radosclient.Cluster { return &cluster{} }
