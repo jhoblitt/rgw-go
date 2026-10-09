@@ -1,0 +1,192 @@
+# s3-tests parity: the phase 1 s3-tests set against rgw-go on a disposable
+# Rook cluster, compared with radosgw's recorded baseline by make
+# s3tests-parity (hack/rooket/README.md). On every pull request, Squid only,
+# and on demand for either release, where it can also re-record radosgw's
+# baseline on the runner.
+#
+# The workflow always starts and its changes job decides whether the pull
+# request touches the S3 path: a required check that a trigger's path filter
+# keeps from starting stays pending and blocks the merge. The s3-tests job is
+# the one to require. A job skipped by its if: reports success, and GitHub
+# skips a job whose needed job failed, so requiring parity itself would let
+# a broken filter merge green.
+name: s3tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: The Ceph release whose cluster the set runs on
+        type: choice
+        options: [squid, tentacle]
+        default: squid
+      record-baseline:
+        description: Re-record radosgw's baseline on the runner, upload it, and compare rgw-go with it instead of the committed one
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Keyed by event too, so that a dispatch never cancels a pull request's run,
+# and by release, so that one release's dispatch never cancels the other's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.release }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - name: Check out repository
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The S3 path: every internal package can change what it answers, so
+      # only docs and records skip the run. Three dots count the pull
+      # request's own changes only, and --no-renames counts a file moved out
+      # of the path by its old name too.
+      - name: Decide whether the pull request touches the S3 path
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")"
+          run=false
+          while IFS= read -r path; do
+            case "$path" in
+              internal/* | cmd/* | go.mod | go.sum | hack/s3tests/* | hack/rooket/* | hack/parity/* | \
+                test/s3tests/* | .github/workflows/s3tests.yml | .github/actions/rooket-cluster/*)
+                echo "on the S3 path: $path"
+                run=true
+                ;;
+            esac
+          done <<<"$files"
+          echo "run=${run}"
+          echo "run=${run}" >>"$GITHUB_OUTPUT"
+
+  parity:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASE: ${{ inputs.release || 'squid' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start and populate the cluster
+        uses: ./.github/actions/rooket-cluster
+        with:
+          release: ${{ env.RELEASE }}
+
+      - name: Start rgw-go
+        run: make rgw-go-up "RELEASE=${RELEASE}"
+
+      # After rgw-go-up, so radosgw records under the parity options it sets.
+      - name: Record radosgw's baseline
+        if: inputs.record-baseline
+        run: |
+          baseline="${RUNNER_TEMP}/s3tests-baseline/${RELEASE}.json"
+          make s3tests-record "RELEASE=${RELEASE}" "OUT=${baseline}"
+          echo "RECORDED_BASELINE=${baseline}" >>"$GITHUB_ENV"
+
+      - name: Upload radosgw's baseline
+        if: inputs.record-baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s3tests-baseline-${{ env.RELEASE }}
+          path: ${{ env.RECORDED_BASELINE }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Compare rgw-go with radosgw's baseline
+        run: |
+          if [ -n "${RECORDED_BASELINE:-}" ]; then
+            make s3tests-parity "RELEASE=${RELEASE}" "BASELINE=${RECORDED_BASELINE}"
+          else
+            make s3tests-parity "RELEASE=${RELEASE}"
+          fi
+
+      - name: Upload the s3-tests reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s3tests-reports-${{ env.RELEASE }}
+          path: |
+            hack/s3tests/out/*.xml
+            hack/s3tests/out/*.log
+            hack/s3tests/out/*.freeze
+            hack/rooket/out/${{ env.RELEASE }}/s3tests-rgw-go.json
+            hack/rooket/out/${{ env.RELEASE }}/rgw-go.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Collected before teardown, which removes the cluster and out/. A
+      # timeout cancels the job rather than failing it. diag.sh leaves out the
+      # admin keyring and the populated users' S3 secrets.
+      - name: Collect cluster diagnostics
+        if: failure() || cancelled()
+        timeout-minutes: 10
+        run: hack/rooket/diag.sh "${RELEASE}" "${RUNNER_TEMP}/diagnostics"
+
+      - name: Upload cluster diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cluster-${{ env.RELEASE }}
+          path: ${{ runner.temp }}/diagnostics
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Tear down the cluster
+        if: always()
+        run: |
+          command -v rooket >/dev/null || { echo "rooket was never installed; nothing to tear down"; exit 0; }
+          make cluster-down "RELEASE=${RELEASE}"
+
+  # The required check. It passes when the filter ran and either parity
+  # passed or the pull request leaves the S3 path alone and parity was
+  # skipped; anything else fails it.
+  s3-tests:
+    needs: [changes, parity]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Judge the filter and the parity run
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUN: ${{ needs.changes.outputs.run }}
+          PARITY: ${{ needs.parity.result }}
+        run: |
+          echo "changes: ${CHANGES}, run: ${RUN:-unset}, parity: ${PARITY}"
+          if [ "$CHANGES" != success ]; then
+            echo "::error::the changes job ended ${CHANGES}"
+            exit 1
+          fi
+          case "${RUN}:${PARITY}" in
+            true:success) echo "parity passed" ;;
+            false:skipped) echo "the pull request leaves the S3 path alone" ;;
+            *)
+              echo "::error::parity ended ${PARITY} with run=${RUN:-unset}"
+              exit 1
+              ;;
+          esac
