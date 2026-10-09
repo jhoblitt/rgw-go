@@ -1,0 +1,27 @@
+# The s3-tests that judge S3 authorization, the ACL, policy and tagging
+# groups: one extended regular expression per line over hack/parity's test
+# ids, each ending in a colon or the end of the line, so that it also
+# selects that test's line of a parity diff, with grep -E -f. A comment line
+# is a pattern to grep too; it holds no test id and no regex operator, so it
+# selects nothing. No line is blank, since an empty pattern selects every
+# line.
+#
+# ACLs: every test whose name contains acl, in either file.
+^s3tests\.functional\.test_(s3|headers)::test_[A-Za-z0-9_]*acl[A-Za-z0-9_]*(:|$)
+# Anonymous and public access to a bucket and its objects under each pair
+# of canned ACLs.
+^s3tests\.functional\.test_s3::test_access_bucket_[A-Za-z0-9_]+(:|$)
+# Bucket policy: the tests s3-tests marks bucket_policy, and the unmarked
+# ones that store and evaluate a bucket policy.
+^s3tests\.functional\.test_s3::test_bucket(v2)?_policy[A-Za-z0-9_]*(:|$)
+^s3tests\.functional\.test_s3::test_set_get_del_bucket_policy(:|$)
+^s3tests\.functional\.test_s3::test_(delete_tags_obj|get_tags_acl|put_tags_acl)_public(:|$)
+^s3tests\.functional\.test_s3::test_head_object_404_with_policy_prefix(:|$)
+^s3tests\.functional\.test_s3::test_multipart_upload_on_a_bucket_with_policy(:|$)
+# Tagging: the tests s3-tests marks tagging, object and bucket tag sets.
+^s3tests\.functional\.test_s3::test_get_obj_(head_)?tagging(:|$)
+^s3tests\.functional\.test_s3::test_put_(delete|excess|excess_key|excess_val|max|max_kvsize|modify)_tags(:|$)
+^s3tests\.functional\.test_s3::test_put_obj_with_tags(:|$)
+^s3tests\.functional\.test_s3::test_set_(bucket|multipart)_tagging(:|$)
+# Tenants: a tenant user's bucket, its policy, and a presigned ACL.
+^s3tests\.functional\.test_s3::test_[A-Za-z0-9_]*tenant[A-Za-z0-9_]*(:|$)
