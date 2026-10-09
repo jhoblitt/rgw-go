@@ -248,6 +248,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
 | [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | pending | pending | ✓ |
 | [radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally](#radosgws-get-compares-if-match-and-if-none-match-as-prefixes-and-takes--literally) | pending | pending | ✓ |
+| [radosgw's set_obj_attrs moves an object's mtime one nanosecond on](#radosgws-set_obj_attrs-moves-an-objects-mtime-one-nanosecond-on) | pending | pending |  |
+| [radosgw defines rgw_put_obj_max_window_size and never reads it](#radosgw-defines-rgw_put_obj_max_window_size-and-never-reads-it) | pending | pending |  |
+| [radosgw stores every x-amz- request header as an attr of the object it writes](#radosgw-stores-every-x-amz--request-header-as-an-attr-of-the-object-it-writes) | pending | pending |  |
+| [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -395,10 +399,14 @@ Every new entry adds its row to this table, in document order.
     the copy above the cancel branch.
 - **Releases:** v17.2.0 and later, and pacific from v16.2.12, which carries
   the backport 8c67a931c9e; checked at v19.2.6, v20.2.4 and main.
-- **rgw-go:** meets it as radosgw does until a release carries the class
-  fix: the class decides, so no client can work around it. By the owner's
-  decision, phase 1's cancel (unit W) sends radosgw's -1:0 version, so
-  rgw-go meets the explicit-cancel case too.
+- **rgw-go:** rgw-go sends radosgw's -1:0 cancel version and meets the
+  defect as radosgw does until a release carries the class fix
+  (ceph/ceph#72097): the class decides, so no client can work around it.
+  The cancel is `indexOp.cancel`
+  (`internal/driver/indexop.go`), which the head write, the delete and
+  `set_attrs` call on failure, as does the removal of a multipart upload's
+  meta object (`internal/driver/mp_cleanup.go`); `indexop_test.go` pins the
+  request and the entry version it leaves.
 - **Upstream:** [#80894](https://tracker.ceph.com/issues/80894), filed
   2026-09-26 with the same analysis, both triggers and the regression from
   8b27472bbd8; its backports are tentacle and umbrella. Our
@@ -6199,7 +6207,8 @@ Every new entry adds its row to this table, in document order.
   prefix acceptance below is unfixed at v20.2.4. The quoted rejection fails
   closed and is not security-relevant; the prefix acceptance fails open,
   but its reach is low, since the condition must start with the current
-  ETag. Unreproduced here: derived from the source.
+  ETag. The quoted rejection and the 412 for a missing object are
+  reproduced on v19.2.6; the prefix acceptance is derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - PutObject reads If-Match and If-None-Match raw
     (`RGWPutObj_ObjStore_S3::get_params`, `rgw_rest_s3.cc:2622-2623` at
@@ -6225,6 +6234,11 @@ Every new entry adds its row to this table, in document order.
   - An If-Match on a missing object, `*` or an ETag, answers 412 on Squid
     (`:6519`, `:6523-6525` at v19.2.6) and ENOENT, 404, on Tentacle
     (`:7291`, `:7304` at v20.2.4).
+  - Reproduced on a disposable v19.2.6 cluster through aws-sdk-go-v2's
+    PutObject (`test/integration/write_test.go`, "answers the write
+    conditions as radosgw does"): an If-Match of the object's ETag in
+    quotes answers 412 PreconditionFailed, the bare ETag 200, and
+    `If-Match: *` on a missing key 412.
 - **Impact:** on Squid a conditional PUT with a quoted If-Match fails 412
   whatever the object holds, and one with a quoted If-None-Match naming the
   current ETag overwrites the object; clients that send ETags as they
@@ -6247,15 +6261,17 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merged
   after v19.2.6).
 - **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
-  preconditions; derived from the source, not reproduced. Upstream reported
-  it first.
+  preconditions; derived from the source. Upstream reported it first.
+  Reproduced on v19.2.6 in unit W, Task 12, 2026-10-08.
 
 ## Squid's write conditions fail an If-None-Match ETag on a missing key and skip a head without a write tag
 
 - **Kind:** defect, and a security issue: an integrity bypass that defeats
   If-None-Match: * and If-Match and so loses an update (triage estimate
-  CVSS about 6.5). Fixed in Tentacle and, after v19.2.6, in Squid.
-  Unreproduced here: derived from the source.
+  CVSS about 6.5). Fixed in Tentacle and, after v19.2.6, in Squid. The
+  412 for an If-None-Match ETag on a missing key is reproduced on
+  v19.2.6; the skipped check on a head without a write tag is derived
+  from the source.
 - **Evidence:** paths are under `src/rgw/driver/rados/`; lines are
   `rgw_rados.cc` at v19.2.6 unless marked.
   - `prepare_atomic_modification` checks a write's conditions only inside
@@ -6269,7 +6285,11 @@ Every new entry adds its row to this table, in document order.
   - With an If-None-Match naming an ETag, a key without an object, or an
     object stored without an ETag, has no etag attr, and
     `!state->get_attr(RGW_ATTR_ETAG, bl)` refuses the PUT with 412
-    PreconditionFailed (`:6536-6542`), though no ETag matches.
+    PreconditionFailed (`:6536-6542`), though no ETag matches. Reproduced
+    on a disposable v19.2.6 cluster: aws-sdk-go-v2's PutObject of a new
+    key with `If-None-Match: <etag>` answers 412
+    (`test/integration/write_test.go`, "answers the write conditions as
+    radosgw does").
   - Tentacle checks the conditions first, whatever the guard
     (`check_preconditions`, called at `:3294-3297` at v20.2.4), and passes an
     If-None-Match ETag when the object has no ETag (`:7315-7324` at
@@ -6297,8 +6317,8 @@ Every new entry adds its row to this table, in document order.
   brought in the regression in "Tentacle's DeleteObject removes the head
   without checking its write tag".
 - **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
-  preconditions; derived from the source, not reproduced. Upstream reported
-  it first.
+  preconditions; derived from the source. Upstream reported it first. The
+  missing-key 412 reproduced on v19.2.6 in unit W, Task 12, 2026-10-08.
 
 ## radosgw's send_split_chain repeats an object in its remainder and loops on an object too large for an entry
 
@@ -7809,7 +7829,7 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, not security-relevant, fixed in v20.2.3 and v21.0.0,
   not on squid as of a742f50616e; prior art, fixed upstream before we met
-  it. Unreproduced: derived from the source.
+  it. Reproduced on v19.2.6.
 - **Evidence:** paths are under `src/rgw/`.
   - v19.2.6's `copy_obj` keeps the source's `user.rgw.storage_class` in
     the attrs a COPY directive carries over
@@ -7826,6 +7846,15 @@ Every new entry adds its row to this table, in document order.
     (`rgw_rest.cc:106`, `rgw_rest_s3.cc:544-548` at v19.2.6), while the
     bucket index entry carries the manifest's class, so a listing shows
     STANDARD.
+  - Reproduced on a disposable v19.2.6 cluster
+    (`test/integration/write_test.go`, "copies a compressed source's
+    stored bytes as a Squid radosgw does"): a CopyObject of the corpus
+    object `comp-zlib.bin`, stored in COMP_ZLIB, that names no storage
+    class leaves `user.rgw.storage_class` COMP_ZLIB on the copy's head and
+    HeadObject reports COMP_ZLIB, while the copy's index entry says
+    STANDARD. The same copy naming `x-amz-storage-class: STANDARD` is
+    labeled STANDARD, since the new manifest's tail class is then not
+    empty.
   - v20.2.4 erases the attr from the source's attrs
     (`driver/rados/rgw_rados.cc:5028` at v20.2.4), with commit
     fdb78c7fb07, "rgw: implement CopyObject for encrypted object", first
@@ -7854,7 +7883,8 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277). The issue's
   Backport field names squid, but the squid branch carries no backport.
 - **Found:** phase 1 unit W, Task 8, 2026-10-05, comparing `copy_obj` at
-  both tags; derived from the source, not reproduced.
+  both tags; derived from the source. Reproduced on v19.2.6 in unit W,
+  Task 12, 2026-10-08.
 
 ## radosgw's copy of an object onto itself can land its old manifest on tails queued for the GC
 
@@ -11296,3 +11326,158 @@ Every new entry adds its row to this table, in document order.
   it covers the read path is for that search.
 - **Found:** phase 1 unit R planning, 2026-09-28, from the source;
   reproduced on Squid by unit R's read gate, 2026-10-08.
+
+## radosgw's set_obj_attrs moves an object's mtime one nanosecond on
+
+- **Kind:** quirk: the nudge is deliberate upstream. Reproduced on
+  v19.2.6.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RadosObject::set_obj_attrs`, under `FLAG_LOG_OP`, hands `set_attrs`
+    the object's mtime plus one nanosecond, "so that fetch_remote_obj()
+    won't return ERR_NOT_MODIFIED when syncing the modified object"
+    (`driver/rados/rgw_sal_rados.cc:2382-2384` at v19.2.6, `:2975-2977` at
+    v20.2.4). `set_attrs` writes that mtime to the head with `mtime2` and
+    completes the index entry with it (`driver/rados/rgw_rados.cc:6683-6688`
+    and `:6722-6725` at v19.2.6).
+  - The requests that change an object's attrs alone pass the flag; only
+    a read marking a replicated object's status COMPLETED does not
+    (`handle_replication_status_header`, `rgw_op.cc:925`). The flag comes
+    from `modify_obj_attrs`
+    (`driver/rados/rgw_sal_rados.cc:2401-2419` at v19.2.6), which
+    PutObjectTagging, PutObjectAcl, PutObjectRetention and
+    PutObjectLegalHold call (`rgw_op.cc:1105`, `:5919`, `:8419`, `:8524`),
+    from `delete_obj_attrs` (`:2421-2429`), which DeleteObjectTagging calls
+    (`rgw_op.cc:1139`), and from `RGWPutMetadataObject`, `RGWRMAttrs` and
+    `RGWSetAttrs`, which pass it themselves (`:5072`, `:7847`, `:7884`).
+  - Reproduced on a disposable v19.2.6 cluster
+    (`test/integration/write_test.go`, "changes an object's ACL with a new
+    write tag and the mtime one nanosecond on, as radosgw does"): a
+    PutObjectAcl through radosgw moves the head's RADOS mtime, read with
+    `rados_read_op_stat2`, by exactly 1 ns.
+- **Impact:** each such change moves Last-Modified by a nanosecond, which
+  the second-resolution HTTP dates hide, so a client sees the object as
+  unchanged; a comparison of exact mtimes, the index entry's included,
+  sees a new one. Not a security issue.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: `SetObjectAttrs` writes the state's mtime
+  plus one nanosecond (`internal/driver/attrs.go`), which the same spec
+  measures on rgw-go's write.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit W's plan, transcribing `set_obj_attrs`;
+  registered and reproduced in unit W, Task 12, 2026-10-08.
+
+## radosgw defines rgw_put_obj_max_window_size and never reads it
+
+- **Kind:** quirk. Derived from the source.
+- **Evidence:** paths are under `src/`.
+  - `common/options/rgw.yaml.in` defines `rgw_put_obj_max_window_size`,
+    64 MiB, "The window size may be dynamically adjusted, but will not
+    surpass this value" (`:114-120` at v19.2.6, `:117-123` at v20.2.4), and
+    `rgw_put_obj_min_window_size` names it under `see_also` with "The window
+    size may be adjusted dynamically" (`:99-113` at v19.2.6, `:102-116` at
+    v20.2.4).
+  - `git grep rgw_put_obj_max_window_size src/rgw` finds nothing at either
+    tag. Every write window is `rgw_put_obj_min_window_size`, fixed for the
+    request: the atomic writer's throttle
+    (`rgw/driver/rados/rgw_sal_rados.cc:2284` at v19.2.6, `:2770` at
+    v20.2.4), `copy_obj_data`'s (`rgw/driver/rados/rgw_rados.cc:5053`,
+    `:5314`), and the throttle's `const uint64_t window`
+    (`rgw/rgw_aio_throttle.h:28` at both tags), which nothing resizes.
+- **Impact:** setting the option changes nothing; a PUT keeps at most
+  `rgw_put_obj_min_window_size` bytes of RADOS writes in flight, 16 MiB by
+  default. Not a security issue.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: the put window is
+  `rgw_put_obj_min_window_size` alone, and the maximum is not read
+  (`putWindow`, `internal/driver/writer.go`).
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit W's plan, sizing the put window; registered in
+  unit W, Task 12, 2026-10-08.
+
+## radosgw stores every x-amz- request header as an attr of the object it writes
+
+- **Kind:** quirk: upstream's own comment on the blocklist says most of
+  these should not be stored. Reproduced on v19.2.6.
+- **Evidence:** paths are under `src/rgw/`.
+  - `req_info::init_meta_info` files every header under one of the meta
+    prefixes, `HTTP_X_AMZ_`, `HTTP_X_GOOG_`, `HTTP_X_DHO_`, `HTTP_X_RGW_`,
+    `HTTP_X_OBJECT_`, `HTTP_X_CONTAINER_` and `HTTP_X_ACCOUNT_`, into
+    `x_meta_map` as `x-amz-` and the rest of its name
+    (`rgw_common.cc:413-464` at v19.2.6, `:426-477` at v20.2.4).
+  - `rgw_get_request_metadata`, which PutObject, a CopyObject with
+    REPLACE and CreateMultipartUpload call, stores each entry its blocklist
+    does not name as `user.rgw.` and the name, NUL-terminated
+    (`rgw_op.h:2171-2229` at v19.2.6, `:2338-2408` at v20.2.4). The
+    blocklist names four headers at v19.2.6 (`:2177-2182`) and ten at
+    v20.2.4 (`:2344-2357`), under "we probably don't want to store these,
+    esp. under user.rgw", so not only `x-amz-meta-*` is stored but the
+    request's own signing and copy headers.
+  - Reproduced on a disposable v19.2.6 cluster
+    (`test/integration/write_test.go`, "writes the object a radosgw PUT of
+    the same request writes" and "stores a REPLACE copy's request headers
+    as radosgw does"): an aws-sdk-go-v2 PutObject leaves
+    `user.rgw.x-amz-content-sha256` and `user.rgw.x-amz-date` on the head
+    beside `user.rgw.x-amz-meta-k`, and a CopyObject with REPLACE also
+    `user.rgw.x-amz-copy-source` and `user.rgw.x-amz-metadata-directive`.
+- **Impact:** each write's head carries its request's signing headers and
+  copy source, which GET and HEAD do not show, since they send only the
+  `x-amz-meta-` attrs; an attr count or name limit
+  (`rgw_max_attrs_num_in_req`, `rgw_max_attr_name_len`) counts them too.
+  Not a security issue in itself; "radosgw stores request credentials as
+  object attrs" is the case where a stored header is a credential.
+- **Releases:** v19.2.6 and v20.2.4, with the shorter blocklist at
+  v19.2.6.
+- **rgw-go:** reproduces it with v20.2.4's blocklist on both releases, and
+  leaves out `x-amz-security-token` too (`requestAttrs`,
+  `internal/s3/requestattrs.go`; `docs/exclusions.md`, "Request headers
+  stored as attrs follow Tentacle's blocklist, and the session token is
+  never stored"), so on a Squid zone rgw-go's heads lack the
+  `x-amz-content-sha256` and `x-amz-date` attrs radosgw's carry.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit W, Task 11, writing `requestAttrs`; registered and
+  reproduced in unit W, Task 12, 2026-10-08.
+
+## radosgw fails a write whose bucket was resharded since the request read it
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a write fails with a
+  404 where it could re-read the bucket. Not security-relevant.
+  Unreproduced on radosgw: derived from the source, and met by rgw-go's
+  driver, which sends the same requests, on a v19.2.6 cluster.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; a pair of line
+  numbers is v19.2.6's then v20.2.4's.
+  - A write's index prepare runs at its head write, after the body
+    (`_do_write_meta`, `rgw_rados.cc:3291`; `:3444`), on the bucket info the
+    request loaded when it started (`RGWRados::Bucket::UpdateIndex`, over the
+    write target's `bucket_info`).
+  - `cls_obj_prepare_op` asserts that the index shard exists before the
+    reshard guard (`rgw_rados.cc:9471`; `:10403`). `guard_reshard` re-reads
+    the bucket only after -ERR_BUSY_RESHARDING and returns any other error
+    to the write (`rgw_rados.cc:7024-7076`; `:7873-7930`).
+  - `commit_reshard` writes the new layout, then removes the old index
+    shards unless an index log still needs them (`rgw_reshard.cc:667-678`;
+    `:894-906`), and a zone that logs no data drops those logs in the
+    commit (`:565-568`; `:792-795`), so there the old shards go at once.
+  - A write that read the bucket before the commit and prepares after the
+    removal gets ENOENT from the assert, which the S3 layer answers 404
+    NoSuchKey. A write that prepares while the old shards still exist meets
+    the guard instead, waits, re-reads the bucket and succeeds.
+  - Met on a disposable v19.2.6 cluster by rgw-go, whose prepare, guard and
+    wait transcribe radosgw's (`test/integration/write_test.go`, "completes
+    every write across a reshard of the bucket"): of 200 sequential 1 KiB
+    PutObjects, each reading the bucket through the cache the reshard's
+    notify invalidates, one failed with ENOENT on
+    `.dir.<bucket id>.5`, a shard of the index the reshard had removed.
+- **Impact:** a PUT, DELETE, CopyObject or attribute change in flight
+  across a reshard's commit can fail with 404 NoSuchKey, and the client
+  must send it again. The window is short for a small write, but a PUT
+  loads the bucket before its body arrives and prepares only after it, so
+  a large upload spans the commit of any reshard that finishes meanwhile,
+  dynamic resharding's among them, and is lost at its end.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: `indexOp.guardReshard`
+  (`internal/driver/indexop.go`) re-reads the bucket on a busy answer
+  alone, as `guard_reshard` does, so rgw-go answers such a write 404
+  NoSuchKey too.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit W, Task 12, 2026-10-08, in the reshard oracle's
+  run under `make integration`.
