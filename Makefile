@@ -165,6 +165,23 @@ parity-record: ## Record a baseline from RUN-FILES: make parity-record SUITE=s3t
 parity-check: ## Compare a candidate result with a baseline: make parity-check BASELINE=... CANDIDATE=...
 	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CANDIDATE)
 
+# The baseline s3tests-parity compares rgw-go's run with; a re-record passes
+# the one it has just written. hack/parity runs as a built binary because go
+# run exits 1 for any failure: make's error line then names the diff's own
+# status, 1 for a test that differs and 2 for a baseline recorded under
+# another s3-tests commit, Ceph version, release or deselect lists.
+BASELINE ?= test/s3tests/baseline/$(RELEASE).json
+
+.PHONY: s3tests-parity
+s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and compare with radosgw's recorded baseline
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity
+	go build -o bin/parity ./hack/parity
+	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
+	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
+	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
+	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
+	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
+
 .PHONY: bench-seam
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
 	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) hack/bench/seam.sh $(RELEASE)

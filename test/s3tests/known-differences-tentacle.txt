@@ -1,0 +1,5 @@
+# Tests whose outcome is expected to differ from radosgw's on this release,
+# each by a decided difference that docs/exclusions.md records: one regular
+# expression per line over hack/parity's test ids, under a comment giving
+# the reason. A test that needs a later phase's feature is not listed here;
+# hack/s3tests/deselect-phase<N>.txt removes it on both gateways.
