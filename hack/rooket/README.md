@@ -39,6 +39,10 @@ with `ROOKET_NAME=rgw-go-<release> rooket k ...`, never with the ambient
 `kubectl`; `ROOKET=<path>` makes the targets run a rooket other than the one
 on `PATH`.
 
+`make integration` runs the write path's oracle, `test/integration/write_test.go`,
+which removes the buckets it writes and the garbage they leave, so `make gate`
+still passes after it.
+
 `make cluster-up` rewrites `out/<release>/` without the `manifest.json` the
 gate reads, so `make populate` runs before `make gate` after every
 `make cluster-up`, in a fresh worktree too. Against a populated cluster it
