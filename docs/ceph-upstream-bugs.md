@@ -245,6 +245,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
+| [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11109,3 +11110,63 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, writing the bucket
   instance's JSON decoder; derived from the source, not reproduced.
+
+## radosgw's metadata put writes a document's attrs raw, the object's version among them
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user or bucket
+  instance metadata put sets every attr its document names on the object,
+  whatever its name, in the op that sets the object's version, so an attr
+  named `ceph.objclass.version` replaces that version. Classification
+  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - The user document's `attrs` decode into a map named as the JSON names
+    them (`RGWUserCompleteInfo::decode_json`, `rgw/driver/rados/rgw_user.h:741-744`
+    at v19.2.6, `rgw/driver/rados/rgw_user.cc:2735-2738` at v20.2.4), and
+    the put passes the map to `store_user_info` whenever the document has
+    it (`rgw/driver/rados/rgw_user.cc:2822-2833`; `:2841-2845`), which
+    writes the uid object with it (`rgw/services/svc_user_rados.cc:300-302`
+    through `RGWSI_MetaBackend_SObj::put_entry`,
+    `rgw/services/svc_meta_be_sobj.cc:163-164`, at v19.2.6;
+    `rgw/services/svc_user_rados.cc:281-282` at v20.2.4).
+  - The bucket instance document's `attrs` decode the same way
+    (`RGWBucketCompleteInfo::decode_json`, `rgw/driver/rados/rgw_bucket.cc:2117-2120`;
+    `:2283-2286`), and the put passes them to `store_bucket_instance_info`
+    (`rgw/driver/rados/rgw_bucket.cc:2756` and `:2874-2886`; `:2885-2886`),
+    which writes the instance with them (`rgw/services/svc_bucket_sobj.cc:537-539`
+    at v19.2.6; `:475-476` at v20.2.4).
+  - `rgw_put_system_obj` hands the map to the system object write unfiltered
+    (`rgw/driver/rados/rgw_tools.cc:125-145`; `:154-174`), and
+    `RGWSI_SysObj_Core::write` builds one op that first runs the version
+    tracker's step, then the data, then a `setxattr` for each attr with a
+    value (`rgw/services/svc_sys_obj_core.cc:505`, `:514` and `:518-526`
+    at both tags).
+  - The tracker's step is the version class's `set` or `inc`, which stores
+    the version in the xattr `ceph.objclass.version`
+    (`cls/version/cls_version.cc:20-30` at both tags), so a document attr of
+    that name, set later in the same op, replaces it.
+  - A later read that checks or reads the version decodes that xattr and
+    answers EIO when it does not decode (`read_version`,
+    `cls/version/cls_version.cc:55-75` at both tags). The user's reads carry
+    a tracker, the metadata get (`rgw/driver/rados/rgw_user.cc:2741-2743` at
+    v19.2.6, `:2809-2811` at v20.2.4) and the lookup by access key or email
+    (`rgw/services/svc_user_rados.cc:706-707`; `:681-682`) among them, and
+    so does the bucket instance's read (`rgw/services/svc_bucket_sobj.cc:353-358`
+    at v19.2.6, `:304-307` at v20.2.4).
+- **Impact:** an admin holding the `metadata=write` cap, or a zone whose
+  metadata another zone syncs, can store a user or bucket instance whose
+  version xattr is garbage. Each of those reads then fails with EIO once it
+  reaches RADOS rather than a gateway's cache: the user's access keys stop
+  authenticating, and the metadata get of the user or the instance fails,
+  until someone repairs the xattr with the rados tool. A well-formed value
+  instead sets the version to one the document chose. Other attrs outside
+  `user.rgw.` are stored too. Admin and sync only.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A metadata put whose document names an
+  attr outside `user.rgw.` answers 400 InvalidArgument and writes nothing
+  (`RefuseRawAttrs`, `internal/op/metadata.go`; `docs/exclusions.md`, "The
+  metadata sections write only what keeps a user or bucket whole").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 8, 2026-10-08; derived from the
+  source, not reproduced.
