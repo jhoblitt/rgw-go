@@ -109,6 +109,9 @@ var _ = Describe("metadata", func() {
 			u.Info.AccessKeys["AKnew"] = meta.AccessKey{ID: "AKnew", Active: true}
 		}, op.ErrInvalidSecretKey),
 		Entry("an account that does not exist", "alice", func(u *meta.UserCompleteInfo) { u.Info.AccountID = acctID }, op.ErrInvalidArgument),
+		Entry("a key id another user holds, the document's copy inactive", "alice", func(u *meta.UserCompleteInfo) {
+			u.Info.AccessKeys["AKbob"] = meta.AccessKey{ID: "AKbob", Secret: "mine", Active: false}
+		}, op.ErrKeyExists),
 		Entry("a root user outside an account", "alice", func(u *meta.UserCompleteInfo) { u.Info.Type = meta.IdentityRoot }, op.ErrInvalidArgument),
 		Entry("a user id in an account id's form", "RGW00000000000000002", func(u *meta.UserCompleteInfo) {
 			u.Info.UserID = meta.UserID{ID: "RGW00000000000000002"}

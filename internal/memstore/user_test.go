@@ -135,10 +135,28 @@ var _ = Describe("users", func() {
 		_, err := store.GetUser(ctx, meta.UserID{ID: "bob"})
 		Expect(err).To(MatchError(op.ErrNoSuchUser), "bob was not written")
 		bob.AccessKeys["AKALICE"] = meta.AccessKey{ID: "AKALICE", Secret: "x"}
-		Expect(store.PutUser(ctx, &op.UserRecord{Info: bob}, op.PutUserOptions{Exclusive: true})).To(Succeed(), "an inactive key is not checked")
-		holder, err := store.GetUserByAccessKey(ctx, "AKALICE")
+		Expect(store.PutUser(ctx, &op.UserRecord{Info: bob}, op.PutUserOptions{Exclusive: true})).To(MatchError(op.ErrKeyExists),
+			"an inactive key over an id another user holds")
+		holder, err := store.FindKeyHolder(ctx, "AKALICE")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(holder.Info.UserID.ID).To(Equal("alice"), "the index still names alice")
+		Expect(holder.ID).To(Equal("alice"))
+	})
+	It("finds a key's holder through the active-key index once the first holder drops it", func(ctx SpecContext) {
+		a := meta.NewUserInfo()
+		a.UserID = meta.UserID{ID: "a"}
+		a.AccessKeys = map[string]meta.AccessKey{"AKBOTH": {ID: "AKBOTH", Secret: "sa"}}
+		store.AddUser(a)
+		b := meta.NewUserInfo()
+		b.UserID = meta.UserID{ID: "b"}
+		b.AccessKeys = map[string]meta.AccessKey{"AKBOTH": {ID: "AKBOTH", Secret: "sb", Active: true}}
+		store.AddUser(b)
+		rec, err := store.GetUser(ctx, meta.UserID{ID: "a"})
+		Expect(err).NotTo(HaveOccurred())
+		rec.Info.AccessKeys = nil
+		Expect(store.PutUser(ctx, rec, op.PutUserOptions{IfVersion: &rec.Version})).To(Succeed())
+		holder, err := store.FindKeyHolder(ctx, "AKBOTH")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(holder.ID).To(Equal("b"), "b holds it active")
 	})
 	It("indexes active access keys only, dropping a key's index when it goes inactive", func(ctx SpecContext) {
 		info := aliceInfo()

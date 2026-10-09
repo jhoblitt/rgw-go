@@ -209,6 +209,9 @@ var _ = Describe("MetadataStore", func() {
 			u.Info.AccessKeys["AKnew"] = meta.AccessKey{ID: "AKnew", Active: true}
 		}, op.ErrInvalidSecretKey),
 		Entry("an account that does not exist", "alice", func(u *meta.UserCompleteInfo) { u.Info.AccountID = acctID }, op.ErrInvalidArgument),
+		Entry("a key id another user holds, the document's copy inactive", "alice", func(u *meta.UserCompleteInfo) {
+			u.Info.AccessKeys["AKbob"] = meta.AccessKey{ID: "AKbob", Secret: "mine", Active: false}
+		}, op.ErrKeyExists),
 		Entry("a root user outside an account", "alice", func(u *meta.UserCompleteInfo) { u.Info.Type = meta.IdentityRoot }, op.ErrInvalidArgument),
 		Entry("a user id in an account id's form", "RGW00000000000000002", func(u *meta.UserCompleteInfo) {
 			u.Info.UserID = meta.UserID{ID: "RGW00000000000000002"}
@@ -220,6 +223,41 @@ var _ = Describe("MetadataStore", func() {
 			u.Attrs, u.HasAttrs = meta.AttrsJSON{"ceph.objclass.version": []byte("garbage")}, true
 		}, op.ErrInvalidArgument),
 	)
+
+	It("refuses a key id another user holds before it links the user into its account", func(ctx SpecContext) {
+		a := meta.NewAccountInfo()
+		a.ID, a.Name = acctID, "acme"
+		Expect(s.PutAccount(ctx, &op.AccountRecord{Info: a}, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed())
+		u := meta.NewUserInfo()
+		u.UserID, u.DisplayName, u.AccountID = meta.UserID{ID: "carol"}, "Carol", acctID
+		u.AccessKeys = map[string]meta.AccessKey{"AKbob": {ID: "AKbob", Secret: "mine", Active: false}}
+		data, err := json.Marshal(meta.UserCompleteInfo{Info: u})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.Put(ctx, "user", "carol", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(MatchError(op.ErrKeyExists))
+		ids, _, err := s.ListAccountUsers(ctx, acctID, "", 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ids).To(BeEmpty(), "nothing written, the account's index included")
+	})
+
+	It("refuses a reactivation of a key another user holds before it relinks the user in its account", func(ctx SpecContext) {
+		a := meta.NewAccountInfo()
+		a.ID, a.Name = acctID, "acme"
+		Expect(s.PutAccount(ctx, &op.AccountRecord{Info: a}, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed())
+		u := meta.NewUserInfo()
+		u.UserID, u.DisplayName, u.AccountID = meta.UserID{ID: "carol"}, "Carol", acctID
+		u.AccessKeys = map[string]meta.AccessKey{"AKY": {ID: "AKY", Secret: "c", Active: false}}
+		seedUser(c, u, nil, meta.ObjVersion{Ver: 1, Tag: "_c"})
+		Expect(s.AddAccountUser(ctx, acctID, u)).To(Succeed())
+		c.Put(rookMetaPool, "users.keys.rgw-go-key-holders", "AKY", encode(meta.UID("bob")))
+		u.DisplayName = "Caroline"
+		u.AccessKeys["AKY"] = meta.AccessKey{ID: "AKY", Secret: "c", Active: true}
+		data, err := json.Marshal(meta.UserCompleteInfo{Info: u})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.Put(ctx, "user", "carol", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(MatchError(op.ErrKeyExists))
+		ids, _, err := s.ListAccountUsers(ctx, acctID, "", 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ids).To(Equal([]string{"carol"}), "no entry under the new name")
+	})
 
 	It("refuses an account of another tenant", func(ctx SpecContext) {
 		a := meta.NewAccountInfo()

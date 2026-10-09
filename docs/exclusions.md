@@ -777,28 +777,69 @@ review and verified against the tree.
   - radosgw checks an access key id another user holds only through its
     key index, which lists active keys, so it lets a second user take a
     deactivated key's id (docs/ceph-upstream-bugs.md, "radosgw lets
-    another user take an inactive access key's id"). rgw-go refuses an id
-    another user holds inactive, on the memstore and on the RADOS driver,
-    which lists the user metadata section. The check reads every user, one
-    read per user, on each new key, whether from a key
-    create, a subuser create or a user create or modify, that names an
-    access key, active or not, and on each modify of an existing key whose
-    result is active, an active key's rotation by its own holder included;
-    it answers 409 KeyExists and stores nothing. A modify that leaves the
-    key inactive, and a key removal, read no users and are never refused.
-    The check is not atomic with the write: two concurrent requests that
-    name one id no user holds yet can both pass the check, and both store
-    the key when at least one leaves it inactive. The memstore's PutUser
-    refuses only a newly active key whose id its index gives another user,
-    under one lock, so of two active keys the second is refused, but an
-    inactive key, which it does not index, is stored beside either. The
-    RADOS driver's PutUser checks the active-key index and then writes it
-    without exclusion (`internal/driver/user.go`), as radosgw's
-    `PutOperation` does (`services/svc_user_rados.cc:257-270` and
-    `:329-339` at v19.2.6, `:236-249` and `:309-319` at v20.2.4), so there
-    two concurrent requests can both store the key even when both leave it
-    active. A lookup of every key id, written exclusively, would close
-    this; it is left for the user store's seam.
+    another user take an inactive access key's id"). rgw-go keeps a key
+    holder index beside radosgw's key index: an object per access key id,
+    active or not, naming the user holding it, in the key index's pool
+    under the key index's namespace with `.rgw-go-key-holders` appended
+    (`users.keys.rgw-go-key-holders` in a default zone), which radosgw
+    neither reads nor writes. Before it writes the user, every user write
+    claims each access key it gains, one the stored user lacks or one it
+    makes active: an entry naming the user is moved on a version under the
+    version read, a missing one is created exclusively, and one naming
+    another user answers 409 KeyExists, storing nothing, so of two
+    concurrent rgw-go writes giving one id to two users, one fails. A key
+    the write keeps or deactivates is claimed the same way but best effort,
+    with no search outside the index: any failure to read, move or create
+    its entry is logged by the index's kind and the write goes on, so a
+    revocation, a suspension included, never fails or waits on the index,
+    and a write that keeps a key, and a key removal, are never refused.
+    Each key a write drops is released after the user is written, and a
+    removed user's keys once the user is gone; a release removes the entry
+    under the version it read, so a write of the user that moves or
+    creates the entry after the release read it keeps it. A write whose
+    move lands before the release reads the entry does not: the release,
+    of a write dropping the key, removes the entry the other write moved,
+    and another user's claim, finding no entry and, before that write's
+    user lands, no holder, can then take the id, after which both users
+    hold it. A write that gains a key reads its entry again once it has
+    written the user and creates it exclusively when it is gone, which
+    narrows that to another user's claim landing between the release and
+    the re-read; an entry naming another user then is logged and the write
+    stands. An entry the re-read creates is released again when the user,
+    read once more, no longer holds the key, as a later write of the user
+    that dropped it, whose release came first, leaves it. The admin routes refuse the same
+    ids before they write anything (`refuseHeldKey`,
+    `internal/op/adminuser_sub.go`): a key create, a subuser create, a user
+    create or modify and a metadata put naming a key, and a key modify
+    whose result is active. The memstore keeps the same index under its
+    lock.
+    A user radosgw or radosgw-admin wrote, or rgw-go wrote before the
+    index, has no entries, so a key a write gains that the index holds no
+    entry for is looked for outside it: in radosgw's key index, then in
+    every stored user, one read per user, every page of the user listing.
+    Another user found holding the key, active or not, refuses the write as
+    an entry would, and any failure to read the listing or a listed user
+    refuses it too; only a user gone between the listing and its read is
+    skipped. So the first rgw-go write gaining a key id no entry records
+    reads every user, as the routes' check did before the index; a user's
+    own next write claims its keys, after which a lookup is one read. The
+    index fences rgw-go writers only: radosgw never reads it, so a radosgw
+    gateway can give a held inactive id to a second user at any time, not
+    only while an rgw-go write is between its lookup and its create, and
+    writes no entry for it, after which both users hold the id. An entry is
+    never taken from the user it names, and never released on a failure: a
+    claim outlives a write that fails after it, whether the write stops or
+    answers an error, a lost race's 409 UserAlreadyExists or
+    ConcurrentModification and a failed index write among them, since a
+    release could not tell a failed write from one about to be retried. Such a write, a write that stops after the user and before its
+    releases, and a removal that stops before its releases, leave entries
+    naming a user that does not hold the key, and that key's id stays
+    refused to every other user. A retry of a write that stopped before the
+    user completes it; an entry a failed write, a release or a removal left
+    stays until a write of that user holding the key and a later one
+    dropping it, or a user created again under that id holding the key and
+    then removed, frees it. Errors and logs name an entry by the index's
+    pool and kind, `user key holder index`, never by the key.
   - A new key gets the `active` the request names. radosgw's
     `generate_key` never reads it and makes every new key active
     (`rgw_user.cc:536-639` at v19.2.6, `:541-644` at v20.2.4), so
@@ -1215,8 +1256,11 @@ review and verified against the tree.
     account the store does not hold, an account of another tenant, a root
     user outside an account, and a user id or tenant in an account id's
     form, which a user create refuses and the email and key indexes would
-    read as an account's, and 409 EmailExists for an email another user or
-    an account holds; radosgw's metadata put checks none of them.
+    read as an account's, 409 EmailExists for an email another user or an
+    account holds, and 409 KeyExists for an access key the put
+    gains whose id another user holds, active or not ("The admin key,
+    subuser, caps and quota routes differ from radosgw in seven ways");
+    radosgw's metadata put checks none of them but an active key's.
     It keeps the account users index as the user routes do, the entry
     added before the user and the old one removed after ("The admin user
     routes answer store failures, and keep the account users index"). The

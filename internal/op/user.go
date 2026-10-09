@@ -55,7 +55,10 @@ type UserStore interface {
 	// rgw_common.h:950-955 at v19.2.6, :974-979 at v20.2.4; obj_version's
 	// compare, cls_version_types.h:46-49 at v19.2.6, :54-57 at v20.2.4). An
 	// active access key another user holds is ErrKeyExists (:257-270 at
-	// v19.2.6).
+	// v19.2.6), and so is any access key FindKeyHolder gives another user;
+	// each of the record's access keys is claimed for the user before the
+	// user is written, so of two writes giving one key id to two users one
+	// fails, and a key the record drops is released after.
 	PutUser(ctx context.Context, rec *UserRecord, opts PutUserOptions) error
 	// RemoveUser removes the active access keys' and Swift keys' index
 	// objects, the email index and, for a user outside an account, the
@@ -63,8 +66,15 @@ type UserStore interface {
 	// (svc_user_rados.cc:551-630 at v19.2.6, :526-604 at v20.2.4). The user's
 	// removal checks rec.Version only when its Ver is not 0. A missing user
 	// is ErrNoSuchUser and a changed one ErrConcurrentModification; on
-	// either, the indexes and the bucket list may already be gone.
+	// either, the indexes and the bucket list may already be gone. The
+	// user's access keys are released once the user is gone.
 	RemoveUser(ctx context.Context, rec *UserRecord) error
+	// FindKeyHolder returns the user holding the access key id among its
+	// keys, active or not: the user PutUser claimed it for, else, a store
+	// whose claims do not cover every user, the user radosgw's active-key
+	// index names or a stored user whose record holds the key. No holder is
+	// ErrNoSuchUser.
+	FindKeyHolder(ctx context.Context, id string) (meta.UserID, error)
 	// ListUserBuckets pages the owner's bucket list from marker, at most
 	// maxEntries entries, which must not be negative. When the page has
 	// entries, more reports whether entries remain past next. A maxEntries

@@ -11,10 +11,10 @@ import (
 
 // hiddenPools are the zone's pools whose objects errors and logs name by
 // the kind of object they hold: the access key, email and Swift key
-// indexes, whose objects are named by a credential or an email, and
-// rgw-go's bucket claims. An account's email redirect is an object of the
-// email index. Errors and logs name an object of one by its pool and kind
-// alone.
+// indexes and rgw-go's key holder index, whose objects are named by a
+// credential or an email, and rgw-go's bucket claims. An account's email
+// redirect is an object of the email index. Errors and logs name an object
+// of one by its pool and kind alone.
 type hiddenPools map[meta.Pool]string
 
 func newHiddenPools(p meta.ZoneParams) hiddenPools {
@@ -22,6 +22,7 @@ func newHiddenPools(p meta.ZoneParams) hiddenPools {
 		p.UserKeysPool:                radosclient.KindUserKeyIndex,
 		p.UserEmailPool:               radosclient.KindUserEmailIndex,
 		p.UserSwiftPool:               radosclient.KindUserSwiftIndex,
+		keyHolderPool(p.UserKeysPool): radosclient.KindUserKeyHolderIndex,
 		bucketClaimPool(p.DomainRoot): radosclient.KindBucketClaim,
 	}
 }

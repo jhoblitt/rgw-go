@@ -144,16 +144,16 @@ var _ = Describe("admin user key, subuser, caps and quota ops", func() {
 			Expect(flaky.puts).To(BeEmpty(), "nothing written")
 			Expect(stored(ctx, "holder").AccessKeys["AKDORMANT"].Secret).To(Equal("s"))
 		})
-		It("refuses the id when the user listing fails, and falls back to the index where the store cannot list", func(ctx SpecContext) {
+		It("refuses the id when the holder lookup fails, naming no credential", func(ctx SpecContext) {
 			create("u", "", "")
-			env.Metadata = listing{MetadataStore: store, err: fmt.Errorf("listing users.uid near AKLIST: %w", op.ErrInternalError)}
+			env.Users = holderless{Store: store, err: fmt.Errorf("reading the holder of AKLOOKUP: %w", op.ErrInternalError)}
 			k := newKey("u")
-			k.Key.AccessKey, k.Key.SecretKey = "AKLIST", "s"
+			k.Key.AccessKey, k.Key.SecretKey = "AKLOOKUP", "s"
 			err := run(ctx, k)
 			Expect(err).To(MatchError(op.ErrInternalError))
-			Expect(err.Error()).NotTo(ContainSubstring("AKLIST"))
-			env.Metadata = listing{MetadataStore: store, err: op.ErrNotImplemented}
-			Expect(run(ctx, k)).To(Succeed(), "the driver lists no users yet; the index check stands alone")
+			Expect(err.Error()).NotTo(ContainSubstring("AKLOOKUP"))
+			_, err = store.GetUserByAccessKey(ctx, "AKLOOKUP")
+			Expect(err).To(MatchError(op.ErrNoSuchUser), "nothing written")
 		})
 		It("refuses to reactivate a key whose id the index gives another user", func(ctx SpecContext) {
 			a := meta.NewUserInfo()
@@ -176,11 +176,11 @@ var _ = Describe("admin user key, subuser, caps and quota ops", func() {
 				u.AccessKeys = map[string]meta.AccessKey{"AKBOTH": {ID: "AKBOTH", Secret: "s" + id, Active: false}}
 				store.AddUser(u)
 			}
-			k := newKey("a")
+			k := newKey("b")
 			k.Key.AccessKey, k.Key.SecretKey, k.Key.Active = "AKBOTH", "new", new(true)
-			Expect(run(ctx, k)).To(MatchError(op.ErrKeyExists))
-			Expect(stored(ctx, "a").AccessKeys["AKBOTH"].Secret).To(Equal("sa"))
-			Expect(stored(ctx, "a").AccessKeys["AKBOTH"].Active).To(BeFalse())
+			Expect(run(ctx, k)).To(MatchError(op.ErrKeyExists), "a holds the id, as the first to store it")
+			Expect(stored(ctx, "b").AccessKeys["AKBOTH"].Secret).To(Equal("sb"))
+			Expect(stored(ctx, "b").AccessKeys["AKBOTH"].Active).To(BeFalse())
 		})
 		It("refuses a new inactive key over an id another user holds inactive", func(ctx SpecContext) {
 			holder := meta.NewUserInfo()
@@ -225,34 +225,6 @@ var _ = Describe("admin user key, subuser, caps and quota ops", func() {
 			d.UID, d.Key.AccessKey = meta.UserID{ID: "a"}, "AKTWICE"
 			Expect(run(ctx, d)).To(Succeed())
 			Expect(stored(ctx, "a").AccessKeys).NotTo(HaveKey("AKTWICE"))
-		})
-		It("reads every page of the user listing for a holder", func(ctx SpecContext) {
-			for i := range 1000 {
-				create(fmt.Sprintf("filler%04d", i), "", "")
-			}
-			holder := meta.NewUserInfo()
-			holder.UserID = meta.UserID{ID: "zzzholder"}
-			holder.AccessKeys = map[string]meta.AccessKey{"AKPAGE": {ID: "AKPAGE", Secret: "s", Active: false}}
-			store.AddUser(holder)
-			create("u", "", "")
-			k := newKey("u")
-			k.Key.AccessKey, k.Key.SecretKey = "AKPAGE", "mine"
-			Expect(run(ctx, k)).To(MatchError(op.ErrKeyExists), "the holder is past the first page of 1000")
-		})
-		It("refuses the id when a listed user cannot be read, naming no credential", func(ctx SpecContext) {
-			create("broken", "", "")
-			create("u", "", "")
-			env.Users = unreadable{
-				Store: store, uid: "broken",
-				err: fmt.Errorf("reading users.uid/broken holding AKUNREAD: %w", op.ErrInternalError),
-			}
-			k := newKey("u")
-			k.Key.AccessKey, k.Key.SecretKey = "AKUNREAD", "s"
-			err := run(ctx, k)
-			Expect(err).To(MatchError(op.ErrInternalError))
-			Expect(err.Error()).NotTo(ContainSubstring("AKUNREAD"))
-			_, err = store.GetUserByAccessKey(ctx, "AKUNREAD")
-			Expect(err).To(MatchError(op.ErrNoSuchUser), "nothing written")
 		})
 		It("generates ids and secrets from crypto/rand with radosgw's lengths and tables", func(ctx SpecContext) {
 			create("gen", "", "")
@@ -841,25 +813,12 @@ var _ = Describe("admin user key, subuser, caps and quota ops", func() {
 })
 
 // listing is a metadata store whose listing fails with err.
-type listing struct {
-	op.MetadataStore
-	err error
-}
-
-func (l listing) List(context.Context, string, string, int) ([]string, string, bool, error) {
-	return nil, "", false, l.err
-}
-
-// unreadable is the memstore's user store failing GetUser of uid with err.
-type unreadable struct {
+// holderless is the memstore's user store failing FindKeyHolder with err.
+type holderless struct {
 	*memstore.Store
-	uid string
 	err error
 }
 
-func (u unreadable) GetUser(ctx context.Context, id meta.UserID) (*op.UserRecord, error) {
-	if id.ID == u.uid {
-		return nil, u.err
-	}
-	return u.Store.GetUser(ctx, id)
+func (h holderless) FindKeyHolder(context.Context, string) (meta.UserID, error) {
+	return meta.UserID{}, h.err
 }

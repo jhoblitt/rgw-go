@@ -192,53 +192,24 @@ func generateKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyPa
 }
 
 // refuseHeldKey is ErrKeyExists when a user other than self holds id among
-// its access keys, active or not. The key index names active keys only
-// (svc_user_rados.cc:329-339 and :424-432 at v19.2.6, :309-319 and
-// :404-412 at v20.2.4), so radosgw lets a second user take a deactivated
-// key's id, and the index then authenticates whichever user it names
-// (docs/ceph-upstream-bugs.md, "radosgw lets another user take an inactive
-// access key's id"). No user store read finds a key by id outside the
-// index, so the users are read one by one through the metadata listing,
-// every page of it: one GetUser per stored user. The index check stands
-// alone where the users cannot be listed: an Env without a MetadataStore,
-// a listing that answers ErrNotImplemented, or ErrNotFound, a listing with
-// no user section. A
-// user gone between the listing and its read, ErrNoSuchUser, is skipped;
-// any other failure refuses the key, as storeErr's error.
+// its access keys, active or not, as FindKeyHolder finds it. radosgw checks
+// only its key index, which names active keys alone (svc_user_rados.cc:329-339
+// and :424-432 at v19.2.6, :309-319 and :404-412 at v20.2.4), so it lets a
+// second user take a deactivated key's id, and the index then authenticates
+// whichever user it names (docs/ceph-upstream-bugs.md, "radosgw lets another
+// user take an inactive access key's id"). A failed lookup refuses the key,
+// as storeErr's error.
 func refuseHeldKey(ctx context.Context, env *Env, self meta.UserID, id string) error {
-	if env.Metadata == nil {
+	holder, err := env.Users.FindKeyHolder(ctx, id)
+	switch {
+	case errors.Is(err, ErrNoSuchUser):
 		return nil
+	case err != nil:
+		return storeErr(err)
+	case holder != self:
+		return ErrKeyExists
 	}
-	marker := ""
-	for {
-		keys, next, more, err := env.Metadata.List(ctx, "user", marker, maxListUsers)
-		switch {
-		case errors.Is(err, ErrNotImplemented), errors.Is(err, ErrNotFound):
-			return nil
-		case err != nil:
-			return storeErr(err)
-		}
-		for _, k := range keys {
-			uid := meta.ParseUserID(k)
-			if uid == self {
-				continue
-			}
-			rec, err := env.Users.GetUser(ctx, uid)
-			if errors.Is(err, ErrNoSuchUser) {
-				continue
-			}
-			if err != nil {
-				return storeErr(err)
-			}
-			if _, held := rec.Info.AccessKeys[id]; held {
-				return ErrKeyExists
-			}
-		}
-		if !more || len(keys) == 0 {
-			return nil
-		}
-		marker = next
-	}
+	return nil
 }
 
 // emplace is std::map::emplace: k goes in under id unless id is there.

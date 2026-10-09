@@ -572,6 +572,14 @@ var CategoryName = categoryName
 // ShardString is shardString for the external specs.
 var ShardString = shardString
 
+// SetHolderWalkPageForTest sets the page the key holder walk lists users
+// in, restoring it when the spec ends.
+func SetHolderWalkPageForTest(n int) (restore func()) {
+	old := holderWalkPage
+	holderWalkPage = n
+	return func() { holderWalkPage = old }
+}
+
 // LinkBucketForTest is linkBucket at the clock's time.
 func (s *Store) LinkBucketForTest(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
 	return s.linkBucket(ctx, owner, b, time.Time{})

@@ -38,6 +38,9 @@ type Store struct {
 	bucketSeq uint64                    // the last bucket instance number handed out
 	users     map[string]*op.UserRecord // by meta.UserID.String()
 	keys      map[string]string         // access key -> user id string
+	// holders maps every access key id, active or not, to the user id
+	// string holding it, as the RADOS driver's key holder index does.
+	holders map[string]string
 	// emails maps a lowercased email to the user id string or account id
 	// holding it: radosgw keeps both in one object per email, so an email is
 	// unique across users and accounts (account.cc:102-114 at v19.2.6).
@@ -146,6 +149,7 @@ func New(cfg Config) *Store {
 		accountsByName: map[string]string{},
 		accountUsers:   map[string]map[string]string{},
 		keys:           map[string]string{},
+		holders:        map[string]string{},
 		emails:         map[string]string{},
 		buckets:        map[string]*bucket{},
 		instances:      map[string]*bucket{},

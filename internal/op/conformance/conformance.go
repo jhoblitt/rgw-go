@@ -161,6 +161,63 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Expect(env.Users.PutUser(ctx, again, op.PutUserOptions{Exclusive: true})).To(MatchError(op.ErrUserAlreadyExists))
 		})
 
+		// keyOf is the one access key newUser gave u.
+		keyOf := func(u *op.UserRecord) string {
+			GinkgoHelper()
+			Expect(u.Info.AccessKeys).To(HaveLen(1))
+			for k := range u.Info.AccessKeys {
+				return k
+			}
+			return ""
+		}
+
+		It("finds a key's holder, active or not, and refuses its id to another user", func(ctx SpecContext) {
+			u := newUser(ctx, "holder")
+			key := keyOf(u)
+			holder, err := env.Users.FindKeyHolder(ctx, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(holder).To(Equal(u.Info.UserID), "an active key")
+			cur, err := env.Users.GetUser(ctx, u.Info.UserID)
+			Expect(err).NotTo(HaveOccurred())
+			k := cur.Info.AccessKeys[key]
+			k.Active = false
+			cur.Info.AccessKeys[key] = k
+			Expect(env.Users.PutUser(ctx, cur, op.PutUserOptions{IfVersion: &cur.Version})).To(Succeed())
+			holder, err = env.Users.FindKeyHolder(ctx, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(holder).To(Equal(u.Info.UserID), "a deactivated key")
+			for _, active := range []bool{false, true} {
+				other := meta.NewUserInfo()
+				other.UserID = meta.UserID{ID: prefix + "-taker"}
+				other.AccessKeys = map[string]meta.AccessKey{key: {ID: key, Secret: rand.Text(), Active: active}}
+				err = env.Users.PutUser(ctx, &op.UserRecord{Info: other}, op.PutUserOptions{Exclusive: true})
+				Expect(err).To(MatchError(op.ErrKeyExists), "active %t", active)
+				Expect(err.Error()).NotTo(ContainSubstring(key), "the error names no key")
+				_, err = env.Users.GetUser(ctx, other.UserID)
+				Expect(err).To(MatchError(op.ErrNoSuchUser), "nothing written, active %t", active)
+			}
+		})
+
+		It("releases a key's id once its holder drops it or is removed", func(ctx SpecContext) {
+			u := newUser(ctx, "dropper")
+			key := keyOf(u)
+			cur, err := env.Users.GetUser(ctx, u.Info.UserID)
+			Expect(err).NotTo(HaveOccurred())
+			cur.Info.AccessKeys = nil
+			Expect(env.Users.PutUser(ctx, cur, op.PutUserOptions{IfVersion: &cur.Version})).To(Succeed())
+			_, err = env.Users.FindKeyHolder(ctx, key)
+			Expect(err).To(MatchError(op.ErrNoSuchUser), "a dropped key")
+
+			gone := meta.NewUserInfo()
+			gone.UserID = meta.UserID{ID: prefix + "-gone"}
+			gone.AccessKeys = map[string]meta.AccessKey{key: {ID: key, Secret: rand.Text(), Active: false}}
+			rec := &op.UserRecord{Info: gone}
+			Expect(env.Users.PutUser(ctx, rec, op.PutUserOptions{Exclusive: true})).To(Succeed(), "the id is free again")
+			Expect(env.Users.RemoveUser(ctx, rec)).To(Succeed())
+			_, err = env.Users.FindKeyHolder(ctx, key)
+			Expect(err).To(MatchError(op.ErrNoSuchUser), "a removed user's key")
+		})
+
 		It("creates a bucket and reads it back with its attrs and both versions", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
 			name := prefix + "-b"

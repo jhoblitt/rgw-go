@@ -153,6 +153,10 @@ func GetMetadataUser(ctx context.Context, users UserStore, key string) (Metadata
 //     tenant, and a root user outside an account are ErrInvalidArgument;
 //   - a key without a secret is ErrInvalidSecretKey, as a key create
 //     refuses one, since anyone holding its id could sign with it;
+//   - an access key the put gains, one the stored user lacks or one it
+//     makes active, whose id another user holds, active or not, is
+//     ErrKeyExists (refuseHeldKey); a key it keeps or deactivates is not
+//     checked, so a revocation always goes through;
 //   - an email another user or an account holds is ErrEmailExists, as the
 //     user and account share the email index;
 //   - a display name another user of the account holds is
@@ -218,6 +222,17 @@ func checkMetadataUser(ctx context.Context, users UserStore, accounts AccountSto
 			if k.Secret == "" {
 				return ErrInvalidSecretKey
 			}
+		}
+	}
+	env := &Env{Users: users}
+	for _, id := range slices.Sorted(maps.Keys(info.AccessKeys)) {
+		if cur != nil {
+			if was, held := cur.Info.AccessKeys[id]; held && (was.Active || !info.AccessKeys[id].Active) {
+				continue
+			}
+		}
+		if err := refuseHeldKey(ctx, env, info.UserID, id); err != nil {
+			return err
 		}
 	}
 	switch {

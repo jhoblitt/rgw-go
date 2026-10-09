@@ -10178,13 +10178,20 @@ Every new entry adds its row to this table, in document order.
   (`src/rgw/services/svc_user_rados.cc:257-270`; `:236-249`). The worst case
   is that an admin cannot reactivate an id another user took.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** does not reproduce it. On the memstore and on the RADOS
-  driver, which lists the user metadata section, a key create, a user
-  create or modify naming a key, or a key modify that leaves the key
-  active answers 409 KeyExists for an id another user holds, active or
-  not, and writes nothing (`refuseHeldKey`,
-  `internal/op/adminuser_sub.go`; `docs/exclusions.md`, "The admin key,
-  subuser, caps and quota routes differ from radosgw in seven ways").
+- **rgw-go:** does not reproduce it for a key rgw-go has written. Every
+  user write claims each of the user's access keys, active or not, in a key
+  holder index radosgw does not use, creating a missing entry exclusively,
+  and a write that gains a key whose entry names another user answers 409
+  KeyExists and writes nothing; a key no entry records, as one a user only
+  radosgw wrote holds, is looked for in radosgw's key index and then in
+  every stored user, so it is refused the same way (`claimKey` and
+  `keyHolderOutsideIndex`, `internal/driver/user.go`). The admin routes and
+  the metadata put refuse such an id before they write (`refuseHeldKey`,
+  `internal/op/adminuser_sub.go`). A radosgw gateway never reads the index,
+  so on a zone it shares with rgw-go it can give a held inactive id to a
+  second user at any time, as it does without rgw-go, and writes no entry
+  for it (`docs/exclusions.md`, "The admin key, subuser, caps and quota
+  routes differ from radosgw in seven ways").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
   (benign, non-security); no prior art.
 - **Found:** review of phase 1 unit N, Task 5, 2026-10-07; derived from

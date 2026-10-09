@@ -67,7 +67,9 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 // a user (svc_user_rados.cc:229-351 at v19.2.6). An active access key that
 // another user's index holds, and that the stored record (read unless
 // Exclusive) did not already hold active, is ErrKeyExists before anything is
-// written (:257-270). IfVersion is checked unless its Ver is 0, and the
+// written (:257-270), and so is a key the write gains, one the stored record
+// lacks or one it makes active, whose id another user holds, active or not,
+// as the RADOS driver's key holder index refuses it. IfVersion is checked unless its Ver is 0, and the
 // version written is IfVersion's plus one under its tag, or a fresh one
 // without IfVersion or its tag, unless WriteVersion has a tag, which is
 // written as given (:234-241; rgw_common.h:950-955). The mtime
@@ -82,11 +84,19 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 		stored = &old.Info
 	}
 	for key, k := range rec.Info.AccessKeys {
+		was, held := meta.AccessKey{}, false
+		if stored != nil {
+			was, held = stored.AccessKeys[key]
+		}
+		gained := !held || k.Active && !was.Active
+		if holder, ok := s.holders[key]; ok && holder != id && gained {
+			return fmt.Errorf("a key of user %s: %w", id, op.ErrKeyExists)
+		}
 		if !k.Active || (stored != nil && stored.AccessKeys[key].Active) {
 			continue
 		}
 		if holder, ok := s.keys[key]; ok && holder != id {
-			return fmt.Errorf("access key %s of user %s: %w", key, id, op.ErrKeyExists)
+			return fmt.Errorf("a key of user %s: %w", id, op.ErrKeyExists)
 		}
 	}
 	if exists && opts.Exclusive {
@@ -134,6 +144,23 @@ func (s *Store) RemoveUser(_ context.Context, rec *op.UserRecord) error {
 	return nil
 }
 
+// FindKeyHolder implements op.UserStore: the user holding the access key
+// id, active or not, else the user the active-key index names. Every user
+// the store holds is written through storeUser, which records each of its
+// keys' holders, so a key no entry names is held by no user.
+func (s *Store) FindKeyHolder(_ context.Context, key string) (meta.UserID, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.holders[key]
+	if !ok {
+		id, ok = s.keys[key]
+	}
+	if !ok {
+		return meta.UserID{}, fmt.Errorf("the holder of a key: %w", op.ErrNoSuchUser)
+	}
+	return meta.ParseUserID(id), nil
+}
+
 // ListUserBuckets implements op.UserStore over the owner's buckets in name
 // order, as cls_user keys a user's bucket list by name (cls_user.cc:45-48 at
 // v19.2.6). Each entry carries the bucket's creation time, placement and
@@ -175,7 +202,9 @@ func (s *Store) user(id string) (*op.UserRecord, error) {
 
 // storeUser stores rec, which the store now owns, and rewrites its index
 // entries: the email, and the access keys that are active, as PutOperation
-// indexes only those (svc_user_rados.cc:328-339, :424-432 at v19.2.6).
+// indexes only those (svc_user_rados.cc:328-339, :424-432 at v19.2.6), and
+// every access key's holder, an id another user already holds keeping that
+// user, as the RADOS driver never takes a holder entry from a user.
 func (s *Store) storeUser(rec *op.UserRecord) {
 	id := rec.Info.UserID.String()
 	s.unindexUser(id)
@@ -183,6 +212,9 @@ func (s *Store) storeUser(rec *op.UserRecord) {
 	for key, k := range rec.Info.AccessKeys {
 		if k.Active {
 			s.keys[key] = id
+		}
+		if _, held := s.holders[key]; !held {
+			s.holders[key] = id
 		}
 	}
 	if rec.Info.Email != "" {
@@ -199,6 +231,9 @@ func (s *Store) unindexUser(id string) {
 	for key := range old.Info.AccessKeys {
 		if s.keys[key] == id {
 			delete(s.keys, key)
+		}
+		if s.holders[key] == id {
+			delete(s.holders, key)
 		}
 	}
 	if email := lowerASCII(old.Info.Email); s.emails[email] == id {
