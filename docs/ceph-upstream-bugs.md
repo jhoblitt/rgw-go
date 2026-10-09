@@ -247,6 +247,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
 | [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
 | [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | pending | pending | ✓ |
+| [radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally](#radosgws-get-compares-if-match-and-if-none-match-as-prefixes-and-takes--literally) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11235,3 +11236,63 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of follow-up X23, 2026-10-08; derived from the source,
   not reproduced.
+
+## radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a GET or HEAD answers
+  RFC 9110's `*` and entity-tag lists wrongly, and takes a condition that
+  only begins with the object's ETag for one naming it. Classification
+  pending: rgw-bug-reproduction will classify it. Reproduced on Squid
+  19.2.6; derived from the source on Tentacle.
+- **Evidence:** paths are under `src/rgw/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - The GET handler reads If-Match and If-None-Match raw
+    (`RGWGetObj_ObjStore::get_params`, `rgw_rest.cc:841-842`; `:846-847`)
+    and hands them to the read op (`rgw_op.cc:2252-2253`; `:2488-2489`),
+    which passes them on as its conditions
+    (`driver/rados/rgw_sal_rados.cc:2851-2852`; `:3687-3688`). A HEAD is
+    the same op without the data.
+  - `RGWRados::Object::Read::prepare` unquotes each condition with
+    `rgw_string_unquote`, which drops trailing spaces and then one pair of
+    quotes around the whole value (`rgw_common.cc:518-533`; `:531-546`),
+    and compares it with the stored ETag as
+    `if_match_str.compare(0, etag.length(), etag.c_str(), etag.length())`,
+    failing If-Match with 412 when they differ and If-None-Match with 304
+    when they agree (`driver/rados/rgw_rados.cc:6975-6989`; `:7824-7838`).
+    The comparison reads only the first `etag.length()` bytes of the
+    condition.
+  - The stored ETag of an S3 PutObject and of a completed multipart upload
+    is the bare digest, without a NUL (`rgw_op.cc:4522`; `:4754`, and
+    `driver/rados/rgw_sal_rados.cc:3588`; `:4436`), so the condition must
+    begin with exactly those bytes.
+  - Nothing tests for `*`: it is compared as the one-byte ETag `*`, so
+    If-Match: `*` fails 412 on an existing object, and If-None-Match: `*`
+    never refuses, where RFC 9110 sections 13.1.1 and 13.1.2 make `*` match
+    any current representation.
+  - A list of entity tags is one string to the comparison: after the outer
+    quotes go, `"<other>", "<etag>"` begins with `<other>`, so a list
+    matches only through its first member.
+  - On rgw-go-squid, a v19.2.6 cluster, on 2026-10-08, `make read-gate`
+    sent each condition to the radosgw for `plain/small.bin`, whose ETag is
+    `"<etag>"`: If-Match `*` answered 412 and If-None-Match `*` 200;
+    If-Match `"<etag>garbage"` 200 and If-None-Match `"<etag>garbage"` 304;
+    If-Match `"ABCORZ", "<etag>"` 412 and If-None-Match
+    `"ABCORZ", "<etag>"` 200.
+- **Impact:** a client that sends If-Match: `*` to GET only an existing
+  object is refused, one that sends If-None-Match: `*` is served the object,
+  a list of ETags is judged by its first, and any condition that begins
+  with the current ETag counts as naming it.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, so that a client gets the same answer from
+  either gateway: `(*GetObject).checkConditions`
+  (`internal/op/getobject.go`) unquotes with `Unquote`
+  (`internal/op/readconds.go`), as `rgw_string_unquote` does, and compares
+  by prefix; `make read-gate` compares both gateways' answers to each of
+  these conditions.
+- **Upstream:** pending: rgw-bug-reproduction will classify it. The write
+  path's prefix comparison is
+  [#80924](https://tracker.ceph.com/issues/80924), under "Squid's PUT
+  refuses a quoted If-Match that matches the object's ETag" above; whether
+  it covers the read path is for that search.
+- **Found:** phase 1 unit R planning, 2026-09-28, from the source;
+  reproduced on Squid by unit R's read gate, 2026-10-08.
