@@ -76,7 +76,7 @@ type listBucketV2Result struct {
 	Contents              []listContents `xml:"Contents"`
 	ContinuationToken     *xmltext.Text  `xml:"ContinuationToken"`
 	NextContinuationToken xmltext.Text   `xml:"NextContinuationToken,omitempty"`
-	KeyCount              int            `xml:"KeyCount"`
+	KeyCount              int            `xml:"-"`
 	StartAfter            *xmltext.Text  `xml:"StartAfter"`
 }
 
