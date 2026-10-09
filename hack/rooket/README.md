@@ -485,7 +485,12 @@ lists: one regular expression per line over `hack/parity`'s test ids
 (`s3tests.functional.test_s3::<test>`), each under a comment naming the
 `docs/exclusions.md` entry that decides the difference. It fails on a line
 that matches no test, and on one whose test no longer differs, so the list
-cannot outlive its differences. Only a recorded exclusion goes there. A
+cannot outlive its differences. A line starting with `~ ` is the other kind
+of entry, for a test whose outcome on rgw-go depends on timing, as its
+exclusion says: its test is skipped whether it differs or agrees, and only
+an entry that matches no test fails. Squid's
+`test_bucket_concurrent_set_canned_acl` is one; every other entry is plain.
+Only a recorded exclusion goes there. A
 difference that is not one is a bug in rgw-go, and a test that needs a later
 phase's feature goes on that phase's deselect list, which removes it on both
 gateways. Squid's list is mostly the Tentacle feature level rgw-go serves on

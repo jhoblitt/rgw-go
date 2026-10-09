@@ -3,3 +3,9 @@
 # expression per line over hack/parity's test ids, under a comment giving
 # the reason. A test that needs a later phase's feature is not listed here;
 # hack/s3tests/deselect-phase<N>.txt removes it on both gateways.
+#
+# A plain line's tests must differ: one that agrees fails the comparison as
+# stale. A line starting with "~ " is for a test whose outcome on rgw-go
+# depends on timing, as its exclusion says; its outcome is accepted whether
+# it differs or agrees. Either kind fails the comparison when it matches no
+# test.

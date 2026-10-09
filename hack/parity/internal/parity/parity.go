@@ -138,11 +138,12 @@ func Record(format Format, suite string, meta map[string]string, files []string)
 // Diff compares cand with base and returns one line per difference, by test
 // id: "<test>: baseline <outcome>, candidate <outcome>" for a test whose
 // outcome differs, with "missing" for a test one of them lacks. Tests in
-// base's unstable set are not compared. A compared test that a known entry
-// matches is expected to differ: when it does, it is skipped, and when it
-// agrees the line is "<test>: known difference no longer differs". Each entry
-// that matches no compared test adds, after those, "<pattern>: known
-// difference matches no test".
+// base's unstable set are not compared. A compared test that a plain known
+// entry matches is expected to differ: when it does, it is skipped, and when
+// it agrees the line is "<test>: known difference no longer differs". A test
+// that only either-outcome entries match is skipped whatever its outcome.
+// Each entry that matches no compared test adds, after those, "<entry>: known
+// difference matches no test", the entry as ParseKnown read it.
 //
 // Diff refuses to compare, and returns an error, when cand lacks a key of
 // comparedMeta that base carries, or, unless allowMetaDrift is set, carries it
@@ -185,23 +186,27 @@ func Diff(base, cand Result, allowMetaDrift bool, known KnownList) ([]string, er
 			continue
 		}
 		b, c := outcome(base.Outcomes, id), outcome(cand.Outcomes, id)
-		expected := false
+		strict, either := false, false
 		for i, k := range known.entries {
 			if k.re.MatchString(id) {
 				matched[i] = true
-				expected = true
+				if k.eitherOutcome {
+					either = true
+				} else {
+					strict = true
+				}
 			}
 		}
 		switch {
-		case expected && b == c:
+		case strict && b == c:
 			diffs = append(diffs, id+": known difference no longer differs")
-		case !expected && b != c:
+		case !strict && !either && b != c:
 			diffs = append(diffs, fmt.Sprintf("%s: baseline %s, candidate %s", id, b, c))
 		}
 	}
 	for i, k := range known.entries {
 		if !matched[i] {
-			diffs = append(diffs, k.pattern+": known difference matches no test")
+			diffs = append(diffs, k.String()+": known difference matches no test")
 		}
 	}
 	return diffs, nil
@@ -221,23 +226,42 @@ type KnownList struct {
 	entries []knownEntry
 }
 
+// knownEntry is one entry of a known-difference list. An eitherOutcome entry
+// is for a test whose outcome on rgw-go depends on timing, so it may differ
+// from radosgw's on one run and agree on the next.
 type knownEntry struct {
-	pattern string
-	re      *regexp.Regexp
+	pattern       string
+	re            *regexp.Regexp
+	eitherOutcome bool
 }
 
-// Patterns returns the list's entries as they were written.
+// String returns the entry in its normalized written form: the pattern,
+// after "~ " for an either-outcome entry.
+func (k knownEntry) String() string {
+	if k.eitherOutcome {
+		return eitherOutcomeMarker + " " + k.pattern
+	}
+	return k.pattern
+}
+
+// eitherOutcomeMarker starts an either-outcome entry. No test id starts with
+// it, so no plain entry that could match a test is read as one.
+const eitherOutcomeMarker = "~"
+
+// Patterns returns the list's entries in their normalized written form.
 func (l KnownList) Patterns() []string {
 	patterns := make([]string, 0, len(l.entries))
 	for _, k := range l.entries {
-		patterns = append(patterns, k.pattern)
+		patterns = append(patterns, k.String())
 	}
 	return patterns
 }
 
 // ParseKnown reads a known-difference list: one regular expression per line,
 // with a "#" starting a comment that runs to the end of the line, and blank
-// lines ignored.
+// lines ignored. A line that starts with "~" is an either-outcome entry: the
+// pattern after it and any blanks matches tests whose outcome may differ or
+// agree.
 func ParseKnown(r io.Reader) (KnownList, error) {
 	var l KnownList
 	sc := bufio.NewScanner(r)
@@ -247,11 +271,18 @@ func ParseKnown(r io.Reader) (KnownList, error) {
 		if pattern == "" {
 			continue
 		}
+		rest, either := strings.CutPrefix(pattern, eitherOutcomeMarker)
+		if either {
+			pattern = strings.TrimSpace(rest)
+			if pattern == "" {
+				return KnownList{}, fmt.Errorf("line %d: %s without a pattern", line, eitherOutcomeMarker)
+			}
+		}
 		re, err := regexp.Compile(`^(?:` + pattern + `)$`)
 		if err != nil {
 			return KnownList{}, fmt.Errorf("line %d: %w", line, err)
 		}
-		l.entries = append(l.entries, knownEntry{pattern: pattern, re: re})
+		l.entries = append(l.entries, knownEntry{pattern: pattern, re: re, eitherOutcome: either})
 	}
 	if err := sc.Err(); err != nil {
 		return KnownList{}, fmt.Errorf("reading the known-difference list: %w", err)

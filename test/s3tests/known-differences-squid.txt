@@ -3,6 +3,12 @@
 # expression per line over hack/parity's test ids, under a comment giving
 # the reason. A test that needs a later phase's feature is not listed here;
 # hack/s3tests/deselect-phase<N>.txt removes it on both gateways.
+#
+# A plain line's tests must differ: one that agrees fails the comparison as
+# stale. A line starting with "~ " is for a test whose outcome on rgw-go
+# depends on timing, as its exclusion says; its outcome is accepted whether
+# it differs or agrees. Either kind fails the comparison when it matches no
+# test.
 
 # Tentacle's PUT If-Match and If-None-Match, served on Squid too; Squid's radosgw fails them (exclusions: "Write conditions are Tentacle's on Squid too")
 ^s3tests\.functional\.test_s3::test_put_object_if_match$
@@ -27,7 +33,8 @@
 ^s3tests\.functional\.test_s3::test_expected_bucket_owner$
 
 # radosgw answers 200 to a PutBucketAcl that lost a race, ACL unstored; rgw-go retries, then answers 409 (exclusions: "A PutBucketAcl that loses a race is retried, and every retried ACL, policy or tagging write is authorized again")
-^s3tests\.functional\.test_s3::test_bucket_concurrent_set_canned_acl$
+# Either outcome: the test passes on rgw-go unless one of its concurrent PutBucketAcl requests loses the race through all its retries
+~ ^s3tests\.functional\.test_s3::test_bucket_concurrent_set_canned_acl$
 
 # net/http answers 417 to an Expect other than 100-continue before any handler runs; radosgw ignores it (exclusions: "Expectations other than 100-continue")
 ^s3tests\.functional\.test_headers::test_bucket_create_bad_expect_mismatch$
