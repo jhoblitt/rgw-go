@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -142,6 +143,30 @@ func read[T any](a Args, name string, def T, conv func(string) (T, bool)) (v T, 
 		return def, true, op.ErrInvalidArgument
 	}
 	return v, true, nil
+}
+
+// nameArgs are the arguments whose value becomes part of a RADOS object
+// name: a user's id and tenant, an access key's, an email's and a subuser's
+// index, an account's id and name, a bucket's entry point and instance, and
+// an object's head.
+var nameArgs = []string{
+	"uid", "tenant", "email", "access-key", "subuser", "account-id",
+	"bucket", "bucket-id", "new-bucket-name", "object", "id", "name",
+}
+
+// RefuseNUL is ErrInvalidArgument when an argument in nameArgs, decoded as
+// String decodes it for the handlers, holds a NUL, where the C string
+// go-ceph hands librados for the name would end. radosgw's
+// RESTArgs::get_string keeps the NUL (rgw_rest.cc:854-871 at v19.2.6,
+// :859-876 at v20.2.4), and librados's C++ API takes the name whole
+// (docs/exclusions.md).
+func (a Args) RefuseNUL() error {
+	for _, name := range nameArgs {
+		if v, _ := a.String(name, ""); strings.IndexByte(v, 0) >= 0 {
+			return fmt.Errorf("%w: a NUL in %s", op.ErrInvalidArgument, name)
+		}
+	}
+	return nil
 }
 
 // SubResource is the first admin sub-resource in the query, "" when none.

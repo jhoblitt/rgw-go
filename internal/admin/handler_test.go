@@ -47,6 +47,7 @@ type fixture struct {
 
 	mu           sync.Mutex
 	lastPayloads op.PayloadForms
+	authCalls    int
 }
 
 func newFixture(cfg admin.Config) *fixture {
@@ -98,6 +99,7 @@ func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 func (fx *fixture) authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	fx.mu.Lock()
 	fx.lastPayloads = payloads
+	fx.authCalls++
 	fx.mu.Unlock()
 	if req.Header.Get("X-Test-Fail") != "" {
 		return nil, fmt.Errorf("%w: credentials %s", op.ErrInternalError, req.Header.Get("Authorization"))
@@ -128,6 +130,13 @@ func (fx *fixture) payloads() op.PayloadForms {
 	fx.mu.Lock()
 	defer fx.mu.Unlock()
 	return fx.lastPayloads
+}
+
+// authenticated counts the requests that reached the authenticator.
+func (fx *fixture) authenticated() int {
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	return fx.authCalls
 }
 
 func (fx *fixture) request(method, path, user string, hdr ...string) *http.Response {

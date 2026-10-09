@@ -279,7 +279,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // method no S3 op serves only later, in get_op (rgw_process.cc:325-329 at
 // v19.2.6, :327-331 at v20.2.4); the parse does not depend on the method,
 // so a request with such a method is parsed as a GET to reach the earlier
-// refusals first.
+// refusals first. A request with a method an S3 op serves is then refused
+// for a NUL in an argument that names a RADOS object (refuseNUL), which
+// radosgw does not check, before authentication reads any object.
 func (h *Handler) parse(req *http.Request, now time.Time) (Parsed, error) {
 	p, err := ParseRequest(req, h.cfg, now)
 	var methodErr error
@@ -303,7 +305,10 @@ func (h *Handler) parse(req *http.Request, now time.Time) (Parsed, error) {
 			return p, op.ErrInvalidArgument // parse_copy_location's false is -EINVAL
 		}
 	}
-	return p, methodErr
+	if methodErr != nil {
+		return p, methodErr
+	}
+	return p, refuseNUL(r)
 }
 
 // serve dispatches p, caps the requests in flight, authenticates and runs

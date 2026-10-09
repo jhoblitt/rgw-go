@@ -203,9 +203,11 @@ type served struct {
 // serve is process_request's order for an admin request: preprocess's
 // refusal of a NUL in the decoded URI and the manager lookup, both answered
 // in JSON because no handler has allocated a formatter yet (abort_early,
-// rgw_rest.cc:676-683 at v19.2.6); the handler's format; get_op;
-// schedule_request; verify_requester; the suspended-user check; then the op
-// (rgw_process.cc:310-405 at v19.2.6). The admin handlers' postauth_init,
+// rgw_rest.cc:676-683 at v19.2.6); the handler's format; get_op; the
+// refusal of a NUL in an argument that names a RADOS object
+// (Args.RefuseNUL), which radosgw does not make, before authentication
+// reads any object; schedule_request; verify_requester; the suspended-user
+// check; then the op (rgw_process.cc:310-405 at v19.2.6). The admin handlers' postauth_init,
 // RGWHandler_Auth_S3's, does nothing (rgw_rest_s3.h:646 at v19.2.6).
 func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Request, r *op.Request, st *served) {
 	uri := s3.DecodedURI(req, s3.Config{DNSNames: h.cfg.DNSNames})
@@ -228,6 +230,10 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		return
 	}
 	st.route = route.Name
+	if err = q.Args.RefuseNUL(); err != nil {
+		WriteError(ctx, w, r, q, err)
+		return
+	}
 
 	// radosgw's scheduler counts a request it refuses until that request is
 	// answered, and answers -EAGAIN, which process_request sends as

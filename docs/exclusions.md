@@ -2035,6 +2035,65 @@ following.
   whitespace; a malformed document type declaration, which Go's decoder
   passes through unparsed; and a character reference to a surrogate code
   point, which Go's decoder reads as U+FFFD.
+- **A NUL in a request argument that names a RADOS object is refused.**
+  radosgw refuses a NUL only in the decoded path (`ERR_ZERO_IN_URL`,
+  `rgw_rest.cc:2182-2186` at v19.2.6, `:2204-2208` at v20.2.4). A `%00`
+  elsewhere decodes to a NUL that radosgw keeps: in a query argument, which
+  `RGWHTTPArgs::parse` decodes through `url_decode` (`rgw_common.cc:848-898`
+  and `:1701-1734` at v19.2.6, `:861-911` and `:1764-1797` at v20.2.4); in
+  the copy source, which `parse_copy_location` and, for a part copy,
+  `RGWPutObj::init_processing` decode (`rgw_op.cc:5329-5374` and
+  `:3807-3851` at v19.2.6, `:5895-5940` and `:4016-4060` at v20.2.4); and
+  in an admin argument, which `RESTArgs::get_string` decodes a second time
+  (`rgw_rest.cc:854-871` at v19.2.6, `:859-876` at v20.2.4). radosgw then
+  names an object, an index object or an attr with the NUL in it, which
+  librados's C++ API takes whole (`IoCtx::operate`,
+  `include/rados/librados.hpp:1170` at v19.2.6, `:1191` at v20.2.4), so it
+  finds no such object, version, upload, user or bucket, or creates one
+  under that name. go-ceph hands librados's C API every such name as a C
+  string, which ends at the NUL (docs/cgo-limitations.md, "go-ceph cuts
+  object names at a NUL byte"), so rgw-go would act on another object
+  than the one it authorized. Before authentication, which reads the access
+  key's index object, rgw-go refuses:
+  - an S3 request, once its method is one an S3 op serves, whose
+    `versionId` or `uploadId` holds a NUL; any of whose query arguments'
+    names does, as an `x-amz-meta-*` one names an attr (`map_qs_metadata`,
+    `rgw_rest_s3.cc:2581-2595` at v19.2.6, `:2742-2756` at v20.2.4); or
+    whose `x-amz-copy-source` holds one in its tenant, bucket, key or
+    `versionId` as either parse reads it. It answers 400 InvalidArgument,
+    radosgw's answer for a copy source it cannot parse. radosgw refuses a
+    copy source's tenant holding a NUL too, after authentication, with
+    InvalidTenantName (`rgw_validate_tenant_name` in `postauth_init`,
+    `rgw_rest_s3.cc:4985-4994` at v19.2.6, `:5545-5554` at v20.2.4).
+  - an admin request, once routed, whose `uid`, `tenant`, `email`,
+    `access-key`, `subuser`, `account-id`, `bucket`, `bucket-id`,
+    `new-bucket-name`, `object`, `id` or `name` holds a NUL as
+    `get_string` decodes it, with 400 InvalidArgument, the answer an admin
+    op gives a malformed argument (`-EINVAL`, as from `RESTArgs::get_bool`,
+    `rgw_rest.cc:1002-1032` at v19.2.6). radosgw reads, creates, links or
+    removes the user, key, subuser, bucket, object or account under the
+    name with its NUL.
+
+  The credentials are refused as radosgw refuses a name nothing holds, but
+  without the lookup: an access key holding a NUL, which only a query's
+  `AWSAccessKeyId` or `X-Amz-Credential` can carry, is 403
+  InvalidAccessKeyId (`LocalEngine::authenticate`,
+  `rgw_rest_s3.cc:6325-6329` at v19.2.6, `:6896-6900` at v20.2.4), and a
+  system user's `rgwx-uid` holding one is 403 AccessDenied
+  (`SysReqApplier::load_acct_info`, `rgw_auth_filters.h:282-317` at
+  v19.2.6, `:304-345` at v20.2.4). A key or user created under such a name
+  through radosgw's admin API authenticates on radosgw and not on rgw-go,
+  whose admin API refuses to create one. A listing's `prefix`, `delimiter`
+  and markers, and every other argument, keep radosgw's handling: they
+  reach the bucket index only inside an encoded class call, which carries
+  the NUL. The metadata API's `key` is the metadata sections' to check. A
+  NUL reaches no other name: net/http refuses a raw one in the request
+  target or in any header with 400 (`net/url/url.go:436-437`,
+  `net/http/server.go:1077-1085` at go1.27.1), and Go's XML decoder refuses
+  one in a body, as expat does. A JSON body, such as a bucket policy or an
+  admin quota, can carry one as `\u0000` but names no RADOS object, and the
+  metadata API's PUT bodies are the metadata sections' to check ("The
+  metadata sections write only what keeps a user or bucket whole").
 
 ### Frontend differences
 
