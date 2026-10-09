@@ -29,6 +29,18 @@ type PutUserOptions struct {
 	// every admin write, since RadosUser::store_user passes none
 	// (rgw_sal_rados.cc:269-276 at v19.2.6, :286-293 at v20.2.4).
 	Mtime time.Time
+	// WriteVersion, when its Tag is not empty, is the version written in
+	// place of the one PutUser computes, as a tracker's write version is
+	// (PutOperation::prepare, svc_user_rados.cc:234-241 at v19.2.6, :213-220
+	// at v20.2.4): a metadata put's document version.
+	WriteVersion meta.ObjVersion
+	// SharedEmail lets the user take an email another user's index names,
+	// as radosgw lets it when rgw_user_unique_email is false: the index is
+	// then written over after the user, as radosgw writes it. An email an
+	// account's index names is refused whatever SharedEmail says, as
+	// account emails are unique (account::write, account.cc:312-322 at
+	// v19.2.6 and v20.2.4).
+	SharedEmail bool
 }
 
 //counterfeiter:generate . UserStore
@@ -50,7 +62,10 @@ type UserStore interface {
 	// rgw_common.h:950-955 at v19.2.6, :974-979 at v20.2.4; obj_version's
 	// compare, cls_version_types.h:46-49 at v19.2.6, :54-57 at v20.2.4). An
 	// active access key another user holds is ErrKeyExists (:257-270 at
-	// v19.2.6).
+	// v19.2.6), and so is any access key FindKeyHolder gives another user;
+	// each of the record's access keys is claimed for the user before the
+	// user is written, so of two writes giving one key id to two users one
+	// fails, and a key the record drops is released after.
 	PutUser(ctx context.Context, rec *UserRecord, opts PutUserOptions) error
 	// RemoveUser removes the active access keys' and Swift keys' index
 	// objects, the email index and, for a user outside an account, the
@@ -58,8 +73,15 @@ type UserStore interface {
 	// (svc_user_rados.cc:551-630 at v19.2.6, :526-604 at v20.2.4). The user's
 	// removal checks rec.Version only when its Ver is not 0. A missing user
 	// is ErrNoSuchUser and a changed one ErrConcurrentModification; on
-	// either, the indexes and the bucket list may already be gone.
+	// either, the indexes and the bucket list may already be gone. The
+	// user's access keys are released once the user is gone.
 	RemoveUser(ctx context.Context, rec *UserRecord) error
+	// FindKeyHolder returns the user holding the access key id among its
+	// keys, active or not: the user PutUser claimed it for, else, a store
+	// whose claims do not cover every user, the user radosgw's active-key
+	// index names or a stored user whose record holds the key. No holder is
+	// ErrNoSuchUser.
+	FindKeyHolder(ctx context.Context, id string) (meta.UserID, error)
 	// ListUserBuckets pages the owner's bucket list from marker, at most
 	// maxEntries entries, which must not be negative. When the page has
 	// entries, more reports whether entries remain past next. A maxEntries

@@ -263,7 +263,7 @@ var _ = Describe("UserStore", func() {
 			for i := range 8 {
 				total += len(c.Notifies("ceph-objectstore.rgw.control", "", fmt.Sprintf("notify.%d", i)))
 			}
-			Expect(total).To(Equal(3), "the uid object, the key index and the email index")
+			Expect(total).To(Equal(4), "the key's holder entry, the uid object, the key index and the email index")
 		})
 	})
 
@@ -280,6 +280,7 @@ var _ = Describe("UserStore", func() {
 				{"users.keys", "AKALICE"},
 				{"users.email", "alice@example.com"},
 				{"users.swift", "alice:swift"},
+				{"users.keys.rgw-go-key-holders", "AKALICE"},
 			} {
 				Expect(object(o[0], o[1])).To(BeNil(), "%s/%s", o[0], o[1])
 			}

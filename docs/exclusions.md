@@ -689,7 +689,7 @@ review and verified against the tree.
   users index clean where radosgw leaves entries behind.** On
   `/admin/user` create, info, modify and remove, rgw-go differs from
   radosgw's `RGWUser` paths (`driver/rados/rgw_user.cc` at v19.2.6 and
-  v20.2.4) in seven ways:
+  v20.2.4) in eight ways:
   - A failed read of a user, of the email index or of the access key
     index fails the request. radosgw's `RGWUser::init` and its duplicate
     checks count any failure as "no such user", so a RADOS error there
@@ -741,6 +741,41 @@ review and verified against the tree.
   - Removing a user with purge-data leaves a bucket the user's bucket list
     names when the bucket now belongs to another owner, where radosgw
     removes the listed bucket whoever owns it.
+  - radosgw writes a user's email index after the user, over whatever it
+    holds unless the write is exclusive, so two concurrent writes giving
+    one email to two users both store it and the index names the last, and
+    a user's write takes an account's email from the account
+    (docs/ceph-upstream-bugs.md, "radosgw lets a user take an account's
+    email and deletes it with the account"). rgw-go claims a new email's
+    index object before it writes the user, creating it exclusively: an
+    index naming the user is its own, left by a write that stopped before
+    the user, and one naming another user or an account answers 409
+    EmailExists and stores nothing, whether or not that user still holds
+    the email. With `rgw_user_unique_email` false, which lets users share
+    an email, a user create or modify leaves another user's index to be
+    written over after the user, as radosgw writes it, under the version
+    its claim read: an index changed since is claimed again, and one an
+    account took meanwhile is left, which answers 409 EmailExists once the
+    user, its key indexes and its releases are written, the email
+    unindexed; an index radosgw wrote, without
+    a version, is written over unchecked; an account's email
+    answers 409 whatever the option says, and a metadata put refuses
+    another user's email whatever it says. The index is written with a
+    version, and a user's removal or change of email removes it only while
+    it names that user, under the version read, where radosgw removes it
+    whoever it names; an index radosgw wrote, which has no version, is
+    removed once it is read to name the user. So a departing sharer never
+    removes another sharer's index or an account's, but it does leave the
+    other sharers unindexed when the index named it: they still hold the
+    email, no lookup by email finds them, and an account created then may
+    take the email, after which an account and a user hold it. The claim
+    fences rgw-go writers; a radosgw gateway writes over it. An index naming a user that no longer
+    holds the email, one claimed by a write that then failed or an old
+    email's whose removal a write stopped before, refuses the email to
+    every other user until a write of that user takes the email and a later
+    one drops it. A refused email claim leaves the write's key claims in
+    place, as any failed write does. The memstore refuses the same emails
+    under its lock.
 - **The admin key, subuser, caps and quota routes differ from radosgw in
   seven ways.** On `/admin/user?key`, `?subuser`, `?caps` and `?quota`
   (`driver/rados/rgw_rest_user.cc` and `driver/rados/rgw_user.cc` at
@@ -777,31 +812,69 @@ review and verified against the tree.
   - radosgw checks an access key id another user holds only through its
     key index, which lists active keys, so it lets a second user take a
     deactivated key's id (docs/ceph-upstream-bugs.md, "radosgw lets
-    another user take an inactive access key's id"). rgw-go refuses an id
-    another user holds inactive only on a store that lists users. rgw-go's
-    RADOS driver does not list them yet (`List` answers ErrNotImplemented),
-    so there, as in radosgw, only the active-key index is checked and
-    another user can take a deactivated key's id, until the user store
-    gains a lookup of a key id across users. Where the check runs it reads
-    every user, one read per user, on each new key, whether from a key
-    create, a subuser create or a user create or modify, that names an
-    access key, active or not, and on each modify of an existing key whose
-    result is active, an active key's rotation by its own holder included;
-    it answers 409 KeyExists and stores nothing. A modify that leaves the
-    key inactive, and a key removal, read no users and are never refused.
-    The check is not atomic with the write: two concurrent requests that
-    name one id no user holds yet can both pass the check, and both store
-    the key when at least one leaves it inactive. The memstore's PutUser
-    refuses only a newly active key whose id its index gives another user,
-    under one lock, so of two active keys the second is refused, but an
-    inactive key, which it does not index, is stored beside either. The
-    RADOS driver's PutUser checks the active-key index and then writes it
-    without exclusion (`internal/driver/user.go`), as radosgw's
-    `PutOperation` does (`services/svc_user_rados.cc:257-270` and
-    `:329-339` at v19.2.6, `:236-249` and `:309-319` at v20.2.4), so there
-    two concurrent requests can both store the key even when both leave it
-    active. A lookup of every key id, written exclusively, would close
-    this; it is left for the user store's seam.
+    another user take an inactive access key's id"). rgw-go keeps a key
+    holder index beside radosgw's key index: an object per access key id,
+    active or not, naming the user holding it, in the key index's pool
+    under the key index's namespace with `.rgw-go-key-holders` appended
+    (`users.keys.rgw-go-key-holders` in a default zone), which radosgw
+    neither reads nor writes. Before it writes the user, every user write
+    claims each access key it gains, one the stored user lacks or one it
+    makes active: an entry naming the user is moved on a version under the
+    version read, a missing one is created exclusively, and one naming
+    another user answers 409 KeyExists, storing nothing, so of two
+    concurrent rgw-go writes giving one id to two users, one fails. A key
+    the write keeps or deactivates is claimed the same way but best effort,
+    with no search outside the index: any failure to read, move or create
+    its entry is logged by the index's kind and the write goes on, so a
+    revocation, a suspension included, never fails or waits on the index,
+    and a write that keeps a key, and a key removal, are never refused.
+    Each key a write drops is released after the user is written, and a
+    removed user's keys once the user is gone; a release removes the entry
+    under the version it read, so a write of the user that moves or
+    creates the entry after the release read it keeps it. A write whose
+    move lands before the release reads the entry does not: the release,
+    of a write dropping the key, removes the entry the other write moved,
+    and another user's claim, finding no entry and, before that write's
+    user lands, no holder, can then take the id, after which both users
+    hold it. A write that gains a key reads its entry again once it has
+    written the user and creates it exclusively when it is gone, which
+    narrows that to another user's claim landing between the release and
+    the re-read; an entry naming another user then is logged and the write
+    stands. An entry the re-read creates is released again when the user,
+    read once more, no longer holds the key, as a later write of the user
+    that dropped it, whose release came first, leaves it. The admin routes refuse the same
+    ids before they write anything (`refuseHeldKey`,
+    `internal/op/adminuser_sub.go`): a key create, a subuser create, a user
+    create or modify and a metadata put naming a key, and a key modify
+    whose result is active. The memstore keeps the same index under its
+    lock.
+    A user radosgw or radosgw-admin wrote, or rgw-go wrote before the
+    index, has no entries, so a key a write gains that the index holds no
+    entry for is looked for outside it: in radosgw's key index, then in
+    every stored user, one read per user, every page of the user listing.
+    Another user found holding the key, active or not, refuses the write as
+    an entry would, and any failure to read the listing or a listed user
+    refuses it too; only a user gone between the listing and its read is
+    skipped. So the first rgw-go write gaining a key id no entry records
+    reads every user, as the routes' check did before the index; a user's
+    own next write claims its keys, after which a lookup is one read. The
+    index fences rgw-go writers only: radosgw never reads it, so a radosgw
+    gateway can give a held inactive id to a second user at any time, not
+    only while an rgw-go write is between its lookup and its create, and
+    writes no entry for it, after which both users hold the id. An entry is
+    never taken from the user it names, and never released on a failure: a
+    claim outlives a write that fails after it, whether the write stops or
+    answers an error, a lost race's 409 UserAlreadyExists or
+    ConcurrentModification and a failed index write among them, since a
+    release could not tell a failed write from one about to be retried. Such a write, a write that stops after the user and before its
+    releases, and a removal that stops before its releases, leave entries
+    naming a user that does not hold the key, and that key's id stays
+    refused to every other user. A retry of a write that stopped before the
+    user completes it; an entry a failed write, a release or a removal left
+    stays until a write of that user holding the key and a later one
+    dropping it, or a user created again under that id holding the key and
+    then removed, frees it. Errors and logs name an entry by the index's
+    pool and kind, `user key holder index`, never by the key.
   - A new key gets the `active` the request names. radosgw's
     `generate_key` never reads it and makes every new key active
     (`rgw_user.cc:536-639` at v19.2.6, `:541-644` at v20.2.4), so
@@ -914,13 +987,7 @@ review and verified against the tree.
     leaves an instance carrying the live bucket's id that no entry point
     names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
     (docs/ceph-upstream-bugs.md, "radosgw's bucket link by bucket id takes
-    the name from the live bucket"). Each such link reads every bucket. The
-    RADOS driver cannot list the section yet, so there it answers 501
-    NotImplemented and links nothing until unit N's metadata task lists it
-    ("On the RADOS driver, three admin bucket requests answer 501
-    NotImplemented for now"). Until then, recovering a bucket whose entry
-    point was lost takes `radosgw-admin bucket link --bucket-id`, with
-    radosgw's hazard: check first that no other name loads that id. One
+    the name from the live bucket"). Each such link reads every bucket. One
     unfinished rename whose new name's entry point names an instance not
     yet written makes that listed name load nothing, so every by-id link of
     the zone answers 409 until that rename is retried, which fails closed:
@@ -1063,20 +1130,11 @@ review and verified against the tree.
     cannot see it (docs/ceph-upstream-bugs.md, "radosgw's admin bucket
     removal never recognizes a forwarded request"); rgw-go forwards
     nothing (Multisite).
-- **On the RADOS driver, three admin bucket requests answer 501
-  NotImplemented for now.** `GET /admin/bucket` without a uid, with or
-  without `stats`, and `PUT /admin/bucket` with a `bucket-id` list the
-  bucket metadata section, which the driver's metadata store cannot list
-  yet; both answer 501 until the metadata task of unit N implements that
-  listing, the link by `bucket-id` having written nothing. Rook's
-  CephObjectStore deletion calls the first of them, `GET /admin/bucket`
-  without a uid (`ListBuckets` in `getBucketDependents`,
-  `pkg/operator/ceph/object/dependents.go:128` at rook ee40ef51f), so on
-  the RADOS driver the deletion's dependents check fails, and the object
-  store's deletion with it, until then. `DELETE /admin/bucket?bypass-gc=true`
-  answers 501 until unit N's bypass-gc task implements the driver's
-  data pass, and removes nothing; `purge-objects=true` without `bypass-gc`
-  works. The memstore serves both.
+- **On the RADOS driver, a bypass-gc bucket removal answers 501
+  NotImplemented for now.** `DELETE /admin/bucket?bypass-gc=true` answers
+  501 until unit N's bypass-gc task implements the driver's data pass, and
+  removes nothing; `purge-objects=true` without `bypass-gc` works. The
+  memstore serves both.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's
@@ -1177,6 +1235,181 @@ review and verified against the tree.
     "radosgw's account removal never sees the account's topics"). A
     failure to read an index or to list the pool refuses the removal. The
     memstore holds none of these resources.
+- **The metadata sections write only what keeps a user or bucket whole.**
+  The `user`, `bucket` and `bucket.instance` sections of the metadata store
+  (`internal/driver/metadata.go`, `internal/op/metadata.go`, and the
+  memstore's) are radosgw's handlers (`driver/rados/rgw_user.cc` and
+  `rgw_bucket.cc`, `rgw_metadata.cc` at v19.2.6 and v20.2.4) with these
+  differences, each refusal coming before anything is written:
+  - Every put reads its object by the key and writes under the version it
+    read, or creates the object exclusively when it read none. radosgw's
+    puts on Squid write under the version read too, but over an object
+    they read none of they write neither guarded nor exclusively (`put_pre`,
+    `rgw_metadata.cc:255-278` at v19.2.6; the user put's `store_user_info`
+    with `exclusive` false, `driver/rados/rgw_user.cc:2831-2833` at
+    v19.2.6), so two puts creating one entry both succeed and the last
+    wins. On Tentacle radosgw writes a bucket instance unguarded
+    (docs/ceph-upstream-bugs.md, "radosgw's bucket instance metadata put
+    overwrites unguarded on Tentacle"). A put over an object that carries
+    no version answers 500 InternalError. The version written is the
+    document's when it has a tag, as radosgw's tracker writes it.
+  - A key holding a NUL byte answers 400 InvalidRequest on every get, put
+    and remove, and a document naming one in a bucket id, marker, owner,
+    explicit placement pool, attr name, user id, email, account id or
+    access or Swift key id answers 400 InvalidArgument, writing nothing:
+    go-ceph cuts an object name at a NUL, so the name would reach another
+    object (docs/cgo-limitations.md, "go-ceph cuts object names at a NUL
+    byte").
+    radosgw refuses a NUL in a request's decoded path alone, with 400
+    InvalidRequest (`ERR_ZERO_IN_URL`, `rgw_rest.cc:2182-2186` at v19.2.6,
+    `:2204-2208` at v20.2.4), not in the query the key arrives in or in a
+    document, and stores the object under the whole name.
+  - A document attr whose name lacks `user.rgw.` answers 400
+    InvalidArgument on every put. radosgw sets each attr a document carries
+    on the object in the op that sets the object's version, so one named
+    `ceph.objclass.version` replaces that version and every later read of
+    the object that reaches RADOS fails (docs/ceph-upstream-bugs.md,
+    "radosgw's metadata put writes a document's attrs raw, the object's
+    version among them"). A get shows the `user.rgw.` attrs alone, so no
+    document read back carries another.
+  - A document that does not decode answers 400 InvalidArgument, and one
+    naming a website configuration or a sync policy with groups, which
+    rgw-go carries opaque, 501 NotImplemented. The decoders read Go's JSON
+    grammar and refuse what radosgw's `decode_json` takes but cannot mean:
+    a string member given null, an object or an array; a list or map given
+    anything but an array, null included, or holding an entry that is no
+    object; a time in a form other than the two radosgw's dump writes,
+    `<sec>.<usec>` and the ISO date; a key without an id, an attr that is
+    not padded base64, a hash type other than Mod, and an index type or
+    reshard status the enums lack. An entry point from before version 8,
+    which embeds its bucket info, answers 400.
+  - A user put whose document names another user than the key answers 400
+    InvalidArgument; radosgw reads the key's user and writes the
+    document's, keeping the key's indexes against the document's record.
+    It also answers 400 InvalidSecretKey for a key without a secret, which
+    anyone holding the key's id could sign with, 400 InvalidArgument for an
+    account the store does not hold, an account of another tenant, a root
+    user outside an account, and a user id or tenant in an account id's
+    form, which a user create refuses and the email and key indexes would
+    read as an account's, 409 EmailExists for an email another user or an
+    account holds, whose index the put claims as a user write does ("The
+    admin user routes answer store failures, and keep the account users
+    index clean"), and 409 KeyExists for an access key the put
+    gains whose id another user holds, active or not ("The admin key,
+    subuser, caps and quota routes differ from radosgw in seven ways");
+    radosgw's metadata put checks none of them but an active key's.
+    It keeps the account users index as the user routes do, the entry
+    added before the user and the old one removed after ("The admin user
+    routes answer store failures, and keep the account users index"). The
+    IAM group users index radosgw's write links is not written: rgw-go
+    refuses a group member's requests outright.
+  - A user removal refuses with 409 BucketAlreadyExists a user outside an
+    account whose bucket list holds a bucket, as the user removal route
+    does; radosgw removes the user and its bucket list, leaving its
+    buckets in no owner's list.
+  - A bucket entry point put answers 400 InvalidArgument for a document
+    naming another bucket than the key, an instance that does not exist,
+    or an owner other than that instance's, as such an entry point is a
+    second owner to every later link, unlink and chown; 409
+    BucketAlreadyExists for another bucket id over a stored entry point,
+    which would leave that bucket without its name, and for a new entry
+    point whose instance another name loads, which would give one bucket's
+    index and data two names; and 409 ConcurrentModification while a live
+    rename or a removal holds the bucket. radosgw writes the entry point
+    the document gives. The owner's list follows the entry point written: a
+    linked one is in its owner's list and an unlinked one is not, and a
+    retry of a put that stopped after the write completes the list, where
+    radosgw relinks only on a change from the old entry point, so a retry
+    of its put leaves the lists as they were. An old owner's entry for the
+    bucket goes too, but only on the put that moves the entry point to
+    another owner: its retry reads the moved entry point as the old one, so
+    a put that stops between leaves the old owner's list naming the bucket,
+    which holds off that owner's removal until the entry is unlinked. The old entry point's attrs are
+    kept on both releases; Tentacle's put writes the document's, which has
+    none (`RGWBucketMetadataHandler::put`, `driver/rados/rgw_bucket.cc:2355-2401`
+    at v20.2.4).
+  - A bucket instance put takes the bucket's tenant, name and id from the
+    key, where radosgw keeps a stored instance's name from the document.
+    A stored instance keeps its marker, its index layout, its explicit
+    placement and placement rule, as radosgw keeps the last two, its
+    object lock configuration, which neither release's JSON carries
+    (docs/ceph-upstream-bugs.md, "radosgw's bucket instance metadata put
+    drops the bucket's object lock rule"), and the attrs rgw-go keeps for
+    itself, `user.rgw.rgw-go-rename` and `user.rgw.rgw-go-removing`, which a
+    document cannot write; a document changing the marker, the shard
+    count, the hash type or the index type, or turning object lock off,
+    answers 400 InvalidArgument, where radosgw writes it, re-sharding the
+    index under its entries. An owner other than that of the entry point
+    naming the instance answers 400. A new instance's marker must be its
+    id (400), and another instance carrying its id as its id or its marker
+    answers 409 BucketAlreadyExists, as either would share another bucket's
+    index or objects; the check lists the instances' keys, which carry
+    their ids, and reads each instance for its marker, one read per
+    instance. The instance's
+    lifecycle configuration and topic mappings, which radosgw updates
+    after the write, are not kept by rgw-go yet.
+  - The bucket puts serialize on a bucket claim, an object per bucket id
+    in the domain root's pool under the domain root's namespace with
+    `.rgw-go-bucket-claims` appended (`root.rgw-go-bucket-claims` in a
+    default zone), which names the bucket the id belongs to and which
+    radosgw neither reads nor writes (`internal/driver/bucketclaim.go`).
+    An instance put creates its claim exclusively, for a new instance after
+    the id and marker check, and each bucket put reads the claim before
+    what it checks, marks it with the owner it writes, under the version it
+    read, before its write, and clears the mark after; an entry point put
+    finding no claim creates one after its checks and answers 409
+    ConcurrentModification when another put created it meanwhile. So of
+    two new instances naming one id under two names, one answers 409
+    BucketAlreadyExists, and a claim naming another bucket answers that to
+    every put of this one; of an entry point put and an instance put
+    changing the owner that checked the same state, the second answers 409
+    ConcurrentModification, as does a put meeting a mark that names another
+    owner. A new instance's marker is its id, so the claim of the id
+    serializes the marker too. A retry of a put that stopped after its mark
+    goes through when it writes the marked owner, and a put of another
+    owner answers 409 until a put of the marked owner completes. A put
+    whose own write fails after its mark with a lost version race or
+    exclusive create clears the mark best effort; any other failure leaves
+    it, as a stop does, a context that ends among them, since the write
+    may still land after it. A mark left with
+    an entry point present names the bucket's owner then: when an admin
+    link or chown, which take no claim, then moves the bucket to another
+    owner, a put of the new owner answers 409 for the mark and a put of the
+    marked owner 400 for the owner, until the operator chowns the bucket
+    back, makes one put as the marked owner, which clears the mark, and
+    chowns it forward again. A rename moves the claim to the new name
+    before it writes anything there, keeping the old name in the claim,
+    and drops the old name once the rename is done, unless a put has
+    marked the claim then, so a put of either name finds the claim its own
+    while the rename runs or after it stops, and its retry finds the claim
+    moved. The move itself keeps a put's mark but changes the claim under
+    that put, whose clear then fails and leaves the mark, another source of
+    a left mark, recovered the same way. A link, unlink or chown changes
+    neither the name nor the id, and leaves the claim. A claim is never
+    removed, so an id stays its bucket's after the bucket's instance is
+    gone. Errors and logs name a claim by its pool and kind,
+    `bucket claim`. The claims fence rgw-go's metadata puts alone: a
+    radosgw gateway, and rgw-go's own bucket create, link, chown, rename
+    and removal, take no mark, so one of them racing a metadata put is fenced
+    only by the version of the object both write, an instance one of them
+    creates between a new instance's check and its claim is not seen, and
+    an owner one of them changes after a put read the instance is not
+    either. The checks that read beyond the claim, the instance listing for
+    ids and markers and the entry point listing for a name loading the id,
+    stay unfenced against those writers.
+  - A bucket entry point is removed only once its instance is gone, a
+    name that loads nothing, and an instance only while no entry point
+    names it; either otherwise answers 409 ConcurrentModification, as
+    removing it would leave a live bucket without its name or a name
+    without its bucket. A bucket a removal or a live rename holds answers
+    409 too. The entry point's removal unlinks the owner's list entry
+    first and returns each failure, where radosgw logs them and answers
+    200. On Tentacle an instance removal reads the instance and removes
+    nothing, as radosgw's does (`driver/rados/rgw_bucket.cc:3062-3080` at
+    v20.2.4).
+  - A listing's marker is the token an rgw-go listing returned; a page
+    holds the keys of up to its maximum objects the section keeps, and a
+    maximum of 0 lists nothing and reports whether a key follows.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the

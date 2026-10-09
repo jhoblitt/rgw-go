@@ -243,6 +243,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user write can leave an account member out of the account's users index](#radosgws-user-write-can-leave-an-account-member-out-of-the-accounts-users-index) | pending | pending | ✓ |
 | [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 | [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
+| [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3254,17 +3257,32 @@ Every new entry adds its row to this table, in document order.
   NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:93`).
 - **Releases:** every release with accounts, from v19.1.0; checked at
   v19.2.6, v20.2.4 and main 06adccc.
-- **rgw-go:** reproduces the takeover, so that both gateways answer alike
-  on a shared zone, and on the RADOS driver not the deletion. A user's
-  write repoints an account's email entry as radosgw's does, in the
-  memstore and the RADOS driver alike. The RADOS driver's account removal
-  deletes the email entry only while it names the account, under the
-  version it read, so the user keeps the email (`RemoveAccount`,
-  `internal/driver/account.go`; `docs/exclusions.md`, "The admin account
-  routes and the RADOS account store differ from radosgw"). The memstore's
-  `RemoveAccount` still deletes the entry whoever holds it, which the spec
-  "lets a user take an account's email, which the account's removal then
-  drops, as radosgw does" (`internal/memstore/admin_test.go`) pins.
+- **rgw-go:** reproduces neither the takeover nor the deletion of a user's
+  entry. A user's write claims a new email's index object before it writes
+  the user, creating it exclusively, and an index naming an account answers
+  409 EmailExists and writes nothing, whatever `rgw_user_unique_email`
+  says, in the RADOS driver (`claimEmail`, `internal/driver/user.go`) and
+  the memstore alike; a user's removal or change of email removes the
+  index only while it names that user (`releaseEmail`; `docs/exclusions.md`,
+  "The admin user routes answer store failures, and keep the account users
+  index clean where radosgw leaves entries behind"). The RADOS driver's
+  account removal deletes the email entry only while it names the account,
+  under the version it read, so a user radosgw gave the email keeps it
+  (`RemoveAccount`, `internal/driver/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw"). The memstore's `RemoveAccount` deletes the account's email
+  entry without reading it, but no user's write takes an account's entry
+  there, so the entry it deletes names the account. With
+  `rgw_user_unique_email` false, a departing sharer whose user the index
+  named leaves the other sharers holding the email unindexed, and an
+  account created then can take it, so an account and a user hold one
+  email, as in radosgw, though no rgw-go write takes the account's entry:
+  a sharer's write over another sharer's index is made under the version
+  its claim read, and one finding an account's index there instead
+  answers 409 EmailExists. The one exception is a sharer's index radosgw
+  wrote, which has no version to check, when an account takes the email
+  between the claim's read and the write over it. A radosgw gateway
+  sharing the zone still takes the email.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,
@@ -10178,15 +10196,20 @@ Every new entry adds its row to this table, in document order.
   (`src/rgw/services/svc_user_rados.cc:257-270`; `:236-249`). The worst case
   is that an admin cannot reactivate an id another user took.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** reproduces it on the RADOS driver until N8; refuses it where
-  the store can list users. The driver's user listing answers
-  ErrNotImplemented, so there only the active-key index is checked, as in
-  radosgw; where the store lists users (memstore), a key create, a user
-  create or modify naming a key, or a key modify that leaves the key
-  active answers 409 KeyExists for an id another user holds, active or
-  not, and writes nothing (`refuseHeldKey`,
-  `internal/op/adminuser_sub.go`; `docs/exclusions.md`, "The admin key,
-  subuser, caps and quota routes differ from radosgw in seven ways").
+- **rgw-go:** does not reproduce it for a key rgw-go has written. Every
+  user write claims each of the user's access keys, active or not, in a key
+  holder index radosgw does not use, creating a missing entry exclusively,
+  and a write that gains a key whose entry names another user answers 409
+  KeyExists and writes nothing; a key no entry records, as one a user only
+  radosgw wrote holds, is looked for in radosgw's key index and then in
+  every stored user, so it is refused the same way (`claimKey` and
+  `keyHolderOutsideIndex`, `internal/driver/user.go`). The admin routes and
+  the metadata put refuse such an id before they write (`refuseHeldKey`,
+  `internal/op/adminuser_sub.go`). A radosgw gateway never reads the index,
+  so on a zone it shares with rgw-go it can give a held inactive id to a
+  second user at any time, as it does without rgw-go, and writes no entry
+  for it (`docs/exclusions.md`, "The admin key, subuser, caps and quota
+  routes differ from radosgw in seven ways").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
   (benign, non-security); no prior art.
 - **Found:** review of phase 1 unit N, Task 5, 2026-10-07; derived from
@@ -10559,11 +10582,8 @@ Every new entry adds its row to this table, in document order.
   own name is read: one naming another bucket is 409 BucketAlreadyExists,
   one naming the instance is written under the version read, and a
   missing one is created exclusively (`claimName`,
-  `internal/driver/bucketadmin.go`). The RADOS driver cannot list the
-  section yet, so there a link by `bucket-id` answers 501 NotImplemented
-  and links nothing (`docs/exclusions.md`, "Bucket link and unlink write
-  differently from radosgw" and "On the RADOS driver, three admin bucket
-  requests answer 501 NotImplemented for now").
+  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  unlink write differently from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
   the source, not reproduced.
@@ -11007,3 +11027,146 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
   review. Derived from the source, not reproduced.
+
+## radosgw's bucket instance metadata put overwrites unguarded on Tentacle
+
+- **Kind:** defect, unfixed at v20.2.4, a regression from v19.2.6: a
+  metadata put of a bucket instance overwrites what another write stored
+  after the put read the instance. Classification pending:
+  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`.
+  - `RGWMetadataManager::put` builds a fresh version tracker and sets only
+    its write version, from the document's `ver` (`rgw/rgw_metadata.cc:316-325`
+    at v20.2.4; `:521-530` at v19.2.6).
+  - Tentacle's `RGWBucketInstanceMetadataHandler::put` reads the stored
+    instance without that tracker (`rgw/driver/rados/rgw_bucket.cc:2863-2871`
+    at v20.2.4), and `put_prepare` copies the tracker, its read version
+    still empty, into the instance it writes (`:2992-2994`).
+  - `store_bucket_instance_info` writes under the instance's tracker
+    (`rgw/services/svc_bucket_sobj.cc:475-476` at v20.2.4), and an empty
+    read version is not checked (`version_for_check`, `rgw/rgw_common.h:974-979`
+    at v20.2.4).
+  - Squid's `put_pre` sets the tracker's read version to the version it
+    read (`rgw/rgw_metadata.cc:255-278` at v19.2.6) and `put_check` copies
+    it into the instance (`rgw/driver/rados/rgw_bucket.cc:2859-2861` at
+    v19.2.6), so Squid's write is checked. Tentacle's entry point and user
+    handlers read into the tracker (`rgw/driver/rados/rgw_bucket.cc:2361-2362`
+    and `rgw/driver/rados/rgw_user.cc:2829-2830` at v20.2.4); only the
+    instance handler lost the check.
+- **Impact:** a bucket instance metadata put, whether `PUT
+  /admin/metadata/bucket.instance`, `radosgw-admin metadata put` or
+  multisite metadata sync, silently undoes a change another request made
+  to the instance between the put's read and its write: an ACL, a
+  versioning or object lock change, a quota, or a reshard's layout. Admin
+  and sync only.
+- **Releases:** v20.2.4; v19.2.6 checks the version it read.
+- **rgw-go:** does not reproduce it. Every metadata put writes under the
+  version it read, or creates the object exclusively
+  (`putInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`,
+  "The metadata sections write only what keeps a user or bucket whole").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 8, 2026-10-08, comparing the two
+  releases' metadata handlers; derived from the source, not reproduced.
+
+## radosgw's bucket instance metadata put drops the bucket's object lock rule
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed on main: a
+  bucket instance's metadata document has no object lock configuration, so
+  writing one back loses the bucket's default retention. Classification
+  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - `RGWBucketInfo::dump` writes no `obj_lock`, and `decode_json` reads
+    none (`rgw/rgw_common.cc:2515-2542` and `:2544-2585`; `:2577-2604` and
+    `:2606-2647`), so a decoded instance holds `RGWObjectLock`'s default,
+    enabled with no rule (`rgw/rgw_object_lock.h:98` at both tags).
+  - `RGWBucketInfo::encode` writes `obj_lock` whenever the flags carry
+    `BUCKET_OBJ_LOCK_ENABLED` (`rgw/rgw_common.cc:2300-2301`; `:2363-2364`),
+    and the instance handler stores the decoded instance whole
+    (`RGWMetadataHandlerPut_BucketInstance::put_checked`,
+    `rgw/driver/rados/rgw_bucket.cc:2866-2887`; `RGWBucketInstanceMetadataHandler::put`,
+    `:2858-2893`), so the stored rule is replaced by none.
+  - The document's `flags` are written as given, so a document without
+    `BUCKET_OBJ_LOCK_ENABLED` turns object lock off, which S3 never allows
+    once it is on.
+  - main writes and reads `obj_lock` in the bucket instance's JSON
+    (commit c2d235788c4, "rgw/multisite: sync bucket obj_lock. add json
+    encoding/decoding to members"); neither release has it.
+- **Impact:** a metadata get and put of a bucket instance, through
+  `radosgw-admin metadata get` and `put`, the admin API's metadata routes,
+  or multisite metadata sync to another zone, removes the bucket's default
+  retention mode and period: objects written afterwards get no default
+  retention, while the bucket still reports object lock enabled. Admin and
+  sync only; it weakens a WORM bucket.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A put over a stored instance keeps
+  its object lock configuration, and one that would turn object lock off
+  answers 400 InvalidArgument (`keepInstance`, `internal/driver/metadata.go`;
+  `docs/exclusions.md`, "The metadata sections write only what keeps a user
+  or bucket whole"). A new instance a put creates gets the default
+  configuration, as radosgw's.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 8, 2026-10-08, writing the bucket
+  instance's JSON decoder; derived from the source, not reproduced.
+
+## radosgw's metadata put writes a document's attrs raw, the object's version among them
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user or bucket
+  instance metadata put sets every attr its document names on the object,
+  whatever its name, in the op that sets the object's version, so an attr
+  named `ceph.objclass.version` replaces that version. Classification
+  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's then v20.2.4's.
+  - The user document's `attrs` decode into a map named as the JSON names
+    them (`RGWUserCompleteInfo::decode_json`, `rgw/driver/rados/rgw_user.h:741-744`
+    at v19.2.6, `rgw/driver/rados/rgw_user.cc:2735-2738` at v20.2.4), and
+    the put passes the map to `store_user_info` whenever the document has
+    it (`rgw/driver/rados/rgw_user.cc:2822-2833`; `:2841-2845`), which
+    writes the uid object with it (`rgw/services/svc_user_rados.cc:300-302`
+    through `RGWSI_MetaBackend_SObj::put_entry`,
+    `rgw/services/svc_meta_be_sobj.cc:163-164`, at v19.2.6;
+    `rgw/services/svc_user_rados.cc:281-282` at v20.2.4).
+  - The bucket instance document's `attrs` decode the same way
+    (`RGWBucketCompleteInfo::decode_json`, `rgw/driver/rados/rgw_bucket.cc:2117-2120`;
+    `:2283-2286`), and the put passes them to `store_bucket_instance_info`
+    (`rgw/driver/rados/rgw_bucket.cc:2756` and `:2874-2886`; `:2885-2886`),
+    which writes the instance with them (`rgw/services/svc_bucket_sobj.cc:537-539`
+    at v19.2.6; `:475-476` at v20.2.4).
+  - `rgw_put_system_obj` hands the map to the system object write unfiltered
+    (`rgw/driver/rados/rgw_tools.cc:125-145`; `:154-174`), and
+    `RGWSI_SysObj_Core::write` builds one op that first runs the version
+    tracker's step, then the data, then a `setxattr` for each attr with a
+    value (`rgw/services/svc_sys_obj_core.cc:505`, `:514` and `:518-526`
+    at both tags).
+  - The tracker's step is the version class's `set` or `inc`, which stores
+    the version in the xattr `ceph.objclass.version`
+    (`cls/version/cls_version.cc:20-30` at both tags), so a document attr of
+    that name, set later in the same op, replaces it.
+  - A later read that checks or reads the version decodes that xattr and
+    answers EIO when it does not decode (`read_version`,
+    `cls/version/cls_version.cc:55-75` at both tags). The user's reads carry
+    a tracker, the metadata get (`rgw/driver/rados/rgw_user.cc:2741-2743` at
+    v19.2.6, `:2809-2811` at v20.2.4) and the lookup by access key or email
+    (`rgw/services/svc_user_rados.cc:706-707`; `:681-682`) among them, and
+    so does the bucket instance's read (`rgw/services/svc_bucket_sobj.cc:353-358`
+    at v19.2.6, `:304-307` at v20.2.4).
+- **Impact:** an admin holding the `metadata=write` cap, or a zone whose
+  metadata another zone syncs, can store a user or bucket instance whose
+  version xattr is garbage. Each of those reads then fails with EIO once it
+  reaches RADOS rather than a gateway's cache: the user's access keys stop
+  authenticating, and the metadata get of the user or the instance fails,
+  until someone repairs the xattr with the rados tool. A well-formed value
+  instead sets the version to one the document chose. Other attrs outside
+  `user.rgw.` are stored too. Admin and sync only.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A metadata put whose document names an
+  attr outside `user.rgw.` answers 400 InvalidArgument and writes nothing
+  (`RefuseRawAttrs`, `internal/op/metadata.go`; `docs/exclusions.md`, "The
+  metadata sections write only what keeps a user or bucket whole").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of phase 1 unit N, Task 8, 2026-10-08; derived from the
+  source, not reproduced.

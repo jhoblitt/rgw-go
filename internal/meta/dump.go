@@ -2,6 +2,7 @@ package meta
 
 import (
 	"cmp"
+	"encoding/base64"
 	"maps"
 	"slices"
 
@@ -68,3 +69,34 @@ func (c Caps) DumpAs(f formatter.Formatter, name string) {
 // Dump is RGWUserCaps::dump(f), which names the array "caps"
 // (rgw_common.cc:2002-2005 at v19.2.6, :2065-2068 at v20.2.4).
 func (c Caps) Dump(f formatter.Formatter, _ denc.Release) { c.DumpAs(f, "caps") }
+
+// dumpTime is encode_json of a utime_t or ceph::real_time: utime_t::gmtime
+// through dump_stream (ceph_json.cc:577-590 at v19.2.6 and v20.2.4).
+func dumpTime(f formatter.Formatter, name string, t Time) { f.DumpStream(name, t.Gmtime()) }
+
+// dumpStrings is encode_json of a std::list, std::set or flat_set of
+// strings: an array of "obj" strings (ceph_json.h:533-573 at v19.2.6).
+func dumpStrings(f formatter.Formatter, name string, ss []string) {
+	f.OpenArraySection(name)
+	for _, s := range ss {
+		f.DumpString("obj", s)
+	}
+	f.CloseSection()
+}
+
+// dumpAttrs is encode_json of a std::map<std::string, bufferlist>: "entry"
+// sections of "key" and "val" (ceph_json.h:596-607 at v19.2.6), each value
+// base64 with padding and no line breaks (ceph_json.cc:592-603 at v19.2.6
+// and v20.2.4).
+func dumpAttrs(f formatter.Formatter, name string, attrs map[string][]byte) {
+	dumpMap(f, name, attrs,
+		func(f formatter.Formatter, k string) { f.DumpString("key", k) },
+		func(f formatter.Formatter, v []byte) { f.DumpString("val", base64.StdEncoding.EncodeToString(v)) })
+}
+
+// Dump is the body of encode_json(name, obj_version) (rgw_metadata.cc:41-47
+// at v19.2.6, :37-43 at v20.2.4).
+func (v ObjVersion) Dump(f formatter.Formatter, _ denc.Release) {
+	f.DumpString("tag", v.Tag)
+	f.DumpUnsigned("ver", v.Ver)
+}

@@ -325,6 +325,15 @@ func foldEqual(a, b string) bool {
 // once the user is gone. Nothing is undone on a failure. Every error is
 // storeErr's.
 func writeUser(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInfo, exists *Error) error {
+	opts := PutUserOptions{SharedEmail: !confFlag(env, "rgw_user_unique_email", true)}
+	if old != nil {
+		opts.IfVersion = &rec.Version
+	}
+	return writeUserWith(ctx, env, rec, old, exists, opts)
+}
+
+// writeUserWith is writeUser with the user's write under opts.
+func writeUserWith(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInfo, exists *Error, opts PutUserOptions) error {
 	newLink, oldLink := linkOf(&rec.Info), linkOf(old)
 	if newLink != (accountLink{}) {
 		taken, err := accountNameTaken(ctx, env, &rec.Info)
@@ -337,10 +346,6 @@ func writeUser(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInf
 		if err := env.Accounts.AddAccountUser(ctx, rec.Info.AccountID, rec.Info); err != nil {
 			return storeErr(err)
 		}
-	}
-	var opts PutUserOptions
-	if old != nil {
-		opts.IfVersion = &rec.Version
 	}
 	if err := env.Users.PutUser(ctx, rec, opts); err != nil {
 		return storeErr(err)

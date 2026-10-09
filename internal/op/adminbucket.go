@@ -513,10 +513,8 @@ func (o *LinkBucket) Execute(ctx context.Context, r *Request) error {
 // owners (docs/ceph-upstream-bugs.md, "radosgw's bucket link by bucket id
 // takes the name from the live bucket"). A listed entry point that loads
 // nothing, and every listing or read failure, refuses too: what it names
-// cannot be told. A store that cannot list the section, as the RADOS
-// driver cannot yet, answers its NotImplemented, so the link is refused
-// rather than made blind (docs/exclusions.md, "On the RADOS driver, three
-// admin bucket requests answer 501 NotImplemented for now"). Each by-id
+// cannot be told. A store that cannot list the section answers its
+// NotImplemented, so the link is refused rather than made blind. Each by-id
 // link reads every bucket's entry point and instance.
 func refuseNamedElsewhere(ctx context.Context, env *Env, rec *BucketRecord) error {
 	own := rec.Info.Bucket

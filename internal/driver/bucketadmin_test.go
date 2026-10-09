@@ -515,7 +515,7 @@ var _ = Describe("BucketAdminStore", func() {
 			radosgwRename(ctx, rec, true)
 			carol := seedCarol()
 			Expect(linkByID(ctx, listingEnv(), "src", id, carol)).To(MatchError(op.ErrBucketAlreadyExists), "dst's entry point names the id")
-			Expect(linkByID(ctx, s.Env(), "src", id, carol)).To(MatchError(op.ErrNotImplemented), "a store that cannot list refuses")
+			Expect(linkByID(ctx, s.Env(), "src", id, carol)).To(MatchError(op.ErrBucketAlreadyExists), "the driver lists the section itself")
 			_, err := s.GetBucket(ctx, "", "src")
 			Expect(err).To(MatchError(op.ErrNoSuchBucket), "no entry point gives the old instance a name")
 			got, err := s.GetBucket(ctx, "", "dst")

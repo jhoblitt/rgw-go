@@ -10,6 +10,20 @@ import (
 )
 
 type FakeUserStore struct {
+	FindKeyHolderStub        func(context.Context, string) (meta.UserID, error)
+	findKeyHolderMutex       sync.RWMutex
+	findKeyHolderArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	findKeyHolderReturns struct {
+		result1 meta.UserID
+		result2 error
+	}
+	findKeyHolderReturnsOnCall map[int]struct {
+		result1 meta.UserID
+		result2 error
+	}
 	GetUserStub        func(context.Context, meta.UserID) (*op.UserRecord, error)
 	getUserMutex       sync.RWMutex
 	getUserArgsForCall []struct {
@@ -99,6 +113,71 @@ type FakeUserStore struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *FakeUserStore) FindKeyHolder(arg1 context.Context, arg2 string) (meta.UserID, error) {
+	fake.findKeyHolderMutex.Lock()
+	ret, specificReturn := fake.findKeyHolderReturnsOnCall[len(fake.findKeyHolderArgsForCall)]
+	fake.findKeyHolderArgsForCall = append(fake.findKeyHolderArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.FindKeyHolderStub
+	fakeReturns := fake.findKeyHolderReturns
+	fake.recordInvocation("FindKeyHolder", []interface{}{arg1, arg2})
+	fake.findKeyHolderMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeUserStore) FindKeyHolderCallCount() int {
+	fake.findKeyHolderMutex.RLock()
+	defer fake.findKeyHolderMutex.RUnlock()
+	return len(fake.findKeyHolderArgsForCall)
+}
+
+func (fake *FakeUserStore) FindKeyHolderCalls(stub func(context.Context, string) (meta.UserID, error)) {
+	fake.findKeyHolderMutex.Lock()
+	defer fake.findKeyHolderMutex.Unlock()
+	fake.FindKeyHolderStub = stub
+}
+
+func (fake *FakeUserStore) FindKeyHolderArgsForCall(i int) (context.Context, string) {
+	fake.findKeyHolderMutex.RLock()
+	defer fake.findKeyHolderMutex.RUnlock()
+	argsForCall := fake.findKeyHolderArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeUserStore) FindKeyHolderReturns(result1 meta.UserID, result2 error) {
+	fake.findKeyHolderMutex.Lock()
+	defer fake.findKeyHolderMutex.Unlock()
+	fake.FindKeyHolderStub = nil
+	fake.findKeyHolderReturns = struct {
+		result1 meta.UserID
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeUserStore) FindKeyHolderReturnsOnCall(i int, result1 meta.UserID, result2 error) {
+	fake.findKeyHolderMutex.Lock()
+	defer fake.findKeyHolderMutex.Unlock()
+	fake.FindKeyHolderStub = nil
+	if fake.findKeyHolderReturnsOnCall == nil {
+		fake.findKeyHolderReturnsOnCall = make(map[int]struct {
+			result1 meta.UserID
+			result2 error
+		})
+	}
+	fake.findKeyHolderReturnsOnCall[i] = struct {
+		result1 meta.UserID
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeUserStore) GetUser(arg1 context.Context, arg2 meta.UserID) (*op.UserRecord, error) {

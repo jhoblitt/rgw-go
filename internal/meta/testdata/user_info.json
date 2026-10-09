@@ -1,0 +1,86 @@
+{
+    "user_id": "tenant1$alice",
+    "display_name": "Alice",
+    "email": "alice@example.com",
+    "suspended": 0,
+    "max_buckets": 1000,
+    "subusers": [
+        {
+            "id": "tenant1$alice:swift",
+            "permissions": "full-control"
+        }
+    ],
+    "keys": [
+        {
+            "user": "tenant1$alice",
+            "access_key": "AKIAALICE0000000000A",
+            "secret_key": "aliceSecret0000000000000000000000000000A",
+            "active": true,
+            "create_date": "2026-09-29T06:45:34.050305Z"
+        },
+        {
+            "user": "tenant1$alice:swift",
+            "access_key": "AKIAALICE0000000000B",
+            "secret_key": "aliceSecret0000000000000000000000000000B",
+            "active": false,
+            "create_date": "2026-09-30T07:00:00.000001Z"
+        }
+    ],
+    "swift_keys": [
+        {
+            "user": "tenant1$alice:swift",
+            "secret_key": "aliceSwiftSecret00000000000000000000000C",
+            "active": true,
+            "create_date": "0.000000"
+        }
+    ],
+    "caps": [
+        {
+            "type": "buckets",
+            "perm": "read"
+        },
+        {
+            "type": "users",
+            "perm": "*"
+        }
+    ],
+    "op_mask": "read, write, delete",
+    "system": true,
+    "default_placement": "default-placement",
+    "default_storage_class": "STANDARD",
+    "placement_tags": [
+        "fast"
+    ],
+    "bucket_quota": {
+        "enabled": true,
+        "check_on_raw": false,
+        "max_size": 1048576,
+        "max_size_kb": 1024,
+        "max_objects": 100
+    },
+    "user_quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "temp_url_keys": [
+        {
+            "key": 0,
+            "val": "tempurl0"
+        }
+    ],
+    "type": "rgw",
+    "mfa_ids": [],
+    "account_id": "",
+    "path": "/",
+    "create_date": "2026-09-29T06:45:34.050294Z",
+    "tags": [
+        {
+            "key": "team",
+            "val": "storage"
+        }
+    ],
+    "group_ids": []
+}

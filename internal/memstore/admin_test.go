@@ -55,18 +55,15 @@ var _ = Describe("memstore admin stores", func() {
 			_, err := store.GetAccountByEmail(ctx, "alice@example.com")
 			Expect(err).To(MatchError(op.ErrNoSuchEntity), "a user's email names no account")
 		})
-		It("lets a user take an account's email, which the account's removal then drops, as radosgw does", func(ctx SpecContext) {
-			acct := store.AddAccount(meta.AccountInfo{ID: acct1, Name: "acme", Email: "ops@acme.example"})
+		It("refuses a user an account's email, which radosgw lets the user take", func(ctx SpecContext) {
+			store.AddAccount(meta.AccountInfo{ID: acct1, Name: "acme", Email: "ops@acme.example"})
 			user := &op.UserRecord{Info: meta.UserInfo{UserID: meta.UserID{ID: "alice"}, Email: "Ops@Acme.example"}}
-			Expect(store.PutUser(ctx, user, op.PutUserOptions{Exclusive: true})).To(Succeed(), "the user's write")
-			got, err := store.GetUserByEmail(ctx, "ops@acme.example")
+			Expect(store.PutUser(ctx, user, op.PutUserOptions{Exclusive: true})).To(MatchError(op.ErrEmailExists))
+			_, err := store.GetUser(ctx, meta.UserID{ID: "alice"})
+			Expect(err).To(MatchError(op.ErrNoSuchUser), "nothing written")
+			got, err := store.GetAccountByEmail(ctx, "ops@acme.example")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(got.Info.UserID.ID).To(Equal("alice"), "the email now names the user")
-			_, err = store.GetAccountByEmail(ctx, "ops@acme.example")
-			Expect(err).To(MatchError(op.ErrNoSuchEntity), "the account by its own email")
-			Expect(store.RemoveAccount(ctx, acct)).To(Succeed())
-			_, err = store.GetUserByEmail(ctx, "ops@acme.example")
-			Expect(err).To(MatchError(op.ErrNoSuchUser), "account::remove deleted the user's entry")
+			Expect(got.Info.ID).To(Equal(acct1), "the account keeps its email")
 		})
 		It("refuses an exclusive put over an existing id", func(ctx SpecContext) {
 			store.AddAccount(meta.AccountInfo{ID: acct1, Name: "acme"})

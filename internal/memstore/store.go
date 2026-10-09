@@ -38,6 +38,9 @@ type Store struct {
 	bucketSeq uint64                    // the last bucket instance number handed out
 	users     map[string]*op.UserRecord // by meta.UserID.String()
 	keys      map[string]string         // access key -> user id string
+	// holders maps every access key id, active or not, to the user id
+	// string holding it, as the RADOS driver's key holder index does.
+	holders map[string]string
 	// emails maps a lowercased email to the user id string or account id
 	// holding it: radosgw keeps both in one object per email, so an email is
 	// unique across users and accounts (account.cc:102-114 at v19.2.6).
@@ -49,11 +52,10 @@ type Store struct {
 	accountsByName map[string]string            // "tenant$name" -> account id
 	accountUsers   map[string]map[string]string // account id -> lowercased display name -> user id
 	usage          []op.UsageEntry
-	usageRecords   []op.UsageRecord                       // the usage log ReadUsage reads, seeded by AddUsage
-	metadata       map[string]map[string]op.MetadataEntry // section -> key -> entry
-	realms         map[string]meta.Realm                  // by id
-	periods        map[string]meta.Period                 // "id.epoch" -> period
-	periodConfigs  map[string]meta.PeriodConfig           // realm id -> config
+	usageRecords   []op.UsageRecord             // the usage log ReadUsage reads, seeded by AddUsage
+	realms         map[string]meta.Realm        // by id
+	periods        map[string]meta.Period       // "id.epoch" -> period
+	periodConfigs  map[string]meta.PeriodConfig // realm id -> config
 }
 
 type bucket struct {
@@ -147,11 +149,11 @@ func New(cfg Config) *Store {
 		accountsByName: map[string]string{},
 		accountUsers:   map[string]map[string]string{},
 		keys:           map[string]string{},
+		holders:        map[string]string{},
 		emails:         map[string]string{},
 		buckets:        map[string]*bucket{},
 		instances:      map[string]*bucket{},
 		uploads:        map[string]*upload{},
-		metadata:       map[string]map[string]op.MetadataEntry{},
 		realms:         map[string]meta.Realm{},
 		periods:        map[string]meta.Period{},
 		periodConfigs:  map[string]meta.PeriodConfig{},

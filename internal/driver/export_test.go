@@ -571,3 +571,35 @@ var CategoryName = categoryName
 
 // ShardString is shardString for the external specs.
 var ShardString = shardString
+
+// SetHolderWalkPageForTest sets the page the key holder walk lists users
+// in, restoring it when the spec ends.
+func SetHolderWalkPageForTest(n int) (restore func()) {
+	old := holderWalkPage
+	holderWalkPage = n
+	return func() { holderWalkPage = old }
+}
+
+// LinkBucketForTest is linkBucket at the clock's time.
+func (s *Store) LinkBucketForTest(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
+	return s.linkBucket(ctx, owner, b, time.Time{})
+}
+
+// WriteInstanceAttrs creates the instance object of info with attrs, under
+// a fresh version.
+func WriteInstanceAttrs(s *Store, ctx context.Context, info meta.BucketInfo, attrs map[string][]byte) error {
+	return s.writeInstance(ctx, &info, attrs, true, time.Time{}, &objv{write: newWriteVersion()})
+}
+
+// HoldClaimForTest marks b's bucket claim with owner as a metadata put does
+// before its write, and returns the clear the put makes after it.
+func HoldClaimForTest(s *Store, ctx context.Context, b meta.BucketID, owner meta.Owner) (func() error, error) {
+	h, err := s.readClaim(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.markClaim(ctx, h, owner); err != nil {
+		return nil, err
+	}
+	return func() error { return s.clearClaim(ctx, h) }, nil
+}
