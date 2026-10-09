@@ -106,6 +106,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_user reset_user_stats2 drops the stats of every page but the last](#cls_user-reset_user_stats2-drops-the-stats-of-every-page-but-the-last) | none | none | ✓ |
 | [Squid's negated condition operators hold when any pair differs, and its Null ignores its values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values) | [#73146](https://tracker.ceph.com/issues/73146), [#74736](https://tracker.ceph.com/issues/74736) | [ceph/ceph#65606](https://github.com/ceph/ceph/pull/65606), [ceph/ceph#67188](https://github.com/ceph/ceph/pull/67188), [ceph/ceph#67214](https://github.com/ceph/ceph/pull/67214), [ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444), [ceph/ceph#67213](https://github.com/ceph/ceph/pull/67213), [ceph/ceph#68445](https://github.com/ceph/ceph/pull/68445) |  |
 | [radosgw's date conditions wrap past 2554 and before 1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970) | none | none | ✓ |
+| [radosgw swaps aws:CurrentTime and aws:EpochTime](#radosgw-swaps-awscurrenttime-and-awsepochtime) | pending | pending | ✓ |
 | [radosgw never expires a presigned SigV4 URL dated before 1970](#radosgw-never-expires-a-presigned-sigv4-url-dated-before-1970) | none | none | ✓ |
 | [radosgw does not check aws-chunked framing against x-amz-decoded-content-length](#radosgw-does-not-check-aws-chunked-framing-against-x-amz-decoded-content-length) | none | none | ✓ |
 | [radosgw answers GetObjectTagging with 200 and no body when the tags do not decode](#radosgw-answers-getobjecttagging-with-200-and-no-body-when-the-tags-do-not-decode) | none | none | ✓ |
@@ -718,6 +719,7 @@ Every new entry adds its row to this table, in document order.
 ## radosgw writes ACL owner and grantee names into its XML unescaped
 
 - **Kind:** defect, not security-relevant, unfixed through main.
+  Unreproduced: derived from the source.
 - **Evidence:** at v19.2.6 the S3 ACL writer puts the owner's ID and display
   name between their tags as they are (`rgw_acl_s3.cc:177`, `:179`), and a
   canonical-user grantee's the same way (`:260`, `:262`). GetBucketAcl and
@@ -754,7 +756,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** the ACL documents (unit Z) escape the owner's and each
   grantee's ID and display name with `xmltext.Escape`, the escaping
   radosgw's formatter gives the text of its other documents (owner decision
-  12c). `docs/exclusions.md` records the difference.
+  12c). `docs/exclusions.md` records the difference. s3-tests' users have
+  plain display names (`s3tests-main`, `s3tests-alt`, `s3tests-tenant`,
+  `s3tests-iam` in `hack/s3tests/run.sh`'s conf), so its ACL tests cannot
+  show the difference; on Squid rgw-go's outcomes for them equal radosgw's
+  but for the PutBucketAcl race `docs/exclusions.md` records (2026-10-08).
 - **Upstream:** no tracker issue or pull request reports or fixes it
   (searched 2026-09-29). Each search was first run on a known match.
   - tracker.ceph.com, full text: every project's issues of every status
@@ -797,6 +803,7 @@ Every new entry adds its row to this table, in document order.
     2023-03, proposes refusing user IDs and display names that hold REST or
     IAM-policy delimiters; it does not mention the ACL documents.
   - Not filed: the defect has not been reproduced on a running cluster.
+    Pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 planning of unit Z, 2026-09-29; derived from the
   source, not reproduced.
 
@@ -4551,6 +4558,50 @@ Every new entry adds its row to this table, in document order.
   `internal_timegm`, compiled with GCC 15.3, agrees with rgw-go on 43 date
   inputs, and its double-to-integer arithmetic gives the same answers under
   GCC 11.5 and 13.5; not reproduced on a running radosgw.
+
+## radosgw swaps aws:CurrentTime and aws:EpochTime
+
+- **Kind:** defect, unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's, and a single line is the same at both.
+  - `rgw_build_iam_environment` sets `aws:CurrentTime` to the request time
+    as decimal seconds since the epoch, `std::to_string` of
+    `real_clock::to_time_t`, and `aws:EpochTime` to the same time as an
+    ISO 8601 string, `ceph::to_iso_8601` (`rgw/rgw_op.cc:853-854`,
+    `:888-889`; main `:993-994` at 06adccc25d6), whose default format
+    carries nanoseconds (`common/iso_8601.h:39-40`). AWS defines the two
+    the other way round: `aws:CurrentTime` is the date and time, and
+    `aws:EpochTime` the epoch seconds.
+  - The date operators read either form through `Condition::as_date`,
+    which takes a value `std::stod` converts whole as seconds and any other
+    through `from_iso_8601` (`rgw/rgw_iam_policy.h:384-401`, `:403-420`),
+    so a date condition on either key compares the request time as AWS
+    does.
+  - The numeric operators convert the environment's value with `as_number`,
+    which refuses a value `std::stod` does not consume whole
+    (`rgw/rgw_iam_policy.h:369-382`, `:388-401`), and an operator whose
+    environment value does not convert is false (`shortible` at v19.2.6,
+    `:495-514`; `typed_any` and `typed_none` at v20.2.4, `:527-567`). So
+    every numeric condition on `aws:EpochTime` is false, `NumericNotEquals`
+    included.
+  - The string operators compare the text, so a string condition on
+    `aws:CurrentTime` sees digits and one on `aws:EpochTime` an ISO 8601
+    string.
+- **Impact:** a policy written to AWS's definitions misjudges the request
+  time outside the date operators. A numeric condition on `aws:EpochTime`
+  never holds: an Allow it guards grants nothing, and a Deny it guards, such
+  as one that ends access after an epoch time, denies nothing. A
+  `StringLike` on `aws:CurrentTime` for a date pattern such as
+  `2026-10-*` never holds.
+- **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01); older
+  releases not checked.
+- **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
+  radosgw does, so `docs/exclusions.md` records no difference.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
+  2026-10-08, reading `rgw_build_iam_environment` at both tags; derived
+  from the source, not reproduced.
 
 ## radosgw never expires a presigned SigV4 URL dated before 1970
 
