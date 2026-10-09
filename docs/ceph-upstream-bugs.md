@@ -203,6 +203,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | none | none | ✓ |
 | [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | none | none | ✓ |
 | [radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get) | none | none | ✓ |
+| [radosgw sends a query-string x-amz-meta name's CR and LF raw in GET's headers](#radosgw-sends-a-query-string-x-amz-meta-names-cr-and-lf-raw-in-gets-headers) | none | none | ✓ |
 | [radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload](#radosgws-abortmultipartupload-queues-the-parts-for-the-gc-before-it-removes-the-upload) | [#80896](https://tracker.ceph.com/issues/80896) | none |  |
 | [radosgw's bucket delete aborts each page of multipart uploads again on every later page](#radosgws-bucket-delete-aborts-each-page-of-multipart-uploads-again-on-every-later-page) | pending | pending |  |
 | [radosgw's retried bucket write can land in a bucket re-created under the same name](#radosgws-retried-bucket-write-can-land-in-a-bucket-re-created-under-the-same-name) | none | none | ✓ |
@@ -9071,10 +9072,85 @@ Every new entry adds its row to this table, in document order.
   found no report or fix. CVE-2020-1760 is the response-* parameter
   variant, and its fix does not reach a stored value. The fix would refuse,
   or strip, control characters in a POST upload's metadata fields.
+  The name variant is "[radosgw sends a query-string x-amz-meta name's CR
+  and LF raw in GET's headers](#radosgw-sends-a-query-string-x-amz-meta-names-cr-and-lf-raw-in-gets-headers)".
 - **Found:** phase 1 unit R, Task 7 review, 2026-10-05, tracing a POST
   upload's metadata to the GET that sends it; confirmed by
   rgw-bug-reproduction's triage against a model of the code. Not
   reproduced on a running system.
+
+## radosgw sends a query-string x-amz-meta name's CR and LF raw in GET's headers
+
+- **Kind:** defect, security-relevant: response-header injection and
+  response splitting (CWE-113). Unfixed at v19.2.6 and v20.2.4.
+  Unreproduced: derived from the source; no cluster. This is the name
+  variant of "[radosgw stores a POST upload's x-amz-meta fields with their
+  CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)",
+  which is the value variant.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `map_qs_metadata` takes every query-string parameter whose
+    lower-cased name starts with `x-amz-meta-` and puts it in
+    `x_meta_map` under that name (`rgw_rest_s3.cc:2581-2595`,
+    `:2742-2756`). `RGWHTTPArgs::parse` url-decodes the whole `name=value`
+    pair before it splits it, so `%0d%0a` in a name becomes a CR and LF
+    (`rgw_common.cc:865`, `:878`).
+  - `map_qs_metadata` has three callers, the same at both tags:
+    `RGWPutObj_ObjStore_S3::get_params` (`rgw_rest_s3.cc:2611`, `:2772`),
+    `RGWPostObj_ObjStore_S3::get_params` (`:2913`, `:3047`) and
+    `RGWCompleteMultipart_ObjStore_S3::get_params` (`:4071`, `:4575`). Only
+    a PutObject stores what it collects: `RGWPutObj::execute` is the one of
+    the three that calls `rgw_get_request_metadata` (`rgw_op.cc:4526`,
+    `:4794`), and that turns each `x_meta_map` entry into an attr named
+    `user.rgw.` plus the name (`rgw_op.h:2171-2233`, `:2338-2408`). A POST
+    upload takes its stored metadata from the form fields, and a
+    CompleteMultipartUpload does not call it; `RGWInitMultipart` and
+    `RGWCopyObj` call it but never `map_qs_metadata`, so a query string
+    does not reach them.
+  - Nothing between the parse and the store refuses a CR or LF in a name.
+    `rgw_add_amz_meta_header` only joins a repeated name's values with a
+    comma (`rgw_common.cc:472-487`). `rgw_get_request_metadata` skips four
+    blocklisted names, reformats the value with `format_xattr`, and checks
+    the attr name's length against `rgw_max_attr_name_len` and the value's
+    against `rgw_max_attr_size`, and nothing else about the name
+    (`rgw_op.h:2171-2233` at v19.2.6).
+  - A GET or HEAD of the object writes each such attr as a header
+    (`send_response_data`, `rgw_rest_s3.cc:581-585`, `:698-702`; a HEAD is
+    the same op with `get_data` false, `:4823-4830` at v19.2.6) through
+    `dump_header`, whose `rgw_sanitized_hdrval` drops only a trailing NUL
+    from the value and never looks at the name (`rgw_rest.cc:359-363` and
+    `rgw_rest.h:29-47` at both tags). `ClientIO::send_header` then writes
+    the name, `: `, the value and a CRLF as they are
+    (`rgw_asio_client.cc:167-181` at both tags).
+  - The fix for CVE-2020-1760 refuses a control character only in a GET's
+    response-* query parameters (`str_has_cntrl`, `rgw_rest_s3.cc:529`).
+    Nothing checks a stored name.
+- **Trigger:** a PutObject whose query string holds
+  `x-amz-meta-a%0d%0aSet-Cookie:%20k%3dv=x`, or a name that ends the
+  header section with `%0d%0a%0d%0a` and goes on with text. The writer
+  needs only the right to PUT the object, whether by its own credentials
+  or anonymously on a bucket that grants public writes.
+  The value, `x` in the example, is appended after the name's `: `, so an
+  injected line ends with it and the writer shapes the line to suit.
+- **Impact:** every reader of the object, by GET or HEAD, receives the
+  headers the writer wrote, such as a `Set-Cookie` or a second
+  `Content-Type`. An empty line ends the header section early, and the
+  writer's text becomes the start of the body (response splitting). A
+  site that signs PUT URLs for its users, or that serves objects to
+  browsers from a shared bucket, lets one writer plant such a response
+  for the others.
+- **Releases:** v19.2.6 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. net/http drops a header whose name is not a
+  valid field name (`net/http/header.go:198-203` at Go 1.27.1), so a GET
+  or HEAD from rgw-go omits the metadata header that radosgw would send
+  (`docs/exclusions.md`, "A user metadata name that is not a valid field
+  name is not sent", added by #202).
+- **Upstream:** pending: rgw-bug-reproduction will classify it (sent the
+  intake on 2026-10-08). CVE-2020-1760 is the response-* parameter
+  variant, and its fix does not reach a stored name. The fix would refuse,
+  or strip, control characters in a metadata name, wherever it arrives.
+- **Found:** phase 1, X14's task review, 2026-10-08, while checking header
+  spellings. Derived from the source, not reproduced on a running system.
 
 ## radosgw's AbortMultipartUpload queues the parts for the GC before it removes the upload
 
