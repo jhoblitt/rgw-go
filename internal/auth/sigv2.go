@@ -66,8 +66,8 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 		// discoverFlavour routes here only on the "AWS " prefix, which
 		// radosgw skips unread.
 		creds := strings.TrimPrefix(a, "AWS ")
-		if i := strings.LastIndexByte(creds, ':'); i >= 0 {
-			d.accessKey, d.signature = creds[:i], creds[i+1:]
+		if accessKey, signature, ok := strings.CutLast(creds, ":"); ok {
+			d.accessKey, d.signature = accessKey, signature
 		}
 		if tok, ok := rv.header("x-amz-security-token"); ok && tok == "" {
 			return nil, fmt.Errorf("%w: empty security token", op.ErrAccessDenied)
