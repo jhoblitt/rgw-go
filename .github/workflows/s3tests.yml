@@ -61,6 +61,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [ -n "$EVENT_NAME" ]; then
+            echo "::error::proof only: the filter fails"
+            exit 1
+          fi
           if [ "$EVENT_NAME" != pull_request ]; then
             echo "run=true" >>"$GITHUB_OUTPUT"
             exit 0
