@@ -3085,6 +3085,11 @@ differ, rgw-go does the following.
   again](ceph-upstream-bugs.md#radosgws-retried-bucket-writes-are-not-authorized-again)").
   rgw-go's retry answers 403 AccessDenied, writes nothing, and leaves the
   revoking ACL or policy in place.
+  The s3-tests check accepts either outcome for
+  `test_bucket_concurrent_set_canned_acl`: whether rgw-go answers 409 to one
+  of its fifty concurrent PutBucketAcl requests, failing it, or passes it as
+  radosgw does depends on whether a request loses the race through all its
+  retries, which a run's timing decides.
 
 ### Object read differences
 

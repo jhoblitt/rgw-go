@@ -315,6 +315,35 @@ var _ = Describe("diff", func() {
 			Expect(diffs).To(BeEmpty())
 		})
 
+		Describe("an either-outcome entry", func() {
+			It("skips its test when the outcome differs", func() {
+				cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\n"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(BeEmpty())
+			})
+
+			It("skips its test when the outcome agrees, where a plain entry would be stale", func() {
+				cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"})
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt2\n"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(Equal([]string{"t2: known difference no longer differs"}))
+			})
+
+			It("leaves a plain entry for the same test strict", func() {
+				cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"})
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt1\n"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(Equal([]string{"t1: known difference no longer differs"}))
+			})
+
+			It("is reported, as written, when it matches no compared test", func() {
+				diffs, err := parity.Diff(base, candidate(base.Outcomes), false, mustKnown("~ t9\n~ t3\n"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(ConsistOf("~ t9: known difference matches no test", "~ t3: known difference matches no test"))
+			})
+		})
+
 		It("compares under the zero list as under an empty parsed one", func() {
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
 			zero, err := parity.Diff(base, cand, false, parity.KnownList{})
@@ -335,8 +364,21 @@ var _ = Describe("ParseKnown", func() {
 		Expect(known.Patterns()).To(Equal([]string{"s3tests.functional.test_s3::test_a", `s3tests\.functional\.test_s3::test_b.*`}))
 	})
 
+	It("reads a line starting with ~ as an either-outcome entry", func() {
+		known, err := parity.ParseKnown(strings.NewReader("~ t1  # timing\n  ~\tt2\n~t3\nt4\n"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(known.Patterns()).To(Equal([]string{"~ t1", "~ t2", "~ t3", "t4"}))
+	})
+
 	It("names the line of a pattern that does not compile", func() {
 		_, err := parity.ParseKnown(strings.NewReader("t1\n\nt[2\n"))
 		Expect(err).To(MatchError(ContainSubstring("line 3")))
+		_, err = parity.ParseKnown(strings.NewReader("t1\n~ t[2\n"))
+		Expect(err).To(MatchError(ContainSubstring("line 2")))
+	})
+
+	It("refuses a ~ with no pattern after it", func() {
+		_, err := parity.ParseKnown(strings.NewReader("t1\n~  # flaky\n"))
+		Expect(err).To(MatchError(ContainSubstring("line 2: ~ without a pattern")))
 	})
 })

@@ -34,6 +34,24 @@ stands up on kind. The `integration` workflow runs them nightly and on demand wi
 `gh workflow run integration.yml`. It does not gate pull requests; locally, the same
 steps are in [hack/rooket/README.md](hack/rooket/README.md).
 
+The `s3tests` workflow runs on every pull request. When the pull request changes the
+S3 path, anything under `internal/`, `cmd/`, `hack/s3tests/`, `hack/rooket/`,
+`hack/parity/` or `test/s3tests/`, `go.mod`, `go.sum`, or the workflow and its
+cluster action, it brings up a Squid cluster, runs the phase 1 s3-tests set against
+rgw-go and compares the outcomes with radosgw's recorded baseline,
+`make s3tests-parity` as it runs locally; otherwise it passes without a cluster. Its
+`s3-tests` job is the check to require. `gh workflow run s3tests.yml -f release=tentacle`
+runs Tentacle's comparison on demand.
+
+Bumping the s3-tests pin (`hack/s3tests/run.sh`), the Ceph pin, or a deselect list
+needs both releases' baselines re-recorded in the same pull request, since the
+comparison refuses a baseline recorded under another s3-tests commit, Ceph version
+or deselect lists. `gh workflow run s3tests.yml --ref <branch> -f record-baseline=true`
+and the same with `-f release=tentacle` record radosgw's baseline on the runner,
+upload it as the artifact `s3tests-baseline-<release>`, and compare rgw-go with it;
+commit the artifact's file as `test/s3tests/baseline/<release>.json`. Locally,
+`make s3tests-record RELEASE=<release>` writes the same file.
+
 A `v*` tag runs the `release` workflow. goreleaser builds rgw-go with cgo once per Ceph
 release, in a builder made from that release's Ceph image (`hack/image/cgo-build.sh`).
 For each release it publishes a `linux/amd64` archive and the derived Ceph image

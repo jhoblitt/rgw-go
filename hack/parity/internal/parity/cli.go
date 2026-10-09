@@ -256,7 +256,7 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 	f := cmd.Flags()
 	f.String("baseline", "", "the baseline result file (PARITY_BASELINE)")
 	f.String("candidate", "", "the candidate result file (PARITY_CANDIDATE)")
-	f.String("known", "", "a file of regular expressions over test ids whose outcomes are expected to differ (PARITY_KNOWN)")
+	f.String("known", "", "a file of regular expressions over test ids whose outcomes are expected to differ, or after \"~ \" may differ (PARITY_KNOWN)")
 	f.Bool("allow-meta-drift", false, "compare even when the results' meta values differ (PARITY_ALLOW_META_DRIFT)")
 	return cmd
 }

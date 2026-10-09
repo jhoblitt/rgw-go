@@ -33,7 +33,10 @@
 // whole test id, with "#" starting a comment. A listed test that differs is
 // skipped; one that agrees prints "<test>: known difference no longer
 // differs", and an entry matching no compared test prints "<pattern>: known
-// difference matches no test", so a stale entry fails the run.
+// difference matches no test", so a stale entry fails the run. A line
+// starting with "~ " is an either-outcome entry, for a test whose outcome
+// depends on timing: its test is skipped whether it differs or agrees, and
+// only an entry that matches no test is reported.
 //
 // diff refuses to compare when the candidate lacks any of s3tests_commit,
 // go_ceph_tag, release, ceph_version and deselect that the baseline's meta

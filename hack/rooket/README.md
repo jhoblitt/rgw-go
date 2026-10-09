@@ -44,9 +44,9 @@ writes the same data and manifest again.
 
 ## Prerequisites
 
-- rooket at the commit `.github/workflows/integration.yml` pins, with its own
-  prerequisites: a container engine, `kind`, `kubectl`, `helm`, and the iSCSI
-  tooling. Every `cluster-up` creates the OSD's iSCSI target and every
+- rooket at the commit `.github/actions/rooket-cluster/action.yml` pins, the
+  setup CI's cluster workflows share, with its own prerequisites: a container
+  engine, `kind`, `kubectl`, `helm`, and the iSCSI tooling. Every `cluster-up` creates the OSD's iSCSI target and every
   `cluster-down` removes it with the disk image, so both need root;
   `rooket sudoers install` removes the prompt.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
@@ -433,13 +433,22 @@ other outcome, failures included. `hack/parity`'s package doc holds the file's
 schema and the comparison's rules.
 
 ```sh
-make gate RELEASE=squid
-make s3tests RELEASE=squid GATEWAY=radosgw RUN=base1
-make s3tests RELEASE=squid GATEWAY=radosgw RUN=base2
-make parity-record SUITE=s3tests FORMAT=junit OUT=test/s3tests/baseline/squid.json \
-	META="release=squid ceph_version=$(jq -r .ceph_version hack/rooket/out/squid/manifest.json) gateway=radosgw s3tests_commit=$(hack/s3tests/run.sh --print-commit) deselect=$(hack/s3tests/run.sh --print-deselect) pytest_freeze=$(sha256sum hack/s3tests/out/squid-radosgw-base2.freeze | cut -c1-12)" \
-	FILES="hack/s3tests/out/squid-radosgw-base1.xml hack/s3tests/out/squid-radosgw-base2.xml"
+make gate RELEASE=squid            # first: the gate counts the zone's users
+make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity too
+make s3tests-record RELEASE=squid  # OUT=FILE writes it elsewhere
 ```
+
+`make s3tests-record` runs the set against radosgw twice, as `RUN=base1` and
+`RUN=base2`, and records both runs in `OUT`, by default
+`test/s3tests/baseline/<release>.json`, with the meta `release`,
+`ceph_version` from `manifest.json`, `gateway=radosgw`, `s3tests_commit`,
+`deselect` and `pytest_freeze`. It refuses to start before `make rgw-go-up`,
+so that radosgw records under the parity options rgw-go is compared under.
+The `s3tests` workflow's `record-baseline` input runs the same target on the
+runner and uploads the file as the artifact `s3tests-baseline-<release>`. A
+re-record there and one here differ only in `recorded`, in `pytest_freeze`
+when the hosts' Python or packages differ, and in any outcome the two hosts'
+radosgw give differently, which is reported rather than committed silently.
 
 A baseline carries the s3-tests commit, the deselect lists' digest, the
 release and its Ceph version, and `make parity-check` refuses to compare
@@ -476,11 +485,22 @@ lists: one regular expression per line over `hack/parity`'s test ids
 (`s3tests.functional.test_s3::<test>`), each under a comment naming the
 `docs/exclusions.md` entry that decides the difference. It fails on a line
 that matches no test, and on one whose test no longer differs, so the list
-cannot outlive its differences. Only a recorded exclusion goes there. A
+cannot outlive its differences. A line starting with `~ ` is the other kind
+of entry, for a test whose outcome on rgw-go depends on timing, as its
+exclusion says: its test is skipped whether it differs or agrees, and only
+an entry that matches no test fails. Squid's
+`test_bucket_concurrent_set_canned_acl` is one; every other entry is plain.
+Only a recorded exclusion goes there. A
 difference that is not one is a bug in rgw-go, and a test that needs a later
 phase's feature goes on that phase's deselect list, which removes it on both
 gateways. Squid's list is mostly the Tentacle feature level rgw-go serves on
 Squid too, which Squid's radosgw fails.
+
+The `s3tests` workflow (`.github/workflows/s3tests.yml`) runs `make
+rgw-go-up` and `make s3tests-parity` against a Squid cluster on every pull
+request that changes the S3 path, and against either release on demand, so
+CI and a local run judge alike; its `s3-tests` job is the check to require.
+It runs no gate, and needs none: nothing after it counts the users.
 
 ## go-ceph's rgw/admin suite
 

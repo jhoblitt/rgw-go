@@ -182,6 +182,28 @@ s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and 
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
 
+# Where s3tests-record writes radosgw's baseline: OUT, else the committed one.
+S3TESTS_RECORD_OUT = $(or $(OUT),test/s3tests/baseline/$(RELEASE).json)
+
+# rgw-go-up sets the parity options on radosgw's entity as well as rgw-go's,
+# so a baseline recorded after it is radosgw under the options rgw-go is
+# compared under; its endpoint file is the sign it has run.
+.PHONY: s3tests-record
+s3tests-record: need-release ## Run the phase 1 s3-tests set twice against radosgw, after rgw-go-up, and record its baseline in OUT (default test/s3tests/baseline/RELEASE.json)
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2
+	go build -o bin/parity ./hack/parity
+	mkdir -p $(dir $(S3TESTS_RECORD_OUT))
+	ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
+	commit=$$(hack/s3tests/run.sh --print-commit) && \
+	deselect=$$(hack/s3tests/run.sh --print-deselect) && \
+	freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-base2.freeze | cut -c1-12) && \
+	bin/parity record --format junit --suite s3tests --out $(S3TESTS_RECORD_OUT) \
+	  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
+	  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze \
+	  hack/s3tests/out/$(RELEASE)-radosgw-base1.xml hack/s3tests/out/$(RELEASE)-radosgw-base2.xml
+
 .PHONY: bench-seam
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
 	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) hack/bench/seam.sh $(RELEASE)
