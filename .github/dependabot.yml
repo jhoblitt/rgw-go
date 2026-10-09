@@ -3,7 +3,11 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # / reaches .github/workflows/ and a root action.yml only; a local
+    # composite action's pins need its own directory listed.
+    directories:
+      - /
+      - /.github/actions/rooket-cluster
     schedule:
       interval: weekly
     commit-message:

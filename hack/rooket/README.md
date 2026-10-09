@@ -44,9 +44,9 @@ writes the same data and manifest again.
 
 ## Prerequisites
 
-- rooket at the commit `.github/workflows/integration.yml` pins, with its own
-  prerequisites: a container engine, `kind`, `kubectl`, `helm`, and the iSCSI
-  tooling. Every `cluster-up` creates the OSD's iSCSI target and every
+- rooket at the commit `.github/actions/rooket-cluster/action.yml` pins, the
+  setup CI's cluster workflows share, with its own prerequisites: a container
+  engine, `kind`, `kubectl`, `helm`, and the iSCSI tooling. Every `cluster-up` creates the OSD's iSCSI target and every
   `cluster-down` removes it with the disk image, so both need root;
   `rooket sudoers install` removes the prompt.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
