@@ -39,3 +39,6 @@
 # net/http answers 417 to an Expect other than 100-continue before any handler runs; radosgw ignores it (exclusions: "Expectations other than 100-continue")
 ^s3tests\.functional\.test_headers::test_bucket_create_bad_expect_mismatch$
 ^s3tests\.functional\.test_headers::test_object_create_bad_expect_mismatch$
+
+# Proof only, never merged: a test both gateways pass, so the list goes stale
+^s3tests\.functional\.test_s3::test_bucket_get_location$
