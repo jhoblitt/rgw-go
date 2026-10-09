@@ -607,12 +607,17 @@ benchmark was re-run.
   `std::string` (`IoCtx::operate`, include/rados/librados.hpp:1170 at
   v19.2.6, :1191 at v20.2.4) and keeps the whole name, so radosgw stores
   an object under a name holding a NUL where rgw-go would read or write
-  another one.
+  another one. An omap listing's start and prefix are C strings too
+  (read_op.go:99-100, read_op_omap_get_keys.go:126), while an omap key
+  set, removed, compared or read by key goes with its length
+  (`rados_write_op_omap_set2`, `rados_write_op_omap_rm_keys2`,
+  `rados_read_op_omap_get_vals_by_keys2`, `rados_write_op_omap_cmp2`), so a
+  NUL in one is kept.
 - **Class:** inherent in the C API; go-ceph could refuse such a name with
   an error rather than cut it, which is an upstream candidate for
   ceph/go-ceph.
-- **Status:** worked around where rgw-go has checked. Every name that
-  reaches go-ceph from user bytes needs a NUL check above it:
+- **Status:** worked around. Every name that reaches go-ceph from user
+  bytes has a NUL check above it:
   - The S3 and admin handlers refuse a NUL in the decoded path, as
     radosgw's `ERR_ZERO_IN_URL` does (`internal/s3/request.go`,
     `internal/admin/handler.go`, `internal/cli/serve.go`), which covers a
@@ -625,17 +630,32 @@ benchmark was re-run.
     InvalidArgument; `op.RefuseNULKey` and `op.RefuseNUL`,
     `internal/op/metadata.go`; docs/exclusions.md, "The metadata sections
     write only what keeps a user or bucket whole").
-  - A grep for `strings.IndexByte(..., 0)` finds no check on these, which
-    carry user bytes into an object, index or holder name and have not
-    been traced for a format check that would refuse a NUL first: the S3
-    `x-amz-copy-source` header, decoded into a bucket and key; the
-    `uploadId` query argument, which names a multipart upload's meta and
-    part objects; the `versionId` query argument, which names an object
-    instance; the admin user routes' `uid`, `access-key`, `email` and
-    `subuser` arguments; the admin bucket routes' `bucket`, `bucket-id`
-    and `new-bucket-name`; and the admin account routes' `id`, `name` and
-    `email`.
-- **Found:** N Task 8 re-review, 2026-10-08.
+  - Where radosgw keeps a NUL, every other request argument that becomes
+    part of such a name is refused with one before authentication, which
+    reads the access key's index object: the S3 `versionId` and `uploadId`,
+    every query argument's name (an `x-amz-meta-*` one names an xattr), and
+    the `x-amz-copy-source`'s tenant, bucket, key and `versionId` as either
+    of its parses reads them (400 InvalidArgument; `refuseNUL`,
+    `internal/s3/request.go`); the admin `uid`, `tenant`, `email`,
+    `access-key`, `subuser`, `account-id`, `bucket`, `bucket-id`,
+    `new-bucket-name`, `object`, `id` and `name`, as `get_string` decodes
+    them (400 InvalidArgument; `Args.RefuseNUL`,
+    `internal/admin/request.go`); and a query's access key (403
+    InvalidAccessKeyId) and a system user's `rgwx-uid` (403 AccessDenied),
+    `internal/auth`. A list prefix or marker reaches the bucket index only
+    inside an encoded class call, which keeps its NUL. docs/exclusions.md,
+    "A NUL in a request argument that names a RADOS object is refused",
+    records the difference from radosgw.
+  - Beneath every check, goceph refuses an oid, a locator, an xattr name or
+    an omap listing's start or prefix holding a NUL with
+    `radosclient.ErrNULName` before the op reaches librados
+    (`internal/radosclient/goceph/pool.go`, `translate.go`), so a name no
+    check above covers fails rather than names another object. Pool and
+    namespace names come from the zone configuration, not a request, and
+    `Cluster.Pool` refuses one holding a NUL the same way
+    (`internal/radosclient/goceph/cluster.go`).
+- **Found:** N Task 8 re-review, 2026-10-08; the request checks and the
+  goceph guard came with X23.
 
 ## RADOS semantics that shape the client
 
