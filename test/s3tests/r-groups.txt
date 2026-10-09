@@ -1,0 +1,36 @@
+# The s3-tests that judge object reads: GET and HEAD of an object, its
+# ranges, conditionals, parts, response overrides, tags, ACL and attributes.
+# One extended regular expression per line over hack/parity's test ids, each
+# ending in :|$ so that it also selects that test's line of a parity diff,
+# with grep -E -f. A comment line is a pattern to grep too; it holds no test
+# id, so it selects nothing. No line is blank, since an empty pattern
+# selects every line. s3-tests carries no marker for reads, so the groups go
+# by name.
+#
+# Ranged GETs, of plain and empty objects.
+^s3tests\.functional\.test_s3::test_ranged_[a-z0-9_]+(:|$)
+# The conditional GETs.
+^s3tests\.functional\.test_s3::test_get_object_if[a-z0-9_]+(:|$)
+# Signed and anonymous GETs through the object's ACL and its bucket's, the
+# response-* overrides, and the presigned GET's X-Amz-Expires; not the
+# presigned PUT, test_object_raw_put_authenticated_expired.
+^s3tests\.functional\.test_s3::test_object_raw_(get|authenticated|response_headers)[a-z0-9_]*(:|$)
+# HEAD of an empty object, GET of a missing one and of one whose name is
+# not printable, and the request id of a GET's error.
+^s3tests\.functional\.test_s3::test_object_head_zero_bytes(:|$)
+^s3tests\.functional\.test_s3::test_object_read_(not_exist|unreadable)(:|$)
+^s3tests\.functional\.test_s3::test_object_requestid_matches_header_on_error(:|$)
+# partNumber on a multipart object, a one-part one and a plain one.
+^s3tests\.functional\.test_s3::test_(non_multipart|multipart|multipart_single)_get_part(:|$)
+# The tag count on HEAD and the tagging subresource.
+^s3tests\.functional\.test_s3::test_get_obj_(head_)?tagging(:|$)
+# ?torrent.
+^s3tests\.functional\.test_s3::test_get_object_torrent(:|$)
+# A read racing an overwrite never sees a mix of the two.
+^s3tests\.functional\.test_s3::test_atomic_read_[a-z0-9_]+(:|$)
+# User metadata read back after a write, unicode values among them.
+^s3tests\.functional\.test_s3::test_object_set_get_(metadata_[a-z0-9_]+|unicode_metadata)(:|$)
+# The object ACL subresource, read back after each canned and explicit ACL.
+^s3tests\.functional\.test_s3::test_object_acl[a-z0-9_]*(:|$)
+# GetObjectAttributes, plain and multipart.
+^s3tests\.functional\.test_s3::test_get_(single_|paginated_)?(multipart_)?object_attributes(:|$)
