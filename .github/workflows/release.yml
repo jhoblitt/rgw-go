@@ -49,8 +49,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          # go1.27.2 explicitly until actions/go-versions lists it, since
+          # check-latest resolves only from that manifest; then go back to
+          # go-version-file: go.mod with check-latest: true.
+          go-version: "1.27.2"
 
       - name: Assert .goreleaser.yaml's Ceph images and build tags match their homes
         run: make release-pins-check

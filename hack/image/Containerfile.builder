@@ -8,7 +8,7 @@
 # hack/rooket/<release>/values/, which .goreleaser.yaml repeats under make
 # release-pins-check, so a build that omits it must fail.
 ARG CEPH_IMAGE
-FROM docker.io/library/golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go
+FROM docker.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS go
 FROM ${CEPH_IMAGE}
 # The Ceph image deletes its ceph repo file after installing (container/Containerfile
 # in ceph.git, "CLEAN UP!"), so librados-devel comes from the release's repo.

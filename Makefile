@@ -1,7 +1,7 @@
 # Managed by go-conventions (references/ci.md owns the target contract);
 # converge rewrites it. `check` is the local gate; CI runs it and adds
 # govulncheck (references/ci.md, "The gates").
-GOLANGCI_LINT_VERSION ?= v2.13.2
+GOLANGCI_LINT_VERSION ?= v2.14.0
 # Module directories, relative to this file; a single-module repo uses ".".
 MODULES ?= .
 # go-ceph's async completions and op steps rgw-go uses sit behind ceph_preview.
