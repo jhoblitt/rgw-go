@@ -136,12 +136,18 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
 	  go test "-tags=$$tags" -race -count=1 ./test/integration -ginkgo.label-filter=integration
 
+# The gate's read specs need an rgw-go beside the radosgw, which make
+# read-gate starts; make gate leaves them out.
 .PHONY: gate
 gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
 	RGW_GO_TEST_MANIFEST=$(CLUSTER_OUT)/manifest.json \
 	RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
-	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v
+	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v '-ginkgo.label-filter=!read'
+
+.PHONY: read-gate
+read-gate: need-release ## Read the populated corpus through rgw-go and the RELEASE cluster's radosgw and compare
+	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) hack/rooket/read-gate.sh $(RELEASE) $(RGW_GO_FLAGS)
 
 # The gateway s3tests and admin-suite run against, and the run id that names
 # their reports.

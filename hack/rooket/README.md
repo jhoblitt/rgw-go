@@ -12,6 +12,7 @@ make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.6 under Rook v1.20.7
 make populate RELEASE=squid
 make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
+make read-gate RELEASE=squid      # the corpus read through rgw-go and the radosgw, compared
 make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
 make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw, after the gate
 make rgw-go-up RELEASE=squid      # rgw-go on the host at http://127.0.0.1:7481, under the parity settings
@@ -23,6 +24,7 @@ make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.20.7
 make populate RELEASE=tentacle
 make integration RELEASE=tentacle
 make gate RELEASE=tentacle
+make read-gate RELEASE=tentacle
 make s3tests RELEASE=tentacle
 make admin-suite RELEASE=tentacle
 make rgw-go-up RELEASE=tentacle
@@ -68,6 +70,7 @@ writes the same data and manifest again.
 | `diag.sh` | collects pod logs, Rook status and Ceph's view for CI, with no admin keyring or S3 secret key, each call bounded by a timeout |
 | `admin.sh`, `endpoint.sh` | `admin.sh <release> <args...>` runs `radosgw-admin` in the toolbox on the site `manifest.json` records and `endpoint.sh <release>` prints the radosgw's URL, for the integration specs (`internal/testutil/cephtest`) |
 | `rgw-go-up.sh`, `rgw-go-down.sh` | build rgw-go, set the parity options for both gateways and run rgw-go on the host against the cluster; stop it |
+| `read-gate.sh` | `make read-gate`: starts rgw-go, runs the gate's read specs against it and the radosgw, and stops it |
 | `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers, and the parity options, that the scripts share |
 | `parity-options-check.sh` | `make parity-options-check`: fails when a release's chart values give the radosgw other options than `parity_options` |
 
@@ -289,6 +292,30 @@ Rook's probe, an anonymous `curl -i http://127.0.0.1:8080/`, answers 200 with
 `http://127.0.0.1:9283/metrics` and `/debug/pprof/` serve the metrics and
 profiles. `serve_integration_test.go` in `internal/cli` runs this command
 under `make integration`, over TLS too, and stops it with SIGTERM.
+
+## The read gate
+
+```sh
+make read-gate RELEASE=squid
+```
+
+`read-gate.sh` starts rgw-go with `rgw-go-up.sh`, runs the specs in
+`test/gate` labelled `read` against it and the cluster's radosgw, and stops
+rgw-go however they end; `make gate` leaves those specs out. Each spec sends
+one signed request to both gateways and requires rgw-go's status, headers and
+body to be radosgw's, an error document's request and host ids aside, since
+they end in each process's librados instance id: every populated object read
+whole and by HEAD, through a raw client and through
+aws-sdk-go-v2, ranges across the head, tail-stripe, part and compression
+boundaries, the conditional headers, `partNumber`, the `response-*`
+overrides, `?tagging` and `?acl`. GetObjectAttributes is compared on
+Tentacle; on Squid, whose radosgw answers it as a GetObject, rgw-go's answer
+is checked on its own. One spec counts the RADOS read ops of a request from
+`rgw_go_rados_ops_total` at the address `rgw-go.metrics` names: one for a GET
+of an object its head holds whole. That counter is the whole process's, so
+each count is taken between two one-second windows in which it holds still,
+and only a count two such measurements agree on is judged. The gate needs a
+populated cluster and is no benchmark.
 
 ## The seam microbenchmark
 
