@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -207,6 +208,41 @@ func copySourceBucket(v string) (string, bool) {
 		return "", false
 	}
 	return bucket, true
+}
+
+// nameArgs are the query arguments whose value becomes part of a RADOS
+// object name: an object's instance and a multipart upload's id.
+var nameArgs = []string{"versionId", "uploadId"}
+
+// refuseNUL is ErrInvalidArgument for a NUL in what of r becomes part of a
+// RADOS object or xattr name, which go-ceph hands librados as a C string
+// that ends at the NUL: any query argument's name, as an x-amz-meta-* one
+// names an xattr; nameArgs' values; and the tenant, bucket, key or versionId
+// of the copy source the ops read, as either parser reads it. radosgw checks
+// only the path for a NUL and keeps one anywhere else in the name, which
+// librados's C++ API takes whole (docs/exclusions.md).
+func refuseNUL(r *op.Request) error {
+	for name := range r.Query {
+		if strings.IndexByte(name, 0) >= 0 {
+			return fmt.Errorf("%w: a NUL in a query argument's name", op.ErrInvalidArgument)
+		}
+	}
+	for _, name := range nameArgs {
+		if strings.IndexByte(r.Query.Get(name), 0) >= 0 {
+			return fmt.Errorf("%w: a NUL in %s", op.ErrInvalidArgument, name)
+		}
+	}
+	v, ok := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
+	if !ok {
+		return nil
+	}
+	for _, parse := range []func(v, defaultTenant string) (string, string, meta.ObjKey, bool){parseCopySource, partCopySource} {
+		tenant, bucket, key, _ := parse(v, "")
+		if strings.IndexByte(tenant+bucket+key.Name+key.Instance, 0) >= 0 {
+			return fmt.Errorf("%w: a NUL in x-amz-copy-source", op.ErrInvalidArgument)
+		}
+	}
+	return nil
 }
 
 // knownMethod reports whether op_from_method maps method to an op the S3

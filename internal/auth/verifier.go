@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -139,8 +140,14 @@ func (v *Verifier) parseAuthData(rv *requestView, ver version, rt route, payload
 // only active keys, so an inactive one fails the lookup; rgw-go checks the
 // flag after it, which keeps the answer whatever a store indexes. Stored
 // identity policies are decoded at authorization, not here. Neither its
-// errors nor its log name the access key, which is the request's.
+// errors nor its log name the access key, which is the request's. A key
+// holding a NUL fails without a lookup, as go-ceph would hand librados the
+// key's index object name as a C string that ends at the NUL; radosgw looks
+// the whole key up and finds none (docs/exclusions.md).
 func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord, meta.AccessKey, *meta.AccountInfo, error) {
+	if strings.IndexByte(accessKey, 0) >= 0 {
+		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key holds a NUL byte", op.ErrInvalidAccessKeyID)
+	}
 	rec, err := v.creds.GetUserByAccessKey(ctx, accessKey)
 	if err != nil {
 		if !errors.Is(err, op.ErrNoSuchUser) {

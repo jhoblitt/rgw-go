@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -23,7 +24,9 @@ import (
 // named one's and the identity stays the system user's
 // (SysReqApplier::load_acct_info, rgw_auth_filters.h:282-317 at v19.2.6,
 // :304-345 at v20.2.4; docs/exclusions.md has Tentacle's user record). A
-// failure is logged by its code alone, without the rgwx-uid.
+// failure is logged by its code alone, without the rgwx-uid. An rgwx-uid
+// holding a NUL is EACCES without a lookup, as go-ceph would hand librados
+// the owner's object name as a C string that ends at the NUL.
 func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRecord, accessKey string, key meta.AccessKey, account *meta.AccountInfo) (op.Identity, error) {
 	info := rec.Info
 	id := op.Identity{
@@ -45,6 +48,9 @@ func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRe
 	uid := rv.sysParams[sysParamPrefix+"uid"]
 	if !id.System || uid == "" {
 		return id, nil
+	}
+	if strings.IndexByte(uid, 0) >= 0 {
+		return op.Identity{}, fmt.Errorf("%w: the rgwx-uid holds a NUL byte", op.ErrAccessDenied)
 	}
 	owner := meta.ParseOwner(uid)
 	if owner.User == nil {

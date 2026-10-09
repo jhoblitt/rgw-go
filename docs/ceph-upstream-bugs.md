@@ -246,6 +246,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
 | [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
+| [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11170,3 +11171,67 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 8, 2026-10-08; derived from the
   source, not reproduced.
+
+## radosgw's policy match cuts an object name at a NUL that its RADOS name keeps
+
+- **Kind:** possibly a defect, and security-relevant if so: it would let
+  an authorization decision on one name govern an object named otherwise.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; lines are given as v19.2.6's then
+  v20.2.4's.
+  - radosgw keeps a NUL that a request decodes into a name.
+    `RGWHTTPArgs::parse` url-decodes each query argument through
+    `url_decode`, which turns `%00` into a NUL and keeps it
+    (`rgw/rgw_common.cc:848-898` and `:1701-1734`; `:861-911` and
+    `:1764-1797`), and `parse_copy_location` decodes the copy source the
+    same way (`rgw/rgw_op.cc:5329-5374`; `:5895-5940`). Only the decoded
+    path is checked for a NUL (`ERR_ZERO_IN_URL`, `rgw/rgw_rest.cc:2182-2186`;
+    `:2204-2208`).
+  - The name reaches RADOS whole: radosgw writes and reads through
+    librados's C++ API, which takes the object name as a `std::string`
+    (`IoCtx::operate`, `include/rados/librados.hpp:1170`; `:1191`).
+  - The policy match cuts it. A request's resource ARN is the bucket, `/`
+    and the key's whole name (`ARN::ARN(const rgw_obj&)`,
+    `rgw/rgw_arn.cc:126-135` at both tags), and a statement's `Resource`
+    and `NotResource` match it through `ARN::match`
+    (`rgw/rgw_iam_policy.cc:1209` and `:1216`; `:1213` and `:1220`), which
+    compares the resource with `match_wildcards` (`rgw/rgw_arn.cc:319-344`
+    at both tags). `match_wildcards` hands `fnmatch` `pattern.data()` and
+    `input.data()` (`rgw/rgw_string.cc:7-22` at both tags), C strings that
+    end at the first NUL, so the key `report\0private` is matched as
+    `report`.
+  - Paths that can name an object with a NUL, from the source:
+    - The path cannot: preprocess refuses it, so no GET, PUT, HEAD or
+      DELETE addresses such an object.
+    - POST object can, as far as the source shows: the form's `key` part
+      is copied whole from the part's data (`part_str`,
+      `rgw/rgw_rest.cc:1367-1380`; `:1372-1385`) into the object
+      (`rgw/rgw_rest_s3.cc:2984-2990`; `:3130-3137`). `validate_object_name`
+      runs only on a key from the path (`rgw/rgw_rest_s3.cc:4979-4983`;
+      `:5539-5543`), and its `check_utf8` takes a NUL as valid UTF-8
+      (`common/utf8.c:158` at both tags). `RGWPostObj::verify_permission`
+      then authorizes the bucket policy against the ARN of that key
+      (`rgw/rgw_op.cc:4592-4599`; `:4885-4892`). Whether the multipart form
+      reader passes a NUL through was not traced.
+    - CopyObject can read one: its source key keeps the NUL, and its source
+      check builds the ARN from it (`rgw/rgw_op.cc:5454`; `:6020`).
+    - The admin API takes a NUL in a bucket link's `new-bucket-name` and
+      the other name arguments (`RESTArgs::get_string`,
+      `rgw/rgw_rest.cc:854-871`; `:859-876`); whether a rename validates
+      the new name was not traced.
+- **Impact:** if such an object exists, a policy written for the name's
+  first part governs it. An Allow on `arn:aws:s3:::b/report` would let its
+  grantee copy `b/report\0private` out with CopyObject, and a Deny on
+  `arn:aws:s3:::b/*.key` would not deny `b/notes\0.key`. Creating the
+  object needs a write the policy allows, so the risk lies in a policy
+  that grants or denies by name within a bucket others write to.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** not affected. It refuses a NUL in every request argument that
+  becomes part of an object name before authorizing it, serves no POST
+  object, and its goceph seam refuses a name holding a NUL
+  (`docs/exclusions.md`, "A NUL in a request argument that names a RADOS
+  object is refused"). An object radosgw created under such a name on a
+  shared zone is listed by rgw-go but cannot be addressed through it.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** review of follow-up X23, 2026-10-08; derived from the source,
+  not reproduced.

@@ -30,6 +30,7 @@ var (
 	ErrBadOp         = errors.New("rados: bad operation")           // a step, flag or mode the implementation cannot translate
 	ErrClosed        = errors.New("rados: closed")                  // the Pool or Cluster was closed
 	ErrReleaseTooOld = errors.New("rados: release below the floor") // the cluster requires a release older than Squid
+	ErrNULName       = errors.New("rados: name holds a NUL byte")   // an object, locator, xattr or omap bound librados's C API would cut at it
 )
 
 // errBusyResharding is cls_rgw's ERR_BUSY_RESHARDING, which has no syscall constant.

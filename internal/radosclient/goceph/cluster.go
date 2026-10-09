@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/ceph/go-ceph/rados"
@@ -283,6 +284,11 @@ func (c *cluster) end() {
 func (c *cluster) Pool(ctx context.Context, pool, namespace string) (radosclient.Pool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// go-ceph opens the pool and sets the namespace by C string, which would
+	// end at a NUL and name another pool or namespace.
+	if strings.IndexByte(pool+namespace, 0) >= 0 {
+		return nil, fmt.Errorf("goceph: open pool %q: %w", pool, radosclient.ErrNULName)
 	}
 	if err := c.begin("open pool " + pool); err != nil {
 		return nil, err
