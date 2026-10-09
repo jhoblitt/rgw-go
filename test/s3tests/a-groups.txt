@@ -1,0 +1,30 @@
+# The s3-tests that judge S3 authentication: one extended regular expression
+# per line over hack/parity's test ids, each ending in :|$ so that it also
+# selects that test's line of a parity diff, with grep -E -f. A comment line
+# is a pattern to grep too; it holds no test id, so it selects nothing. No
+# line is blank, since an empty pattern selects every line.
+#
+# test_headers.py: s3-tests' auth groups. At the pinned commit every test
+# in the file carries the auth_common or the auth_aws2 marker, and no test of
+# test_s3.py carries an auth marker.
+^s3tests\.functional\.test_headers::
+# A SigV4 header signature with an access key radosgw does not know, and
+# with the main user's key and a wrong secret.
+^s3tests\.functional\.test_s3::test_list_buckets_(bad|invalid)_auth(:|$)
+# Anonymous requests: the anonymous identity, and its access through ACLs.
+^s3tests\.functional\.test_s3::test_list_buckets_anonymous(:|$)
+^s3tests\.functional\.test_s3::test_bucket_list(v2)?_objects_anonymous(_fail)?(:|$)
+^s3tests\.functional\.test_s3::test_object_anon_put(_write_access)?(:|$)
+^s3tests\.functional\.test_s3::test_object_raw_get(_bucket_acl|_bucket_gone|_object_acl|_object_gone)?(:|$)
+# The header-signed counterparts of the anonymous object requests.
+^s3tests\.functional\.test_s3::test_object_raw_authenticated(_bucket_acl|_bucket_gone|_object_acl|_object_gone)?(:|$)
+^s3tests\.functional\.test_s3::test_object_put_authenticated(:|$)
+# Presigned URLs: X-Amz-Expires out of range, an expired PUT, and a
+# presigned PUT carrying a canned ACL, for a plain and a tenant user.
+^s3tests\.functional\.test_s3::test_object_raw_get_x_amz_expires_out_(max_range|positive_range|range_zero)(:|$)
+^s3tests\.functional\.test_s3::test_object_raw_put_authenticated_expired(:|$)
+^s3tests\.functional\.test_s3::test_object_presigned_put_object_with_acl(_tenant)?(:|$)
+# Payload framing the verifier reads: aws-chunked in Content-Encoding, and a
+# signed body sent with Transfer-Encoding: chunked and no Content-Length.
+^s3tests\.functional\.test_s3::test_object_content_encoding_aws_chunked(:|$)
+^s3tests\.functional\.test_s3::test_object_write_with_chunked_transfer_encoding(:|$)
