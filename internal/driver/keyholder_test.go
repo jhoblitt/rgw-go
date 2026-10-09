@@ -259,3 +259,181 @@ var _ = Describe("the key holder index", func() {
 		Expect(err).To(MatchError(op.ErrNoSuchUser))
 	})
 })
+
+var _ = Describe("the email index claim", func() {
+	var (
+		c *fakerados.Cluster
+		s *driver.Store
+	)
+	BeforeEach(func(ctx SpecContext) {
+		DeferCleanup(driver.CaptureLog(GinkgoWriter))
+		c = newIndexCluster()
+		st, err := driver.Open(ctx, c, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(st.Close)
+		s = st
+	})
+	userWith := func(id, email string) meta.UserInfo {
+		u := meta.NewUserInfo()
+		u.UserID = meta.UserID{ID: id}
+		u.Email = email
+		return u
+	}
+	put := func(ctx context.Context, u meta.UserInfo) error {
+		cur, err := s.GetUser(ctx, u.UserID)
+		if err != nil {
+			return s.PutUser(ctx, &op.UserRecord{Info: u}, op.PutUserOptions{})
+		}
+		return s.PutUser(ctx, &op.UserRecord{Info: u}, op.PutUserOptions{IfVersion: &cur.Version})
+	}
+	indexNames := func(email string) string {
+		GinkgoHelper()
+		o := c.Object(rookMetaPool, "users.email", email)
+		if o == nil {
+			return ""
+		}
+		d := denc.NewDecoder(o.Data)
+		uid := meta.DecodeUID(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		return string(uid)
+	}
+
+	It("claims a new email before it writes the user", func(ctx SpecContext) {
+		var named string
+		c.BeforeWrite(rookMetaPool, "users.uid", "alice", func(*fakerados.Object) { named = indexNames("alice@example.com") })
+		Expect(put(ctx, userWith("alice", "Alice@Example.com"))).To(Succeed())
+		Expect(named).To(Equal("alice"))
+	})
+
+	It("refuses the second of two writes giving one email to two users, writing neither its user nor its index", func(ctx SpecContext) {
+		Expect(put(ctx, userWith("bob", ""))).To(Succeed())
+		c.BeforeWrite(rookMetaPool, "users.email", "shared@example.com", func(*fakerados.Object) {
+			c.BeforeWrite(rookMetaPool, "users.email", "shared@example.com", nil)
+			Expect(put(ctx, userWith("carol", "shared@example.com"))).To(Succeed())
+		})
+		err := put(ctx, userWith("bob", "SHARED@example.com"))
+		Expect(err).To(MatchError(op.ErrEmailExists))
+		Expect(err.Error()).NotTo(ContainSubstring("shared"))
+		Expect(indexNames("shared@example.com")).To(Equal("carol"))
+		rec, err := s.GetUser(ctx, meta.UserID{ID: "bob"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec.Info.Email).To(BeEmpty())
+	})
+
+	It("takes an index naming the user as its own, and refuses one naming an account or another user", func(ctx SpecContext) {
+		c.Put(rookMetaPool, "users.email", "dana@example.com", encode(meta.UID("dana")))
+		Expect(put(ctx, userWith("dana", "dana@example.com"))).To(Succeed(), "a write that stopped before the user")
+		c.Put(rookMetaPool, "users.email", "acct@example.com", encode(meta.UID("RGW00000000000000001")))
+		Expect(put(ctx, userWith("erin", "acct@example.com"))).To(MatchError(op.ErrEmailExists))
+		c.Put(rookMetaPool, "users.email", "ghost@example.com", encode(meta.UID("ghost")))
+		Expect(put(ctx, userWith("erin", "ghost@example.com"))).To(MatchError(op.ErrEmailExists),
+			"another user's index, whether or not that user still exists")
+		Expect(c.Object(rookMetaPool, "users.uid", "erin")).To(BeNil())
+	})
+
+	It("removes a shared email's index only while it names the departing user, so an account that takes it keeps it", func(ctx SpecContext) {
+		shared := op.PutUserOptions{Exclusive: true, SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("alice", "shared@example.com")}, shared)).To(Succeed())
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, shared)).To(Succeed())
+		Expect(indexNames("shared@example.com")).To(Equal("bob"))
+		bob, err := s.GetUser(ctx, meta.UserID{ID: "bob"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.RemoveUser(ctx, bob)).To(Succeed())
+		Expect(c.Object(rookMetaPool, "users.email", "shared@example.com")).To(BeNil(), "bob's index goes, alice is left unindexed")
+		acct := &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001", Name: "acme", Email: "shared@example.com"}}
+		Expect(s.PutAccount(ctx, acct, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed())
+		alice, err := s.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred())
+		alice.Info.Email = "alice@example.com"
+		Expect(s.PutUser(ctx, alice, op.PutUserOptions{IfVersion: &alice.Version})).To(Succeed())
+		Expect(indexNames("shared@example.com")).To(Equal("RGW00000000000000001"), "alice's change leaves the account's index")
+		alice, err = s.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.RemoveUser(ctx, alice)).To(Succeed())
+		Expect(indexNames("alice@example.com")).To(BeEmpty())
+		Expect(indexNames("shared@example.com")).To(Equal("RGW00000000000000001"))
+	})
+
+	It("never writes a shared email's index over an account that took it after the claim read it", func(ctx SpecContext) {
+		shared := op.PutUserOptions{Exclusive: true, SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, shared)).To(Succeed())
+		c.BeforeWrite(rookMetaPool, "users.uid", "alice", func(*fakerados.Object) {
+			c.BeforeWrite(rookMetaPool, "users.uid", "alice", nil)
+			bob, err := s.GetUser(ctx, meta.UserID{ID: "bob"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s.RemoveUser(ctx, bob)).To(Succeed(), "bob leaves after alice's claim read his index")
+			acct := &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001", Name: "acme", Email: "shared@example.com"}}
+			Expect(s.PutAccount(ctx, acct, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed(), "and an account takes the email")
+		})
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("alice", "shared@example.com")}, shared)).To(MatchError(op.ErrEmailExists))
+		Expect(indexNames("shared@example.com")).To(Equal("RGW00000000000000001"), "the account keeps its index")
+		_, err := s.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred(), "alice is written, holding the email unindexed")
+	})
+
+	It("finishes the user's indexes and releases before it answers a shared email's 409", func(ctx SpecContext) {
+		shared := op.PutUserOptions{SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, op.PutUserOptions{Exclusive: true, SharedEmail: true})).To(Succeed())
+		alice := userWith("alice", "")
+		alice.AccessKeys = map[string]meta.AccessKey{"AKTWO": {ID: "AKTWO", Secret: "s", Active: true}}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: alice}, op.PutUserOptions{Exclusive: true})).To(Succeed())
+		c.BeforeWrite(rookMetaPool, "users.uid", "alice", func(*fakerados.Object) {
+			c.BeforeWrite(rookMetaPool, "users.uid", "alice", nil)
+			bob, err := s.GetUser(ctx, meta.UserID{ID: "bob"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s.RemoveUser(ctx, bob)).To(Succeed())
+			acct := &op.AccountRecord{Info: meta.AccountInfo{ID: "RGW00000000000000001", Name: "acme", Email: "shared@example.com"}}
+			Expect(s.PutAccount(ctx, acct, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed())
+		})
+		cur, err := s.GetUser(ctx, meta.UserID{ID: "alice"})
+		Expect(err).NotTo(HaveOccurred())
+		next := userWith("alice", "shared@example.com")
+		next.AccessKeys = map[string]meta.AccessKey{"AKONE": {ID: "AKONE", Secret: "s", Active: true}}
+		shared.IfVersion = &cur.Version
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: next}, shared)).To(MatchError(op.ErrEmailExists))
+		got, err := s.GetUserByAccessKey(ctx, "AKONE")
+		Expect(err).NotTo(HaveOccurred(), "the gained key's index is written, so it authenticates")
+		Expect(got.Info.UserID).To(Equal(meta.UserID{ID: "alice"}))
+		holder, err := s.FindKeyHolder(ctx, "AKTWO")
+		Expect(err).To(MatchError(op.ErrNoSuchUser), "the dropped key's entry is released")
+		Expect(holder).To(BeZero())
+		Expect(c.Object(rookMetaPool, "users.keys", "AKTWO")).To(BeNil(), "and its index removed")
+	})
+
+	It("writes a shared email's index over another sharer's that changed after the claim read it", func(ctx SpecContext) {
+		shared := op.PutUserOptions{Exclusive: true, SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, shared)).To(Succeed())
+		c.BeforeWrite(rookMetaPool, "users.uid", "alice", func(*fakerados.Object) {
+			c.BeforeWrite(rookMetaPool, "users.uid", "alice", nil)
+			Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("carol", "shared@example.com")}, shared)).To(Succeed())
+		})
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("alice", "shared@example.com")}, shared)).To(Succeed())
+		Expect(indexNames("shared@example.com")).To(Equal("alice"), "claimed again from carol's index")
+	})
+
+	It("keeps an email's index another sharer writes between a removal's read and its removal", func(ctx SpecContext) {
+		shared := op.PutUserOptions{Exclusive: true, SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, shared)).To(Succeed())
+		c.BeforeWrite(rookMetaPool, "users.email", "shared@example.com", func(*fakerados.Object) {
+			c.BeforeWrite(rookMetaPool, "users.email", "shared@example.com", nil)
+			Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("carol", "shared@example.com")}, shared)).To(Succeed())
+		})
+		bob, err := s.GetUser(ctx, meta.UserID{ID: "bob"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.RemoveUser(ctx, bob)).To(Succeed())
+		Expect(indexNames("shared@example.com")).To(Equal("carol"))
+	})
+
+	It("writes over another user's index after the user when users may share an email, but never an account's", func(ctx SpecContext) {
+		c.Put(rookMetaPool, "users.email", "shared@example.com", encode(meta.UID("carol")))
+		var before string
+		c.BeforeWrite(rookMetaPool, "users.uid", "bob", func(*fakerados.Object) { before = indexNames("shared@example.com") })
+		shared := op.PutUserOptions{SharedEmail: true}
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("bob", "shared@example.com")}, shared)).To(Succeed())
+		Expect(before).To(Equal("carol"), "radosgw writes the index after the user")
+		Expect(indexNames("shared@example.com")).To(Equal("bob"))
+		c.Put(rookMetaPool, "users.email", "acct@example.com", encode(meta.UID("RGW00000000000000001")))
+		Expect(s.PutUser(ctx, &op.UserRecord{Info: userWith("erin", "acct@example.com")}, shared)).To(MatchError(op.ErrEmailExists))
+		Expect(indexNames("acct@example.com")).To(Equal("RGW00000000000000001"))
+	})
+})

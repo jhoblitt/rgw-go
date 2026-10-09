@@ -689,7 +689,7 @@ review and verified against the tree.
   users index clean where radosgw leaves entries behind.** On
   `/admin/user` create, info, modify and remove, rgw-go differs from
   radosgw's `RGWUser` paths (`driver/rados/rgw_user.cc` at v19.2.6 and
-  v20.2.4) in seven ways:
+  v20.2.4) in eight ways:
   - A failed read of a user, of the email index or of the access key
     index fails the request. radosgw's `RGWUser::init` and its duplicate
     checks count any failure as "no such user", so a RADOS error there
@@ -741,6 +741,41 @@ review and verified against the tree.
   - Removing a user with purge-data leaves a bucket the user's bucket list
     names when the bucket now belongs to another owner, where radosgw
     removes the listed bucket whoever owns it.
+  - radosgw writes a user's email index after the user, over whatever it
+    holds unless the write is exclusive, so two concurrent writes giving
+    one email to two users both store it and the index names the last, and
+    a user's write takes an account's email from the account
+    (docs/ceph-upstream-bugs.md, "radosgw lets a user take an account's
+    email and deletes it with the account"). rgw-go claims a new email's
+    index object before it writes the user, creating it exclusively: an
+    index naming the user is its own, left by a write that stopped before
+    the user, and one naming another user or an account answers 409
+    EmailExists and stores nothing, whether or not that user still holds
+    the email. With `rgw_user_unique_email` false, which lets users share
+    an email, a user create or modify leaves another user's index to be
+    written over after the user, as radosgw writes it, under the version
+    its claim read: an index changed since is claimed again, and one an
+    account took meanwhile is left, which answers 409 EmailExists once the
+    user, its key indexes and its releases are written, the email
+    unindexed; an index radosgw wrote, without
+    a version, is written over unchecked; an account's email
+    answers 409 whatever the option says, and a metadata put refuses
+    another user's email whatever it says. The index is written with a
+    version, and a user's removal or change of email removes it only while
+    it names that user, under the version read, where radosgw removes it
+    whoever it names; an index radosgw wrote, which has no version, is
+    removed once it is read to name the user. So a departing sharer never
+    removes another sharer's index or an account's, but it does leave the
+    other sharers unindexed when the index named it: they still hold the
+    email, no lookup by email finds them, and an account created then may
+    take the email, after which an account and a user hold it. The claim
+    fences rgw-go writers; a radosgw gateway writes over it. An index naming a user that no longer
+    holds the email, one claimed by a write that then failed or an old
+    email's whose removal a write stopped before, refuses the email to
+    every other user until a write of that user takes the email and a later
+    one drops it. A refused email claim leaves the write's key claims in
+    place, as any failed write does. The memstore refuses the same emails
+    under its lock.
 - **The admin key, subuser, caps and quota routes differ from radosgw in
   seven ways.** On `/admin/user?key`, `?subuser`, `?caps` and `?quota`
   (`driver/rados/rgw_rest_user.cc` and `driver/rados/rgw_user.cc` at
@@ -1257,7 +1292,9 @@ review and verified against the tree.
     user outside an account, and a user id or tenant in an account id's
     form, which a user create refuses and the email and key indexes would
     read as an account's, 409 EmailExists for an email another user or an
-    account holds, and 409 KeyExists for an access key the put
+    account holds, whose index the put claims as a user write does ("The
+    admin user routes answer store failures, and keep the account users
+    index clean"), and 409 KeyExists for an access key the put
     gains whose id another user holds, active or not ("The admin key,
     subuser, caps and quota routes differ from radosgw in seven ways");
     radosgw's metadata put checks none of them but an active key's.

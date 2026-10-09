@@ -8,7 +8,9 @@ package conformance
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive // Ginkgo's DSL is meant to be dot-imported
 	. "github.com/onsi/gomega"    //nolint:revive // Gomega's DSL is meant to be dot-imported
@@ -216,6 +218,56 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Expect(env.Users.RemoveUser(ctx, rec)).To(Succeed())
 			_, err = env.Users.FindKeyHolder(ctx, key)
 			Expect(err).To(MatchError(op.ErrNoSuchUser), "a removed user's key")
+		})
+
+		It("removes a shared email's index only while it names the departing user", func(ctx SpecContext) {
+			email := prefix + "-shared@example.com"
+			sharer := func(suffix string) *op.UserRecord {
+				GinkgoHelper()
+				info := meta.NewUserInfo()
+				info.UserID = meta.UserID{ID: prefix + "-" + suffix}
+				info.Email = email
+				rec := &op.UserRecord{Info: info}
+				Expect(env.Users.PutUser(ctx, rec, op.PutUserOptions{Exclusive: true, SharedEmail: true})).To(Succeed(), "putting %s", suffix)
+				DeferCleanup(func(ctx context.Context) {
+					if cur, err := env.Users.GetUser(ctx, info.UserID); err == nil {
+						Expect(env.Users.RemoveUser(ctx, cur)).To(Succeed())
+					}
+				})
+				return rec
+			}
+			alice, carol, bob := sharer("alice"), sharer("carol"), sharer("bob")
+			got, err := env.Users.GetUserByEmail(ctx, email)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.UserID).To(Equal(bob.Info.UserID), "the last sharer's write holds the index")
+			cur, err := env.Users.GetUser(ctx, bob.Info.UserID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.Users.RemoveUser(ctx, cur)).To(Succeed())
+			_, err = env.Users.GetUserByEmail(ctx, email)
+			Expect(err).To(MatchError(op.ErrNoSuchUser), "the departing sharer leaves alice unindexed")
+
+			acct := &op.AccountRecord{Info: meta.AccountInfo{
+				ID: fmt.Sprintf("RGW%017d", time.Now().UnixNano()%1e17), Name: prefix + "-acct", Email: email,
+			}}
+			Expect(env.Accounts.PutAccount(ctx, acct, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed(), "the email is free")
+			DeferCleanup(func(ctx context.Context) {
+				if stored, gerr := env.Accounts.GetAccount(ctx, acct.Info.ID); gerr == nil {
+					Expect(env.Accounts.RemoveAccount(ctx, stored)).To(Succeed())
+				}
+			})
+			cur, err = env.Users.GetUser(ctx, alice.Info.UserID)
+			Expect(err).NotTo(HaveOccurred())
+			cur.Info.Email = prefix + "-alice@example.com"
+			Expect(env.Users.PutUser(ctx, cur, op.PutUserOptions{IfVersion: &cur.Version, SharedEmail: true})).To(Succeed())
+			byEmail, err := env.Accounts.GetAccountByEmail(ctx, email)
+			Expect(err).NotTo(HaveOccurred(), "alice's change of email leaves the account's index")
+			Expect(byEmail.Info.ID).To(Equal(acct.Info.ID))
+			cur, err = env.Users.GetUser(ctx, carol.Info.UserID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.Users.RemoveUser(ctx, cur)).To(Succeed())
+			byEmail, err = env.Accounts.GetAccountByEmail(ctx, email)
+			Expect(err).NotTo(HaveOccurred(), "carol's removal leaves the account's index")
+			Expect(byEmail.Info.ID).To(Equal(acct.Info.ID))
 		})
 
 		It("creates a bucket and reads it back with its attrs and both versions", func(ctx SpecContext) {

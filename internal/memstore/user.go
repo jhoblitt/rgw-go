@@ -28,7 +28,7 @@ func (s *Store) AddUser(info meta.UserInfo) *op.UserRecord {
 		Version: meta.ObjVersion{Ver: 1, Tag: s.newTag()},
 		Mtime:   s.now(),
 	}
-	s.storeUser(rec)
+	s.storeUser(rec, false)
 	return copyUser(rec)
 }
 
@@ -69,7 +69,9 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 // Exclusive) did not already hold active, is ErrKeyExists before anything is
 // written (:257-270), and so is a key the write gains, one the stored record
 // lacks or one it makes active, whose id another user holds, active or not,
-// as the RADOS driver's key holder index refuses it. IfVersion is checked unless its Ver is 0, and the
+// as the RADOS driver's key holder index refuses it. A new email an account
+// holds is ErrEmailExists, and so is one another user holds unless
+// opts.SharedEmail, as the driver's claim of the email index refuses it. IfVersion is checked unless its Ver is 0, and the
 // version written is IfVersion's plus one under its tag, or a fresh one
 // without IfVersion or its tag, unless WriteVersion has a tag, which is
 // written as given (:234-241; rgw_common.h:950-955). The mtime
@@ -99,6 +101,11 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 			return fmt.Errorf("a key of user %s: %w", id, op.ErrKeyExists)
 		}
 	}
+	if e := rec.Info.Email; e != "" && (stored == nil || lowerASCII(e) != lowerASCII(stored.Email)) {
+		if holder, ok := s.emails[lowerASCII(e)]; ok && holder != id && (!opts.SharedEmail || meta.ValidAccountID(holder)) {
+			return fmt.Errorf("the email of user %s: %w", id, op.ErrEmailExists)
+		}
+	}
 	if exists && opts.Exclusive {
 		return fmt.Errorf("user %s: %w", id, op.ErrUserAlreadyExists)
 	}
@@ -121,7 +128,7 @@ func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOp
 	if rec.Mtime.IsZero() {
 		rec.Mtime = s.now()
 	}
-	s.storeUser(copyUser(rec))
+	s.storeUser(copyUser(rec), opts.SharedEmail)
 	return nil
 }
 
@@ -201,13 +208,21 @@ func (s *Store) user(id string) (*op.UserRecord, error) {
 }
 
 // storeUser stores rec, which the store now owns, and rewrites its index
-// entries: the email, and the access keys that are active, as PutOperation
-// indexes only those (svc_user_rados.cc:328-339, :424-432 at v19.2.6), and
-// every access key's holder, an id another user already holds keeping that
-// user, as the RADOS driver never takes a holder entry from a user.
-func (s *Store) storeUser(rec *op.UserRecord) {
+// entries: the access keys that are active, as PutOperation indexes only
+// those (svc_user_rados.cc:328-339, :424-432 at v19.2.6), every access
+// key's holder, an id another user already holds keeping that user, as the
+// RADOS driver never takes a holder entry from a user, and the email's
+// entry only when the email changes, as the RADOS driver's PutUser claims
+// a new email alone: the old email's entry goes while it names the user,
+// and the new one is taken when free or the user's, or, with shared, from
+// another user, never from an account.
+func (s *Store) storeUser(rec *op.UserRecord, shared bool) {
 	id := rec.Info.UserID.String()
-	s.unindexUser(id)
+	var oldEmail string
+	if old, ok := s.users[id]; ok {
+		oldEmail = lowerASCII(old.Info.Email)
+	}
+	s.unindexKeys(id)
 	s.users[id] = rec
 	for key, k := range rec.Info.AccessKeys {
 		if k.Active {
@@ -217,13 +232,24 @@ func (s *Store) storeUser(rec *op.UserRecord) {
 			s.holders[key] = id
 		}
 	}
-	if rec.Info.Email != "" {
-		s.emails[lowerASCII(rec.Info.Email)] = id
+	email := lowerASCII(rec.Info.Email)
+	if email == oldEmail {
+		return
+	}
+	if oldEmail != "" && s.emails[oldEmail] == id {
+		delete(s.emails, oldEmail)
+	}
+	if email == "" {
+		return
+	}
+	if holder, taken := s.emails[email]; !taken || holder == id || shared && !meta.ValidAccountID(holder) {
+		s.emails[email] = id
 	}
 }
 
-// unindexUser drops the index entries that name the user stored under id.
-func (s *Store) unindexUser(id string) {
+// unindexKeys drops the access key and holder entries that name the user
+// stored under id.
+func (s *Store) unindexKeys(id string) {
 	old, ok := s.users[id]
 	if !ok {
 		return
@@ -236,6 +262,17 @@ func (s *Store) unindexUser(id string) {
 			delete(s.holders, key)
 		}
 	}
+}
+
+// unindexUser drops the index entries that name the user stored under id,
+// its email's among them while it names the user, as the RADOS driver's
+// releaseEmail removes it.
+func (s *Store) unindexUser(id string) {
+	old, ok := s.users[id]
+	if !ok {
+		return
+	}
+	s.unindexKeys(id)
 	if email := lowerASCII(old.Info.Email); s.emails[email] == id {
 		delete(s.emails, email)
 	}

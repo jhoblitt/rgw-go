@@ -171,10 +171,11 @@ func activeKeys(m map[string]meta.AccessKey) map[string]bool {
 // the put is exclusive. The account and group user indexes it also keeps
 // are the admin API's. Before the uid object, each of the record's access
 // keys is claimed in rgw-go's key holder index (claimKey), a key the write
-// gains being refused where another user holds it, and after the indexes,
-// each key the stored record held that the new one drops is released
-// (releaseKey). A write that fails after a claim leaves the claim, which
-// names the user and is its own to a retry.
+// gains being refused where another user holds it, and a new email's index
+// object is claimed (claimEmail); after the indexes, each key the stored
+// record held that the new one drops is released (releaseKey). A write that
+// fails after a claim leaves the claim, which names the user and is its own
+// to a retry.
 func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	id := rec.Info.UserID
 	var old *meta.UserInfo
@@ -208,6 +209,14 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		}
 		gained = append(gained, key)
 	}
+	newEmail := rec.Info.Email != "" && (old == nil || lowerASCII(rec.Info.Email) != lowerASCII(old.Email))
+	var overwriteEmail *meta.ObjVersion
+	if newEmail {
+		var err error
+		if overwriteEmail, err = s.claimEmail(ctx, id, rec.Info.Email, opts.SharedEmail); err != nil {
+			return err
+		}
+	}
 
 	// prepare (:234-241; v20.2.4 :213-220): a write version given with a tag
 	// is written; otherwise a read version with a tag moves on by one under
@@ -234,9 +243,10 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		s.recheckClaim(ctx, id, key)
 	}
 
-	// complete (:309-358; v20.2.4 :289-338): each new index holds the
+	// complete (:309-358; v20.2.4 :289-338): each new key index holds the
 	// encoded RGWUID and is written as the uid object was, exclusively or
-	// not, without a version.
+	// not, without a version. The email's was claimed before the uid object,
+	// and is written here only over another user's, as opts.SharedEmail lets.
 	link := encodeAt(meta.UID(id.String()), s.release)
 	putIndex := func(o sysObj) error {
 		if _, err := s.sysobj.write(ctx, o, link, nil, opts.Exclusive, time.Time{}, nil); err != nil {
@@ -244,38 +254,47 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		}
 		return nil
 	}
-	if e := rec.Info.Email; e != "" && (old == nil || lowerASCII(e) != lowerASCII(old.Email)) {
-		if err := putIndex(s.emailIndexObj(e)); err != nil {
+	// A failed write over a shared email's index comes after the user is
+	// written, so the rest of the completion still runs, and the email's
+	// error is returned once it has; a later step's failure is then logged.
+	var emailErr error
+	if overwriteEmail != nil {
+		emailErr = s.overwriteEmail(ctx, id, rec.Info.Email, *overwriteEmail)
+	}
+	fail := func(err error) error {
+		if emailErr == nil {
 			return err
 		}
+		slog.WarnContext(ctx, "a user's index write failed after its email's", slog.String("user", id.String()), slog.Any("error", err))
+		return emailErr
 	}
 	for key := range activeKeys(rec.Info.AccessKeys) {
 		if !oldKeys[key] {
 			if err := putIndex(s.keyIndexObj(key)); err != nil {
-				return err
+				return fail(err)
 			}
 		}
 	}
 	for name := range activeKeys(rec.Info.SwiftKeys) {
 		if !oldSwift[name] {
 			if err := putIndex(s.swiftIndexObj(name)); err != nil {
-				return err
+				return fail(err)
 			}
 		}
 	}
 	if old != nil {
 		if err := s.removeOldIndexes(ctx, *old, rec.Info); err != nil {
-			return err
+			return fail(err)
 		}
 		for key := range old.AccessKeys {
 			if _, kept := rec.Info.AccessKeys[key]; !kept {
 				if err := s.releaseKey(ctx, id, key); err != nil {
-					return err
+					return fail(err)
 				}
 			}
 		}
 	}
-	return nil
+	return emailErr
 }
 
 // FindKeyHolder implements op.UserStore: the user the key holder index
@@ -549,6 +568,113 @@ func (s *Store) releaseKey(ctx context.Context, id meta.UserID, key string) erro
 	return mapUserErr(err)
 }
 
+// claimEmail creates a new email's index object for user id exclusively,
+// before the user is written, so of two writes giving one email to two
+// owners the second fails. An index naming id is the user's own, one a
+// write that stopped before the user left; one naming an account is
+// ErrEmailExists, and so is one naming another user unless shared, whether
+// or not that user still holds the email, as no read could tell one that
+// dropped it from one about to hold it again. With shared, another user's
+// index is left for overwriteEmail to write over after the user, under the
+// version claimEmail returns. The index is written with a version of its
+// own, which releaseEmail removes it under. radosgw writes the index after
+// the user, without a version, and exclusively only for an exclusive put.
+func (s *Store) claimEmail(ctx context.Context, id meta.UserID, email string, shared bool) (*meta.ObjVersion, error) {
+	o := s.emailIndexObj(email)
+	for range 2 {
+		err := s.createEmailIndex(ctx, o, id)
+		if err == nil {
+			return nil, nil
+		}
+		if !errors.Is(err, radosclient.ErrExists) {
+			return nil, mapUserErr(err)
+		}
+		holder, v, err := s.readEmailIndex(ctx, o)
+		switch {
+		case errors.Is(err, op.ErrNoSuchUser):
+			continue
+		case err != nil:
+			return nil, err
+		}
+		switch {
+		case holder.User != nil && *holder.User == id:
+			return nil, nil
+		case holder.User != nil && shared:
+			return &v, nil
+		}
+		return nil, fmt.Errorf("the email of user %s is another's: %w", id, op.ErrEmailExists)
+	}
+	return nil, fmt.Errorf("the email of user %s: its index keeps changing: %w", id, op.ErrConcurrentModification)
+}
+
+// overwriteEmail writes the index of email, which another user sharing it
+// held when claimEmail read it at v, over to user id, under v. An index
+// changed or gone since is claimed again: a missing one created
+// exclusively, one naming id kept, another user's written over under the
+// version read then, and an account's left, which is ErrEmailExists, the
+// user just written holding the email unindexed, as a departing sharer
+// leaves the others. An index without a version, which radosgw writes,
+// cannot be checked, and is written over as radosgw writes it.
+func (s *Store) overwriteEmail(ctx context.Context, id meta.UserID, email string, v meta.ObjVersion) error {
+	o := s.emailIndexObj(email)
+	for range 3 {
+		_, err := s.sysobj.write(ctx, o, encodeAt(meta.UID(id.String()), s.release), nil, false, time.Time{}, &objv{read: v})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, radosclient.ErrCanceled) && !errors.Is(err, radosclient.ErrNotFound) {
+			return mapUserErr(err)
+		}
+		s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))
+		err = s.createEmailIndex(ctx, o, id)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, radosclient.ErrExists) {
+			return mapUserErr(err)
+		}
+		holder, hv, err := s.readEmailIndex(ctx, o)
+		switch {
+		case errors.Is(err, op.ErrNoSuchUser):
+			continue
+		case err != nil:
+			return err
+		case holder.User != nil && *holder.User == id:
+			return nil
+		case holder.User == nil:
+			slog.WarnContext(ctx, "leaving an account's email index a user sharing the email was to write over",
+				slog.String("pool", o.pool.String()), s.sysobj.hidden.attr(o.pool, o.oid), slog.String("user", id.String()))
+			return fmt.Errorf("the email of user %s is an account's: %w", id, op.ErrEmailExists)
+		}
+		v = hv
+	}
+	return fmt.Errorf("the email of user %s: its index keeps changing: %w", id, op.ErrConcurrentModification)
+}
+
+// createEmailIndex creates the index object o naming user id exclusively,
+// with a version of its own.
+func (s *Store) createEmailIndex(ctx context.Context, o sysObj, id meta.UserID) error {
+	_, err := s.sysobj.write(ctx, o, encodeAt(meta.UID(id.String()), s.release), nil, true, time.Time{}, &objv{write: newWriteVersion()})
+	return err
+}
+
+// readEmailIndex is the owner the index object o names, read past the
+// cache, and the version it was read at. A missing index is ErrNoSuchUser.
+func (s *Store) readEmailIndex(ctx context.Context, o sysObj) (meta.Owner, meta.ObjVersion, error) {
+	s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))
+	v := &objv{}
+	res, err := s.sysobj.read(ctx, o, readParams{data: true, objv: v})
+	if err != nil {
+		return meta.Owner{}, meta.ObjVersion{}, mapUserErr(err)
+	}
+	d := denc.NewDecoder(res.data)
+	uid := meta.DecodeUID(d)
+	if err := d.Err(); err != nil {
+		return meta.Owner{}, meta.ObjVersion{}, fmt.Errorf("%w: decoding index %s: %w", op.ErrInternalError, s.sysobj.hidden.name(o.pool, o.oid), err)
+	}
+	return meta.ParseOwner(string(uid)), v.read, nil
+}
+
 // checkKeys is prepare's check of each key newly active in keys (:243-270):
 // one whose index names an existing other user is radosgw's -EEXIST. The
 // check reads the user through the index, as get_user_info_by_swift and
@@ -575,13 +701,47 @@ func (s *Store) removeIndex(ctx context.Context, o sysObj) error {
 	return nil
 }
 
+// releaseEmail removes email's index object while it names user id, under
+// the version read, so an index another user sharing the email, or an
+// account, holds, or one written over since the read, stays. An index
+// without a version, which radosgw writes, is removed once it is read to
+// name the user, as radosgw removes it. A missing index is no failure.
+// radosgw removes the index whoever it names (remove_old_indexes, :415-417;
+// remove_user_info, :584-590).
+func (s *Store) releaseEmail(ctx context.Context, id meta.UserID, email string) error {
+	o := s.emailIndexObj(email)
+	v := &objv{}
+	res, err := s.sysobj.read(ctx, o, readParams{data: true, objv: v})
+	if err != nil {
+		if err = mapUserErr(err); errors.Is(err, op.ErrNoSuchUser) {
+			return nil
+		}
+		return err
+	}
+	d := denc.NewDecoder(res.data)
+	uid := meta.DecodeUID(d)
+	if d.Err() != nil {
+		return fmt.Errorf("%w: decoding index %s: %w", op.ErrInternalError, s.sysobj.hidden.name(o.pool, o.oid), d.Err())
+	}
+	if owner := meta.ParseOwner(string(uid)); owner.User == nil || *owner.User != id {
+		return nil
+	}
+	err = s.sysobj.remove(ctx, o, &objv{read: v.read})
+	switch {
+	case err == nil, errors.Is(err, radosclient.ErrNotFound), errors.Is(err, radosclient.ErrCanceled):
+		return nil
+	}
+	return mapUserErr(err)
+}
+
 // removeOldIndexes is PutOperation::remove_old_indexes (:399-443): the
-// indexes of the old record that the new one no longer has. radosgw names
-// an access key's index by the key's own id when it removes one
-// (remove_key_index, :513-520), and by its map key when it writes one.
+// indexes of the old record that the new one no longer has, the email's
+// through releaseEmail. radosgw names an access key's index by the key's own
+// id when it removes one (remove_key_index, :513-520), and by its map key
+// when it writes one.
 func (s *Store) removeOldIndexes(ctx context.Context, old, cur meta.UserInfo) error {
 	if old.Email != "" && lowerASCII(old.Email) != lowerASCII(cur.Email) {
-		if err := s.removeIndex(ctx, s.emailIndexObj(old.Email)); err != nil {
+		if err := s.releaseEmail(ctx, old.UserID, old.Email); err != nil {
 			return err
 		}
 	}
@@ -633,7 +793,7 @@ func (s *Store) RemoveUser(ctx context.Context, rec *op.UserRecord) error {
 		}
 	}
 	if info.Email != "" {
-		if err := s.removeIndex(ctx, s.emailIndexObj(info.Email)); err != nil {
+		if err := s.releaseEmail(ctx, info.UserID, info.Email); err != nil {
 			return err
 		}
 	}

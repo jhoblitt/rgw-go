@@ -325,7 +325,7 @@ func foldEqual(a, b string) bool {
 // once the user is gone. Nothing is undone on a failure. Every error is
 // storeErr's.
 func writeUser(ctx context.Context, env *Env, rec *UserRecord, old *meta.UserInfo, exists *Error) error {
-	var opts PutUserOptions
+	opts := PutUserOptions{SharedEmail: !confFlag(env, "rgw_user_unique_email", true)}
 	if old != nil {
 		opts.IfVersion = &rec.Version
 	}

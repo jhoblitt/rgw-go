@@ -541,12 +541,14 @@ var _ = Describe("admin user ops", func() {
 			create(ctx, "leseb", "", "", "")
 			Expect(flaky.puts).To(Equal([]op.PutUserOptions{{}}))
 		})
-		It("creates over an email index that names no user", func(ctx SpecContext) {
-			store.AddAccount(meta.AccountInfo{ID: "RGW00000000000000007", Name: "holder", Email: "stale@example.com"})
-			create(ctx, "leseb", "stale@example.com", "", "")
-			rec, err := store.GetUserByEmail(ctx, "stale@example.com")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(rec.Info.UserID.ID).To(Equal("leseb"), "the index is overwritten, as radosgw overwrites it")
+		It("refuses a create over an account's email index, which radosgw writes over", func(ctx SpecContext) {
+			store.AddAccount(meta.AccountInfo{ID: "RGW00000000000000007", Name: "holder", Email: "taken@example.com"})
+			Expect(run(ctx, newCreate("leseb", "taken@example.com", "", ""))).To(MatchError(op.ErrEmailExists))
+			_, err := store.GetUser(ctx, meta.UserID{ID: "leseb"})
+			Expect(err).To(MatchError(op.ErrNoSuchUser))
+			env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_user_unique_email": "false"})
+			Expect(run(ctx, newCreate("leseb", "taken@example.com", "", ""))).To(MatchError(op.ErrEmailExists),
+				"an account's email even when users may share one")
 		})
 		It("creates a second user with an email another holds when rgw_user_unique_email is off", func(ctx SpecContext) {
 			env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_user_unique_email": "false"})

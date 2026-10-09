@@ -3254,17 +3254,32 @@ Every new entry adds its row to this table, in document order.
   NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:93`).
 - **Releases:** every release with accounts, from v19.1.0; checked at
   v19.2.6, v20.2.4 and main 06adccc.
-- **rgw-go:** reproduces the takeover, so that both gateways answer alike
-  on a shared zone, and on the RADOS driver not the deletion. A user's
-  write repoints an account's email entry as radosgw's does, in the
-  memstore and the RADOS driver alike. The RADOS driver's account removal
-  deletes the email entry only while it names the account, under the
-  version it read, so the user keeps the email (`RemoveAccount`,
-  `internal/driver/account.go`; `docs/exclusions.md`, "The admin account
-  routes and the RADOS account store differ from radosgw"). The memstore's
-  `RemoveAccount` still deletes the entry whoever holds it, which the spec
-  "lets a user take an account's email, which the account's removal then
-  drops, as radosgw does" (`internal/memstore/admin_test.go`) pins.
+- **rgw-go:** reproduces neither the takeover nor the deletion of a user's
+  entry. A user's write claims a new email's index object before it writes
+  the user, creating it exclusively, and an index naming an account answers
+  409 EmailExists and writes nothing, whatever `rgw_user_unique_email`
+  says, in the RADOS driver (`claimEmail`, `internal/driver/user.go`) and
+  the memstore alike; a user's removal or change of email removes the
+  index only while it names that user (`releaseEmail`; `docs/exclusions.md`,
+  "The admin user routes answer store failures, and keep the account users
+  index clean where radosgw leaves entries behind"). The RADOS driver's
+  account removal deletes the email entry only while it names the account,
+  under the version it read, so a user radosgw gave the email keeps it
+  (`RemoveAccount`, `internal/driver/account.go`; `docs/exclusions.md`,
+  "The admin account routes and the RADOS account store differ from
+  radosgw"). The memstore's `RemoveAccount` deletes the account's email
+  entry without reading it, but no user's write takes an account's entry
+  there, so the entry it deletes names the account. With
+  `rgw_user_unique_email` false, a departing sharer whose user the index
+  named leaves the other sharers holding the email unindexed, and an
+  account created then can take it, so an account and a user hold one
+  email, as in radosgw, though no rgw-go write takes the account's entry:
+  a sharer's write over another sharer's index is made under the version
+  its claim read, and one finding an account's index there instead
+  answers 409 EmailExists. The one exception is a sharer's index radosgw
+  wrote, which has no version to check, when an account takes the email
+  between the claim's read and the write over it. A radosgw gateway
+  sharing the zone still takes the email.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 admin API work (unit N, Task 1 review), 2026-10-01,

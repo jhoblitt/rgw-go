@@ -34,6 +34,13 @@ type PutUserOptions struct {
 	// (PutOperation::prepare, svc_user_rados.cc:234-241 at v19.2.6, :213-220
 	// at v20.2.4): a metadata put's document version.
 	WriteVersion meta.ObjVersion
+	// SharedEmail lets the user take an email another user's index names,
+	// as radosgw lets it when rgw_user_unique_email is false: the index is
+	// then written over after the user, as radosgw writes it. An email an
+	// account's index names is refused whatever SharedEmail says, as
+	// account emails are unique (account::write, account.cc:312-322 at
+	// v19.2.6 and v20.2.4).
+	SharedEmail bool
 }
 
 //counterfeiter:generate . UserStore
