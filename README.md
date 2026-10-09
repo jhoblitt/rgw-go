@@ -68,6 +68,8 @@ locally without publishing; its image tags end in `-amd64`, such as
 `ghcr.io/jhoblitt/rgw-go:squid-amd64`. The workflow sets `RGW_GO_ENGINE=docker`, so
 the binaries build with the engine goreleaser builds the images with.
 
+This line exists only to prove that a docs-only pull request skips the s3-tests run.
+
 ## License
 
 [LGPL-2.1-or-later](LICENSE)
