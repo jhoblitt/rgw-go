@@ -15,6 +15,7 @@ make gate RELEASE=squid           # the phase 0 gate, test/gate/
 make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
 make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw, after the gate
 make rgw-go-up RELEASE=squid      # rgw-go on the host at http://127.0.0.1:7481, under the parity settings
+make s3tests-parity RELEASE=squid # s3-tests against rgw-go, compared with radosgw's baseline
 make rgw-go-down RELEASE=squid
 make cluster-down RELEASE=squid
 
@@ -25,6 +26,7 @@ make gate RELEASE=tentacle
 make s3tests RELEASE=tentacle
 make admin-suite RELEASE=tentacle
 make rgw-go-up RELEASE=tentacle
+make s3tests-parity RELEASE=tentacle
 make rgw-go-down RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
@@ -446,6 +448,39 @@ or changing a deselect list, re-records both releases' baselines in the same
 change. `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
 `.freeze` file beside the last run, a record of the venv rather than a key
 the comparison checks.
+
+## Comparing rgw-go with the baseline
+
+```sh
+make gate RELEASE=squid           # first: the gate counts the zone's users
+make rgw-go-up RELEASE=squid
+make s3tests-parity RELEASE=squid
+make s3tests-parity RELEASE=squid BASELINE=path/to/just-recorded.json
+make rgw-go-down RELEASE=squid
+```
+
+`make s3tests-parity` runs the set against the rgw-go `make rgw-go-up`
+started, as `make s3tests GATEWAY=rgw-go RUN=parity`, records the run in
+`out/<release>/s3tests-rgw-go.json` with the release, the Ceph version from
+`manifest.json`, the s3-tests commit and the deselect digest, and compares it
+with `BASELINE`, by default `test/s3tests/baseline/<release>.json`. It needs a
+populated cluster, for `manifest.json`. It prints one line per test whose
+outcome differs and fails unless there is none. `hack/parity` runs as a built
+binary, `bin/parity`, so make's error line carries the comparison's own
+status: 1 for a test that differs, 2 for a baseline recorded under another
+s3-tests commit, Ceph version, release or deselect lists, which is
+re-recorded as under "Parity baselines". make itself exits 2 for either.
+
+The comparison skips the tests `test/s3tests/known-differences-<release>.txt`
+lists: one regular expression per line over `hack/parity`'s test ids
+(`s3tests.functional.test_s3::<test>`), each under a comment naming the
+`docs/exclusions.md` entry that decides the difference. It fails on a line
+that matches no test, and on one whose test no longer differs, so the list
+cannot outlive its differences. Only a recorded exclusion goes there. A
+difference that is not one is a bug in rgw-go, and a test that needs a later
+phase's feature goes on that phase's deselect list, which removes it on both
+gateways. Squid's list is mostly the Tentacle feature level rgw-go serves on
+Squid too, which Squid's radosgw fails.
 
 ## go-ceph's rgw/admin suite
 
