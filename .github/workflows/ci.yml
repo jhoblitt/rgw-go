@@ -32,8 +32,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          # go1.27.2 explicitly until actions/go-versions lists it, since
+          # check-latest resolves only from that manifest; then go back to
+          # go-version-file: go.mod with check-latest: true.
+          go-version: "1.27.2"
 
       # The Makefile is the one home of the build tags.
       - name: Test with race detector and coverage
@@ -63,8 +65,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          # go1.27.2 explicitly until actions/go-versions lists it, since
+          # check-latest resolves only from that manifest; then go back to
+          # go-version-file: go.mod with check-latest: true.
+          go-version: "1.27.2"
 
       # The Makefile is the one home of the golangci-lint version.
       - name: Read the pinned golangci-lint version
@@ -92,8 +96,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          # go1.27.2 explicitly until actions/go-versions lists it, since
+          # check-latest resolves only from that manifest; then go back to
+          # go-version-file: go.mod with check-latest: true.
+          go-version: "1.27.2"
 
       - name: go vet, go fix, go mod tidy, go generate leave no diff; release pins and parity options match
         run: make vet fix-check tidy-check generate-check release-pins-check parity-options-check
@@ -120,5 +126,8 @@ jobs:
       - name: govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
-          go-version-file: go.mod
+          # go1.27.2 explicitly until actions/go-versions lists it, since
+          # check-latest resolves only from that manifest; then go back to
+          # go-version-file: go.mod with check-latest: true.
+          go-version-input: "1.27.2"
           go-package: ./...
