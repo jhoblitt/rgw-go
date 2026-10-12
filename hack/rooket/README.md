@@ -378,6 +378,25 @@ the release's rooket output, as the floor does, and the sweep refuses an
 release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the
 script's header lists its other settings.
 
+`make bench-seam RELEASE=squid BENCH_LIMITER=1` re-runs only the sweep's
+over-budget cell, write4m at 64 in flight past the byte budget, under the
+in-flight limiter. It runs `hack/bench/limited`, a Go command, rather than
+`seam.sh`. The cell runs in sync, callback and pipe mode, each in a
+benchmark process of its own, with the limiter's byte bound at 100 MiB,
+librados's default `objecter_inflight_op_bytes`, and its operation bound
+derived, as rgw-go runs. `BENCH_INFLIGHT_BYTES` sets another bound. The run
+writes `overbudget-<mode>.jsonl`, `env.json`, `sweep.log`, `noise.log` and
+`bench-<mode>.log` into `hack/bench/out/<release>/seam-<UTC time>-limited/`,
+or `seam-<UTC time>-limited-<bytes>/` for another bound. It runs no floor and
+renders no `REPORT.md`, since `hack/bench/report` renders only a whole sweep.
+Every setting is checked before anything touches the cluster, and
+`BENCH_PLAN=1` prints each benchmark process's arguments and watchdog limit,
+then exits. `BENCH_QUICK=1` runs 128 objects a process instead of 640, and
+`BENCH_OVER_OBJECTS`, `BENCH_TIMEOUT` and `BENCH_MIN_AVAIL_GIB` work as they
+do for the sweep. `go run ./hack/bench/limited --help` lists every flag and
+its environment name. Setting `BENCH_PLAN` or `BENCH_INFLIGHT_BYTES` without
+`BENCH_LIMITER=1` is refused rather than starting the sweep.
+
 ## Running the gateway comparison
 
 `make bench-gateway RELEASE=<release> GATEWAY=radosgw|rgw-go` runs
