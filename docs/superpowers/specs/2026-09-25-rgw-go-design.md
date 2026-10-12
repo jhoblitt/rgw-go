@@ -348,8 +348,9 @@ more changes: the suite lives in ceph/ceph, under `src/test/rgw/s3-tests`.
 The harness pins, by commit, the `rgw-go-s3tests` branch of the
 jhoblitt/ceph fork, ceph/ceph `main` with the improvements on top, as
 go-ceph is pinned through jhoblitt/go-ceph. Each improvement lands on that
-branch and is also proposed to ceph/ceph as a pull request, each upstream
-post only with the owner's explicit go-ahead. The first candidates, found
+branch first and will eventually be proposed to ceph/ceph as a pull
+request; it need not be proposed when it lands, and each upstream post
+waits for the owner's explicit go-ahead. The first candidates, found
 by a local run: one failed cleanup fails every later test, because
 `nuke_prefixed_buckets` raises on a leftover bucket; cleanup always deletes
 with a `VersionId`, so it needs versioning support;
