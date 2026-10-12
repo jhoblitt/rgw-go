@@ -4974,7 +4974,7 @@ The last six lines are the conditional-write block (W-D3, W-D12): the eight unma
 make cluster-up RELEASE=squid && make populate RELEASE=squid
 make rgw-go-up RELEASE=squid
 make s3tests-parity RELEASE=squid
-go run ./hack/parity diff -baseline test/s3tests/baseline/squid.json -candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/w-groups.txt
+go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json --candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/w-groups.txt
 ```
 
 `make rgw-go-up` is T Task 11's (rgw-go on the rooket cluster); `make s3tests-parity` is T Task 12's (`RUN=parity`, records `hack/rooket/out/squid/s3tests-rgw-go.json` with T's meta and diffs; it exits 1 while other units' differences remain). (T's `s3tests` target takes `RUN=`, not `OUT=`, and writes under `hack/s3tests/out/`; `parity record` requires `-out FILE`; `parity diff` has no `-only` — the grep over the pattern file is the filter, P Task 11's form.) Expected: the grep prints nothing on Squid and on Tentacle. Every difference is triaged: a radosgw quirk rgw-go mis-transcribed is fixed in the owning task; a test whose baseline outcome differs between releases (the `conditional_write` group is expected to be the one, since Squid's raw `If-Match` compare fails quoted etags) is confirmed to differ the same way for rgw-go.

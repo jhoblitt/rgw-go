@@ -1520,14 +1520,14 @@ Open the draft PR `feat(authz): the real authorizer (unit Z tasks 9-11)`. The PR
 - Modify: `docs/ceph-upstream-bugs.md` (three entries), `docs/cgo-limitations.md` only if a task above found one (none expected)
 
 **Interfaces:**
-- Consumes: T Task 12's `make s3tests-parity RELEASE=<r>` and T Task 5's `go run ./hack/parity diff -baseline FILE -candidate FILE` (there is no `compare` subcommand and no `-k`; `run.sh` writes one file, `hack/s3tests/out/<release>-rgw-go-parity.xml`, which the target records to `hack/rooket/out/<release>/s3tests-rgw-go.json`), the radosgw baselines `test/s3tests/baseline/{squid,tentacle}.json`; units M, R and W merged (the ops that store ACLs, policies and tags and read objects).
+- Consumes: T Task 12's `make s3tests-parity RELEASE=<r>` and T Task 5's `go run ./hack/parity diff --baseline FILE --candidate FILE` (there is no `compare` subcommand and no `-k`; `run.sh` writes one file, `hack/s3tests/out/<release>-rgw-go-parity.xml`, which the target records to `hack/rooket/out/<release>/s3tests-rgw-go.json`), the radosgw baselines `test/s3tests/baseline/{squid,tentacle}.json`; units M, R and W merged (the ops that store ACLs, policies and tags and read objects).
 
 - [ ] **Step 1: Run the parity comparison on Squid**
 
 ```sh
 make cluster-up RELEASE=squid && make populate RELEASE=squid && make rgw-go-up RELEASE=squid
 make s3tests-parity RELEASE=squid
-go run ./hack/parity diff -baseline test/s3tests/baseline/squid.json -candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/z-groups.txt
+go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json --candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/z-groups.txt
 ```
 
 `make s3tests-parity` exits 1 while other units' differences remain; the grep is Z's verdict. Expected: the grep prints nothing.
@@ -1539,7 +1539,7 @@ The groups that must match radosgw's outcome exactly: every test whose name cont
 ```sh
 make cluster-up RELEASE=tentacle && make populate RELEASE=tentacle && make rgw-go-up RELEASE=tentacle
 make s3tests-parity RELEASE=tentacle
-go run ./hack/parity diff -baseline test/s3tests/baseline/tentacle.json -candidate hack/rooket/out/tentacle/s3tests-rgw-go.json | grep -E -f test/s3tests/z-groups.txt
+go run ./hack/parity diff --baseline test/s3tests/baseline/tentacle.json --candidate hack/rooket/out/tentacle/s3tests-rgw-go.json | grep -E -f test/s3tests/z-groups.txt
 ```
 
 Any mismatch is a defect in this unit; fix and rerun. A test that turns out to exercise an op outside phase 1 is not Z's to excuse: it belongs on T's deselect list for its phase (T Task 4), where it stops running on both gateways and the baselines are re-recorded. Record the pass-and-fail set the comparison printed in the PR description.

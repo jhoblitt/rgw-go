@@ -4117,7 +4117,7 @@ git commit -m "feat(auth): resolve identities and authenticate requests as rados
 - Modify: `internal/cli/serve.go` (G Task 9 step 8: the authenticator), `internal/cli/serve_integration_test.go` (G's "GET / with Authorization is 501" expectation), `docs/ceph-upstream-bugs.md`
 
 **Interfaces:**
-- Consumes: Task 9's `auth.New`, `auth.ConfigFrom`; G's `cli serve` (`conf *cephconf.Options`, `store *driver.Store`, `cfg s3.Config`); T's harness (`make cluster-up`, `make rgw-go-up`, T Task 12's `make s3tests-parity RELEASE=<r>`, T Task 5's `go run ./hack/parity diff -baseline FILE -candidate FILE`).
+- Consumes: Task 9's `auth.New`, `auth.ConfigFrom`; G's `cli serve` (`conf *cephconf.Options`, `store *driver.Store`, `cfg s3.Config`); T's harness (`make cluster-up`, `make rgw-go-up`, T Task 12's `make s3tests-parity RELEASE=<r>`, T Task 5's `go run ./hack/parity diff --baseline FILE --candidate FILE`).
 - Produces: a binary that authenticates; five registry entries and rgw-go's handling on the #81122 and #81123 entries.
 
 - [ ] **Step 1: Wire the verifier**
@@ -4183,7 +4183,7 @@ make cluster-up RELEASE=squid
 make populate RELEASE=squid
 make rgw-go-up RELEASE=squid
 make s3tests-parity RELEASE=squid
-go run ./hack/parity diff -baseline test/s3tests/baseline/squid.json -candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/a-groups.txt
+go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json --candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/a-groups.txt
 ```
 
 `make s3tests-parity` (T Task 12) runs the set as `RUN=parity`, records `hack/rooket/out/squid/s3tests-rgw-go.json` and diffs it; it exits 1 while other units' differences remain. (T's `parity-check` target takes `BASELINE=` and `CANDIDATE=` — a recorded result JSON, never a raw junit file — and `run.sh` names its report `hack/s3tests/out/<release>-<gateway>-<run>.xml`; the two lines above are the interface T Task 12 defines, the same form P Task 11 uses.) Expected: the grep prints nothing — no difference for any test in `s3tests/functional/test_headers.py` and for the `auth_aws2`, `auth_aws4` and `auth_common` markers of `test_s3.py` (T's Task 12 names the files that are A's: a `test_headers.py` difference is A's). Every difference is a bug in this unit: reproduce it as a `testdata` vector or a `verifier_test.go` spec, fix, rerun. Tests of the parity set that fail on rgw-go because their op is not yet implemented (a 501 from a handler R, W or P has not registered) are not auth differences; they are listed in the PR description by name.
@@ -4196,7 +4196,7 @@ If the `aws` CLI is on the machine, also smoke the two request shapes no Go clie
 make cluster-down RELEASE=squid
 make cluster-up RELEASE=tentacle && make populate RELEASE=tentacle && make rgw-go-up RELEASE=tentacle
 make s3tests-parity RELEASE=tentacle
-go run ./hack/parity diff -baseline test/s3tests/baseline/tentacle.json -candidate hack/rooket/out/tentacle/s3tests-rgw-go.json | grep -E -f test/s3tests/a-groups.txt
+go run ./hack/parity diff --baseline test/s3tests/baseline/tentacle.json --candidate hack/rooket/out/tentacle/s3tests-rgw-go.json | grep -E -f test/s3tests/a-groups.txt
 ```
 
 Expected: the same empty difference list. D-A8 predicts identical auth behaviour on both releases apart from the four Tentacle entries of the payload whitelist, which G's dispatch table carries (D-A1); any other Tentacle-only difference here would be the first counter-example and goes in the PR description before any fix.

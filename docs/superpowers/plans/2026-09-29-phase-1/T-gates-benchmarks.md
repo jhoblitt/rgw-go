@@ -854,11 +854,11 @@ Expected: 393 tests run and 415 deselected (at the pinned commit the two files h
 - Produces:
 
 ```
-go run ./hack/parity record -format junit|gotest -suite NAME -out FILE [-meta k=v]... RUN-FILE [RUN-FILE...]
+go run ./hack/parity record --format junit|gotest --suite NAME --out FILE [--meta k=v]... RUN-FILE [RUN-FILE...]
     Outcomes come from the last run file; a test whose outcome differs between the
     given runs is listed under "unstable". Every test must appear in every run, or
     record fails naming the missing test.
-go run ./hack/parity diff -baseline FILE -candidate FILE [-known FILE]
+go run ./hack/parity diff --baseline FILE --candidate FILE [--known FILE]
     -known FILE lists regular expressions over test ids (one per line, "#" comments)
     whose outcomes are EXPECTED to differ (the known-difference list):
     a matching test that differs is skipped; one that AGREES is printed as
@@ -967,11 +967,11 @@ var _ = Describe("diff", func() {
 ```make
 .PHONY: parity-record
 parity-record: ## Record a baseline from RUN-FILES: make parity-record SUITE=s3tests FORMAT=junit OUT=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.6 s3tests_commit=..." FILES="a.xml b.xml"
-	go run ./hack/parity record -format $(FORMAT) -suite $(SUITE) -out $(OUT) $(foreach kv,$(META),-meta $(kv)) $(FILES)
+	go run ./hack/parity record --format $(FORMAT) --suite $(SUITE) --out $(OUT) $(foreach kv,$(META),--meta $(kv)) $(FILES)
 
 .PHONY: parity-check
 parity-check: ## Compare a candidate result with a baseline: make parity-check BASELINE=... CANDIDATE=...
-	go run ./hack/parity diff -baseline $(BASELINE) -candidate $(CANDIDATE)
+	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CANDIDATE)
 ```
 
 - [ ] **Step 4: Record the Squid baseline from two radosgw runs** (cluster-backed, after `make gate`)
