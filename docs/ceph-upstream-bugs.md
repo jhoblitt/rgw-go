@@ -256,6 +256,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's removal of an account user leaves the bucket list its quota sync wrote](#radosgws-removal-of-an-account-user-leaves-the-bucket-list-its-quota-sync-wrote) | pending | pending | ✓ |
 | [radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry](#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry) | pending | pending |  |
 | [Tentacle's metadata put ignores update-type](#tentacles-metadata-put-ignores-update-type) | pending | pending | ✓ |
+| [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11700,3 +11701,42 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit N, Task 9, 2026-10-11, implementing the metadata
   put; derived from the source, not reproduced.
+
+## radosgw's user listing takes an unparsable max-entries from an uninitialized variable
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET /admin/user?list`
+  with a `max-entries` radosgw cannot parse pages by whatever value a
+  stack variable held, up to 1000, and answers 200. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; the lines are the same at
+  v19.2.6 and v20.2.4.
+  - `RGWOp_User_List::execute` declares `uint32_t max_entries;` without a
+    value, reads the argument with `RESTArgs::get_uint32` and checks no
+    return, then copies the variable into the op state
+    (`driver/rados/rgw_rest_user.cc:62-67`).
+  - `get_uint32` writes the default only when the argument is absent; a
+    present one goes to `stringtoul` (`rgw_rest.cc:915-934` at v19.2.6,
+    `:920-939` at v20.2.4), which returns EINVAL without writing its
+    output for trailing text or a value that saturates at ULONG_MAX
+    (`rgw_string.h:86-100`).
+  - So `max-entries=10x` or `max-entries=all` leaves `max_entries` as the
+    stack left it. The op state's own default, 1000
+    (`driver/rados/rgw_user.h:205` at v19.2.6, `:206` at v20.2.4), is
+    overwritten by the copy, and `RGWUser::list` caps the value at 1000
+    (`driver/rados/rgw_user.cc:2281-2283` at v19.2.6, `:2287-2289` at
+    v20.2.4) before it pages by it.
+  - The same class as "radosgw's quota set stores garbage for an
+    unparsable max-size-kb", in another reader of the same family.
+- **Impact:** a client that sends an unparsable `max-entries` gets a page
+  of an unpredictable size from 0 to 1000 keys, with `truncated` and a
+  marker when more follow, and may take a short or empty page for the
+  end of the list if it ignores `truncated`. Callers holding `users=read`
+  only; nothing is written.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. An unparsable `max-entries` reads as
+  the default, 1000 (`listUser`, `internal/admin/user.go`;
+  `docs/exclusions.md`, "`GET /admin/user?list` reads an unparsable
+  max-entries as 1000").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 9 review, 2026-10-11, reading the user
+  listing's arguments; derived from the source, not reproduced.

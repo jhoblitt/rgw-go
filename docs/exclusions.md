@@ -1483,6 +1483,10 @@ review and verified against the tree.
     radosgw takes a `ver` that is no object as the zero version, a tag
     given as an object as that object's text, and an mtime in any form
     `utime_t::parse_date` reads.
+- **`GET /admin/user?list` reads an unparsable max-entries as 1000.** rgw-go
+  pages by the default when `max-entries` is not a number `stringtoul`
+  reads, where radosgw pages by an uninitialized variable, capped at 1000
+  ([radosgw's user listing takes an unparsable max-entries from an uninitialized variable](ceph-upstream-bugs.md#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable)).
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the
