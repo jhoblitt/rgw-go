@@ -118,6 +118,9 @@ var _ = Describe("PutObjectACL", func() {
 	Describe("a write that loses a race", func() {
 		var stub *opfakes.FakeObjectStore
 		keep := func(p acl.Policy) (acl.Policy, error) { return p, nil }
+		// publicRead asks for an ACL other than the one every read finds, so
+		// that no retry finds it already in place.
+		publicRead := func(acl.Policy) (acl.Policy, error) { return publicReadOf(f.alice.Owner), nil }
 		BeforeEach(func() {
 			stub = &opfakes.FakeObjectStore{}
 			stub.StatObjectReturns(&op.ObjectState{Exists: true, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}}, nil)
@@ -125,7 +128,7 @@ var _ = Describe("PutObjectACL", func() {
 		})
 		It("is retried after the head is read again, and answers ConcurrentModification after the last try, where radosgw answers success", func(ctx SpecContext) {
 			stub.SetObjectAttrsReturns(op.ErrConcurrentModification)
-			Expect(op.Run(ctx, &op.PutObjectACL{Build: keep}, f.req(http.MethodPut, "plain", "small"))).To(MatchError(op.ErrConcurrentModification),
+			Expect(op.Run(ctx, &op.PutObjectACL{Build: publicRead}, f.req(http.MethodPut, "plain", "small"))).To(MatchError(op.ErrConcurrentModification),
 				"rgw_op.cc:5925-5927 at v19.2.6 answers 0")
 			Expect(stub.SetObjectAttrsCallCount()).To(Equal(16), "the first try and retry_raced_bucket_write's fifteen")
 			Expect(stub.StatObjectCallCount()).To(Equal(16), "Init's read and one before each retry")
@@ -134,7 +137,7 @@ var _ = Describe("PutObjectACL", func() {
 			reread := &op.ObjectState{Exists: true, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL, meta.AttrETag: []byte("new")}}
 			stub.StatObjectReturnsOnCall(1, reread, nil)
 			stub.SetObjectAttrsReturnsOnCall(0, op.ErrConcurrentModification)
-			Expect(op.Run(ctx, &op.PutObjectACL{Build: keep}, f.req(http.MethodPut, "plain", "small"))).To(Succeed())
+			Expect(op.Run(ctx, &op.PutObjectACL{Build: publicRead}, f.req(http.MethodPut, "plain", "small"))).To(Succeed())
 			Expect(stub.SetObjectAttrsCallCount()).To(Equal(2))
 			_, st, set, _ := stub.SetObjectAttrsArgsForCall(1)
 			Expect(st).To(BeIdenticalTo(reread))
@@ -233,6 +236,105 @@ var _ = Describe("PutObjectACL", func() {
 				Expect(op.Run(ctx, o, bobsRequest())).To(Succeed())
 				Expect(stub.SetObjectAttrsCallCount()).To(Equal(2))
 				Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(wanted())))
+			})
+
+			Describe("once the write it lost to stored an ACL", func() {
+				putOf := func(p acl.Policy) op.Op {
+					return &op.PutObjectACL{Build: func(acl.Policy) (acl.Policy, error) { return p, nil }}
+				}
+				// bothGroupsRead is bob's WRITE_ACP with READ granted to
+				// AllUsers, then to AuthenticatedUsers, or in the other order,
+				// which the encoding keeps: both grants sit under the empty key.
+				bothGroupsRead := func(allUsersFirst bool) acl.Policy {
+					p := bobCanWriteACP()
+					groups := []uint32{acl.GroupAllUsers, acl.GroupAuthenticatedUsers}
+					if !allUsersFirst {
+						groups = []uint32{acl.GroupAuthenticatedUsers, acl.GroupAllUsers}
+					}
+					for _, g := range groups {
+						p.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: g, Permission: acl.PermRead})
+					}
+					return p
+				}
+
+				It("answers success without writing when that ACL is the requested one", func(ctx SpecContext) {
+					race(ctx, wanted())
+					Expect(op.Run(ctx, putOf(wanted()), bobsRequest())).To(Succeed(), "radosgw answers 200 to a lost race, rgw_op.cc:5925-5927 at v19.2.6")
+					Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), "the retry finds the client's ACL in place and writes nothing")
+					Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(wanted())))
+				})
+				It("compares the decoded policies, so the same grants stored in another order are the requested ACL", func(ctx SpecContext) {
+					Expect(encodedPolicy(bothGroupsRead(false))).NotTo(Equal(encodedPolicy(bothGroupsRead(true))), "the two encodings differ")
+					race(ctx, bothGroupsRead(false))
+					Expect(op.Run(ctx, putOf(bothGroupsRead(true)), bobsRequest())).To(Succeed())
+					Expect(stub.SetObjectAttrsCallCount()).To(Equal(1))
+					Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(bothGroupsRead(false))))
+				})
+				DescribeTable("retries, and stores the requested ACL, when that ACL differs",
+					func(ctx SpecContext, stored func() acl.Policy) {
+						race(ctx, stored())
+						Expect(op.Run(ctx, putOf(wanted()), bobsRequest())).To(Succeed())
+						Expect(stub.SetObjectAttrsCallCount()).To(Equal(2), "the first try lost, the retry wrote")
+						Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(wanted())))
+					},
+					Entry("by a grant more", func() acl.Policy {
+						p := wanted()
+						p.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermRead})
+						return p
+					}),
+					Entry("by a grant fewer", func() acl.Policy { return bobCanWriteACP() }),
+					Entry("by a grant's permission", func() acl.Policy {
+						p := bobCanWriteACP()
+						p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermReadACP})
+						return p
+					}),
+					Entry("by a grant's display name", func() acl.Policy {
+						p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+						p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Robert", Permission: acl.PermWriteACP})
+						p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Robert", Permission: acl.PermRead})
+						return p
+					}),
+					Entry("by the owner's display name", func() acl.Policy {
+						p := wanted()
+						p.Owner.DisplayName = "Alice Liddell"
+						return p
+					}),
+					Entry("by an empty owner, which the owner check lets through", func() acl.Policy {
+						p := wanted()
+						p.Owner.ID = ""
+						return p
+					}),
+				)
+				It("refuses with 403 a requester whose WRITE_ACP that ACL revoked, though it is the requested one", func(ctx SpecContext) {
+					revoking := publicReadOf(f.alice.Owner)
+					race(ctx, revoking)
+					Expect(op.Run(ctx, putOf(revoking), bobsRequest())).To(MatchError(op.ErrAccessDenied))
+					Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), "the retry writes nothing")
+					Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(revoking)))
+				})
+				It("refuses with 403 the requested public ACL once the bucket blocks public ACLs", func(ctx SpecContext) {
+					public := bothGroupsRead(true)
+					race(ctx, public)
+					lose := stub.SetObjectAttrsStub
+					stub.SetObjectAttrsStub = func(ctx context.Context, st *op.ObjectState, set map[string][]byte, rm []string) error {
+						if stub.SetObjectAttrsCallCount() == 1 {
+							f.setBucketAttrs(ctx, map[string][]byte{op.AttrPublicAccess: publicAccessAttr(acl.PublicAccessBlock{BlockPublicACLs: true})})
+						}
+						return lose(ctx, st, set, rm)
+					}
+					Expect(op.Run(ctx, putOf(public), bobsRequest())).To(MatchError(op.ErrAccessDenied))
+					Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), "the retry writes nothing")
+				})
+				It("still writes an ACL the object already holds when its first try loses no race", func(ctx SpecContext) {
+					f.env.Authz = authz.New(authz.DefaultConfig(denc.Squid))
+					held := bobCanWriteACP()
+					st := f.stat(ctx, "small")
+					Expect(f.store.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: encodedPolicy(held)}, nil)).To(Succeed())
+					stub.StatObjectStub = f.store.StatObject
+					stub.SetObjectAttrsStub = f.store.SetObjectAttrs
+					Expect(op.Run(ctx, putOf(held), bobsRequest())).To(Succeed())
+					Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), "radosgw writes it, rgw_op.cc:5916-5919 at v19.2.6")
+				})
 			})
 		})
 		It("answers NoSuchKey when the object is gone by the retry", func(ctx SpecContext) {

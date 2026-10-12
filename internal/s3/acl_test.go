@@ -210,6 +210,26 @@ var _ = Describe("bucket get_acls and put_acls", func() {
 			Expect(buckets.PutBucketAttrsCallCount()).To(Equal(16))
 			Expect(storedACL(ctx)).To(Equal(private()))
 		})
+		It("answers 200 without a second write when the request it lost to stored the same canned ACL", func(ctx SpecContext) {
+			buckets := &opfakes.FakeBucketStore{}
+			buckets.GetBucketStub = w.store.GetBucket
+			buckets.PutBucketAttrsStub = func(ctx context.Context, rec *op.BucketRecord, set map[string][]byte, rm []string) error {
+				if buckets.PutBucketAttrsCallCount() > 1 {
+					return w.store.PutBucketAttrs(ctx, rec, set, rm)
+				}
+				// A concurrent PUT ?acl of public-read, the request
+				// test_bucket_concurrent_set_canned_acl sends fifty times, lands first.
+				winner, err := w.store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(w.store.PutBucketAttrs(ctx, winner, set, rm)).To(Succeed())
+				return op.ErrConcurrentModification
+			}
+			w.env.Buckets = buckets
+			rec := w.send(w.alice, http.MethodPut, "/plain?acl", "", "x-amz-acl", "public-read", "Content-Length", "0")
+			Expect(rec.Code).To(Equal(200), "radosgw answers 200 to a lost race, rgw_op.cc:5925-5927 at v19.2.6")
+			Expect(buckets.PutBucketAttrsCallCount()).To(Equal(1))
+			Expect(storedACL(ctx).IsPublic()).To(BeTrue())
+		})
 		It("refuses a request without a Content-Length with MissingContentLength", func() {
 			rec := w.send(w.alice, http.MethodPut, "/plain?acl", "", "x-amz-acl", "public-read")
 			Expect(rec.Code).To(Equal(411), "the length-required tolerance at rgw_rest_s3.cc:3624-3632 at v19.2.6 never holds")

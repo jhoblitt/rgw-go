@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -160,7 +162,8 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // PutBucketAcl answers success when its write loses a race"); rgw-go
 // retries it through retryBucketWrite and makes both checks again against
 // the bucket as each try reads it, so a retry never puts back an owner a
-// concurrent change replaced (docs/exclusions.md).
+// concurrent change replaced; a retry that passes them and finds the
+// requested ACL in place writes nothing and succeeds (docs/exclusions.md).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 	existing, err := BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
@@ -171,6 +174,7 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	set := map[string][]byte{meta.AttrACL: encodeAt(p, r.Env.Zone.Release())}
+	raced := false
 	return retryBucketWrite(ctx, r, o, func() error {
 		current, err := BucketACLFor(ctx, r.BucketRec)
 		if err != nil {
@@ -182,8 +186,50 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 		if blockPublicACLs(r.BucketRec) && p.IsPublic() {
 			return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 		}
+		if raced && aclInPlace(r.BucketRec.Attrs, current, p) {
+			return nil
+		}
+		raced = true
 		return r.Env.Buckets.PutBucketAttrs(ctx, r.BucketRec, set, nil)
 	})
+}
+
+// aclInPlace is whether a retry of an ACL write finds the requested ACL, want,
+// already stored in attrs as current, its decoded form: radosgw answers the
+// lost race 200 (rgw_op.cc:5925-5927 at v19.2.6, :6587-6589 at v20.2.4), and
+// the client's intent already holds. An ACL that holds only as the default
+// generated for a missing attr is not in place.
+func aclInPlace(attrs map[string][]byte, current, want acl.Policy) bool {
+	_, stored := attrs[meta.AttrACL]
+	return stored && sameACL(current, want)
+}
+
+// sameACL is whether a and b are one policy: the same owner and display name,
+// the same grants in any order, the same user and group maps, and the same
+// referer list in order, as get_referer_perm lets the last match win
+// (rgw_acl.cc:137-158 at v19.2.6 and v20.2.4). Each grant compares as its
+// key and its encoding, which keeps only the fields of its grantee type and
+// the to_string form of a canonical user's id.
+func sameACL(a, b acl.Policy) bool {
+	return meta.ParseOwner(a.Owner.ID).String() == meta.ParseOwner(b.Owner.ID).String() &&
+		a.Owner.DisplayName == b.Owner.DisplayName &&
+		maps.Equal(a.ACL.UserMap, b.ACL.UserMap) &&
+		maps.Equal(a.ACL.GroupMap, b.ACL.GroupMap) &&
+		slices.Equal(a.ACL.RefererList, b.ACL.RefererList) &&
+		slices.Equal(grantForms(a.ACL), grantForms(b.ACL))
+}
+
+// grantForms is l's grants, each as its key then its encoding, sorted.
+func grantForms(l acl.List) []string {
+	forms := make([]string, 0, len(l.Grants))
+	for _, g := range l.Grants {
+		e := denc.NewEncoder()
+		e.String(g.Key)
+		g.Grant.Encode(e, denc.Squid)
+		forms = append(forms, string(e.Bytes()))
+	}
+	slices.Sort(forms)
+	return forms
 }
 
 // Complete does nothing: the handler logs usage once the response is written.

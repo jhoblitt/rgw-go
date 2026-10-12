@@ -32,10 +32,6 @@
 # Tentacle's x-amz-expected-bucket-owner check, served on Squid too; Squid's radosgw ignores the header (exclusions: "Squid clusters get Tentacle's checks outside the policy language")
 ^s3tests\.functional\.test_s3::test_expected_bucket_owner$
 
-# radosgw answers 200 to a PutBucketAcl that lost a race, ACL unstored; rgw-go retries, then answers 409 (exclusions: "A PutBucketAcl that loses a race is retried, and every retried ACL, policy or tagging write is authorized again")
-# Either outcome: the test passes on rgw-go unless one of its concurrent PutBucketAcl requests loses the race through all its retries
-~ ^s3tests\.functional\.test_s3::test_bucket_concurrent_set_canned_acl$
-
 # net/http answers 417 to an Expect other than 100-continue before any handler runs; radosgw ignores it (exclusions: "Expectations other than 100-continue")
 ^s3tests\.functional\.test_headers::test_bucket_create_bad_expect_mismatch$
 ^s3tests\.functional\.test_headers::test_object_create_bad_expect_mismatch$

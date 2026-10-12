@@ -3359,7 +3359,12 @@ differ, rgw-go does the following.
   tracker #16930). The re-authorization guards rgw-go's own retry: when the
   write it lost to revoked the requester's WRITE_ACP, the retry answers 403
   AccessDenied, writes nothing, and leaves the revoking ACL in place, where
-  radosgw would have answered 200 with that ACL in place too. An admin is
+  radosgw would have answered 200 with that ACL in place too. A lost race
+  whose bucket or object already holds the requested ACL answers 200
+  without a write, as the client's intent already holds: the retry that
+  finds it has authorized the requester again and made both checks first,
+  and compares the stored ACL decoded, the same owner and the same grants
+  in any order, never its bytes. An admin is
   let through a retry's unmarked access denial as Run lets one through the
   first check, and through nothing else. Every retried bucket write,
   PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging and
@@ -3377,11 +3382,9 @@ differ, rgw-go does the following.
   again](ceph-upstream-bugs.md#radosgws-retried-bucket-writes-are-not-authorized-again)").
   rgw-go's retry answers 403 AccessDenied, writes nothing, and leaves the
   revoking ACL or policy in place.
-  The s3-tests check accepts either outcome for
-  `test_bucket_concurrent_set_canned_acl`: whether rgw-go answers 409 to one
-  of its fifty concurrent PutBucketAcl requests, failing it, or passes it as
-  radosgw does depends on whether a request loses the race through all its
-  retries, which a run's timing decides.
+  `test_bucket_concurrent_set_canned_acl`'s fifty concurrent PutBucketAcl
+  requests all ask for one ACL, so a request that loses the race finds it
+  in place and answers 200, and rgw-go passes the test as radosgw does.
 
 ### Object read differences
 

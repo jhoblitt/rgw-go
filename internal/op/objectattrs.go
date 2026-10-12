@@ -68,8 +68,9 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 // refuses a new owner and a public policy under a block of public ACLs
 // against the ACL and the bucket each try read, so a retry never writes
 // back an owner a concurrent change replaced, nor writes for a requester a
-// concurrent change refused; once the retries are spent it answers
-// ConcurrentModification (docs/exclusions.md).
+// concurrent change refused. A retry that passes them and finds the requested
+// ACL in place writes nothing and succeeds; once the retries are spent it
+// answers ConcurrentModification (docs/exclusions.md).
 func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
@@ -93,6 +94,7 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 		return nil
 	}
 	verify := func() error { return VerifyObjectPermission(ctx, r, a, acl.PermFor(a)) }
+	raced := false
 	return RetryRacedWriteReauthorized(ctx, r, reread, verify, func() error {
 		current, err := ObjectACLFor(ctx, r.ObjState, r.BucketRec)
 		if err != nil {
@@ -104,6 +106,10 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 		if blockPublicACLs(r.BucketRec) && p.IsPublic() {
 			return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 		}
+		if raced && aclInPlace(r.ObjState.Attrs, current, p) {
+			return nil
+		}
+		raced = true
 		return modifyObjAttr(ctx, r, meta.AttrACL, encoded)
 	})
 }
