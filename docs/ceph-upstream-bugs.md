@@ -262,6 +262,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
 | [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
+| [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11986,3 +11987,36 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 10, 2026-10-11, transcribing
   `read_usage`; derived from the source, not reproduced.
+
+## radosgw's ratelimit get reports a failure for limits it answered 200
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET /admin/ratelimit`
+  for a user's limits, or for the global limits when no period config is
+  stored, sends 200 and the limits, then ends with an error status that
+  only radosgw's own log and its op status see. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/rgw_rest_ratelimit.cc`, the same at v19.2.6 and
+  v20.2.4.
+  - The user branch of `RGWOp_Ratelimit_Info::execute` starts the
+    flusher, dumps the limits and flushes, but has no `return`
+    (`:66-100`); with `global` false the global branch is skipped and the
+    op falls to `op_ret = -EINVAL` (`:118`). The bucket and global
+    branches return after their flush (`:64`, `:116`).
+  - The global branch takes a missing `period_config.<realm>` as no
+    error but leaves `op_ret` at `-ENOENT` (`:104-108`) while it goes on
+    to start the flusher and send the zero limits (`:109-116`).
+  - `RGWRESTOp::send_response` sets and sends the error status only when
+    the flusher has not started (`rgw_rest.cc:1677-1685` at v19.2.6,
+    `:1681-1689` at v20.2.4), so both
+    responses are a 200 with the limits; `process_request` then logs
+    `op status=-22` or `op status=-2` for the request
+    (`rgw_process.cc:475-490` at v19.2.6, `:496-497` at v20.2.4).
+- **Impact:** a client sees the right answer. An operator reading
+  radosgw's log, or anything that counts requests by op status, sees a
+  failed `get_ratelimit_info` for each such read.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** answers the same 200 and limits; it has no op status to
+  report the error under.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12, 2026-10-12, reading the ratelimit
+  op; derived from the source, not reproduced.
