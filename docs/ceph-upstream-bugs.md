@@ -262,6 +262,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
 | [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
+| [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
+| [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
+| [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11986,3 +11990,148 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 10, 2026-10-11, transcribing
   `read_usage`; derived from the source, not reproduced.
+
+## radosgw's ratelimit get reports a failure for limits it answered 200
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET /admin/ratelimit`
+  for a user's limits, or for the global limits when no period config is
+  stored, sends 200 and the limits, then ends with an error status that
+  only radosgw's own log and its op status see. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** `src/rgw/rgw_rest_ratelimit.cc`, the same at v19.2.6 and
+  v20.2.4.
+  - The user branch of `RGWOp_Ratelimit_Info::execute` starts the
+    flusher, dumps the limits and flushes, but has no `return`
+    (`:66-100`); with `global` false the global branch is skipped and the
+    op falls to `op_ret = -EINVAL` (`:118`). The bucket and global
+    branches return after their flush (`:64`, `:116`).
+  - The global branch takes a missing `period_config.<realm>` as no
+    error but leaves `op_ret` at `-ENOENT` (`:104-108`) while it goes on
+    to start the flusher and send the zero limits (`:109-116`).
+  - `RGWRESTOp::send_response` sets and sends the error status only when
+    the flusher has not started (`rgw_rest.cc:1677-1685` at v19.2.6,
+    `:1681-1689` at v20.2.4), so both
+    responses are a 200 with the limits; `process_request` then logs
+    `op status=-22` or `op status=-2` for the request
+    (`rgw_process.cc:475-490` at v19.2.6, `:496-497` at v20.2.4).
+- **Impact:** a client sees the right answer. An operator reading
+  radosgw's log, or anything that counts requests by op status, sees a
+  failed `get_ratelimit_info` for each such read.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** answers the same 200 and limits; it has no op status to
+  report the error under.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12, 2026-10-12, reading the ratelimit
+  op; derived from the source, not reproduced.
+
+## radosgw hands a cloud tier's secret key to any holder of zone=read
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6 and
+  v20.2.4: `GET /admin/realm/period` writes the S3 access key and secret
+  key of every cloud tier in the period's zonegroups to a caller holding
+  only the `zone=read` cap. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Period_Get` checks `zone=read` alone
+    (`driver/rados/rgw_rest_realm.cc:57-62` at v19.2.6, `:58-63` at
+    v20.2.4), and its response is `encode_json("period", period)`
+    (`:48` at v19.2.6, `:49` at v20.2.4) on the request's own
+    formatter, which carries no `JSONEncodeFilter`: only radosgw-admin's
+    `JSONFormatter_PrettyZone` installs one, for zone ids alone
+    (`rgw_admin.cc:3304-3333` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:3501-3530` at v20.2.4).
+  - The dump descends `RGWPeriod::dump` (`rgw_period.cc:234-246`),
+    `RGWPeriodMap::dump` (`rgw_zone.cc:1000-1005` at v19.2.6,
+    `:1040-1045` at v20.2.4), `RGWZoneGroup::dump` (`:735-750`,
+    `:743-758`), `RGWZoneGroupPlacementTarget::dump`'s `tier_targets`
+    (`:848-856`, `:858-866`) and `RGWZoneGroupPlacementTier::dump`'s
+    `s3` (`:895-904` for cloud-s3 at v19.2.6; `:929-944` for either cloud
+    type at v20.2.4) to `RGWZoneGroupPlacementTierS3::dump`, which writes
+    `access_key` and `secret` from the tier's key unredacted (`:966-979`
+    at v19.2.6, `:1006-1019` at v20.2.4).
+  - The same cap reads the zone's system key ("radosgw hands the zone's
+    system key to any holder of zone=read").
+- **Impact:** a credential for an external S3 endpoint, which radosgw
+  needs only to transition objects, reaches every admin user granted
+  `zone=read`, a read cap a monitoring or tooling user may hold; Rook's
+  own admin ops user is granted it (`rgwAdminOpsUserCaps`,
+  `pkg/operator/ceph/object/admin.go:117` at rook/rook v1.20.7). A
+  Rook-managed single-site store has no cloud tier unless an operator adds
+  one.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, for fidelity: the period getter checks
+  `zone=read` before any read and writes the tier's key as radosgw does
+  (`internal/meta/dump_period.go`, `internal/admin/realm.go`); a refused
+  caller gets the error document alone. No other rgw-go path renders a
+  zonegroup or period, and none logs one.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 security review, 2026-10-12; derived
+  from the source, not reproduced.
+
+## radosgw's global ratelimit set rewrites the period config unguarded
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `POST /admin/ratelimit`
+  with `global=true` reads `period_config.<realm>`, changes one scope's
+  limits and writes the whole object back with no version guard, so a
+  concurrent change to the same object is lost. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Ratelimit_Set::execute`'s global branch reads the config, sets
+    the bucket, anon or user limits and calls `period_config.write`
+    (`rgw_rest_ratelimit.cc:305-339`, the same at v19.2.6 and v20.2.4).
+  - `RGWPeriodConfig::write` encodes the whole config and writes it with
+    `set_exclusive(false)` and no objv tracker (`rgw_zone.cc:638-651` at
+    v19.2.6, `:646-659` at v20.2.4); the read carries none either
+    (`:616-636`, `:624-644`).
+  - The object also holds the global bucket and user quotas
+    (`RGWPeriodConfig::dump`, `rgw_zone.cc:662-669` at v19.2.6, `:670-677`
+    at v20.2.4), which `radosgw-admin global quota set` rewrites the same
+    way: a read, a change and a non-exclusive write with no objv
+    (`rgw_admin.cc:4820-4860` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:5092-5096` at v20.2.4;
+    `RadosConfigStore::write_period_config`,
+    `driver/rados/config/period_config.cc:44-53` at both tags).
+- **Impact:** two concurrent global ratelimit sets keep only the later
+  one's object, losing the other scope's change; a global ratelimit set
+  that races `radosgw-admin global quota set` or `global ratelimit set`
+  drops that change too, global quotas included. Nothing reports the loss.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** mirrors radosgw: its global ratelimit set reads, changes and
+  writes the period config unguarded (`SetRateLimit`,
+  `internal/op/admininfo.go`; `PutPeriodConfig`, `internal/driver/realm.go`),
+  so the same races lose the same changes.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 review, 2026-10-12, reading the global
+  ratelimit set; derived from the source, not reproduced.
+
+## radosgw hands the zone's system key to any holder of zone=read
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6 and
+  v20.2.4: `GET /admin/config?type=zone` writes the zone's system key,
+  access key and secret key, to a caller holding only the `zone=read` cap.
+  In a multisite configuration that key is the system user's, whose
+  requests every zone accepts as system requests. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_ZoneConfig_Get` checks `zone=read` alone
+    (`rgw_rest_config.h:27-31` at v19.2.6 and v20.2.4) and dumps the zone
+    parameters on the request's formatter, which carries no
+    `JSONEncodeFilter` (`rgw_rest_config.cc:35-47` at both tags).
+  - `RGWZoneParams::dump` writes `encode_json_plain("system_key",
+    system_key)` (`rgw_zone.cc:330` at v19.2.6, `:335` at v20.2.4), which
+    is `RGWAccessKey::dump_plain` in an object section, the secret
+    included (`rgw_zone.cc:43-48`; `rgw_common.cc:2968-2972` at v19.2.6,
+    `:3030-3034` at v20.2.4).
+- **Impact:** every admin user granted `zone=read`, a read cap a
+  monitoring or tooling user may hold, reads the system user's
+  credentials; Rook's own admin ops user is granted it
+  (`rgwAdminOpsUserCaps`, `pkg/operator/ceph/object/admin.go:117` at
+  rook/rook v1.20.7). A single-site zone often has no system key, and then
+  the secret is empty.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, for fidelity: `GET /admin/config?type=zone`
+  checks `zone=read` before any read and writes the system key as radosgw
+  does (`getZoneConfig`, `internal/admin/info.go`; `ZoneParams.Dump`,
+  `internal/meta/dump_zone.go`), and logs neither.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 review, 2026-10-12; derived from the
+  source, not reproduced.

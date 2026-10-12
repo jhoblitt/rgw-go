@@ -80,6 +80,7 @@ func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 		Zone: fx.store, Users: fx.store, Accounts: fx.store, Buckets: fx.store, Objects: fx.store,
 		Multipart: fx.store, Stats: fx.store, BucketAdmin: fx.store, Metadata: fx.store,
 		Usage: fx.store, Metrics: fx.metrics, HostID: hostID, ClusterID: fsid,
+		Realms: fx.store,
 	}
 	if cfg.Prefix == "" {
 		cfg.Prefix = "admin"
@@ -275,12 +276,16 @@ var _ = Describe("admin handler", func() {
 		Expect(res.Header.Get("Content-Type")).To(Equal("application/json"))
 		Expect(body(res)).To(HavePrefix(`{"Code":"InvalidRequest",`))
 	})
+	// Every route radosgw has is served, so these register the handler a
+	// route without one gets.
 	It("answers an unregistered route NotImplemented, in the request's format, for a caller its op admits", func() {
+		fx.handler.Register("get_realm", admin.Unregistered("get_realm"))
 		res := fx.get("/admin/realm?format=xml", "admin")
 		Expect(res.StatusCode).To(Equal(501))
 		Expect(body(res)).To(HavePrefix(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code>`))
 	})
 	It("refuses a caller an unregistered route's op would refuse", func() {
+		fx.handler.Register("get_realm", admin.Unregistered("get_realm"))
 		Expect(fx.get("/admin/realm", "").StatusCode).To(Equal(403), "anonymous")
 		res := fx.get("/admin/realm", "nocaps")
 		Expect(res.StatusCode).To(Equal(403))

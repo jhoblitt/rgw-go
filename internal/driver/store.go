@@ -25,14 +25,19 @@ type Options struct {
 }
 
 // Store is the RADOS driver: one type implementing every store interface in
-// op over the seam. A method that is not implemented yet returns
-// op.ErrNotImplemented.
+// op over the seam.
 type Store struct {
 	cluster radosclient.Cluster
 	conf    *cephconf.Options
 	opts    options
 	release denc.Release
 	zone    *zoneConfig
+	// names are the rgw_realm, rgw_zonegroup and rgw_zone options and their
+	// ids, which the realm getters resolve an unnamed realm through, as
+	// RGWSystemMetaObj::init does.
+	names zoneNames
+	// roots are the realm, zonegroup, zone and period root pools.
+	roots   rootPools
 	pools   *poolCache
 	sysobj  *sysobjs
 	readCfg readConfig
@@ -106,7 +111,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 		return nil, err
 	}
 	pools := newPoolCache(cluster)
-	zc, err := openZone(ctx, conf, pools, names, release)
+	zc, roots, err := openZone(ctx, conf, pools, names, release)
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
@@ -133,7 +138,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
 	s := &Store{
-		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, pools: pools, sysobj: sys, readCfg: readCfg,
+		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
 		mp: mp, newTicker: newTimeTicker,
 	}
 	s.heads = s
@@ -153,12 +158,13 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 }
 
 // openZone opens the root pools and resolves the zone from them.
-func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, names zoneNames, rel denc.Release) (*zoneConfig, error) {
+func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, names zoneNames, rel denc.Release) (*zoneConfig, rootPools, error) {
 	roots, err := openRootPools(ctx, conf, pools)
 	if err != nil {
-		return nil, err
+		return nil, rootPools{}, err
 	}
-	return resolveZone(ctx, roots, names, rel)
+	zc, err := resolveZone(ctx, roots, names, rel)
+	return zc, roots, err
 }
 
 // Close cancels the stats caches' refreshes under way and waits for them,
@@ -227,28 +233,3 @@ func (s *Store) Period() meta.Period { return s.zone.Period }
 // period's config, or the realm's period_config object when the zonegroup
 // is not in the period.
 func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
-
-// GetRealm implements op.RealmStore.
-func (s *Store) GetRealm(context.Context, string, string) (meta.Realm, error) {
-	return meta.Realm{}, op.ErrNotImplemented
-}
-
-// ListRealms implements op.RealmStore.
-func (s *Store) ListRealms(context.Context) (defaultID string, names []string, err error) {
-	return "", nil, op.ErrNotImplemented
-}
-
-// GetPeriod implements op.RealmStore.
-func (s *Store) GetPeriod(context.Context, string, string, uint32) (meta.Period, error) {
-	return meta.Period{}, op.ErrNotImplemented
-}
-
-// GetPeriodConfig implements op.RealmStore.
-func (s *Store) GetPeriodConfig(context.Context, string) (meta.PeriodConfig, error) {
-	return meta.PeriodConfig{}, op.ErrNotImplemented
-}
-
-// PutPeriodConfig implements op.RealmStore.
-func (s *Store) PutPeriodConfig(context.Context, string, meta.PeriodConfig) error {
-	return op.ErrNotImplemented
-}

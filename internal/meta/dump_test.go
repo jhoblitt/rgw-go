@@ -163,6 +163,58 @@ var _ = Describe("Dump", func() {
 		f.CloseSection()
 		Expect(f.Err()).To(MatchError(meta.ErrOpaqueJSON), "a sync policy with groups")
 	})
+	It("writes a cloud tier as each release does", func() {
+		t := meta.NewZoneGroupPlacementTier()
+		t.TierType = meta.TierTypeCloudS3Glacier
+		t.StorageClass = "GLACIER"
+		Expect(render(t, denc.Squid)).To(Equal(`{"tier_type":"cloud-s3-glacier","storage_class":"GLACIER","retain_head_object":false}`))
+		tentacle := render(t, denc.Tentacle)
+		Expect(tentacle).To(HavePrefix(`{"tier_type":"cloud-s3-glacier","storage_class":"GLACIER","retain_head_object":false,"s3":{"endpoint":"","access_key":"","secret":"","region":"","host_style":"path",`))
+		Expect(tentacle).To(HaveSuffix(`"multipart_min_part_size":33554432},"allow_read_through":false,"read_through_restore_days":1,"restore_storage_class":"STANDARD","s3-glacier":{"glacier_restore_days":1,"glacier_restore_tier_type":"Standard"}}`))
+		t.TierType = meta.TierTypeCloudS3
+		Expect(render(t, denc.Squid)).To(ContainSubstring(`"retain_head_object":false,"s3":{"endpoint":""`))
+		Expect(render(t, denc.Tentacle)).NotTo(ContainSubstring(`s3-glacier`), "the glacier config is cloud-s3-glacier's alone")
+		t.S3.HostStyle = 1
+		t.S3.ACLMappings = map[string]meta.TierACLMapping{"b": {Type: 2, SourceID: "s", DestID: "d"}, "a": {Type: 1}}
+		Expect(render(t, denc.Squid)).To(ContainSubstring(`"host_style":"virtual","target_storage_class":"","target_path":"",` +
+			`"acl_mappings":[{"key":"a","val":{"type":"email","source_id":"","dest_id":""}},{"key":"b","val":{"type":"uri","source_id":"s","dest_id":"d"}}],`))
+		t.S3Glacier.RestoreTierType = 1
+		t.TierType = meta.TierTypeCloudS3Glacier
+		Expect(render(t, denc.Tentacle)).To(HaveSuffix(`"glacier_restore_tier_type":"Expedited"}}`))
+	})
+	It("writes rate limits without main's list and delete limits", func() {
+		l := meta.RateLimitInfo{MaxReadOps: 1, MaxWriteOps: 2, MaxListOps: 7, MaxDeleteOps: 8, MaxReadBytes: 3, MaxWriteBytes: 4, Enabled: true}
+		Expect(render(l, denc.Tentacle)).To(Equal(`{"max_read_ops":1,"max_write_ops":2,"max_read_bytes":3,"max_write_bytes":4,"enabled":true}`))
+	})
+	It("writes a period config's quotas, then its user, bucket and anonymous rate limits", func() {
+		c := meta.PeriodConfig{UserRateLimit: meta.RateLimitInfo{MaxReadOps: 1}, BucketRateLimit: meta.RateLimitInfo{MaxReadOps: 2}, AnonRateLimit: meta.RateLimitInfo{MaxReadOps: 3}}
+		Expect(render(c, denc.Squid)).To(MatchRegexp(`^\{"bucket_quota":\{[^}]*\},"user_quota":\{[^}]*\},` +
+			`"user_ratelimit":\{"max_read_ops":1,[^}]*\},"bucket_ratelimit":\{"max_read_ops":2,[^}]*\},"anonymous_ratelimit":\{"max_read_ops":3,[^}]*\}\}$`))
+	})
+	It("writes an empty zonegroup sync policy and fails on one with groups", func() {
+		g := meta.ZoneGroup{ID: "g", Name: "zg"}
+		Expect(render(g, denc.Squid)).To(ContainSubstring(`"realm_id":"","sync_policy":{"groups":[]},"enabled_features":[]}`))
+		g.SyncPolicy = meta.SyncPolicy{Raw: []byte{1, 1, 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0}}
+		f := formatter.NewJSON(false)
+		f.OpenObjectSection("x")
+		g.Dump(f, denc.Squid)
+		f.CloseSection()
+		Expect(f.Err()).To(MatchError(meta.ErrOpaqueJSON))
+		p := meta.NewPeriod()
+		p.PeriodMap.ZoneGroups = map[string]meta.ZoneGroup{"g": g}
+		f = formatter.NewJSON(false)
+		f.OpenObjectSection("period")
+		p.Dump(f, denc.Squid)
+		f.CloseSection()
+		Expect(f.Err()).To(MatchError(meta.ErrOpaqueJSON), "a period holding that zonegroup")
+	})
+	It("writes a realm in XML as RGWRealm::dump does", func() {
+		f := formatter.NewXML(false, false)
+		f.OpenObjectSection("realm")
+		meta.Realm{ID: "R", Name: "r1", CurrentPeriod: "P", Epoch: 2}.Dump(f, denc.Squid)
+		f.CloseSection()
+		Expect(string(f.Bytes())).To(Equal(`<realm><id>R</id><name>r1</name><current_period>P</current_period><epoch>2</epoch></realm>`))
+	})
 	It("dumps an object version as encode_json(obj_version) does", func() {
 		Expect(render(meta.ObjVersion{Ver: 3, Tag: "_abc"}, denc.Squid)).To(Equal(`{"tag":"_abc","ver":3}`))
 	})

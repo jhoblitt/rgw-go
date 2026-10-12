@@ -16,6 +16,10 @@ import (
 // realm's control object, which is empty.
 const RootPool = ".rgw.root"
 
+// RealmNamesPrefix begins the name of every object mapping a realm name to
+// its id; the realm listing is the root pool's objects under it.
+const RealmNamesPrefix = "realms_names."
+
 // The object names are built from the prefixes, suffixes and fixed names of
 // src/rgw/driver/rados/config/{zone,zonegroup,realm,period,period_config}.cc
 // with the default rgw_default_*_info_oid and
@@ -28,7 +32,6 @@ const (
 	zoneGroupNamePrefix = "zonegroups_names."
 	defaultZoneGroupOID = "default.zonegroup"
 	realmInfoPrefix     = "realms."
-	realmNamesPrefix    = "realms_names."
 	realmControlSuffix  = ".control"
 	defaultRealmOID     = "default.realm"
 	periodInfoPrefix    = "periods."
@@ -63,7 +66,7 @@ func DefaultZoneGroupOID(realmID string) string { return defaultZoneGroupOID + "
 func RealmOID(id string) string { return realmInfoPrefix + id }
 
 // RealmNameOID names the object mapping a realm name to its id.
-func RealmNameOID(name string) string { return realmNamesPrefix + name }
+func RealmNameOID(name string) string { return RealmNamesPrefix + name }
 
 // RealmControlOID names a realm's empty control object, which radosgw
 // watches for notice of a newly committed period.
@@ -85,6 +88,17 @@ func PeriodConfigOID(realmID string) string {
 // does: a staging period's name has no epoch.
 func PeriodOID(id string, epoch uint32) string {
 	if strings.HasSuffix(id, periodStagingSuffix) {
+		return periodInfoPrefix + id
+	}
+	return periodInfoPrefix + id + "." + strconv.FormatUint(uint64(epoch), 10)
+}
+
+// RealmPeriodOID names the object holding one epoch of a period read for
+// realm realmID, as RGWPeriod::get_period_oid does (rgw_period.cc:80-88 at
+// v19.2.6 and v20.2.4): only the realm's own staging period,
+// "<realm id>:staging", is named without its epoch.
+func RealmPeriodOID(realmID, id string, epoch uint32) string {
+	if id == realmID+periodStagingSuffix {
 		return periodInfoPrefix + id
 	}
 	return periodInfoPrefix + id + "." + strconv.FormatUint(uint64(epoch), 10)

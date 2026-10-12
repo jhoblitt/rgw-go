@@ -1779,7 +1779,9 @@ review and verified against the tree.
   refuses to render their JSON when a sync policy holds groups. Rook creates
   no sync policies on a single-site store, and multisite is excluded, so a
   Rook-managed cluster is not affected; an operator who ran
-  `radosgw-admin sync group create` would be.
+  `radosgw-admin sync group create` would be. The admin API's
+  `GET /admin/realm/period` answers 501 NotImplemented for such a period,
+  where radosgw renders it.
 - **radosgw does not key class request shapes on the cluster release;
   rgw-go does, and that is stricter.** Request-struct bumps keep their
   compat version at 1, so a newer radosgw sends the newest shape
@@ -2277,12 +2279,12 @@ following.
     `rgw_rest_s3.cc:4985-4994` at v19.2.6, `:5545-5554` at v20.2.4).
   - an admin request, once routed, whose `uid`, `tenant`, `email`,
     `access-key`, `subuser`, `account-id`, `bucket`, `bucket-id`,
-    `new-bucket-name`, `object`, `id` or `name` holds a NUL as
-    `get_string` decodes it, with 400 InvalidArgument, the answer an admin
-    op gives a malformed argument (`-EINVAL`, as from `RESTArgs::get_bool`,
-    `rgw_rest.cc:1002-1032` at v19.2.6). radosgw reads, creates, links or
-    removes the user, key, subuser, bucket, object or account under the
-    name with its NUL.
+    `new-bucket-name`, `object`, `id`, `name`, `realm_id` or `period_id`
+    holds a NUL as `get_string` decodes it, with 400 InvalidArgument, the
+    answer an admin op gives a malformed argument (`-EINVAL`, as from
+    `RESTArgs::get_bool`, `rgw_rest.cc:1002-1032` at v19.2.6). radosgw
+    reads, creates, links or removes the user, key, subuser, bucket,
+    object, account, realm or period under the name with its NUL.
 
   The credentials are refused as radosgw refuses a name nothing holds, but
   without the lookup: an access key holding a NUL, which only a query's

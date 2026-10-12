@@ -148,10 +148,11 @@ func read[T any](a Args, name string, def T, conv func(string) (T, bool)) (v T, 
 // nameArgs are the arguments whose value becomes part of a RADOS object
 // name: a user's id and tenant, an access key's, an email's and a subuser's
 // index, an account's id and name, a bucket's entry point and instance, and
-// an object's head.
+// an object's head, and a period's.
 var nameArgs = []string{
 	"uid", "tenant", "email", "access-key", "subuser", "account-id",
 	"bucket", "bucket-id", "new-bucket-name", "object", "id", "name",
+	"realm_id", "period_id",
 }
 
 // RefuseNUL is ErrInvalidArgument when an argument in nameArgs, decoded as

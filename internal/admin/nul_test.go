@@ -39,6 +39,9 @@ var _ = Describe("a NUL in an admin argument that names a RADOS object", func() 
 		Entry("object", http.MethodDelete, "/admin/bucket?object&bucket=b&object=a%00b"),
 		Entry("an account's id", http.MethodGet, "/admin/account?id=a%00b"),
 		Entry("an account's name", http.MethodPost, "/admin/account?name=a%00b"),
+		Entry("a realm's name", http.MethodGet, "/admin/realm?name=a%00b"),
+		Entry("a period's realm", http.MethodGet, "/admin/realm/period?realm_id=a%00b"),
+		Entry("a period's id", http.MethodGet, "/admin/realm/period?period_id=a%00b"),
 	)
 
 	It("creates no user under the name before the NUL", func(ctx SpecContext) {
