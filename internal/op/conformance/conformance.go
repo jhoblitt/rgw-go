@@ -313,6 +313,22 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Expect(env.Buckets.PutBucketInfo(ctx, stale)).To(MatchError(op.ErrConcurrentModification))
 		})
 
+		It("refuses to delete a bucket of another zonegroup with PermanentRedirect and keeps it", func(ctx SpecContext) {
+			u := newUser(ctx, "owner")
+			name := prefix + "-b"
+			newBucket(ctx, u, name, meta.Quota{})
+			rec, err := env.Buckets.GetBucket(ctx, "", name)
+			Expect(err).NotTo(HaveOccurred())
+			local := rec.Info.Zonegroup
+			rec.Info.Zonegroup = prefix + "-elsewhere"
+			Expect(env.Buckets.PutBucketInfo(ctx, rec)).To(Succeed())
+			Expect(env.Buckets.DeleteBucket(ctx, rec)).To(MatchError(op.ErrPermanentRedirect))
+			got, err := env.Buckets.GetBucket(ctx, "", name)
+			Expect(err).NotTo(HaveOccurred(), "the bucket stays")
+			got.Info.Zonegroup = local
+			Expect(env.Buckets.PutBucketInfo(ctx, got)).To(Succeed(), "restoring the zonegroup so the cleanup can delete the bucket")
+		})
+
 		It("pages the owner's buckets in name order", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
 			for _, s := range []string{"c", "a", "b"} {

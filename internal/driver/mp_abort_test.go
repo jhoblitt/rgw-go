@@ -807,16 +807,16 @@ var _ = Describe("DeleteBucket aborts in-flight uploads", func() {
 		Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
 		Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up.ID))).NotTo(BeNil())
 	})
-	It("does not list or abort anything for a bucket another zonegroup owns", func(ctx SpecContext) {
+	It("refuses a bucket another zonegroup owns before it lists or aborts anything", func(ctx SpecContext) {
 		Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
 		foreign := create(ctx, "elsewhere")
 		up := upload(ctx, foreign, "k", 1)
 		c.ResetCounters()
-		Expect(s.DeleteBucket(ctx, foreign)).To(Succeed())
+		Expect(s.DeleteBucket(ctx, foreign)).To(MatchError(op.ErrPermanentRedirect))
 		for i := range 11 {
-			Expect(c.Reads(rookIndexPool, "", fmt.Sprintf(".dir.%s.%d", foreign.Info.Bucket.ID, i))).To(BeZero(), "results.is_truncated = own_bucket: no listing at all")
+			Expect(c.Reads(rookIndexPool, "", fmt.Sprintf(".dir.%s.%d", foreign.Info.Bucket.ID, i))).To(BeZero(), "no listing at all")
 		}
 		Expect(c.Writes(extraPoolName, "", metaOID(foreign, "k", up.ID))).To(BeZero())
-		Expect(c.Object(extraPoolName, "", metaOID(foreign, "k", up.ID))).NotTo(BeNil(), "abort_multiparts runs only under own_bucket")
+		Expect(c.Object(extraPoolName, "", metaOID(foreign, "k", up.ID))).NotTo(BeNil(), "the upload stays")
 	})
 })

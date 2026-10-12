@@ -23,6 +23,9 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
 	}
+	if err := refuseForeignPurge(env, rec); err != nil {
+		return err
+	}
 	if err := refuseVersionedPurge(rec); err != nil {
 		return err
 	}
@@ -67,6 +70,9 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
 	}
+	if err := refuseForeignPurge(env, rec); err != nil {
+		return err
+	}
 	if err := refuseVersionedPurge(rec); err != nil {
 		return err
 	}
@@ -74,6 +80,20 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 		return err
 	}
 	return PurgeBucket(ctx, env, rec)
+}
+
+// refuseForeignPurge answers PermanentRedirect for a bucket of another
+// zonegroup, as RGWZoneGroup::equals tells it, before a purge deletes
+// anything. radosgw's remove neither lists nor deletes such a bucket's
+// objects, which it leaves to the zonegroup that owns them, and removes the
+// bucket (rgw_sal_rados.cc:366-369 at v19.2.6, :383-386 at v20.2.4); rgw-go
+// knows no other zonegroup to leave them to, and the RADOS store refuses
+// the removal (docs/exclusions.md).
+func refuseForeignPurge(env *Env, rec *BucketRecord) error {
+	if env.Zone.ZoneGroup().Equals(rec.Info.Zonegroup) {
+		return nil
+	}
+	return fmt.Errorf("%w: bucket %s belongs to zonegroup %q", ErrPermanentRedirect, rec.Info.Bucket.Name, rec.Info.Zonegroup)
 }
 
 // refuseVersionedPurge answers NotImplemented for a bucket whose versioning

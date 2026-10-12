@@ -67,11 +67,9 @@ func (o *DeleteObject) OpMask() uint32 { return OpTypeDelete }
 // a delete is guarded, on both releases").
 func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
+	if err := loadBucket(ctx, r); err != nil {
 		return err
 	}
-	r.BucketRec = rec
 	o.params = DeleteParams{IfMatch: storeCondition(o.IfMatch)}
 	if o.UnmodifiedSince != nil {
 		t, ok := parseDate(*o.UnmodifiedSince)

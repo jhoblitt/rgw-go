@@ -106,7 +106,10 @@ type BucketStore interface {
 	// can compare owners; it never re-links the name to a new instance.
 	CreateBucket(ctx context.Context, p CreateBucketParams) (*BucketRecord, error)
 	// DeleteBucket removes the instance, the entry point and the user's list
-	// entry; a bucket with objects fails with ErrBucketNotEmpty.
+	// entry; a bucket with objects fails with ErrBucketNotEmpty, and one
+	// whose zonegroup meta.ZoneGroup.Equals does not take for this one with
+	// ErrPermanentRedirect, before the store reads its index or removes
+	// anything: rgw-go has no zonegroup to leave its objects to.
 	DeleteBucket(ctx context.Context, rec *BucketRecord) error
 	// PutBucketInfo rewrites the instance from rec.Info, guarded by rec.Version.
 	PutBucketInfo(ctx context.Context, rec *BucketRecord) error

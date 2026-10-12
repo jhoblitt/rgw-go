@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // aws4Algorithm is AWS4_HMAC_SHA256_STR.
@@ -49,46 +50,16 @@ type requestView struct {
 	params, sysParams, subres map[string]string
 }
 
-// newRequestView builds req_info's view of req. REQUEST_URI is the target
-// as sent; get_abs_path reduces an absolute-form one before the split at
-// its first '?', so a query without one falls back to beast's QUERY_STRING
-// (rgw_common.cc:209-245 at v19.2.6, :209-255 at v20.2.4;
-// rgw_asio_client.cc:74-84).
+// newRequestView builds req_info's view of req, its target split as
+// vhost.RequestTarget splits it.
 func newRequestView(req *http.Request) *requestView {
-	target := req.RequestURI
-	if target == "" {
-		target = req.URL.RequestURI()
-	}
-	_, queryString, _ := strings.Cut(target, "?")
-	uri := target
-	if !strings.HasPrefix(uri, "/") {
-		uri = absPath(uri)
-	}
-	path, query, hasQuery := strings.Cut(uri, "?")
-	if !hasQuery {
-		query = queryString
-	}
+	path, query := vhost.RequestTarget(req)
 	rv := &requestView{
 		req: req, rawPath: path, rawQuery: query,
 		params: map[string]string{}, sysParams: map[string]string{}, subres: map[string]string{},
 	}
 	rv.parseQuery()
 	return rv
-}
-
-// absPath is get_abs_path: an http, https, ws or wss URI keeps what
-// follows its authority from the first '/', which may lie in the query;
-// without a '/' it stays as it is.
-func absPath(uri string) string {
-	for _, scheme := range []string{"http://", "https://", "ws://", "wss://"} {
-		if rest, ok := strings.CutPrefix(uri, scheme); ok {
-			if i := strings.IndexByte(rest, '/'); i >= 0 {
-				return rest[i:]
-			}
-			return uri
-		}
-	}
-	return uri
 }
 
 // parseQuery is RGWHTTPArgs::parse and append (rgw_common.cc:848-975 at

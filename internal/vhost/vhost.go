@@ -1,13 +1,53 @@
 // Package vhost reads the bucket a virtual-hosted request's Host names, as
-// radosgw's RGWREST::preprocess does. The S3 handler routes by that bucket and
-// SigV2 signs it in front of the path, so both read it here and cannot
-// disagree.
+// radosgw's RGWREST::preprocess does, and the request target req_info splits
+// before it. The S3 handler routes by that bucket and SigV2 signs it in front
+// of the path, so both read the bucket here; SigV2 and the S3 handler's
+// Location header read the target from RequestTarget.
 package vhost
 
 import (
 	"net"
+	"net/http"
 	"strings"
 )
+
+// RequestTarget is req_info's request_uri and request_params: REQUEST_URI is
+// the target as sent; get_abs_path reduces an absolute-form one before the
+// split at its first '?', so a query without one falls back to beast's
+// QUERY_STRING (rgw_common.cc:209-245 at v19.2.6, :209-255 at v20.2.4;
+// rgw_asio_client.cc:74-84). The path is what RGWREST::preprocess then puts
+// a virtual-hosted bucket in front of.
+func RequestTarget(req *http.Request) (path, query string) {
+	target := req.RequestURI
+	if target == "" {
+		target = req.URL.RequestURI()
+	}
+	_, queryString, _ := strings.Cut(target, "?")
+	uri := target
+	if !strings.HasPrefix(uri, "/") {
+		uri = absPath(uri)
+	}
+	path, query, hasQuery := strings.Cut(uri, "?")
+	if !hasQuery {
+		query = queryString
+	}
+	return path, query
+}
+
+// absPath is get_abs_path: an http, https, ws or wss URI keeps what
+// follows its authority from the first '/', which may lie in the query;
+// without a '/' it stays as it is.
+func absPath(uri string) string {
+	for _, scheme := range []string{"http://", "https://", "ws://", "wss://"} {
+		if rest, ok := strings.CutPrefix(uri, scheme); ok {
+			if i := strings.IndexByte(rest, '/'); i >= 0 {
+				return rest[i:]
+			}
+			return uri
+		}
+	}
+	return uri
+}
 
 // maxBucketNameLen is RGWHandler_REST's MAX_BUCKET_NAME_LEN (rgw_rest.h:555
 // at v19.2.6, :567 at v20.2.4).

@@ -1,6 +1,8 @@
 package vhost
 
 import (
+	"net/http"
+	"net/url"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -8,6 +10,17 @@ import (
 )
 
 var _ = Describe("vhost", func() {
+	DescribeTable("RequestTarget is req_info's request_uri and request_params",
+		func(target, wantPath, wantQuery string) {
+			req := &http.Request{RequestURI: target, URL: &url.URL{Path: "/unused"}}
+			path, query := RequestTarget(req)
+			Expect([]string{path, query}).To(Equal([]string{wantPath, wantQuery}), "%q", target)
+		},
+		Entry("the path and query as sent, a byte Go would escape kept", "/b/a|b%2F?x=1&y", "/b/a|b%2F", "x=1&y"),
+		Entry("an absolute-form target reduced to its path", "http://h.example.com:8080/k%20v?y", "/k%20v", "y"),
+		Entry("a slash in the query that get_abs_path takes for the path's", "http://h?x=/y", "/y", "x=/y"),
+		Entry("a scheme get_abs_path does not reduce", "ftp://h/k?q", "ftp://h/k", "q"),
+	)
 	DescribeTable("Hostname is req_info.host after RGWREST::preprocess",
 		func(host, want string) { Expect(Hostname(host)).To(Equal(want), "%q", host) },
 		Entry("a bare name", "example.com", "example.com"),

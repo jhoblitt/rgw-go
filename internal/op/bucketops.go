@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -19,16 +20,50 @@ import (
 // RGWDeleteBucket, RGWStatBucket and RGWGetBucketLocation. A bare line
 // number is v19.2.6's; the v20.2.4 code is the same unless noted.
 
-// loadBucket is rgw_build_bucket_policies' bucket load for a bucket op: a
-// missing bucket is NoSuchBucket before the permission check
-// (rgw_op.cc:523-541; v20.2.4 :569-582).
+// loadBucket is rgw_build_bucket_policies' load of the bucket the request
+// names, which every S3 op but CreateBucket makes before anything else
+// once the requester is authenticated: a missing bucket is NoSuchBucket
+// (rgw_op.cc:523-541; v20.2.4 :553-571), and a bucket of another zonegroup
+// is redirectForeignBucket's PermanentRedirect, with r.BucketRec set either
+// way, as s->bucket is, for the headers and the usage log.
 func loadBucket(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
 		return err
 	}
 	r.BucketRec = rec
-	return nil
+	return redirectForeignBucket(ctx, r)
+}
+
+// redirectForeignBucket is rgw_build_bucket_policies' zonegroup check
+// (rgw_op.cc:558-574; v20.2.4 :588-604): a bucket whose zonegroup
+// RGWZoneGroup::equals does not take for this one is PermanentRedirect,
+// except for a system request to the master zonegroup and for a PUT of an
+// object whose copy source's bucket this zonegroup holds (localSource).
+// GetBucketLocation, the third exception, loads its bucket without the
+// check.
+func redirectForeignBucket(ctx context.Context, r *Request) error {
+	zg := r.Env.Zone.ZoneGroup()
+	switch {
+	case zg.Equals(r.BucketRec.Info.Zonegroup):
+		return nil
+	case zg.IsMaster && r.Identity.System:
+		return nil
+	case r.Method == http.MethodPut && r.Object.Name != "" && localSource(ctx, r, zg):
+		return nil
+	}
+	return ErrPermanentRedirect
+}
+
+// localSource is s->local_source (rgw_op.cc:509-518; v20.2.4 :539-548): the
+// request names a copy source whose bucket loads and is of zonegroup zg. A
+// source that fails to load is no local source, whatever the failure.
+func localSource(ctx context.Context, r *Request, zg meta.ZoneGroup) bool {
+	if r.SrcBucket == "" {
+		return false
+	}
+	src, err := r.Env.Buckets.GetBucket(ctx, r.SrcTenant, r.SrcBucket)
+	return err == nil && zg.Equals(src.Info.Zonegroup)
 }
 
 // CreateBucket is RGWCreateBucket (rgw_op.cc:3170-3244, :3416-3707; v20.2.4
@@ -467,8 +502,17 @@ func (*GetBucketLocation) Action() policy.Action { return policy.S3GetBucketLoca
 // OpMask is RGW_OP_TYPE_READ.
 func (*GetBucketLocation) OpMask() uint32 { return OpTypeRead }
 
-// Init loads the bucket.
-func (*GetBucketLocation) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
+// Init loads the bucket without redirecting one of another zonegroup, the
+// exception rgw_build_bucket_policies makes for this op (rgw_op.cc:567;
+// v20.2.4 :597).
+func (*GetBucketLocation) Init(ctx context.Context, r *Request) error {
+	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
+	if err != nil {
+		return err
+	}
+	r.BucketRec = rec
+	return nil
+}
 
 // VerifyPermission authorizes s3:GetBucketLocation against the bucket.
 func (o *GetBucketLocation) VerifyPermission(ctx context.Context, r *Request) error {

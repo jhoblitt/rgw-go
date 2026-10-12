@@ -2958,6 +2958,61 @@ v20.2.4 tags, rgw-go does the following.
     otherwise. radosgw files the status of its op's own result.
   - **A client that half-closed its connection and still reads** gets no
     answer, where radosgw would answer its op.
+- **A bucket of another zonegroup is redirected as radosgw redirects it,
+  and never removed.** An S3 request on a bucket whose instance names a
+  zonegroup `RGWZoneGroup::equals` does not take for this one answers 301
+  PermanentRedirect with no body once the bucket loads, before the
+  permission check, as `rgw_build_bucket_policies` answers it
+  (`rgw_op.cc:558-574` at v19.2.6, `:588-604` at v20.2.4): a missing
+  zonegroup id is the master zonegroup's, and GetBucketLocation, a system
+  request to the master zonegroup and a PUT of an object whose
+  `x-amz-copy-source` bucket this zonegroup holds are let through. The
+  `Location` header is built from this zonegroup's endpoint, or its master
+  zone's, and the request URI and query as sent, and is left out when
+  neither has an endpoint (`abort_early`, `rgw_rest.cc:716-727` at
+  v19.2.6, `:721-732` at v20.2.4). Such a bucket arises from instance
+  metadata carried over from another cluster with `radosgw-admin metadata
+  put`, which radosgw and rgw-go both accept whatever zonegroup it names.
+  rgw-go differs in three ways:
+  - An S3 route rgw-go does not serve answers 501 NotImplemented before
+    the bucket is loaded, so such a bucket is never redirected there;
+    radosgw loads the bucket for every op but CreateBucket and answers 301.
+  - The RADOS store's bucket removal refuses a bucket of another
+    zonegroup with 301 PermanentRedirect before it reads the index or
+    removes anything, and a purge refuses it before it deletes an object.
+    radosgw's S3 delete reaches such a bucket only as a system request to
+    the master zonegroup, which the redirect lets through (`rgw_op.cc:565`
+    at v19.2.6, `:595` at v20.2.4): the delete the owning zonegroup's zone
+    forwards to the metadata master (`rgw_forward_request_to_master`,
+    `rgw_op.cc:126-134` at v19.2.6, `:161-169` at v20.2.4) once its own
+    emptiness check has passed. The master compares the raw ids, skips the
+    check (`rgw_op.cc:3759-3783` at v19.2.6, `:3968-3992` at v20.2.4) and
+    removes the bucket without listing it
+    (`driver/rados/rgw_sal_rados.cc:366-369` at v19.2.6, `:383-386` at
+    v20.2.4). rgw-go neither forwards a delete nor receives a forwarded one
+    (Multisite), so no zone has checked such a bucket, and removing it would
+    leave its objects in the data pool with nothing naming them. The
+    refusal is what a system request's S3 DeleteBucket on the master
+    zonegroup meets, and what `DELETE /admin/user` with `purge-data`
+    answers for a user owning such a bucket, keeping the user, that bucket
+    and the buckets it had not yet reached. radosgw's user removal removes
+    the bucket without listing it and leaves its objects
+    (`driver/rados/rgw_user.cc:1977` at v19.2.6, `:1983` at v20.2.4).
+    `DELETE /admin/bucket` answers 301 earlier, as radosgw does.
+  - A copy between zonegroups runs here. A copy into a bucket of another
+    zonegroup from a source this zonegroup holds, which the redirect lets
+    through, writes the object into that bucket's index here, and a copy
+    from a source bucket of another zonegroup into a bucket of this one
+    reads the source here. radosgw's `copy_obj` sends the first through
+    `copy_obj_to_remote_dest` to the metadata master, the master zone of
+    the period's master zonegroup (`get_master_conn`,
+    `driver/rados/rgw_rados.cc:4615` and `services/svc_zone.cc:547-550` at
+    v19.2.6, `:4864` and `:383-385` at v20.2.4), which is in the
+    destination's zonegroup only when that is the master zonegroup. It
+    fetches the second with `fetch_remote_obj` through the source
+    zonegroup's connection, answering 404 NoSuchKey when it has none
+    (`driver/rados/rgw_rados.cc:4716-4736`, `:4808-4810` and `:4270-4278`
+    at v19.2.6, `:4966-4990`, `:5064-5066` and `:4473-4481` at v20.2.4).
 
 ### Request authentication differences
 

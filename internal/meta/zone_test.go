@@ -112,6 +112,17 @@ func farray(xs ...meta.JSONFormattable) meta.JSONFormattable {
 	return meta.JSONFormattable{Type: meta.FormattableArray, Array: xs}
 }
 
+var _ = DescribeTable("ZoneGroup.Equals, RGWZoneGroup::equals",
+	func(master bool, id string, want bool) {
+		g := meta.ZoneGroup{ID: "zg-1", IsMaster: master}
+		Expect(g.Equals(id)).To(Equal(want), "master %t, id %q", master, id)
+	},
+	Entry("its own id", false, "zg-1", true),
+	Entry("another id", true, "zg-2", false),
+	Entry("an empty id on the master", true, "", true),
+	Entry("an empty id elsewhere", false, "", false),
+)
+
 // The pre-v12 tier config reaches JSONFormattable::set, which parses each
 // value with json_spirit and stores a nested scalar as
 // json_spirit::write_string prints it.

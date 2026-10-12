@@ -97,11 +97,10 @@ func (o *DeleteObjects) OpMask() uint32 { return OpTypeDelete }
 // rgw_max_put_param_size. get_params asks read_all_input for no chunked
 // input, which it ignores, so a chunked body is read too.
 func (o *DeleteObjects) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
+	err := loadBucket(ctx, r)
 	if err != nil {
 		return err
 	}
-	r.BucketRec = rec
 	o.body, err = ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
 	return err
 }
