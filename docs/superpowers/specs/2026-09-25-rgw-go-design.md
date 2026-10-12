@@ -355,8 +355,8 @@ with 417.
 with the OLH protocol, ListObjectVersions, object lock with retention and
 legal hold, lifecycle with the worker for expiration, noncurrent
 expiration, multipart abort and in-cluster storage-class transition, CORS
-with preflight, static website, request payment, SSE-C and the encryption
-configuration ops behaving as an unconfigured radosgw, ownership controls,
+with preflight, static website, the encryption configuration ops behaving
+as an unconfigured radosgw, ownership controls,
 public access block, policy status, POST object, checksums at Tentacle
 level, compression and placement on the write path, MFA, the `?layout`
 extension. Admin adds the otp metadata section.
@@ -373,6 +373,17 @@ extension; rate-limit enforcement; ops log to a file in radosgw's format;
 admin-socket counters in the form ceph-exporter scrapes, with librados's
 own client socket kept out of the shared socket directory. Admin adds the
 roles, user_policy, group and topic metadata sections.
+
+**Phase 4, customer-key encryption and request payment.** SSE-C,
+byte-compatible with radosgw's chunked AES-256-CBC so that each gateway
+reads what the other wrote, ranges, multipart parts and copies included,
+gated by that cross-gateway check in both directions and by s3-tests' SSE-C
+tests, over TLS or with `rgw_crypt_require_ssl` off; and the
+request-payment configuration ops, whose requester-pays enforcement phase 1
+already carries. Both moved here from phase 2 so that phase 2 stays smaller
+than phase 1 turned out to be. Until phase 4, SSE-C reads and writes answer
+501 and the request-payment ops answer 501, so nothing asked to be
+encrypted is stored in the clear and no ciphertext is served.
 
 ## 10. Testing
 

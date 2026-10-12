@@ -6,11 +6,12 @@ Add an entry, or update one, whenever planning or orchestration costs rework, st
 
 ## Reviews
 
-A process and planning review runs at three points:
+A process and planning review runs at four points:
 
 1. **End of phase 1, before phase 2's tasks are planned.**
 2. **End of phase 2, before phase 3's tasks are planned.**
-3. **End of phase 3.** This one also decides whether to change the existing skills or write a new one.
+3. **End of phase 3, before phase 4's tasks are planned.**
+4. **End of phase 4.** This one also decides whether to change the existing skills or write a new one.
 
 Each review reads every open entry. It applies the fixes the next planning round needs, and it marks each entry **fixed** (naming the change), **carried** (to the next review) or **dropped** (with the reason).
 

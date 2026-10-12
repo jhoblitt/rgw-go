@@ -235,8 +235,10 @@ path, AES-256-CBC in RGW's chunked format, stays with SSE-C.
 
 Still required, and these three hold the exclusion together:
 
-1. SSE-C is implemented, byte-compatible with RGW's scheme, so that
-   objects radosgw wrote with a customer key decrypt.
+1. SSE-C is implemented in phase 4, byte-compatible with RGW's scheme,
+   so that objects radosgw wrote with a customer key decrypt. Until then
+   rgw-go answers SSE-C reads and writes with 501, so it neither stores in
+   the clear what a client asked to have encrypted nor serves ciphertext.
 2. The three bucket-encryption configuration ops behave exactly as a
    radosgw with no backend configured: the configuration round-trips,
    and any use of `aws:kms` or `AES256` fails with radosgw's error.
@@ -2065,8 +2067,8 @@ review and verified against the tree.
   NotImplemented on both releases, as a Squid radosgw does
   (`driver/rados/rgw_rados.cc:4755-4763` at v19.2.6); a Tentacle radosgw
   decrypts it and re-encrypts as the request asks (`rgw_op.cc:5793-5805`
-  and `:5846-5866` at v20.2.4), which needs SSE-C decryption, not yet
-  implemented, or a key server, which is excluded.
+  and `:5846-5866` at v20.2.4), which needs SSE-C decryption, which
+  phase 4 adds, or a key server, which is excluded.
 - **CreateBucket with object lock answers 501 until phase 2.** A
   CreateBucket with `x-amz-bucket-object-lock-enabled: true`, in any case,
   answers 501 NotImplemented and creates nothing, until object lock and
@@ -3657,10 +3659,10 @@ does the following.
   radosgw's.
 - **SSE-C reads.** A GET or HEAD of an SSE-C object whose customer-key
   headers pass every check radosgw makes answers 501 NotImplemented until
-  rgw-go decrypts SSE-C, which "Key management" above requires; radosgw
-  decrypts it. GetObjectAttributes, which makes GetObject's checks, answers
-  the same 501, where radosgw makes them without setting up a decryption,
-  because it reads no data, and answers the attributes
+  rgw-go decrypts SSE-C in phase 4, as "Key management" above requires;
+  radosgw decrypts it. GetObjectAttributes, which makes GetObject's checks,
+  answers the same 501, where radosgw makes them without setting up a
+  decryption, because it reads no data, and answers the attributes
   (`RGWGetObjAttrs_ObjStore_S3::get_decrypt_filter`, `rgw_rest_s3.cc:3985-3997`
   at v20.2.4). Every refusal before that is radosgw's.
 - **SSE-C key headers that are all '='.** rgw-go decodes the SSE-C customer
@@ -4120,7 +4122,8 @@ does the following.
   `rgw_common.cc:61` at v19.2.6, `:62` at v20.2.4), where rgw-go
   serves it. No radosgw component sends either parameter at either
   release; they belong to multisite, which is excluded.
-- **Writes that ask for encryption answer 501 until phase 2.** radosgw
+- **Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
+  phase 2 and SSE-C until phase 4.** radosgw
   encrypts a PutObject or CopyObject that sends the SSE-C headers, and
   fails one that asks for SSE-S3 or SSE-KMS, or that lands in a bucket
   with a default encryption, when it has no key server
@@ -4128,7 +4131,10 @@ does the following.
   `:151-269` at v20.2.4). rgw-go encrypts nothing on the write path in phase
   1, so it answers 501 NotImplemented, rather than store in the clear what
   a client asked to have encrypted ("Key management: SSE-KMS and SSE-S3 with
-  every backend"):
+  every backend"). Phase 2 answers a request for SSE-S3 or SSE-KMS, and a
+  write into a bucket with a default encryption, with radosgw's failure
+  without a key server (item 2 there); an SSE-C write keeps the 501 until
+  phase 4 encrypts it. The 501 comes:
   - before the permission check and before reading the body, to a PutObject
     or CopyObject carrying any header that radosgw takes for an encryption
     header once `init_meta_info` has rewritten its meta prefixes to `x-amz-`
