@@ -218,7 +218,8 @@ reconciliation.
   1024 operations or 100 MiB, blocks the submitting thread inside C.
   rgw-go keeps its own in-flight limiter under those limits so waiting
   happens parked in Go, honors `rgw_max_concurrent_requests`, default
-  1024, as a hard cap, and bounds body memory with a byte budget.
+  1024, as a hard cap, and bounds the memory PUT bodies hold: a byte
+  budget covers their tails, and that cap bounds the heads they keep.
 - **Cancellation.** A client disconnect cancels the request context and
   every wait selects on it. librados can only abandon an in-flight
   operation on the client side (`rados_aio_cancel`, not yet bound in the
