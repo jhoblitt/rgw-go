@@ -340,7 +340,7 @@ func (s *Store) realm(id, name string) (meta.Realm, error) {
 		return meta.Realm{}, fmt.Errorf("realm name %q: %w", name, op.ErrNoSuchKey)
 	}
 	if id == "" {
-		id = s.cfg.Realm.ID
+		id = s.defaultRealm
 	}
 	r, ok := s.realms[id]
 	if !ok {
@@ -349,8 +349,30 @@ func (s *Store) realm(id, name string) (meta.Realm, error) {
 	return r, nil
 }
 
-// ListRealms implements op.RealmStore: the realm names sorted, and
-// Config.Realm's id as the default when one was seeded.
+// AddRealm seeds r, replacing a realm with its id.
+func (s *Store) AddRealm(r meta.Realm) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.realms[r.ID] = r
+}
+
+// AddPeriod seeds one epoch of a period, replacing that epoch.
+func (s *Store) AddPeriod(p meta.Period) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.periods[periodKey(p.ID, p.Epoch)] = p
+}
+
+// SetDefaultRealm makes id the default realm, as default.realm names one;
+// Config.Realm's id is the default until then.
+func (s *Store) SetDefaultRealm(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultRealm = id
+}
+
+// ListRealms implements op.RealmStore: the realm names sorted, and the
+// default realm's id.
 func (s *Store) ListRealms(context.Context) (defaultID string, names []string, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -358,7 +380,7 @@ func (s *Store) ListRealms(context.Context) (defaultID string, names []string, e
 		names = append(names, r.Name)
 	}
 	slices.Sort(names)
-	return s.cfg.Realm.ID, names, nil
+	return s.defaultRealm, names, nil
 }
 
 // GetPeriod implements op.RealmStore over the seeded period as RGWPeriod::init
@@ -388,11 +410,12 @@ func (s *Store) GetPeriod(_ context.Context, realmID, periodID string, epoch uin
 	return p, nil
 }
 
-// GetPeriodConfig implements op.RealmStore.
+// GetPeriodConfig implements op.RealmStore, keyed as the object is named:
+// no realm is the realm "default" (meta.PeriodConfigOID).
 func (s *Store) GetPeriodConfig(_ context.Context, realmID string) (meta.PeriodConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cfg, ok := s.periodConfigs[realmID]
+	cfg, ok := s.periodConfigs[meta.PeriodConfigOID(realmID)]
 	if !ok {
 		return meta.PeriodConfig{}, fmt.Errorf("period config of realm %q: %w", realmID, op.ErrNotFound)
 	}
@@ -403,7 +426,7 @@ func (s *Store) GetPeriodConfig(_ context.Context, realmID string) (meta.PeriodC
 func (s *Store) PutPeriodConfig(_ context.Context, realmID string, cfg meta.PeriodConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.periodConfigs[realmID] = cfg
+	s.periodConfigs[meta.PeriodConfigOID(realmID)] = cfg
 	return nil
 }
 

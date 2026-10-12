@@ -14,7 +14,6 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
-	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
@@ -243,31 +242,6 @@ var _ = Describe("the driver", func() {
 			s, err = driver.Open(ctx, cluster, opts, driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
 		})
-
-		DescribeTable("answers NotImplemented from every store method",
-			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
-				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
-			},
-			Entry("GetRealm", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetRealm(ctx, "", "")
-				return err
-			}),
-			Entry("ListRealms", func(ctx context.Context, s *driver.Store) error {
-				_, _, err := s.ListRealms(ctx)
-				return err
-			}),
-			Entry("GetPeriod", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetPeriod(ctx, "", "", 0)
-				return err
-			}),
-			Entry("GetPeriodConfig", func(ctx context.Context, s *driver.Store) error {
-				_, err := s.GetPeriodConfig(ctx, "")
-				return err
-			}),
-			Entry("PutPeriodConfig", func(ctx context.Context, s *driver.Store) error {
-				return s.PutPeriodConfig(ctx, "", meta.PeriodConfig{})
-			}),
-		)
 
 		It("gives an Env whose every store is itself and whose options are Open's", func() {
 			env := s.Env()

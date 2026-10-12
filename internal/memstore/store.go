@@ -55,7 +55,8 @@ type Store struct {
 	usageRecords   []op.UsageRecord             // the usage log ReadUsage reads, seeded by AddUsage
 	realms         map[string]meta.Realm        // by id
 	periods        map[string]meta.Period       // "id.epoch" -> period
-	periodConfigs  map[string]meta.PeriodConfig // realm id -> config
+	periodConfigs  map[string]meta.PeriodConfig // object name -> config
+	defaultRealm   string                       // default.realm's id
 }
 
 type bucket struct {
@@ -157,6 +158,7 @@ func New(cfg Config) *Store {
 		realms:         map[string]meta.Realm{},
 		periods:        map[string]meta.Period{},
 		periodConfigs:  map[string]meta.PeriodConfig{},
+		defaultRealm:   cfg.Realm.ID,
 	}
 	if cfg.Realm.ID != "" {
 		s.realms[cfg.Realm.ID] = cfg.Realm
