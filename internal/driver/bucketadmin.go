@@ -12,11 +12,14 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
 // The admin bucket ops' storage steps are RGWBucketAdminOp's and
@@ -71,21 +74,146 @@ func (s *Store) IndexStats(ctx context.Context, rec *op.BucketRecord) (op.Bucket
 	}
 	vers, masters, markers := make([]string, len(headers)), make([]string, len(headers)), make([]string, len(headers))
 	for i, h := range headers {
-		for c, hs := range h.Stats {
-			name := categoryName(c)
-			cs := st.Categories[name]
-			cs.Size += hs.TotalSize
-			cs.SizeRounded += hs.TotalSizeRounded
-			cs.SizeUtilized += hs.ActualSize
-			cs.NumObjects += hs.NumEntries
-			st.Categories[name] = cs
-		}
+		accumulateStats(st.Categories, h)
 		vers[i] = strconv.FormatUint(h.Ver, 10)
 		masters[i] = strconv.FormatUint(h.MasterVer, 10)
 		markers[i] = h.MaxMarker
 	}
 	st.Ver, st.MasterVer, st.MaxMarker = shardString(vers), shardString(masters), shardString(markers)
 	return st, nil
+}
+
+// accumulateStats is accumulate_raw_stats (rgw_rados.cc:5464-5479 at
+// v19.2.6, :6196-6211 at v20.2.4): h's categories added into cats.
+func accumulateStats(cats map[string]op.CategoryStats, h rgwcls.DirHeader) {
+	for c, hs := range h.Stats {
+		name := categoryName(c)
+		cs := cats[name]
+		cs.Size += hs.TotalSize
+		cs.SizeRounded += hs.TotalSizeRounded
+		cs.SizeUtilized += hs.ActualSize
+		cs.NumObjects += hs.NumEntries
+		cats[name] = cs
+	}
+}
+
+// eachShard runs fn on every shard object of rec's current index
+// generation, at most rgw_bucket_index_max_aio at once, as radosgw's
+// CLSRGWConcurrentIO does (cls_rgw_client.cc at v19.2.6; shard_io's
+// async_reads and async_writes at v20.2.4). radosgw opens the index without
+// looking at its layout, so an indexless bucket's calls go to the
+// ".dir.<id>" object it never created.
+func (s *Store) eachShard(ctx context.Context, rec *op.BucketRecord, fn func(ctx context.Context, pool radosclient.Pool, i int, oid string) error) error {
+	pool, oids, err := s.indexShards(ctx, rec)
+	if err != nil {
+		return err
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(max(s.opts.bucketIndexMaxAIO, 1))
+	for i, oid := range oids {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			return fn(gctx, pool, i, oid)
+		})
+	}
+	return g.Wait()
+}
+
+// CheckIndex implements op.BucketAdminStore as RGWRados::bucket_check_index
+// (rgw_rados.cc:5481-5514 at v19.2.6; :6213-6237 and
+// svc_bi_rados.cc:851-882 at v20.2.4): one bucket_check_index on every
+// shard, both headers each returns summed per category. A shard the OSD
+// does not find is radosgw's -ENOENT, NoSuchKey, and a reply that does not
+// decode its -EIO.
+func (s *Store) CheckIndex(ctx context.Context, rec *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
+	rets := make([]rgwcls.CheckIndexRet, len(shardOIDs(&rec.Info, rec.Info.Layout.Current)))
+	err = s.eachShard(ctx, rec, func(ctx context.Context, pool radosclient.Pool, i int, oid string) error {
+		rop := radosclient.NewReadOp()
+		res := rgwcls.BucketCheckIndex(rop, s.release)
+		if _, rerr := pool.Read(ctx, oid, rop, radosclient.OpFlagNone); rerr != nil {
+			return fmt.Errorf("checking index shard %s: %w", oid, op.FromRADOS(rerr, op.ScopeObject))
+		}
+		ret, derr := res.Result()
+		if derr != nil {
+			return fmt.Errorf("%w: checking index shard %s: %w", op.ErrUnknown, oid, derr)
+		}
+		rets[i] = ret
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	existing, calculated = map[string]op.CategoryStats{}, map[string]op.CategoryStats{}
+	for _, r := range rets {
+		accumulateStats(existing, r.ExistingHeader)
+		accumulateStats(calculated, r.CalculatedHeader)
+	}
+	return existing, calculated, nil
+}
+
+// RebuildIndex implements op.BucketAdminStore as
+// RGWRados::bucket_rebuild_index (rgw_rados.cc:5516-5527 at v19.2.6;
+// svc_bi_rados.cc:894-925 at v20.2.4): one bucket_rebuild_index on every
+// shard, which writes the header its entries make in place of the stored
+// one.
+func (s *Store) RebuildIndex(ctx context.Context, rec *op.BucketRecord) error {
+	return s.eachShard(ctx, rec, func(ctx context.Context, pool radosclient.Pool, _ int, oid string) error {
+		wop := radosclient.NewWriteOp()
+		rgwcls.BucketRebuildIndex(wop)
+		if _, err := pool.Write(ctx, oid, wop, radosclient.OpFlagNone); err != nil {
+			return fmt.Errorf("rebuilding index shard %s: %w", oid, op.FromRADOS(err, op.ScopeObject))
+		}
+		return nil
+	})
+}
+
+// RemoveIndexEntries implements op.BucketAdminStore as
+// RGWRados::remove_objs_from_index (rgw_rados.cc:10247-10321 at v19.2.6,
+// :11171-11245 at v20.2.4), which removes the omap keys directly, without
+// cls_rgw, so the shard headers keep counting what it removes. An indexless
+// layout is EINVAL. Each key goes to the shard bucket_shard_index names
+// (svc_bi_rados.h:109-122 at both tags): by the object name for a
+// multipart entry, the name with its last two "."-components removed as
+// RGWMPObj::from_meta splits it, and the empty key when it cannot; by the
+// name itself otherwise. The key removed is
+// rgw_obj_key(name, instance, ns).get_oid(); the shard's keys go in one
+// omap_rm_keys, in order, the shards one after another.
+func (s *Store) RemoveIndexEntries(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey) error {
+	gen := rec.Info.Layout.Current
+	if gen.Layout.Type == meta.IndexIndexless {
+		return op.ErrInvalidArgument
+	}
+	pool, err := s.indexPool(ctx, &rec.Info)
+	if err != nil {
+		return err
+	}
+	if rec.Info.Bucket.ID == "" {
+		return fmt.Errorf("%w: bucket %s has no bucket id", op.ErrUnknown, rec.Info.Bucket.Name)
+	}
+	byShard := map[uint32][]string{}
+	for _, k := range keys {
+		hashKey := k.Name
+		if k.NS == meta.NSMultipart {
+			hashKey, _, _ = meta.ParseMultipartMeta(k.Name)
+		}
+		shard, _ := meta.IndexShard(hashKey, gen.Layout.Normal.NumShards)
+		byShard[shard] = append(byShard[shard], k.OID())
+	}
+	for _, shard := range slices.Sorted(maps.Keys(byShard)) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		oid := rec.Info.IndexShardOID(gen, shard)
+		names := slices.Compact(slices.Sorted(slices.Values(byShard[shard])))
+		wop := radosclient.NewWriteOp()
+		wop.OmapRmKeys(names)
+		if _, err := pool.Write(ctx, oid, wop, radosclient.OpFlagNone); err != nil {
+			return fmt.Errorf("removing %d entries from index shard %s: %w", len(names), oid, op.FromRADOS(err, op.ScopeObject))
+		}
+	}
+	return nil
 }
 
 // ownerOf is the owner an ACL's owner id names, nothing for an empty id.

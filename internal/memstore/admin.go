@@ -218,19 +218,42 @@ func (s *Store) UnlinkBucketOwner(_ context.Context, rec *op.BucketRecord, owner
 	return nil
 }
 
-// CheckIndex implements op.BucketAdminStore; not implemented yet.
-func (s *Store) CheckIndex(context.Context, *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
-	return nil, nil, op.ErrNotImplemented
+// CheckIndex implements op.BucketAdminStore: the store keeps no index
+// header apart from its objects, so both headers are IndexStats' categories.
+func (s *Store) CheckIndex(ctx context.Context, rec *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
+	st, err := s.IndexStats(ctx, rec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st.Categories, maps.Clone(st.Categories), nil
 }
 
-// RebuildIndex implements op.BucketAdminStore; not implemented yet.
-func (s *Store) RebuildIndex(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
+// RebuildIndex implements op.BucketAdminStore: there is no header to
+// rebuild, so only the bucket is checked.
+func (s *Store) RebuildIndex(_ context.Context, rec *op.BucketRecord) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, err := s.instance(rec)
+	return err
 }
 
-// RemoveIndexEntries implements op.BucketAdminStore; not implemented yet.
-func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.ObjKey) error {
-	return op.ErrNotImplemented
+// RemoveIndexEntries implements op.BucketAdminStore: each key's entry, in
+// whatever namespace, goes; one the bucket lacks is skipped. An indexless
+// bucket is ErrInvalidArgument, as remove_objs_from_index answers it.
+func (s *Store) RemoveIndexEntries(_ context.Context, rec *op.BucketRecord, keys []meta.ObjKey) error {
+	if rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless {
+		return op.ErrInvalidArgument
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.instance(rec)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		delete(b.objects, objKey(k))
+	}
+	return nil
 }
 
 // ChownBucket implements op.BucketAdminStore as RadosBucket::chown

@@ -688,9 +688,14 @@ review and verified against the tree.
   fails after that still answers 200 with its body cut short: a bucket
   listing for a uid that does not exist gets a 200 with no document, a
   bucket index check given `check-objects` without `fix` a 200 that stops
-  after the multipart entries, and a usage or user listing whose RADOS
+  after the multipart entries, one whose index read or entry removal
+  fails a 200 cut short there, and a usage or user listing whose RADOS
   read fails midway a partial one. rgw-go renders the whole body first and
-  answers each of these with the error document and its status. A
+  answers each of these with the error document and its status. It also
+  answers the failure of an index check's object listing, a page radosgw
+  lists again for as long as it fails, holding the request for good when
+  the failure persists ([radosgw's bucket check object listing retries a failed page without
+  end](ceph-upstream-bugs.md#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end)). A
   metadata listing whose RADOS read fails after its first page answers
   the error status, but radosgw writes the error document into the
   formatter that holds the keys listed so far, so its body is those keys
@@ -1124,19 +1129,21 @@ review and verified against the tree.
   On `DELETE /admin/bucket`, a `purge-objects` or `bypass-gc` that is
   empty, bare, or other than `true` or `false` in any case, `1` or `0`
   answers 400 InvalidArgument after the cap check, and nothing is removed;
-  so does an unparsable `enabled` on `PUT /admin/bucket?quota`. radosgw
-  takes an unparsable value as the default, false for the two removal
-  flags and the current value for `enabled`, and an empty or bare one as
-  true, so `purge-objects=` purges (`driver/rados/rgw_rest_bucket.cc:232-233`
-  and `:319` at v19.2.6 and v20.2.4; docs/ceph-upstream-bugs.md, "radosgw's
+  so does such a `fix` on `GET /admin/bucket?index`, which removes index
+  entries and rewrites the shard headers, and an unparsable `enabled` on
+  `PUT /admin/bucket?quota`. radosgw takes an unparsable value as the
+  default, false for the three removal flags and the current value for
+  `enabled`, and an empty or bare one as true, so `purge-objects=` purges
+  and `fix=` fixes (`driver/rados/rgw_rest_bucket.cc:232-233`, `:118` and
+  `:319` at v19.2.6 and v20.2.4; docs/ceph-upstream-bugs.md, "radosgw's
   admin API takes an unparsable boolean argument as its default"). An
   empty `enabled=` reads as true, as in radosgw: it enables a limit. The
   bucket quota set holds the user quota set's rules for `max-objects`,
   `max-size` and `max-size-kb`: an unparsable value, a `max-size-kb`
   whose size in bytes overflows, and a maximum size below 0 other than -1,
   `max-size-kb=-1` among them, answer 400 and store nothing, with or
-  without a body. The read-only `stats` of `GET /admin/bucket` keeps
-  radosgw's reading.
+  without a body. The read-only `stats` of `GET /admin/bucket`, and the
+  index check's `check-objects`, keep radosgw's reading.
 - **The other admin bucket routes differ from radosgw in three ways.**
   - `DELETE /admin/bucket?object` and `GET /admin/bucket?policy&object=`
     answer 404 NoSuchKey for an object name no object can carry, empty,
@@ -1518,6 +1525,51 @@ review and verified against the tree.
   pages by the default when `max-entries` is not a number `stringtoul`
   reads, where radosgw pages by an uninitialized variable, capped at 1000
   ([radosgw's user listing takes an unparsable max-entries from an uninitialized variable](ceph-upstream-bugs.md#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable)).
+- **The admin index check does not re-read every object's head.** `GET
+  /admin/bucket?index&check-objects=true&fix=true` lists the bucket's
+  objects and reports their names, as radosgw does, but radosgw's listing
+  also reads the head of every object it lists and repairs the index from
+  it: an entry whose object is gone is dropped from the report and removed
+  from the index, and the others are refreshed
+  (`rgw_bucket_object_check_filter`,
+  [rgw_bucket.cc:141-146](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L141-L146),
+  forcing `check_disk_state` in the listing,
+  [rgw_rados.cc:9820-9864](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9820-L9864)).
+  rgw-go's listing repairs only entries with a pending operation, as every
+  listing does, so it reports and keeps such an entry. `radosgw-admin
+  bucket check --check-objects --fix` repairs it. radosgw also sets every
+  shard's tag timeout to 30 seconds, `BUCKET_TAG_QUICK_TIMEOUT`, for that
+  listing and to 0 after it (`set_tag_timeout`, rgw_bucket.cc:437 and :465
+  at v19.2.6, :574 and :602 at v20.2.4), so its forced check expires
+  pending operations sooner; rgw-go writes no tag timeout.
+- **The admin index check's fix keeps the entries of an object with an
+  upload in flight.** `GET /admin/bucket?index&fix=true` reports under
+  `invalid_multipart_entries` what radosgw reports, by each release's
+  rule, but removes a reported entry only when no upload of its object is
+  in flight: after its check, rgw-go lists the bucket's `multipart`
+  namespace again and keeps every reported entry whose object, the
+  entry's name with its last two `.`-components removed, has a `.meta`
+  entry there. radosgw removes every entry it reports, and it reports the
+  head of a part sent twice, whose name carries a random prefix where the
+  upload id goes, and on Tentacle also a part that another upload's
+  entries separate from its `.meta` entry on the shard; its fix then
+  drops a live upload's part from the bucket's listing and stats until the
+  upload ends ([radosgw-admin bucket check reports a live re-uploaded part
+  as an invalid multipart
+  entry](ceph-upstream-bugs.md#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry),
+  [Tentacle's bucket check reports a live part that another upload's
+  entries separate from its meta
+  entry](ceph-upstream-bugs.md#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry)).
+  rgw-go also keeps an orphan of an object that has another upload in
+  flight, which a fix after that upload ends removes, and
+  `radosgw-admin bucket check --fix` removes at once. Both releases' checks
+  read the `multipart` namespace through rgw-go's bucket listing, which
+  removes a part entry with a pending operation whose head is gone, and
+  leaves it out of the report, with or without `fix`. Squid's check lists
+  that way too, but Tentacle's reads the raw entries (`bi_list`,
+  rgw_bucket.cc:381-382 at v20.2.4) and reports such a part, so on
+  Tentacle rgw-go leaves out a part radosgw reports, and removes its entry
+  even without `fix`.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the

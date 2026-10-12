@@ -2,6 +2,7 @@ package memstore_test
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -326,21 +327,50 @@ var _ = Describe("memstore admin stores", func() {
 		})
 	})
 
-	DescribeTable("answers NotImplemented from the bucket admin store",
-		func(ctx SpecContext, call func(context.Context, *memstore.Store) error) {
-			Expect(call(ctx, store)).To(MatchError(op.ErrNotImplemented))
-		},
-		Entry("CheckIndex", func(ctx context.Context, s *memstore.Store) error {
-			_, _, err := s.CheckIndex(ctx, &op.BucketRecord{})
-			return err
-		}),
-		Entry("RebuildIndex", func(ctx context.Context, s *memstore.Store) error {
-			return s.RebuildIndex(ctx, &op.BucketRecord{})
-		}),
-		Entry("RemoveIndexEntries", func(ctx context.Context, s *memstore.Store) error {
-			return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
-		}),
-	)
+	Describe("the bucket index check", func() {
+		put := func(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body string) {
+			GinkgoHelper()
+			_, err := store.PutObject(ctx, rec, key, strings.NewReader(body), op.PutParams{Size: int64(len(body))})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		It("reports the stats it keeps as both headers, and rebuilds nothing", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			put(ctx, rec, meta.ObjKey{Name: "k"}, "hello")
+			existing, calculated, err := store.CheckIndex(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			want := map[string]op.CategoryStats{"rgw.main": {Size: 5, SizeRounded: 4096, SizeUtilized: 5, NumObjects: 1}}
+			Expect(existing).To(Equal(want))
+			Expect(calculated).To(Equal(want))
+			Expect(store.RebuildIndex(ctx, rec)).To(Succeed())
+			_, _, err = store.CheckIndex(ctx, &op.BucketRecord{})
+			Expect(err).To(MatchError(op.ErrNoSuchBucket))
+			Expect(store.RebuildIndex(ctx, &op.BucketRecord{})).To(MatchError(op.ErrNoSuchBucket))
+		})
+		It("removes the entries named, in any namespace, and leaves the rest", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			part := meta.ObjKey{Name: "obj.2~abc.1", NS: meta.NSMultipart}
+			put(ctx, rec, part, "p")
+			put(ctx, rec, meta.ObjKey{Name: "obj.2~abc.2", NS: meta.NSMultipart}, "p")
+			put(ctx, rec, meta.ObjKey{Name: "obj"}, "o")
+			Expect(store.RemoveIndexEntries(ctx, rec, []meta.ObjKey{part, {Name: "obj"}, {Name: "missing"}})).To(Succeed())
+			res, err := store.ListObjects(ctx, rec, op.ListObjectsParams{NS: meta.NSMultipart, MaxKeys: 10})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(HaveLen(1))
+			Expect(res.Entries[0].Key.Name).To(Equal("obj.2~abc.2"))
+			st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "obj"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeFalse())
+		})
+		It("refuses an indexless bucket, as remove_objs_from_index does", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			put(ctx, rec, meta.ObjKey{Name: "obj"}, "o")
+			rec.Info.Layout.Current.Layout.Type = meta.IndexIndexless
+			Expect(store.RemoveIndexEntries(ctx, rec, []meta.ObjKey{{Name: "obj"}})).To(MatchError(op.ErrInvalidArgument))
+			st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "obj"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeTrue())
+		})
+	})
 
 	Describe("bucket administration", func() {
 		withACL := func(ctx context.Context, name string, o meta.Owner, display string) *op.BucketRecord {
