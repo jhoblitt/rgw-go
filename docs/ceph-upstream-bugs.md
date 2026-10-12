@@ -9502,7 +9502,10 @@ Every new entry adds its row to this table, in document order.
   loses a race is retried"). `op.PutObjectACL` does the same through
   `op.RetryRacedWriteReauthorized`, reading the object's head again and
   authorizing the requester against it before each retry
-  (`internal/op/objectattrs.go`).
+  (`internal/op/objectattrs.go`). For either, a retry that passes those
+  checks and finds the requested ACL already stored answers 200 without a
+  write (`docs/exclusions.md`, "A PutBucketAcl that loses a race is
+  retried").
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
   when setting acls", which introduced this behaviour on purpose; found by
