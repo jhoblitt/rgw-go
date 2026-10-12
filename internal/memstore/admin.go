@@ -263,13 +263,18 @@ func (s *Store) RemoveIndexEntries(_ context.Context, rec *op.BucketRecord, keys
 // grant keyed by the old owner and gains FULL_CONTROL for the new one, who
 // becomes its owner. A memstore write cannot race, so the stored instance
 // is rewritten whatever version rec holds, as adopt_user_bucket's retries
-// end; rec is left at the stored state.
+// end; rec is left at the stored state. A name that now loads an instance
+// other than rec's, or rec's instance under an owner other than rec's, is
+// ErrNoSuchBucket, as the driver refuses them.
 func (s *Store) ChownBucket(_ context.Context, rec *op.BucketRecord, owner meta.Owner, displayName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.instance(rec)
 	if err != nil {
 		return err
+	}
+	if s.buckets[bucketKey(rec.Info.Bucket.Tenant, rec.Info.Bucket.Name)] != b || b.rec.Info.Owner.String() != rec.Info.Owner.String() {
+		return op.ErrNoSuchBucket
 	}
 	if raw, ok := b.rec.Attrs[meta.AttrACL]; ok {
 		d := denc.NewDecoder(raw)

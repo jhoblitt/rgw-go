@@ -325,6 +325,31 @@ var _ = Describe("memstore admin stores", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got.Info.Owner).To(Equal(owner("bob")))
 		})
+		It("refuses a record whose instance another owner now holds", func(ctx SpecContext) {
+			rec := mustCreate(ctx, store, "", "b", owner("alice"))
+			stale := *rec
+			Expect(store.ChownBucket(ctx, rec, owner("bob"), "Bob")).To(Succeed())
+			Expect(store.ChownBucket(ctx, &stale, owner("carol"), "Carol")).To(MatchError(op.ErrNoSuchBucket))
+			got, err := store.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("bob")))
+		})
+		It("refuses a record whose name now loads another instance", func(ctx SpecContext) {
+			rec, err := store.CreateBucket(ctx, op.CreateBucketParams{
+				Name: "src", Owner: owner("alice"), Attrs: map[string][]byte{meta.AttrACL: encodeACL(acl.DefaultPolicy(owner("alice"), "Alice"))},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			renamed := *rec
+			Expect(store.ChangeBucketOwner(ctx, &renamed, owner("alice"), "Alice", &meta.BucketID{Name: "dst"})).To(Succeed())
+			theirs := mustCreate(ctx, store, "", "src", owner("bob"))
+			Expect(store.ChownBucket(ctx, rec, owner("carol"), "Carol")).To(MatchError(op.ErrNoSuchBucket))
+			got, err := store.GetBucket(ctx, "", "dst")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(owner("alice")), "the instance the record names, under its new name")
+			got, err = store.GetBucket(ctx, "", "src")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(theirs), "the bucket the name now loads")
+		})
 	})
 
 	Describe("the bucket index check", func() {

@@ -1119,12 +1119,38 @@ review and verified against the tree.
     gives it the empty tenant, moving it out of the account's
     (docs/ceph-upstream-bugs.md, "radosgw's bucket link to an account
     moves the bucket out of the account's tenant").
-  - The adoption reads the bucket by its name each round, writes the entry
-    point under the version it read, and starts the round over when
-    another write moved it; a name that now loads another instance is
-    refused. radosgw loads the instance the owner's list entry names by its
-    id (`driver/rados/buckets.cc:119-130` and `rgw_user.cc:1714-1741` at
-    v19.2.6) and points the name at it unchecked.
+  - The adoption takes only buckets the moving user holds. It loads the
+    instance the owner's list entry names by its id, or, for an entry that
+    carries no id, the bucket its name loads, as radosgw's `load_bucket`
+    loads them (`rgw_sal_rados.cc:616-629` at v19.2.6, `:636-647` at
+    v20.2.4), and skips one that is gone or that another owner holds. Each
+    chown round then reads the bucket by its name and skips it when the
+    name now loads another instance than the one loaded, or that instance
+    under another owner than at the load; it writes the entry point under
+    the version it read and starts the round over when another write moved
+    it. A round skipped after an earlier one lost its race leaves that
+    round's list writes: the user's entry removed and the account's entry
+    added. When the skip is for another owner, the entry point names the
+    account if that round got so far, and the instance, its ACL and its
+    owner stay the other owner's; when it is for the name now loading
+    another instance, the entry point is the other writer's and the loaded
+    instance stays the moving user's, without her list entry. The adoption
+    logs each such skip with the bucket's name and instance. So neither a
+    stale entry whose name another owner re-created nor one that still
+    names an instance a link gave to another owner, as a link whose
+    removal of the old owner's entry failed leaves it
+    (`rgw_bucket.cc:1118` and `:3424-3432` at v19.2.6, `:1269` and
+    `:3510-3518` at v20.2.4, where radosgw logs the failure and goes on),
+    hands that owner's bucket to the account. radosgw loads the bucket
+    again in each round, chowns it from whoever holds it, and points the
+    name at it unchecked (`driver/rados/buckets.cc:119-130` at v19.2.6 and
+    v20.2.4; `rgw_user.cc:1681-1742` at v19.2.6, `:1687-1748` at v20.2.4;
+    `RadosBucket::chown`, `rgw_sal_rados.cc:699-751` at v19.2.6, `:717-769`
+    at v20.2.4). For an entry without an id, every round compares with the
+    instance the first load returned, so a bucket re-created under the name
+    between rounds is skipped, where radosgw loads the name again and
+    adopts the new bucket. The chown's unlink removes the user's entry
+    without an id with the rest, as radosgw unlinks by name.
 - **The admin bucket routes refuse a boolean argument they cannot parse.**
   On `DELETE /admin/bucket`, a `purge-objects` or `bypass-gc` that is
   empty, bare, or other than `true` or `false` in any case, `1` or `0`

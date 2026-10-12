@@ -460,6 +460,15 @@ const maxUnlinkRetries = 5
 // entry that keeps changing is left after maxUnlinkRetries reads, with a
 // warning (docs/exclusions.md).
 func (s *Store) unlinkInstance(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
+	return s.unlinkEntry(ctx, owner, b, false)
+}
+
+// unlinkEntry is unlinkInstance that, with byName, also removes an entry
+// carrying no bucket id, which names whatever bucket its name loads, as
+// load_bucket reads an rgw_bucket without an id by its name
+// (rgw_sal_rados.cc:616-622 at v19.2.6, :636-641 at v20.2.4). A caller
+// passes byName only when the name loads b.
+func (s *Store) unlinkEntry(ctx context.Context, owner meta.Owner, b meta.BucketID, byName bool) error {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {
 		return err
@@ -482,7 +491,7 @@ func (s *Store) unlinkInstance(ctx context.Context, owner meta.Owner, b meta.Buc
 		if err := d.Err(); err != nil {
 			return fmt.Errorf("%w: the entry of bucket %s in %s: %w", op.ErrUnknown, b.Name, oid, err)
 		}
-		if ent.Bucket.BucketID != b.ID {
+		if ent.Bucket.BucketID != b.ID && (!byName || ent.Bucket.BucketID != "") {
 			slog.InfoContext(ctx, "leaving the owner's entry of another instance of the bucket",
 				slog.String("bucket", b.Name), slog.String("instance", b.ID), slog.String("entry", ent.Bucket.BucketID))
 			return nil

@@ -761,9 +761,13 @@ func suspendBuckets(ctx context.Context, env *Env, uid meta.UserID, suspended bo
 }
 
 // adoptBuckets is adopt_user_buckets (driver/rados/rgw_user.cc:1714-1742 at
-// v19.2.6): every bucket of uid's own list chowned to the account under its
-// name, a bucket gone meanwhile skipped. ChownBucket retries a lost race as
-// adopt_user_bucket does.
+// v19.2.6, :1720-1748 at v20.2.4): every bucket of uid's own list chowned to
+// the account, each loaded as adopt_user_bucket loads the entry's bucket
+// (:1681-1712, :1687-1718; loadListedBucket), and skipped when it is gone or
+// another owner holds it. ChownBucket retries a lost race as
+// adopt_user_bucket does, and refuses, so this skips, a round that finds the
+// name loading another instance or the instance under another owner: a
+// stale entry never hands the account another owner's bucket.
 func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID string) error {
 	acct, err := env.Accounts.GetAccount(ctx, accountID)
 	if err != nil {
@@ -772,10 +776,17 @@ func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID stri
 	owner := meta.AccountOwner(accountID)
 	return eachUserBucket(ctx, env, uid, func(ents []meta.BucketEnt) error {
 		for i := range ents {
-			ent := &ents[i]
-			rec, err := env.Buckets.GetBucket(ctx, ent.Bucket.Tenant, ent.Bucket.Name)
+			rec, err := loadListedBucket(ctx, env, uid, ents[i].Bucket)
 			if err == nil {
 				err = env.BucketAdmin.ChownBucket(ctx, rec, owner, acct.Info.Name)
+				// radosgw logs a failed chown at level 1 (rgw_user.cc:1705 at
+				// v19.2.6, :1711 at v20.2.4). A refused round may have left an
+				// earlier round's writes for an operator to clear.
+				if errors.Is(err, ErrNoSuchBucket) {
+					slog.WarnContext(ctx, "the bucket changed while it was being adopted, leaving it",
+						slog.String("bucket", rec.Info.Bucket.Name), slog.String("instance", rec.Info.Bucket.ID),
+						slog.Any("error", err))
+				}
 			}
 			if err != nil && !errors.Is(err, ErrNoSuchBucket) {
 				return err
@@ -783,6 +794,34 @@ func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID stri
 		}
 		return nil
 	})
+}
+
+// loadListedBucket is RadosBucket::load_bucket over an entry of uid's bucket
+// list (driver/rados/rgw_sal_rados.cc:610-637 at v19.2.6, :631-655 at
+// v20.2.4): the instance the entry names by its id, or, for an entry that
+// carries no id, the bucket its name loads. A bucket uid does not hold is
+// ErrNoSuchBucket, where radosgw takes whatever it loads: a link whose
+// removal of the old owner's entry failed, which radosgw logs and goes past
+// (rgw_bucket.cc:1118 and :3424-3432 at v19.2.6, :1269 and :3510-3518 at
+// v20.2.4), leaves an entry naming the instance its new owner holds.
+// ChownBucket checks the owner again in each of its rounds.
+func loadListedBucket(ctx context.Context, env *Env, uid meta.UserID, b meta.BucketID) (*BucketRecord, error) {
+	var rec *BucketRecord
+	var err error
+	if b.ID != "" {
+		rec, err = env.Buckets.GetBucketInstance(ctx, b)
+	} else {
+		rec, err = env.Buckets.GetBucket(ctx, b.Tenant, b.Name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if rec.Info.Owner.User == nil || *rec.Info.Owner.User != uid {
+		slog.WarnContext(ctx, "the user's bucket list names a bucket another owner holds, leaving it",
+			slog.String("bucket", b.Name))
+		return nil, ErrNoSuchBucket
+	}
+	return rec, nil
 }
 
 // GetUserInfo is RGWOp_User_Info and RGWUserAdminOp_User::info

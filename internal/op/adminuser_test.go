@@ -8,7 +8,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -335,6 +337,117 @@ var _ = Describe("admin user ops", func() {
 			m = modify("u")
 			m.AccountID = acct2
 			Expect(run(ctx, m)).To(Succeed(), "naming its own account is no move")
+		})
+		Describe("joining an account with a stale or id-less bucket list entry", func() {
+			// listWith makes u's bucket list read with stale ahead of the
+			// stored entries.
+			listWith := func(stale meta.BucketID) {
+				env.Users = editedBucketList{UserStore: store, owner: user("u"), edit: func(ents []meta.BucketEnt) []meta.BucketEnt {
+					return append([]meta.BucketEnt{{Bucket: stale}}, ents...)
+				}}
+			}
+			// listWithoutIDs makes u's bucket list read as entries carrying no
+			// bucket id.
+			listWithoutIDs := func() {
+				env.Users = editedBucketList{UserStore: store, owner: user("u"), edit: func(ents []meta.BucketEnt) []meta.BucketEnt {
+					for i := range ents {
+						ents[i].Bucket.ID, ents[i].Bucket.Marker = "", ""
+					}
+					return ents
+				}}
+			}
+			moveIntoAcct2 := func(ctx context.Context) error {
+				m := modify("u")
+				m.DisplayName = "u"
+				m.AccountID = acct2
+				return run(ctx, m)
+			}
+			listed := func(ctx context.Context, owner meta.Owner) []string {
+				GinkgoHelper()
+				ents, _, _, err := store.ListUserBuckets(ctx, owner, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				names := []string{}
+				for _, e := range ents {
+					names = append(names, e.Bucket.Name)
+				}
+				return names
+			}
+			BeforeEach(func(ctx SpecContext) {
+				create(ctx, "u", "", "", "")
+				bucket(ctx, "live", user("u"))
+			})
+			It("leaves the bucket another owner re-created under the entry's name, and adopts the live ones", func(ctx SpecContext) {
+				old := bucket(ctx, "data", user("u"))
+				Expect(store.DeleteBucket(ctx, old)).To(Succeed())
+				e := denc.NewEncoder()
+				acl.DefaultPolicy(user("v"), "V").Encode(e, denc.Squid)
+				theirs, err := store.CreateBucket(ctx, op.CreateBucketParams{
+					Name: "data", Owner: user("v"), Placement: meta.PlacementRule{Name: "default-placement"},
+					Attrs: map[string][]byte{meta.AttrACL: e.Bytes()},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				listWith(old.Info.Bucket)
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				got, err := store.GetBucket(ctx, "", "data")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(theirs), "v's bucket keeps its owner, entry point and ACL")
+				Expect(listed(ctx, user("v"))).To(ConsistOf("data"))
+				Expect(listed(ctx, meta.AccountOwner(acct2))).To(ConsistOf("live"))
+			})
+			It("leaves another owner's bucket whose instance the entry still names", func(ctx SpecContext) {
+				theirs := bucket(ctx, "data", user("v"))
+				listWith(theirs.Info.Bucket)
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				got, err := store.GetBucket(ctx, "", "data")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(theirs), "v's bucket keeps its owner and entry point")
+				Expect(listed(ctx, user("v"))).To(ConsistOf("data"))
+				Expect(listed(ctx, meta.AccountOwner(acct2))).To(ConsistOf("live"))
+			})
+			It("logs a bucket whose chown is refused, naming it and its instance", func(ctx SpecContext) {
+				live, err := store.GetBucket(ctx, "", "live")
+				Expect(err).NotTo(HaveOccurred())
+				env.BucketAdmin = chownRefused{store}
+				logs := captureLogs()
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				Expect(logs.String()).To(And(
+					ContainSubstring(`"level":"WARN"`),
+					ContainSubstring(`"bucket":"live"`),
+					ContainSubstring(`"instance":"`+live.Info.Bucket.ID+`"`),
+				))
+			})
+			It("skips the entry when its bucket is gone", func(ctx SpecContext) {
+				old := bucket(ctx, "gone", user("u"))
+				Expect(store.DeleteBucket(ctx, old)).To(Succeed())
+				listWith(old.Info.Bucket)
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				_, err := store.GetBucket(ctx, "", "gone")
+				Expect(err).To(MatchError(op.ErrNoSuchBucket))
+				Expect(listed(ctx, meta.AccountOwner(acct2))).To(ConsistOf("live"))
+			})
+			It("adopts the buckets entries without an id name, loading each by its name", func(ctx SpecContext) {
+				bucket(ctx, "data", user("u"))
+				listWithoutIDs()
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				for _, name := range []string{"data", "live"} {
+					got, err := store.GetBucket(ctx, "", name)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(got.Info.Owner).To(Equal(meta.AccountOwner(acct2)), name)
+					Expect(got.EntryPoint.Owner).To(Equal(meta.AccountOwner(acct2)), name)
+				}
+				Expect(listed(ctx, user("u"))).To(BeEmpty())
+			})
+			It("leaves the bucket another owner holds under the name an entry without an id names", func(ctx SpecContext) {
+				old := bucket(ctx, "data", user("u"))
+				Expect(store.DeleteBucket(ctx, old)).To(Succeed())
+				theirs := bucket(ctx, "data", user("v"))
+				listWith(meta.BucketID{Name: "data"})
+				Expect(moveIntoAcct2(ctx)).To(Succeed())
+				got, err := store.GetBucket(ctx, "", "data")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(theirs), "v's bucket keeps its owner and entry point")
+				Expect(listed(ctx, meta.AccountOwner(acct2))).To(ConsistOf("live"))
+			})
 		})
 		It("answers a missing account as modify maps radosgw's ENOENT, and keeps the IAM name rule", func(ctx SpecContext) {
 			create(ctx, "u", "", "", "")
@@ -692,6 +805,31 @@ func (g goneBucket) GetBucket(ctx context.Context, tenant, name string) (*op.Buc
 		return nil, op.ErrNoSuchBucket
 	}
 	return g.Store.GetBucket(ctx, tenant, name)
+}
+
+// editedBucketList is a user store whose listing of owner's buckets is what
+// edit makes of the stored one: with the entry a delete that failed at its
+// unlink leaves, or with entries that carry no bucket id.
+type editedBucketList struct {
+	op.UserStore
+	owner meta.Owner
+	edit  func([]meta.BucketEnt) []meta.BucketEnt
+}
+
+func (l editedBucketList) ListUserBuckets(ctx context.Context, owner meta.Owner, marker string, maxEntries int) ([]meta.BucketEnt, string, bool, error) {
+	ents, next, more, err := l.UserStore.ListUserBuckets(ctx, owner, marker, maxEntries)
+	if err != nil || marker != "" || owner.String() != l.owner.String() {
+		return ents, next, more, err
+	}
+	return l.edit(ents), next, more, nil
+}
+
+// chownRefused is the memstore's bucket admin store whose ChownBucket
+// refuses every bucket, as a round that finds it changed does.
+type chownRefused struct{ *memstore.Store }
+
+func (chownRefused) ChownBucket(context.Context, *op.BucketRecord, meta.Owner, string) error {
+	return op.ErrNoSuchBucket
 }
 
 // deleteGone is the memstore's bucket store whose DeleteBucket finds every
