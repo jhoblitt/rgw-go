@@ -247,7 +247,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account create and modify store an unparsable or wrapped limit, which can mean no limit](#radosgws-account-create-and-modify-store-an-unparsable-or-wrapped-limit-which-can-mean-no-limit) | pending | pending | ✓ |
 | [radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance](#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
-| [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | [#71157](https://tracker.ceph.com/issues/71157), [#73067](https://tracker.ceph.com/issues/73067), [#73069](https://tracker.ceph.com/issues/73069) | [ceph/ceph#63089](https://github.com/ceph/ceph/pull/63089), [ceph/ceph#70501](https://github.com/ceph/ceph/pull/70501), [ceph/ceph#70500](https://github.com/ceph/ceph/pull/70500) |  |
 | [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
 | [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | none | none | ✓ |
 | [radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally](#radosgws-get-compares-if-match-and-if-none-match-as-prefixes-and-takes--literally) | [#80924](https://tracker.ceph.com/issues/80924) | [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117), [ceph/ceph#64428](https://github.com/ceph/ceph/pull/64428) (the `*` half) |  |
@@ -5031,10 +5031,13 @@ Every new entry adds its row to this table, in document order.
 ## radosgw's eval_principal skips NotPrincipal for a role that Principal names, but not for a user
 
 - **Kind:** defect on the squid and tentacle branches; main lost it to a
-  refactor. Potentially security-relevant, under a condition: it
-  over-grants only on v19.2.6 and the releases like it, to an Allow that
-  names a role in both Principal and NotPrincipal. Unreproduced: derived
-  from the source.
+  refactor. Not security-relevant (rgw-bug-reproduction's triage,
+  2026-10-12): the skip matters only for a role identity (TYPE_ROLE),
+  under a statement that names it in both Principal and NotPrincipal,
+  which AWS does not allow and which only the policy's author writes.
+  `eval_principal` is the same at v19.2.6 and v20.2.4; for this rule the
+  releases differ only in whether the parser accepts an Allow with
+  NotPrincipal. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - `Statement::eval_principal` checks a non-role identity against a
@@ -5883,14 +5886,22 @@ Every new entry adds its row to this table, in document order.
 ## radosgw re-reads a resharding bucket by name, so a write can land in a bucket recreated under that name
 
 - **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+  source. Whether a bucket can be removed and its name created again
+  while a write waits out a reshard is not established from the source;
+  rgw-bug-reproduction parked it on 2026-10-12 for a reproduction on a
+  disposable cluster.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is
   v19.2.6's, then v20.2.4's.
   - `block_while_resharding`'s `fetch_new_bucket_info` re-reads the bucket
     by tenant and name (`get_bucket_info`,
     `driver/rados/rgw_rados.cc:7793`, `:8735`; `:9400` on main 06adccc25d6)
     into the `UpdateIndex` target's bucket info, and `bs->init` takes the
-    shard from it (`:7802`, `:8744`).
+    shard from it (`:7802`, `:8744`). Neither it nor `guard_reshard`, which
+    resumes the write with that info (`:7048-7063`, `:7897-7912`),
+    compares the instance id it loads with the one the write began on.
+    The reshard queue's by-name read does: `RGWReshard::process_entry`
+    skips a bucket whose instance id is not its entry's
+    (`driver/rados/rgw_reshard.cc:1208`, `:1572`).
   - If the bucket was removed and a bucket of the same name created while
     the write waited out the reshard, the prepare and completion go to the
     new bucket's index, although the head object was written under the old
@@ -10845,15 +10856,23 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's stale-instance cleanup purges a live bucket's index
 
-- **Kind:** defect, unclassified; unfixed at v19.2.6 and v20.2.4: data
-  loss through an operator command. Unreproduced: derived from the
-  source.
+- **Kind:** defect, non-security (rgw-bug-reproduction's triage,
+  2026-10-12); unfixed at v19.2.6 and v20.2.4: data loss through an
+  operator command. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is
   v19.2.6's, then v20.2.4's.
-  - `get_stale_instances` takes an instance listed under a bucket name as
-    stale when the name loads no bucket, or one with another id
-    (`driver/rados/rgw_bucket.cc:1745-1834`; `:1911-2000`, the cases at
-    `:1783` and `:1800`; `:1949` and `:1966`).
+  - `process_stale_instances` hands `get_stale_instances`
+    (`driver/rados/rgw_bucket.cc:1745-1834`; `:1911-2000`) the instances
+    whose keys carry one tenant and bucket name (`:1871-1882`;
+    `:2037-2048`). `get_stale_instances` takes each one whose reshard
+    status is DONE as stale (`:1767-1768`; `:1933-1934`), and the rest by
+    what that name loads: all of them when it loads no bucket
+    (`:1781-1786`; `:1947-1952`), none when the load fails otherwise or
+    the bucket it loads is resharding (`:1787-1798`; `:1953-1964`), and
+    otherwise, once it takes that bucket's reshard lock, all but those
+    carrying the loaded bucket's id or its new instance id (`:1800-1831`;
+    `:1966-1997`). So a leftover that shares a live bucket's id is spared
+    only when its own name loads that bucket.
   - `clear_stale_instances`, `radosgw-admin bucket stale-instances rm`,
     calls `purge_instance` on each (`:1905-1927`; `:2071-2093`), which
     removes every index shard of the instance's current layout
@@ -10867,7 +10886,7 @@ Every new entry adds its row to this table, in document order.
     (`driver/rados/rgw_bucket.cc:1165-1184`; `:1316-1335`), or a failure
     after the new instance's write and before the new entry point's
     (`:1144` and `:1159`; `:1295` and `:1310`), leaves an instance its
-    name does not load.
+    name does not load, so the id check does not spare it.
 - **Impact:** after a failed admin rename, the documented stale-instance
   cleanup removes the renamed bucket's index: its object heads and data
   stay, but no listing reaches them, and quota stats are lost. Admin-only.
@@ -10887,7 +10906,8 @@ Every new entry adds its row to this table, in document order.
   is removed from the zone's domain root pool with `rados rm`
   (`docs/exclusions.md`, "Bucket link and unlink write differently from
   radosgw").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
   the source, not reproduced.
 
@@ -11326,11 +11346,12 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's bucket instance metadata put drops the bucket's object lock rule
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed on main: a
-  bucket instance's metadata document has no object lock configuration, so
-  writing one back loses the bucket's default retention. Classification
-  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
-  from the source.
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed on main and in
+  v19.2.7; the tentacle branch carries the fix, but no Tentacle release
+  does yet: a bucket instance's metadata document has no object lock
+  configuration, so writing one back loses the bucket's default retention.
+  Prior art: upstream reported and fixed it before we met it. Unreproduced:
+  derived from the source.
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - `RGWBucketInfo::dump` writes no `obj_lock`, and `decode_json` reads
@@ -11355,14 +11376,30 @@ Every new entry adds its row to this table, in document order.
   retention mode and period: objects written afterwards get no default
   retention, while the bucket still reports object lock enabled. Admin and
   sync only; it weakens a WORM bucket.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** Squid through v19.2.6 and Tentacle through v20.2.4. The
+  fix is first tagged in v19.2.7, and on main in v21.0.0.
 - **rgw-go:** does not reproduce it. A put over a stored instance keeps
   its object lock configuration, and one that would turn object lock off
   answers 400 InvalidArgument (`keepInstance`, `internal/driver/metadata.go`;
   `docs/exclusions.md`, "The metadata sections write only what keeps a user
   or bucket whole"). A new instance a put creates gets the default
   configuration, as radosgw's.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** [#71157](https://tracker.ceph.com/issues/71157)
+  (Resolved), "rgw-multisite: object lock rule applied on a bucket doesn't
+  sync", reported 2025-04-30, is this defect met through multisite sync.
+  Its fix, c2d235788c4 above, came with
+  [ceph/ceph#63089](https://github.com/ceph/ceph/pull/63089), merged
+  2025-09-17. The squid backport,
+  [ceph/ceph#70501](https://github.com/ceph/ceph/pull/70501) for
+  [#73067](https://tracker.ceph.com/issues/73067), merged 2026-08-03 and
+  is first tagged in v19.2.7. The tentacle backport,
+  [ceph/ceph#70500](https://github.com/ceph/ceph/pull/70500) for
+  [#73069](https://tracker.ceph.com/issues/73069), merged 2026-08-21,
+  after v20.2.4, and is in no tag yet. The reef backport,
+  [#73068](https://tracker.ceph.com/issues/73068), was rejected. The fix
+  decodes `obj_lock` only when the document's flags enable object lock,
+  so a document without `BUCKET_OBJ_LOCK_ENABLED` still turns object lock
+  off. rgw-bug-reproduction's triage, 2026-10-12, found the prior art.
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, writing the bucket
   instance's JSON decoder; derived from the source, not reproduced.
 
@@ -12390,16 +12427,16 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry
 
-- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6, at
-  v20.2.4 and on main: a user's suspension, and a user's move into an
-  account, act on whatever bucket an entry of the user's bucket list
-  loads and never check that the user owns it, and the move points the
-  bucket's name at what it adopts, unchecked. So a stale entry suspends
-  another owner's bucket, hands it to the account, or takes its name
-  from it. Classification pending: rgw-bug-reproduction will classify
-  it. Unreproduced on a running cluster: derived from the source; the
-  adoption of a listed instance another owner holds is reproduced only
-  on rgw-go's fake RADOS.
+- **Kind:** defect, unfixed at v19.2.6, at v20.2.4 and on main: a user's
+  suspension, and a user's move into an account, act on whatever bucket
+  an entry of the user's bucket list loads and never check that the user
+  owns it, and the move points the bucket's name at what it adopts,
+  unchecked. So a stale entry suspends another owner's bucket, hands it
+  to the account, or takes its name from it. Below the bar for a security
+  report: rgw-bug-reproduction's triage, 2026-10-12, rated the suspension
+  and the adoption a NOTE. Unreproduced on a running cluster: derived
+  from the source; the adoption of a listed instance another owner holds
+  is reproduced only on rgw-go's fake RADOS.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
   - A list entry names a bucket by tenant, name and instance id
