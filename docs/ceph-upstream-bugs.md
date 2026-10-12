@@ -497,9 +497,16 @@ Every new entry adds its row to this table, in document order.
   v21.0.0 and later (v21.1.0 `cls_rgw.cc:4403`) and on neither the squid nor
   the tentacle branch.
 - **Releases:** every Squid and Tentacle release, through v19.2.6 and v20.2.4.
-- **rgw-go:** `internal/cls/rgw` marshals `user_usage_log_trim` but runs no
-  trim loop yet. Phase 1's usage trim must bound its loop, since on Squid and
-  Tentacle OSDs ENODATA may never come.
+- **rgw-go:** `TrimUsage` (`internal/driver/usageadmin.go`) repeats the trim
+  as radosgw does, but reads the shard again after each round that answers 0
+  and stops at the first round that removed nothing the read sees, logging a
+  warning naming this tracker and #58136. It so removes every record
+  radosgw's rounds remove, the payer's own records among them, and answers
+  200 with the payer-keyed records left, where radosgw's request never
+  answers. A cap of 10 times ceil(n/1000)+1 rounds, n counted by the first
+  read, backs the check up with a warning of its own (`docs/exclusions.md`,
+  "The admin usage trim is bounded"). fakerados emulates the class's keys
+  (`internal/testutil/fakerados/cls_rgw.go`).
 - **Upstream:** [#72593](https://tracker.ceph.com/issues/72593), fixed by
   [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329). Upstream decided
   not to backport the fix, because it changes how the usage log works; our
@@ -522,8 +529,11 @@ Every new entry adds its row to this table, in document order.
   buckets in the range; records past them are never reached. The logic is
   unchanged at v20.2.4, v21.1.0 and main.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** as for the previous entry, phase 1's usage trim must bound its
-  loop.
+- **rgw-go:** as for the previous entry: `TrimUsage` goes on while its
+  rounds remove records, which they do ever more slowly as other buckets'
+  records gather at the front of the window, and at the first round that
+  removes nothing it stops, logs the warning naming this tracker and
+  answers 200 with the records past the stall left.
 - **Upstream:** [#58136](https://tracker.ceph.com/issues/58136). Its fix,
   [ceph/ceph#49168](https://github.com/ceph/ceph/pull/49168), has been under
   review since 2022.
@@ -6613,10 +6623,12 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4; main for the prefix match and for ids
   beginning with `1`.
 - **rgw-go:** writes the same two keys through `user_usage_log_add`, as it
-  must for radosgw to read them (`internal/driver/usage.go`). It reads and
-  trims no usage yet; unit N's usage read and trim send the same class
-  methods and inherit the defect. fakerados's `Cluster.UsageEntries` tells
-  the two keys apart by rebuilding each record's by-time key.
+  must for radosgw to read them (`internal/driver/usage.go`). Its usage
+  read and trim send the same class methods and inherit the defect
+  (`internal/driver/usageadmin.go`), as fakerados's emulation of them does
+  (`internal/testutil/fakerados/cls_rgw.go`). fakerados's
+  `Cluster.UsageEntries` tells the two keys apart by rebuilding each
+  record's by-time key.
 - **Upstream:** none for the prefix match and the double count.
   rgw-bug-reproduction's prior-art search found no report or fix; the nearest
   are [#72593](https://tracker.ceph.com/issues/72593), the intermingling of ids
