@@ -255,6 +255,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | pending |  |
 | [radosgw's removal of an account user leaves the bucket list its quota sync wrote](#radosgws-removal-of-an-account-user-leaves-the-bucket-list-its-quota-sync-wrote) | pending | pending | ✓ |
 | [radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry](#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry) | pending | pending |  |
+| [Tentacle's metadata put ignores update-type](#tentacles-metadata-put-ignores-update-type) | pending | pending | ✓ |
+| [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -5285,7 +5287,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. `fromBase64` of an input that is empty once its
   trailing '=' are removed returns an empty result and success
   (`internal/op/readconds.go`), so an all-'=' SSE-C key or key-MD5 is 400
-  InvalidArgument, not a crash; `docs/exclusions.md` records the difference.
+  InvalidArgument, not a crash, and an all-'=' admin metadata listing
+  marker lists from the beginning (`ListMetadata`,
+  `internal/op/adminmetadata.go`); `docs/exclusions.md` records each
+  difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
   the 2016 LDAP non-base64 defects
@@ -11649,3 +11654,89 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 10, 2026-10-11, in the multipart oracle's
   run against a disposable Squid cluster; reproduced on Tentacle the same day.
+
+## Tentacle's metadata put ignores update-type
+
+- **Kind:** defect, a regression in v20.0.0, unfixed at v20.2.4 and on
+  main: a metadata put's `update-type` is checked and handed to the
+  section's handler, which never reads it, so every put applies.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Metadata_Put::execute` reads `update-type`, refuses a value
+    `string_to_sync_type` does not name with EINVAL, and passes the sync
+    type to `RGWMetadataManager::put` (`rgw_rest_metadata.cc:250-264`, the
+    same at v19.2.6 and v20.2.4), which hands it to the section handler's
+    `put` (`rgw_metadata.cc:544` at v19.2.6, `:339` at v20.2.4).
+    `send_response` reports `RGWX_UPDATE_STATUS: skipped` only for
+    STATUS_NO_APPLY (`rgw_rest_metadata.cc:270-288`).
+  - At v19.2.6, `RGWMetadataHandlerPut_SObj::put_pre` compares the stored
+    version and mtime with the document's through `check_versions` and
+    returns STATUS_NO_APPLY when the sync type refuses the put
+    (`rgw_metadata.cc:255-278`; `driver/rados/rgw_metadata.h:196-218`).
+  - At v20.2.4 `check_versions` is gone, and the user, bucket and bucket
+    instance handlers take the sync type and never read it
+    (`RGWUserMetadataHandler::put`, `driver/rados/rgw_user.cc:2820-2851`;
+    `RGWBucketMetadataHandler::put`, `driver/rados/rgw_bucket.cc:2355-2401`;
+    `RGWBucketInstanceMetadataHandler::put`, `:2858-2893`). Nothing returns
+    STATUS_NO_APPLY (`rgw_common.h:271` defines it, and only
+    `rgw_rest_metadata.cc:270` and `:278` test it), and APPLY_UPDATES and
+    APPLY_NEWER, which the enum declares (`rgw_mdlog_types.h:22-23`), are
+    set only by `string_to_sync_type` (`rgw_rest_metadata.cc:224-226`).
+  - The check went with the metadata backend services in commit
+    8c56a2327fa ("rgw/service: remove unused metadata and metadata backend
+    services", 2023-12-04), first released in v20.0.0; main (7ed73efc1be,
+    2026-09-25) has no `check_versions` either.
+- **Impact:** a client that puts metadata with
+  `update-type=update-by-version` or `update-by-timestamp`, to apply a
+  document only over an older one, overwrites newer metadata on Tentacle
+  and is told `RGWX_UPDATE_STATUS: applied`: a user's keys, caps or
+  suspension, or a bucket's owner, ACL or versioning, rolled back to what
+  the document holds. Callers holding `metadata=write` only.
+- **Releases:** v20.0.0 through v20.2.4, and main; v19.2.6 honors the sync
+  type.
+- **rgw-go:** does not reproduce it. A metadata put compares versions and
+  mtimes as Squid's `check_versions` does, on both releases (`PutMetadata`,
+  `internal/op/adminmetadata.go`; `docs/exclusions.md`, "The admin metadata
+  API serves three sections").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit N, Task 9, 2026-10-11, implementing the metadata
+  put; derived from the source, not reproduced.
+
+## radosgw's user listing takes an unparsable max-entries from an uninitialized variable
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET /admin/user?list`
+  with a `max-entries` radosgw cannot parse pages by whatever value a
+  stack variable held, up to 1000, and answers 200. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; the lines are the same at
+  v19.2.6 and v20.2.4.
+  - `RGWOp_User_List::execute` declares `uint32_t max_entries;` without a
+    value, reads the argument with `RESTArgs::get_uint32` and checks no
+    return, then copies the variable into the op state
+    (`driver/rados/rgw_rest_user.cc:62-67`).
+  - `get_uint32` writes the default only when the argument is absent; a
+    present one goes to `stringtoul` (`rgw_rest.cc:915-934` at v19.2.6,
+    `:920-939` at v20.2.4), which returns EINVAL without writing its
+    output for trailing text or a value that saturates at ULONG_MAX
+    (`rgw_string.h:86-100`).
+  - So `max-entries=10x` or `max-entries=all` leaves `max_entries` as the
+    stack left it. The op state's own default, 1000
+    (`driver/rados/rgw_user.h:205` at v19.2.6, `:206` at v20.2.4), is
+    overwritten by the copy, and `RGWUser::list` caps the value at 1000
+    (`driver/rados/rgw_user.cc:2281-2283` at v19.2.6, `:2287-2289` at
+    v20.2.4) before it pages by it.
+  - The same class as "radosgw's quota set stores garbage for an
+    unparsable max-size-kb", in another reader of the same family.
+- **Impact:** a client that sends an unparsable `max-entries` gets a page
+  of an unpredictable size from 0 to 1000 keys, with `truncated` and a
+  marker when more follow, and may take a short or empty page for the
+  end of the list if it ignores `truncated`. Callers holding `users=read`
+  only; nothing is written.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. An unparsable `max-entries` reads as
+  the default, 1000 (`listUser`, `internal/admin/user.go`;
+  `docs/exclusions.md`, "`GET /admin/user?list` reads an unparsable
+  max-entries as 1000").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 9 review, 2026-10-11, reading the user
+  listing's arguments; derived from the source, not reproduced.
