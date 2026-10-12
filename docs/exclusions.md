@@ -694,7 +694,8 @@ review and verified against the tree.
   answers each of these with the error document and its status. It also
   answers the failure of an index check's object listing, a page radosgw
   lists again for as long as it fails, holding the request for good when
-  the failure persists. A
+  the failure persists ([radosgw's bucket check object listing retries a failed page without
+  end](ceph-upstream-bugs.md#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end)). A
   metadata listing whose RADOS read fails after its first page answers
   the error status, but radosgw writes the error document into the
   formatter that holds the keys listed so far, so its body is those keys

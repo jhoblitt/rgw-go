@@ -259,6 +259,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's metadata put ignores update-type](#tentacles-metadata-put-ignores-update-type) | pending | pending | ✓ |
 | [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry](#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry) | pending | pending | ✓ |
+| [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11849,3 +11850,46 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 11, 2026-10-11, emulating Tentacle's
   multipart check; derived from the source, not reproduced.
+
+## radosgw's bucket check object listing retries a failed page without end
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: the object check of
+  `bucket check --check-objects --fix`, and of `GET
+  /admin/bucket?index&check-objects=true&fix=true`, lists the same page
+  again after any listing failure but ENOENT, so a failure that persists
+  holds the request, or the CLI, for good. Not security-relevant: the
+  caller needs `buckets=write`, or the CLI, and the failure is a damaged
+  or unreachable index. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWBucket::check_object_index` loops while `results.is_truncated`,
+    which it sets true before the first pass, and starts each pass at
+    `results.next_marker`. A list that returns ENOENT ends the loop; any
+    other failure only sets an error message, and the loop goes on
+    (`driver/rados/rgw_bucket.cc:439-460` at v19.2.6, `:576-597` at
+    v20.2.4).
+  - `RadosBucket::list` updates `next_marker` only when the listing
+    succeeds (`driver/rados/rgw_sal_rados.cc:897-901` at v19.2.6,
+    `:917-918` at v20.2.4).
+  - `RGWRados::Bucket::List::list_objects_ordered` clears its result, then
+    returns a failed shard listing's error at once
+    (`driver/rados/rgw_rados.cc:1822` and `:1894-1896` at v19.2.6,
+    `:1997-1999` at v20.2.4); it writes `*is_truncated` only on its way out
+    after success (`:2154-2156` at v19.2.6, `:2257-2259` at v20.2.4).
+  - So after such a failure the marker and the truncated flag are as they
+    were, and the next pass lists the same page. A failure that does not
+    go away, such as a shard whose reply does not decode (EIO), repeats it
+    without end, each pass
+    flushing an empty `objects` page to the client.
+- **Impact:** an operator's `radosgw-admin bucket check --check-objects
+  --fix` on a bucket with a damaged index shard never returns, and an
+  admin API caller's request holds a radosgw request thread, issuing a
+  shard listing per pass, for as long as the failure lasts. Callers
+  holding `buckets=write` only.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. A failed page of the object check's
+  listing fails the request with its error (`listObjectNames`,
+  `internal/op/adminbucket_index.go`; `docs/exclusions.md`, "Admin
+  responses carry a Content-Type on every body").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 11 review, 2026-10-12, reading the
+  object check's loop; derived from the source, not reproduced.
