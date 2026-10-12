@@ -24,14 +24,7 @@ func (o *AbortMultipart) Action() policy.Action { return policy.S3AbortMultipart
 func (o *AbortMultipart) OpMask() uint32 { return OpTypeDelete }
 
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket.
-func (o *AbortMultipart) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
-		return err
-	}
-	r.BucketRec = rec
-	return nil
-}
+func (o *AbortMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWAbortMultipart::verify_permission
 // (rgw_op.cc:6595-6607 at v19.2.6, :7519-7531 at v20.2.4).

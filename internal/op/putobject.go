@@ -100,11 +100,9 @@ func (o *PutObject) OpMask() uint32 { return OpTypeWrite }
 // init_processing wait for the requester to be authorized, so that a refused
 // requester learns nothing of the bucket (Execute; docs/exclusions.md).
 func (o *PutObject) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
+	if err := loadBucket(ctx, r); err != nil {
 		return err
 	}
-	r.BucketRec = rec
 	if o.Params != nil {
 		return o.Params(ctx, o)
 	}

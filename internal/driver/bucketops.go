@@ -312,14 +312,13 @@ func (s *Store) unlinkIfRemoved(ctx context.Context, owner meta.Owner, b meta.Bu
 const emptinessPage = 1000
 
 // checkBucketEmpty is RGWRados::check_bucket_empty (rgw_rados.cc:5186-5231;
-// v20.2.4 :5723-5768): nothing to check for another zonegroup's bucket; else
-// the unordered listing, versions included, from the start, pages of a
-// thousand, until an entry parses into the empty namespace, which is
-// BucketNotEmpty.
+// v20.2.4 :5723-5768): the unordered listing, versions included, from the
+// start, pages of a thousand, until an entry parses into the empty
+// namespace, which is BucketNotEmpty. radosgw checks nothing for a bucket
+// whose zonegroup id is not this one's; DeleteBucket, which calls this,
+// refuses such a bucket first, and checks one whose empty id
+// RGWZoneGroup::equals takes for this zonegroup.
 func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) error {
-	if rec.Info.Zonegroup != s.zone.ZoneGroup.ID {
-		return nil
-	}
 	var marker rgwcls.ObjKey
 	for {
 		entries, truncated, last, err := s.listUnordered(ctx, rec, marker, "", emptinessPage, true)
@@ -343,16 +342,26 @@ func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) erro
 const maxRemoveRetries = 20
 
 // DeleteBucket implements op.BucketStore as RGWDeleteBucket's own-bucket
-// steps (rgw_op.cc:3759-3772; v20.2.4 :3986-3999) and RadosBucket::remove
+// steps (rgw_op.cc:3759-3772; v20.2.4 :3968-3981) and RadosBucket::remove
 // with delete_children false (rgw_sal_rados.cc:350-468; v20.2.4 :367-489)
 // through RGWRados::delete_bucket (rgw_rados.cc:5238-5302; v20.2.4
 // :5936-6018). It first reads the instance again by its id, as remove's
 // load_bucket does (rgw_sal_rados.cc:356-360; v20.2.4 :373-377): one already
-// gone is radosgw's -ENOENT, NoSuchKey, and the delete stops there. For a
-// bucket of this zonegroup it syncs the owner's stats, logging a failure,
-// refuses a bucket with objects, and aborts the bucket's multipart uploads
-// (abortMultiparts, rgw_sal_rados.cc:395-400; v20.2.4 :412-417), stopping at
-// an abort that fails. It then reads the entry point afresh,
+// gone is radosgw's -ENOENT, NoSuchKey, and the delete stops there. A
+// bucket of another zonegroup, as RGWZoneGroup::equals tells it, is
+// PermanentRedirect before the index is read or anything removed. radosgw
+// reaches its delete with another zonegroup's bucket only for a system
+// request to the master zonegroup (rgw_op.cc:565; v20.2.4 :595): the delete
+// the owning zonegroup's zone forwarded to the metadata master after
+// checking emptiness itself (:3759-3783 and rgw_forward_request_to_master,
+// :126-134; v20.2.4 :3968-3992 and :161-169). rgw-go forwards nothing
+// (docs/exclusions.md). For a bucket of this zonegroup it
+// syncs the owner's stats, logging a failure, refuses a bucket with
+// objects, and aborts the bucket's multipart uploads (abortMultiparts,
+// rgw_sal_rados.cc:395-400; v20.2.4 :412-417), stopping at an abort that
+// fails; radosgw compares the raw id there and so skips all three for a
+// bucket with an empty zonegroup id on the master zonegroup
+// (docs/ceph-upstream-bugs.md). It then reads the entry point afresh,
 // as remove's new tracker does, and leaves it when the read fails or it
 // names another instance; otherwise it removes it under the version read,
 // and a failure there is returned before anything else is removed, a lost
@@ -380,20 +389,21 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 		return lerr
 	}
 	b := cur.Info.Bucket
-	if cur.Info.Zonegroup == s.zone.ZoneGroup.ID {
-		if _, err := s.syncOwnerStats(ctx, cur.Info.Owner, &cur.Info); err != nil {
-			slog.WarnContext(ctx, "failed to sync user stats before bucket delete", slog.String("bucket", b.Name), slog.Any("error", err))
-		}
-		if err := s.checkBucketEmpty(ctx, cur); err != nil {
-			return err
-		}
-		n, err := s.abortMultiparts(ctx, cur)
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			slog.WarnContext(ctx, "aborted incomplete multipart uploads", slog.String("bucket", b.Name), slog.Int("count", n))
-		}
+	if !s.zone.ZoneGroup.Equals(cur.Info.Zonegroup) {
+		return fmt.Errorf("%w: bucket %s belongs to zonegroup %q", op.ErrPermanentRedirect, b.Name, cur.Info.Zonegroup)
+	}
+	if _, err := s.syncOwnerStats(ctx, cur.Info.Owner, &cur.Info); err != nil {
+		slog.WarnContext(ctx, "failed to sync user stats before bucket delete", slog.String("bucket", b.Name), slog.Any("error", err))
+	}
+	if err := s.checkBucketEmpty(ctx, cur); err != nil {
+		return err
+	}
+	n, err := s.abortMultiparts(ctx, cur)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		slog.WarnContext(ctx, "aborted incomplete multipart uploads", slog.String("bucket", b.Name), slog.Int("count", n))
 	}
 	if cur, lerr = s.claimRemoval(ctx, cur); lerr != nil {
 		return lerr

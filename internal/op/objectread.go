@@ -19,14 +19,13 @@ import (
 // rgw_build_bucket_policies and rgw_build_object_policies do before
 // verify_permission for an op that prefetches nothing (rgw_op.cc:494 and
 // :631-649 at v19.2.6, :524 and :661-679 at v20.2.4). A missing bucket is
-// NoSuchBucket before any object is read.
+// NoSuchBucket before any object is read, as is one of another zonegroup
+// PermanentRedirect (loadBucket).
 func statHead(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
+	if err := loadBucket(ctx, r); err != nil {
 		return err
 	}
-	r.BucketRec = rec
-	st, err := r.Env.Objects.StatObject(ctx, rec, r.Object)
+	st, err := r.Env.Objects.StatObject(ctx, r.BucketRec, r.Object)
 	if err != nil {
 		return err
 	}

@@ -371,15 +371,32 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
 			Expect(c.Writes(rookMetaPool, "users.uid", "alice.buckets")).To(Equal(3), "the stats sync, then the unlink")
 		})
-		It("skips the emptiness check and the stats sync for another zonegroup's bucket", func(ctx SpecContext) {
+		It("refuses another zonegroup's bucket with PermanentRedirect before it reads the index or removes anything", func(ctx SpecContext) {
 			p := params("plain")
 			p.Zonegroup = "elsewhere"
 			rec, err := s.CreateBucket(ctx, p)
 			Expect(err).NotTo(HaveOccurred())
 			seedIndexEntry(c, indexPool, ".dir."+rec.Info.Bucket.ID+"."+strconv.FormatUint(uint64(shardOf(rec, "k")), 10), entry("k", 1))
-			Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "rgw_rados.cc:5188-5192")
-			Expect(c.Writes(rookMetaPool, "users.uid", "alice.buckets")).To(Equal(2), "the link and the unlink only")
-			Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+			c.ResetCounters()
+			Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrPermanentRedirect),
+				"radosgw deletes such a bucket only as a system request the owning zone forwarded after its own emptiness check (rgw_op.cc:565 and :3759-3783 at v19.2.6, :595 and :3968-3992 at v20.2.4)")
+			for oid := range shards() {
+				Expect(c.Reads(indexPool, "", oid)).To(BeZero(), "shard %s", oid)
+			}
+			Expect(c.Writes(rookMetaPool, "users.uid", "alice.buckets")).To(BeZero(), "no stats sync and no unlink")
+			Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil())
+			Expect(instances("plain")).To(HaveLen(1))
+			Expect(shards()).To(HaveLen(11))
+		})
+		It("checks the emptiness of a bucket with an empty zonegroup id, which RGWZoneGroup::equals puts in the master zonegroup", func(ctx SpecContext) {
+			p := params("plain")
+			p.Zonegroup = ""
+			rec, err := s.CreateBucket(ctx, p)
+			Expect(err).NotTo(HaveOccurred())
+			seedIndexEntry(c, indexPool, ".dir."+rec.Info.Bucket.ID+"."+strconv.FormatUint(uint64(shardOf(rec, "k")), 10), entry("k", 1))
+			Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty),
+				"radosgw compares the raw id here, removes the bucket and leaves its objects unnamed in the data pool (docs/ceph-upstream-bugs.md)")
+			Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil())
 		})
 		It("removes the bucket under the entry-point version it re-reads", func(ctx SpecContext) {
 			st := uncached(ctx)
@@ -435,14 +452,15 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil())
 			Expect(linked(ctx, s, aliceOwner)).To(HaveLen(1))
 		})
-		It("tolerates an index already gone for another zonegroup's bucket", func(ctx SpecContext) {
-			p := params("plain")
-			p.Zonegroup = "elsewhere"
-			rec, err := s.CreateBucket(ctx, p)
+		It("tolerates index shards gone after the emptiness check", func(ctx SpecContext) {
+			rec, err := s.CreateBucket(ctx, params("plain"))
 			Expect(err).NotTo(HaveOccurred())
-			for oid := range shards() {
-				c.Remove(indexPool, "", oid)
-			}
+			c.BeforeWrite(rookMetaPool, rookRoot, "plain", func(*fakerados.Object) {
+				c.BeforeWrite(rookMetaPool, rookRoot, "plain", nil)
+				for oid := range shards() {
+					c.Remove(indexPool, "", oid)
+				}
+			})
 			Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "IndexCleanWriter ignores ENOENT")
 			Expect(instances("plain")).To(BeEmpty())
 			Expect(linked(ctx, s, aliceOwner)).To(BeEmpty())

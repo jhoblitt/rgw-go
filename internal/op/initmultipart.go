@@ -54,14 +54,7 @@ func (o *InitMultipart) OpMask() uint32 { return OpTypeWrite }
 // Its check of the destination placement waits for the requester to be
 // authorized, as nothing the bucket holds is checked before (Execute;
 // docs/exclusions.md).
-func (o *InitMultipart) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
-		return err
-	}
-	r.BucketRec = rec
-	return nil
-}
+func (o *InitMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWInitMultipart::verify_permission (rgw_op.cc:6271-6286
 // at v19.2.6, :6941-6956 at v20.2.4).

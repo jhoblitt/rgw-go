@@ -69,6 +69,12 @@ type Request struct {
 	// Object has an empty Name for service and bucket scope; Instance carries
 	// the versionId query parameter.
 	Object meta.ObjKey
+	// SrcTenant and SrcBucket are radosgw's src_tenant_name and
+	// src_bucket_name: the bucket of the x-amz-copy-source that
+	// RGWHandler_REST_S3::init parses, which postauth_init resolves under
+	// the identity's tenant once auth has run. SrcBucket is "" when the
+	// request names none.
+	SrcTenant, SrcBucket string
 
 	Identity Identity
 	Env      *Env

@@ -35,12 +35,7 @@ func (o *ListMultipartUploads) OpMask() uint32 { return OpTypeRead }
 
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket.
 func (o *ListMultipartUploads) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
-		return err
-	}
-	r.BucketRec = rec
-	return nil
+	return loadBucket(ctx, r)
 }
 
 // VerifyPermission is RGWListBucketMultiparts::verify_permission

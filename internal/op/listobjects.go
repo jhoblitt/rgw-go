@@ -83,15 +83,9 @@ func (*ListObjects) OpMask() uint32 { return OpTypeRead }
 
 // Init loads the bucket. A missing bucket is NoSuchBucket here, before the
 // parameters are read, as rgw_build_bucket_policies fails init_permissions
-// (rgw_op.cc:523-541 at v19.2.6, :569-582 at v20.2.4).
-func (*ListObjects) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
-		return err
-	}
-	r.BucketRec = rec
-	return nil
-}
+// (rgw_op.cc:523-541 at v19.2.6, :553-571 at v20.2.4), or a bucket of another
+// zonegroup PermanentRedirect (loadBucket).
+func (*ListObjects) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWListBucket::verify_permission, which runs
 // get_params first, so a max-keys that is not a number is InvalidArgument

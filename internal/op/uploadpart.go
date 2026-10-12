@@ -100,11 +100,10 @@ func (o *UploadPart) OpMask() uint32 { return OpTypeWrite }
 // storage class of a part with a body and the block of public ACLs
 // (docs/exclusions.md).
 func (o *UploadPart) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
+	err := loadBucket(ctx, r)
 	if err != nil {
 		return err
 	}
-	r.BucketRec = rec
 	if o.SourceErr != nil {
 		return o.SourceErr
 	}

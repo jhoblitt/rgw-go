@@ -84,11 +84,9 @@ func (o *CopyObject) OpMask() uint32 { return OpTypeWrite }
 // source once the destination and the op mask allow the request, and
 // Execute checks the rest (docs/exclusions.md).
 func (o *CopyObject) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
+	if err := loadBucket(ctx, r); err != nil {
 		return err
 	}
-	r.BucketRec = rec
 	if o.Params != nil {
 		return o.Params(ctx, o)
 	}

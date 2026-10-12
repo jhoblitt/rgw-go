@@ -47,14 +47,7 @@ func (o *CompleteMultipart) Action() policy.Action { return policy.S3PutObject }
 func (o *CompleteMultipart) OpMask() uint32 { return OpTypeWrite }
 
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket.
-func (o *CompleteMultipart) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
-		return err
-	}
-	r.BucketRec = rec
-	return nil
-}
+func (o *CompleteMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWCompleteMultipart::verify_permission
 // (rgw_op.cc:6345-6360 at v19.2.6, :7021-7036 at v20.2.4).

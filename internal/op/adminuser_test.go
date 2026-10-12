@@ -558,6 +558,22 @@ var _ = Describe("admin user ops", func() {
 			Expect(run(ctx, d)).To(MatchError(op.ErrNoSuchUser))
 			Expect(run(ctx, op.NewRemoveUser())).To(MatchError(op.ErrInvalidArgument), "no uid")
 		})
+		It("refuses to purge another zonegroup's bucket before it deletes any object, keeping the user", func(ctx SpecContext) {
+			create(ctx, "leseb", "", "", "")
+			rec, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "far", Owner: user("leseb"), Zonegroup: "elsewhere"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.PutObject(ctx, rec, meta.ObjKey{Name: "o"}, strings.NewReader("x"), op.PutParams{Size: 1})
+			Expect(err).NotTo(HaveOccurred())
+			d := op.NewRemoveUser()
+			d.UID = meta.UserID{ID: "leseb"}
+			d.PurgeData = true
+			Expect(run(ctx, d)).To(MatchError(op.ErrPermanentRedirect), "rgw-go has no master zonegroup to leave the bucket's data to")
+			_, err = store.GetUser(ctx, d.UID)
+			Expect(err).NotTo(HaveOccurred())
+			st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "o"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeTrue(), "the purge deleted the object")
+		})
 		It("purges only the removed user's buckets", func(ctx SpecContext) {
 			create(ctx, "leseb", "", "", "")
 			create(ctx, "other", "", "", "")

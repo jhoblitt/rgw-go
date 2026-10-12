@@ -59,11 +59,11 @@ func (o *ListParts) OpMask() uint32 { return OpTypeRead }
 // whatever the store holds, where radosgw answers the failure
 // (docs/exclusions.md).
 func (o *ListParts) Init(ctx context.Context, r *Request) error {
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
+	err := loadBucket(ctx, r)
 	if err != nil {
 		return err
 	}
-	r.BucketRec = rec
+	rec := r.BucketRec
 	if o.UploadID == "" {
 		var st *ObjectState
 		if st, err = r.Env.Objects.StatObject(ctx, rec, r.Object); err != nil {

@@ -581,6 +581,32 @@ var _ = Describe("admin bucket ops", func() {
 			_, err = store.GetBucket(ctx, "", "test")
 			Expect(err).NotTo(HaveOccurred())
 		})
+		It("refuses another zonegroup's bucket in the bypass-gc purge before its data pass", func(ctx SpecContext) {
+			putObject(ctx, "test", "k1")
+			rec, err := store.GetBucket(ctx, "", "test")
+			Expect(err).NotTo(HaveOccurred())
+			rec.Info.Zonegroup = "elsewhere"
+			Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+			fake := new(opfakes.FakeBucketAdminStore)
+			env.BucketAdmin = fake
+			Expect(op.RemoveBucketBypassGC(ctx, env, rec)).To(MatchError(op.ErrPermanentRedirect))
+			Expect(fake.PurgeBypassGCCallCount()).To(BeZero(), "PurgeBypassGC deletes the tails before PurgeBucket's own refusal")
+			st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "k1"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeTrue(), "k1 was deleted")
+		})
+		It("refuses a bucket with an empty zonegroup id, which remove_bucket compares as a raw id where S3 serves it", func(ctx SpecContext) {
+			Expect(store.ZoneGroup().IsMaster).To(BeTrue(), "RGWZoneGroup::equals places an empty id in a master zonegroup")
+			rec, err := store.GetBucket(ctx, "", "test")
+			Expect(err).NotTo(HaveOccurred())
+			rec.Info.Zonegroup = ""
+			Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+			d := op.NewRemoveBucketAdmin()
+			d.Bucket = "test"
+			Expect(run(ctx, d)).To(MatchError(op.ErrPermanentRedirect), "rgw_bucket.cc:1296 at v19.2.6, :1458 at v20.2.4")
+			_, err = store.GetBucket(ctx, "", "test")
+			Expect(err).NotTo(HaveOccurred())
+		})
 		It("completes a purge that failed partway when retried", func(ctx SpecContext) {
 			putObject(ctx, "test", "k1")
 			putObject(ctx, "test", "k2")

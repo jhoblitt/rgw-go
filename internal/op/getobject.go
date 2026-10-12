@@ -108,12 +108,10 @@ func (o *GetObject) OpMask() uint32 { return OpTypeRead }
 func (o *GetObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	o.VersionID = r.Object.Instance
-	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
-	if err != nil {
+	if err := loadBucket(ctx, r); err != nil {
 		return err
 	}
-	r.BucketRec = rec
-	st, err := o.readHead(ctx, r.Env.Objects, rec, r.Object)
+	st, err := o.readHead(ctx, r.Env.Objects, r.BucketRec, r.Object)
 	if err != nil {
 		return err
 	}

@@ -88,14 +88,19 @@ func (s *Store) CreateBucket(_ context.Context, p op.CreateBucketParams) (*op.Bu
 	return copyBucket(&b.rec), nil
 }
 
-// DeleteBucket implements op.BucketStore: a bucket without objects goes, and
-// its in-flight uploads with it, as RadosBucket::remove aborts them.
+// DeleteBucket implements op.BucketStore: a bucket of this zonegroup without
+// objects goes, and its in-flight uploads with it, as RadosBucket::remove
+// aborts them; one of another zonegroup is refused as the RADOS store
+// refuses it.
 func (s *Store) DeleteBucket(_ context.Context, rec *op.BucketRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.instance(rec)
 	if err != nil {
 		return err
+	}
+	if zg := b.rec.Info.Zonegroup; !s.cfg.ZoneGroup.Equals(zg) {
+		return fmt.Errorf("%w: bucket %s belongs to zonegroup %q", op.ErrPermanentRedirect, rec.Info.Bucket.Name, zg)
 	}
 	if len(b.objects) > 0 {
 		return fmt.Errorf("bucket %s: %w", rec.Info.Bucket.Name, op.ErrBucketNotEmpty)

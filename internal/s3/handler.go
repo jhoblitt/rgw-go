@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // HandlerFunc serves one route: it fills the op from r, runs it and renders
@@ -384,8 +386,45 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 			return
 		}
 		setMissingDeleteMarker(ctx, w.Header(), r, err)
+		setRedirectLocation(w.Header(), req, h.cfg, r, err)
 		WriteError(ctx, w, r, err)
 	}
+}
+
+// setRedirectLocation sends Location with the PermanentRedirect of a bucket
+// that loaded, as abort_early does (rgw_rest.cc:716-727 at v19.2.6, :721-732
+// at v20.2.4): build_redirect_url over s->zonegroup_endpoint, which
+// rgw_build_bucket_policies sets from this zonegroup once the bucket loads
+// (rgw_op.cc:555 at v19.2.6, :585 at v20.2.4). The URL is that endpoint less
+// one trailing slash, then request_uri, then '?' and request_params when
+// there are any, both as the client sent them; without an endpoint none is
+// sent.
+func setRedirectLocation(h http.Header, req *http.Request, cfg Config, r *op.Request, err error) {
+	if r.BucketRec == nil || !errors.Is(err, op.ErrPermanentRedirect) {
+		return
+	}
+	base := zoneGroupEndpoint(r.Env.Zone.ZoneGroup())
+	if base == "" {
+		return
+	}
+	loc := strings.TrimSuffix(base, "/") + requestURI(req, cfg)
+	if _, query := vhost.RequestTarget(req); query != "" {
+		loc += "?" + query
+	}
+	SetHeader(h, "Location", loc)
+}
+
+// zoneGroupEndpoint is get_zonegroup_endpoint (rgw_zone.cc:1277-1288 at
+// v19.2.6, :1320-1331 at v20.2.4): the zonegroup's first endpoint, else its
+// master zone's first, else "".
+func zoneGroupEndpoint(zg meta.ZoneGroup) string {
+	if len(zg.Endpoints) > 0 {
+		return zg.Endpoints[0]
+	}
+	if z, ok := zg.Zones[zg.MasterZone]; ok && len(z.Endpoints) > 0 {
+		return z.Endpoints[0]
+	}
+	return ""
 }
 
 // refuse answers a request refused before postauth_init has named its

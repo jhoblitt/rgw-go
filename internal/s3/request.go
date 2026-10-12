@@ -115,12 +115,28 @@ func DecodedURI(req *http.Request, cfg Config) string {
 	if b == "" {
 		return req.URL.Path
 	}
-	rawPath := req.URL.EscapedPath()
+	return rgwtext.URLDecode(withHostBucket(b, req.URL.EscapedPath()), false)
+}
+
+// requestURI is req_info.request_uri as RGWREST::preprocess leaves it: the
+// target's path as the client sent it (vhost.RequestTarget), with a bucket
+// the Host names put in front of it.
+func requestURI(req *http.Request, cfg Config) string {
+	path, _ := vhost.RequestTarget(req)
+	if b := vhost.Bucket(vhost.Hostname(req.Host), cfg.DNSNames); b != "" {
+		return withHostBucket(b, path)
+	}
+	return path
+}
+
+// withHostBucket is preprocess's "/" and bucket b in front of uri, with a
+// "/" between them unless uri starts with one.
+func withHostBucket(b, uri string) string {
 	sep := "/"
-	if strings.HasPrefix(rawPath, "/") {
+	if strings.HasPrefix(uri, "/") {
 		sep = ""
 	}
-	return rgwtext.URLDecode("/"+b+sep+rawPath, false)
+	return "/" + b + sep + uri
 }
 
 // PostAuthInit finishes parsing once the request is authenticated, as
@@ -134,7 +150,8 @@ func DecodedURI(req *http.Request, cfg Config) string {
 // InvalidTenantName for a tenant of anything but letters, digits and
 // underscores, InvalidObjectName for an object name over 1024 bytes or not
 // valid UTF-8, then the bucket and tenant checks again for the copy source
-// RGWHandler_REST_S3::init parsed, whatever the method. radosgw makes none
+// RGWHandler_REST_S3::init parsed, whatever the method, whose tenant and
+// bucket it gives to p.Req.SrcTenant and p.Req.SrcBucket. radosgw makes none
 // of these checks earlier: init's own tenant and object checks read what
 // postauth_init has not yet set, so they pass. Its x-amz-mfa verification
 // fails no request.
@@ -158,16 +175,17 @@ func PostAuthInit(p Parsed, authTenant string) error {
 	}
 	if v, ok := copySource(r); ok {
 		if src, parsed := copySourceBucket(v); parsed && src != "" {
-			tenant := authTenant
-			if t, bucket, found := strings.Cut(src, ":"); found {
-				if bucket == "" {
+			tenant, bucket := authTenant, src
+			if t, b, found := strings.Cut(src, ":"); found {
+				if b == "" {
 					return op.ErrInvalidBucketName
 				}
-				tenant = t
+				tenant, bucket = t, b
 			}
 			if !validTenantName(tenant) {
 				return op.ErrInvalidTenantName
 			}
+			r.SrcTenant, r.SrcBucket = tenant, bucket
 		}
 	}
 	return nil
