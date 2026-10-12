@@ -47,6 +47,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw answers 200 to a CreateBucket that loses a race to another owner](#radosgw-answers-200-to-a-createbucket-that-loses-a-race-to-another-owner) | [#76398](https://tracker.ceph.com/issues/76398) | [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) |  |
 | [radosgw's admin API bypass-gc removal leaks a tail and runs unbounded](#radosgws-admin-api-bypass-gc-removal-leaks-a-tail-and-runs-unbounded) | [#81304](https://tracker.ceph.com/issues/81304) | [ceph/ceph#72304](https://github.com/ceph/ceph/pull/72304) | ✓ |
 | [radosgw's bypass-gc bucket removal fails once a tail stripe is gone](#radosgws-bypass-gc-bucket-removal-fails-once-a-tail-stripe-is-gone) | [#24789](https://tracker.ceph.com/issues/24789), [#40587](https://tracker.ceph.com/issues/40587) | [ceph/ceph#28789](https://github.com/ceph/ceph/pull/28789), [ceph/ceph#30198](https://github.com/ceph/ceph/pull/30198), [ceph/ceph#29984](https://github.com/ceph/ceph/pull/29984), [ceph/ceph#29956](https://github.com/ceph/ceph/pull/29956) |  |
+| [radosgw's bypass-gc bucket removal deletes a racing write's new head and leaks its tails](#radosgws-bypass-gc-bucket-removal-deletes-a-racing-writes-new-head-and-leaks-its-tails) | pending | pending | ✓ |
 | [The 2pc queue's reserved size drifts upward](#the-2pc-queues-reserved-size-drifts-upward) | none | none |  |
 | [The 2pc queue's self-heal is skipped when another write comes first](#the-2pc-queues-self-heal-is-skipped-when-another-write-comes-first) | [#80994](https://tracker.ceph.com/issues/80994) | [ceph/ceph#72212](https://github.com/ceph/ceph/pull/72212) | ✓ |
 | [The 2pc queue hands out reservation id 0, which radosgw treats as none](#the-2pc-queue-hands-out-reservation-id-0-which-radosgw-treats-as-none) | [#80996](https://tracker.ceph.com/issues/80996) | [ceph/ceph#72163](https://github.com/ceph/ceph/pull/72163) | ✓ |
@@ -1494,6 +1495,48 @@ Every new entry adds its row to this table, in document order.
   reproduction and a C++ reproducer.
 - **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source,
   not reproduced.
+
+## radosgw's bypass-gc bucket removal deletes a racing write's new head and leaks its tails
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - `RadosBucket::remove_bypass_gc` reads each listed object's head with
+    `get_obj_state` (`rgw_sal_rados.cc:519-521` at v19.2.6, `:540-542` at
+    v20.2.4), releases the tail stripes that state's manifest names, then
+    removes the head with `delete_obj_aio` (`:565-566`, v20.2.4 `:586-587`).
+  - `delete_obj_aio` prepares an index DEL, removes the head with
+    `cls_rgw_remove_obj` and no guard on the head's idtag, and completes the
+    index DEL through `delete_obj_index` with pool -1 and epoch 0
+    (`rgw_rados.cc:10687-10732` and `:6033-6050` at v19.2.6, `:11624-11669`
+    and `:6787-6804` at v20.2.4). An S3 delete at v19.2.6 guards the same
+    removal with a cmpxattr on the idtag it read
+    (`prepare_atomic_modification`, `rgw_rados.cc:6493-6513`).
+  - Nothing stops writes to the bucket while it is purged. A PUT, copy or
+    multipart completion of a listed key whose head write lands between
+    the purge's `get_obj_state` and its `cls_rgw_remove_obj` has its new
+    head removed. cls_rgw skips a completion as stale only for a non-zero
+    epoch (`src/cls/rgw/cls_rgw.cc:1080-1087` at v19.2.6, `:1215-1222` at
+    v20.2.4), so the epoch-0 DEL removes the new entry too. The state the
+    purge read never named the new head's tail stripes, so they are
+    neither released nor queued for GC, and no head or index entry names
+    them.
+- **Impact:** a client whose write races a bypass-gc removal of its bucket
+  gets 200 for an object that is then gone, which the bucket's removal
+  makes moot, and its tail stripes stay in the data pool, where only an
+  orphan scan finds them. The overwritten object's old tails are released
+  twice, by the purge and by the write's GC entry, which cls_refcount's
+  retired refs and ENOENT make harmless. Callers holding `buckets=write`
+  start the removal; the racing writer needs only write access to the
+  bucket.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it. `PurgeBypassGC` (`internal/driver/purge.go`)
+  removes the head as `delete_obj_aio` does, unguarded, and a write racing
+  the purge leaks its tails the same way (`docs/exclusions.md`, "The admin
+  bucket removal with bypass-gc deletes every tail, and with a bound").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 14 review, 2026-10-12, reviewing the
+  bypass-gc head removal; derived from the source, not reproduced.
 
 ## The 2pc queue's reserved size drifts upward
 
