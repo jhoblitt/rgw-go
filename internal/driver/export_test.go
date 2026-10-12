@@ -352,6 +352,17 @@ func (s *Store) SetUsageFinalFlushTimeoutForTest(d time.Duration) { s.usage.fina
 // UsageOIDForTest is usageOID for the external specs.
 func UsageOIDForTest(s *Store, user string, index uint32) string { return s.usageOID(user, index) }
 
+// UsageTrimRoundsForTest is usageTrimRounds for the external specs.
+var UsageTrimRoundsForTest = usageTrimRounds
+
+// SetUsageTrimCapFactorForTest makes n the factor of a shard trim's round
+// cap until restore runs.
+func SetUsageTrimCapFactorForTest(n int) (restore func()) {
+	old := usageTrimCapFactor
+	usageTrimCapFactor = n
+	return func() { usageTrimCapFactor = old }
+}
+
 // FlushUsageForTest is flushUsage for the external specs.
 func (s *Store) FlushUsageForTest(ctx context.Context) error { return s.flushUsage(ctx) }
 
