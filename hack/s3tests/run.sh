@@ -9,7 +9,7 @@
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users.
 #
-# Usage: run.sh squid|tentacle radosgw|rgw-go RUN-ID
+# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID
 #        run.sh --print-commit | --print-deselect
 set -euo pipefail
 
@@ -21,8 +21,25 @@ readonly script=run.sh
 # shellcheck source=hack/rooket/lib.sh
 source "${here}/lib.sh"
 
-readonly S3TESTS_REPO=https://github.com/ceph/s3-tests
-readonly S3TESTS_COMMIT=5522d1c351f75bc00ae0f64f742f3f095f5939d9 # master, 2026-05-27; bump by hand and re-record the baselines
+# S3TESTS_REPO and S3TESTS_COMMIT in the environment run another repository,
+# a local clone's path among them, at another commit, to try a change to
+# s3-tests before it is pinned. --print-commit prints the commit that runs,
+# which a recorded result carries, so hack/parity refuses to compare such a
+# run with a baseline recorded at the pin.
+S3TESTS_REPO=${S3TESTS_REPO:-https://github.com/ceph/s3-tests}
+# git runs the fetch inside the checkout, so a path is made absolute here,
+# from the directory run.sh starts in. Neither a URL nor git's host:path
+# form is a path: the latter has a colon before any slash.
+if [[ "${S3TESTS_REPO}" != *://* && ! "${S3TESTS_REPO}" =~ ^[^/]*: ]]; then
+	[[ -d "${S3TESTS_REPO}" ]] || die "S3TESTS_REPO ${S3TESTS_REPO} is neither a URL nor a directory"
+	S3TESTS_REPO=$(cd "${S3TESTS_REPO}" && pwd)
+fi
+readonly S3TESTS_REPO
+readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-5522d1c351f75bc00ae0f64f742f3f095f5939d9} # master, 2026-05-27; bump by hand and re-record the baselines
+# A result records the commit it ran, and the checkout and the venv are reused
+# while the commit stays the same, so it must be a commit id: a branch or tag
+# names whatever it points at when fetched.
+[[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "S3TESTS_COMMIT ${S3TESTS_COMMIT} is not a full commit id"
 readonly PYTEST_TIMEOUT_VERSION=2.4.0
 
 # Features not implemented yet and docs/exclusions.md's, by s3-tests marker.

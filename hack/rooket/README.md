@@ -599,6 +599,21 @@ the pin is bumped by hand, and the baselines re-recorded with it. `run.sh`
 exits 0 when pytest ran the whole set, whatever the tests' outcomes, and
 nonzero when it could not.
 
+To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
+`S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
+calls it, run another repository, a local clone's path among them (a
+relative path is taken from the directory `run.sh` starts in, which is the
+repository root under `make`), at another commit, which must be a full
+commit id. `run.sh --print-commit`
+prints that commit, so a result recorded from such a run carries it and
+`make s3tests-parity` refuses to compare it with a baseline recorded at the
+pin; `bin/parity diff --allow-meta-drift` compares the outcomes anyway.
+
+```sh
+S3TESTS_REPO=$HOME/src/s3-tests S3TESTS_COMMIT=$(git -C "$HOME/src/s3-tests" rev-parse HEAD) \
+	make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1
+```
+
 Each line of a deselect list is a pytest node id and, after `#`, the calls
 that need the feature. `run.sh` stops before any test runs when a line names
 no test the markers leave, because it was renamed, removed or marked at the
