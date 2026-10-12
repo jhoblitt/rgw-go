@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -250,7 +251,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if err != nil {
 		return err
 	}
-	env, verifier, s3cfg := gw.env, gw.verifier, gw.cfg
+	env, s3cfg := gw.env, gw.cfg
 	var s3h http.Handler
 	if s3On {
 		s3h = gw.S3Handler()
@@ -261,13 +262,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 			return fmt.Errorf("reading the cluster fsid: %w", err)
 		}
 		prefix := strings.TrimPrefix(adminPath, "/")
-		adminH = admin.NewHandler(env, verifier, admin.Config{
-			Prefix:        prefix,
-			TransIDSuffix: s3cfg.TransIDSuffix,
-			ServerHeader:  s3cfg.ServerHeader,
-			MaxConcurrent: s3cfg.MaxConcurrent,
-			DNSNames:      s3cfg.DNSNames,
-		})
+		adminH = gw.AdminHandler(prefix)
 		slog.InfoContext(ctx, "admin api mounted", slog.String("prefix", prefix))
 	}
 	root := newRouter(s3h, adminH, adminPath, newUnservedHandler(env, s3cfg), s3cfg, unserved)
@@ -313,7 +308,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 // API and the router share the environment.
 type Gateway struct {
 	env      *op.Env
-	verifier *auth.Verifier
+	verifier s3.Authenticator
 	cfg      s3.Config
 }
 
@@ -337,12 +332,38 @@ func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, 
 	if err != nil {
 		return nil, fmt.Errorf("reading auth options: %w", err)
 	}
-	return &Gateway{env: env, verifier: auth.New(authCfg, store, store), cfg: cfg}, nil
+	return newGateway(env, auth.New(authCfg, store, store), cfg), nil
+}
+
+// newGateway is the gateway over env that authenticates through a and
+// serves S3 with cfg. Its S3 and admin handlers count their requests in one
+// count that cfg.MaxConcurrent caps, as radosgw's beast frontend throttles
+// every request, S3 or admin, through its one scheduler once get_op has
+// found the op (rgw_asio_frontend.cc:470 and :508-522 at v19.2.6, :425 and
+// :460-474 at v20.2.4; rgw_process.cc:330-338 at v19.2.6, :332-340 at
+// v20.2.4).
+func newGateway(env *op.Env, a s3.Authenticator, cfg s3.Config) *Gateway {
+	cfg.InFlight = new(atomic.Int64)
+	return &Gateway{env: env, verifier: a, cfg: cfg}
 }
 
 // S3Handler is the S3 handler serve serves.
 func (g *Gateway) S3Handler() *s3.Handler {
 	return s3.NewHandler(g.env, g.verifier, g.cfg)
+}
+
+// AdminHandler is the admin API serve mounts at prefix, rgw_admin_entry
+// without its leading slash, with the S3 handler's transaction ids, Server
+// header, hostnames, request cap and count.
+func (g *Gateway) AdminHandler(prefix string) *admin.Handler {
+	return admin.NewHandler(g.env, g.verifier, admin.Config{
+		Prefix:        prefix,
+		TransIDSuffix: g.cfg.TransIDSuffix,
+		ServerHeader:  g.cfg.ServerHeader,
+		MaxConcurrent: g.cfg.MaxConcurrent,
+		InFlight:      g.cfg.InFlight,
+		DNSNames:      g.cfg.DNSNames,
+	})
 }
 
 // serveAndRun starts the frontend's serve and the store's run in g. run's

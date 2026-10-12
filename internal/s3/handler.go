@@ -31,8 +31,9 @@ type Handler struct {
 	cfg     Config
 	metrics op.Metrics
 	routes  map[routeKey]HandlerFunc
-	// inflight is SimpleThrottler's outstanding_requests.
-	inflight atomic.Int64
+	// inflight is SimpleThrottler's outstanding_requests: cfg.InFlight, or a
+	// count of the handler's own.
+	inflight *atomic.Int64
 }
 
 // routeKey binds a handler: a route name can be routed in more than one
@@ -66,9 +67,12 @@ func NewHandler(env *op.Env, auth Authenticator, cfg Config) *Handler {
 }
 
 func buildHandler(env *op.Env, auth Authenticator, cfg Config, u unitHandlers) *Handler {
-	h := &Handler{env: env, auth: auth, cfg: cfg, metrics: env.Metrics, routes: map[routeKey]HandlerFunc{}}
+	h := &Handler{env: env, auth: auth, cfg: cfg, metrics: env.Metrics, routes: map[routeKey]HandlerFunc{}, inflight: cfg.InFlight}
 	if h.metrics == nil {
 		h.metrics = op.NopMetrics{}
+	}
+	if h.inflight == nil {
+		h.inflight = new(atomic.Int64)
 	}
 	for scope, fns := range map[op.Scope]map[string]HandlerFunc{
 		op.ScopeService: u.service,
@@ -116,7 +120,7 @@ func (h *Handler) Register(name string, fn HandlerFunc) {
 }
 
 // InFlight returns the requests counted against rgw_max_concurrent_requests:
-// those dispatched and not yet answered.
+// those dispatched and not yet answered, by every handler sharing the count.
 func (h *Handler) InFlight() int64 { return h.inflight.Load() }
 
 // routedAt reports whether Dispatch routes name at scope at some release:

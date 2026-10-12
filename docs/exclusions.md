@@ -2987,15 +2987,6 @@ v20.2.4 tags, rgw-go does the following.
   `rgw_dmclock_async_scheduler.h:176-183` at v19.2.6, `:175-182` at
   v20.2.4), and it has no counterpart to the experimental `dmclock`
   scheduler that `rgw_scheduler_type` selects.
-- **The admin API counts its requests apart from S3's.** radosgw throttles
-  every request, admin or S3, through the frontend's one scheduler:
-  `process_request` calls `schedule_request` once `get_op` has found the
-  op (`rgw_process.cc:330-338` at v19.2.6, `:332-340` at v20.2.4), and the
-  beast frontend holds a single scheduler (`rgw_asio_frontend.cc:470` and
-  `:508-522` at v19.2.6, `:425` and `:460-474` at v20.2.4). rgw-go's admin
-  handler keeps its own count beside the S3 handler's, each refusing past
-  `rgw_max_concurrent_requests` with 503 SlowDown, so with both APIs busy
-  up to twice that many requests run at once.
 - **Go's reason phrases.** net/http writes Go's reason phrase after every
   status code. radosgw writes the phrase its own `http_codes` table gives
   (`rgw_rest.cc:44-88` at v19.2.6 and v20.2.4), so a status line differs
@@ -3049,11 +3040,12 @@ v20.2.4 tags, rgw-go does the following.
     in-flight limit (`internal/radosclient/goceph/limiter.go`), and it waits
     there with no deadline, so while a PG is unavailable and its ops, which
     `rados_osd_op_timeout` at its default of 0 never times out, fill that
-    limit, such a request keeps its `rgw_max_concurrent_requests` slot
-    until the unlock is admitted and answered. radosgw blocks the same way:
-    its lock waits in the objecter throttle holding its scheduler slot and
-    is never cancelled. On either gateway a long PG outage can so fill the
-    cap and answer further requests 503 SlowDown.
+    limit, such a request keeps its `rgw_max_concurrent_requests` slot,
+    which S3 and admin requests share, until the unlock is admitted and
+    answered. radosgw blocks the same way: its lock waits in the objecter
+    throttle holding its scheduler slot and is never cancelled. On either
+    gateway a long PG outage can so fill the cap and answer every further
+    request 503 SlowDown.
   - **The usage log and the metrics.** They file the request under the 408
     RequestTimeout a context error maps to when nothing was sent yet, so the
     usage entry counts no successful op, and under the status sent

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -21,6 +22,10 @@ type Config struct {
 	DNSNames []string
 	// MaxConcurrent is rgw_max_concurrent_requests; 0 means unlimited.
 	MaxConcurrent int
+	// InFlight is the count of requests MaxConcurrent caps, which the admin
+	// handler shares, as radosgw's frontend throttles every request through
+	// one scheduler; nil gives the handler a count of its own.
+	InFlight *atomic.Int64
 	// TransIDSuffix is op.TransIDSuffix(instance id, zone name).
 	TransIDSuffix string
 	// ServerHeader is the Server header value, "Ceph Object Gateway (<release>)".

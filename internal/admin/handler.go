@@ -25,9 +25,12 @@ type Config struct {
 	Prefix        string
 	TransIDSuffix string
 	ServerHeader  string
-	// MaxConcurrent is rgw_max_concurrent_requests, which the handler counts
-	// against admin requests alone; 0 means unlimited.
+	// MaxConcurrent is rgw_max_concurrent_requests; 0 means unlimited.
 	MaxConcurrent int
+	// InFlight is the count of requests MaxConcurrent caps, s3.Config's, as
+	// radosgw's frontend throttles S3 and admin requests through one
+	// scheduler; nil gives the handler a count of its own.
+	InFlight *atomic.Int64
 	// DNSNames are the hostnames a Host names a bucket under, as s3.Config's:
 	// the handler parses the path with that bucket in front, as radosgw's
 	// manager lookup does.
@@ -45,17 +48,21 @@ type Handler struct {
 	cfg     Config
 	metrics op.Metrics
 	routes  map[string]HandlerFunc
-	// inflight is the admin requests counted against MaxConcurrent.
-	inflight atomic.Int64
+	// inflight is the requests counted against MaxConcurrent: cfg.InFlight,
+	// or a count of the handler's own.
+	inflight *atomic.Int64
 }
 
 // NewHandler builds the handler with every route Dispatch yields running
 // unregistered until a handler is registered for it, then the routes this
 // package serves registered. It panics on a route without its cap pairs.
 func NewHandler(env *op.Env, auth s3.Authenticator, cfg Config) *Handler {
-	h := &Handler{env: env, auth: auth, cfg: cfg, metrics: env.Metrics, routes: map[string]HandlerFunc{}}
+	h := &Handler{env: env, auth: auth, cfg: cfg, metrics: env.Metrics, routes: map[string]HandlerFunc{}, inflight: cfg.InFlight}
 	if h.metrics == nil {
 		h.metrics = op.NopMetrics{}
+	}
+	if h.inflight == nil {
+		h.inflight = new(atomic.Int64)
 	}
 	for _, name := range routeNames {
 		if len(routeCaps[name]) == 0 {
@@ -114,8 +121,8 @@ func (h *Handler) Register(name string, fn HandlerFunc) {
 	h.routes[name] = fn
 }
 
-// InFlight returns the admin requests counted against MaxConcurrent: those
-// dispatched and not yet answered.
+// InFlight returns the requests counted against MaxConcurrent: those
+// dispatched and not yet answered, by every handler sharing the count.
 func (h *Handler) InFlight() int64 { return h.inflight.Load() }
 
 // ServeHTTP runs radosgw's process_request for an admin request
