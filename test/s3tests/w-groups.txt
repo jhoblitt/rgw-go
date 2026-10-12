@@ -1,0 +1,53 @@
+# The s3-tests that judge object writes: PUT, DELETE, COPY, the
+# multi-object delete, the conditional writes, and the object ACL and
+# tagging subresources a write sets. One extended regular expression per
+# line over hack/parity's test ids, each ending in :|$ so that it also
+# selects that test's line of a parity diff, with grep -E -f. A comment line
+# is a pattern to grep too; it holds no test id, so it selects nothing. No
+# line is blank, since an empty pattern selects every line. s3-tests marks
+# only the conditional writes, so the groups go by name.
+#
+# PUT: a plain write and its read back, its headers, a missing bucket, an
+# overwrite that replaces the metadata, user metadata, and an empty object.
+^s3tests\.functional\.test_s3::test_object_write_[a-z0-9_]+(:|$)
+^s3tests\.functional\.test_s3::test_object_set_get_(metadata_[a-z0-9_]+|unicode_metadata)(:|$)
+^s3tests\.functional\.test_s3::test_object_metadata_replaced_on_put(:|$)
+^s3tests\.functional\.test_s3::test_object_head_zero_bytes(:|$)
+^s3tests\.functional\.test_s3::test_object_read_not_exist(:|$)
+^s3tests\.functional\.test_s3::test_bucket_create_special_key_names(:|$)
+^s3tests\.functional\.test_s3::test_100_continue(_error_retry)?(:|$)
+# Writes racing writes: a read never sees a mix, and the last write wins.
+^s3tests\.functional\.test_s3::test_atomic_(dual_)?(conditional_)?write_[a-z0-9_]+(:|$)
+# The body headers a PUT checks, Content-Length, Content-MD5, Content-Type
+# and Expect, and an anonymous or presigned PUT. The signature and date
+# headers are authentication's.
+^s3tests\.functional\.test_headers::test_object_create_bad_(contentlength|contenttype|expect|md5)_[a-z0-9_]+(:|$)
+^s3tests\.functional\.test_headers::test_object_acl_create_contentlength_none(:|$)
+^s3tests\.functional\.test_s3::test_object_anon_put(_write_access)?(:|$)
+^s3tests\.functional\.test_s3::test_object_put_authenticated(:|$)
+^s3tests\.functional\.test_s3::test_object_raw_put_[a-z0-9_]+(:|$)
+^s3tests\.functional\.test_s3::test_object_presigned_put_object_with_acl(_tenant)?(:|$)
+# DELETE of a key whose bucket is gone.
+^s3tests\.functional\.test_s3::test_object_delete_key_bucket_gone(:|$)
+# COPY: within and across buckets, onto itself, with its metadata and ACL,
+# and under the copy-source conditions.
+^s3tests\.functional\.test_s3::test_object_copy_[a-z0-9_]+(:|$)
+^s3tests\.functional\.test_s3::test_copy_object_if(match|nonematch)_(good|failed)(:|$)
+# DeleteObjects, in both listing versions and at the key limit.
+^s3tests\.functional\.test_s3::test_multi_object(v2)?_delete[a-z0-9_]*(:|$)
+# The object ACL: canned and explicit on PUT and on the subresource, and
+# the grant headers.
+^s3tests\.functional\.test_s3::test_object_acl[a-z0-9_]*(:|$)
+^s3tests\.functional\.test_s3::test_object_header_acl_grants(:|$)
+# The object tag set: on PUT, and set, replaced, removed and read back
+# through the subresource, by its owner and through a bucket policy.
+^s3tests\.functional\.test_s3::test_put_obj_with_tags(:|$)
+^s3tests\.functional\.test_s3::test_put_(delete|excess|excess_key|excess_val|max|max_kvsize|modify)_tags(:|$)
+^s3tests\.functional\.test_s3::test_get_obj_(head_)?tagging(:|$)
+^s3tests\.functional\.test_s3::test_(delete_tags_obj|get_tags_acl|put_tags_acl)_public(:|$)
+# The conditional writes: If-Match and If-None-Match on PUT, unmarked, and
+# the tests s3-tests marks conditional_write that the parity set runs, the
+# conditional PUT, CompleteMultipartUpload, DeleteObject and DeleteObjects.
+^s3tests\.functional\.test_s3::test_put_object_if(match|nonmatch)_[a-z0-9_]+(:|$)
+^s3tests\.functional\.test_s3::test_(multipart_)?put_object_if_match(:|$)
+^s3tests\.functional\.test_s3::test_delete_objects?_if_match[a-z0-9_]*(:|$)

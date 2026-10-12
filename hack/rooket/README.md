@@ -533,6 +533,25 @@ request that changes the S3 path, and against either release on demand, so
 CI and a local run judge alike; its `s3-tests` job is the check to require.
 It runs no gate, and needs none: nothing after it counts the users.
 
+### A unit's tests
+
+`test/s3tests/<unit>-groups.txt` names the tests that judge one area of
+the S3 path, one extended regular expression per line over `hack/parity`'s
+test ids, so that `grep -E -f` keeps a diff's lines for that area alone.
+The write path's, `w-groups.txt`, selects PUT, DELETE, COPY, DeleteObjects,
+the conditional writes and the object ACL and tagging subresources. After
+`make s3tests-parity`:
+
+```sh
+go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json \
+	--candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/w-groups.txt
+```
+
+The diff runs without `--known`, so it prints the recorded differences
+too: every line the filter keeps is a known-differences entry, whose
+exclusion decides it, an upstream Ceph defect, which goes in
+`docs/ceph-upstream-bugs.md`, or a bug in rgw-go.
+
 ## go-ceph's rgw/admin suite
 
 ```sh
