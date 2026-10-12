@@ -226,9 +226,10 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //     suspended or object lock, is answered 501 before the store is
 //     touched: radosgw writes a version there (:6459-6466), and the plain
 //     key's head written here would stand beside the bucket's olh;
-//   - the RGWCompleteMultipart lock on the meta object (lockMeta), whose
-//     ENOENT, when the key already carries the parts' ETag, is radosgw's
-//     re-sent completion, answered without an ETag on Squid and with the
+//   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
+//     cookie of this completion's own (newLockCookie), whose ENOENT, when
+//     the key already carries the parts' ETag, is radosgw's re-sent
+//     completion, answered without an ETag on Squid and with the
 //     stored one on Tentacle (:6438-6441 and :6533; v20.2.4 :7472); any
 //     other refusal is 500 "This multipart completion is already in
 //     progress";
@@ -272,8 +273,9 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 	}
 	parts = op.SortCompleteParts(parts)
 	ref, err := s.metaRef(ctx, rec, key, up.ID)
+	cookie := newLockCookie()
 	if err == nil {
-		err = s.lockMeta(ctx, ref, "")
+		err = s.lockMeta(ctx, ref, cookie)
 	} else if !errors.Is(err, radosclient.ErrNotFound) {
 		return nil, err
 	}
@@ -293,16 +295,16 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 		return nil, fmt.Errorf("%w: locking upload %s: %w", op.ErrCompletionInProgress, up.ID, err)
 	}
 	ctx = context.WithoutCancel(ctx)
-	res, released, err := s.completeLocked(ctx, up, ref, parts)
+	res, released, err := s.completeLocked(ctx, up, ref, cookie, parts)
 	if !released {
-		s.unlockMeta(ctx, ref, "")
+		s.unlockMeta(ctx, ref, cookie)
 	}
 	return res, err
 }
 
 // completeLocked is Complete under the lock; the bool reports that the lock
 // went with the meta object.
-func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, parts []op.CompletePart) (*op.PutResult, bool, error) {
+func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, cookie string, parts []op.CompletePart) (*op.PutResult, bool, error) {
 	rec, key := up.Bucket, up.Key
 	ms, err := s.readMeta(ctx, ref)
 	if errors.Is(err, radosclient.ErrNotFound) {
@@ -339,7 +341,7 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, pa
 		return &op.PutResult{ETag: a.etag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch}, released, nil
 	}
 	tag := cmp.Or(up.WriteTag, s.w.randTag())
-	if lerr := s.renewAndRecord(ctx, ref, tag); lerr != nil {
+	if lerr := s.renewAndRecord(ctx, ref, cookie, tag); lerr != nil {
 		return nil, false, fmt.Errorf("%w: renewing the lock of upload %s: %w", op.ErrCompletionInProgress, up.ID, lerr)
 	}
 	attrs := maps.Clone(ms.attrs)

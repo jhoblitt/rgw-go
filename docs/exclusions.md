@@ -606,12 +606,25 @@ review and verified against the tree.
   in the reshard code but never taken, and radosgw takes no lock on the
   queue registry object. Cookies do not need reproducing: the class
   identifies a holder by client identity plus cookie, so a cookie only
-  has to be unique within one client, and radosgw's are random strings.
-  Two consequences follow. A restarted gateway cannot renew or release
-  its predecessor's lock even with the same cookie, so recovery is by
-  expiry, as radosgw's is. And a lock on a missing object creates it, so
-  wherever the object's absence matters radosgw prepends an existence
-  assertion, and rgw-go does the same.
+  has to be unique within one client. Two consequences follow. A restarted
+  gateway cannot renew or release its predecessor's lock even with the
+  same cookie, so recovery is by expiry, as radosgw's is. And a lock on a
+  missing object creates it, so wherever the object's absence matters
+  radosgw prepends an existence assertion, and rgw-go does the same.
+  radosgw's multipart serializer never sets a cookie and locks under ""
+  (`cls_lock_client.h:79`; `MPRadosSerializer`,
+  `driver/rados/rgw_sal_rados.h:848-860` at v19.2.6, `:905-916` at
+  v20.2.4), which is safe there because it unlocks only a hold its own
+  lock's reply confirmed. Every request of an rgw-go gateway is one RADOS
+  client, so each multipart completion and abort takes the
+  `RGWCompleteMultipart` lock, renews it, asserts it and releases it under
+  a cookie of its own, 128 random bits (`newLockCookie`,
+  `internal/driver/mp_cleanup.go`): an unlock or a renewal acts on that
+  attempt's hold alone and answers ENOENT for another's
+  (`remove_lock` and `lock_obj`, `cls/lock/cls_lock.cc:282-304` and
+  `:190-199` at v19.2.6 and v20.2.4). A radosgw gateway is another client,
+  so the cookie changes nothing in how its locks and rgw-go's exclude each
+  other.
   The class's failure modes matter for renewal: a renew with
   `LOCK_FLAG_MUST_RENEW` by a client that does not hold the lock fails
   with `ENOENT`, not `EBUSY` (`MAY_RENEW` gets `EBUSY`), which radosgw's
@@ -3022,6 +3035,25 @@ v20.2.4 tags, rgw-go does the following.
     PutObject is not one: once its body is read, its write and its second
     quota check go on under a context detached from the request's
     (`internal/driver/put.go`), and the multipart writes detach the same way.
+    A CompleteMultipartUpload or AbortMultipartUpload stopped while its
+    `RGWCompleteMultipart` lock request is in flight, which may still land,
+    sends the unlock under the cookie of that one attempt (`lockMeta`,
+    `internal/driver/mp_cleanup.go`), so it releases that attempt's hold if
+    the lock landed and nothing else: another request of the same gateway
+    holding the lock does so under a cookie of its own ("Lock names are
+    radosgw's; cookies are not shared"). radosgw waits for the lock's reply
+    and unlocks only a hold it saw (`MPRadosSerializer::try_lock`,
+    `rgw_sal_rados.cc:3750-3760` at v19.2.6, `:4613-4624` at v20.2.4;
+    `RGWCompleteMultipart::complete`, `rgw_op.cc:6582-6593`, `:7506-7517`).
+    The unlock is sent too when the lock never left the RADOS client's
+    in-flight limit (`internal/radosclient/goceph/limiter.go`), and it waits
+    there with no deadline, so while a PG is unavailable and its ops, which
+    `rados_osd_op_timeout` at its default of 0 never times out, fill that
+    limit, such a request keeps its `rgw_max_concurrent_requests` slot
+    until the unlock is admitted and answered. radosgw blocks the same way:
+    its lock waits in the objecter throttle holding its scheduler slot and
+    is never cancelled. On either gateway a long PG outage can so fill the
+    cap and answer further requests 503 SlowDown.
   - **The usage log and the metrics.** They file the request under the 408
     RequestTimeout a context error maps to when nothing was sent yet, so the
     usage entry counts no successful op, and under the status sent
@@ -4756,9 +4788,11 @@ does the following.
   later radosgw renews it every half duration and refuses the head write
   with the same 500 when a renewal failed
   ([ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696)). Requests
-  of one gateway share its RADOS client and so its lock holder, as
-  radosgw's do, so the renewal cannot tell this completion from another of
-  the same gateway that took a lapsed lock. The renewal also leaves a
+  of one gateway share its RADOS client, as radosgw's do, but each
+  completion locks and renews under a cookie of its own ("Lock names are
+  radosgw's; cookies are not shared"), so the renewal fails too when
+  another completion of the same gateway took a lapsed lock, where
+  radosgw's renewal under "" would pass. The renewal also leaves a
   window from the read of the key's head that looks for an earlier
   completion to the head write's own read: a completion of the same upload
   whose head write was in flight longer than `rgw_mp_lock_max_time`, after
@@ -4783,7 +4817,8 @@ does the following.
     when it lands. A gateway that stops between the removal and the queue
     leaks the parts, where radosgw's leaves a live upload over freed ones.
   - rgw-go takes the lock under a cookie of the abort's own, 128 random
-    bits, where radosgw and rgw-go's completions use "", and the removal
+    bits, where radosgw's serializer uses "" ("Lock names are radosgw's;
+    cookies are not shared"), and the removal
     asserts, in its own op and before `obj_remove`, that the abort still
     holds it under that cookie. A cls_lock locker is the request's entity
     and its cookie (`cls/lock/cls_lock.cc:174-178`, `:201-212` and

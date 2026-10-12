@@ -3,8 +3,6 @@ package driver
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,7 +22,7 @@ import (
 // Abort implements op.MultipartStore as AbortMultipartUpload aborts an
 // upload:
 //   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
-//     cookie of this abort's own (newAbortCookie), whose errors FromRADOS
+//     cookie of this abort's own (newLockCookie), whose errors FromRADOS
 //     maps: ENOENT NoSuchUpload, any other holder (EBUSY) 503;
 //   - then up to maxMetaDeleteRetries rounds, each reading the meta object
 //     and the key's head (abortRound). A round whose meta object removal
@@ -48,7 +46,7 @@ func (s *Store) Abort(ctx context.Context, up *op.Upload) error {
 	// Taken before the lock request, so the OSD starts the lock's term no
 	// earlier than this.
 	lockedAt := s.now()
-	cookie := newAbortCookie()
+	cookie := newLockCookie()
 	if err := s.lockMeta(ctx, ref, cookie); err != nil {
 		return fmt.Errorf("locking upload %s: %w", up.ID, op.FromRADOS(err, op.ScopeUpload))
 	}
@@ -65,22 +63,6 @@ func (s *Store) Abort(ctx context.Context, up *op.Upload) error {
 		}
 	}
 	return fmt.Errorf("removing the meta object of upload %s: %w", up.ID, op.FromRADOS(radosclient.ErrCanceled, op.ScopeUpload))
-}
-
-// newAbortCookie is a lock cookie no other hold shares: 128 random bits in
-// hex. A cls_lock locker is the request's entity and its cookie
-// (cls_lock.cc:174-178, and locker_id_t's ordering, cls_lock_types.h:80-86,
-// at v19.2.6 and v20.2.4), and every request of this gateway is one entity,
-// so only the cookie tells the abort's hold from one this gateway's own
-// completion takes, under cookie "", after the abort's lapsed. The exclusive
-// lock still refuses the second holder either way (cls_lock.cc:201-212), and
-// the removal's assert_locked fails on the OSD once the abort's hold is gone
-// (:507-519). A radosgw gateway is another entity, so the cookie changes
-// nothing in how its locks and this one exclude each other.
-func newAbortCookie() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b) //nolint:errcheck // crypto/rand.Read never fails
-	return hex.EncodeToString(b)
 }
 
 // abortState is what abort carries from one round to the next: when it
