@@ -200,6 +200,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload does not keep its lock past rgw_mp_lock_max_time](#radosgws-completemultipartupload-does-not-keep-its-lock-past-rgw_mp_lock_max_time) | [#75375](https://tracker.ceph.com/issues/75375) | [ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696) |  |
 | [radosgw sends several GC chains under one tag, and an omap-era gc shard keeps only the last](#radosgw-sends-several-gc-chains-under-one-tag-and-an-omap-era-gc-shard-keeps-only-the-last) | none | none | ✓ |
 | [A CompleteMultipartUpload that loses its head write's race leaks its parts](#a-completemultipartupload-that-loses-its-head-writes-race-leaks-its-parts) | pending | pending |  |
+| [Squid answers a re-sent CompleteMultipartUpload of a finished upload with an empty ETag](#squid-answers-a-re-sent-completemultipartupload-of-a-finished-upload-with-an-empty-etag) | [#75999](https://tracker.ceph.com/issues/75999) | [ceph/ceph#68364](https://github.com/ceph/ceph/pull/68364), [ceph/ceph#70108](https://github.com/ceph/ceph/pull/70108), [ceph/ceph#70067](https://github.com/ceph/ceph/pull/70067) |  |
 | [radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private](#radosgws-putbucketacl-takes-any-canned-acl-whose-name-holds-bucket-for-private) | pending | pending |  |
 | [Tentacle's radosgw terminates on a GET or HEAD of an object whose restore attr does not decode](#tentacles-radosgw-terminates-on-a-get-or-head-of-an-object-whose-restore-attr-does-not-decode) | none | none | ✓ |
 | [radosgw sends the ACL document as a body after the headers of a HEAD ?acl](#radosgw-sends-the-acl-document-as-a-body-after-the-headers-of-a-head-acl) | none | none | ✓ |
@@ -8975,6 +8976,47 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit P, Task 6 review, 2026-10-05, reading
   `done_cancel` for the completion's lost race; derived from the source, not
   reproduced.
+
+## Squid answers a re-sent CompleteMultipartUpload of a finished upload with an empty ETag
+
+- **Kind:** defect, fixed on main and both release branches; in no Squid
+  tag through v19.2.6. A client that retries a completion whose response it
+  lost gets 200 with an empty quoted ETag, `<ETag>&quot;&quot;</ETag>` on
+  the wire. Unreproduced here: derived from the source; upstream reported
+  it first.
+- **Evidence:** paths are under `src/rgw/`.
+  - At v19.2.6 `RGWCompleteMultipart::execute` takes the
+    `RGWCompleteMultipart` lock on the meta object, and when the lock meets
+    no meta object and `check_previously_completed` finds the key's ETag
+    equal to the one the request's parts make, it answers 0 and returns
+    (`rgw_op.cc:6434-6442`), before the member `etag` is assigned at
+    `:6533`. `check_previously_completed` compares the stored ETag through a
+    local, `oetag`, and never sets the member (`:6543-6580`).
+  - `send_response` dumps the member, quoted, for any 0
+    (`rgw_rest_s3.cc:4104`).
+  - At v20.2.4 the same return (`rgw_op.cc:7248-7256`) follows a check that
+    sets `etag = oetag` (`:7472`), so Tentacle answers with the stored ETag
+    (`rgw_rest_s3.cc:4634`).
+- **Impact:** a retried completion reports success without the object's
+  ETag; a client that records or checks the returned ETag gets `""`. The
+  object itself is untouched.
+- **Releases:** v19.2.6; v20.2.4 carries the fix. Fixed on main by
+  565077e2f1c, on the tentacle branch by 4ab2e9722c7 (first in v20.2.3),
+  and on the squid branch by 4b567265365, merged 2026-07-27 and in no tag
+  through v19.2.6.
+- **rgw-go:** reproduces it per release: on Squid it answers the re-sent
+  completion 200 with an empty ETag, on Tentacle with the stored one
+  (`Store.Complete`, `internal/driver/mp_complete.go`, and
+  `Store.previouslyCompleted`, `internal/memstore/multipart.go`).
+- **Upstream:** [#75999](https://tracker.ceph.com/issues/75999), named by
+  the fix commits' `Fixes:` trailer; the fix is
+  [ceph/ceph#68364](https://github.com/ceph/ceph/pull/68364) on main, with
+  the backports [ceph/ceph#70108](https://github.com/ceph/ceph/pull/70108)
+  (tentacle) and [ceph/ceph#70067](https://github.com/ceph/ceph/pull/70067)
+  (squid), read from the merge commits in the ceph git history. The
+  tracker's own state is pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 6, 2026-10-05, writing the re-sent
+  completion's answer; recorded in Task 11, 2026-10-11.
 
 ## radosgw's PutBucketAcl takes any canned ACL whose name holds "bucket" for private
 
