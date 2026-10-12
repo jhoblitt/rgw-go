@@ -228,16 +228,6 @@ func (s *Store) Period() meta.Period { return s.zone.Period }
 // is not in the period.
 func (s *Store) PeriodConfig() meta.PeriodConfig { return s.zone.PeriodConfig }
 
-// ReadUsage implements op.UsageReader.
-func (s *Store) ReadUsage(context.Context, string, string, uint64, uint64, uint32, *op.UsageIter) (recs []op.UsageRecord, truncated bool, err error) {
-	return nil, false, op.ErrNotImplemented
-}
-
-// TrimUsage implements op.UsageReader.
-func (s *Store) TrimUsage(context.Context, string, string, uint64, uint64) error {
-	return op.ErrNotImplemented
-}
-
 // GetRealm implements op.RealmStore.
 func (s *Store) GetRealm(context.Context, string, string) (meta.Realm, error) {
 	return meta.Realm{}, op.ErrNotImplemented

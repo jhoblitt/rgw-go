@@ -248,14 +248,6 @@ var _ = Describe("the driver", func() {
 			func(ctx SpecContext, call func(context.Context, *driver.Store) error) {
 				Expect(call(ctx, s)).To(MatchError(op.ErrNotImplemented))
 			},
-			Entry("ReadUsage", func(ctx context.Context, s *driver.Store) error {
-				_, _, err := s.ReadUsage(ctx, "alice", "", 0, ^uint64(0), 1000, &op.UsageIter{})
-				return err
-			}),
-			Entry("TrimUsage", func(ctx context.Context, s *driver.Store) error {
-				return s.TrimUsage(ctx, "alice", "", 0, ^uint64(0))
-			}),
-
 			Entry("GetRealm", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetRealm(ctx, "", "")
 				return err

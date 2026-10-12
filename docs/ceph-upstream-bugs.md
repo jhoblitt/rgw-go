@@ -260,6 +260,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry](#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry) | pending | pending | ✓ |
 | [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
+| [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
+| [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -495,9 +497,16 @@ Every new entry adds its row to this table, in document order.
   v21.0.0 and later (v21.1.0 `cls_rgw.cc:4403`) and on neither the squid nor
   the tentacle branch.
 - **Releases:** every Squid and Tentacle release, through v19.2.6 and v20.2.4.
-- **rgw-go:** `internal/cls/rgw` marshals `user_usage_log_trim` but runs no
-  trim loop yet. Phase 1's usage trim must bound its loop, since on Squid and
-  Tentacle OSDs ENODATA may never come.
+- **rgw-go:** `TrimUsage` (`internal/driver/usageadmin.go`) repeats the trim
+  as radosgw does, but reads the shard again after each round that answers 0
+  and stops at the first round that removed nothing the read sees, logging a
+  warning naming this tracker and #58136. It so removes every record
+  radosgw's rounds remove, the payer's own records among them, and answers
+  200 with the payer-keyed records left, where radosgw's request never
+  answers. A cap of 10 times ceil(n/1000)+1 rounds, n counted by the first
+  read, backs the check up with a warning of its own (`docs/exclusions.md`,
+  "The admin usage trim is bounded"). fakerados emulates the class's keys
+  (`internal/testutil/fakerados/cls_rgw.go`).
 - **Upstream:** [#72593](https://tracker.ceph.com/issues/72593), fixed by
   [ceph/ceph#65329](https://github.com/ceph/ceph/pull/65329). Upstream decided
   not to backport the fix, because it changes how the usage log works; our
@@ -520,8 +529,11 @@ Every new entry adds its row to this table, in document order.
   buckets in the range; records past them are never reached. The logic is
   unchanged at v20.2.4, v21.1.0 and main.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** as for the previous entry, phase 1's usage trim must bound its
-  loop.
+- **rgw-go:** as for the previous entry: `TrimUsage` goes on while its
+  rounds remove records, which they do ever more slowly as other buckets'
+  records gather at the front of the window, and at the first round that
+  removes nothing it stops, logs the warning naming this tracker and
+  answers 200 with the records past the stall left.
 - **Upstream:** [#58136](https://tracker.ceph.com/issues/58136). Its fix,
   [ceph/ceph#49168](https://github.com/ceph/ceph/pull/49168), has been under
   review since 2022.
@@ -6611,10 +6623,12 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4; main for the prefix match and for ids
   beginning with `1`.
 - **rgw-go:** writes the same two keys through `user_usage_log_add`, as it
-  must for radosgw to read them (`internal/driver/usage.go`). It reads and
-  trims no usage yet; unit N's usage read and trim send the same class
-  methods and inherit the defect. fakerados's `Cluster.UsageEntries` tells
-  the two keys apart by rebuilding each record's by-time key.
+  must for radosgw to read them (`internal/driver/usage.go`). Its usage
+  read and trim send the same class methods and inherit the defect
+  (`internal/driver/usageadmin.go`), as fakerados's emulation of them does
+  (`internal/testutil/fakerados/cls_rgw.go`). fakerados's
+  `Cluster.UsageEntries` tells the two keys apart by rebuilding each
+  record's by-time key.
 - **Upstream:** none for the prefix match and the double count.
   rgw-bug-reproduction's prior-art search found no report or fix; the nearest
   are [#72593](https://tracker.ceph.com/issues/72593), the intermingling of ids
@@ -11893,3 +11907,82 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 11 review, 2026-10-12, reading the
   object check's loop; derived from the source, not reproduced.
+
+## radosgw's usage show and trim take an unparsable date from an uninitialized variable
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET` and `DELETE
+  /admin/usage` with a `start` or `end` radosgw cannot parse read or trim
+  the range an uninitialized variable names. Admin-only: the routes need
+  `usage=read` and `usage=write`. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; the lines are the same at v19.2.6
+  and v20.2.4 unless a pair is given, v19.2.6's first.
+  - `RGWOp_Usage_Get::execute` and `RGWOp_Usage_Delete::execute` declare
+    `uint64_t start, end;` without a value and read both with
+    `RESTArgs::get_epoch`, checking no return (`rgw/rgw_rest_usage.cc:34`
+    and `:52-53`, `:89` and `:105-106`).
+  - `get_epoch` writes the default only when the argument is absent; a
+    present one goes to `utime_t::parse_date`, whose return it passes on
+    (`rgw/rgw_rest.cc:982-1000`, `:987-1005`). `parse_date` returns
+    -EINVAL for a date whose time it cannot read and for a text that is
+    neither a date nor `<sec>.<usec>`, before it writes the epoch
+    (`include/utime.h:397-486`: the returns at `:440` and `:463`, the
+    write at `:486`).
+  - So `start=yesterday` leaves `start` as the stack left it. The trim's
+    refusal of a trim of every user's whole usage without `remove-all`
+    tests `!start && end == (uint64_t)-1` (`rgw/rgw_rest_usage.cc:108-118`),
+    so a garbage `start` other than 0 skips it, and `RGWUsage::trim` then
+    trims every user's usage between the garbage epoch and `end`
+    (`rgw/rgw_usage.cc:166-177`).
+  - The same class as "radosgw's user listing takes an unparsable
+    max-entries from an uninitialized variable", in another of
+    `RESTArgs`'s readers.
+- **Impact:** a usage show with a mistyped date reports an unpredictable
+  range and answers 200; a usage trim with one deletes an unpredictable
+  range, every user's when no uid or bucket is named, without the
+  `remove-all` the trim of everything otherwise needs.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The usage show reads such a date as
+  the argument's default, and the usage trim answers 400 InvalidArgument
+  and trims nothing (`getUsage` and `trimUsage`,
+  `internal/admin/usage.go`; `docs/exclusions.md`, "The admin usage
+  routes give a date they cannot parse a value of their own").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 10, 2026-10-11, reading the usage ops'
+  arguments; derived from the source, not reproduced.
+
+## radosgw's usage read ends a listing early when a shard fills the page without truncation
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWRados::read_usage` reads one shard at a time with the records
+    still wanted, `num`, takes the records the class returns off `num`,
+    and, when the read was not truncated, moves to the next shard with a
+    fresh iterator; it loops `while (num && !*is_truncated && hash !=
+    first_hash)` and returns `*is_truncated` as the last read left it
+    (`rgw/driver/rados/rgw_rados.cc:1674-1716`, `:1777-1819`; the
+    subtraction at `:1703`, `:1806`, the loop's end at `:1714`, `:1817`).
+  - So a read that returns exactly `num` records and is not truncated ends
+    the call untruncated even when shards are left, and `RGWUsage::show`,
+    which pages while the call says it is truncated, stops there
+    (`rgw/rgw_usage.cc:59-124` at both tags), as does `radosgw-admin usage
+    show`, which runs the same show (`rgw/rgw_admin.cc:7718` at v19.2.6,
+    `rgw/radosgw-admin/radosgw-admin.cc:8104` at v20.2.4).
+  - The class answers untruncated when the keys after its window run out
+    or leave the walk (`usage_iterate_range`,
+    `cls/rgw/cls_rgw.cc:3654-3703`, `:4056-4105`), and `num` counts the
+    records the class merged per user and bucket. A user's read hits the
+    case when that user's by-user keys are the last of its usage object
+    and the object holds exactly 1000 of its buckets in range, with
+    `rgw_usage_max_user_shards` above 1 so that the user has a later
+    shard to skip; the default, 1, leaves none.
+- **Impact:** `GET /admin/usage?uid=` and `radosgw-admin usage show --uid`
+  leave out a user's usage on its later shards, and the summary
+  undercounts it, answering 200.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it (`ReadUsage`, `internal/driver/usageadmin.go`),
+  so that both gateways show the same usage.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 10, 2026-10-11, transcribing
+  `read_usage`; derived from the source, not reproduced.

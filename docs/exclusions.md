@@ -1570,6 +1570,51 @@ review and verified against the tree.
   rgw_bucket.cc:381-382 at v20.2.4) and reports such a part, so on
   Tentacle rgw-go leaves out a part radosgw reports, and removes its entry
   even without `fix`.
+- **The admin usage trim is bounded.** `DELETE /admin/usage` repeats
+  `user_usage_log_trim` on each usage shard object until the class answers
+  ENODATA, as radosgw does, but after each round that answers 0 it reads
+  the shard again with the same filter, and once a round removed nothing
+  that read sees it stops and answers 200, logging a warning that names
+  the two defects below. radosgw repeats the call with no bound
+  (`cls_rgw_usage_log_trim_repeat`, [rgw_rados.cc:10197-10211](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10197-L10211);
+  v20.2.4 [:11121-11135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11121-L11135)).
+  Each call walks its window from the range's start, so a round removes
+  only the matching records the window reaches, and once a round removes
+  nothing every later one does the same; on Squid and Tentacle ENODATA
+  then never comes while a record whose payer is not its owner is in
+  range, because the class stores it under the payer and deletes under
+  the owner (tracker #72593, fixed in v21 only; [cls_rgw usage trim never removes a payer-keyed record](ceph-upstream-bugs.md#cls_rgw-usage-trim-never-removes-a-payer-keyed-record)),
+  or while 1000 records of other buckets fill the front of a
+  bucket-filtered trim's window (#58136; [cls_rgw usage trim with a bucket filter stalls behind 1000 other records](ceph-upstream-bugs.md#cls_rgw-usage-trim-with-a-bucket-filter-stalls-behind-1000-other-records)).
+  There radosgw's request spins without answering, and rgw-go's answers
+  200 having removed every record radosgw's rounds remove, the rest left in
+  place. As a backstop rgw-go also stops a shard, with a warning of its
+  own, after 10 times ceil(n/1000)+1 rounds that each removed something, n
+  being what the first read of the shard counts, 1000 for each full page of
+  keys and the records of its last; there it can leave records radosgw
+  would go on to remove.
+- **The admin usage routes give a date they cannot parse a value of their
+  own.** radosgw reads `GET` and `DELETE /admin/usage`'s `start` and `end`
+  with `RESTArgs::get_epoch` and drops its return, and
+  `utime_t::parse_date` writes no epoch for a date it cannot parse, so
+  both ops go on with what their uninitialized variables held
+  ([radosgw's usage show and trim take an unparsable date from an uninitialized variable](ceph-upstream-bugs.md#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable)).
+  rgw-go's `GET` reads such a date as the argument's default, 0 for
+  `start` and 2^64-1 for `end`. Its `DELETE` answers 400 InvalidArgument
+  after the cap check and trims nothing, since a default `start` would
+  trim more than the range asked for. A date with a `%` conversion rgw-go
+  does not run is such a date to both ("A date whose time names a
+  conversion rgw-go does not run is refused").
+- **A usage show of a bucket an account owns answers 500.** `GET
+  /admin/usage` naming a bucket an account owns answers 500 UnknownError
+  with its error document, as radosgw maps `RadosBucket::read_usage`'s
+  `-ENOTSUP` ([rgw_sal_rados.cc:785-797](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L785-L797);
+  v20.2.4 [:803-815](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L803-L815)).
+  radosgw meets that failure after its flusher has started the body
+  (`RGWUsage::show`, `rgw_usage.cc:48-69` at both tags), so it answers 200
+  with the body cut short inside the usage section ("Admin responses carry
+  a Content-Type on every body"). The trim of such a bucket answers 500
+  UnknownError from both.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the
@@ -4251,7 +4296,9 @@ does the following.
     `%Od` or `%EY`. glibc runs those modified forms and `%C %D %F %G %I %R
     %T %U %V %W %X %Z %c %g %j %k %l %p %r %s %u %w %x`, so radosgw reads
     such a value; a character glibc does not know either, such as `%q` or
-    a trailing `%`, is refused by both.
+    a trailing `%`, is refused by both. The usage show reads every date it
+    cannot parse as the argument's default instead ("The admin usage
+    routes give a date they cannot parse a value of their own").
   - A delete date: rgw-go answers a value with any `%` after its seconds
     with 400 InvalidArgument (`internal/op/deleteobject.go`); radosgw
     parses it as that conversion directs.

@@ -19,14 +19,15 @@ import (
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
 // registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4716,
-// :4722, :4728, :4731, :4743 and :4752 at v19.2.6, :5107-5115, :5122-5123,
-// :5135, :5141, :5147, :5150, :5162 and :5171 at v20.2.4), which
-// RegisterClass takes with RGWClass.
+// :4722, :4724-4725, :4728, :4731, :4743 and :4752 at v19.2.6, :5107-5115,
+// :5122-5123, :5135, :5141, :5143-5144, :5147, :5150, :5162 and :5171 at
+// v20.2.4), which RegisterClass takes with RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
 	"user_usage_log_add", "dir_suggest_changes",
 	"bucket_rebuild_index",
+	"user_usage_log_trim", "usage_log_clear",
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
@@ -39,7 +40,8 @@ var RGWWriteMethods = []string{
 // mp_upload_part_info_update on a multipart meta object; obj_remove,
 // obj_store_pg_ver and obj_check_mtime on a head object; on a gc shard the
 // omap-era log, gc_set_entry, gc_list and gc_remove; user_usage_log_add
-// on a usage log object; and on an index shard bucket_check_index and
+// on a usage log object, with user_usage_log_read, user_usage_log_trim
+// and usage_log_clear; and on an index shard bucket_check_index and
 // bucket_rebuild_index, as rgwCheckIndex says. Every other
 // method is EOPNOTSUPP. A bucket_list asking for entries and
 // dir_suggest_changes are emulated as rgwBucketListEntries and
@@ -86,6 +88,12 @@ func RGWClass() ClassFunc {
 			return nil, rgwGCRemove(call)
 		case "user_usage_log_add":
 			return nil, rgwUserUsageLogAdd(call)
+		case "user_usage_log_read":
+			return rgwUserUsageLogRead(call)
+		case "user_usage_log_trim":
+			return nil, rgwUserUsageLogTrim(call)
+		case "usage_log_clear":
+			return nil, rgwUsageLogClear(call)
 		case "dir_suggest_changes":
 			return nil, rgwDirSuggestChanges(call)
 		case "bucket_check_index":
@@ -792,6 +800,144 @@ func addUsageData(a, b rgwcls.UsageData) rgwcls.UsageData {
 		Ops:           a.Ops + b.Ops,
 		SuccessfulOps: a.SuccessfulOps + b.SuccessfulOps,
 	}
+}
+
+// usageMaxEntries is both MAX_ENTRIES, the window user_usage_log_read
+// reads when the request names none, and MAX_USAGE_TRIM_ENTRIES, the window
+// of every user_usage_log_trim (cls_rgw.cc:3739 and :3794 at v19.2.6,
+// :4141 and :4196 at v20.2.4).
+const usageMaxEntries = 1000
+
+// usageIterateRange is usage_iterate_range (cls_rgw.cc:3620-3704 at
+// v19.2.6, :4022-4106 at v20.2.4): one omap read of maxEntries keys after
+// *iter, or, when *iter is empty, after the user's by-user prefix at start,
+// or without a user the by-time prefix at start. Each key read moves *iter;
+// a key without the user's prefix, or without a user one at or past the
+// by-time prefix of end, ends the walk untruncated. Each record is decoded,
+// EINVAL when it does not decode, and skipped unless of bucket when one is
+// named and at or after start; one at or past end ends the walk
+// untruncated. The prefix test lets in the by-user keys of another user
+// whose id begins with user and "_", and the by-time walk any by-user key
+// that sorts below end's key (docs/ceph-upstream-bugs.md). The callback
+// sees every other record. truncated is the omap read's, unless the walk
+// ended.
+func usageIterateRange(call *ClassCall, start, end uint64, user, bucket string, iter *string, maxEntries uint32, cb func(e rgwcls.UsageLogEntry)) (truncated bool, rval int32) {
+	byUser := user != ""
+	var startKey, endKey, userKey string
+	if byUser {
+		userKey = user + "_"
+	} else {
+		endKey = fmt.Sprintf("%011d", end)
+	}
+	switch {
+	case *iter != "":
+		startKey = *iter
+	case byUser:
+		startKey = fmt.Sprintf("%s_%011d_", user, start)
+	default:
+		startKey = fmt.Sprintf("%011d", start)
+	}
+	if call.Stored == nil {
+		return false, -int32(syscall.ENOENT)
+	}
+	vals, more := omapPage(call.Stored.Omap, startKey, "", uint64(maxEntries))
+	for _, k := range slices.Sorted(maps.Keys(vals)) {
+		*iter = k
+		if (!byUser && k >= endKey) || (byUser && !strings.HasPrefix(k, userKey)) {
+			return false, 0
+		}
+		e, rval := decodeRequest(vals[k], rgwcls.DecodeUsageLogEntry)
+		if rval < 0 {
+			return more, rval
+		}
+		if (bucket != "" && bucket != e.Bucket) || e.Epoch < start {
+			continue
+		}
+		if e.Epoch >= end {
+			return false, 0
+		}
+		cb(e)
+	}
+	return more, 0
+}
+
+// rgwUserUsageLogRead is rgw_user_usage_log_read with usage_log_read_cb
+// (cls_rgw.cc:3706-3750 at v19.2.6, :4108-4152 at v20.2.4): the records
+// usageIterateRange walks, merged per payer, or owner when there is none,
+// and bucket by aggregateUsage, with the last key walked as the next
+// iterator when the read was truncated. A request that does not decode is
+// EINVAL.
+func rgwUserUsageLogRead(call *ClassCall) (out []byte, rval int32) {
+	op, rval := decodeRequest(call.In, rgwcls.DecodeUsageReadOp)
+	if rval < 0 {
+		return nil, rval
+	}
+	maxEntries := op.MaxEntries
+	if maxEntries == 0 {
+		maxEntries = usageMaxEntries
+	}
+	ret := rgwcls.UsageReadRet{Usage: map[rgwcls.UserBucket]rgwcls.UsageLogEntry{}}
+	iter := op.Iter
+	ret.Truncated, rval = usageIterateRange(call, op.StartEpoch, op.EndEpoch, op.Owner, op.Bucket, &iter, maxEntries,
+		func(e rgwcls.UsageLogEntry) {
+			ub := rgwcls.UserBucket{User: usageRecordUser(e), Bucket: e.Bucket}
+			ret.Usage[ub] = aggregateUsage(ret.Usage[ub], e)
+		})
+	if rval < 0 {
+		return nil, rval
+	}
+	if ret.Truncated {
+		ret.NextIter = iter
+	}
+	return encodeSquid(ret), 0
+}
+
+// rgwUserUsageLogTrim is rgw_user_usage_log_trim with usage_log_trim_cb
+// (cls_rgw.cc:3752-3803 at v19.2.6, :4154-4205 at v20.2.4): ENOENT for an
+// object that does not exist, EINVAL for a request that does not decode,
+// then one window of usageIterateRange from the range's start, each record
+// it hands on removed under the by-time and by-user keys built from its
+// owner. A record filed under its payer is therefore found and never
+// removed, and a trim of its payer removes the owner's record of the same
+// hour and bucket instead (tracker #72593, fixed in v21 only). ENODATA
+// answers a window that found no record with nothing after it; a window
+// of 1000 keys none of which matches the bucket filter answers 0 without
+// progress, every time (#58136).
+func rgwUserUsageLogTrim(call *ClassCall) int32 {
+	if call.Stored == nil {
+		return -int32(syscall.ENOENT)
+	}
+	op, rval := decodeRequest(call.In, rgwcls.DecodeUsageTrimOp)
+	if rval < 0 {
+		return rval
+	}
+	var iter string
+	found := false
+	more, rval := usageIterateRange(call, op.StartEpoch, op.EndEpoch, op.User, op.Bucket, &iter, usageMaxEntries,
+		func(e rgwcls.UsageLogEntry) {
+			found = true
+			omap := call.Object().Omap
+			delete(omap, usageKeyByTime(e.Epoch, e.Owner, e.Bucket))
+			delete(omap, usageKeyByUser(e.Owner, e.Epoch, e.Bucket))
+		})
+	if rval < 0 {
+		return rval
+	}
+	if !more && !found {
+		return -int32(syscall.ENODATA)
+	}
+	return 0
+}
+
+// rgwUsageLogClear is rgw_usage_log_clear (cls_rgw.cc:3805-3815 at v19.2.6,
+// :4207-4217 at v20.2.4): the omap cleared, header included, as
+// cls_cxx_map_clear does; an object that does not exist is already clear.
+func rgwUsageLogClear(call *ClassCall) int32 {
+	if obj := call.Object(); obj != nil {
+		clear(obj.Omap)
+		obj.OmapHdr = nil
+	}
+	return 0
 }
 
 // UsageEntries decodes the usage records the stored object keeps, each once,
