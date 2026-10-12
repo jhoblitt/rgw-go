@@ -2,9 +2,10 @@
   "suite": "admin",
   "meta": {
     "ceph_version": "19.2.6",
+    "deselect": "fc08dbada56c",
     "gateway": "radosgw",
     "go_ceph_tag": "v0.39.0",
-    "recorded": "2026-10-04T18:58:44Z",
+    "recorded": "2026-10-12T08:36:17Z",
     "release": "squid",
     "runs": "2"
   },
@@ -17,8 +18,6 @@
     "TestRadosGWTestSuite/TestAccount/successfully_get_account": "skipped",
     "TestRadosGWTestSuite/TestAccount/successfully_modify_account": "passed",
     "TestRadosGWTestSuite/TestAccount/try_to_create_account_that_already_exists": "passed",
-    "TestRadosGWTestSuite/TestBucket/enable_bucket_object_lock": "passed",
-    "TestRadosGWTestSuite/TestBucket/enable_versioning": "passed",
     "TestRadosGWTestSuite/TestBucket/existing_bucket_has_valid_creation_date": "passed",
     "TestRadosGWTestSuite/TestBucket/get_policy_existing_bucket": "passed",
     "TestRadosGWTestSuite/TestBucket/get_policy_non-existing_bucket": "passed",

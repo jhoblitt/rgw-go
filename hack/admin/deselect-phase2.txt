@@ -1,0 +1,11 @@
+# Subtests of go-ceph's rgw/admin suite, at run.sh's GO_CEPH_TAG, that call a
+# phase 2 S3 feature to set up what they then read through the admin API.
+# run.sh skips every line on both gateways with go test -skip, and stops when
+# a line names no subtest of the checkout or when the run still reports one.
+# The PR that lands a feature deletes its lines and re-records the radosgw
+# baselines.
+# Format: a go test id, as go test -json reports it, then "#" and the calls
+# that need the feature.
+
+TestRadosGWTestSuite/TestBucket/enable_versioning # PutBucketVersioning
+TestRadosGWTestSuite/TestBucket/enable_bucket_object_lock # CreateBucket with object lock

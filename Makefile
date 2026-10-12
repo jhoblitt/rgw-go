@@ -188,6 +188,38 @@ s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and 
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
 
+# The baseline admin-parity compares rgw-go's run with; a re-record passes the
+# one it has just written.
+ADMIN_BASELINE ?= test/admin/baseline/$(RELEASE).json
+
+.PHONY: admin-parity
+admin-parity: need-release ## Run go-ceph's rgw/admin suite against rgw-go and compare with radosgw's recorded baseline
+	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity
+	go build -o bin/parity ./hack/parity
+	bin/parity record --format gotest --suite admin --out $(CLUSTER_OUT)/admin-rgw-go.json \
+	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
+	  --meta go_ceph_tag=$$(hack/admin/run.sh --print-tag) --meta deselect=$$(hack/admin/run.sh --print-deselect) \
+	  hack/admin/_out/$(RELEASE)-rgw-go-parity.jsonl
+	bin/parity diff --baseline $(ADMIN_BASELINE) --candidate $(CLUSTER_OUT)/admin-rgw-go.json
+
+# Where admin-record writes radosgw's baseline: OUT, else the committed one.
+ADMIN_RECORD_OUT = $(or $(OUT),test/admin/baseline/$(RELEASE).json)
+
+.PHONY: admin-record
+admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosgw, after rgw-go-up, and record its baseline in OUT (default test/admin/baseline/RELEASE.json)
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
+	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1
+	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2
+	go build -o bin/parity ./hack/parity
+	mkdir -p $(dir $(ADMIN_RECORD_OUT))
+	ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
+	tag=$$(hack/admin/run.sh --print-tag) && \
+	deselect=$$(hack/admin/run.sh --print-deselect) && \
+	bin/parity record --format gotest --suite admin --out $(ADMIN_RECORD_OUT) \
+	  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
+	  --meta go_ceph_tag=$$tag --meta deselect=$$deselect \
+	  hack/admin/_out/$(RELEASE)-radosgw-base1.jsonl hack/admin/_out/$(RELEASE)-radosgw-base2.jsonl
+
 # Where s3tests-record writes radosgw's baseline: OUT, else the committed one.
 S3TESTS_RECORD_OUT = $(or $(OUT),test/s3tests/baseline/$(RELEASE).json)
 
