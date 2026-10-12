@@ -256,17 +256,6 @@ var _ = Describe("the driver", func() {
 				return s.TrimUsage(ctx, "alice", "", 0, ^uint64(0))
 			}),
 
-			Entry("CheckIndex", func(ctx context.Context, s *driver.Store) error {
-				_, _, err := s.CheckIndex(ctx, &op.BucketRecord{})
-				return err
-			}),
-			Entry("RebuildIndex", func(ctx context.Context, s *driver.Store) error {
-				return s.RebuildIndex(ctx, &op.BucketRecord{})
-			}),
-			Entry("RemoveIndexEntries", func(ctx context.Context, s *driver.Store) error {
-				return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
-			}),
-
 			Entry("GetRealm", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetRealm(ctx, "", "")
 				return err

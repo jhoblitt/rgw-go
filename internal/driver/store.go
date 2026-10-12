@@ -238,21 +238,6 @@ func (s *Store) TrimUsage(context.Context, string, string, uint64, uint64) error
 	return op.ErrNotImplemented
 }
 
-// CheckIndex implements op.BucketAdminStore.
-func (s *Store) CheckIndex(context.Context, *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
-	return nil, nil, op.ErrNotImplemented
-}
-
-// RebuildIndex implements op.BucketAdminStore.
-func (s *Store) RebuildIndex(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
-}
-
-// RemoveIndexEntries implements op.BucketAdminStore.
-func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.ObjKey) error {
-	return op.ErrNotImplemented
-}
-
 // GetRealm implements op.RealmStore.
 func (s *Store) GetRealm(context.Context, string, string) (meta.Realm, error) {
 	return meta.Realm{}, op.ErrNotImplemented

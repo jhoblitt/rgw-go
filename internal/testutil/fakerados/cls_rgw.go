@@ -26,6 +26,7 @@ var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
 	"user_usage_log_add", "dir_suggest_changes",
+	"bucket_rebuild_index",
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
@@ -37,8 +38,9 @@ var RGWWriteMethods = []string{
 // set_bucket_resharding, with which a spec stages a reshard;
 // mp_upload_part_info_update on a multipart meta object; obj_remove,
 // obj_store_pg_ver and obj_check_mtime on a head object; on a gc shard the
-// omap-era log, gc_set_entry, gc_list and gc_remove; and user_usage_log_add
-// on a usage log object. Every other
+// omap-era log, gc_set_entry, gc_list and gc_remove; user_usage_log_add
+// on a usage log object; and on an index shard bucket_check_index and
+// bucket_rebuild_index, as rgwCheckIndex says. Every other
 // method is EOPNOTSUPP. A bucket_list asking for entries and
 // dir_suggest_changes are emulated as rgwBucketListEntries and
 // rgwDirSuggestChanges say. It reads the header and entries from the stored
@@ -86,6 +88,10 @@ func RGWClass() ClassFunc {
 			return nil, rgwUserUsageLogAdd(call)
 		case "dir_suggest_changes":
 			return nil, rgwDirSuggestChanges(call)
+		case "bucket_check_index":
+			return rgwBucketCheckIndex(call)
+		case "bucket_rebuild_index":
+			return nil, rgwBucketRebuildIndex(call)
 		}
 		return nil, -int32(syscall.EOPNOTSUPP)
 	}
@@ -1081,4 +1087,71 @@ func (c *Cluster) Suggestions(pool, ns, oid string) []rgwcls.Suggestion {
 		}
 	}
 	return out
+}
+
+// rgwCheckIndex is check_index (cls_rgw.cc:3035-3114 at v19.2.6, :3361-3434
+// at v20.2.4) over a shard: its stored header, and the header its entries
+// make, which carries the stored tag timeout, version and sync-stopped flag
+// and nothing else of it, and counts each existing plain entry without flags
+// in its category. An entry that does not decode is EIO. The fake answers
+// ENOENT for a shard that does not exist, which is what the OSD answers
+// bucket_check_index, a read; bucket_rebuild_index, a write, would instead
+// read an empty header there (PrimaryLogPG.cc:7767-7770 at v19.2.6) and
+// create the shard holding a zero header at version 1. radosgw sends
+// neither method to a shard it has not created. The fake stores no key in
+// the 0x80 namespace, whose instance entries the class counts as well.
+func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32) {
+	if call.Stored == nil {
+		return rgwcls.DirHeader{}, rgwcls.DirHeader{}, -int32(syscall.ENOENT)
+	}
+	existing, rval = rgwDirHeader(call)
+	if rval < 0 {
+		return rgwcls.DirHeader{}, rgwcls.DirHeader{}, rval
+	}
+	calc = rgwcls.DirHeader{TagTimeout: existing.TagTimeout, Ver: existing.Ver, SyncStopped: existing.SyncStopped, Stats: map[uint8]rgwcls.CategoryStats{}}
+	for _, k := range slices.Sorted(maps.Keys(call.Stored.Omap)) {
+		if strings.HasPrefix(k, "\x80") {
+			continue
+		}
+		d := denc.NewDecoder(call.Stored.Omap[k])
+		en := rgwcls.DecodeDirEntry(d)
+		if d.Err() != nil {
+			return rgwcls.DirHeader{}, rgwcls.DirHeader{}, -int32(syscall.EIO)
+		}
+		if !en.Exists || en.Flags != 0 {
+			continue
+		}
+		st := calc.Stats[en.Meta.Category]
+		st.NumEntries++
+		st.TotalSize += en.Meta.AccountedSize
+		st.TotalSizeRounded += rgwRoundedSize(en.Meta.AccountedSize)
+		st.ActualSize += en.Meta.Size
+		calc.Stats[en.Meta.Category] = st
+	}
+	return existing, calc, 0
+}
+
+// rgwBucketCheckIndex is rgw_bucket_check_index (cls_rgw.cc:3129-3141 at
+// v19.2.6, :3461-3478 at v20.2.4): both headers, as rgw_cls_check_index_ret.
+func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
+	existing, calc, rval := rgwCheckIndex(call)
+	if rval < 0 {
+		return nil, rval
+	}
+	return encodeSquid(rgwcls.CheckIndexRet{ExistingHeader: existing, CalculatedHeader: calc}), 0
+}
+
+// rgwBucketRebuildIndex is rgw_bucket_rebuild_index (cls_rgw.cc:3116-3126 at
+// v19.2.6): the recalculated header written in place of the stored one, its
+// version counted as write_bucket_header counts it (:696-703). Tentacle's
+// (:3436-3458) also guards itself against a reshard, which the fake, Squid's
+// class, leaves out.
+func rgwBucketRebuildIndex(call *ClassCall) int32 {
+	_, calc, rval := rgwCheckIndex(call)
+	if rval < 0 {
+		return rval
+	}
+	calc.Ver++
+	call.Create().OmapHdr = encodeSquid(calc)
+	return 0
 }

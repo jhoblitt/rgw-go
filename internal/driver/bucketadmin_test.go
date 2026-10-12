@@ -17,6 +17,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
 
@@ -169,6 +170,161 @@ var _ = Describe("BucketAdminStore", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(st).To(Equal(op.BucketIndexStats{Categories: map[string]op.CategoryStats{}}))
 			Expect(c.Reads(indexPool, "", fmt.Sprintf(".dir.%s.0", rec.Info.Bucket.ID))).To(BeZero())
+		})
+	})
+
+	Describe("CheckIndex and RebuildIndex", func() {
+		var (
+			rec  *op.BucketRecord
+			oids []string
+		)
+		shardOID := func(name string) string {
+			return rec.Info.IndexShardOID(rec.Info.Layout.Current, shardOf(rec, name))
+		}
+		BeforeEach(func(ctx SpecContext) {
+			rec = createBucket(ctx, "plain", aliceOwner)
+			oids = nil
+			for i := range rec.Info.Layout.Current.Layout.Normal.NumShards {
+				oids = append(oids, rec.Info.IndexShardOID(rec.Info.Layout.Current, i))
+			}
+			Expect(len(oids)).To(BeNumerically(">", 3))
+			seedIndexEntry(c, indexPool, shardOID("a"), entry("a", 10))
+			seedIndexEntry(c, indexPool, shardOID("b"), entry("b", 20))
+			big := entry("c", 30)
+			big.Meta.AccountedSize = 5000
+			seedIndexEntry(c, indexPool, shardOID("c"), big)
+			gone := entry("gone", 7)
+			gone.Exists = false
+			seedIndexEntry(c, indexPool, shardOID("gone"), gone)
+			flagged := entry("flagged", 9)
+			flagged.Flags = rgwcls.FlagVer
+			seedIndexEntry(c, indexPool, shardOID("flagged"), flagged)
+			upload := entry("", 0)
+			upload.Key = rgwcls.ObjKey{Name: meta.ObjKey{Name: "obj.2~abc.meta", NS: meta.NSMultipart}.IndexKeyName()}
+			upload.Meta.Category = rgwcls.CategoryMultiMeta
+			seedIndexEntry(c, indexPool, shardOID("obj"), upload)
+			stored := c.Header(indexPool, "", shardOID("a"))
+			stored.TagTimeout, stored.MasterVer, stored.MaxMarker = 30, 2, "m0"
+			stored.Stats = map[uint8]rgwcls.CategoryStats{rgwcls.CategoryMain: {NumEntries: 2, TotalSize: 30, TotalSizeRounded: 8192, ActualSize: 30}}
+			seedShardHeader(c, indexPool, shardOID("a"), stored)
+		})
+		calculated := func() map[string]op.CategoryStats {
+			return map[string]op.CategoryStats{
+				"rgw.main":      {Size: 5030, SizeRounded: 16384, SizeUtilized: 60, NumObjects: 3},
+				"rgw.multimeta": {NumObjects: 1},
+			}
+		}
+
+		It("reports every shard's stored header and the header its existing unflagged entries make, summed", func(ctx SpecContext) {
+			c.ResetCounters()
+			existing, calc, err := s.CheckIndex(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(existing).To(Equal(map[string]op.CategoryStats{"rgw.main": {Size: 30, SizeRounded: 8192, SizeUtilized: 30, NumObjects: 2}}))
+			Expect(calc).To(Equal(calculated()))
+			for _, oid := range oids {
+				Expect(c.Reads(indexPool, "", oid)).To(Equal(1), "shard %s read once", oid)
+				Expect(c.Writes(indexPool, "", oid)).To(BeZero(), "shard %s not written", oid)
+			}
+		})
+		It("rebuilds every shard's header from its entries, as bucket_rebuild_index writes it", func(ctx SpecContext) {
+			before := c.Header(indexPool, "", shardOID("a"))
+			c.ResetCounters()
+			Expect(s.RebuildIndex(ctx, rec)).To(Succeed())
+			for _, oid := range oids {
+				Expect(c.Writes(indexPool, "", oid)).To(Equal(1), "shard %s written once", oid)
+			}
+			st, err := s.IndexStats(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Categories).To(Equal(calculated()))
+			after := c.Header(indexPool, "", shardOID("a"))
+			Expect(after.Ver).To(Equal(before.Ver+1), "write_bucket_header counts the write")
+			Expect(after.TagTimeout).To(Equal(uint64(30)), "the tag timeout is kept")
+			Expect(after.MasterVer).To(BeZero(), "check_index's header copies no master version")
+			Expect(after.MaxMarker).To(BeEmpty(), "nor a max marker")
+			existing, calc, err := s.CheckIndex(ctx, rec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(existing).To(Equal(calc))
+		})
+		It("answers a shard the OSD does not find NoSuchKey, radosgw's -ENOENT", func(ctx SpecContext) {
+			c.Remove(indexPool, "", oids[len(oids)-1])
+			_, _, err := s.CheckIndex(ctx, rec)
+			Expect(err).To(MatchError(op.ErrNoSuchKey))
+		})
+	})
+
+	Describe("RemoveIndexEntries", func() {
+		var (
+			rec  *op.BucketRecord
+			part meta.ObjKey
+		)
+		shardOID := func(name string) string {
+			return rec.Info.IndexShardOID(rec.Info.Layout.Current, shardOf(rec, name))
+		}
+		BeforeEach(func(ctx SpecContext) {
+			rec = createBucket(ctx, "plain", aliceOwner)
+			part = meta.ObjKey{Name: "obj.2~abc.1", NS: meta.NSMultipart}
+		})
+
+		It("removes a multipart entry from the shard of its object, and a plain one from its own, one omap_rm_keys a shard", func(ctx SpecContext) {
+			Expect(shardOf(rec, part.Name)).NotTo(Equal(shardOf(rec, "obj")), "the part's own name hashes elsewhere")
+			mine, decoy := shardOID("obj"), shardOID(part.Name)
+			partEntry := entry("", 1)
+			partEntry.Key = rgwcls.ObjKey{Name: part.IndexKeyName()}
+			metaEntry := entry("", 0)
+			metaEntry.Key = rgwcls.ObjKey{Name: meta.ObjKey{Name: "obj.2~abc.meta", NS: meta.NSMultipart}.IndexKeyName()}
+			seedIndexEntry(c, indexPool, mine, partEntry)
+			seedIndexEntry(c, indexPool, mine, metaEntry)
+			seedIndexEntry(c, indexPool, mine, entry("obj", 3))
+			seedIndexEntry(c, indexPool, decoy, partEntry)
+			seedIndexEntry(c, indexPool, shardOID("plain-obj"), entry("plain-obj", 4))
+			c.ResetCounters()
+
+			Expect(s.RemoveIndexEntries(ctx, rec, []meta.ObjKey{{Name: "obj"}, part, {Name: "plain-obj"}, part})).To(Succeed())
+			_, ok := c.Entry(indexPool, "", mine, "_multipart_obj.2~abc.1")
+			Expect(ok).To(BeFalse(), "the part's entry is gone from its object's shard")
+			_, ok = c.Entry(indexPool, "", mine, "obj")
+			Expect(ok).To(BeFalse())
+			_, ok = c.Entry(indexPool, "", mine, "_multipart_obj.2~abc.meta")
+			Expect(ok).To(BeTrue(), "an entry not named stays")
+			_, ok = c.Entry(indexPool, "", decoy, "_multipart_obj.2~abc.1")
+			Expect(ok).To(BeTrue(), "the shard the part's own name hashes to is untouched")
+			_, ok = c.Entry(indexPool, "", shardOID("plain-obj"), "plain-obj")
+			Expect(ok).To(BeFalse())
+
+			w := c.WritesTo(indexPool, "", mine)
+			Expect(w).To(HaveLen(1), "one write for the shard's keys, a std::set of them")
+			Expect(w[0].Steps()).To(ConsistOf(&radosclient.OmapRmKeysStep{Keys: []string{"_multipart_obj.2~abc.1", "obj"}}))
+			for i := range rec.Info.Layout.Current.Layout.Normal.NumShards {
+				oid := rec.Info.IndexShardOID(rec.Info.Layout.Current, i)
+				if oid != mine && oid != shardOID("plain-obj") {
+					Expect(c.Writes(indexPool, "", oid)).To(BeZero(), "shard %s untouched", oid)
+				}
+			}
+		})
+		It("shards a multipart name with fewer than two dots by the empty key, as RGWMPObj::from_meta leaves it", func(ctx SpecContext) {
+			odd := meta.ObjKey{Name: "orph.1", NS: meta.NSMultipart}
+			e := entry("", 1)
+			e.Key = rgwcls.ObjKey{Name: odd.IndexKeyName()}
+			seedIndexEntry(c, indexPool, shardOID(""), e)
+			Expect(s.RemoveIndexEntries(ctx, rec, []meta.ObjKey{odd})).To(Succeed())
+			_, ok := c.Entry(indexPool, "", shardOID(""), odd.IndexKeyName())
+			Expect(ok).To(BeFalse())
+		})
+		It("removes from the one object of an unsharded index", func(ctx SpecContext) {
+			rec.Info.Layout.Current.Layout.Normal.NumShards = 0
+			oid := rec.Info.IndexShardOID(rec.Info.Layout.Current, 0)
+			e := entry("", 1)
+			e.Key = rgwcls.ObjKey{Name: part.IndexKeyName()}
+			seedIndexEntry(c, indexPool, oid, e)
+			Expect(s.RemoveIndexEntries(ctx, rec, []meta.ObjKey{part})).To(Succeed())
+			_, ok := c.Entry(indexPool, "", oid, part.IndexKeyName())
+			Expect(ok).To(BeFalse())
+		})
+		It("refuses an indexless bucket, writing nothing", func(ctx SpecContext) {
+			rec.Info.Layout.Current.Layout.Type = meta.IndexIndexless
+			c.ResetCounters()
+			Expect(s.RemoveIndexEntries(ctx, rec, []meta.ObjKey{part})).To(MatchError(op.ErrInvalidArgument))
+			Expect(c.WriteOrder(indexPool, "")).To(BeEmpty())
 		})
 	})
 
