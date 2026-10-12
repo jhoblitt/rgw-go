@@ -117,4 +117,8 @@ var _ = Describe("limiter", func() {
 		Expect(ops).To(Equal(1))
 		Expect(bytes).To(BeEquivalentTo(15))
 	})
+
+	It("reports its byte bound through the Cluster, which the driver sizes its body byte budget from", func() {
+		Expect(goceph.LimitedCluster(8, 1<<20).MaxInflightBytes()).To(BeEquivalentTo(1 << 20))
+	})
 })

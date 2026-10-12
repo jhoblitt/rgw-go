@@ -87,8 +87,9 @@ type cluster struct {
 }
 
 var (
-	_ radosclient.Cluster       = (*cluster)(nil)
-	_ radosclient.StatsReporter = (*cluster)(nil)
+	_ radosclient.Cluster         = (*cluster)(nil)
+	_ radosclient.StatsReporter   = (*cluster)(nil)
+	_ radosclient.InflightLimiter = (*cluster)(nil)
 )
 
 // Connect creates the librados connection, reads the config file and CEPH_ARGS, parses Args,
@@ -345,6 +346,9 @@ func (c *cluster) Stats() radosclient.Stats {
 	s.WriteOps, s.WriteBytes = c.writes.ops.Load(), c.writes.bytes.Load()
 	return s
 }
+
+// MaxInflightBytes is the in-flight limiter's byte bound.
+func (c *cluster) MaxInflightBytes() int64 { return c.limit.maxBytes }
 
 // track registers an open pool so Close can close it.
 func (c *cluster) track(s *poolState) error {
