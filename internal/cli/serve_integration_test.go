@@ -37,7 +37,10 @@ import (
 	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/gexec"
 
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cls/gc"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/frontend"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
 	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
@@ -165,8 +168,21 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		client = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
 
+	// stop ends s as Rook ends radosgw, with SIGTERM, and kills it, failing
+	// the spec, only when it has not exited a minute past the drain. A
+	// gateway killed during a gc pass leaves the shard it holds locked for
+	// rgw_gc_processor_max_time, an hour by default, and every gc processor
+	// skips that shard until then.
+	stop := func(s *gexec.Session) {
+		GinkgoHelper()
+		defer s.Kill()
+		s.Terminate()
+		Eventually(s).WithTimeout(frontend.DrainTimeout+time.Minute).WithPolling(100*time.Millisecond).
+			Should(gexec.Exit(), "rgw-go outlived SIGTERM and is killed")
+	}
+
 	// start runs the binary with Rook's argv shape, frontends as its
-	// rgw_frontends and metricsAddr as RGW_GO_METRICS_ADDR, and kills it when
+	// rgw_frontends and metricsAddr as RGW_GO_METRICS_ADDR, and stops it when
 	// the spec or container that started it ends, unless it has exited.
 	start := func(frontends, metricsAddr string, extra ...string) *gexec.Session {
 		GinkgoHelper()
@@ -182,7 +198,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		cmd.Env = append(os.Environ(), "RGW_GO_METRICS_ADDR="+metricsAddr, "RGW_GO_LOG_LEVEL=debug")
 		s, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { s.Kill().Wait(10 * time.Second) })
+		DeferCleanup(func() { stop(s) })
 		return s
 	}
 
@@ -406,6 +422,49 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 
 		s.Signal(syscall.SIGTERM)
 		Eventually(s).WithTimeout(frontend.DrainTimeout).WithPolling(100 * time.Millisecond).Should(gexec.Exit(0))
+	})
+
+	It("leaves no gc shard locked when SIGTERM stops its first gc pass", func(ctx SpecContext) {
+		c, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf, Args: []string{
+			"--rgw-realm=" + m.Realm, "--rgw-zonegroup=" + m.Zonegroup, "--rgw-zone=" + m.Zone,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(c.Close()).To(Succeed()) })
+		opts := cephconf.NewOptions(c)
+		store, err := driver.Open(ctx, c, opts, driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(store.Close()).To(Succeed()) })
+		shards, err := opts.Int64("rgw_gc_max_objs")
+		Expect(err).NotTo(HaveOccurred())
+		gp := store.ZoneParams().GCPool
+		pool, err := c.Pool(ctx, gp.Name, gp.NS)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(pool.Close()).To(Succeed()) })
+		lockers := func(g Gomega) []string {
+			var held []string
+			for i := range int(shards) {
+				ls, err := pool.ListLockers(ctx, gc.ShardOID(i), "gc_process")
+				g.Expect(err).NotTo(HaveOccurred(), "listing %s's gc_process lockers", gc.ShardOID(i))
+				for _, l := range ls {
+					held = append(held, gc.ShardOID(i)+" by "+l.Client)
+				}
+			}
+			return held
+		}
+		before := lockers(Default)
+
+		s := start("beast endpoint="+freeAddr(ctx), "")
+		// The worker's first pass starts with serve, so the stop lands in it.
+		Eventually(s.Err).WithTimeout(time.Minute).WithPolling(5 * time.Millisecond).
+			Should(gbytes.Say(`"msg":"garbage collection: start"`))
+		stop(s)
+
+		// Another processor holds a shard only for its pass.
+		Eventually(func(g Gomega) []string {
+			return slices.DeleteFunc(lockers(g), func(l string) bool { return slices.Contains(before, l) })
+		}).WithContext(ctx).WithTimeout(10*time.Second).WithPolling(time.Second).
+			Should(BeEmpty(), "gc shards locked after rgw-go stopped")
+		Expect(s).To(gexec.Exit(0))
 	})
 
 	It("answers 405 on / and serves the admin API when rgw_enable_apis leaves S3 out", func(ctx SpecContext) {

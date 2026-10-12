@@ -350,8 +350,7 @@ func gcProcess(ctx context.Context) {
 
 // expectGCShardsFree waits a little for every gc shard's gc_process lock to
 // be free, and fails naming the holders that keep one. A processor holds a
-// shard for its pass alone, but one killed during its pass, as
-// internal/cli's serve specs kill rgw-go, holds it for
+// shard for its pass alone, but one killed during its pass holds it for
 // rgw_gc_processor_max_time, an hour by default, and every collector skips
 // the shard until then. It closes the pool it opens, so a cleanup can call
 // it.
