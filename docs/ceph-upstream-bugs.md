@@ -2073,15 +2073,16 @@ Every new entry adds its row to this table, in document order.
   (`cls_lock_ops.h:255` and `:257`).
 - **Releases:** every release since v14.1.0; checked at v19.2.6, v20.2.4 and
   main.
-- **rgw-go:** unaffected. `internal/cls/lock` binds both methods, as
-  `GetInfo` and `AssertLocked`, but rgw-go takes no ephemeral lock and sends
-  neither for one; the package documents the restriction on both and on
-  `TypeExclusiveEphemeral`. The fakerados lock emulator removes an expired
-  ephemeral lock's object as the class does, so a spec that reads one gets
-  EIO as from the OSD. radosgw's one ephemeral lock, the bucket reshard lock
-  (`rgw_reshard.cc:734`), is never read with either method; rgw-go must do
-  the same if it takes that lock. `docs/exclusions.md` records the failure
-  mode.
+- **rgw-go:** unaffected. It binds the lock class in `internal/cls/lock`
+  (lock, unlock, break_lock, get_info, assert_locked); it never takes an
+  ephemeral lock, and the package documents that get_info and assert_locked
+  must not be sent for one. Every lock rgw-go takes, `RGWCompleteMultipart`
+  and `gc_process`, is a plain exclusive lock. The fakerados lock emulator
+  removes an expired ephemeral lock's object as the class does, so a spec
+  that reads one gets EIO as from the OSD. radosgw's one ephemeral lock, the
+  bucket reshard lock (`rgw_reshard.cc:734`), is never read with either
+  method; rgw-go must do the same if it takes that lock.
+  `docs/exclusions.md` records the failure mode.
 - **Upstream:** [#80993](https://tracker.ceph.com/issues/80993). Upstream QA
   logged the failure in 2022 as
   [#56575](https://tracker.ceph.com/issues/56575), which was resolved by a
@@ -6878,7 +6879,7 @@ Every new entry adds its row to this table, in document order.
   is 31 characters of a 64-symbol table (`common/random_string.cc:45-50`
   at both tags), 186 bits, so two uploads of one key drawing the same id
   is not a practical event.
-- **Releases:** v19.2.6 and v20.2.4; on main (7ed73efc1, 2026-09-25) init
+- **Releases:** v19.2.6 and v20.2.4; on main (c19f283c174, 2026-10-08) init
   still sets the flag (`driver/rados/rgw_sal_rados.cc:4364`), which the
   driver names nowhere else.
 - **rgw-go:** reproduces radosgw's write, `create(false)` and `obj_remove`
