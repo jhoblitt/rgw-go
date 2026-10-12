@@ -7,59 +7,12 @@
 # Format: a pytest node id, then "#" and the calls that need the feature.
 
 # bucket versioning: each enables it (PutBucketVersioning)
-s3tests/functional/test_s3.py::test_bucket_list_return_data_versioning # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_concurrent_multi_object_delete # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_object_put_acl_mtime # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_object_copy_versioned_bucket # PutBucketVersioning
-s3tests/functional/test_s3.py::test_object_copy_versioned_url_encoding # PutBucketVersioning
-s3tests/functional/test_s3.py::test_object_copy_versioning_multipart_upload # PutBucketVersioning
-s3tests/functional/test_s3.py::test_multipart_copy_versioned # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_bucket_create_suspend # PutBucketVersioning
 s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove # PutBucketVersioning, ListObjectVersions
 s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_stack_delete_merkers # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_suspend_versions # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_suspended_copy # PutBucketVersioning
-s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_all # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_special_names # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_create_overwrite_multipart # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_list_marker # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_copy_obj_version # PutBucketVersioning
-s3tests/functional/test_s3.py::test_versioning_multi_object_delete # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker_create # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioned_object_acl # PutBucketVersioning
-s3tests/functional/test_s3.py::test_versioned_object_acl_no_version_specified # PutBucketVersioning
-s3tests/functional/test_s3.py::test_versioned_concurrent_object_create_concurrent_remove # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioned_concurrent_object_create_and_remove # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_bucket_atomic_upload_return_version_id # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_bucket_multipart_upload_return_version_id # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_get_versioned_object_attributes # PutBucketVersioning
-s3tests/functional/test_s3.py::test_put_current_object_if_none_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_multipart_put_current_object_if_none_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_put_current_object_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_multipart_put_current_object_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_put_object_current_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_current_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_version_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_current_if_match_last_modified_time # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_version_if_match_last_modified_time # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_current_if_match_size # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_object_version_if_match_size # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_current_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_version_if_match # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_current_if_match_last_modified_time # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_version_if_match_last_modified_time # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_current_if_match_size # PutBucketVersioning
-s3tests/functional/test_s3.py::test_delete_objects_version_if_match_size # PutBucketVersioning
 
 # object lock
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock # CreateBucket with object lock, PutObjectLockConfiguration
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_bucket # PutObjectLockConfiguration
-s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_enable_after_create # PutBucketVersioning, PutObjectLockConfiguration
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_with_days_and_years # CreateBucket with object lock, PutObjectLockConfiguration
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_days # CreateBucket with object lock, PutObjectLockConfiguration
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_years # CreateBucket with object lock, PutObjectLockConfiguration
@@ -151,6 +104,7 @@ s3tests/functional/test_s3.py::test_cors_presigned_put_object_v2 # PutBucketCors
 s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_v2 # PutBucketCors, OPTIONS preflight
 s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant # PutBucketCors, OPTIONS preflight
 s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_with_acl # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_url_non_preflight # PutBucketCors
 
 # public access block
 s3tests/functional/test_s3.py::test_get_undefined_public_block # GetPublicAccessBlock, DeletePublicAccessBlock

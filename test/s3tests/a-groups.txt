@@ -5,8 +5,8 @@
 # line is blank, since an empty pattern selects every line.
 #
 # test_headers.py: s3-tests' auth groups. At the pinned commit every test
-# in the file carries the auth_common or the auth_aws2 marker, and no test of
-# test_s3.py carries an auth marker.
+# in the file carries the auth_common, auth_aws2 or auth_aws4 marker, and no
+# test of test_s3.py carries an auth marker.
 ^s3tests\.functional\.test_headers::
 # A SigV4 header signature with an access key radosgw does not know, and
 # with the main user's key and a wrong secret.
