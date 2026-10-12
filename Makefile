@@ -95,8 +95,21 @@ release-pins-check: ## Fail when .goreleaser.yaml's Ceph images or build tags di
 parity-options-check: ## Fail when a release's chart values start radosgw under other options than hack/rooket/lib.sh's parity_options
 	@hack/rooket/parity-options-check.sh
 
+# The least the data pool could take on an idle cluster of either release, in
+# bytes: Tentacle's in a seam sweep of 2026-10-02.
+BENCH_PLAN_IDLE ?= 8220119040
+
+# Every setting gateway.sh sizes a profile from is unset, so the check judges
+# the defaults whatever the caller's shell exports.
+.PHONY: bench-plan-check
+bench-plan-check: ## Fail when a gateway comparison profile's default dataset is more than half of BENCH_PLAN_IDLE bytes
+	@out=$$(env -u BENCH_SMOKE -u BENCH_SECONDS -u BENCH_CONC -u BENCH_PUT_OBJECTS -u BENCH_GET_OBJECTS \
+	  -u BENCH_LARGE_THREADS -u BENCH_LARGE_OBJECTS -u BENCH_LIST_THREADS -u BENCH_LIST_OBJECTS \
+	  BENCH_PLAN=1 BENCH_IDLE_AVAIL=$(BENCH_PLAN_IDLE) hack/bench/gateway.sh tentacle radosgw 2>&1) || \
+	  { printf '%s\n' "$$out"; exit 1; }
+
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
@@ -260,8 +273,19 @@ s3tests-record: need-release ## Run the phase 1 s3-tests set twice against rados
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
 	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) hack/bench/seam.sh $(RELEASE)
 
-# Extra rgw-go serve flags for rgw-go-up, such as --rados-completions=pipe.
+.PHONY: elbencho
+elbencho: ## Build the pinned jhoblitt/elbencho fork statically into hack/bench/out/elbencho
+	hack/bench/elbencho-build.sh
+
+# Extra rgw-go serve flags for rgw-go-up and bench-gateway, such as
+# --rados-completions=pipe.
 RGW_GO_FLAGS ?=
+# The gateway comparison's profiles; empty runs them all (hack/bench/gateway.sh).
+PROFILES ?=
+
+.PHONY: bench-gateway
+bench-gateway: need-release ## Run the gateway comparison profiles against GATEWAY (radosgw|rgw-go) on the RELEASE cluster
+	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) RGW_GO_FLAGS="$(RGW_GO_FLAGS)" hack/bench/gateway.sh $(RELEASE) $(GATEWAY) $(PROFILES)
 
 .PHONY: rgw-go-up
 rgw-go-up: need-release ## Build rgw-go and run it on the host against the RELEASE cluster under the parity settings

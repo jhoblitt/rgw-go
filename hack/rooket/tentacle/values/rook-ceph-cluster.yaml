@@ -33,3 +33,13 @@ cephObjectStores:
           rgw_enable_usage_log: "true"
           rgw_usage_log_tick_interval: "1"
           rgw_usage_log_flush_threshold: "1"
+        # Rook passes the radosgw --rgw-frontends="beast port=80" and then
+        # these flags, so this frontend is the one its argument parsing keeps
+        # (rook pkg/operator/ceph/object/spec.go). It replaces Rook's whole
+        # frontend rather than adding to it: a port or TLS setting the gateway
+        # is given must be repeated here, or the radosgw will not serve it.
+        # beast leaves TCP_NODELAY off unless tcp_nodelay=1, and rgw-go keeps
+        # Go's on: with this, both gateways answer with it on, as the gateway
+        # comparison requires.
+        rgwCommandFlags:
+          rgw_frontends: "beast port=80 tcp_nodelay=1"
