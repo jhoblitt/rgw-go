@@ -1,0 +1,42 @@
+diff --git a/tests/integration/ceph_object_test.go b/tests/integration/ceph_object_test.go
+index 03bf91eb8..099ce3cd1 100644
+--- a/tests/integration/ceph_object_test.go
++++ b/tests/integration/ceph_object_test.go
+@@ -23,15 +23,12 @@ import (
+ 
+ 	"github.com/rook/rook/tests/framework/installer"
+ 	"github.com/rook/rook/tests/framework/utils"
+-	bucketlifecycle "github.com/rook/rook/tests/integration/object/bucket/lifecycle"
+ 	bucketowner "github.com/rook/rook/tests/integration/object/bucket/owner"
+ 	bucketpolicy "github.com/rook/rook/tests/integration/object/bucket/policy"
+ 	bucketquota "github.com/rook/rook/tests/integration/object/bucket/quota"
+ 	bucketrw "github.com/rook/rook/tests/integration/object/bucket/rw"
+ 	"github.com/rook/rook/tests/integration/object/cosi"
+ 	"github.com/rook/rook/tests/integration/object/dependents"
+-	"github.com/rook/rook/tests/integration/object/notification"
+-	topickafka "github.com/rook/rook/tests/integration/object/topic/kafka"
+ 	usercaps "github.com/rook/rook/tests/integration/object/user/caps"
+ 	userkeys "github.com/rook/rook/tests/integration/object/user/keys"
+ 	useropmask "github.com/rook/rook/tests/integration/object/user/opmask"
+@@ -122,13 +119,11 @@ func runObjectE2ETest(t *testing.T, k8sh *utils.K8sHelper, installer *installer.
+ 	defer sharedObjectStore.Destroy()
+ 
+ 	zonepools.TestZonePools(t, k8sh, sharedObjectStore)
+-	bucketlifecycle.TestObjectBucketClaimLifecycle(t, k8sh, sharedObjectStore)
+ 	bucketowner.TestObjectBucketClaimBucketOwner(t, k8sh, sharedObjectStore)
+ 	bucketpolicy.TestObjectBucketClaimPolicy(t, k8sh, sharedObjectStore)
+ 	bucketquota.TestObjectBucketClaimQuota(t, k8sh, sharedObjectStore)
+ 	bucketrw.TestObjectBucketClaimReadWrite(t, k8sh, sharedObjectStore)
+ 	userkeys.TestObjectStoreUserKeys(t, k8sh, sharedObjectStore)
+-	topickafka.TestBucketTopicKafka(t, k8sh, sharedObjectStore)
+ 	useropmask.TestObjectStoreUserOpMask(t, k8sh, sharedObjectStore)
+ 	usercaps.TestObjectStoreUserCaps(t, k8sh, sharedObjectStore)
+ 	userplacement.TestObjectStoreUserDefaultPlacement(t, k8sh, sharedObjectStore)
+@@ -136,7 +131,6 @@ func runObjectE2ETest(t *testing.T, k8sh *utils.K8sHelper, installer *installer.
+ 	// the ceph-cosi driver cannot reach a TLS object store endpoint, so this
+ 	// suite skips itself in the TLS pass
+ 	cosi.TestCephCOSIDriver(t, k8sh, sharedObjectStore)
+-	notification.TestBucketNotification(t, k8sh, sharedObjectStore)
+ 
+ 	// last: this builds and deletes a store of its own, so keep it clear of the
+ 	// packages sharing the fixture store

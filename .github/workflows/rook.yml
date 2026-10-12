@@ -1,0 +1,180 @@
+# The Rook gate: Rook's object suite, minus the lifecycle, Kafka topic and
+# notification tests of features not implemented yet
+# (hack/rook/phase1.patch), on kind against the derived image with rgw-go
+# as radosgw. Rook is checked out at the workspace root because its setup
+# action runs its helper scripts from there; rgw-go sits under rgw-go/.
+# Nightly and on demand; it does not gate pull requests.
+name: rook
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  # rook/rook master, bumped by hand with hack/rook/phase1.patch regenerated
+  # (hack/rook/README.md).
+  ROOK_COMMIT: 863ff2c8c7ed065a47c0ff6a141d65f02ee34dd8
+  # The kind node version for both passes, as in Rook's per-Ceph-version
+  # suite (.github/workflows/ceph-suite-integration-test.yml), which this
+  # workflow mirrors. Rook's pull request jobs run the non-TLS pass on its
+  # oldest supported Kubernetes, v1.32.11, instead.
+  KUBERNETES_VERSION: v1.37.0
+  # go-ceph's rgw/admin account APIs, as Rook's CI sets it.
+  GOFLAGS: "-tags=ceph_preview"
+
+jobs:
+  object-suite:
+    name: ${{ matrix.release }} ${{ matrix.pass }}
+    # Forks must not spend four runner-hours a night on the upstream gate.
+    if: github.repository == 'jhoblitt/rgw-go'
+    # Rook's own object suite runner, where its disk and kind helpers are proven.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [squid, tentacle]
+        pass: [TestWithoutTLS, TestWithTLS]
+    env:
+      RELEASE: ${{ matrix.release }}
+      PASS: ${{ matrix.pass }}
+    steps:
+      - name: Check out Rook
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rook/rook
+          ref: ${{ env.ROOK_COMMIT }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Rook's own setup: disk space, Go, the kind cluster, node prep, host
+      # routes, the OSD disk, and the Rook build loaded into the cluster. It
+      # runs before rgw-go is checked out, because the Rook build fails on any
+      # file git status reports in its tree
+      # (tests/scripts/validate_modified_files.sh), rgw-go/ included.
+      - name: Set up the cluster the way Rook's CI does
+        uses: ./.github/workflows/integration-test-setup-cluster-resources
+        with:
+          kubernetes-version: ${{ env.KUBERNETES_VERSION }}
+
+      - name: Check out rgw-go
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: rgw-go
+          fetch-depth: 0
+          persist-credentials: false
+
+      # rgw-go compiles inside its builder, made from the release's Ceph image,
+      # so the host Go Rook set up never builds it. Docker, not the runner's
+      # podman, so the node import below finds the image. The image test checks
+      # that /usr/bin/radosgw is rgw-go and the Ceph tools are the base's.
+      - name: Build the derived image
+        working-directory: rgw-go
+        env:
+          RGW_GO_ENGINE: docker
+          RGW_GO_IMAGE_TEST: "1"
+        run: |
+          image=$(hack/image/build.sh "${RELEASE}")
+          echo "IMAGE=${image}" >>"$GITHUB_ENV"
+
+      - name: Load the derived image into the kind node
+        run: tests/scripts/github-action-helper.sh load_image_into_cluster "${IMAGE}"
+
+      - name: Reduce the suite to the phase 1 subset and point it at the image
+        run: |
+          git apply --check rgw-go/hack/rook/phase1.patch
+          git apply rgw-go/hack/rook/phase1.patch
+          rgw-go/hack/rook/set-image.sh "${RELEASE}" "${IMAGE}" .
+
+      # Rook's own invocation of the suite. With the collection level at all,
+      # Rook describes every pod in object-ns before tearing the cluster down,
+      # on a passing run too.
+      - name: TestCephObjectSuite
+        id: suite
+        env:
+          TEST_LOG_COLLECTION_LEVEL: all
+        run: |
+          DEVICE_FILTER=$(tests/scripts/github-action-helper.sh find_extra_block_dev)
+          export DEVICE_FILTER
+          SKIP_CLEANUP_POLICY=false CEPH_SUITE_VERSION="${RELEASE}" go test -v -timeout 2400s -failfast \
+            -run "CephObjectSuite/${PASS}" github.com/rook/rook/tests/integration
+
+      # A pass against stock Ceph would be no gate at all. A passing suite
+      # deletes its CephCluster on the way out, so the evidence is the pod
+      # descriptions Rook wrote before the teardown: every Ceph daemon runs
+      # the CephCluster's image, and none may run stock Ceph.
+      - name: Assert the cluster ran the derived image
+        if: always() && steps.suite.outcome != 'skipped'
+        run: |
+          shopt -s nullglob
+          files=(tests/integration/_output/tests/*_object-ns_podDescribe_*.log)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::Rook wrote no pod descriptions for object-ns"
+            exit 1
+          fi
+          images=$(awk '$1 == "Image:" { print $2 }' "${files[@]}" | sort -u)
+          printf 'images run in object-ns:\n%s\n' "${images}"
+          if ! grep -qxF "${IMAGE}" <<<"${images}"; then
+            echo "::error::no pod in object-ns ran ${IMAGE}"
+            exit 1
+          fi
+          if grep -qF "quay.io/ceph/ceph:" <<<"${images}"; then
+            echo "::error::a pod in object-ns ran a stock Ceph image"
+            exit 1
+          fi
+
+      - name: Collect Rook's logs
+        if: always()
+        timeout-minutes: 10
+        run: |
+          export LOG_DIR="${GITHUB_WORKSPACE}/tests/integration/_output/tests/"
+          export CLUSTER_NAMESPACE="object-ns"
+          export OPERATOR_NAMESPACE="object-ns-system"
+          tests/scripts/collect-logs.sh
+
+      # The artifact is public, and a failed suite leaves its cluster up, so
+      # the files collect-logs.sh fills with cephx keys are deleted whatever
+      # the steps above did: `ceph auth ls`, and the secret dumps, whose keys
+      # are base64-encoded again where the guard cannot see them. The guard
+      # then blocks the upload if any other file holds a keyring line or a
+      # key in either encoding Squid and Tentacle create, AES ("AQ", 40
+      # characters) or AES256KRB5 ("Ag", 60).
+      - name: Drop key material from Rook's logs
+        id: scrub
+        if: always()
+        env:
+          ARTIFACT_DIR: tests/integration/_output/tests
+        run: |
+          [ -d "${ARTIFACT_DIR}" ] || exit 0
+          find "${ARTIFACT_DIR}" -type f \( -name ceph-auth-ls.txt -o -name 'secret-get--*' \) -print -delete
+          rc=0
+          hits=$(grep -rlE 'key = |AQ[A-Za-z0-9+/]{36}==|Ag[A-Za-z0-9+/]{57}=' "${ARTIFACT_DIR}") || rc=$?
+          case "${rc}" in
+            0)
+              printf 'key material in:\n%s\n' "${hits}"
+              echo "::error::key material left in Rook's logs; the upload is blocked"
+              exit 1
+              ;;
+            1) echo "no key material left in ${ARTIFACT_DIR}" ;;
+            *)
+              echo "::error::grep could not read ${ARTIFACT_DIR}; the upload is blocked"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload Rook's logs
+        if: (failure() || cancelled()) && steps.scrub.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rook-${{ matrix.release }}-${{ matrix.pass }}
+          path: tests/integration/_output/tests/
+          retention-days: 14
+          if-no-files-found: ignore
