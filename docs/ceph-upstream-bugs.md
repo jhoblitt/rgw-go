@@ -142,7 +142,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ARN ordering is not a strict weak ordering](#radosgws-arn-ordering-is-not-a-strict-weak-ordering) | pending | pending |  |
 | [radosgw's policy parser forgets a statement's keys when an object in an array closes](#radosgws-policy-parser-forgets-a-statements-keys-when-an-object-in-an-array-closes) | pending | pending |  |
 | [radosgw refuses a JSON true, false or null in a policy with "No error?"](#radosgw-refuses-a-json-true-false-or-null-in-a-policy-with-no-error) | none | none | ✓ |
-| [Squid's PUT refuses a quoted If-Match that matches the object's ETag](#squids-put-refuses-a-quoted-if-match-that-matches-the-objects-etag) | [#64439](https://tracker.ceph.com/issues/64439), [#80924](https://tracker.ceph.com/issues/80924) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
+| [Squid's PUT refuses a quoted If-Match that matches the object's ETag](#squids-put-refuses-a-quoted-if-match-that-matches-the-objects-etag) | [#64439](https://tracker.ceph.com/issues/64439), [#80924](https://tracker.ceph.com/issues/80924) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117) |  |
 | [Squid's write conditions fail an If-None-Match ETag on a missing key and skip a head without a write tag](#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag) | [#68183](https://tracker.ceph.com/issues/68183), [#80925](https://tracker.ceph.com/issues/80925), [#80906](https://tracker.ceph.com/issues/80906), [#80922](https://tracker.ceph.com/issues/80922), [#80907](https://tracker.ceph.com/issues/80907), [#80898](https://tracker.ceph.com/issues/80898) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
 | [radosgw's send_split_chain repeats an object in its remainder and loops on an object too large for an entry](#radosgws-send_split_chain-repeats-an-object-in-its-remainder-and-loops-on-an-object-too-large-for-an-entry) | none | none | ✓ |
 | [Tentacle's delete_objs_inline puts every ref through the first object's pool, without its locator](#tentacles-delete_objs_inline-puts-every-ref-through-the-first-objects-pool-without-its-locator) | none | none | ✓ |
@@ -248,8 +248,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket instance metadata put overwrites unguarded on Tentacle](#radosgws-bucket-instance-metadata-put-overwrites-unguarded-on-tentacle) | pending | pending | ✓ |
 | [radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule) | pending | pending | ✓ |
 | [radosgw's metadata put writes a document's attrs raw, the object's version among them](#radosgws-metadata-put-writes-a-documents-attrs-raw-the-objects-version-among-them) | pending | pending | ✓ |
-| [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | pending | pending | ✓ |
-| [radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally](#radosgws-get-compares-if-match-and-if-none-match-as-prefixes-and-takes--literally) | pending | pending | ✓ |
+| [radosgw's policy match cuts an object name at a NUL that its RADOS name keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps) | none | none | ✓ |
+| [radosgw's GET compares If-Match and If-None-Match as prefixes and takes `*` literally](#radosgws-get-compares-if-match-and-if-none-match-as-prefixes-and-takes--literally) | [#80924](https://tracker.ceph.com/issues/80924) | [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117), [ceph/ceph#64428](https://github.com/ceph/ceph/pull/64428) (the `*` half) |  |
 | [radosgw's set_obj_attrs moves an object's mtime one nanosecond on](#radosgws-set_obj_attrs-moves-an-objects-mtime-one-nanosecond-on) | pending | pending |  |
 | [radosgw defines rgw_put_obj_max_window_size and never reads it](#radosgw-defines-rgw_put_obj_max_window_size-and-never-reads-it) | pending | pending |  |
 | [radosgw stores every x-amz- request header as an attr of the object it writes](#radosgw-stores-every-x-amz--request-header-as-an-attr-of-the-object-it-writes) | pending | pending |  |
@@ -263,11 +263,12 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
 | [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
-| [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | [#76359](https://tracker.ceph.com/issues/76359) | [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690) |  |
 | [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
-| [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | none | none | ✓ |
 | [radosgw's account modify answers BucketAlreadyExists for a taken name or email](#radosgws-account-modify-answers-bucketalreadyexists-for-a-taken-name-or-email) | pending | pending | ✓ |
 | [radosgw's bucket delete and user purge orphan the objects of a bucket with no zonegroup id](#radosgws-bucket-delete-and-user-purge-orphan-the-objects-of-a-bucket-with-no-zonegroup-id) | pending | pending | ✓ |
+| [radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry](#radosgws-user-suspension-and-account-adoption-act-on-another-owners-bucket-through-a-stale-list-entry) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6326,9 +6327,15 @@ Every new entry adds its row to this table, in document order.
   "Write conditions are Tentacle's on Squid too").
 - **Upstream:** [#64439](https://tracker.ceph.com/issues/64439) (open; a
   quoted If-Match is rejected) and
-  [#80924](https://tracker.ceph.com/issues/80924) (open; the prefix
-  comparison accepts any If-Match that begins with the current ETag, which
-  survives the fix at v20.2.4 `rgw_rados.cc:7299`). The quoted condition is
+  [#80924](https://tracker.ceph.com/issues/80924) (Fix Under Review; the
+  prefix comparison takes any If-Match or If-None-Match that begins with
+  the current ETag for one naming it, which survives the fix at v20.2.4
+  `rgw_rados.cc:7299` and `:7321`). #80924 names the write path's
+  `check_preconditions` and the read path's
+  `RGWRados::Object::Read::prepare` alike, under "radosgw's GET compares
+  If-Match and If-None-Match as prefixes and takes `*` literally" below;
+  its fix, [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117)
+  (open), compares whole entity tags in both. The quoted condition is
   fixed by [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
   backports [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949)
   (tentacle, in v20.2.4) and
@@ -9612,17 +9619,21 @@ Every new entry adds its row to this table, in document order.
   read the ACL back.
 - **Releases:** every release since v11.0.1; checked at v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. `op.PutBucketACL` retries the write
-  through `op.RetryRacedBucketWrite`, checks the owner and the block of
-  public ACLs again against the bucket each try reads, and answers 409
-  ConcurrentModification once the retries are spent
-  (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A PutBucketAcl that
-  loses a race is retried"). `op.PutObjectACL` does the same through
-  `op.RetryRacedWriteReauthorized`, reading the object's head again and
-  authorizing the requester against it before each retry
+  through `retryBucketWrite`, which is `op.RetryRacedWriteReauthorized`
+  with the op's own permission check: before each retry it reads the
+  bucket again and authorizes the requester again against that bucket's
+  ACL, policy and public-access block ("radosgw's retried bucket writes
+  are not authorized again", below); each try then checks the owner and
+  the block of public ACLs against the bucket it read, and the write
+  answers 409 ConcurrentModification once the retries are spent
+  (`internal/op/bucketsubres.go`). `op.PutObjectACL` retries through
+  `op.RetryRacedWriteReauthorized` as well, reading the object's head
+  again and authorizing the requester against it before each retry
   (`internal/op/objectattrs.go`). For either, a retry that passes those
   checks and finds the requested ACL already stored answers 200 without a
   write (`docs/exclusions.md`, "A PutBucketAcl that loses a race is
-  retried").
+  retried, and every retried ACL, policy or tagging write is authorized
+  again").
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
   when setting acls", which introduced this behaviour on purpose; found by
@@ -11325,9 +11336,10 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's policy match cuts an object name at a NUL that its RADOS name keeps
 
-- **Kind:** possibly a defect, and security-relevant if so: it would let
-  an authorization decision on one name govern an object named otherwise.
-  Unreproduced: derived from the source.
+- **Kind:** defect, security-relevant, low: an authorization decision on
+  one name can govern an object named otherwise (triage estimate CVSS
+  about 2.7-4.3, rgw-bug-reproduction, 2026-10-12). Unreproduced end to
+  end: derived from the source.
 - **Evidence:** paths are under `src/`; lines are given as v19.2.6's then
   v20.2.4's.
   - radosgw keeps a NUL that a request decodes into a name.
@@ -11376,14 +11388,34 @@ Every new entry adds its row to this table, in document order.
   `arn:aws:s3:::b/*.key` would not deny `b/notes\0.key`. Creating the
   object needs a write the policy allows, so the risk lies in a policy
   that grants or denies by name within a bucket others write to.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** every release since v19.1.0, and reef since v18.2.5 and
+  quincy since v17.2.8 through their backports; checked at v19.2.6 and
+  v20.2.4.
 - **rgw-go:** not affected. It refuses a NUL in every request argument that
   becomes part of an object name before authorizing it, serves no POST
   object, and its goceph seam refuses a name holding a NUL
   (`docs/exclusions.md`, "A NUL in a request argument that names a RADOS
   object is refused"). An object radosgw created under such a name on a
-  shared zone is listed by rgw-go but cannot be addressed through it.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+  shared zone is listed by rgw-go but cannot be addressed through it. Its
+  matcher cuts both strings at the first NUL as `match_wildcards` does
+  (`policy.MatchWildcards`, `internal/policy/match.go`), so the cut would
+  follow a name that reached it; none does.
+- **Upstream:** none. A prior-art search on 2026-10-12 found no tracker
+  issue or pull request that reports the cut or fixes it;
+  [#20418](https://tracker.ceph.com/issues/20418) is the path's NUL, which
+  `ERR_ZERO_IN_URL` has refused since its fix, ed35722e9be (2017), and
+  [#81301](https://tracker.ceph.com/issues/81301) is a percent-escape
+  routing defect. The cut came with 94fa9bd2d90 ("rgw: modify string
+  match_wildcards with fnmatch", 2023), merged to main by
+  [ceph/ceph#53156](https://github.com/ceph/ceph/pull/53156) for
+  [#62292](https://tracker.ceph.com/issues/62292), "Bucket policy wildcard
+  `*` not working properly", and backported to reef by
+  [ceph/ceph#57901](https://github.com/ceph/ceph/pull/57901) and to
+  quincy by [ceph/ceph#57907](https://github.com/ceph/ceph/pull/57907).
+  The matcher it replaced walked both `std::string_view`s to their ends, a
+  NUL included (`rgw/rgw_string.cc:16-45` at 94fa9bd2d90's parent). The
+  fix would make `match_wildcards` compare whole strings, or refuse a NUL
+  in an object name as the path's check does.
 - **Found:** review of follow-up X23, 2026-10-08; derived from the source,
   not reproduced.
 
@@ -11391,9 +11423,9 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a GET or HEAD answers
   RFC 9110's `*` and entity-tag lists wrongly, and takes a condition that
-  only begins with the object's ETag for one naming it. Classification
-  pending: rgw-bug-reproduction will classify it. Reproduced on Squid
-  19.2.6; derived from the source on Tentacle.
+  only begins with the object's ETag for one naming it. Upstream reported
+  the prefix comparison first (#80924); the literal `*` is fixed on main
+  only. Reproduced on Squid 19.2.6; derived from the source on Tentacle.
 - **Evidence:** paths are under `src/rgw/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The GET handler reads If-Match and If-None-Match raw
@@ -11439,13 +11471,23 @@ Every new entry adds its row to this table, in document order.
   (`internal/op/readconds.go`), as `rgw_string_unquote` does, and compares
   by prefix; `make read-gate` compares both gateways' answers to each of
   these conditions.
-- **Upstream:** pending: rgw-bug-reproduction will classify it. The write
-  path's prefix comparison is
-  [#80924](https://tracker.ceph.com/issues/80924), under "Squid's PUT
-  refuses a quoted If-Match that matches the object's ETag" above; whether
-  it covers the read path is for that search.
+- **Upstream:** [#80924](https://tracker.ceph.com/issues/80924) (Fix Under
+  Review), filed on 2026-09-27, reports the prefix comparison in both of
+  its paths: the write path's `check_preconditions`, under "Squid's PUT
+  refuses a quoted If-Match that matches the object's ETag" above, and
+  this read path, `RGWRados::Object::Read::prepare` (`rgw_rados.cc:8459`
+  and `:8474` on main). Its fix,
+  [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117) (open),
+  compares whole entity tags, as a list, in both, so for GET, HEAD and a
+  copy's source too. The literal `*` was fixed separately, on main only,
+  by [ceph/ceph#64428](https://github.com/ceph/ceph/pull/64428) (merged
+  2025-09-17, not backported), which tests for `*` before the comparison
+  and keeps the prefix: on main at 4fd0af757f7 `Read::prepare` takes `*`
+  (`:8457` and `:8469`) and still compares by prefix (`:8459` and
+  `:8474`).
 - **Found:** phase 1 unit R planning, 2026-09-28, from the source;
-  reproduced on Squid by unit R's read gate, 2026-10-08.
+  reproduced on Squid by unit R's read gate, 2026-10-08. Upstream reported
+  it first.
 
 ## radosgw's set_obj_attrs moves an object's mtime one nanosecond on
 
@@ -12065,9 +12107,17 @@ Every new entry adds its row to this table, in document order.
   (`internal/meta/dump_period.go`, `internal/admin/realm.go`); a refused
   caller gets the error document alone. No other rgw-go path renders a
   zonegroup or period, and none logs one.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** [#76359](https://tracker.ceph.com/issues/76359) (Fix Under
+  Review), "rgw/cloud-transition: obfuscate secret key in
+  ZoneTierPlacement config display", filed 2026-04-30, reports the
+  unmasked tier secret in the CLI and admin ops output. Its fix,
+  [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690), would have
+  masked the secret on `GET /admin/realm/period` unless the caller passes
+  `mask_secrets=false`, as a period pull does, but it was closed unmerged
+  on 2026-08-16. Main is unfixed: `RGWZoneGroupPlacementTierS3::dump`
+  still writes the secret (`rgw_zone.cc:777-781` on main at 4fd0af757f7).
 - **Found:** phase 1 unit N, Task 12 security review, 2026-10-12; derived
-  from the source, not reproduced.
+  from the source, not reproduced. Upstream reported it first.
 
 ## radosgw's global ratelimit set rewrites the period config unguarded
 
@@ -12134,7 +12184,18 @@ Every new entry adds its row to this table, in document order.
   checks `zone=read` before any read and writes the system key as radosgw
   does (`getZoneConfig`, `internal/admin/info.go`; `ZoneParams.Dump`,
   `internal/meta/dump_zone.go`), and logs neither.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
+  report or fix for this endpoint and cap. Main is unfixed:
+  `RGWOp_ZoneConfig_Get` still checks `zone=read` alone and dumps the zone
+  parameters (`rgw_rest_config.h:28` and `rgw_rest_config.cc:47` on main
+  at 4fd0af757f7), whose dump writes the system key with
+  `encode_json_plain` (`rgw_zone.cc:201`) through
+  `RGWAccessKey::dump_plain` (`rgw_common.cc:3134-3138`). Related, and no
+  fix for this:
+  [#81451](https://tracker.ceph.com/issues/81451), CVE-2025-57750 (advisory
+  GHSA-mwxg-rhfr-gprc, a draft at 2026-10-12), exposes the same secret,
+  the replication system user's keys, through another vector: ceph-ansible
+  logging them in its output during a multisite setup.
 - **Found:** phase 1 unit N, Task 12 review, 2026-10-12; derived from the
   source, not reproduced.
 
@@ -12234,3 +12295,151 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the follow-up to the phase 1 closing review's finding on
   another zonegroup's bucket, 2026-10-12, reading radosgw's bucket delete;
   derived from the source, not reproduced.
+
+## radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6, at
+  v20.2.4 and on main: a user's suspension, and a user's move into an
+  account, act on whatever bucket an entry of the user's bucket list
+  loads and never check that the user owns it, and the move points the
+  bucket's name at what it adopts, unchecked. So a stale entry suspends
+  another owner's bucket, hands it to the account, or takes its name
+  from it. Classification pending: rgw-bug-reproduction will classify
+  it. Unreproduced on a running cluster: derived from the source; the
+  adoption of a listed instance another owner holds is reproduced only
+  on rgw-go's fake RADOS.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - A list entry names a bucket by tenant, name and instance id
+    (`driver/rados/buckets.cc:119-130` at both tags), and can outlive what
+    it named. A bucket link removes the old owner's entry with
+    `unlink_bucket(..., false)` (`driver/rados/rgw_bucket.cc:1118`;
+    `:1269`), which logs a failed removal and returns 0
+    (`driver/rados/rgw_bucket.cc:3424-3432`; `:3510-3518`): the link goes
+    on, and the old owner's entry keeps naming the instance the new owner
+    now holds. A bucket delete whose unlink fails leaves an entry naming a
+    bucket that is gone, whose name another owner can then create ("A
+    stale bucket list entry blocks a user's removal for good", above).
+  - The suspension: `RGWUser::execute_modify` passes every entry of the
+    user's list to `set_buckets_enabled`
+    (`driver/rados/rgw_user.cc:2098-2133`; `:2104-2139`), which loads each
+    bucket by its tenant and name, the entry's id unread
+    (`get_bucket_info`, `driver/rados/rgw_rados.cc:5348`; `:6068`), and
+    sets or clears `BUCKET_SUSPENDED` on the instance the name now loads
+    (`:5354-5360`; `:6074-6080`). A suspended bucket answers every request
+    but a system request, on Tentacle an admin's, with 403 UserSuspended
+    (`rgw_op.cc:366-370` and `:403-407`; `:396` and `:433`;
+    `rgw_common.cc:93`; `:94`).
+  - The adoption: moving a user into an account adopts every bucket of its
+    list (`adopt_user_buckets`, `driver/rados/rgw_user.cc:1714-1742`;
+    `:1720-1748`, called at `:2178`; `:2184`). `adopt_user_bucket` loads
+    each entry with `load_bucket` and chowns what it loads, loading it
+    again for each of up to ten tries that lose a race (`:1681-1712`;
+    `:1687-1718`); of its errors only ENOENT is skipped (`:1735`;
+    `:1741`). `RadosBucket::load_bucket` loads an entry without an id by
+    its name, through the entry point, and one with an id as that instance
+    (`driver/rados/rgw_sal_rados.cc:616-622` and `:623-629`; `:636-641`
+    and `:642-647`). `RadosBucket::chown` unlinks the instance's current
+    owner, whoever that is, links the account, writes it as the owner and
+    gives it FULL_CONTROL in the ACL in place of the old owner's grant
+    (`driver/rados/rgw_sal_rados.cc:699-751`; `:717-769`).
+  - The adoption also points the name at the instance it adopts,
+    unchecked. `RadosBucket::chown` links the account through
+    `RadosBucket::link`, which hands `link_bucket` an entry point naming
+    the loaded instance with a version tracker that read nothing
+    (`driver/rados/rgw_sal_rados.cc:668-690`; `:686-708`), and the entry
+    point is written under that tracker, which checks no version
+    (`do_link_bucket`, `driver/rados/rgw_bucket.cc:3336-3396`, the write
+    at `:3388-3392`; `link_bucket`, `:3437-3495`, the write at
+    `:3487-3491`; `version_for_check`, `rgw_common.h:950-955`;
+    `:974-979`). An entry whose instance outlived its bucket's delete, as
+    one does when the delete's instance removal loses a race ("radosgw's
+    bucket delete answers success when its instance removal loses a
+    race", above), names the moving user's own instance, so a check of
+    the owner passes it. If another owner has since created the name, the
+    adoption points the name back at that stale instance.
+  - No step compares the loaded bucket's owner with the user, in either
+    operation or in any retry. Main at 4fd0af757f7 is the same
+    (`set_buckets_enabled`, `driver/rados/rgw_rados.cc:6635-6671`;
+    `adopt_user_bucket`, `driver/rados/rgw_user.cc:1629-1660`), and so is
+    the unchecked entry point write (`RadosBucket::link`,
+    `driver/rados/rgw_sal_rados.cc:917-939`; `link_bucket`,
+    `driver/rados/rgw_bucket.cc:3655-3713`).
+  - On rgw-go's fake RADOS, a review probe of rgw-go's adoption, which on
+    the id path then followed radosgw, gave user B's bucket `data` to the
+    account: user A's list held an entry naming `data`'s instance, and
+    moving A into the account succeeded. jhoblitt/rgw-go#251 then changed
+    rgw-go's adoption (below).
+- **Impact:** each needs a stale entry, and an operator's request runs
+  each.
+  - A user's suspension suspends the bucket another owner holds under a
+    stale entry's name, the instance a failed link left listed among them,
+    and that bucket refuses its owner and everyone else until an enable of
+    either user clears the flag; an enable of the first user also clears a
+    suspension that the other owner's own suspension set.
+  - A user's move into an account hands such a bucket to the account: the
+    other owner loses its list entry, its ownership and its grant in the
+    bucket's ACL, and the account root then holds the bucket. For an
+    entry with an id, the entry a failed link leaves is enough; for one
+    without, the name need only have been created again by another owner.
+    Whether radosgw still writes entries without an id was not traced.
+  - Who in the account then reaches the data, derived from the source:
+    same-account access does not consult ACLs, but needs an Allow from an
+    identity or bucket policy, and only the account root holds one
+    implicitly (`verify_bucket_permission`, `rgw_common.cc:1386-1403`;
+    `:1414-1433`; `evaluate_iam_policies`, `:1241-1244`; `:1254-1257`).
+    The objects keep their object ACLs, whose owner is their writer, so
+    an object the other owner wrote is cross-account to every identity of
+    the account, the root included: reaching it needs an identity Allow,
+    which for the root is implicit, and a resource Allow, which the
+    writer's default ACL, granting only the writer, does not give
+    (`verify_object_permission`, `:1530-1551`; `:1582-1604`), unless
+    `rgw_defer_to_bucket_acls` lets the bucket's ACL decide (`:1567-1570`;
+    `:1621-1624`). So the root reaches that data once a bucket policy
+    grants it, which the root can write, and the account's other users
+    once their identity policies allow it too. Listing, writing and
+    deleting the bucket's objects are checked against the bucket, so the
+    root lists, overwrites and deletes the other owner's objects at once,
+    with no policy, and only reading them needs one
+    (`RGWListBucket::verify_permission`, `rgw_op.cc:3051-3055`;
+    `:3285-3289`; `RGWPutObj::verify_permission`, `:3982-3984`;
+    `:4191-4193`; `RGWDeleteObj::verify_permission`, `:5149`; `:5539`).
+  - A move that points the name back at a stale instance takes the name
+    from the other owner's bucket, whose instance and data no entry point
+    then names, and gives the account the stale bucket.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces the suspension: `suspendBuckets` loads each
+  listed bucket by name and sets or clears the flag on whatever it loads
+  (`internal/op/adminuser.go`). It does not reproduce the adoption: since
+  jhoblitt/rgw-go#251, `loadListedBucket` loads the instance an entry names
+  by its id, or for an entry without one the bucket its name loads, and
+  skips a bucket the moving user does not own (`internal/op/adminuser.go`),
+  and each round of `ChownBucket` skips one whose name now loads another
+  instance or whose owner has changed since that load, and writes the
+  entry point under the version the round read
+  (`internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link
+  and unlink write differently from radosgw").
+- **Upstream:** none. A prior-art search on 2026-10-12 found no tracker
+  issue or pull request that reports either operation acting on another
+  owner's bucket, or the adoption's unchecked entry point write. Related,
+  and no fix for this:
+  [#79320](https://tracker.ceph.com/issues/79320) (Fix Under Review), an
+  account root's suspension that misses the account's buckets, whose fix,
+  [ceph/ceph#70940](https://github.com/ceph/ceph/pull/70940) (open), keeps
+  `set_buckets_enabled`'s load by name and leaves the adoption alone;
+  [#70561](https://tracker.ceph.com/issues/70561) (In Progress), to
+  separate the buckets' suspension from the user's;
+  [#72849](https://tracker.ceph.com/issues/72849) (Resolved), bucket ACLs
+  the adoption left unmigrated; and
+  [#73905](https://tracker.ceph.com/issues/73905) (Need More Info), a
+  bucket given to a new owner, outside any account, whose existing
+  objects answer that owner 403 while new ones work, which the reporter
+  puts down to the objects' old ACLs, the mechanism the Impact derives.
+  The fix would compare each loaded bucket's owner with the user, in
+  every try, and write the adopted bucket's entry point only under the
+  version of one that still names that instance.
+- **Found:** follow-up X32, 2026-10-12: the suspension while fixing
+  rgw-go's adoption, the adoption of an entry without an id in its fix
+  round, and the adoption of a listed instance another owner holds and
+  the name pointed back at a stale instance in its review; derived from
+  the source, not reproduced on a running cluster.
