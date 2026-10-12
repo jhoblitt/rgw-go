@@ -268,6 +268,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | none | none | ✓ |
 | [radosgw's account modify answers BucketAlreadyExists for a taken name or email](#radosgws-account-modify-answers-bucketalreadyexists-for-a-taken-name-or-email) | pending | pending | ✓ |
 | [radosgw's bucket delete and user purge orphan the objects of a bucket with no zonegroup id](#radosgws-bucket-delete-and-user-purge-orphan-the-objects-of-a-bucket-with-no-zonegroup-id) | pending | pending | ✓ |
+| [radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry](#radosgws-user-suspension-and-account-adoption-act-on-another-owners-bucket-through-a-stale-list-entry) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12294,3 +12295,151 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the follow-up to the phase 1 closing review's finding on
   another zonegroup's bucket, 2026-10-12, reading radosgw's bucket delete;
   derived from the source, not reproduced.
+
+## radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6, at
+  v20.2.4 and on main: a user's suspension, and a user's move into an
+  account, act on whatever bucket an entry of the user's bucket list
+  loads and never check that the user owns it, and the move points the
+  bucket's name at what it adopts, unchecked. So a stale entry suspends
+  another owner's bucket, hands it to the account, or takes its name
+  from it. Classification pending: rgw-bug-reproduction will classify
+  it. Unreproduced on a running cluster: derived from the source; the
+  adoption of a listed instance another owner holds is reproduced only
+  on rgw-go's fake RADOS.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - A list entry names a bucket by tenant, name and instance id
+    (`driver/rados/buckets.cc:119-130` at both tags), and can outlive what
+    it named. A bucket link removes the old owner's entry with
+    `unlink_bucket(..., false)` (`driver/rados/rgw_bucket.cc:1118`;
+    `:1269`), which logs a failed removal and returns 0
+    (`driver/rados/rgw_bucket.cc:3424-3432`; `:3510-3518`): the link goes
+    on, and the old owner's entry keeps naming the instance the new owner
+    now holds. A bucket delete whose unlink fails leaves an entry naming a
+    bucket that is gone, whose name another owner can then create ("A
+    stale bucket list entry blocks a user's removal for good", above).
+  - The suspension: `RGWUser::execute_modify` passes every entry of the
+    user's list to `set_buckets_enabled`
+    (`driver/rados/rgw_user.cc:2098-2133`; `:2104-2139`), which loads each
+    bucket by its tenant and name, the entry's id unread
+    (`get_bucket_info`, `driver/rados/rgw_rados.cc:5348`; `:6068`), and
+    sets or clears `BUCKET_SUSPENDED` on the instance the name now loads
+    (`:5354-5360`; `:6074-6080`). A suspended bucket answers every request
+    but a system request, on Tentacle an admin's, with 403 UserSuspended
+    (`rgw_op.cc:366-370` and `:403-407`; `:396` and `:433`;
+    `rgw_common.cc:93`; `:94`).
+  - The adoption: moving a user into an account adopts every bucket of its
+    list (`adopt_user_buckets`, `driver/rados/rgw_user.cc:1714-1742`;
+    `:1720-1748`, called at `:2178`; `:2184`). `adopt_user_bucket` loads
+    each entry with `load_bucket` and chowns what it loads, loading it
+    again for each of up to ten tries that lose a race (`:1681-1712`;
+    `:1687-1718`); of its errors only ENOENT is skipped (`:1735`;
+    `:1741`). `RadosBucket::load_bucket` loads an entry without an id by
+    its name, through the entry point, and one with an id as that instance
+    (`driver/rados/rgw_sal_rados.cc:616-622` and `:623-629`; `:636-641`
+    and `:642-647`). `RadosBucket::chown` unlinks the instance's current
+    owner, whoever that is, links the account, writes it as the owner and
+    gives it FULL_CONTROL in the ACL in place of the old owner's grant
+    (`driver/rados/rgw_sal_rados.cc:699-751`; `:717-769`).
+  - The adoption also points the name at the instance it adopts,
+    unchecked. `RadosBucket::chown` links the account through
+    `RadosBucket::link`, which hands `link_bucket` an entry point naming
+    the loaded instance with a version tracker that read nothing
+    (`driver/rados/rgw_sal_rados.cc:668-690`; `:686-708`), and the entry
+    point is written under that tracker, which checks no version
+    (`do_link_bucket`, `driver/rados/rgw_bucket.cc:3336-3396`, the write
+    at `:3388-3392`; `link_bucket`, `:3437-3495`, the write at
+    `:3487-3491`; `version_for_check`, `rgw_common.h:950-955`;
+    `:974-979`). An entry whose instance outlived its bucket's delete, as
+    one does when the delete's instance removal loses a race ("radosgw's
+    bucket delete answers success when its instance removal loses a
+    race", above), names the moving user's own instance, so a check of
+    the owner passes it. If another owner has since created the name, the
+    adoption points the name back at that stale instance.
+  - No step compares the loaded bucket's owner with the user, in either
+    operation or in any retry. Main at 4fd0af757f7 is the same
+    (`set_buckets_enabled`, `driver/rados/rgw_rados.cc:6635-6671`;
+    `adopt_user_bucket`, `driver/rados/rgw_user.cc:1629-1660`), and so is
+    the unchecked entry point write (`RadosBucket::link`,
+    `driver/rados/rgw_sal_rados.cc:917-939`; `link_bucket`,
+    `driver/rados/rgw_bucket.cc:3655-3713`).
+  - On rgw-go's fake RADOS, a review probe of rgw-go's adoption, which on
+    the id path then followed radosgw, gave user B's bucket `data` to the
+    account: user A's list held an entry naming `data`'s instance, and
+    moving A into the account succeeded. jhoblitt/rgw-go#251 then changed
+    rgw-go's adoption (below).
+- **Impact:** each needs a stale entry, and an operator's request runs
+  each.
+  - A user's suspension suspends the bucket another owner holds under a
+    stale entry's name, the instance a failed link left listed among them,
+    and that bucket refuses its owner and everyone else until an enable of
+    either user clears the flag; an enable of the first user also clears a
+    suspension that the other owner's own suspension set.
+  - A user's move into an account hands such a bucket to the account: the
+    other owner loses its list entry, its ownership and its grant in the
+    bucket's ACL, and the account root then holds the bucket. For an
+    entry with an id, the entry a failed link leaves is enough; for one
+    without, the name need only have been created again by another owner.
+    Whether radosgw still writes entries without an id was not traced.
+  - Who in the account then reaches the data, derived from the source:
+    same-account access does not consult ACLs, but needs an Allow from an
+    identity or bucket policy, and only the account root holds one
+    implicitly (`verify_bucket_permission`, `rgw_common.cc:1386-1403`;
+    `:1414-1433`; `evaluate_iam_policies`, `:1241-1244`; `:1254-1257`).
+    The objects keep their object ACLs, whose owner is their writer, so
+    an object the other owner wrote is cross-account to every identity of
+    the account, the root included: reaching it needs an identity Allow,
+    which for the root is implicit, and a resource Allow, which the
+    writer's default ACL, granting only the writer, does not give
+    (`verify_object_permission`, `:1530-1551`; `:1582-1604`), unless
+    `rgw_defer_to_bucket_acls` lets the bucket's ACL decide (`:1567-1570`;
+    `:1621-1624`). So the root reaches that data once a bucket policy
+    grants it, which the root can write, and the account's other users
+    once their identity policies allow it too. Listing, writing and
+    deleting the bucket's objects are checked against the bucket, so the
+    root lists, overwrites and deletes the other owner's objects at once,
+    with no policy, and only reading them needs one
+    (`RGWListBucket::verify_permission`, `rgw_op.cc:3051-3055`;
+    `:3285-3289`; `RGWPutObj::verify_permission`, `:3982-3984`;
+    `:4191-4193`; `RGWDeleteObj::verify_permission`, `:5149`; `:5539`).
+  - A move that points the name back at a stale instance takes the name
+    from the other owner's bucket, whose instance and data no entry point
+    then names, and gives the account the stale bucket.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces the suspension: `suspendBuckets` loads each
+  listed bucket by name and sets or clears the flag on whatever it loads
+  (`internal/op/adminuser.go`). It does not reproduce the adoption: since
+  jhoblitt/rgw-go#251, `loadListedBucket` loads the instance an entry names
+  by its id, or for an entry without one the bucket its name loads, and
+  skips a bucket the moving user does not own (`internal/op/adminuser.go`),
+  and each round of `ChownBucket` skips one whose name now loads another
+  instance or whose owner has changed since that load, and writes the
+  entry point under the version the round read
+  (`internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link
+  and unlink write differently from radosgw").
+- **Upstream:** none. A prior-art search on 2026-10-12 found no tracker
+  issue or pull request that reports either operation acting on another
+  owner's bucket, or the adoption's unchecked entry point write. Related,
+  and no fix for this:
+  [#79320](https://tracker.ceph.com/issues/79320) (Fix Under Review), an
+  account root's suspension that misses the account's buckets, whose fix,
+  [ceph/ceph#70940](https://github.com/ceph/ceph/pull/70940) (open), keeps
+  `set_buckets_enabled`'s load by name and leaves the adoption alone;
+  [#70561](https://tracker.ceph.com/issues/70561) (In Progress), to
+  separate the buckets' suspension from the user's;
+  [#72849](https://tracker.ceph.com/issues/72849) (Resolved), bucket ACLs
+  the adoption left unmigrated; and
+  [#73905](https://tracker.ceph.com/issues/73905) (Need More Info), a
+  bucket given to a new owner, outside any account, whose existing
+  objects answer that owner 403 while new ones work, which the reporter
+  puts down to the objects' old ACLs, the mechanism the Impact derives.
+  The fix would compare each loaded bucket's owner with the user, in
+  every try, and write the adopted bucket's entry point only under the
+  version of one that still names that instance.
+- **Found:** follow-up X32, 2026-10-12: the suspension while fixing
+  rgw-go's adoption, the adoption of an entry without an id in its fix
+  round, and the adoption of a listed instance another owner holds and
+  the name pointed back at a stale instance in its review; derived from
+  the source, not reproduced on a running cluster.
