@@ -42,6 +42,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/frontend"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
 	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
@@ -139,6 +140,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		m       serveManifest
 		release string
 		client  *http.Client
+		cluster radosclient.Cluster
 	)
 
 	BeforeAll(func(ctx SpecContext) {
@@ -156,7 +158,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		bin = filepath.Join(GinkgoT().TempDir(), "radosgw")
 		Expect(os.WriteFile(bin, b, 0o755)).To(Succeed())
 
-		cluster, err := goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
+		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
 		name, err := cluster.RequiredOSDRelease(ctx)
@@ -338,21 +340,72 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		})
 
 		It("serves the request and RADOS metrics and the heap profile", func(ctx SpecContext) {
-			resp, body, err := fetch(ctx, client, http.MethodGet, metricsBase+"/metrics", nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-			Expect(body).To(ContainSubstring(`rgw_go_requests_total{op="list_buckets",status="2xx"}`))
-			// The gc worker's first pass over the gc shards starts with serve
-			// and may have a read in the limiter at any one scrape; an
-			// operation that leaked would hold the gauge above 0 on every one.
-			Eventually(func(g Gomega) string {
-				_, scrape, scrapeErr := fetch(ctx, client, http.MethodGet, metricsBase+"/metrics", nil)
-				g.Expect(scrapeErr).NotTo(HaveOccurred())
-				return metricLine(scrape, `rgw_go_rados_ops_in_flight{mode="callback"}`)
-			}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(100 * time.Millisecond).
-				Should(Equal(`rgw_go_rados_ops_in_flight{mode="callback"} 0`))
+			const inFlight = `rgw_go_rados_ops_in_flight{mode="callback"}`
+			// A request is answered before the middleware counts it and before
+			// the limiter releases its operations, and the gc worker's first
+			// pass over the gc shards starts with serve, so any one scrape can
+			// miss the count or catch the gauge above 0. Once they drain the
+			// gauge is exactly 0: an operation never released holds it above 0
+			// on every scrape, one never counted takes it below.
+			settled := func() {
+				GinkgoHelper()
+				Eventually(func(g Gomega) string {
+					resp, scrape, err := fetch(ctx, client, http.MethodGet, metricsBase+"/metrics", nil)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+					g.Expect(scrape).To(ContainSubstring(`rgw_go_requests_total{op="list_buckets",status="2xx"}`))
+					return metricLine(scrape, inFlight)
+				}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(100 * time.Millisecond).
+					Should(Equal(inFlight + " 0"))
+			}
+			settled()
 
-			resp, body, err = fetch(ctx, client, http.MethodGet, metricsBase+"/debug/pprof/heap?debug=1", nil)
+			// A gauge that never moves reads 0 as well, so the spec also holds
+			// a request's reads in flight. While the OSD map carries the pause
+			// flags, librados's objecter keeps back every read and write it is
+			// handed (Objecter::target_should_be_paused, src/osdc/Objecter.cc
+			// at v19.2.6 and v20.2.4), and the limiter counts them until the
+			// unpause lets them complete; every client of the cluster stalls
+			// meanwhile. librados picks up a map change lazily, so a request
+			// rgw-go answers before it has the paused map is sent again.
+			osd := func(ctx context.Context, prefix string) {
+				GinkgoHelper()
+				out, status, err := cluster.MonCommand(ctx, []byte(`{"prefix":"`+prefix+`"}`))
+				Expect(err).NotTo(HaveOccurred(), "%s: %s %s", prefix, status, out)
+			}
+			osd(ctx, "osd pause")
+			DeferCleanup(func(ctx SpecContext) { osd(ctx, "osd unpause") })
+			u := alice()
+			var listing chan error
+			Eventually(func(g Gomega) string {
+				if listing == nil {
+					answer := make(chan error, 1)
+					go func() {
+						_, err := s3Client(base, u).ListBuckets(ctx, &awss3.ListBucketsInput{})
+						answer <- err
+					}()
+					listing = answer
+				}
+				_, scrape, err := fetch(ctx, client, http.MethodGet, metricsBase+"/metrics", nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				select {
+				case listErr := <-listing:
+					listing = nil
+					g.Expect(listErr).NotTo(HaveOccurred(), "ListBuckets")
+					return "ListBuckets answered before rgw-go had the paused map"
+				default:
+					return metricLine(scrape, inFlight)
+				}
+			}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(100*time.Millisecond).
+				Should(MatchRegexp(`^%s [1-9][0-9]*$`, regexp.QuoteMeta(inFlight)), "the gauge while a ListBuckets is held")
+
+			osd(ctx, "osd unpause")
+			var err error
+			Eventually(listing).WithTimeout(time.Minute).WithPolling(100 * time.Millisecond).Should(Receive(&err))
+			Expect(err).NotTo(HaveOccurred(), "the held ListBuckets")
+			settled()
+
+			resp, body, err := fetch(ctx, client, http.MethodGet, metricsBase+"/debug/pprof/heap?debug=1", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			Expect(body).To(HavePrefix("heap profile:"))
