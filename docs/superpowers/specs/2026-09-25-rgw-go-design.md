@@ -479,11 +479,15 @@ path filter keeps from starting stays pending and blocks the merge. It
 brings up its Squid cluster through the same composite action as the
 integration workflow, so that the two cluster setups cannot drift, and
 diffs rgw-go's outcomes with radosgw's recorded baseline under the
-release's known-differences file. An input of its manual run re-records
-radosgw's baseline in CI. A bump of the s3-tests pin requires a re-record,
-because the baseline carries the pin it ran at and the comparison refuses
-a baseline recorded at another commit. Tentacle parity runs in CI only on
-demand.
+release's known-differences file. An input of its manual run records
+radosgw's outcomes in CI, for review before anything is committed. The
+baseline is an append-only ledger: every outcome carries the s3-tests
+commit and the Ceph version it was recorded at, an entry is never edited,
+and an entry that changes a test's outcome carries the reason for it, so a
+regression cannot pass into the baseline unseen. A pin bump that only adds
+tests records just those tests; any other change to the suite, or a Ceph
+version bump, records every test again as new entries. Tentacle parity runs
+in CI only on demand.
 
 rgw-go supports running only against librados 19.2.6 or later on Squid, or
 20.2.4 or later on Tentacle. This is a support policy: technically the
