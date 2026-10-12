@@ -260,6 +260,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry](#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry) | pending | pending | ✓ |
 | [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
+| [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11893,3 +11894,45 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 11 review, 2026-10-12, reading the
   object check's loop; derived from the source, not reproduced.
+
+## radosgw's usage show and trim take an unparsable date from an uninitialized variable
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `GET` and `DELETE
+  /admin/usage` with a `start` or `end` radosgw cannot parse read or trim
+  the range an uninitialized variable names. Admin-only: the routes need
+  `usage=read` and `usage=write`. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; the lines are the same at v19.2.6
+  and v20.2.4 unless a pair is given, v19.2.6's first.
+  - `RGWOp_Usage_Get::execute` and `RGWOp_Usage_Delete::execute` declare
+    `uint64_t start, end;` without a value and read both with
+    `RESTArgs::get_epoch`, checking no return (`rgw/rgw_rest_usage.cc:34`
+    and `:52-53`, `:89` and `:105-106`).
+  - `get_epoch` writes the default only when the argument is absent; a
+    present one goes to `utime_t::parse_date`, whose return it passes on
+    (`rgw/rgw_rest.cc:982-1000`, `:987-1005`). `parse_date` returns
+    -EINVAL for a date whose time it cannot read and for a text that is
+    neither a date nor `<sec>.<usec>`, before it writes the epoch
+    (`include/utime.h:397-486`: the returns at `:440` and `:463`, the
+    write at `:486`).
+  - So `start=yesterday` leaves `start` as the stack left it. The trim's
+    refusal of a trim of every user's whole usage without `remove-all`
+    tests `!start && end == (uint64_t)-1` (`rgw/rgw_rest_usage.cc:108-118`),
+    so a garbage `start` other than 0 skips it, and `RGWUsage::trim` then
+    trims every user's usage between the garbage epoch and `end`
+    (`rgw/rgw_usage.cc:166-177`).
+  - The same class as "radosgw's user listing takes an unparsable
+    max-entries from an uninitialized variable", in another of
+    `RESTArgs`'s readers.
+- **Impact:** a usage show with a mistyped date reports an unpredictable
+  range and answers 200; a usage trim with one deletes an unpredictable
+  range, every user's when no uid or bucket is named, without the
+  `remove-all` the trim of everything otherwise needs.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. The usage show reads such a date as
+  the argument's default, and the usage trim answers 400 InvalidArgument
+  and trims nothing (`getUsage` and `trimUsage`,
+  `internal/admin/usage.go`; `docs/exclusions.md`, "The admin usage
+  routes give a date they cannot parse a value of their own").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 10, 2026-10-11, reading the usage ops'
+  arguments; derived from the source, not reproduced.
