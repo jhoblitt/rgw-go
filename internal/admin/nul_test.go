@@ -3,6 +3,7 @@ package admin_test
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -42,6 +43,18 @@ var _ = Describe("a NUL in an admin argument that names a RADOS object", func() 
 		Entry("a realm's name", http.MethodGet, "/admin/realm?name=a%00b"),
 		Entry("a period's realm", http.MethodGet, "/admin/realm/period?realm_id=a%00b"),
 		Entry("a period's id", http.MethodGet, "/admin/realm/period?period_id=a%00b"),
+	)
+
+	DescribeTable("answers the metadata API's key the same 400 InvalidArgument, whose NUL radosgw keeps as in every other argument",
+		func(method, path, reqBody string) {
+			res := fx.requestBody(method, path, "admin", strings.NewReader(reqBody))
+			Expect(res.StatusCode).To(Equal(http.StatusBadRequest))
+			Expect(body(res)).To(HavePrefix(`{"Code":"InvalidArgument",`))
+		},
+		Entry("a get", http.MethodGet, "/admin/metadata/user?key=al%00ice", ""),
+		Entry("a put", http.MethodPut, "/admin/metadata/user?key=al%00ice", `{"data":{}}`),
+		Entry("a remove", http.MethodDelete, "/admin/metadata/bucket?key=te%00st", ""),
+		Entry("a key that names its section", http.MethodGet, "/admin/metadata?key=user:al%00ice", ""),
 	)
 
 	It("creates no user under the name before the NUL", func(ctx SpecContext) {

@@ -404,9 +404,9 @@ var _ = Describe("MetadataStore", func() {
 				{"user", "alice\x00x", user.Data},
 			} {
 				_, err := s.Get(ctx, k.section, k.key)
-				Expect(err).To(MatchError(op.ErrInvalidRequest), "get %s", k.section)
-				Expect(s.Put(ctx, k.section, k.key, op.MetadataEntry{Data: k.data}, op.PutMetadataOptions{})).To(MatchError(op.ErrInvalidRequest), "put %s", k.section)
-				Expect(s.Remove(ctx, k.section, k.key)).To(MatchError(op.ErrInvalidRequest), "remove %s", k.section)
+				Expect(err).To(MatchError(op.ErrInvalidArgument), "get %s", k.section)
+				Expect(s.Put(ctx, k.section, k.key, op.MetadataEntry{Data: k.data}, op.PutMetadataOptions{})).To(MatchError(op.ErrInvalidArgument), "put %s", k.section)
+				Expect(s.Remove(ctx, k.section, k.key)).To(MatchError(op.ErrInvalidArgument), "remove %s", k.section)
 			}
 			Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+id)).NotTo(BeNil(), "plain's instance, which the cut key names, stays")
 			Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil())

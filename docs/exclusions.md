@@ -1399,17 +1399,22 @@ review and verified against the tree.
     overwrites unguarded on Tentacle"). A put over an object that carries
     no version answers 500 InternalError. The version written is the
     document's when it has a tag, as radosgw's tracker writes it.
-  - A key holding a NUL byte answers 400 InvalidRequest on every get, put
-    and remove, and a document naming one in a bucket id, marker, owner,
-    explicit placement pool, attr name, user id, email, account id or
-    access or Swift key id answers 400 InvalidArgument, writing nothing:
-    go-ceph cuts an object name at a NUL, so the name would reach another
-    object (docs/cgo-limitations.md, "go-ceph cuts object names at a NUL
-    byte").
+  - A key holding a NUL byte, on every get, put and remove, and a document
+    naming one in a bucket id, marker, owner, explicit placement pool, attr
+    name, user id, email, account id or access or Swift key id answer 400
+    InvalidArgument, writing nothing: go-ceph cuts an object name at a NUL,
+    so the name would reach another object (docs/cgo-limitations.md,
+    "go-ceph cuts object names at a NUL byte").
     radosgw refuses a NUL in a request's decoded path alone, with 400
     InvalidRequest (`ERR_ZERO_IN_URL`, `rgw_rest.cc:2182-2186` at v19.2.6,
     `:2204-2208` at v20.2.4), not in the query the key arrives in or in a
-    document, and stores the object under the whole name.
+    document, and stores the object under the whole name. It keeps a NUL
+    in the key as in every other admin argument, decoding the key once
+    where `get_string` decodes the others again (`frame_metadata_key`,
+    `rgw_rest_metadata.cc:35-52` at v19.2.6 and v20.2.4), so the key gets
+    the answer rgw-go gives a NUL in any admin argument that names a RADOS
+    object ("A NUL in a request argument that names a RADOS object is
+    refused"), from the sections, after authentication.
   - A document attr whose name lacks `user.rgw.` answers 400
     InvalidArgument on every put. radosgw sets each attr a document carries
     on the object in the op that sets the object's version, so one named
@@ -2413,9 +2418,13 @@ following.
   whose admin API refuses to create one. A listing's `prefix`, `delimiter`
   and markers, and every other argument, keep radosgw's handling: they
   reach the bucket index only inside an encoded class call, which carries
-  the NUL. The metadata API's `key` is the metadata sections' to check. A
-  NUL reaches no other name: net/http refuses a raw one in the request
-  target or in any header with 400 (`net/url/url.go:436-437`,
+  the NUL. The metadata API's `key`, whose NUL radosgw keeps as it keeps
+  one in the arguments above, decoding it once (`frame_metadata_key`,
+  `rgw_rest_metadata.cc:35-52` at v19.2.6 and v20.2.4), is the metadata
+  sections' to check, and they answer a NUL in it with the same 400
+  InvalidArgument, after authentication ("The metadata sections write only
+  what keeps a user or bucket whole"). A NUL reaches no other name:
+  net/http refuses a raw one in the request target or in any header with 400 (`net/url/url.go:436-437`,
   `net/http/server.go:1077-1085` at go1.27.1), and Go's XML decoder refuses
   one in a body, as expat does. A JSON body, such as a bucket policy or an
   admin quota, can carry one as `\u0000` but names no RADOS object, and the

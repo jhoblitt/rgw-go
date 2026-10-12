@@ -632,11 +632,11 @@ benchmark was re-run.
     `internal/admin/handler.go`, `internal/cli/serve.go`), which covers a
     bucket name and an object key given in the path.
   - The metadata sections refuse a NUL in the key on every get, put and
-    remove (400 InvalidRequest), and in a document's bucket id, marker,
-    entry point or instance owner, which names the owner's bucket list,
-    explicit placement pool, attr name, user id, email, account id, which
-    names the account's object, and access or Swift key id (400
-    InvalidArgument; `op.RefuseNULKey` and `op.RefuseNUL`,
+    remove, and in a document's bucket id, marker, entry point or instance
+    owner, which names the owner's bucket list, explicit placement pool,
+    attr name, user id, email, account id, which names the account's
+    object, and access or Swift key id (400 InvalidArgument;
+    `op.RefuseNULKey` and `op.RefuseNUL`,
     `internal/op/metadata.go`; docs/exclusions.md, "The metadata sections
     write only what keeps a user or bucket whole").
   - Where radosgw keeps a NUL, every other request argument that becomes

@@ -128,9 +128,9 @@ var _ = Describe("metadata", func() {
 		for _, section := range []string{"user", "bucket", "bucket.instance"} {
 			key := "plain:" + plain.Info.Bucket.ID + "\x00x"
 			_, err := store.Get(ctx, section, key)
-			Expect(err).To(MatchError(op.ErrInvalidRequest), section)
-			Expect(store.Put(ctx, section, key, op.MetadataEntry{Data: json.RawMessage(`{}`)}, op.PutMetadataOptions{})).To(MatchError(op.ErrInvalidRequest), section)
-			Expect(store.Remove(ctx, section, key)).To(MatchError(op.ErrInvalidRequest), section)
+			Expect(err).To(MatchError(op.ErrInvalidArgument), section)
+			Expect(store.Put(ctx, section, key, op.MetadataEntry{Data: json.RawMessage(`{}`)}, op.PutMetadataOptions{})).To(MatchError(op.ErrInvalidArgument), section)
+			Expect(store.Remove(ctx, section, key)).To(MatchError(op.ErrInvalidArgument), section)
 		}
 		u := docOf[meta.UserCompleteInfo](get(ctx, "user", "alice"))
 		u.Info.Email = "alice@example.com\x00x"
