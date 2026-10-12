@@ -9618,17 +9618,21 @@ Every new entry adds its row to this table, in document order.
   read the ACL back.
 - **Releases:** every release since v11.0.1; checked at v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. `op.PutBucketACL` retries the write
-  through `op.RetryRacedBucketWrite`, checks the owner and the block of
-  public ACLs again against the bucket each try reads, and answers 409
-  ConcurrentModification once the retries are spent
-  (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A PutBucketAcl that
-  loses a race is retried"). `op.PutObjectACL` does the same through
-  `op.RetryRacedWriteReauthorized`, reading the object's head again and
-  authorizing the requester against it before each retry
+  through `retryBucketWrite`, which is `op.RetryRacedWriteReauthorized`
+  with the op's own permission check: before each retry it reads the
+  bucket again and authorizes the requester again against that bucket's
+  ACL, policy and public-access block ("radosgw's retried bucket writes
+  are not authorized again", below); each try then checks the owner and
+  the block of public ACLs against the bucket it read, and the write
+  answers 409 ConcurrentModification once the retries are spent
+  (`internal/op/bucketsubres.go`). `op.PutObjectACL` retries through
+  `op.RetryRacedWriteReauthorized` as well, reading the object's head
+  again and authorizing the requester against it before each retry
   (`internal/op/objectattrs.go`). For either, a retry that passes those
   checks and finds the requested ACL already stored answers 200 without a
   write (`docs/exclusions.md`, "A PutBucketAcl that loses a race is
-  retried").
+  retried, and every retried ACL, policy or tagging write is authorized
+  again").
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
   when setting acls", which introduced this behaviour on purpose; found by
