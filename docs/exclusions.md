@@ -2075,6 +2075,21 @@ review and verified against the tree.
   `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
   `:2496-2498` at v20.2.4). Any other value but `false` is 400
   InvalidArgument from both, after the permission check.
+- **PutBucketVersioning answers 501 until a later phase.** `PUT
+  /{bucket}?versioning` is recognized and, once the request authenticates,
+  answers 501 NotImplemented before any permission check and changes
+  nothing, as does `GET /{bucket}?versioning`: the route has no handler
+  (`internal/s3/handler.go:371-374`, the `h.routes` lookup that answers
+  `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
+  `BUCKET_VERSIONS_SUSPENDED` (`RGWSetBucketVersioning::execute`,
+  `rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4). rgw-go
+  therefore makes no bucket versioned or suspended itself; one that is
+  was made so by radosgw, and rgw-go refuses it where it cannot yet serve
+  it: the writes in "Writes to a versioned or object-lock bucket answer
+  501 until versioning is served", PutObjectAcl among them, the listing
+  of versions, a read of an object whose head is an olh, and the purging
+  removals in "A purging bucket removal refuses a bucket whose versioning
+  was ever enabled" (`refuseVersionedPurge`, `internal/op/adminpurge.go`).
 - **A requested bucket index answers 501 on Tentacle.** Tentacle's
   CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
   whose `Type` and `NumShards` set the new bucket's index, and refuses a
