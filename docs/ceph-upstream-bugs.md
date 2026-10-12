@@ -232,6 +232,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again) | pending | pending | ✓ |
 | [radosgw's bucket link overwrites the entry point of the bucket it renames onto](#radosgws-bucket-link-overwrites-the-entry-point-of-the-bucket-it-renames-onto) | pending | pending | ✓ |
 | [radosgw's failed bucket rename leaves the old name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner) | pending | pending | ✓ |
+| [radosgw's bucket rename loses a bucket config write made through the old name](#radosgws-bucket-rename-loses-a-bucket-config-write-made-through-the-old-name) | pending | pending | ✓ |
 | [radosgw's bucket link to an account moves the bucket out of the account's tenant](#radosgws-bucket-link-to-an-account-moves-the-bucket-out-of-the-accounts-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket info answers nothing for a tenant/name bucket when the uid names a tenant](#radosgws-admin-bucket-info-answers-nothing-for-a-tenantname-bucket-when-the-uid-names-a-tenant) | pending | pending | ✓ |
 | [radosgw's admin bucket removal never recognizes a forwarded request](#radosgws-admin-bucket-removal-never-recognizes-a-forwarded-request) | pending | pending | ✓ |
@@ -10616,6 +10617,70 @@ Every new entry adds its row to this table, in document order.
   (transient; heals on retry); not yet disclosed.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
+
+## radosgw's bucket rename loses a bucket config write made through the old name
+
+- **Kind:** defect, security-relevant, found by us; unfixed at v19.2.6 and
+  v20.2.4: a bucket config write made through a bucket's old name while an
+  admin rename runs is answered 200 and then removed with the old
+  instance, so a policy removal or narrowing, or a public access block,
+  made then never reaches the renamed bucket. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/` unless named; each pair of
+  lines is v19.2.6's, then v20.2.4's.
+  - `RGWBucketAdminOp::link` loads the bucket by its old name in
+    `bucket.init` (`driver/rados/rgw_bucket.cc:1044`; `:1195`) and clones
+    it, attrs and all, for the new key (`:1071`; `:1222`). It replaces only
+    the ACL attr, with a default ACL for the new owner (`:1133-1134`;
+    `:1284-1285`), and writes the new instance with every other attr as
+    `init` read it (`:1144`; `:1295`), through `RadosBucket::put_info`
+    (`driver/rados/rgw_sal_rados.cc:753-757`; `:771-775`).
+  - The old name keeps loading the old instance, under the old owner and
+    ACL, while the new instance is written and the new name linked
+    (`:1159`; `:1310`), until the old entry point's removal (`:1167-1170`;
+    `:1318-1321`).
+  - The old instance is then removed with `ep_data.ep_objv` (`:1175-1179`;
+    `:1326-1330`), the tracker of the new entry point's unchecked write,
+    which `RGWObjVersionTracker::apply_write` leaves at version 0
+    (`driver/rados/rgw_rados.cc:185-197`; `:220-232`); at version 0
+    `version_for_check` checks nothing (`rgw_common.h:950-952`;
+    `:974-976`), so the removal takes the old instance whatever was
+    written to it since `init`.
+  - Meanwhile an S3 bucket config write through the old name loads and
+    rewrites that old instance under its own version, through
+    `retry_raced_bucket_write` (`rgw_op.h:184-196`; `:198-210`), and is
+    answered 200; nothing in the rename refuses it. Among them are
+    PutBucketPolicy (`rgw_op.cc:8110-8115`; `:9036-9046`),
+    DeleteBucketPolicy (`:8204-8209`; `:9151-9157`) and
+    PutPublicAccessBlock (`:8656-8660`; `:9637-9641`).
+- **Impact:** a write acknowledged through the old name between `init`
+  and the old instance's removal is lost silently. The renamed bucket
+  carries the policy, public access block, tags, versioning and other
+  configuration the rename read. A lost DeleteBucketPolicy, narrowing
+  PutBucketPolicy or PutPublicAccessBlock leaves the bucket more open than
+  its owner last set it. The ACL is not affected, as the rename replaces it
+  with the new owner's default. Admin-gated in part: only an admin starts
+  the rename, and the write must land in a window a few metadata writes
+  long.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it within one rename attempt. Each attempt
+  removes the old instance only under the version its own mark wrote. A
+  write made through the old name since fails that removal, and the
+  attempt then copies the old instance whole onto the new name again,
+  under the version it last wrote there, and retries, up to 20 times.
+  After that it answers 409 ConcurrentModification with both names loading
+  the bucket and the write kept. Across a failed attempt and its retry it
+  can still lose a write: a retry through the new name writes the new
+  instance from that name's own instance, so a copy it makes replaces a
+  write made through the new name between the attempts, and a retry by
+  either name can drop a write made between the attempts through the
+  other (`dropSource`, `internal/driver/bucketadmin.go`;
+  `docs/exclusions.md`, "Bucket link and unlink write differently from
+  radosgw").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 closing review, an unverified lead traced in
+  follow-up X40, 2026-10-12, reading the admin bucket rename; derived from
+  the source, not reproduced.
 
 ## radosgw's bucket link to an account moves the bucket out of the account's tenant
 
