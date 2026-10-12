@@ -1140,6 +1140,24 @@ review and verified against the tree.
     having written only its claim of the new name: the bucket
     keeps its old name, its owner, its ACL and its owner's list entry, and
     carries no record, so a later request is not refused.
+  - A bucket configuration write made through the old name during one
+    attempt of a rename, such as a policy, ACL, tagging or versioning
+    change, is kept: the attempt removes the old instance only under the
+    version its own mark wrote, and when such a write has changed it since,
+    copies it whole to the new name and retries the removal, up to 20
+    times. Then it answers 409 ConcurrentModification, with both names
+    loading the bucket and the write in the old one, and a retry of the
+    rename completes it. A write made through the new name after the
+    attempt last wrote the new instance fails a later copy, and the
+    attempt, the same way. This holds within one attempt only: a retry
+    through the new name writes the new instance from that name's own
+    instance, so a copy it makes replaces a write made through the new
+    name between the attempts, and a retry by either name can drop a write
+    made between the attempts through the other. radosgw removes the
+    old instance unchecked (`rgw_bucket.cc:1175-1179` at v19.2.6,
+    `:1326-1330` at v20.2.4), so it answers such a write 200 and loses it
+    (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket
+    config write made through the old name").
   - The owners' bucket list entries a link removes are the ACL owner's and
     the instance owner's when it differs, each only while it names the
     bucket's instance, and a failure is returned; radosgw removes the ACL

@@ -432,7 +432,9 @@ func (s *Store) linkEntryPoint(ctx context.Context, cur *op.BucketRecord, owner 
 //  5. the instance under dst is written, with the bucket's id and marker,
 //     owner, the ACL and the record;
 //  6. owner's list gains dst;
-//  7. the entry point of src is read, and the instance under src removed;
+//  7. the entry point of src is read, and the instance under src removed
+//     under the version step 3 wrote, step 5 done again from it while
+//     another write has changed it since (dropSource);
 //  8. that entry point is removed while it names the bucket, under the
 //     version step 7 read;
 //  9. the record is removed from the instance under dst.
@@ -483,7 +485,8 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 	}
 	cur.EntryPoint, cur.EPVersion = ep, epv.read
 
-	if err := s.markSource(ctx, rec, &cur, src, owner, displayName, intent); err != nil {
+	srcv, err := s.markSource(ctx, rec, &cur, src, owner, displayName, intent)
+	if err != nil {
 		return err
 	}
 	if err := s.unlinkFrom(ctx, intent.From, rec, pol, src); err != nil {
@@ -501,7 +504,7 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 		return op.FromRADOS(err, op.ScopeBucket)
 	}
 
-	if err := s.removeSource(ctx, src); err != nil {
+	if err := s.removeSource(ctx, &cur, src, srcv); err != nil {
 		return err
 	}
 
@@ -515,14 +518,14 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 }
 
 // removeSource is renameBucket's steps 7 and 8: src's entry point read,
-// the instance under src removed, then that entry point removed while it
-// named the bucket, under the version read.
-func (s *Store) removeSource(ctx context.Context, src meta.BucketID) error {
+// the instance under src removed by dropSource, then that entry point
+// removed while it named the bucket, under the version read.
+func (s *Store) removeSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion) error {
 	oldEP, err := s.readEntryPoint(ctx, src.Tenant, src.Name)
 	if err != nil && !errors.Is(err, op.ErrNoSuchBucket) {
 		return err
 	}
-	if rerr := s.removeInstance(ctx, src, &objv{}); rerr != nil {
+	if rerr := s.dropSource(ctx, cur, src, srcv); rerr != nil {
 		return rerr
 	}
 	if oldEP == nil || oldEP.ep.Bucket.ID != src.ID {
@@ -535,23 +538,68 @@ func (s *Store) removeSource(ctx context.Context, src meta.BucketID) error {
 	return nil
 }
 
+// dropSource removes the instance under src under srcv, the version
+// markSource wrote. The old name loads that instance until it goes, so a
+// bucket config write made through it since is acknowledged and fails the
+// removal: the instance is then read again and written whole over cur, the
+// instance under dst, under the version cur holds, and its removal tried
+// again under the version read. A write through the new name since this
+// attempt last wrote cur fails that rewrite, and maxRemoveRetries lost
+// removals fail the rename, both with ConcurrentModification and both
+// instances left. Writes are kept within one attempt only: a retry through
+// the new name builds cur from that name's own instance, so a rewrite in it
+// replaces a write made through the new name between the attempts. radosgw
+// removes the old instance unchecked (rgw_bucket.cc:1175-1179; v20.2.4
+// :1326-1330), losing such a write (docs/ceph-upstream-bugs.md, "radosgw's
+// bucket rename loses a bucket config write made through the old name").
+func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion) error {
+	for range maxRemoveRetries {
+		err := s.removeInstance(ctx, src, &objv{read: srcv})
+		if !errors.Is(err, op.ErrConcurrentModification) {
+			return err
+		}
+		old, err := s.rereadInstance(ctx, src)
+		if errors.Is(err, op.ErrNoSuchBucket) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		next := *cur
+		next.Info, next.Attrs = old.Info, old.Attrs
+		next.Info.Bucket = cur.Info.Bucket
+		if err := s.PutBucketInfo(ctx, &next); err != nil {
+			return err
+		}
+		*cur, srcv = next, old.Version
+	}
+	return fmt.Errorf("%w: bucket instance %s kept changing as the rename removed it", op.ErrConcurrentModification, src.InstanceOID())
+}
+
 // markSource writes the rename's owner, ACL and record into the instance
 // under src: cur itself when rec is that instance, else the instance read
-// under src, when one is left.
-func (s *Store) markSource(ctx context.Context, rec, cur *op.BucketRecord, src meta.BucketID, owner meta.Owner, displayName string, intent op.RenameIntent) error {
+// under src, when one is left. It returns the version it wrote, none when
+// no instance is left.
+func (s *Store) markSource(ctx context.Context, rec, cur *op.BucketRecord, src meta.BucketID, owner meta.Owner, displayName string, intent op.RenameIntent) (meta.ObjVersion, error) {
 	if rec.Info.Bucket.Tenant == src.Tenant && rec.Info.Bucket.Name == src.Name {
-		return s.PutBucketInfo(ctx, cur)
+		if err := s.PutBucketInfo(ctx, cur); err != nil {
+			return meta.ObjVersion{}, err
+		}
+		return cur.Version, nil
 	}
 	old, err := s.GetBucketInstance(ctx, src)
 	if errors.Is(err, op.ErrNoSuchBucket) {
-		return nil
+		return meta.ObjVersion{}, nil
 	}
 	if err != nil {
-		return err
+		return meta.ObjVersion{}, err
 	}
 	marked := withOwner(old, owner, displayName, s.release)
 	marked.Attrs[op.RenameIntentAttr] = intent.Encode()
-	return s.PutBucketInfo(ctx, &marked)
+	if err := s.PutBucketInfo(ctx, &marked); err != nil {
+		return meta.ObjVersion{}, err
+	}
+	return marked.Version, nil
 }
 
 // RemoveDanglingEntryPoint implements op.BucketAdminStore. The entry point

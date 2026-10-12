@@ -1089,6 +1089,87 @@ var _ = Describe("BucketAdminStore", func() {
 			Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrConcurrentModification))
 			Expect(readEP(ctx, "", "src").Bucket.ID).To(Equal("other"), "an entry point rewritten after the read stays")
 		})
+		Describe("a bucket config write made through the old name while a rename runs", func() {
+			// writeThroughOldName is an S3 PutBucketPolicy that also enables
+			// versioning, made through src as the S3 ops make it: the bucket
+			// loaded by its name and written whole under the version loaded.
+			writeThroughOldName := func(ctx context.Context, policy string) {
+				GinkgoHelper()
+				rec, err := s.GetBucket(ctx, "", "src")
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= meta.BucketVersioned
+				Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrIAMPolicy: []byte(policy)}, nil)).To(Succeed(), "the write is acknowledged")
+			}
+			hasWrite := func(rec *op.BucketRecord, policy string) {
+				GinkgoHelper()
+				Expect(rec.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(policy)))
+				Expect(rec.Info.Flags & meta.BucketVersioned).NotTo(BeZero())
+			}
+			DescribeTable("is kept under the new name, landing at any step between the copy and the old instance's removal",
+				func(ctx context.Context, step int) {
+					rec := createBucket(ctx, "src", aliceOwner)
+					id := rec.Info.Bucket.ID
+					f := renameWrites(id)[step]
+					c.AfterWrite(f.pool, f.ns, f.oid, func() {
+						c.AfterWrite(f.pool, f.ns, f.oid, nil)
+						writeThroughOldName(ctx, `{"v":1}`)
+					})
+					Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(Succeed())
+					completed(ctx, id)
+					got, err := s.GetBucket(ctx, "", "dst")
+					Expect(err).NotTo(HaveOccurred())
+					hasWrite(got, `{"v":1}`)
+				},
+				Entry("after the old instance's new owner and record", 1),
+				Entry("after the old owner's unlink", 2),
+				Entry("after the new instance", 3),
+				Entry("after the new owner's link", 4),
+			)
+			It("fails the rename with both names loading the bucket when such writes keep landing, and the retry keeps the last", func(ctx SpecContext) {
+				rec := createBucket(ctx, "src", aliceOwner)
+				id := rec.Info.Bucket.ID
+				dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+				n := 0
+				c.AfterWrite(rookMetaPool, rookRoot, dstInst, func() {
+					n++
+					writeThroughOldName(ctx, fmt.Sprintf(`{"v":%d}`, n))
+				})
+				Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrConcurrentModification))
+				c.AfterWrite(rookMetaPool, rookRoot, dstInst, nil)
+				Expect(n).To(Equal(21), "the first copy, then one after each of the 20 lost removals")
+				holds(ctx, id)
+				got, err := s.GetBucket(ctx, "", "src")
+				Expect(err).NotTo(HaveOccurred(), "the old name still loads the bucket")
+				Expect(got.Info.Bucket.ID).To(Equal(id))
+				hasWrite(got, fmt.Sprintf(`{"v":%d}`, n))
+
+				Expect(retryRename(ctx)).To(Succeed())
+				completed(ctx, id)
+				got, err = s.GetBucket(ctx, "", "dst")
+				Expect(err).NotTo(HaveOccurred())
+				hasWrite(got, fmt.Sprintf(`{"v":%d}`, n))
+			})
+			It("fails the rename rather than copy over a write made through the new name, keeping both writes", func(ctx SpecContext) {
+				rec := createBucket(ctx, "src", aliceOwner)
+				id := rec.Info.Bucket.ID
+				dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+				c.AfterWrite(rookMetaPool, rookRoot, dstInst, func() {
+					c.AfterWrite(rookMetaPool, rookRoot, dstInst, nil)
+					viaNew, err := s.GetBucket(ctx, "", "dst")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.PutBucketAttrs(ctx, viaNew, map[string][]byte{op.AttrIAMPolicy: []byte(`{"new":1}`)}, nil)).To(Succeed())
+					writeThroughOldName(ctx, `{"old":1}`)
+				})
+				Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrConcurrentModification))
+				holds(ctx, id)
+				got, err := s.GetBucket(ctx, "", "src")
+				Expect(err).NotTo(HaveOccurred())
+				hasWrite(got, `{"old":1}`)
+				got, err = s.GetBucket(ctx, "", "dst")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"new":1}`)))
+			})
+		})
 		It("refuses a link by bucket id onto a name another bucket now holds, writing nothing", func(ctx SpecContext) {
 			stale := createBucket(ctx, "a", aliceOwner)
 			Expect(driver.RemoveEntryPoint(s, ctx, "", "a", meta.ObjVersion{})).To(Succeed())
