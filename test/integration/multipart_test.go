@@ -26,9 +26,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/internal/auth"
-	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/cls/lock"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -36,7 +35,6 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
-	"github.com/jhoblitt/rgw-go/internal/s3"
 	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 )
 
@@ -81,22 +79,11 @@ func serveRGWGo(ctx context.Context) rgwgoGateway {
 	sr, ok := c.(radosclient.StatsReporter)
 	Expect(ok).To(BeTrue(), "%T reports no RADOS stats", c)
 
-	conf := cephconf.NewOptions(c)
-	env := s.Env()
-	azCfg, err := authz.ConfigFrom(conf, s.Release())
-	Expect(err).NotTo(HaveOccurred())
-	env.Authz = authz.New(azCfg)
 	reg := metrics.New()
 	reg.WatchRADOS(string(goceph.ModeCallback), sr)
-	env.Metrics = reg
-	zone := s.Zone()
-	env.HostID = op.HostID(c.InstanceID(), zone.Name, s.ZoneGroup().Name)
-	authCfg, err := auth.ConfigFrom(conf, nil)
+	gw, err := cli.NewGateway(cephconf.NewOptions(c), s, c.InstanceID(), reg)
 	Expect(err).NotTo(HaveOccurred())
-	srv := httptest.NewServer(s3.NewHandler(env, auth.New(authCfg, s, s), s3.Config{
-		TransIDSuffix: op.TransIDSuffix(c.InstanceID(), zone.Name),
-		ServerHeader:  "Ceph Object Gateway (" + s.Release().String() + ")",
-	}))
+	srv := httptest.NewServer(gw.S3Handler())
 	DeferCleanup(srv.Close)
 	return rgwgoGateway{url: srv.URL, stats: sr}
 }

@@ -346,7 +346,6 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, pa
 	if attrs == nil {
 		attrs = map[string][]byte{}
 	}
-	delete(attrs, attrMPCompletionTag)
 	delete(attrs, attrMPCompletionInstance)
 	attrs[meta.AttrETag] = []byte(a.etag)
 	if ms.info.Retention != nil {
