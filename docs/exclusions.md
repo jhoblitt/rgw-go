@@ -1555,7 +1555,10 @@ review and verified against the tree.
   drops a live upload's part from the bucket's listing and stats until the
   upload ends ([radosgw-admin bucket check reports a live re-uploaded part
   as an invalid multipart
-  entry](ceph-upstream-bugs.md#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry)).
+  entry](ceph-upstream-bugs.md#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry),
+  [Tentacle's bucket check reports a live part that another upload's
+  entries separate from its meta
+  entry](ceph-upstream-bugs.md#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry)).
   rgw-go also keeps an orphan of an object that has another upload in
   flight, which a fix after that upload ends removes, and
   `radosgw-admin bucket check --fix` removes at once. Both releases' checks

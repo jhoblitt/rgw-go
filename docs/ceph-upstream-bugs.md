@@ -258,6 +258,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry](#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry) | pending | pending |  |
 | [Tentacle's metadata put ignores update-type](#tentacles-metadata-put-ignores-update-type) | pending | pending | ✓ |
 | [radosgw's user listing takes an unparsable max-entries from an uninitialized variable](#radosgws-user-listing-takes-an-unparsable-max-entries-from-an-uninitialized-variable) | pending | pending | ✓ |
+| [Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry](#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11692,10 +11693,15 @@ Every new entry adds its row to this table, in document order.
   meta object still lists the part, and the completion or the abort
   retires it from there.
 - **Releases:** v19.2.6 and v20.2.4, both reproduced.
-- **rgw-go:** reproduces it: a re-uploaded part's head takes the same
-  random prefix and index entry (`streamPart`,
+- **rgw-go:** reproduces the report, not the fix: a re-uploaded part's
+  head takes the same random prefix and index entry (`streamPart`,
   `internal/driver/mp_part.go`), so `bucket check` reports rgw-go's part as
-  it reports radosgw's.
+  it reports radosgw's, and rgw-go's `GET /admin/bucket?index` reports
+  either gateway's part as radosgw's does. Its fix keeps the entry, as it
+  keeps every entry of an object with an upload in flight
+  (`removeOrphanParts`, `internal/op/adminbucket_index.go`;
+  `docs/exclusions.md`, "The admin index check's fix keeps the entries of
+  an object with an upload in flight").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 10, 2026-10-11, in the multipart oracle's
   run against a disposable Squid cluster; reproduced on Tentacle the same day.
@@ -11785,3 +11791,61 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 9 review, 2026-10-11, reading the user
   listing's arguments; derived from the source, not reproduced.
+
+## Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry
+
+- **Kind:** defect, a regression in v20.0.0, unfixed at v20.2.4 and on
+  main: Tentacle's multipart check, which `bucket check` and
+  `GET /admin/bucket?index` run, reports a part of a live upload as an
+  invalid multipart entry when another object's upload entries sort
+  between the part and its upload's `.meta` entry on the same index
+  shard, and its fix removes the part's index entry. Not
+  security-relevant: the caller needs `buckets=write`, or the CLI, and
+  removes entries from its own bucket's index. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - v20.2.4's `check_bad_index_multipart` walks one shard's multipart
+    entries in index order and holds a run of part entries sharing the
+    prefix before their last `.` in a window; a part entry with another
+    prefix, or a `.meta` entry with another prefix, moves the window to
+    the entries it reports, and only a `.meta` entry of the same prefix
+    arriving next clears it (`driver/rados/rgw_bucket.cc:389-461` at
+    v20.2.4). Its comment assumes an upload's entries are sequential with
+    the `.meta` entry last (`:328-342`).
+  - They are not when another object's name starts with the upload's
+    prefix and a `.`: the upload of `a` with id `2~x` has the entries
+    `a.2~x.1` and `a.2~x.meta`, and an upload `2~y` of an object named
+    `a.2~x.1` has `a.2~x.1.2~y.1` and `a.2~x.1.2~y.meta`, which sort
+    between them. An upload's entries go to the shard of its object's
+    name (`driver/rados/rgw_putobj_processor.cc:501`,
+    `driver/rados/rgw_sal_rados.cc:4135` at v20.2.4), so the two
+    objects' entries share a shard when the two names hash alike, one
+    pair of names in eleven at the default shard count, or always on an
+    unsharded index. The walk then reports `_multipart_a.2~x.1`.
+  - With `--fix`, or `fix=true` on the admin API, the reported entries go
+    through `remove_objs_from_index`, which removes the omap keys without
+    cls_rgw (`driver/rados/rgw_rados.cc:11171-11245` at v20.2.4).
+  - v19.2.6's check takes a part as valid when a `.meta` entry of its
+    prefix is anywhere in the listing (`driver/rados/rgw_bucket.cc:326-420`
+    at v19.2.6), so it does not report the part. The window came with
+    commit ebe98934cd6 ("rgw: make incomplete multipart upload part of
+    bucket check efficient", 2024-04-24), first released in v20.0.0; main
+    (c19f283c174) has it (`driver/rados/rgw_bucket.cc:422-514`).
+- **Impact:** a client that names an object after another object's upload
+  id, which CreateMultipartUpload returns to it, makes a Tentacle
+  `bucket check` report the other upload's part as invalid, and
+  `bucket check --fix` remove its index entry, so the bucket's listing
+  and stats leave the part out until that upload ends, as in "radosgw-admin
+  bucket check reports a live re-uploaded part as an invalid multipart
+  entry". The part's data and the upload are untouched.
+- **Releases:** v20.0.0 through v20.2.4, and main; v19.2.6 does not
+  report the part.
+- **rgw-go:** reproduces the report on Tentacle: `GET /admin/bucket?index`
+  walks each shard's multipart entries as Tentacle does
+  (`badMultipartByShard`, `internal/op/adminbucket_index.go`). Its fix
+  keeps the entry, as it keeps every entry of an object with an upload in
+  flight (`removeOrphanParts`; `docs/exclusions.md`, "The admin index
+  check's fix keeps the entries of an object with an upload in flight").
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 11, 2026-10-11, emulating Tentacle's
+  multipart check; derived from the source, not reproduced.
