@@ -28,6 +28,12 @@ func NewRouter(s3h http.Handler, env *op.Env, cfg s3.Config, paths []string) htt
 	return newRouter(s3h, nil, "", newUnservedHandler(env, cfg), cfg, paths)
 }
 
+// NewGatewayForTest is the gateway NewGateway builds, over env, a and cfg
+// rather than a store's.
+func NewGatewayForTest(env *op.Env, a s3.Authenticator, cfg s3.Config) *Gateway {
+	return newGateway(env, a, cfg)
+}
+
 // NewAdminRouter is NewRouter with adminH at adminPath.
 func NewAdminRouter(s3h, adminH http.Handler, adminPath string, env *op.Env, cfg s3.Config, paths []string) http.Handler {
 	return newRouter(s3h, adminH, adminPath, newUnservedHandler(env, cfg), cfg, paths)

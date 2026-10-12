@@ -606,12 +606,25 @@ review and verified against the tree.
   in the reshard code but never taken, and radosgw takes no lock on the
   queue registry object. Cookies do not need reproducing: the class
   identifies a holder by client identity plus cookie, so a cookie only
-  has to be unique within one client, and radosgw's are random strings.
-  Two consequences follow. A restarted gateway cannot renew or release
-  its predecessor's lock even with the same cookie, so recovery is by
-  expiry, as radosgw's is. And a lock on a missing object creates it, so
-  wherever the object's absence matters radosgw prepends an existence
-  assertion, and rgw-go does the same.
+  has to be unique within one client. Two consequences follow. A restarted
+  gateway cannot renew or release its predecessor's lock even with the
+  same cookie, so recovery is by expiry, as radosgw's is. And a lock on a
+  missing object creates it, so wherever the object's absence matters
+  radosgw prepends an existence assertion, and rgw-go does the same.
+  radosgw's multipart serializer never sets a cookie and locks under ""
+  (`cls_lock_client.h:79`; `MPRadosSerializer`,
+  `driver/rados/rgw_sal_rados.h:848-860` at v19.2.6, `:905-916` at
+  v20.2.4), which is safe there because it unlocks only a hold its own
+  lock's reply confirmed. Every request of an rgw-go gateway is one RADOS
+  client, so each multipart completion and abort takes the
+  `RGWCompleteMultipart` lock, renews it, asserts it and releases it under
+  a cookie of its own, 128 random bits (`newLockCookie`,
+  `internal/driver/mp_cleanup.go`): an unlock or a renewal acts on that
+  attempt's hold alone and answers ENOENT for another's
+  (`remove_lock` and `lock_obj`, `cls/lock/cls_lock.cc:282-304` and
+  `:190-199` at v19.2.6 and v20.2.4). A radosgw gateway is another client,
+  so the cookie changes nothing in how its locks and rgw-go's exclude each
+  other.
   The class's failure modes matter for renewal: a renew with
   `LOCK_FLAG_MUST_RENEW` by a client that does not hold the lock fails
   with `ENOENT`, not `EBUSY` (`MAY_RENEW` gets `EBUSY`), which radosgw's
@@ -903,8 +916,25 @@ review and verified against the tree.
     user completes it; an entry a failed write, a release or a removal left
     stays until a write of that user holding the key and a later one
     dropping it, or a user created again under that id holding the key and
-    then removed, frees it. Errors and logs name an entry by the index's
-    pool and kind, `user key holder index`, never by the key.
+    then removed, frees it. radosgw and radosgw-admin never touch the
+    index either, so a user, or a user's key, that either removes keeps its
+    entries, the likeliest source on a zone the two share: an rgw-go write
+    giving that key id to another user answers 409 KeyExists, for good,
+    where radosgw stores it. rgw-go never frees such an entry itself, since
+    nothing it reads tells a user gone for good from one about to hold the
+    key again. An operator who has checked that the user the entry names,
+    the uid in its data (`rados get`), no longer holds the key frees the id
+    by removing the entry, named by the access key id in the pool of the
+    zone's `user_keys_pool` (`radosgw-admin zone get`) under its namespace
+    with `.rgw-go-key-holders` appended: `rados -p default.rgw.meta -N
+    users.keys.rgw-go-key-holders rm <access key id>` in a default zone.
+    A removal outside rgw-go sends no cache notify, so an rgw-go gateway
+    that cached the entry, on its first read of it after a miss, less than
+    `rgw_cache_expiry_interval` ago (900 s by default) refuses the id until
+    that copy expires, which later reads do not postpone, or is evicted, or
+    the gateway restarts.
+    Errors and logs name an entry by the index's pool and kind, `user key
+    holder index`, never by the key.
   - A new key gets the `active` the request names. radosgw's
     `generate_key` never reads it and makes every new key active
     (`rgw_user.cc:536-639` at v19.2.6, `:541-644` at v20.2.4), so
@@ -1011,11 +1041,10 @@ review and verified against the tree.
     when one under another name loads the bucket's id, and 409
     ConcurrentModification when a listed entry point loads nothing; a
     listing or a read that fails answers the store's error, 500
-    InternalError, or 501 NotImplemented from a store that cannot list; a
-    listing that reports the section missing answers 404 NotFound, and one
-    that makes no progress 500 InternalError: radosgw's own failed rename
-    leaves an instance carrying the live bucket's id that no entry point
-    names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
+    InternalError; a listing that reports the section missing answers 404
+    NotFound, and one that makes no progress 500 InternalError: radosgw's
+    own failed rename leaves an instance carrying the live bucket's id that
+    no entry point names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
     (docs/ceph-upstream-bugs.md, "radosgw's bucket link by bucket id takes
     the name from the live bucket"). Each such link reads every bucket. One
     unfinished rename whose new name's entry point names an instance not
@@ -1383,17 +1412,22 @@ review and verified against the tree.
     overwrites unguarded on Tentacle"). A put over an object that carries
     no version answers 500 InternalError. The version written is the
     document's when it has a tag, as radosgw's tracker writes it.
-  - A key holding a NUL byte answers 400 InvalidRequest on every get, put
-    and remove, and a document naming one in a bucket id, marker, owner,
-    explicit placement pool, attr name, user id, email, account id or
-    access or Swift key id answers 400 InvalidArgument, writing nothing:
-    go-ceph cuts an object name at a NUL, so the name would reach another
-    object (docs/cgo-limitations.md, "go-ceph cuts object names at a NUL
-    byte").
+  - A key holding a NUL byte, on every get, put and remove, and a document
+    naming one in a bucket id, marker, owner, explicit placement pool, attr
+    name, user id, email, account id or access or Swift key id answer 400
+    InvalidArgument, writing nothing: go-ceph cuts an object name at a NUL,
+    so the name would reach another object (docs/cgo-limitations.md,
+    "go-ceph cuts object names at a NUL byte").
     radosgw refuses a NUL in a request's decoded path alone, with 400
     InvalidRequest (`ERR_ZERO_IN_URL`, `rgw_rest.cc:2182-2186` at v19.2.6,
     `:2204-2208` at v20.2.4), not in the query the key arrives in or in a
-    document, and stores the object under the whole name.
+    document, and stores the object under the whole name. It keeps a NUL
+    in the key as in every other admin argument, decoding the key once
+    where `get_string` decodes the others again (`frame_metadata_key`,
+    `rgw_rest_metadata.cc:35-52` at v19.2.6 and v20.2.4), so the key gets
+    the answer rgw-go gives a NUL in any admin argument that names a RADOS
+    object ("A NUL in a request argument that names a RADOS object is
+    refused"), from the sections, after authentication.
   - A document attr whose name lacks `user.rgw.` answers 400
     InvalidArgument on every put. radosgw sets each attr a document carries
     on the object in the op that sets the object's version, so one named
@@ -2148,8 +2182,8 @@ review and verified against the tree.
   /{bucket}?versioning` is recognized and, once the request authenticates,
   answers 501 NotImplemented before any permission check and changes
   nothing, as does `GET /{bucket}?versioning`: the route has no handler
-  (`internal/s3/handler.go:371-374`, the `h.routes` lookup that answers
-  `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
+  (`Handler.serve` in `internal/s3/handler.go`, the `h.routes` lookup that
+  answers `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
   `BUCKET_VERSIONS_SUSPENDED` (`RGWSetBucketVersioning::execute`,
   `rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4). rgw-go
   therefore makes no bucket versioned or suspended itself; one that is
@@ -2397,9 +2431,13 @@ following.
   whose admin API refuses to create one. A listing's `prefix`, `delimiter`
   and markers, and every other argument, keep radosgw's handling: they
   reach the bucket index only inside an encoded class call, which carries
-  the NUL. The metadata API's `key` is the metadata sections' to check. A
-  NUL reaches no other name: net/http refuses a raw one in the request
-  target or in any header with 400 (`net/url/url.go:436-437`,
+  the NUL. The metadata API's `key`, whose NUL radosgw keeps as it keeps
+  one in the arguments above, decoding it once (`frame_metadata_key`,
+  `rgw_rest_metadata.cc:35-52` at v19.2.6 and v20.2.4), is the metadata
+  sections' to check, and they answer a NUL in it with the same 400
+  InvalidArgument, after authentication ("The metadata sections write only
+  what keeps a user or bucket whole"). A NUL reaches no other name:
+  net/http refuses a raw one in the request target or in any header with 400 (`net/url/url.go:436-437`,
   `net/http/server.go:1077-1085` at go1.27.1), and Go's XML decoder refuses
   one in a body, as expat does. A JSON body, such as a bucket policy or an
   admin quota, can carry one as `\u0000` but names no RADOS object, and the
@@ -2949,15 +2987,6 @@ v20.2.4 tags, rgw-go does the following.
   `rgw_dmclock_async_scheduler.h:176-183` at v19.2.6, `:175-182` at
   v20.2.4), and it has no counterpart to the experimental `dmclock`
   scheduler that `rgw_scheduler_type` selects.
-- **The admin API counts its requests apart from S3's.** radosgw throttles
-  every request, admin or S3, through the frontend's one scheduler:
-  `process_request` calls `schedule_request` once `get_op` has found the
-  op (`rgw_process.cc:330-338` at v19.2.6, `:332-340` at v20.2.4), and the
-  beast frontend holds a single scheduler (`rgw_asio_frontend.cc:470` and
-  `:508-522` at v19.2.6, `:425` and `:460-474` at v20.2.4). rgw-go's admin
-  handler keeps its own count beside the S3 handler's, each refusing past
-  `rgw_max_concurrent_requests` with 503 SlowDown, so with both APIs busy
-  up to twice that many requests run at once.
 - **Go's reason phrases.** net/http writes Go's reason phrase after every
   status code. radosgw writes the phrase its own `http_codes` table gives
   (`rgw_rest.cc:44-88` at v19.2.6 and v20.2.4), so a status line differs
@@ -2997,6 +3026,26 @@ v20.2.4 tags, rgw-go does the following.
     PutObject is not one: once its body is read, its write and its second
     quota check go on under a context detached from the request's
     (`internal/driver/put.go`), and the multipart writes detach the same way.
+    A CompleteMultipartUpload or AbortMultipartUpload stopped while its
+    `RGWCompleteMultipart` lock request is in flight, which may still land,
+    sends the unlock under the cookie of that one attempt (`lockMeta`,
+    `internal/driver/mp_cleanup.go`), so it releases that attempt's hold if
+    the lock landed and nothing else: another request of the same gateway
+    holding the lock does so under a cookie of its own ("Lock names are
+    radosgw's; cookies are not shared"). radosgw waits for the lock's reply
+    and unlocks only a hold it saw (`MPRadosSerializer::try_lock`,
+    `rgw_sal_rados.cc:3750-3760` at v19.2.6, `:4613-4624` at v20.2.4;
+    `RGWCompleteMultipart::complete`, `rgw_op.cc:6582-6593`, `:7506-7517`).
+    The unlock is sent too when the lock never left the RADOS client's
+    in-flight limit (`internal/radosclient/goceph/limiter.go`), and it waits
+    there with no deadline, so while a PG is unavailable and its ops, which
+    `rados_osd_op_timeout` at its default of 0 never times out, fill that
+    limit, such a request keeps its `rgw_max_concurrent_requests` slot,
+    which S3 and admin requests share, until the unlock is admitted and
+    answered. radosgw blocks the same way: its lock waits in the objecter
+    throttle holding its scheduler slot and is never cancelled. On either
+    gateway a long PG outage can so fill the cap and answer every further
+    request 503 SlowDown.
   - **The usage log and the metrics.** They file the request under the 408
     RequestTimeout a context error maps to when nothing was sent yet, so the
     usage entry counts no successful op, and under the status sent
@@ -4731,9 +4780,11 @@ does the following.
   later radosgw renews it every half duration and refuses the head write
   with the same 500 when a renewal failed
   ([ceph/ceph#67696](https://github.com/ceph/ceph/pull/67696)). Requests
-  of one gateway share its RADOS client and so its lock holder, as
-  radosgw's do, so the renewal cannot tell this completion from another of
-  the same gateway that took a lapsed lock. The renewal also leaves a
+  of one gateway share its RADOS client, as radosgw's do, but each
+  completion locks and renews under a cookie of its own ("Lock names are
+  radosgw's; cookies are not shared"), so the renewal fails too when
+  another completion of the same gateway took a lapsed lock, where
+  radosgw's renewal under "" would pass. The renewal also leaves a
   window from the read of the key's head that looks for an earlier
   completion to the head write's own read: a completion of the same upload
   whose head write was in flight longer than `rgw_mp_lock_max_time`, after
@@ -4758,7 +4809,8 @@ does the following.
     when it lands. A gateway that stops between the removal and the queue
     leaks the parts, where radosgw's leaves a live upload over freed ones.
   - rgw-go takes the lock under a cookie of the abort's own, 128 random
-    bits, where radosgw and rgw-go's completions use "", and the removal
+    bits, where radosgw's serializer uses "" ("Lock names are radosgw's;
+    cookies are not shared"), and the removal
     asserts, in its own op and before `obj_remove`, that the abort still
     holds it under that cookie. A cls_lock locker is the request's entity
     and its cookie (`cls/lock/cls_lock.cc:174-178`, `:201-212` and

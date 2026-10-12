@@ -8961,7 +8961,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** renews the lock with `LOCK_FLAG_MUST_RENEW` just before the
   head write and answers the same 500 when it no longer holds it
-  (`Store.renewMeta`, `internal/driver/mp_cleanup.go`; `docs/exclusions.md`,
+  (`Store.renewAndRecord`, `internal/driver/mp_cleanup.go`; `docs/exclusions.md`,
   "CompleteMultipartUpload renews its lock before the head write").
 - **Upstream:** [#75375](https://tracker.ceph.com/issues/75375)
   (Backporting); fixed by
@@ -9422,7 +9422,7 @@ Every new entry adds its row to this table, in document order.
   the lock under it, and the removal asserts that hold in its own op, so
   the OSD refuses the removal, however late it runs, once the abort's hold
   lapsed, even when a completion of the same gateway, the same entity
-  under cookie "", took the lock since (`cls/lock/cls_lock.cc:174-178`,
+  under a cookie of its own, took the lock since (`cls/lock/cls_lock.cc:174-178`,
   `:201-212` and `:507-519` at both tags); the abort then answers 503 and
   queues nothing (`Store.Abort`, `internal/driver/mp_abort.go`;
   `docs/exclusions.md`, "AbortMultipartUpload removes the upload before it

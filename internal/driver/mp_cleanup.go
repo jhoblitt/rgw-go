@@ -3,6 +3,8 @@ package driver
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -52,16 +54,54 @@ func readMPOptions(conf *cephconf.Options) (mpOptions, error) {
 	return o, nil
 }
 
+// newLockCookie is the cookie one completion or abort takes the
+// RGWCompleteMultipart lock under, which no other hold shares: 128 random
+// bits in hex. A cls_lock locker is the request's entity and its cookie
+// (cls_lock.cc:174-178, and locker_id_t's ordering, cls_lock_types.h:80-86,
+// at v19.2.6 and v20.2.4), and every request of this gateway is one entity,
+// so only the cookie tells one attempt's hold from another's on this
+// gateway: an unlock releases the hold of its own cookie alone, and answers
+// ENOENT for any other (remove_lock, cls_lock.cc:282-304); a renewal under
+// LOCK_FLAG_MUST_RENEW fails once its own hold is gone (lock_obj, :190-199);
+// and an abort's assert_locked fails on the OSD then too (:507-519). The
+// exclusive lock refuses a second holder whatever its cookie (:201-212).
+// radosgw's serializer never sets a cookie and locks under ""
+// (cls_lock_client.h:79; MPRadosSerializer, driver/rados/rgw_sal_rados.h:848-860
+// at v19.2.6, :905-916 at v20.2.4), which is safe there because it unlocks
+// only a hold its lock's reply confirmed; a radosgw gateway is another
+// entity, so the cookie changes nothing in how its locks and these exclude
+// each other.
+func newLockCookie() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b) //nolint:errcheck // crypto/rand.Read never fails
+	return hex.EncodeToString(b)
+}
+
 // lockMeta is MPRadosSerializer::try_lock (:3750-3760; v20.2.4
 // :4613-4624): one write op on the meta object, assert_exists then an
-// exclusive lock under cookie for rgw_mp_lock_max_time. radosgw's serializer
-// sends cookie "", as a completion does. The seam's error comes back for
-// the caller's mapping: ENOENT for a missing meta object, EBUSY for another
-// holder, EEXIST for this client's own hold under the same cookie.
+// exclusive lock under cookie, the attempt's own (newLockCookie), for
+// rgw_mp_lock_max_time. The seam's error comes back for the caller's
+// mapping: ENOENT for a missing meta object, EBUSY for another holder.
+//
+// A context that ends while the lock is in flight returns its error with the
+// lock possibly landed, which would refuse every completion and abort of the
+// upload for rgw_mp_lock_max_time; radosgw waits for the lock's reply
+// whatever the client does (rgw_rados_operate,
+// driver/rados/rgw_tools.cc:235-248 at v19.2.6, :260-274 at v20.2.4), so it
+// never leaves one it did not see. That hold is released under the same
+// cookie (unlockMeta), which, being the attempt's own, releases nothing
+// another request of this gateway holds; its ENOENT, for a lock that did
+// not land, is ignored. A context already ended sends neither.
 func (s *Store) lockMeta(ctx context.Context, ref mpRef, cookie string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	w := radosclient.NewWriteOp()
 	lock.LockExisting(w, completeLockName, cookie, "", s.mp.lockMaxTime, s.release)
 	_, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		s.unlockMeta(ctx, ref, cookie)
+	}
 	return err
 }
 
@@ -80,16 +120,16 @@ const (
 	nullInstance = "null"
 )
 
-// renewAndRecord renews this client's lock for another
+// renewAndRecord renews the completion's hold under cookie for another
 // rgw_mp_lock_max_time, failing unless it still holds it, and in the same
 // op writes the completion record for a head written under tag:
 // assert_exists, lock_exclusive with LOCK_FLAG_MUST_RENEW, as radosgw's
 // renewal sends it since tracker #75375's fix (ceph/ceph#67696, after
 // v19.2.6 and v20.2.4), and the record's two setxattrs.
-func (s *Store) renewAndRecord(ctx context.Context, ref mpRef, tag string) error {
+func (s *Store) renewAndRecord(ctx context.Context, ref mpRef, cookie, tag string) error {
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
-	lock.Lock(w, lock.LockOp{Name: completeLockName, Type: lock.TypeExclusive, Duration: s.mp.lockMaxTime, Flags: lock.FlagMustRenew}, s.release)
+	lock.Lock(w, lock.LockOp{Name: completeLockName, Type: lock.TypeExclusive, Cookie: cookie, Duration: s.mp.lockMaxTime, Flags: lock.FlagMustRenew}, s.release)
 	w.SetXattr(attrMPCompletionTag, []byte(tag+"\x00"))
 	w.SetXattr(attrMPCompletionInstance, []byte(nullInstance))
 	_, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
@@ -352,8 +392,8 @@ type metaDelete struct {
 	// was broken, whoever holds the lock since: a cls_lock locker is the
 	// request's entity and its cookie (cls_lock.cc:174-178 and :507-519 at
 	// v19.2.6 and v20.2.4), so a completion of this gateway, the same
-	// entity under cookie "", does not pass for an abort's hold under its
-	// own cookie; a cancel retires none of removeObjs, where
+	// entity under a cookie of its own, does not pass for an abort's hold
+	// under the abort's; a cancel retires none of removeObjs, where
 	// delete_obj's cancel retires them (:5969) from an upload that stands;
 	// and a meta object already gone comes back as radosclient.ErrNotFound
 	// without the quota cache change, as delete_obj returns -ENOENT before

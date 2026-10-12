@@ -157,7 +157,7 @@ func (s *Store) getInstance(ctx context.Context, key string) (op.MetadataEntry, 
 // and writes under that version, or exclusively when it read nothing; the
 // version written is e.Version's when it has a tag, and the mtime
 // e.Mtime's. Whether the put is applied at all, check_versions, is the
-// op's. A key holding a NUL byte is ErrInvalidRequest in every section, on
+// op's. A key holding a NUL byte is ErrInvalidArgument in every section, on
 // Get and Remove too (op.RefuseNULKey).
 func (s *Store) Put(ctx context.Context, section, key string, e op.MetadataEntry, opts op.PutMetadataOptions) error {
 	if err := op.RefuseNULKey(key); err != nil {

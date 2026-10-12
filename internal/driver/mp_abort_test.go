@@ -59,8 +59,9 @@ func bumpVersion(o *fakerados.Object) {
 	o.Xattrs[version.XattrName] = encode(v)
 }
 
-// ownLock takes the RGWCompleteMultipart lock on the meta object oid as this
-// gateway's own completion takes it: the same client, cookie "".
+// ownLock takes the RGWCompleteMultipart lock on the meta object oid as
+// another request of this gateway holds it: the same client, under a cookie
+// that is not the abort's.
 func ownLock(ctx context.Context, c *fakerados.Cluster, oid string) {
 	GinkgoHelper()
 	p, err := c.Pool(ctx, extraPoolName, "")
@@ -264,7 +265,7 @@ var _ = Describe("Abort", func() {
 			lockOp := lock.DecodeLockOp(denc.NewDecoder(execStep(writes[len(writes)-3].Steps()[1]).In))
 			assertOp := lock.DecodeAssertOp(denc.NewDecoder(execStep(writes[len(writes)-2].Steps()[0]).In))
 			unlockOp := lock.DecodeUnlockOp(denc.NewDecoder(execStep(writes[len(writes)-1].Steps()[0]).In))
-			Expect(lockOp.Cookie).To(MatchRegexp(`^[0-9a-f]{32}$`), "128 random bits, never the completion's \"\"")
+			Expect(lockOp.Cookie).To(MatchRegexp(`^[0-9a-f]{32}$`), "128 random bits, never radosgw's \"\"")
 			Expect([]string{assertOp.Cookie, unlockOp.Cookie}).To(Equal([]string{lockOp.Cookie, lockOp.Cookie}))
 			cookies = append(cookies, lockOp.Cookie)
 		}

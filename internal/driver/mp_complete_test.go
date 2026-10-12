@@ -244,10 +244,12 @@ var _ = Describe("Complete", func() {
 		writes := c.WritesTo(extraPoolName, "", mOID)
 		lockOp := writes[0].Steps()
 		Expect(lockOp[0]).To(BeAssignableToTypeOf(&radosclient.AssertExistsStep{}))
-		Expect(lock.DecodeLockOp(denc.NewDecoder(execStep(lockOp[1]).In))).To(Equal(lock.LockOp{Name: "RGWCompleteMultipart", Type: lock.TypeExclusive, Duration: 600 * time.Second}))
+		taken := lock.DecodeLockOp(denc.NewDecoder(execStep(lockOp[1]).In))
+		Expect(taken.Cookie).To(MatchRegexp(`^[0-9a-f]{32}$`), "the completion's own cookie")
+		Expect(taken).To(Equal(lock.LockOp{Name: "RGWCompleteMultipart", Type: lock.TypeExclusive, Cookie: taken.Cookie, Duration: 600 * time.Second}))
 		renew := writes[1].Steps()
 		Expect(renew[0]).To(BeAssignableToTypeOf(&radosclient.AssertExistsStep{}))
-		Expect(lock.DecodeLockOp(denc.NewDecoder(execStep(renew[1]).In))).To(Equal(lock.LockOp{Name: "RGWCompleteMultipart", Type: lock.TypeExclusive, Duration: 600 * time.Second, Flags: lock.FlagMustRenew}))
+		Expect(lock.DecodeLockOp(denc.NewDecoder(execStep(renew[1]).In))).To(Equal(lock.LockOp{Name: "RGWCompleteMultipart", Type: lock.TypeExclusive, Cookie: taken.Cookie, Duration: 600 * time.Second, Flags: lock.FlagMustRenew}))
 		Expect(renew[2:]).To(Equal([]radosclient.Step{
 			&radosclient.SetXattrStep{Name: "user.rgw.mp_completion_tag", Value: []byte("tx-complete\x00")},
 			&radosclient.SetXattrStep{Name: "user.rgw.mp_completion_instance", Value: []byte("null")},
@@ -431,8 +433,9 @@ var _ = Describe("Complete", func() {
 		_, err = p.Write(ctx, metaOID(rec, "k", up.ID), w, radosclient.OpFlagNone)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = s.Complete(ctx, up, completeParts(etags))
-		Expect(err).To(MatchError(op.ErrInternalError), "lock_obj's EEXIST")
+		Expect(err).To(MatchError(op.ErrInternalError), "lock_obj's EBUSY: each attempt locks under a cookie of its own")
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
+		Expect(c.Locks(extraPoolName, "", metaOID(rec, "k", up.ID), "RGWCompleteMultipart")).To(HaveLen(1), "the earlier attempt's hold stands")
 	})
 
 	It("fails closed when the lock lapsed before the head write", func(ctx SpecContext) {

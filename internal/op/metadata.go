@@ -76,18 +76,11 @@ func RefuseNUL(what string, values ...string) error {
 	return nil
 }
 
-// RefuseNULKey is ErrInvalidRequest for a metadata key holding a NUL byte,
-// for RefuseNUL's reason. It is radosgw's answer to a NUL in a request's
-// decoded path, ERR_ZERO_IN_URL (rgw_rest.cc:2182-2186 at v19.2.6, :2204-2208
-// at v20.2.4; rgw_common.cc:136, :137), which does not cover the query the
-// key arrives in (req_info, rgw_common.cc:238-243 at v19.2.6), so radosgw
-// takes such a key.
-func RefuseNULKey(key string) error {
-	if strings.IndexByte(key, 0) >= 0 {
-		return fmt.Errorf("%w: the metadata key holds a NUL byte", ErrInvalidRequest)
-	}
-	return nil
-}
+// RefuseNULKey is RefuseNUL for a metadata key. radosgw takes a NUL in the
+// key whole, as in every other admin argument (frame_metadata_key,
+// rgw_rest_metadata.cc:35-52 at v19.2.6 and v20.2.4), so the key gets the
+// answer the admin API gives a NUL in any argument naming a RADOS object.
+func RefuseNULKey(key string) error { return RefuseNUL("the metadata key", key) }
 
 // RefuseNULKeys is RefuseNUL over a user document's names that name
 // objects: the user id, the email, the account id and each access key's
