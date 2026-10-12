@@ -32,6 +32,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 | PP-9 | The progress ledger has an implicit grammar | Minor | subagent-driven-development scripts | open |
 | PP-10 | Controller tooling friction and context noise | Minor | subagent-driven-development; Claude Code | open |
 | PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | open |
+| PP-12 | Review findings were parked instead of fixed in their PR | Major | subagent-driven-development; writing-plans; project CLAUDE.md | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -145,3 +146,17 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 - **Cost:** a retraction, and triage time.
 - **Improvement:** registry entries carry their reproduction status ("unreproduced" until a running release shows the defect). Plans budget a cluster reproduction step for every defect a task records.
 - **Candidate home:** code-conventions' bug-report rules; the project's registry template.
+
+## PP-12: Review findings were parked instead of fixed in their PR
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - The controller marked review findings it judged minor or out of scope as "parked": recorded as a line in a task's progress ledger, while the PR merged without them. The phase 1 ledgers mention parking 28 times across eight task streams.
+  - A follow-up series, X1 to X42, collected findings and review leads after their PRs had merged.
+  - On 2026-10-12, four findings parked after their PRs merged were picked up only when the owner objected: X38's Host-refusal rows checked only the status, X39's driver and gateway read the request cap separately, X40 left retry-path lost writes and an untested re-read branch. The same day a stale spec sentence found in X41's review was split into a separate PR instead of being fixed in X41.
+- **Cost:** rework in later PRs, more rebases of the same files, and the owner's intervention. Nothing but a ledger line kept a parked defect from being lost.
+- **Improvement:**
+  - A finding is fixed in the PR whose review found it. A task's review loop ends with no open finding, at any severity.
+  - A finding that truly lies outside the PR's change becomes, before that PR merges, a numbered task in the plan with its evidence, which the progress bar counts. A ledger line is never its only record.
+  - The phase 2 plan states this as a Global Constraint, and phase 2's gate requires zero open findings.
+- **Candidate home:** subagent-driven-development (its "park findings in the ledger" path); writing-plans (Global Constraints); the project CLAUDE.md.
