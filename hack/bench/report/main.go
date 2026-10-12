@@ -25,6 +25,33 @@
 // whose were derived. A cell in a file named for another mode, or a floor
 // line whose op or size is not its shape's, is refused.
 //
+//	go run ./hack/bench/report gateway --dir DIR [--dir DIR...] [--out FILE]
+//
+// gateway reads the run directories hack/bench/gateway.sh wrote and renders
+// them side by side, each run's columns in the order given and, beside every
+// run but the first radosgw one, its ratio to that run: per profile, a row
+// per variant and concurrency with requests, objects and MiB per second, the
+// p50, p99 and p999 latencies, and the gateway's CPU per request, thread
+// high-water, peak RSS, errors and retries. It reads:
+//
+//   - env.json, which names the release, the gateway, its frontends and their
+//     TCP_NODELAY, and the run's settings; runs of different releases, of
+//     different profiles, or that differ in a setting that shapes the
+//     numbers, the phases' sizes, the client, the host or TCP_NODELAY, are
+//     refused.
+//   - every <profile>.json, elbencho's results, one line per phase. The
+//     latency percentiles come from its latency histogram, as elbencho prints
+//     them, since its JSON carries none.
+//   - every noop-<t>.json, httpload's, whose rows sit beside small-get's at
+//     the same concurrency.
+//   - samples-<profile>.csv, sample.sh's, for the CPU, threads and RSS.
+//   - gctrace-<profile>.log, rgw-go's GODEBUG=gctrace=1 lines, for its GC
+//     cycles and pauses, and config.json, the parity options.
+//
+// One run's report is written to its REPORT.md, several runs' to stdout, and
+// either to --out when it is given; the command prints the file it wrote and
+// whether any phase had an error or a retry.
+//
 // --dir can also come from REPORT_DIR, and every flag but --config from the
 // config file --config names. The root's --log-level (debug, info, warn or
 // error; info by default) and --log-format (json or text; json by default)

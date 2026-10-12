@@ -1,6 +1,6 @@
 // Package report renders benchmark results into markdown: a seam sweep
 // directory into its REPORT.md, with the verdict of the cgo question's four
-// criteria.
+// criteria, and gateway comparison runs side by side.
 package report
 
 import (

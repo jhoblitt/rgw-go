@@ -48,7 +48,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (REPORT_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (REPORT_LOG_FORMAT)")
-	cmd.AddCommand(newSeamCmd(v))
+	cmd.AddCommand(newSeamCmd(v), newGatewayCmd(v))
 	return cmd
 }
 
@@ -119,5 +119,50 @@ func newSeamCmd(v *viper.Viper) *cobra.Command {
 		},
 	}
 	cmd.Flags().String("dir", "", "the sweep directory hack/bench/seam.sh wrote (REPORT_DIR)")
+	return cmd
+}
+
+func newGatewayCmd(v *viper.Viper) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "gateway --dir DIR [--dir DIR...] [--out FILE]",
+		Short: "Render gateway comparison runs side by side",
+		Long: "Render the run directories hack/bench/gateway.sh wrote side by side, each run's columns in the order " +
+			"given, with each run's ratio to the first radosgw run. One run's report is written to its REPORT.md, " +
+			"several runs' to stdout, either to --out when it is given.",
+		Args: cobra.NoArgs,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			for _, f := range []string{"dir", "out"} {
+				if err := v.BindPFlag(f, cmd.Flags().Lookup(f)); err != nil {
+					return fmt.Errorf("binding --%s: %w", f, err)
+				}
+			}
+			if len(v.GetStringSlice("dir")) == 0 {
+				return errors.New("--dir is required")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dirs := v.GetStringSlice("dir")
+			r, err := Gateway(cmd.Context(), dirs)
+			if err != nil {
+				return err
+			}
+			path := v.GetString("out")
+			if path == "" && len(dirs) == 1 {
+				path = filepath.Join(dirs[0], "REPORT.md")
+			}
+			if path == "" {
+				_, err := io.WriteString(cmd.OutOrStdout(), r.Markdown)
+				return err
+			}
+			if err := os.WriteFile(path, []byte(r.Markdown), 0o600); err != nil {
+				return fmt.Errorf("writing the report: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", path, r.Summary())
+			return nil
+		},
+	}
+	cmd.Flags().StringArray("dir", nil, "a run directory hack/bench/gateway.sh wrote; repeat it to compare runs (REPORT_DIR)")
+	cmd.Flags().String("out", "", "the file to write the report to (REPORT_OUT)")
 	return cmd
 }

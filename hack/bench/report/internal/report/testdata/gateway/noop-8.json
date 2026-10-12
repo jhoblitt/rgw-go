@@ -1,0 +1,1 @@
+{"threads":8,"duration_s":2.000181404,"requests":392,"errors":0,"ops_per_s":195.9822240203169,"lat_us":{"p50":41022.771,"p99":42051.836,"p999":42078.596},"start":"2026-10-12T07:14:15.421826815-07:00","command":"httpload -url http://10.89.0.34:80/ -threads 8 -duration 2s -out hack/bench/out/tentacle/gateway-radosgw-20261012T141331Z/noop-8.json"}

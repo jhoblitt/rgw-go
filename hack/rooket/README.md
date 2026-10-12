@@ -109,8 +109,9 @@ it on, Rook creates a `dashboard-admin` user in the zone) and drop the
 chart's block pool and filesystem, which rgw-go does not use. rooket's
 one-worker base already fits the chart's `ceph-objectstore` object store to a
 single OSD; the values' entry for it, which rooket merges onto the base's by
-name, adds only the parity options to its gateway as `rgwConfig` (see
-"Running rgw-go against the cluster"). rooket's `rgw` profile is not
+name, adds to its gateway the parity options as `rgwConfig` (see "Running
+rgw-go against the cluster") and, as `rgwCommandFlags`, a frontend with
+`tcp_nodelay=1` (see "Running the gateway comparison"). rooket's `rgw` profile is not
 used: its CephObjectStoreUser and bucket claim would add a user and a bucket
 to the zone the gate counts. `host-network` sits in `config.yaml` rather than
 on the command line because Rook cannot move a running cluster onto host
@@ -376,6 +377,123 @@ the release's rooket output, as the floor does, and the sweep refuses an
 `RGW_GO_TEST_CEPH_CONF` naming another file. A full sweep took about an hour per
 release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the
 script's header lists its other settings.
+
+## Running the gateway comparison
+
+`make bench-gateway RELEASE=<release> GATEWAY=radosgw|rgw-go` runs
+`hack/bench/gateway.sh`: elbencho against the gateway for the S3 profiles,
+`hack/bench/httpload` for the anonymous `GET /` baseline, `hack/bench/sample.sh`
+on the gateway's process once a second, and for rgw-go a CPU profile of each
+profile's last phase and its GC trace. It writes
+`hack/bench/out/<release>/gateway-<gateway>-<UTC time>/` and its `REPORT.md`;
+the script's header lists the profiles, the files and the settings.
+`PROFILES="small-get noop"` runs some profiles only, and `BENCH_SMOKE=1` runs
+every profile with 5 s phases at one concurrency, which proves the tooling and
+measures nothing.
+
+`make elbencho` builds the pinned [jhoblitt/elbencho](https://github.com/jhoblitt/elbencho)
+fork statically in an Alpine container (`RGW_GO_ENGINE` picks the engine) into
+`hack/bench/out/elbencho`, and `bench-gateway` builds it when it is missing.
+The build takes about 8 minutes and keeps about 5 GiB of source and external
+libraries in `hack/bench/out/elbencho-src`, which `ELBENCHO_SRC` moves to a
+filesystem with room. The Alpine image is pinned by digest and its packages
+are not upgraded, but Alpine keeps only each package's latest release, so a
+later build can link a newer libcurl; `hack/bench/out/elbencho.commit` records
+the image and the toolchain and library versions a binary was built with,
+and every run copies them into its `env.json`.
+
+elbencho signs as the user `bench`, created with fixed keys. A radosgw run
+refuses to start while an rgw-go runs against the cluster, and both refuse a
+gateway whose entity lacks the parity options, so `make rgw-go-up` runs once
+first; an rgw-go run starts its own rgw-go and stops it when it ends.
+
+The clusters' one OSD holds 10 GiB, and the parity options leave no garbage
+collector running. A run first collects any garbage left queued and reads the
+data pool's free space, and refuses to start when a profile's dataset, the
+most object data the profile holds at once, is more than half of it; the
+other half is room for the bucket index and the OSD's own metadata. The
+defaults hold at most 3 GiB at once, small-put's 3 000 objects of 4 KiB per
+thread at 256 threads, and 2 GiB in the large profiles, which write one
+64 MiB object per thread at 32 threads and remove it before the next write.
+After each profile the run removes every bench object and collects the
+garbage, and when it ends it removes the user with its buckets, collects the
+garbage and compacts the OSD, so that `make gate` passes after it and the
+next run does not start on the tombstones its deletes left in the OSD's
+RocksDB. `BENCH_PLAN=1 BENCH_IDLE_AVAIL=<bytes>` prints each profile's
+dataset against that much free space without touching a cluster, and `make
+bench-plan-check`, part of `make check`, fails when the defaults need more
+than 8 220 119 040 B, the least the data pool could take on an idle cluster
+in the seam sweeps.
+
+Both gateways answer with TCP_NODELAY on. Rook starts the radosgw with the
+frontend `beast port=80`, and beast turns TCP_NODELAY on only for
+`tcp_nodelay=1`; the chart values' `rgwCommandFlags` give the radosgw `beast
+port=80 tcp_nodelay=1`, which Rook passes after its own frontend, so the
+radosgw keeps it. rgw-go keeps Go's TCP_NODELAY unless its frontend sets
+`tcp_nodelay` to anything else (`docs/exclusions.md`, "TCP options"). A run
+refuses a gateway that answers with it off and records the gateway's
+frontends and their TCP_NODELAY in `env.json`; `report gateway` names them
+in its header and refuses to compare runs that differ in it, or in their
+profiles or settings. Under Rook's own frontend the Tentacle radosgw answered
+each anonymous `GET /` after a connection's first in about 41 ms, the first
+in half a millisecond; with `tcp_nodelay=1`, every one in 0.2 to 0.5 ms.
+
+A cluster brought up before the chart values carried `rgwCommandFlags` takes
+them with `make cluster-up`, whose helm upgrade restarts the radosgw, then
+`make populate`, since `cluster-up` rewrites `out/<release>/` and so drops
+`manifest.json`. The measured runs, Squid first and each release's radosgw
+before its rgw-go, on a quiet host:
+
+```sh
+export CGO_CFLAGS=... CGO_LDFLAGS=...   # as for make rgw-go-up; leave GOMAXPROCS unset
+make elbencho
+make cluster-up RELEASE=squid && make populate RELEASE=squid  # a cluster without rgwCommandFlags only
+make rgw-go-up RELEASE=squid && make rgw-go-down RELEASE=squid
+make bench-gateway RELEASE=squid GATEWAY=radosgw     # about 40 minutes
+make bench-gateway RELEASE=squid GATEWAY=rgw-go      # about 40 minutes
+make gate RELEASE=squid
+make cluster-up RELEASE=tentacle && make populate RELEASE=tentacle  # likewise
+make rgw-go-up RELEASE=tentacle && make rgw-go-down RELEASE=tentacle
+make bench-gateway RELEASE=tentacle GATEWAY=radosgw  # about 40 minutes
+make bench-gateway RELEASE=tentacle GATEWAY=rgw-go   # about 40 minutes
+make gate RELEASE=tentacle
+go run ./hack/bench/report gateway --dir hack/bench/out/squid/gateway-radosgw-<time> \
+  --dir hack/bench/out/squid/gateway-rgw-go-<time> --out hack/bench/out/squid/gateway.md
+go run ./hack/bench/report gateway --dir hack/bench/out/tentacle/gateway-radosgw-<time> \
+  --dir hack/bench/out/tentacle/gateway-rgw-go-<time> --out hack/bench/out/tentacle/gateway.md
+```
+
+The durations scale the `BENCH_SMOKE=1` runs on Tentacle to the full phases,
+and are estimates: small-put, small-get and noop run six 60 s phases each,
+about 6.5 minutes apiece with small-get's read set of 102 400 objects written
+first; large-put and large-get about 2 and 3 minutes; list about 4.5 minutes,
+most of it writing its 102 400 keys; 2 to 3 minutes to start, render, remove
+the user and compact the OSD, a minute more for rgw-go, which `rgw-go-up.sh`
+builds and starts; and the removals after each profile, which the smoke ran
+at about 1 600 objects a second: about a minute each for small-get's and
+list's 102 400, and for small-put's however many its phases wrote, up to
+768 000. A phase that finishes its objects first, as small-put's lower
+concurrencies do, is shorter.
+
+What shapes the numbers before they are read:
+
+- The gateways sit in different places. radosgw runs host-networked in the
+  rooket node, a container behind the engine's bridge network, under its
+  pod's 2 GiB memory limit and no CPU limit; rgw-go runs on the host and
+  listens on loopback, and every RADOS operation it sends crosses the bridge.
+  elbencho and httpload run on the host for both.
+- Only the radosgw run pays for its samples on the same host: each is a
+  `rooket kubectl exec`, where rgw-go's are read from `/proc`. Only rgw-go
+  runs with `GODEBUG=gctrace=1`, and under its CPU profiler during each
+  profile's last phase.
+- A 2 s gap after every phase and every preparation keeps their CPU out of
+  the next phase's, but not their threads out of rgw-go's thread high-water:
+  Go parks an idle OS thread rather than ending it, so the column is the most
+  threads the run has needed by then, not that phase's own.
+- The GC figures cover the whole profile, its preparations and removals
+  included.
+- A multipart PUT's row counts parts: elbencho counts one IO per UploadPart
+  and none for the upload's Create and Complete.
 
 ## The derived image
 
