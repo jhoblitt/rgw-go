@@ -17,16 +17,20 @@ import (
 
 // The bucket subresource ops of this file are rgw_op.cc's RGWGetACLs and
 // RGWPutACLs at bucket scope, RGWGetBucketPolicy, RGWPutBucketPolicy,
-// RGWDeleteBucketPolicy, RGWGetBucketTags, RGWPutBucketTags and
-// RGWDeleteBucketTags. Each loads the bucket in Init, so a missing bucket is
-// NoSuchBucket before the permission check, and authorizes its action against
-// the bucket. The forward to the metadata master each write makes is a no-op
-// on a single zone, which is its own master. A bare line number is v19.2.6's
-// rgw_op.cc.
+// RGWDeleteBucketPolicy, RGWGetBucketTags, RGWPutBucketTags,
+// RGWDeleteBucketTags and RGWGetLC. Each loads the bucket in Init, so a
+// missing bucket is NoSuchBucket before the permission check, and authorizes
+// its action against the bucket. The forward to the metadata master each
+// write makes is a no-op on a single zone, which is its own master. A bare
+// line number is v19.2.6's rgw_op.cc.
 
 // AttrIAMPolicy is RGW_ATTR_IAM_POLICY (rgw_common.h:154 at v19.2.6, :173 at
 // v20.2.4), the bucket attr holding its policy's text.
 const AttrIAMPolicy = meta.AttrPrefix + "iam-policy"
+
+// AttrLC is RGW_ATTR_LC (rgw_common.h:82 at v19.2.6, :87 at v20.2.4), the
+// bucket attr holding its lifecycle configuration.
+const AttrLC = meta.AttrPrefix + "lc"
 
 // attrIAMPolicyRemoveSelfAccess is Tentacle's
 // RGW_ATTR_IAM_POLICY_REMOVE_SELF_ACCESS (rgw_common.h:177 at v20.2.4).
@@ -528,3 +532,45 @@ func (o *DeleteBucketTagging) Execute(ctx context.Context, r *Request) error {
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (*DeleteBucketTagging) Complete(context.Context, *Request) {}
+
+// GetBucketLifecycle is RGWGetLC (rgw_op.h:1631-1646 at v19.2.6, :1785-1801
+// at v20.2.4) with RGWGetLC_ObjStore_S3::execute (rgw_rest_s3.cc:3658-3676 at
+// v19.2.6, :4139-4157 at v20.2.4). rgw-go renders no lifecycle configuration
+// yet, so it serves only a bucket without one.
+type GetBucketLifecycle struct{}
+
+var _ Op = (*GetBucketLifecycle)(nil)
+
+// Name is RGWGetLC::name.
+func (*GetBucketLifecycle) Name() string { return "get_lifecycle" }
+
+// Action is s3:GetLifecycleConfiguration.
+func (*GetBucketLifecycle) Action() policy.Action { return policy.S3GetLifecycleConfiguration }
+
+// OpMask is RGW_OP_TYPE_READ.
+func (*GetBucketLifecycle) OpMask() uint32 { return OpTypeRead }
+
+// Init loads the bucket.
+func (*GetBucketLifecycle) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
+
+// VerifyPermission is RGWGetLC::verify_permission (:5759-5770; v20.2.4
+// :6405-6416).
+func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) error {
+	return verifyBucketAction(ctx, r, o)
+}
+
+// Execute is RGWGetLC_ObjStore_S3::execute up to the decode: a bucket without
+// the lifecycle attr is -ENOENT, which send_response answers as
+// ERR_NO_SUCH_LC, 404 NoSuchLifecycleConfiguration with no message
+// (rgw_rest_s3.cc:3678-3696 at v19.2.6, :4159-4177 at v20.2.4). radosgw tests
+// the attr's presence, so an empty one counts as a configuration; any
+// configuration is NotImplemented (docs/exclusions.md).
+func (*GetBucketLifecycle) Execute(_ context.Context, r *Request) error {
+	if _, ok := r.BucketRec.Attrs[AttrLC]; !ok {
+		return ErrNoSuchLifecycleConfiguration
+	}
+	return fmt.Errorf("%w: rendering the lifecycle configuration of bucket %s", ErrNotImplemented, r.BucketRec.Info.Bucket.Name)
+}
+
+// Complete does nothing: the handler logs usage once the response is written.
+func (*GetBucketLifecycle) Complete(context.Context, *Request) {}

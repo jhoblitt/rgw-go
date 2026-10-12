@@ -24,7 +24,7 @@ import (
 
 const allowAll = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::plain/*"}]}`
 
-var _ = Describe("bucket policy and tagging routes", func() {
+var _ = Describe("bucket policy, tagging and lifecycle routes", func() {
 	var w *subresWorld
 	BeforeEach(func(ctx SpecContext) { w = newSubresWorld(ctx, denc.Squid) })
 
@@ -180,6 +180,47 @@ var _ = Describe("bucket policy and tagging routes", func() {
 			Expect(w.send(w.bob, http.MethodPut, "/plain?tagging", doc).Code).To(Equal(403))
 			Expect(w.send(w.bob, http.MethodGet, "/plain?tagging", "").Code).To(Equal(403))
 			Expect(w.send(w.bob, http.MethodDelete, "/plain?tagging", "").Code).To(Equal(403))
+		})
+	})
+
+	Describe("the lifecycle configuration", func() {
+		It("is 404 NoSuchLifecycleConfiguration, in radosgw's error document, for a bucket without one", func() {
+			rec := w.send(w.alice, http.MethodGet, "/plain?lifecycle", "")
+			Expect(rec.Code).To(Equal(404), rec.Body.String())
+			Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
+			Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchLifecycleConfiguration</Code><Message></Message>`+
+				`<BucketName>plain</BucketName><RequestId>`+exactHeader(rec.Header(), "x-amz-request-id")+`</RequestId><HostId>4155-z-zg</HostId></Error>`),
+				"ERR_NO_SUCH_LC through end_header's error branch, rgw_rest_s3.cc:3680-3688 and rgw_rest.cc:620-625 at v19.2.6")
+			Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())))
+		})
+		It("answers 501 NotImplemented for a bucket that carries one", func(ctx SpecContext) {
+			w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {1}})
+			rec := w.send(w.alice, http.MethodGet, "/plain?lifecycle", "")
+			Expect(rec.Code).To(Equal(501), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+		})
+		It("refuses a requester the bucket's ACL refuses with 403 AccessDenied, with a configuration or without", func(ctx SpecContext) {
+			expectDenied := func(state string) {
+				GinkgoHelper()
+				rec := w.send(w.bob, http.MethodGet, "/plain?lifecycle", "")
+				Expect(rec.Code).To(Equal(403), "%s: %s", state, rec.Body.String())
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"), state)
+			}
+			expectDenied("without a configuration")
+			w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {1}})
+			expectDenied("with a configuration")
+		})
+		It("answers 404 NoSuchBucket for a bucket that does not exist", func() {
+			rec := w.send(w.alice, http.MethodGet, "/missing?lifecycle", "")
+			Expect(rec.Code).To(Equal(404))
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NoSuchBucket</Code>"))
+		})
+		It("leaves PUT and DELETE 501 NotImplemented", func() {
+			for _, method := range []string{http.MethodPut, http.MethodDelete} {
+				rec := w.send(w.alice, method, "/plain?lifecycle", "")
+				Expect(rec.Code).To(Equal(501), "%s: %s", method, rec.Body.String())
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+			}
 		})
 	})
 })

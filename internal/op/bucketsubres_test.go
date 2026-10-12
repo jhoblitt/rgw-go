@@ -64,6 +64,7 @@ var _ = Describe("bucket subresource ops", func() {
 		Entry("GetBucketTagging", &op.GetBucketTagging{}, "get_bucket_tags", policy.S3GetBucketTagging, op.OpTypeRead),
 		Entry("PutBucketTagging", &op.PutBucketTagging{}, "put_bucket_tags", policy.S3PutBucketTagging, op.OpTypeWrite),
 		Entry("DeleteBucketTagging, a delete authorized as s3:PutBucketTagging", &op.DeleteBucketTagging{}, "delete_bucket_tags", policy.S3PutBucketTagging, op.OpTypeDelete),
+		Entry("GetBucketLifecycle", &op.GetBucketLifecycle{}, "get_lifecycle", policy.S3GetLifecycleConfiguration, op.OpTypeRead),
 	)
 
 	DescribeTable("answers NoSuchBucket before any permission check",
@@ -80,6 +81,7 @@ var _ = Describe("bucket subresource ops", func() {
 		Entry("GetBucketTagging", &op.GetBucketTagging{}),
 		Entry("PutBucketTagging", &op.PutBucketTagging{}),
 		Entry("DeleteBucketTagging", &op.DeleteBucketTagging{}),
+		Entry("GetBucketLifecycle", &op.GetBucketLifecycle{}),
 	)
 
 	Describe("GetBucketACL", func() {
@@ -331,6 +333,32 @@ var _ = Describe("bucket subresource ops", func() {
 		It("refuses the tagging ops to a requester the authorizer refuses", func(ctx SpecContext) {
 			Expect(op.Run(ctx, &op.GetBucketTagging{}, asBob(http.MethodGet))).To(MatchError(op.ErrAccessDenied))
 			Expect(op.Run(ctx, &op.DeleteBucketTagging{}, asBob(http.MethodDelete))).To(MatchError(op.ErrAccessDenied))
+		})
+	})
+
+	Describe("bucket lifecycle", func() {
+		It("is NoSuchLifecycleConfiguration with no message for a bucket without a lifecycle attr", func(ctx SpecContext) {
+			Expect(op.AttrLC).To(Equal("user.rgw.lc"), "RGW_ATTR_LC, rgw_common.h:82 at v19.2.6, :87 at v20.2.4")
+			err := op.Run(ctx, &op.GetBucketLifecycle{}, f.req(http.MethodGet, "plain", ""))
+			Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration), "-ENOENT as ERR_NO_SUCH_LC, rgw_rest_s3.cc:3662-3666 and :3681-3682 at v19.2.6")
+			Expect(op.AsError(err).Message).To(BeEmpty(), "send_response sets no message")
+		})
+		It("answers NotImplemented for a bucket that carries a lifecycle attr, empty or not", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {1, 1, 0, 0, 0, 0}})
+			Expect(op.Run(ctx, &op.GetBucketLifecycle{}, f.req(http.MethodGet, "plain", ""))).To(MatchError(op.ErrNotImplemented))
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {}})
+			Expect(op.Run(ctx, &op.GetBucketLifecycle{}, f.req(http.MethodGet, "plain", ""))).To(MatchError(op.ErrNotImplemented),
+				"radosgw tests the attr's presence, not its length, rgw_rest_s3.cc:3662-3666 at v19.2.6")
+		})
+		It("refuses a requester the authorizer refuses, whether or not the bucket carries a lifecycle attr", func(ctx SpecContext) {
+			Expect(op.Run(ctx, &op.GetBucketLifecycle{}, asBob(http.MethodGet))).To(MatchError(op.ErrAccessDenied))
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {1}})
+			Expect(op.Run(ctx, &op.GetBucketLifecycle{}, asBob(http.MethodGet))).To(MatchError(op.ErrAccessDenied))
+		})
+		It("refuses an identity whose op mask lacks read before it reads the attr", func(ctx SpecContext) {
+			r := f.req(http.MethodGet, "plain", "")
+			r.Identity.OpMask = op.OpTypeModify
+			Expect(op.Run(ctx, &op.GetBucketLifecycle{}, r)).To(MatchError(op.ErrAccessDenied), "RGW_OP_TYPE_READ, rgw_op.h:1645 at v19.2.6")
 		})
 	})
 
