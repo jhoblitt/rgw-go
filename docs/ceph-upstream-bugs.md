@@ -265,6 +265,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
 | [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 | [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
+| [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12047,18 +12048,15 @@ Every new entry adds its row to this table, in document order.
     type at v20.2.4) to `RGWZoneGroupPlacementTierS3::dump`, which writes
     `access_key` and `secret` from the tier's key unredacted (`:966-979`
     at v19.2.6, `:1006-1019` at v20.2.4).
-  - The same cap reads the zone's system key: `RGWOp_ZoneConfig_Get`
-    checks `zone=read` (`rgw_rest_config.h:27-31` at both tags) and
-    `RGWZoneParams::dump` writes `system_key` through
-    `RGWAccessKey::dump_plain`, secret included (`rgw_zone.cc:330` and
-    `rgw_common.cc:2968-2972` at v19.2.6, `:335` and `:3030-3034` at
-    v20.2.4).
+  - The same cap reads the zone's system key ("radosgw hands the zone's
+    system key to any holder of zone=read").
 - **Impact:** a credential for an external S3 endpoint, which radosgw
   needs only to transition objects, reaches every admin user granted
   `zone=read`, a read cap a monitoring or tooling user may hold; Rook's
   own admin ops user is granted it (`rgwAdminOpsUserCaps`,
-  `pkg/operator/ceph/object/admin.go:117` in rook/rook). A Rook-managed
-  single-site store has no cloud tier unless an operator adds one.
+  `pkg/operator/ceph/object/admin.go:117` at rook/rook v1.20.7). A
+  Rook-managed single-site store has no cloud tier unless an operator adds
+  one.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** reproduces it, for fidelity: the period getter checks
   `zone=read` before any read and writes the tier's key as radosgw does
@@ -12104,3 +12102,36 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 12 review, 2026-10-12, reading the global
   ratelimit set; derived from the source, not reproduced.
+
+## radosgw hands the zone's system key to any holder of zone=read
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6 and
+  v20.2.4: `GET /admin/config?type=zone` writes the zone's system key,
+  access key and secret key, to a caller holding only the `zone=read` cap.
+  In a multisite configuration that key is the system user's, whose
+  requests every zone accepts as system requests. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_ZoneConfig_Get` checks `zone=read` alone
+    (`rgw_rest_config.h:27-31` at v19.2.6 and v20.2.4) and dumps the zone
+    parameters on the request's formatter, which carries no
+    `JSONEncodeFilter` (`rgw_rest_config.cc:35-47` at both tags).
+  - `RGWZoneParams::dump` writes `encode_json_plain("system_key",
+    system_key)` (`rgw_zone.cc:330` at v19.2.6, `:335` at v20.2.4), which
+    is `RGWAccessKey::dump_plain` in an object section, the secret
+    included (`rgw_zone.cc:43-48`; `rgw_common.cc:2968-2972` at v19.2.6,
+    `:3030-3034` at v20.2.4).
+- **Impact:** every admin user granted `zone=read`, a read cap a
+  monitoring or tooling user may hold, reads the system user's
+  credentials; Rook's own admin ops user is granted it
+  (`rgwAdminOpsUserCaps`, `pkg/operator/ceph/object/admin.go:117` at
+  rook/rook v1.20.7). A single-site zone often has no system key, and then
+  the secret is empty.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, for fidelity: `GET /admin/config?type=zone`
+  checks `zone=read` before any read and writes the system key as radosgw
+  does (`getZoneConfig`, `internal/admin/info.go`; `ZoneParams.Dump`,
+  `internal/meta/dump_zone.go`), and logs neither.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 review, 2026-10-12; derived from the
+  source, not reproduced.
