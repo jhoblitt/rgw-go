@@ -22,7 +22,42 @@ func newUserHandlers() map[string]HandlerFunc {
 		"create_user":   createUser,
 		"modify_user":   modifyUser,
 		"remove_user":   removeUser,
+		"list_user":     listUser,
 	}
+}
+
+// listUser is RGWOp_User_List::execute (driver/rados/rgw_rest_user.cc:58-70
+// at v19.2.6 and v20.2.4): max-entries through get_uint32 and the marker
+// through get_string, neither checked. RGWUser::list starts the flusher
+// (driver/rados/rgw_user.cc:2293 at v19.2.6, :2299 at v20.2.4).
+func listUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
+	o := op.NewListUsers()
+	if v, _, err := q.Args.Uint32("max-entries", o.MaxEntries); err == nil {
+		o.MaxEntries = v
+	}
+	o.Marker, _ = q.Args.String("marker", "")
+	if err := op.Run(ctx, o, r); err != nil {
+		return err
+	}
+	return WriteBody(w, r, q, func(f formatter.Formatter) { dumpUserList(f, o) })
+}
+
+// dumpUserList is RGWUser::list's document (driver/rados/rgw_user.cc:2295-2323
+// at v19.2.6, :2301-2329 at v20.2.4): count through dump_int, and the
+// marker as the lister returns it, unwrapped.
+func dumpUserList(f formatter.Formatter, o *op.ListUsers) {
+	f.OpenObjectSection("result")
+	f.OpenArraySection("keys")
+	for _, k := range o.Keys {
+		f.DumpString("key", k)
+	}
+	f.CloseSection()
+	f.DumpBool("truncated", o.Truncated)
+	f.DumpInt("count", int64(o.Count)) //nolint:gosec // RGWUser::list caps max-entries at 1000
+	if o.Truncated {
+		f.DumpString("marker", o.NextMarker)
+	}
+	f.CloseSection()
 }
 
 // boolArg is RESTArgs::get_bool as the read-only RGWOp_User_Info calls it,

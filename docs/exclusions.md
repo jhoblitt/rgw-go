@@ -690,7 +690,14 @@ review and verified against the tree.
   bucket index check given `check-objects` without `fix` a 200 that stops
   after the multipart entries, and a usage or user listing whose RADOS
   read fails midway a partial one. rgw-go renders the whole body first and
-  answers each of these with the error document and its status. Clients
+  answers each of these with the error document and its status. A
+  metadata listing whose RADOS read fails after its first page answers
+  the error status, but radosgw writes the error document into the
+  formatter that holds the keys listed so far, so its body is those keys
+  with the error document after them and the listing's sections left open
+  (`RGWOp_Metadata_List::execute` and `end_header`, `rgw_rest_metadata.cc:134-158`
+  and `rgw_rest.cc:620-624` at v19.2.6); rgw-go sends the error document
+  alone. Clients
   that read the body, go-ceph and Rook among them, see no difference on
   success; one that inspects the headers does.
 - **A purging bucket removal checks the index is empty at the end.**
@@ -1426,6 +1433,49 @@ review and verified against the tree.
   - A listing's marker is the token an rgw-go listing returned; a page
     holds the keys of up to its maximum objects the section keeps, and a
     maximum of 0 lists nothing and reports whether a key follows.
+- **Admin listing markers are rgw-go's own.** A truncated `GET
+  /admin/metadata/<section>` or `GET /admin/user?list` returns a marker
+  that resumes the listing only on the gateway that issued it. radosgw's
+  marker is a librados object cursor, and radosgw parses any marker it is
+  given as one (`rgw_list_pool`, [rgw_tools.cc:354-358](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L354-L358);
+  v20.2.4 [:370-374](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L370-L374)).
+  rgw-go's marker names the last key it returned and resumes after that
+  key's placement hash, because the cursor go-ceph exposes marks the next
+  batch rather than the last key, and rgw-go answers 400 InvalidArgument
+  for a radosgw marker. go-ceph's rgw/admin package, Rook's client, sends
+  no marker: its `GetUsers` asks for the unpaged list. A client that pages
+  and moves between gateways mid-listing starts the listing again. A
+  metadata marker of nothing but '=' lists from the beginning, as one that
+  is not base64 does on both gateways, where radosgw reads before the
+  marker's buffer
+  ([radosgw's from_base64 reads before an all-'=' input](ceph-upstream-bugs.md#radosgws-from_base64-reads-before-an-all--input)).
+- **The admin metadata API serves three sections, and differs from
+  radosgw's in three more ways.** `GET`, `PUT` and `DELETE
+  /admin/metadata` are radosgw's `RGWHandler_Metadata` ops
+  (`rgw_rest_metadata.cc`, the same at v19.2.6 and v20.2.4) over the
+  sections "The metadata sections write only what keeps a user or bucket
+  whole" describes, with these differences:
+  - Only the `user`, `bucket` and `bucket.instance` sections are served,
+    and the top-level listing, `GET /admin/metadata`, lists those three.
+    radosgw also serves and lists `account`, `group`, `otp`, `roles` and
+    `topic`, for each of which rgw-go answers 404 NoSuchKey.
+  - A put's `RGWX_UPDATE_VERSION` names the version the put read, in every
+    section. radosgw's user section names that version too, but its
+    `bucket` and `bucket.instance` puts name the version their write left,
+    as the write updates the tracker the header is read from
+    (`RGWObjVersionTracker::apply_write`, `driver/rados/rgw_rados.cc:185-197`
+    at v19.2.6, `:220-232` at v20.2.4).
+  - A put's document is read up to 16 MiB, and a longer one answers 400
+    InvalidArgument; radosgw reads a body of any length into memory
+    (`RGWOp_Metadata_Put::get_data`, `rgw_rest_metadata.cc:176-219`). A
+    body that ends short of its Content-Length answers 400 RequestTimeout.
+  - The document's `ver` must be an object whose `tag` is a string and
+    whose `ver` is a number, and its `mtime` must be in one of the two
+    forms a get writes; anything else answers 400 InvalidArgument, as the
+    sections' decoders refuse what `decode_json` takes but cannot mean.
+    radosgw takes a `ver` that is no object as the zero version, a tag
+    given as an object as that object's text, and an mtime in any form
+    `utime_t::parse_date` reads.
 - **aws-chunked trailer sections are accepted up to 1 KiB, and a longer
   one is refused with 409.** radosgw reads an aws-chunked upload's trailer
   section, counted from the CRLF that ends the last data chunk through the
@@ -1579,7 +1629,12 @@ review and verified against the tree.
   byte-exact by construction, with one known exception until they are
   modelled: radosgw re-encodes an old v1 website configuration as v2 when
   it rewrites the bucket, while rgw-go writes the v1 bytes back. The phase
-  that serves website, object lock or bucket sync policy models them.
+  that serves website, object lock or bucket sync policy models them. The
+  admin API's `GET` or `PUT /admin/metadata/bucket.instance` of a bucket
+  holding a website configuration or a sync policy answers 501
+  NotImplemented, where radosgw renders the record, and writes a put's
+  document even when that document holds neither: the put reads the
+  stored record in its rendered form before it writes.
 - **Zonegroup and period JSON with sync policy groups is not rendered.** The
   zonegroup's and period's sync policy is also kept opaque, and rgw-go
   refuses to render their JSON when a sync policy holds groups. Rook creates
