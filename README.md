@@ -46,14 +46,27 @@ rgw-go and compares the outcomes with radosgw's recorded baseline,
 `s3-tests` job is the check to require. `gh workflow run s3tests.yml -f release=tentacle`
 runs Tentacle's comparison on demand.
 
-Bumping the s3-tests pin (`hack/s3tests/run.sh`), the Ceph pin, or a deselect list
-needs both releases' baselines re-recorded in the same pull request, since the
-comparison refuses a baseline recorded under another s3-tests commit, Ceph version
-or deselect lists. `gh workflow run s3tests.yml --ref <branch> -f record-baseline=true`
-and the same with `-f release=tentacle` record radosgw's baseline on the runner,
-upload it as the artifact `s3tests-baseline-<release>`, and compare rgw-go with it;
-commit the artifact's file as `test/s3tests/baseline/<release>.json`. Locally,
-`make s3tests-record RELEASE=<release>` writes the same file.
+radosgw's baselines, `test/s3tests/baseline/` and `test/admin/baseline/`, are
+append-only ledgers: each outcome carries the s3-tests commit or go-ceph tag and the
+Ceph version it was recorded at, and an entry that changes an outcome carries the
+reason for it. `make check` validates them, and the `ledgers` workflow, which
+runs on every pull request as the default branch holds it and runs nothing from
+the pull request, fails a pull request that edits or removes what a ledger holds, leaves an appended
+change without its reason, or appends an s3-tests pin it cannot prove; its summary
+lists every appended entry that changes an outcome, with its reason, for review.
+A Ceph pin bump, or an s3-tests pin bump that does more than add tests, records both
+releases again in the same pull request, as new entries; a pin bump that only adds
+tests records just those. [hack/rooket/README.md](hack/rooket/README.md), "Parity
+baselines", has the procedures.
+
+`gh workflow run s3tests.yml --ref <branch> -f record-baseline=true` and the same
+with `-f release=tentacle` record radosgw on the runner as a draft appended to a
+copy of the committed ledger, compare rgw-go with it, list each changed outcome in
+the job summary, and upload the copy as the artifact `s3tests-baseline-<release>`.
+A draft's changed outcomes carry the reason `unreviewed: recorded by <run>`, which
+`make check` and the `ledgers` job refuse: replace each with the change's own reason
+before committing the copy as `test/s3tests/baseline/<release>.json`. Locally,
+`make s3tests-record RELEASE=<release> REASONS=<file>` appends to the same file.
 
 The `rook` workflow runs Rook's own object-store suite, reduced to the phase 1
 subset, on kind against the derived image with rgw-go as radosgw, for both releases

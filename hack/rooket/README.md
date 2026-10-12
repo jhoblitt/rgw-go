@@ -537,11 +537,13 @@ make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1    # GATEWAY=rgw-go runs the
 
 `hack/s3tests/run.sh` runs s3-tests, the suite ceph/ceph carries in
 `src/test/rgw/s3-tests` now that ceph/s3-tests takes no changes, at the commit
-it pins (`run.sh --print-commit`) on the `rgw-go-s3tests` branch of
-[jhoblitt/ceph](https://github.com/jhoblitt/ceph): ceph/ceph `main` with the
-suite fixes rgw-go needs on top. A commit is pushed to that branch before
-the change that pins it, and the branch only ever gains commits, so no
-rewrite can take a pinned commit away. It runs
+`hack/s3tests/PIN` pins (`run.sh --print-commit`) on the `rgw-go-s3tests`
+branch of [jhoblitt/ceph](https://github.com/jhoblitt/ceph): ceph/ceph `main`
+with the suite fixes rgw-go needs on top. `PIN` is the single place the pin is
+set: exactly 40 lowercase hex digits and a newline, which `run.sh` and the
+recorder, `hack/parity`, read the same way, by that one rule.
+A commit is merged into that branch before the change that pins it, and the
+branch only ever gains commits, so no rewrite can take a pinned commit away. It runs
 against the release's radosgw, or against the rgw-go whose URL
 `out/<release>/rgw-go.endpoint` holds. The set
 is `test_s3.py` and `test_headers.py` minus the s3-tests markers `run.sh`
@@ -605,10 +607,15 @@ so of all of Ceph only the suite in `src/test/rgw/s3-tests` is on disk, with
 the files directly in its parent directories and at the top level, which
 cone mode always keeps: a few megabytes. pytest runs from the suite's
 directory. It and the venv
-in `out/venv` are rebuilt when the pin changes; the pin is bumped by hand,
-and the baselines re-recorded with it. `run.sh`
-exits 0 when pytest ran the whole set, whatever the tests' outcomes, and
-nonzero when it could not.
+in `out/venv` are rebuilt when the pin changes, which "Moving the s3-tests
+pin" below covers. `run.sh` exits 0 when pytest ran the whole set, whatever
+the tests' outcomes, and nonzero when it could not.
+
+A fourth argument, a file of pytest node ids
+(`s3tests/functional/test_s3.py::test_x`) one a line, `#` starting a comment,
+runs only those tests; `make s3tests TESTS=FILE` passes it. `run.sh` stops
+before any test runs when an id is not in the set: no such test at the pin,
+or the markers or a deselect list remove it.
 
 To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
 `S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
@@ -616,9 +623,11 @@ calls it, run another clone of Ceph, a local clone's path among them (a
 relative path is taken from the directory `run.sh` starts in, which is the
 repository root under `make`), at another commit, which must be a full
 commit id. `run.sh --print-commit`
-prints that commit, so a result recorded from such a run carries it and
-`make s3tests-parity` refuses to compare it with a baseline recorded at the
-pin; `bin/parity diff --allow-meta-drift` compares the outcomes anyway. A
+prints that commit, and on stderr that it came from the environment, not
+`PIN`, so a result recorded from such a run carries it; `make s3tests-parity`
+refuses to compare it with the ledger, whose chain ends at the pin, and
+`make s3tests-record` refuses to record it. `bin/parity diff
+--allow-meta-drift` compares the outcomes anyway. A
 local clone serves the fetch without file contents only with
 `uploadpack.allowFilter` set: without it git fetches every file of the
 commit, which a clone made without file contents cannot serve.
@@ -629,62 +638,202 @@ S3TESTS_REPO=$HOME/src/ceph S3TESTS_COMMIT=$(git -C "$HOME/src/ceph" rev-parse H
 	make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1
 ```
 
-Rewording commits, for example to sign them before they are pushed, gives
-the pin new commit ids but keeps every tree the baselines were recorded
-from. So `hack/s3tests/repin.sh` moves the pin in `run.sh` and both
-baselines' `s3tests_commit` together, with no re-record. Its first argument
-is a clone of Ceph that holds both the pinned and the new commit, and it
-stops unless each commit on the two lines since they met has the same tree,
-in the same order. Push the new commit to `rgw-go-s3tests` before the change
-that pins it: `run.sh` cannot fetch a pin that is not pushed, and says so.
-
-```sh
-hack/s3tests/repin.sh "$HOME/src/ceph" "$(git -C "$HOME/src/ceph" rev-parse rgw-go-s3tests)"
-```
-
 Each line of a deselect list is a pytest node id and, after `#`, the calls
 that need the feature. `run.sh` stops before any test runs when a line names
 no test the markers leave, because it was renamed, removed or marked at the
 pinned commit, or when a line would also remove a test the lists do not name,
 since pytest's `--deselect` removes every node id that starts with its
-argument. `run.sh --print-deselect` prints a digest of the listed ids, which a
-recorded baseline carries. The PR that lands a later phase's feature deletes
-its lines and re-records the radosgw baselines.
+argument. `run.sh --print-deselect` prints a digest of the listed ids, which
+each recorded entry carries in its meta; the comparison no longer checks it.
+The PR that lands a later phase's feature deletes its lines and records the
+tests they free in both ledgers, as "Adding tests" below does.
 
 ## Parity baselines
 
-`test/s3tests/baseline/<release>.json` is radosgw's outcome for every test of
-the set on that release's cluster, recorded by `hack/parity` from two runs in a
-row; a test whose outcome differed between them is listed as `unstable`, and a
-comparison skips it. rgw-go's run is compared with it, and must match every
-other outcome, failures included. `hack/parity`'s package doc holds the file's
-schema and the comparison's rules.
+`test/s3tests/baseline/<release>.json` is radosgw's baseline on that
+release's cluster: a ledger, which only ever grows. Its chain names each
+s3-tests commit the suite has been pinned at, and each test holds a list of
+entries, each an outcome radosgw gave, stamped with the commit, the Ceph
+version and the time it was recorded at, the number of runs, whether the
+runs disagreed, which makes the test `unstable`, and why the entry was
+needed. A test's last entry is its baseline. rgw-go's run is compared with
+it, and must match every outcome but an unstable one's, failures included.
+`hack/parity`'s package doc holds the ledger's schema and the comparison's
+rules.
+
+Nothing in a ledger is edited, removed or reordered. A record appends an
+entry only for a test whose outcome, unstable flag or Ceph version changed,
+or whose entry an s3-tests change made stale, and an entry that changes the
+outcome or the unstable flag, or retires a test the set no longer runs,
+needs a reason. That rule is the guard against a radosgw regression
+entering the baseline unremarked: a failure recorded as the baseline lets
+the same failure on rgw-go pass. A reason that starts `unreviewed:` marks a
+draft, which the comparison accepts but nothing lets into the repository.
+
+A reason must say something, a letter or a digit at least, and no ledger text
+may hold a control or format character, a zero-width space or a bidi override
+among them.
+
+`make check` validates the four ledgers. The `ledgers` workflow runs
+`hack/parity check --base --head` on every pull request, a required check that
+reports even when no ledger changes; the ledger directories it reads and the
+`run.sh` a pin's proof reads come from the default branch's build and the base
+branch's history. It fails a pull request that removes a ledger, changes
+what one holds other than by appending, replaces one with a link, or adds one
+anywhere else; that leaves an appended change or base pin without its reason
+or with a draft's; or that appends an additive or reworded s3-tests pin which
+`hack/parity pin`'s proof, run again against a fetch of `jhoblitt/ceph`
+without file contents, does not admit as it says. Its summary lists each
+changed ledger's appended pins, each base pin with its reason and every
+outcome it re-stamps, counting those it carries forward unchanged, and every
+appended entry that changes an outcome or an unstable flag, with its reason.
+Everything `hack/parity` prints escapes control characters and holds no GitHub
+Actions workflow command, so text in a ledger reads back in the job's log as it
+was written.
+
+These are a regression test's integrity checks against honest mistakes: they
+keep the baseline append-only, require a reason for a changed outcome, keep a
+pin bump that is not purely additive from carrying old outcomes over, and keep
+pins on `rgw-go-s3tests`'s history. Every s3-tests pin the pull request brings
+in, in a ledger or in `hack/s3tests/PIN`, must be on that history, as "Moving
+the s3-tests pin" describes, and `PIN` must hold it by the rule.
+
+The workflow runs on `pull_request_target`, so GitHub runs it as the default
+branch holds it: every pull request is checked by the rules already merged,
+and a change to the workflow takes effect once it merges. The job builds the
+checker from the default branch, with `setup-go`'s cache off and module and
+build caches of its own, then fetches the pull request's head by its commit
+id and reads that commit's ledgers from git, against the merge base of the
+head and the base branch. `pull_request_target` runs with the repository's
+token, so the job reads the pull request and never checks it out or runs
+it.
+
+### Recording
 
 ```sh
 make gate RELEASE=squid            # first: the gate counts the zone's users
 make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity too
-make s3tests-record RELEASE=squid  # OUT=FILE writes it elsewhere
+make s3tests-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
 `make s3tests-record` runs the set against radosgw twice, as `RUN=base1` and
-`RUN=base2`, and records both runs in `OUT`, by default
+`RUN=base2`, and appends both runs to `OUT`, by default
 `test/s3tests/baseline/<release>.json`, with the meta `release`,
 `ceph_version` from `manifest.json`, `gateway=radosgw`, `s3tests_commit`,
 `deselect` and `pytest_freeze`. It refuses to start before `make rgw-go-up`,
 so that radosgw records under the parity options rgw-go is compared under.
-The `s3tests` workflow's `record-baseline` input runs the same target on the
-runner and uploads the file as the artifact `s3tests-baseline-<release>`. A
-re-record there and one here differ only in `recorded`, in `pytest_freeze`
-when the hosts' Python or packages differ, and in any outcome the two hosts'
-radosgw give differently, which is reported rather than committed silently.
+A record that would change an outcome or an unstable flag, or retire a test,
+stops and names each one; nothing is written. Each needs a line in
+`REASONS`, a file of a test id, blanks and the reason, one a line:
 
-A baseline carries the s3-tests commit, the deselect lists' digest, the
-release and its Ceph version, and `make parity-check` refuses to compare
-results that differ in any of them: bumping the s3-tests pin or the Ceph pin,
-or changing a deselect list, re-records both releases' baselines in the same
-change. `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
-`.freeze` file beside the last run, a record of the venv rather than a key
-the comparison checks.
+```text
+s3tests.functional.test_s3::test_x radosgw 19.2.7 answers 400 where 19.2.6 answered 200
+```
+
+`pytest_freeze` is the first twelve hex digits of the SHA-256 of the
+`.freeze` file beside the last run, a record of the venv rather than
+something the comparison checks.
+
+The `s3tests` workflow's `record-baseline` input runs the same target on the
+runner with `DRAFT`, appending to a copy of the committed ledger as a draft:
+each change that needs a reason gets `unreviewed: recorded by <run URL>`.
+The job summary lists those entries, the workflow compares rgw-go with the
+copy, and uploads it as the artifact `s3tests-baseline-<release>`. A record
+there and one here differ only in `recorded`, in `pytest_freeze` when the
+hosts' Python or packages differ, and in any outcome the two hosts' radosgw
+give differently, which the summary shows rather than letting it in
+silently. `make check` and the `ledgers` job refuse the draft until each
+`unreviewed:` reason is replaced by the change's own, and a reasons file
+cannot give one. Every reader holds a ledger to the exact form
+`hack/parity` writes, one pin or entry a line, so that its diff reads as the
+tools read it; `go run ./hack/parity fmt FILE` rewrites a hand-edited ledger
+into that form.
+
+### A full record
+
+A full record, at the pin, is due when the Ceph pin moves: every entry
+under the old version is stale, and the comparison names each test so
+until the record appends one under the new version. It also enters the tests
+a deselect list stops removing and retires those one starts removing. When
+the s3-tests pin moves to a commit `make s3tests-pin` cannot prove keeps the
+outcomes, write the new commit to `hack/s3tests/PIN` by hand and record in full with
+`PIN_REASON`, a line saying why the move cannot be proven: the record appends
+a base pin carrying it, after which every earlier entry is stale until the
+record replaces it. Such a pin re-stamps every outcome at a source no proof
+ties to the one before, so a record that would append one without
+`PIN_REASON` stops, and `DRAFT` gives it the draft's reason, which `make
+check` refuses like any other.
+
+### Moving the s3-tests pin
+
+```sh
+make s3tests-pin CLONE="$HOME/src/ceph" NEW="$(git -C "$HOME/src/ceph" rev-parse rgw-go-s3tests)" TESTS=added.txt
+```
+
+Every s3-tests pin, in `hack/s3tests/PIN` or a ledger, must be the tip of
+`jhoblitt/ceph`'s `rgw-go-s3tests` or an ancestor of it, so that pins stay on
+the branch's history: a commit of a fork, of another branch or of none is
+refused as a likely mistake, by `make s3tests-pin` and by the `ledgers`
+workflow, each asking a treeless fetch of the branch. The proof below is a
+regression test's check against honest mistakes: it keeps a pin bump that is
+not purely additive from carrying the old outcomes over, and stays
+conservative, so whatever it does not recognize needs a full record.
+
+`make s3tests-pin` runs `hack/parity pin`, which moves the pin in `PIN` and
+appends it to both ledgers when `NEW` is on `rgw-go-s3tests` and a clone of
+Ceph that holds both the pin and `NEW` proves the move keeps every outcome
+they hold:
+
+- additive, when `NEW` descends from the pin and the suite's directory only
+  gains tests: no line changed or removed, no file added or removed, and
+  nothing changed but test modules (`test_*.py`) and `pytest.ini`. A test
+  module may gain only whole new tests between its existing statements: a
+  one-line `def test_<name>(<bare names>):`, a name the module did not hold,
+  with its body, every line of it indented, under any number of bare
+  `@pytest.mark.<name>` decorators, each followed by a comment at most, as
+  the suite writes them, and each naming a marker `pytest.ini` registers at
+  `NEW`, so that no built-in such as `parametrize` or `skipif` passes. A
+  mark's arguments refuse, literal or not: Python evaluates them when pytest
+  imports the module, and pytest judges them when it collects it, where a
+  `parametrize` whose names and values disagree fails the module and every
+  test in it. Any other top-level line, a fixture, an
+  import, an assignment, a class, a comment, refuses, as does any line added
+  inside an existing test or statement. An added line must be printable ASCII
+  ending at a line feed, with no tab, no `;` and no backslash at its end, and
+  no string or continuation may carry it across lines: the proof does not
+  parse Python, and these keep its reading of each line Python's; a test
+  they refuse needs a full record. `pytest.ini` may gain only markers, with
+  no control character or line separator, which pytest's ini reader takes
+  for a line break. It writes the node ids of the tests it adds to `run.sh`'s
+  test files to `TESTS`. The proof cannot judge what it would have to run
+  Python to see: what the new tests do when they run.
+- reworded, when the commits on the two lines since they met are as many,
+  with the same tree at each, as rewording commits, for example to sign them
+  before they are pushed, leaves them.
+
+Anything else it refuses, naming each line and file that keeps the move from
+being additive: that needs a full record. Merge `NEW` into `rgw-go-s3tests`
+before the change that pins it: `hack/parity pin` and the `ledgers` job both
+refuse a commit the branch does not hold, and the job proves the pin again
+from there.
+
+### Adding tests
+
+A test added to s3-tests needs only its own record, not the whole set
+again. Push it to `rgw-go-s3tests`, then:
+
+```sh
+make s3tests-pin CLONE="$HOME/src/ceph" NEW=<commit> TESTS=added.txt
+make gate RELEASE=squid && make rgw-go-up RELEASE=squid
+make s3tests-record-tests RELEASE=squid TESTS=added.txt
+```
+
+and the last two lines again with `RELEASE=tentacle`. Delete from
+`added.txt` any test the set's markers remove, which `run.sh` refuses.
+`make s3tests-record-tests` runs the listed tests against radosgw twice, as
+`RUN=tests1` and `RUN=tests2`, and appends them alone; every other test
+keeps its entries. A new test's first entry needs no reason. Commit
+`run.sh` and both ledgers together.
 
 ## Comparing rgw-go with the baseline
 
@@ -702,11 +851,14 @@ started, as `make s3tests GATEWAY=rgw-go RUN=parity`, records the run in
 `manifest.json`, the s3-tests commit and the deselect digest, and compares it
 with `BASELINE`, by default `test/s3tests/baseline/<release>.json`. It needs a
 populated cluster, for `manifest.json`. It prints one line per test whose
-outcome differs and fails unless there is none. `hack/parity` runs as a built
+outcome differs, and `<test>: baseline stale, re-record` for each whose last
+entry was recorded under another Ceph version or before the chain's last
+base pin, and fails unless there is none. `hack/parity` runs as a built
 binary, `bin/parity`, so make's error line carries the comparison's own
-status: 1 for a test that differs, 2 for a baseline recorded under another
-s3-tests commit, Ceph version, release or deselect lists, which is
-re-recorded as under "Parity baselines". make itself exits 2 for either.
+status: 1 for a test that differs or is stale, 2 for a run at another
+s3-tests commit than the ledger's head, or for another release. A stale
+test and a moved pin are recorded as under "Parity baselines". make itself
+exits 2 for either status.
 
 The comparison skips the tests `test/s3tests/known-differences-<release>.txt`
 lists: one regular expression per line over `hack/parity`'s test ids
@@ -774,7 +926,8 @@ each run it resets the checkout to the tag and applies two patches:
   `t`, so `hack/parity` compares each subtest.
 
 Bumping the tag regenerates both patches with `git diff` in a checkout of the
-new tag and re-records both baselines.
+new tag and records both ledgers in full, with `PIN_REASON` naming the bump,
+which appends a base pin at the new tag, carrying it, to each.
 
 `go test` skips, on both gateways, the subtests
 `hack/admin/deselect-phase2.txt` names: subtests that set up what they read
@@ -783,9 +936,9 @@ CreateBucket with object lock, which rgw-go answers 501 until phase 2. Each
 line is a test id as `go test -json` reports it; `run.sh` turns the lines
 into one `-skip` pattern, stops before the run when a line names no method
 or subtest of the checkout, and after it when the run still reports one.
-`run.sh --print-deselect` prints a digest of the listed ids, which a
-recorded baseline carries. The PR that lands a feature deletes its lines and
-re-records both baselines.
+`run.sh --print-deselect` prints a digest of the listed ids, which each
+recorded entry carries in its meta. The PR that lands a feature deletes its
+lines and records both ledgers, which enters the subtests it frees.
 
 `go test` runs the suite with `-tags ceph_preview`, which the account tests
 need, and with `CEPH_CONF` naming `out/<release>/ceph.conf`, since
@@ -845,25 +998,28 @@ beside it. `run.sh` exits 0 when the suite ran to its end, whatever the tests'
 outcomes, and nonzero when it did not: the package failed to build, the test
 binary panicked, or the gateway could not be reached.
 
-`test/admin/baseline/<release>.json` is radosgw's outcome for each test,
-recorded from two runs in a row:
+`test/admin/baseline/<release>.json` is radosgw's ledger for the suite, as
+"Parity baselines" describes for s3-tests, its chain the go-ceph tags it has
+been pinned at:
 
 ```sh
 make rgw-go-up RELEASE=squid     # sets the parity options on radosgw's entity too
-make admin-record RELEASE=squid  # OUT=FILE writes it elsewhere
+make admin-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
 `make admin-record` runs the suite against radosgw twice, as `RUN=base1` and
-`RUN=base2`, and records both runs in `OUT`, by default
+`RUN=base2`, and appends both runs to `OUT`, by default
 `test/admin/baseline/<release>.json`, with the meta `release`, `ceph_version`
 from `manifest.json`, `gateway=radosgw`, `go_ceph_tag` and `deselect`. Like
 `make s3tests-record` it refuses to start before `make rgw-go-up`, so that
-radosgw records under the parity options rgw-go is compared under. A test
-whose outcome differed between the runs is listed as `unstable`, and a
-comparison skips it. The comparison refuses results whose go-ceph tag,
-deselect list, release or Ceph version differ, so bumping `GO_CEPH_TAG` or a
-Ceph pin, or changing a deselect list, re-records both releases' baselines in
-the same change.
+radosgw records under the parity options rgw-go is compared under, and it
+stops on a changed outcome or unstable flag, or a retired subtest, that
+`REASONS` gives no reason for. A subtest whose outcome differed between the
+runs is `unstable`, and a comparison skips it. The comparison refuses a run
+at another go-ceph tag than the ledger's head or for another release, and
+names each subtest stale under another Ceph version, so bumping
+`GO_CEPH_TAG` or a Ceph pin records both releases' ledgers in the same
+change.
 
 Each baseline holds the suite's 82 subtests less the two the deselect list
 skips. On both releases radosgw fails
@@ -899,8 +1055,8 @@ started, as `make admin-suite GATEWAY=rgw-go RUN=parity`, records the run in
 with `ADMIN_BASELINE`, by default `test/admin/baseline/<release>.json`. It
 prints one line per subtest whose outcome differs and fails unless there is
 none; as for `make s3tests-parity`, `bin/parity`'s status is 1 for a
-subtest that differs and 2 for a baseline recorded under another go-ceph tag,
-deselect list, Ceph version or release. No subtest differs for a recorded
+subtest that differs or is stale and 2 for a run at another go-ceph tag than
+the ledger's head, or for another release. No subtest differs for a recorded
 exclusion at this tag, so there is no known-differences list: a subtest that
 needs a later phase's feature goes on that phase's deselect list, and any
 other difference is a bug in rgw-go.

@@ -28,7 +28,8 @@ source "${here}/lib.sh"
 
 readonly GO_CEPH_REPO=https://github.com/ceph/go-ceph
 # Bump by hand: regenerate both patches, recheck suite_version below, and
-# re-record the baselines.
+# record both ledgers in full with make admin-record, which appends a base
+# pin at the new tag.
 readonly GO_CEPH_TAG=v0.39.0
 
 # The subtests of later phases' features, by go test id, one file per phase.
