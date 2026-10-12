@@ -108,8 +108,16 @@ bench-plan-check: ## Fail when a gateway comparison profile's default dataset is
 	  BENCH_PLAN=1 BENCH_IDLE_AVAIL=$(BENCH_PLAN_IDLE) hack/bench/gateway.sh tentacle radosgw 2>&1) || \
 	  { printf '%s\n' "$$out"; exit 1; }
 
+# The parity ledgers, radosgw's baselines; hack/parity's package doc owns
+# their schema.
+LEDGERS = $(wildcard test/s3tests/baseline/*.json test/admin/baseline/*.json)
+
+.PHONY: ledger-check
+ledger-check: ## Fail when a parity ledger breaks its schema or the reason rule
+	go run ./hack/parity validate $(LEDGERS)
+
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
@@ -177,37 +185,55 @@ read-gate: need-release ## Read the populated corpus through rgw-go and the RELE
 	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) hack/rooket/read-gate.sh $(RELEASE) $(RGW_GO_FLAGS)
 
 # The gateway s3tests and admin-suite run against, and the run id that names
-# their reports.
+# their reports. TESTS names a file of pytest node ids, one a line, for
+# s3tests to run alone, s3tests-record-tests to record and s3tests-pin to
+# write.
 GATEWAY ?= radosgw
 RUN ?= local
+TESTS ?=
 
 .PHONY: s3tests
-s3tests: need-release ## Run the phase 1 s3-tests set against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
-	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN)
+s3tests: need-release ## Run the phase 1 s3-tests set, or the TESTS file's tests, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
+	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(TESTS)
 
 .PHONY: admin-suite
 admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster; go test -json under hack/admin/_out/
 	ROOKET=$(ROOKET_BIN) hack/admin/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
-# hack/parity's package doc owns the result file and the comparison rules.
+# hack/parity's package doc owns the ledger, the result file and the
+# comparison rules. A record that appends to a ledger takes the reasons for
+# its changed outcomes from REASONS, a file of test ids each followed by its
+# reason. DRAFT, when set, makes the ledger a draft: a change REASONS does not
+# cover gets the reason "unreviewed: DRAFT", which diff accepts and make
+# ledger-check and the ci workflow refuse. PIN_REASON says why a full record
+# at a source the ledger does not pin re-stamps every outcome there, which the
+# base pin it appends must carry.
+REASONS ?=
+DRAFT ?=
+PIN_REASON ?=
+RECORD_FLAGS = $(if $(REASONS),--reasons $(REASONS)) $(if $(DRAFT),--draft "$(DRAFT)") \
+  $(if $(PIN_REASON),--pin-reason "$(PIN_REASON)")
+
 .PHONY: parity-record
-parity-record: ## Record a baseline from RUN-FILES: make parity-record SUITE=s3tests FORMAT=junit OUT=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.6 s3tests_commit=..." FILES="a.xml b.xml"
-	go run ./hack/parity record --format $(FORMAT) --suite $(SUITE) --out $(OUT) $(foreach kv,$(META),--meta $(kv)) $(FILES)
+parity-record: ## Append RUN-FILES to a ledger: make parity-record SUITE=s3tests FORMAT=junit LEDGER=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.6 s3tests_commit=..." FILES="a.xml b.xml" [SUBSET=1] [REASONS=FILE] [PIN_REASON=TEXT]
+	go run ./hack/parity record --format $(FORMAT) --suite $(SUITE) --ledger $(LEDGER) $(if $(SUBSET),--subset) $(RECORD_FLAGS) \
+	  $(foreach kv,$(META),--meta $(kv)) $(FILES)
 
 .PHONY: parity-check
-parity-check: ## Compare a candidate result with a baseline: make parity-check BASELINE=... CANDIDATE=...
+parity-check: ## Compare a candidate result with a ledger: make parity-check BASELINE=... CANDIDATE=...
 	go run ./hack/parity diff --baseline $(BASELINE) --candidate $(CANDIDATE)
 
-# The baseline s3tests-parity compares rgw-go's run with; a re-record passes
-# the one it has just written. hack/parity runs as a built binary because go
-# run exits 1 for any failure: make's error line then names the diff's own
-# status, 1 for a test that differs and 2 for a baseline recorded under
-# another s3-tests commit, Ceph version, release or deselect lists.
+# The ledger s3tests-parity compares rgw-go's run with; a record made on the
+# runner passes the copy it has just appended to. hack/parity runs as a
+# built binary because go run exits 1 for any failure: make's error line
+# then names the diff's own status, 1 for a test that differs or whose entry
+# is stale under another Ceph version, and 2 for a run at another s3-tests
+# commit than the ledger's head, or for another release.
 BASELINE ?= test/s3tests/baseline/$(RELEASE).json
 
 .PHONY: s3tests-parity
-s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and compare with radosgw's recorded baseline
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity
+s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and compare with radosgw's ledger
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity TESTS=
 	go build -o bin/parity ./hack/parity
 	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
 	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
@@ -215,12 +241,12 @@ s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and 
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
 
-# The baseline admin-parity compares rgw-go's run with; a re-record passes the
-# one it has just written.
+# The ledger admin-parity compares rgw-go's run with; a record made elsewhere
+# passes the copy it has just appended to.
 ADMIN_BASELINE ?= test/admin/baseline/$(RELEASE).json
 
 .PHONY: admin-parity
-admin-parity: need-release ## Run go-ceph's rgw/admin suite against rgw-go and compare with radosgw's recorded baseline
+admin-parity: need-release ## Run go-ceph's rgw/admin suite against rgw-go and compare with radosgw's ledger
 	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity
 	go build -o bin/parity ./hack/parity
 	bin/parity record --format gotest --suite admin --out $(CLUSTER_OUT)/admin-rgw-go.json \
@@ -229,11 +255,12 @@ admin-parity: need-release ## Run go-ceph's rgw/admin suite against rgw-go and c
 	  hack/admin/_out/$(RELEASE)-rgw-go-parity.jsonl
 	bin/parity diff --baseline $(ADMIN_BASELINE) --candidate $(CLUSTER_OUT)/admin-rgw-go.json
 
-# Where admin-record writes radosgw's baseline: OUT, else the committed one.
+# The ledger admin-record appends radosgw's runs to: OUT, else the committed
+# one.
 ADMIN_RECORD_OUT = $(or $(OUT),test/admin/baseline/$(RELEASE).json)
 
 .PHONY: admin-record
-admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosgw, after rgw-go-up, and record its baseline in OUT (default test/admin/baseline/RELEASE.json)
+admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/admin/baseline/RELEASE.json)
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
 	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1
 	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2
@@ -242,32 +269,56 @@ admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosg
 	ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
 	tag=$$(hack/admin/run.sh --print-tag) && \
 	deselect=$$(hack/admin/run.sh --print-deselect) && \
-	bin/parity record --format gotest --suite admin --out $(ADMIN_RECORD_OUT) \
+	bin/parity record --format gotest --suite admin --ledger $(ADMIN_RECORD_OUT) $(RECORD_FLAGS) \
 	  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
 	  --meta go_ceph_tag=$$tag --meta deselect=$$deselect \
 	  hack/admin/_out/$(RELEASE)-radosgw-base1.jsonl hack/admin/_out/$(RELEASE)-radosgw-base2.jsonl
 
-# Where s3tests-record writes radosgw's baseline: OUT, else the committed one.
+# The ledger s3tests-record and s3tests-record-tests append radosgw's runs to:
+# OUT, else the committed one.
 S3TESTS_RECORD_OUT = $(or $(OUT),test/s3tests/baseline/$(RELEASE).json)
+
+# s3tests_append RUN1,RUN2[,FLAGS] appends radosgw's two s3-tests runs to the
+# ledger S3TESTS_RECORD_OUT.
+define s3tests_append
+go build -o bin/parity ./hack/parity
+mkdir -p $(dir $(S3TESTS_RECORD_OUT))
+ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
+commit=$$(hack/s3tests/run.sh --print-commit) && \
+deselect=$$(hack/s3tests/run.sh --print-deselect) && \
+freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-$(2).freeze | cut -c1-12) && \
+bin/parity record --format junit --suite s3tests --ledger $(S3TESTS_RECORD_OUT) --pin-file hack/s3tests/PIN $(3) $(RECORD_FLAGS) \
+  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
+  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze \
+  hack/s3tests/out/$(RELEASE)-radosgw-$(1).xml hack/s3tests/out/$(RELEASE)-radosgw-$(2).xml
+endef
 
 # rgw-go-up sets the parity options on radosgw's entity as well as rgw-go's,
 # so a baseline recorded after it is radosgw under the options rgw-go is
 # compared under; its endpoint file is the sign it has run.
 .PHONY: s3tests-record
-s3tests-record: need-release ## Run the phase 1 s3-tests set twice against radosgw, after rgw-go-up, and record its baseline in OUT (default test/s3tests/baseline/RELEASE.json)
+s3tests-record: need-release ## Run the phase 1 s3-tests set twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2
-	go build -o bin/parity ./hack/parity
-	mkdir -p $(dir $(S3TESTS_RECORD_OUT))
-	ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
-	commit=$$(hack/s3tests/run.sh --print-commit) && \
-	deselect=$$(hack/s3tests/run.sh --print-deselect) && \
-	freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-base2.freeze | cut -c1-12) && \
-	bin/parity record --format junit --suite s3tests --out $(S3TESTS_RECORD_OUT) \
-	  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
-	  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze \
-	  hack/s3tests/out/$(RELEASE)-radosgw-base1.xml hack/s3tests/out/$(RELEASE)-radosgw-base2.xml
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 TESTS=
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 TESTS=
+	$(call s3tests_append,base1,base2)
+
+.PHONY: s3tests-record-tests
+s3tests-record-tests: need-release ## Run the TESTS file's s3-tests twice against radosgw, after rgw-go-up, and append them alone to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
+	@test -n "$(TESTS)" || { echo "set TESTS to a file of pytest node ids, one a line, such as make s3tests-pin writes" >&2; exit 1; }
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 TESTS=$(TESTS)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 TESTS=$(TESTS)
+	$(call s3tests_append,tests1,tests2,--subset)
+
+# A clone of Ceph that holds the s3-tests pin and NEW, the commit to pin.
+CLONE ?=
+NEW ?=
+
+.PHONY: s3tests-pin
+s3tests-pin: ## Move the s3-tests pin to NEW, a commit of rgw-go-s3tests proven additive or reworded in CLONE, and append it to both ledgers; an additive move writes its tests to TESTS
+	@test -n "$(CLONE)" -a -n "$(NEW)" || { echo "set CLONE to a clone of Ceph and NEW to the commit to pin" >&2; exit 1; }
+	go run ./hack/parity pin --clone $(CLONE) --new $(NEW) $(if $(TESTS),--tests $(TESTS))
 
 .PHONY: bench-seam
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
