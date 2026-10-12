@@ -86,6 +86,9 @@ type BucketAdminStore interface {
 	// Info.Owner, and in the ACL replace the old owner's canonical grant by a
 	// FULL_CONTROL grant for the new owner and the owner itself; other grants
 	// stay. ECANCELED is retried up to 10 times (adopt_user_bucket, rgw_user.cc:1681-1712).
+	// rec names the instance and the owner it is taken from; a round that finds
+	// the name loading another instance, or the instance under another owner,
+	// is ErrNoSuchBucket.
 	ChownBucket(ctx context.Context, rec *BucketRecord, owner meta.Owner, displayName string) error
 	// RemoveDanglingEntryPoint removes the entry point of tenant/name when
 	// the instance it names does not exist and no live rename claims the

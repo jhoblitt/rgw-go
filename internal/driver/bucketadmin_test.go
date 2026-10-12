@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1223,6 +1224,193 @@ var _ = Describe("BucketAdminStore", func() {
 			gone.Info.Bucket.ID = "other"
 			Expect(s.ChownBucket(ctx, &gone, bobOwner, "Bob")).To(MatchError(op.ErrNoSuchBucket))
 			Expect(listOwnerBuckets(ctx, aliceOwner)).To(ConsistOf("plain"))
+		})
+		It("refuses an instance another owner now holds", func(ctx SpecContext) {
+			rec := createBucket(ctx, "plain", aliceOwner)
+			stale := *rec
+			Expect(s.ChownBucket(ctx, rec, bobOwner, "Bob")).To(Succeed())
+			Expect(s.ChownBucket(ctx, &stale, carolOwner, "Carol")).To(MatchError(op.ErrNoSuchBucket))
+			got, err := s.GetBucket(ctx, "", "plain")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(bobOwner))
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("plain"))
+			Expect(listOwnerBuckets(ctx, carolOwner)).To(BeEmpty())
+		})
+		It("refuses a round that finds the instance given to another owner since the round before", func(ctx SpecContext) {
+			rec := createBucket(ctx, "plain", aliceOwner)
+			pool, bobOID := driver.OwnerBucketsObj(s, bobOwner)
+			c.AfterWrite(pool.Name, pool.NS, bobOID, func() {
+				c.AfterWrite(pool.Name, pool.NS, bobOID, nil)
+				cur, err := s.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				cur.Info.Owner = carolOwner
+				Expect(s.PutBucketInfo(ctx, cur)).To(Succeed())
+			})
+			Expect(s.ChownBucket(ctx, rec, bobOwner, "Bob")).To(MatchError(op.ErrNoSuchBucket))
+			got, err := s.GetBucket(ctx, "", "plain")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(carolOwner), "the instance the other writer gave carol stays hers")
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(BeEmpty(), "the lost round's unlink stays")
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("plain"), "and its link")
+			Expect(readEP(ctx, "", "plain").Owner).To(Equal(bobOwner), "and its entry point")
+		})
+	})
+
+	Describe("a user's move into an account", func() {
+		const acctID = "RGW00000000000000001"
+		var acctOwner meta.Owner
+		BeforeEach(func(ctx SpecContext) {
+			acctOwner = meta.AccountOwner(acctID)
+			u := meta.NewUserInfo()
+			u.UserID, u.DisplayName = meta.UserID{ID: "alice"}, "alice"
+			seedUser(c, u, nil, meta.ObjVersion{Ver: 1, Tag: "_alice"})
+			a := meta.NewAccountInfo()
+			a.ID, a.Name = acctID, "acme"
+			Expect(s.PutAccount(ctx, &op.AccountRecord{Info: a}, nil, op.PutAccountOptions{Exclusive: true})).To(Succeed())
+		})
+		// moveAlice is POST /admin/user?uid=alice&account-id=<acctID> over the
+		// driver's env.
+		moveAlice := func(ctx context.Context) error {
+			m := op.NewModifyUser()
+			m.UID, m.AccountID = meta.UserID{ID: "alice"}, acctID
+			admin := meta.NewUserInfo()
+			admin.UserID = meta.UserID{ID: "admin"}
+			caps := meta.Caps{"users": meta.CapAll}
+			return op.Run(ctx, m, &op.Request{Env: s.Env(), Identity: op.Identity{User: &admin, Owner: meta.UserOwner(admin.UserID), OpMask: op.OpTypeAll, Caps: caps}})
+		}
+		// strand deletes rec as a delete that fails at its last step, the
+		// unlink from alice's list, leaves it: the entry point, the instance
+		// and the index gone, and alice's list entry kept.
+		strand := func(ctx context.Context, rec *op.BucketRecord) {
+			GinkgoHelper()
+			pool, oid := driver.OwnerBucketsObj(s, aliceOwner)
+			name := rec.Info.Bucket.Name
+			c.AfterWrite(rookMetaPool, rookRoot, name, func() {
+				c.AfterWrite(rookMetaPool, rookRoot, name, nil)
+				c.FailNextWrite(pool.Name, pool.NS, oid, syscall.EIO)
+			})
+			Expect(s.DeleteBucket(ctx, rec)).NotTo(Succeed())
+			Expect(objectExists(name)).To(BeFalse(), "the entry point")
+			Expect(instancesOf(rec.Info.Bucket.ID)).To(BeEmpty(), "the instance")
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(ContainElement(name), "alice's list entry")
+		}
+		It("adopts a live bucket: its owner, entry point, ACL and list entry move to the account", func(ctx SpecContext) {
+			createBucket(ctx, "live", aliceOwner)
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "live")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(acctOwner))
+			Expect(readEP(ctx, "", "live").Owner).To(Equal(acctOwner))
+			p := decodeACL(got.Attrs[meta.AttrACL])
+			Expect(p.Owner).To(Equal(acl.Owner{ID: acctID, DisplayName: "acme"}))
+			Expect(p.ACL.Grants).To(ConsistOf(HaveField("Key", acctID)), "alice's grant became the account's")
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("live"))
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(BeEmpty())
+		})
+		It("leaves the bucket another owner re-created under a stale entry's name, and adopts the live ones", func(ctx SpecContext) {
+			createBucket(ctx, "live", aliceOwner)
+			strand(ctx, createBucket(ctx, "data", aliceOwner))
+			createBucket(ctx, "data", bobOwner)
+			theirs, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(theirs), "bob's instance, ACL and entry point unchanged")
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("data"))
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("live"))
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(ConsistOf("data"), "the stale entry stays, as radosgw skips it")
+		})
+		It("leaves the bucket another owner re-created under a stale entry's name whose instance is left", func(ctx SpecContext) {
+			// What radosgw's delete leaves when its instance removal loses a
+			// race: the entry point gone, the instance and the list entry kept.
+			old := createBucket(ctx, "data", aliceOwner)
+			Expect(driver.RemoveEntryPoint(s, ctx, "", "data", meta.ObjVersion{})).To(Succeed())
+			createBucket(ctx, "data", bobOwner)
+			theirs, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(theirs), "bob's instance, ACL and entry point unchanged")
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("data"))
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(BeEmpty())
+			left, err := s.GetBucketInstance(ctx, old.Info.Bucket)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(left.Info.Owner).To(Equal(aliceOwner), "the old instance is not adopted either")
+		})
+		It("leaves bob's bucket whose instance a stale entry of alice's still names", func(ctx SpecContext) {
+			// What a link to bob leaves when its removal of alice's entry
+			// fails, a failure radosgw's link logs and goes past.
+			createBucket(ctx, "live", aliceOwner)
+			theirs := createBucket(ctx, "data", bobOwner)
+			Expect(driver.LinkBucket(s, ctx, aliceOwner, theirs.Info.Bucket, time.Time{})).To(Succeed())
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(ContainElement("data"))
+			before, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(before), "bob's instance, ACL and entry point unchanged")
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("data"))
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("live"))
+		})
+		It("follows the entry's instance, not the bucket of alice's the name now loads", func(ctx SpecContext) {
+			old := createBucket(ctx, "data", aliceOwner)
+			Expect(driver.RemoveEntryPoint(s, ctx, "", "data", meta.ObjVersion{})).To(Succeed())
+			createBucket(ctx, "data", aliceOwner)
+			Expect(driver.LinkBucket(s, ctx, aliceOwner, old.Info.Bucket, time.Time{})).To(Succeed())
+			now, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(now), "the name loads another instance than the entry names, so nothing is chowned")
+			left, err := s.GetBucketInstance(ctx, old.Info.Bucket)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(left.Info.Owner).To(Equal(aliceOwner))
+		})
+		It("skips a stale entry whose bucket is gone", func(ctx SpecContext) {
+			createBucket(ctx, "live", aliceOwner)
+			strand(ctx, createBucket(ctx, "gone", aliceOwner))
+			Expect(moveAlice(ctx)).To(Succeed())
+			Expect(objectExists("gone")).To(BeFalse(), "no entry point is written for the name")
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("live"))
+		})
+		// withoutID rewrites alice's list entry for name as one carrying no
+		// bucket id.
+		withoutID := func(ctx context.Context, name string) {
+			GinkgoHelper()
+			Expect(driver.LinkBucket(s, ctx, aliceOwner, meta.BucketID{Name: name}, time.Time{})).To(Succeed())
+			ents, _, _, err := s.ListUserBuckets(ctx, aliceOwner, "", 100)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ents).To(ContainElement(And(HaveField("Bucket.Name", name), HaveField("Bucket.ID", ""))), "alice's entry carries no id")
+		}
+		It("adopts the bucket an entry without an id names, loading it by its name, and drops the entry", func(ctx SpecContext) {
+			createBucket(ctx, "data", aliceOwner)
+			withoutID(ctx, "data")
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.Owner).To(Equal(acctOwner))
+			Expect(readEP(ctx, "", "data").Owner).To(Equal(acctOwner))
+			Expect(decodeACL(got.Attrs[meta.AttrACL]).Owner).To(Equal(acl.Owner{ID: acctID, DisplayName: "acme"}))
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("data"))
+			Expect(listOwnerBuckets(ctx, aliceOwner)).To(BeEmpty(), "the chown unlinks the entry by its name, as radosgw does")
+		})
+		It("leaves bob's bucket under the name an entry of alice's without an id names", func(ctx SpecContext) {
+			createBucket(ctx, "live", aliceOwner)
+			strand(ctx, createBucket(ctx, "data", aliceOwner))
+			createBucket(ctx, "data", bobOwner)
+			withoutID(ctx, "data")
+			theirs, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(moveAlice(ctx)).To(Succeed())
+			got, err := s.GetBucket(ctx, "", "data")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(theirs), "bob's instance, ACL and entry point unchanged")
+			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("data"))
+			Expect(listOwnerBuckets(ctx, acctOwner)).To(ConsistOf("live"))
 		})
 	})
 

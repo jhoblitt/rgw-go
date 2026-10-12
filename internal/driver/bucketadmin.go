@@ -728,22 +728,25 @@ const maxChownRounds = 10
 // owner and writes the entry point naming it, then the instance with owner
 // and an ACL whose old owner's grant becomes owner's FULL_CONTROL grant,
 // other grants kept; an ACL that does not decode is left as it is. A round
-// that loses a version race starts over. The round loads the bucket by its
-// name and refuses with ErrNoSuchBucket a name that now loads another
-// instance; radosgw's adopt_user_buckets loads the instance the owner's
-// list entry names by its id and points the name at it
-// (driver/rados/buckets.cc:119-130 and rgw_user.cc:1714-1741 at v19.2.6).
-// The entry point is written under the version the round read, where
-// radosgw writes it unchecked, and a bucket an unfinished rename marks is
-// ConcurrentModification, without another round.
+// that loses a version race starts over. rec names the instance to chown
+// and the owner it is taken from, for an adoption the instance the owner's
+// list entry names by its id. Every round loads the bucket by its name and
+// refuses with ErrNoSuchBucket a name that now loads an instance other than
+// rec's, or rec's instance under an owner other than rec's; radosgw's
+// adopt_user_bucket loads that instance by its id in each round and chowns
+// it from whoever holds it, pointing the name at it
+// (driver/rados/buckets.cc:119-130 and rgw_user.cc:1681-1742 at v19.2.6,
+// :1687-1748 at v20.2.4). The entry point is written under the version the
+// round read, where radosgw writes it unchecked, and a bucket an unfinished
+// rename marks is ConcurrentModification, without another round.
 func (s *Store) ChownBucket(ctx context.Context, rec *op.BucketRecord, owner meta.Owner, displayName string) error {
-	id := rec.Info.Bucket
+	id, from := rec.Info.Bucket, rec.Info.Owner.String()
 	for range maxChownRounds {
 		cur, err := s.GetBucket(ctx, id.Tenant, id.Name)
 		if err != nil {
 			return err
 		}
-		if cur.Info.Bucket.ID != id.ID {
+		if cur.Info.Bucket.ID != id.ID || cur.Info.Owner.String() != from {
 			return op.ErrNoSuchBucket
 		}
 		if _, live, lerr := s.liveRename(ctx, cur); lerr != nil || live {
@@ -763,10 +766,11 @@ func (s *Store) ChownBucket(ctx context.Context, rec *op.BucketRecord, owner met
 }
 
 // chownRound is one RadosBucket::chown over cur, which it leaves at the
-// bucket as written.
+// bucket as written. cur was loaded by its name, so the old owner's entry
+// without an id names it too.
 func (s *Store) chownRound(ctx context.Context, cur *op.BucketRecord, owner meta.Owner, displayName string) error {
 	b := cur.Info.Bucket
-	if err := s.unlinkInstance(ctx, cur.Info.Owner, b); err != nil {
+	if err := s.unlinkEntry(ctx, cur.Info.Owner, b, true); err != nil {
 		return op.FromRADOS(err, op.ScopeBucket)
 	}
 	if err := s.linkBucket(ctx, owner, b, cur.Info.CreationTime.Time); err != nil {
