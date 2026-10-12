@@ -654,6 +654,22 @@ review and verified against the tree.
   A floor radosgw writes no record, and answers neither refusal: a floor
   radosgw's retry or abort of an upload rgw-go recorded still meets
   #80896. The format is revisited when the PR merges.
+- **Multipart uploads in flight are shared.** Either gateway may add parts
+  to, list, complete or abort an upload the other began. What they share is
+  radosgw's: the meta object's name and pool, `<key>.<upload id>.meta` in
+  the `multipart` namespace of the placement's data-extra pool; its
+  `multipart_upload_info` data and its omap of `part.%08d` part records;
+  the part names; each part record's `past_prefixes`, the history of a part
+  uploaded again; the index entries in the `multipart` namespace; and the
+  `RGWCompleteMultipart` lock ("Lock names are radosgw's; cookies are not
+  shared"). rgw-go writes the meta object and the part heads without an
+  idtag, as radosgw's non-atomic writes do. Two costs are accepted:
+  - a part without a manifest, which only a gateway older than Hammer
+    wrote, is skipped by rgw-go's abort, and its objects leak on both
+    gateways ("AbortMultipartUpload removes the upload before it frees the
+    parts");
+  - on Tentacle, the checksums of a multipart upload are ignored until
+    phase 2 ("Client checksums are ignored until phase 2").
 - **Signature quirks are radosgw's, not AWS's.** When a request carries
   no `x-amz-content-sha256` header, radosgw treats the payload as
   unsigned rather than rejecting the request as AWS does. This is a hard

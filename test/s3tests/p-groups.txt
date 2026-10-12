@@ -1,0 +1,23 @@
+# The s3-tests that judge multipart uploads: CreateMultipartUpload,
+# UploadPart, UploadPartCopy, CompleteMultipartUpload, AbortMultipartUpload
+# and ListMultipartUploads. One extended regular expression per line over
+# hack/parity's test ids, each ending in :|$ so that it also selects that
+# test's line of a parity diff, with grep -E -f. A comment line is a pattern
+# to grep too; it holds no test id, so it selects nothing. No line is blank,
+# since an empty pattern selects every line. s3-tests carries no marker for
+# multipart uploads, so the groups go by name.
+#
+# Every test named test_multipart_: uploads of each size, a resent part,
+# completions that fail, the conditional completion, UploadPartCopy of
+# whole sources and ranges, valid and not, and with special names, and
+# partNumber reads of the result. The tests that enable bucket versioning
+# are on hack/s3tests/deselect-phase2.txt and do not run.
+^s3tests\.functional\.test_s3::test_multipart_[a-z0-9_]+(:|$)
+# UploadPartCopy of a source whose key needs percent-encoding.
+^s3tests\.functional\.test_s3::test_upload_part_copy_[a-z0-9_]+(:|$)
+# ListMultipartUploads, and the owner and initiator it reports.
+^s3tests\.functional\.test_s3::test_list_multipart_upload[a-z0-9_]*(:|$)
+# AbortMultipartUpload, and the abort of an upload that does not exist.
+^s3tests\.functional\.test_s3::test_abort_multipart_upload[a-z0-9_]*(:|$)
+# An upload begun and aborted over an existing key leaves its object whole.
+^s3tests\.functional\.test_s3::test_atomic_multipart_upload_write(:|$)
