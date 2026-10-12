@@ -419,8 +419,14 @@ settings turn it off.
 
 For `make gate` to pass again, remove the users with their buckets, then
 the accounts, then the tails the removal leaves for the collector, which
-the gate's data pool check would count. `run.sh` creates them again on its
-next run.
+the gate's data pool check would count, and last the account roots'
+`<uid>.buckets` objects in `users.uid`, which the gate counts too. Either
+gateway's quota user sync writes that object for every user when the
+gateway starts, and radosgw's user removal leaves it for a user in an
+account (`docs/ceph-upstream-bugs.md`, "radosgw's removal of an account
+user leaves the bucket list its quota sync wrote"), so it is there only
+when a gateway started while the roots existed. `run.sh` creates the users
+and accounts again on its next run.
 
 ```sh
 export ROOKET_NAME=rgw-go-squid
@@ -434,6 +440,12 @@ done
 admin account rm --account-id RGW11111111111111111
 admin account rm --account-id RGW22222222222222222
 admin gc process --include-all
+uids() {
+	rooket k -n rook-ceph exec deploy/rook-ceph-tools -- rados -p ceph-objectstore.rgw.meta -N users.uid "$@"
+}
+for uid in s3tests-root1 s3tests-root2; do
+	if uids stat "${uid}.buckets" >/dev/null 2>&1; then uids rm "${uid}.buckets"; fi
+done
 ```
 
 Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
