@@ -266,6 +266,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 | [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
 | [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw's account modify answers BucketAlreadyExists for a taken name or email](#radosgws-account-modify-answers-bucketalreadyexists-for-a-taken-name-or-email) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12135,3 +12136,42 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 12 review, 2026-10-12; derived from the
   source, not reproduced.
+
+## radosgw's account modify answers BucketAlreadyExists for a taken name or email
+
+- **Kind:** quirk: the admin API's account modify answers 409
+  BucketAlreadyExists when the new name or email belongs to another
+  account, where its create answers 409 AccountAlreadyExists for the same
+  conflict. Reproduced on running v19.2.6 and v20.2.4 clusters.
+- **Evidence:** paths are under `src/rgw/`; the lines are the same at
+  v19.2.6 and v20.2.4 unless a second is given.
+  - `RadosStore`'s account write reads the name redirect of a changed name
+    and the email redirect of a changed email, and returns `-EEXIST` when
+    either exists (`driver/rados/account.cc:296-310` and `:312-326`).
+  - `rgw::account::modify` returns that error from `store_account` as it
+    is (`rgw_account.cc:262-265`).
+  - `RGWOp_Account_Create::execute` maps `-EEXIST` to
+    `-ERR_ACCOUNT_EXISTS` (`rgw_rest_account.cc:95-100`), but
+    `RGWOp_Account_Modify::execute` leaves `op_ret` as `modify` returned it
+    (`:166-167`).
+  - An admin op's error goes through the S3 table, whose `EEXIST` row is
+    409 BucketAlreadyExists (`rgw_common.cc:113` at v19.2.6, `:114` at
+    v20.2.4) and whose `ERR_ACCOUNT_EXISTS` row 409 AccountAlreadyExists
+    (`:140`; `:141`).
+- **Reproduction:** the admin gate's body oracle
+  (`test/integration/admin_test.go`, "account rename to a taken name")
+  sends `PUT /admin/account?id=<id>&name=<another account's name>` to the
+  radosgw of each release's rooket cluster and gets 409 with the code
+  `BucketAlreadyExists`, in JSON and XML, on v19.2.6 and v20.2.4
+  (2026-10-12).
+- **Impact:** a client that tells a name conflict by its error code reads
+  a bucket conflict from a modify: go-ceph's `ModifyAccount` returns an
+  error whose code is `BucketAlreadyExists`, which matches none of the
+  admin package's named errors, `ErrAccountAlreadyExists` among them.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it: the account modify passes the store's
+  `ErrAccountAlreadyExists` through as `ErrBucketAlreadyExists`, radosgw's
+  answer (`internal/op/adminaccount.go`), and the admin gate compares the
+  two gateways' bodies byte for byte.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 7, recorded by Task 13, 2026-10-12.
