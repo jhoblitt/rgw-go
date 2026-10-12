@@ -2973,7 +2973,7 @@ v20.2.4 tags, rgw-go does the following.
   v19.2.6, `:721-732` at v20.2.4). Such a bucket arises from instance
   metadata carried over from another cluster with `radosgw-admin metadata
   put`, which radosgw and rgw-go both accept whatever zonegroup it names.
-  rgw-go differs in three ways:
+  rgw-go differs in four ways:
   - An S3 route rgw-go does not serve answers 501 NotImplemented before
     the bucket is loaded, so such a bucket is never redirected there;
     radosgw loads the bucket for every op but CreateBucket and answers 301.
@@ -3013,6 +3013,18 @@ v20.2.4 tags, rgw-go does the following.
     zonegroup's connection, answering 404 NoSuchKey when it has none
     (`driver/rados/rgw_rados.cc:4716-4736`, `:4808-4810` and `:4270-4278`
     at v19.2.6, `:4966-4990`, `:5064-5066` and `:4473-4481` at v20.2.4).
+  - A bucket whose instance records no zonegroup is the master
+    zonegroup's to both gateways, and S3 serves it there. Its removal
+    syncs the owner's stats, refuses it while it holds an object with 409
+    BucketNotEmpty and aborts its uploads, and `DELETE /admin/user` with
+    `purge-data` deletes its objects before it removes it, as for any
+    bucket of this zonegroup. radosgw compares the raw ids in both, takes
+    the bucket for another zonegroup's, and removes it without checking or
+    listing it, leaving its objects in the data pool with nothing naming
+    them (`rgw_op.cc:3759-3772` at v19.2.6, `:3968-3981` at v20.2.4;
+    `driver/rados/rgw_user.cc:1977` at v19.2.6, `:1983` at v20.2.4;
+    docs/ceph-upstream-bugs.md, "radosgw's bucket delete and user purge
+    orphan the objects of a bucket with no zonegroup id").
 
 ### Request authentication differences
 

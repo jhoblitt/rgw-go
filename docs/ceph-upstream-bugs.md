@@ -267,6 +267,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
 | [radosgw hands the zone's system key to any holder of zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 | [radosgw's account modify answers BucketAlreadyExists for a taken name or email](#radosgws-account-modify-answers-bucketalreadyexists-for-a-taken-name-or-email) | pending | pending | ✓ |
+| [radosgw's bucket delete and user purge orphan the objects of a bucket with no zonegroup id](#radosgws-bucket-delete-and-user-purge-orphan-the-objects-of-a-bucket-with-no-zonegroup-id) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12175,3 +12176,61 @@ Every new entry adds its row to this table, in document order.
   two gateways' bodies byte for byte.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 7, recorded by Task 13, 2026-10-12.
+
+## radosgw's bucket delete and user purge orphan the objects of a bucket with no zonegroup id
+
+- **Kind:** defect, data loss, non-security; unfixed at v19.2.6 and
+  v20.2.4. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is
+  v19.2.6's, then v20.2.4's.
+  - `rgw_build_bucket_policies` serves the request when
+    `RGWZoneGroup::equals` takes the bucket's zonegroup for this one
+    (`rgw_op.cc:558`; `:588`), and `equals` takes an empty id for a master
+    zonegroup (`driver/rados/rgw_zone.cc:115-121` at both tags).
+  - `RGWDeleteBucket::execute` compares the raw ids instead, and for a
+    bucket it so finds it does not own skips `sync_owner_stats` and
+    `check_empty` (`rgw_op.cc:3759-3772`; `:3968-3981`). Its
+    `rgw_forward_request_to_master` returns 0 without a period and on the
+    metadata master (`rgw_op.cc:119-125`; `:154-160`).
+  - The user removal with `purge-data` removes each of the user's buckets
+    with `RadosBucket::remove` and `delete_children` set
+    (`driver/rados/rgw_user.cc:1977`; `:1983`).
+  - `RadosBucket::remove` compares the raw ids again and, for such a
+    bucket, lists nothing, so deletes no object, and aborts no upload
+    (`driver/rados/rgw_sal_rados.cc:366-369` and `:395-400`; `:383-386`
+    and `:412-417`). `RGWRados::delete_bucket` checks emptiness only
+    without `delete_children` (`driver/rados/rgw_sal_rados.cc:445`;
+    `:462`), and the `check_bucket_empty` it then calls returns 0 for a
+    zonegroup id that is not this one's
+    (`driver/rados/rgw_rados.cc:5247-5252` and `:5188-5192`; `:5945-5950`
+    and `:5725-5729`).
+  - An instance carries an empty zonegroup id when it was encoded before
+    version 5 (`rgw_common.cc:2330-2331`; `:2392-2393`) or put through the
+    metadata API without a `zonegroup` or `region` field
+    (`rgw_common.cc:2551-2555`; `:2613-2617`), which the instance put
+    accepts without looking at the zonegroup
+    (`driver/rados/rgw_bucket.cc:2803-2946`; `:2921-3060`).
+- **Impact:** on a single-site cluster, whose zonegroup is the master
+  and whose zone the metadata master, two removals leave such a bucket's
+  objects behind. The owner's S3 DeleteBucket answers 204 whatever the
+  bucket holds, and `DELETE /admin/user` with `purge-data` removes the
+  bucket without deleting what it holds. Either way the entry point, the
+  instance and the index go, its multipart uploads are not aborted, and
+  every object's head and tails stay in the data pool with nothing that
+  names them, beyond any listing, garbage collection or purge. The admin
+  bucket removal refuses the same bucket with 301, as it too compares the
+  raw ids (`driver/rados/rgw_bucket.cc:1296`; `:1458`).
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** does not reproduce it. Its bucket removal and its purges
+  decide whether a bucket is this zonegroup's with `RGWZoneGroup::equals`,
+  as the S3 redirect does. For a bucket with an empty zonegroup id on a
+  master zonegroup the removal syncs the owner's stats, refuses a bucket
+  with objects with 409 BucketNotEmpty and aborts its uploads
+  (`Store.DeleteBucket`, `internal/driver/bucketops.go`), and the user
+  purge deletes its objects before it removes it (`PurgeBucket`,
+  `internal/op/adminpurge.go`; `docs/exclusions.md`, "A bucket of another
+  zonegroup is redirected as radosgw redirects it, and never removed").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** the follow-up to the phase 1 closing review's finding on
+  another zonegroup's bucket, 2026-10-12, reading radosgw's bucket delete;
+  derived from the source, not reproduced.
