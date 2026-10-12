@@ -305,7 +305,7 @@ Disposable Squid and Tentacle clusters with a radosgw and a population
 script. Gate: every metadata object a populated radosgw wrote decodes and
 re-encodes byte-identically.
 
-**Phase 1, data path, auth and core admin; first benchmark.** SigV4 header,
+**Phase 1, data path, auth and core admin.** SigV4 header,
 query and presigned with chunked and trailer payloads, SigV2, anonymous;
 ACL, policy, quota and tenant authorization; ListBuckets, Create, Delete,
 Head and GetLocation for buckets, ListObjects v1 and v2; Put, Get with
@@ -318,9 +318,12 @@ log writes; TLS through the beast spec. Admin: user with keys, subusers,
 caps and quota; bucket except Sync_Bucket; usage; metadata over user,
 bucket and bucket.instance; info; account; config; ratelimit settings
 stored; the read-only realm and period getters. Gates: s3-tests parity, the
-go-ceph rgw/admin suite, the seam microbenchmark answering the cgo
-question, the pipeline baseline, the first gateway comparison, and the
-Rook suite as soon as the derived image serves a store.
+go-ceph rgw/admin suite, and the Rook suite as soon as the derived image
+serves a store. The seam microbenchmark's preliminary answer to the cgo
+question is phase 1's. Its final form, the pipeline baseline and the first
+gateway comparison moved out of phase 1 on 2026-10-12, so that phase 1
+closes on its correctness gates; they run on a quiet host before phase 2's
+tasks start.
 
 Phase 1's s3-tests parity is held on every pull request, not only at the
 gate: it is a required check on each pull request that touches the S3

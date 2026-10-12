@@ -122,6 +122,8 @@ README.md                                   modify: development section
 | 16 | s3-tests workflow and the shared cluster action | 4 | 11, 12; required only after X13, as "Before the check is required" orders |
 | 17 | The jhoblitt/s3-tests fork | 4 | 4, 5; its re-record uses 16's dispatch when 16 has merged |
 
+(Amended 2026-10-12: Task 7's quick microbenchmark nightly, Task 14's measured runs and Task 15 moved out of phase 1, by the owner's decision, so that phase 1 closes on its correctness gates; they run on a quiet host before phase 2 begins. Task 17's fork moved from jhoblitt/s3-tests, since deleted, to branch `rgw-go-s3tests` of jhoblitt/ceph: ceph/ceph main 36ae747 plus the four fixes, under `src/test/rgw/s3-tests`, because ceph/s3-tests is archived and the suite now lives in ceph/ceph.)
+
 Tasks 1 to 8 need no gateway and run in wave 0 in parallel with unit G; Tasks 3, 4 and 6 are independent of each other. Tasks 9 and 10 are authored in wave 2 as soon as G's binary starts under Rook's argv; Task 10's first green run is the wave-5 completion of the Rook gate. Tasks 11, 12 and 16 are the per-pull-request s3-tests check (spec §9), which must not wait for wave 5: they run in wave 4 as soon as M Task 13 merges, the last of the code they need (G, A, Z, M, R, W and P's other tasks have merged), and do not wait for N. Task 17 needs no gateway and can run beside them. Tasks 13 to 15 need the data path and N, and keep wave 5.
 
 Order inside wave 4: 11, then 12, then 16; 17 at any point after 5, its re-record through 16's dispatch input once 16 has merged, or locally through `make s3tests-record` (Task 16) before then. Follow-ups X13 (a `VersionId` of `null` on a never-versioned bucket is the plain object, not a 501), X14 (lower-case `x-amz-meta-*` response headers) and X15 (an `Expect` other than `100-continue` no longer answered 417 by net/http) are fixes in their owning units, not tasks of this plan; Task 16, "Before the check is required", orders them against the required check.
@@ -1884,6 +1886,8 @@ Merge Task 16's pull request on green, then dispatch `s3tests.yml` on `main` wit
 ---
 
 ### Task 17: The jhoblitt/s3-tests fork
+
+(Amended 2026-10-12: carried out on jhoblitt/ceph, branch `rgw-go-s3tests`, instead of jhoblitt/s3-tests, which is deleted; see the note under the task table. The text below is the plan as written.)
 
 Spec §9 puts s3-tests improvements in phase 1's scope: the harness pins the jhoblitt/s3-tests fork, branch `rgw-go`, by commit, as go-ceph is pinned through jhoblitt/go-ceph, and each improvement is also proposed to ceph/s3-tests, each upstream post only with the owner's explicit go-ahead. This task needs no gateway: it depends on Tasks 4 and 5, and runs in wave 4 beside Tasks 11, 12 and 16.
 
