@@ -261,6 +261,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's bucket check reports a live part that another upload's entries separate from its meta entry](#tentacles-bucket-check-reports-a-live-part-that-another-uploads-entries-separate-from-its-meta-entry) | pending | pending | ✓ |
 | [radosgw's bucket check object listing retries a failed page without end](#radosgws-bucket-check-object-listing-retries-a-failed-page-without-end) | pending | pending | ✓ |
 | [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
+| [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11936,3 +11937,40 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 10, 2026-10-11, reading the usage ops'
   arguments; derived from the source, not reproduced.
+
+## radosgw's usage read ends a listing early when a shard fills the page without truncation
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
+  then v20.2.4's.
+  - `RGWRados::read_usage` reads one shard at a time with the records
+    still wanted, `num`, takes the records the class returns off `num`,
+    and, when the read was not truncated, moves to the next shard with a
+    fresh iterator; it loops `while (num && !*is_truncated && hash !=
+    first_hash)` and returns `*is_truncated` as the last read left it
+    (`rgw/driver/rados/rgw_rados.cc:1674-1716`, `:1777-1819`; the
+    subtraction at `:1703`, `:1806`, the loop's end at `:1714`, `:1817`).
+  - So a read that returns exactly `num` records and is not truncated ends
+    the call untruncated even when shards are left, and `RGWUsage::show`,
+    which pages while the call says it is truncated, stops there
+    (`rgw/rgw_usage.cc:59-124` at both tags), as does `radosgw-admin usage
+    show`, which runs the same show (`rgw/rgw_admin.cc:7718` at v19.2.6,
+    `rgw/radosgw-admin/radosgw-admin.cc:8104` at v20.2.4).
+  - The class answers untruncated when the keys after its window run out
+    or leave the walk (`usage_iterate_range`,
+    `cls/rgw/cls_rgw.cc:3654-3703`, `:4056-4105`), and `num` counts the
+    records the class merged per user and bucket. A user's read hits the
+    case when that user's by-user keys are the last of its usage object
+    and the object holds exactly 1000 of its buckets in range, with
+    `rgw_usage_max_user_shards` above 1 so that the user has a later
+    shard to skip; the default, 1, leaves none.
+- **Impact:** `GET /admin/usage?uid=` and `radosgw-admin usage show --uid`
+  leave out a user's usage on its later shards, and the summary
+  undercounts it, answering 200.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it (`ReadUsage`, `internal/driver/usageadmin.go`),
+  so that both gateways show the same usage.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 10, 2026-10-11, transcribing
+  `read_usage`; derived from the source, not reproduced.
