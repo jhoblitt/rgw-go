@@ -307,6 +307,28 @@ func (t *TailWriter) Drain() error { return t.tw.drain() }
 // Discard is discard.
 func (t *TailWriter) Discard() { t.tw.discard() }
 
+// Buffered is the bytes of buffers the writer holds.
+func (t *TailWriter) Buffered() uint64 {
+	t.tw.mu.Lock()
+	defer t.tw.mu.Unlock()
+	return t.tw.held
+}
+
+// BodyBudget is the byte budget PUT bodies share: its size, the shares
+// taken and not given back, and the most taken at once.
+type BodyBudget struct{ Size, Held, Peak int64 }
+
+// BodyBudgetForTest reports s's body byte budget.
+func (s *Store) BodyBudgetForTest() BodyBudget {
+	b := s.w.body
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return BodyBudget{Size: b.size, Held: b.held, Peak: b.peak}
+}
+
+// SetBodyBudgetForTest gives s a body byte budget of n bytes.
+func (s *Store) SetBodyBudgetForTest(n int64) { s.w.body = newBodyBudget(n) }
+
 // Tails returns the oids of the tails the writer issued, in issue order.
 func (t *TailWriter) Tails() []string {
 	t.tw.mu.Lock()
@@ -537,6 +559,12 @@ func (s *Store) NewPartWriterForTest(m *meta.Manifest, l Layout, n uint32) *Part
 func (p *PartWriter) Consume(ctx context.Context, body io.Reader, size int64, h hash.Hash) (uint64, error) {
 	_, n, err := p.tw.consume(ctx, body, size, h)
 	return n, err
+}
+
+// Resume is resume: p takes over prev's kept first stripe and streams the
+// rest of body.
+func (p *PartWriter) Resume(ctx context.Context, prev *PartWriter, body io.Reader, h hash.Hash) (uint64, error) {
+	return p.tw.resume(ctx, prev.tw, body, h)
 }
 
 // Drain is drain.

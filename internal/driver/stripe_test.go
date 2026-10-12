@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -594,6 +597,394 @@ var _ = Describe("part writer", func() {
 		Expect(c.Object(testDataPool, "", shadowOID(2, 1)).Data).To(Equal(body[4<<20:]))
 	})
 })
+
+var _ = Describe("body byte budget", func() {
+	var (
+		c   *fakerados.Cluster
+		s   *driver.Store
+		rec *op.BucketRecord
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = newPutCluster()
+		s = openPutStore(ctx, c, denc.Squid, nil, time.Now())
+		rec = testBucket(putBucketID, 11)
+	})
+	// prefix is the tail prefix of the i-th PUT of a spec.
+	prefix := func(i int) string { return fmt.Sprintf("%031d", i) }
+	writer := func(ctx context.Context, i int) *driver.TailWriter {
+		GinkgoHelper()
+		s.SetRandForTest(fixedRand(prefix(i)))
+		tw, err := s.NewTailWriterForTest(ctx, rec, meta.ObjKey{Name: prefix(i)}, "")
+		Expect(err).NotTo(HaveOccurred())
+		return tw
+	}
+	held := func() int64 { return s.BodyBudgetForTest().Held }
+	// openBounded opens a Store over c as a cluster whose in-flight limiter
+	// bounds its payload at limit bytes, with the options kv.
+	openBounded := func(ctx context.Context, limit int64, kv map[string]string) *driver.Store {
+		GinkgoHelper()
+		rel := denc.Squid
+		st, err := driver.Open(ctx, boundedCluster{Cluster: c, bytes: limit}, conf(kv), driver.Options{Release: &rel})
+		Expect(err).NotTo(HaveOccurred())
+		return st
+	}
+
+	It("is unbounded on a cluster without an in-flight limiter", func() {
+		Expect(s.BodyBudgetForTest().Size).To(BeEquivalentTo(int64(math.MaxInt64)), "fakerados has none")
+	})
+
+	DescribeTable("is the in-flight limiter's byte bound, raised to a piece for every request rgw_max_concurrent_requests admits",
+		func(ctx SpecContext, limit int64, kv map[string]string, want int64) {
+			Expect(openBounded(ctx, limit, kv).BodyBudgetForTest().Size).To(Equal(want))
+		},
+		Entry("radosgw's defaults: 1024 four-MiB pieces, above the limiter's fifteen sixteenths of 100 MiB",
+			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "1024"}, int64(1024*(4<<20))),
+		Entry("the limiter's bound, above the pieces of a small cap",
+			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "2"}, int64(98304000)),
+		Entry("a part's first stripe, larger than a chunk, as the piece",
+			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "1024", "rgw_obj_stripe_size": "8388608"}, int64(1024*(8<<20))),
+		Entry("a first stripe past the window, as the window and the byte that shows it",
+			int64(1), map[string]string{"rgw_max_concurrent_requests": "2", "rgw_obj_stripe_size": "33554432"}, int64(2*((16<<20)+1))),
+		Entry("no request cap, under which radosgw holds as many bodies as it serves",
+			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "0"}, int64(math.MaxInt64)),
+		Entry("a cap whose pieces pass 2^63",
+			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "9223372036854775807"}, int64(math.MaxInt64)),
+		Entry("a limiter turned off, as librados's throttle at 0",
+			int64(math.MaxInt64), map[string]string{"rgw_max_concurrent_requests": "1024"}, int64(math.MaxInt64)),
+	)
+
+	It("lets a PUT through while slow clients each hold a piece's share, the budget keeping a piece for every request", func(ctx SpecContext) {
+		// A limiter bound that two pieces fill, and a cap of three requests.
+		s = openBounded(ctx, 8<<20, map[string]string{"rgw_max_concurrent_requests": "3"})
+		slowCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		slowDone := make(chan error, 2)
+		for i := range 2 {
+			slow := writer(ctx, i)
+			go func() {
+				// Its head and a megabyte of its first tail piece, then nothing,
+				// as a client sending a byte within each request_timeout_ms.
+				body := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), ctxReader{slowCtx})
+				_, _, err := slow.Consume(slowCtx, body, 64<<20, md5.New())
+				slowDone <- err
+			}()
+		}
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(8<<20),
+			"each slow client holds its piece's share while it sends nothing")
+		fast := writer(ctx, 2)
+		body := mibPattern(20)
+		_, size, err := fast.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
+		Expect(err).NotTo(HaveOccurred(), "the third request reads and writes its pieces past the two that stall")
+		Expect(fast.Drain()).To(Succeed())
+		Expect(size).To(BeEquivalentTo(20 << 20))
+		Expect(c.Object(testDataPool, "", tailOID(prefix(2), 4)).Data).To(Equal(body[16<<20:]))
+		Expect(held()).To(BeEquivalentTo(8<<20), "the slow clients still hold theirs")
+		cancel()
+		for range 2 {
+			Eventually(slowDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
+		}
+		Expect(held()).To(BeZero())
+	}, SpecTimeout(20*time.Second))
+
+	It("holds no more than the budget in the tail buffers of concurrent PUTs whose windows exceed it", func(ctx SpecContext) {
+		const budget, puts = 8 << 20, 4
+		s.SetBodyBudgetForTest(budget)
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		DeferCleanup(unblock)
+		var started atomic.Int32
+		writers := make([]*driver.TailWriter, puts)
+		for i := range writers {
+			for n := 1; n <= 8; n++ {
+				c.BeforeWrite(testDataPool, "", tailOID(prefix(i), n), func(*fakerados.Object) {
+					started.Add(1)
+					<-release
+				})
+			}
+			writers[i] = writer(ctx, i)
+		}
+		var read atomic.Int64
+		done := make(chan error, puts)
+		for _, tw := range writers {
+			body := &countingReader{r: io.LimitReader(zeros{}, 32<<20), n: &read}
+			go func() {
+				_, _, err := tw.Consume(ctx, body, -1, md5.New())
+				done <- err
+			}()
+		}
+		last := int64(-1)
+		Eventually(func() bool {
+			cur := read.Load()
+			quiet := cur == last
+			last = cur
+			return quiet
+		}).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).Should(BeTrue(), "every PUT stops reading once the budget is spent")
+		var buffered uint64
+		for _, tw := range writers {
+			buffered += tw.Buffered()
+		}
+		Expect(buffered).To(BeNumerically("<=", budget), "four 16 MiB windows, whose tail buffers share one 8 MiB budget")
+		Expect(s.BodyBudgetForTest()).To(And(HaveField("Held", BeEquivalentTo(buffered)), HaveField("Peak", BeEquivalentTo(budget))),
+			"every buffer carries its share")
+		Expect(started.Load()).To(BeEquivalentTo(2), "two 4 MiB pieces in flight spend the budget")
+		unblock()
+		for range puts {
+			Eventually(done).WithTimeout(10 * time.Second).Should(Receive(BeNil()))
+		}
+		for _, tw := range writers {
+			Expect(tw.Drain()).To(Succeed())
+		}
+		Expect(held()).To(BeZero(), "every write gave its share back")
+	})
+
+	It("waits for the budget before it reads a piece, and holds nothing when canceled while it waits", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(4 << 20)
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		DeferCleanup(unblock)
+		c.BeforeWrite(testDataPool, "", tailOID(prefix(0), 1), func(*fakerados.Object) { <-release })
+		first := writer(ctx, 0)
+		firstDone := make(chan error, 1)
+		go func() {
+			_, _, err := first.Consume(ctx, bytes.NewReader(mibPattern(8)), 8<<20, md5.New())
+			firstDone <- err
+		}()
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4<<20),
+			"the first PUT's tail piece in flight holds the whole budget")
+		reqCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		second := writer(ctx, 1)
+		var read atomic.Int64
+		body := &countingReader{r: bytes.NewReader(mibPattern(8)), n: &read}
+		secondDone := make(chan error, 1)
+		go func() {
+			_, _, err := second.Consume(reqCtx, body, 8<<20, md5.New())
+			secondDone <- err
+		}()
+		Eventually(read.Load).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4<<20), "the head is read")
+		Consistently(read.Load).WithTimeout(100*time.Millisecond).WithPolling(5*time.Millisecond).Should(BeEquivalentTo(4<<20),
+			"the tail piece is not read before its share is taken")
+		cancel()
+		Eventually(secondDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
+		Expect(held()).To(BeEquivalentTo(4<<20), "the canceled PUT took nothing")
+		unblock()
+		Eventually(firstDone).WithTimeout(5 * time.Second).Should(Receive(BeNil()))
+		Expect(first.Drain()).To(Succeed())
+		Expect(held()).To(BeZero())
+	})
+
+	It("gives a PUT's share back when its client goes away mid-piece, to the PUT waiting for it", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(4 << 20)
+		reqCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stalled := writer(ctx, 0)
+		stalledDone := make(chan error, 1)
+		go func() {
+			body := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), ctxReader{reqCtx})
+			_, _, err := stalled.Consume(reqCtx, body, 12<<20, md5.New())
+			stalledDone <- err
+		}()
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4<<20),
+			"the stalled PUT's tail piece holds the whole budget while its client sends nothing")
+		next := writer(ctx, 1)
+		body := mibPattern(8)
+		nextDone := make(chan error, 1)
+		go func() {
+			_, _, err := next.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
+			nextDone <- err
+		}()
+		Consistently(nextDone).WithTimeout(100*time.Millisecond).WithPolling(5*time.Millisecond).ShouldNot(Receive(),
+			"the next PUT's tail waits for the budget")
+		cancel()
+		Eventually(stalledDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
+		Eventually(nextDone).WithTimeout(5*time.Second).Should(Receive(BeNil()), "the canceled PUT's share lets the next one read")
+		Expect(next.Drain()).To(Succeed())
+		Expect(c.Object(testDataPool, "", tailOID(prefix(1), 1)).Data).To(Equal(body[4<<20:]))
+		stalled.Discard()
+		Expect(held()).To(BeZero())
+	})
+
+	It("completes a PUT whose window exceeds the whole budget, each piece taking all of it in turn", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(1 << 20)
+		tw := writer(ctx, 0)
+		body := mibPattern(20)
+		_, size, err := tw.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tw.Drain()).To(Succeed())
+		Expect(size).To(BeEquivalentTo(20 << 20))
+		for n := 1; n <= 4; n++ {
+			Expect(c.Object(testDataPool, "", tailOID(prefix(0), n)).Data).To(Equal(body[n<<22:(n+1)<<22]), "tail %d", n)
+		}
+		Expect(s.BodyBudgetForTest()).To(Equal(driver.BodyBudget{Size: 1 << 20, Held: 0, Peak: 1 << 20}),
+			"a 4 MiB piece takes the whole 1 MiB budget and proceeds alone")
+	}, SpecTimeout(10*time.Second))
+
+	It("gives every share back when a tail write fails", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(8 << 20)
+		c.FailNextWrite(testDataPool, "", tailOID(prefix(0), 1), syscall.ETIMEDOUT)
+		tw := writer(ctx, 0)
+		_, _, err := tw.Consume(ctx, bytes.NewReader(mibPattern(16)), 16<<20, md5.New())
+		if err == nil {
+			err = tw.Drain()
+		}
+		Expect(err).To(MatchError(op.ErrRequestTimedOut))
+		tw.Discard()
+		Expect(held()).To(BeZero())
+	})
+
+	// partWriterAt is the writer of part 1 of "part" under prefix.
+	partWriterAt := func(ctx context.Context, prefix string) *driver.PartWriter {
+		GinkgoHelper()
+		target := meta.Obj{Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: "part"}}
+		l, err := s.PlanPutForTest(ctx, rec, target.Key, "")
+		Expect(err).NotTo(HaveOccurred())
+		m := meta.NewPartManifest(target, rec.Info.PlacementRule, meta.PlacementRule{}, prefix, 1, l.Stripe)
+		return s.NewPartWriterForTest(&m, l, 1)
+	}
+	partWriter := func(ctx context.Context) *driver.PartWriter {
+		GinkgoHelper()
+		return partWriterAt(ctx, "part.2~id")
+	}
+	const partHead = putBucketID + "__multipart_part.2~id.1"
+
+	It("hands a part's kept first stripe and its share over through resume, and gives the share back once written", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(8 << 20)
+		c.Put(testDataPool, "", partHead, []byte("old"))
+		body := bytes.NewReader(mibPattern(6))
+		first := partWriter(ctx)
+		_, err := first.Consume(ctx, body, 6<<20, md5.New())
+		Expect(err).To(MatchError(radosclient.ErrExists))
+		Expect(held()).To(BeEquivalentTo(4<<20), "the kept first stripe holds its share")
+		retry := partWriterAt(ctx, "part.2~retry")
+		size, err := retry.Resume(ctx, first, body, md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retry.Drain()).To(Succeed())
+		Expect(size).To(BeEquivalentTo(6 << 20))
+		Expect(first.First()).To(BeNil(), "resume took the stripe")
+		Expect(held()).To(BeZero())
+	})
+
+	It("gives a kept first stripe's share back on discard", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(8 << 20)
+		c.Put(testDataPool, "", partHead, []byte("old"))
+		first := partWriter(ctx)
+		_, err := first.Consume(ctx, bytes.NewReader(mibPattern(6)), 6<<20, md5.New())
+		Expect(err).To(MatchError(radosclient.ErrExists))
+		Expect(held()).To(BeEquivalentTo(4 << 20))
+		first.Discard()
+		Expect(held()).To(BeZero())
+	})
+
+	DescribeTable("gives a part's first-stripe share back when it cannot be read whole",
+		func(ctx SpecContext, kv map[string]string, body func() io.Reader, want error) {
+			s = openPutStore(ctx, c, denc.Squid, kv, time.Now())
+			s.SetBodyBudgetForTest(64 << 20)
+			_, err := partWriter(ctx).Consume(ctx, body(), -1, md5.New())
+			Expect(err).To(MatchError(want))
+			Expect(held()).To(BeZero())
+		},
+		Entry("a body cut short", map[string]string(nil),
+			func() io.Reader { return &cutReader{r: bytes.NewReader(mibPattern(1)), err: io.ErrUnexpectedEOF} }, op.ErrRequestTimeout),
+		Entry("a stripe past rgw_max_put_size", map[string]string{"rgw_max_put_size": "1048576"},
+			func() io.Reader { return bytes.NewReader(mibPattern(2)) }, op.ErrEntityTooLarge),
+		Entry("a stripe past the put window", map[string]string{"rgw_obj_stripe_size": "33554432"},
+			func() io.Reader { return bytes.NewReader(make([]byte, 20<<20)) }, op.ErrUnknown),
+	)
+
+	It("gives a tail piece's share back when the body passes rgw_max_put_size", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_put_size": "6291456"}, time.Now())
+		s.SetBodyBudgetForTest(8 << 20)
+		tw := writer(ctx, 0)
+		_, _, err := tw.Consume(ctx, bytes.NewReader(mibPattern(10)), -1, md5.New())
+		Expect(err).To(MatchError(op.ErrEntityTooLarge))
+		Expect(tw.Tails()).To(BeEmpty(), "the piece past the limit was never issued")
+		Expect(held()).To(BeZero())
+	})
+
+	DescribeTable("gives every share back when a panic unwinds the request, which the handler's recovery survives",
+		func(ctx SpecContext, start func(context.Context) func() error) {
+			s.SetBodyBudgetForTest(8 << 20)
+			consume := start(ctx)
+			var err error
+			Expect(func() { err = consume() }).To(PanicWith("boom"))
+			Expect(err).NotTo(HaveOccurred(), "Consume never returned")
+			Eventually(held).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(BeZero())
+		},
+		Entry("a body reader that panics mid-piece", func(ctx context.Context) func() error {
+			tw := writer(ctx, 0)
+			return func() error {
+				_, _, err := tw.Consume(ctx, panicReader{bytes.NewReader(mibPattern(6))}, -1, md5.New())
+				return err
+			}
+		}),
+		Entry("a body reader that panics within a part's first stripe", func(ctx context.Context) func() error {
+			pw := partWriter(ctx)
+			return func() error {
+				_, err := pw.Consume(ctx, panicReader{bytes.NewReader(mibPattern(1))}, -1, md5.New())
+				return err
+			}
+		}),
+		Entry("a write of a part's first stripe that panics", func(ctx context.Context) func() error {
+			c.BeforeWrite(testDataPool, "", partHead, func(*fakerados.Object) { panic("boom") })
+			pw := partWriter(ctx)
+			return func() error {
+				_, err := pw.Consume(ctx, bytes.NewReader(mibPattern(5)), 5<<20, md5.New())
+				return err
+			}
+		}),
+	)
+
+	It("takes a part's first stripe's share before it reads the stripe", func(ctx SpecContext) {
+		s.SetBodyBudgetForTest(4 << 20)
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		DeferCleanup(unblock)
+		c.BeforeWrite(testDataPool, "", tailOID(prefix(0), 1), func(*fakerados.Object) { <-release })
+		tail := writer(ctx, 0)
+		tailDone := make(chan error, 1)
+		go func() {
+			_, _, err := tail.Consume(ctx, bytes.NewReader(mibPattern(8)), 8<<20, md5.New())
+			tailDone <- err
+		}()
+		Eventually(held).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4 << 20))
+		part := partWriter(ctx)
+		var read atomic.Int64
+		partDone := make(chan error, 1)
+		go func() {
+			_, err := part.Consume(ctx, &countingReader{r: bytes.NewReader(mibPattern(5)), n: &read}, 5<<20, md5.New())
+			partDone <- err
+		}()
+		Consistently(read.Load).WithTimeout(100*time.Millisecond).WithPolling(5*time.Millisecond).Should(BeZero(),
+			"the part's first stripe waits for its share before it is read")
+		unblock()
+		Eventually(tailDone).WithTimeout(5 * time.Second).Should(Receive(BeNil()))
+		Eventually(partDone).WithTimeout(5 * time.Second).Should(Receive(BeNil()))
+		Expect(tail.Drain()).To(Succeed())
+		Expect(part.Drain()).To(Succeed())
+		Expect(read.Load()).To(BeEquivalentTo(5 << 20))
+		Expect(held()).To(BeZero())
+	})
+})
+
+// boundedCluster is a fake cluster whose in-flight limiter bounds its
+// payload bytes at bytes.
+type boundedCluster struct {
+	*fakerados.Cluster
+	bytes int64
+}
+
+func (b boundedCluster) MaxInflightBytes() int64 { return b.bytes }
+
+// panicReader reads r, then panics with "boom" where r would end.
+type panicReader struct{ r io.Reader }
+
+func (p panicReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if errors.Is(err, io.EOF) {
+		panic("boom")
+	}
+	return n, err
+}
 
 // mibPattern is n MiB whose every MiB holds its own byte value, 1 to n, so
 // a piece written at the wrong place shows.

@@ -126,3 +126,9 @@ func DetachedPool(namespace, locator string) radosclient.Pool {
 // DetachedCluster is a Cluster with no connection, for specs of what it
 // refuses before it reaches librados.
 func DetachedCluster() radosclient.Cluster { return &cluster{} }
+
+// LimitedCluster is a Cluster with no connection whose in-flight limiter
+// admits maxOps operations and maxBytes bytes.
+func LimitedCluster(maxOps int, maxBytes int64) radosclient.InflightLimiter {
+	return &cluster{limit: newLimiter(maxOps, maxBytes)}
+}

@@ -202,18 +202,25 @@ func (s *Store) newPartWriter(m *meta.Manifest, l layout, n uint32) *tailWriter 
 	return t
 }
 
-// buf takes a buffer of at least n bytes, one chunk when it allocates.
-func (t *tailWriter) buf(n uint64) *[]byte {
+// buf takes a buffer of one chunk once its share of the body budget is
+// taken, waiting on ctx. A pooled buffer of another layout's chunk is left,
+// so the share is what the buffer weighs.
+func (t *tailWriter) buf(ctx context.Context) (*[]byte, error) {
+	if _, err := t.s.w.body.acquire(ctx, t.chunk); err != nil {
+		return nil, err
+	}
 	p, ok := t.s.tailBufs.Get().(*[]byte)
-	if !ok || uint64(cap(*p)) < n {
-		b := make([]byte, max(n, t.chunk))
+	if !ok || uint64(cap(*p)) != t.chunk {
+		b := make([]byte, t.chunk)
 		p = &b
 	}
 	t.hold(p)
-	return p
+	return p, nil
 }
 
-// hold counts p among the buffers the writer holds.
+// hold counts p among the buffers the writer holds. Every one of them
+// carries its share of the body budget, taken before it was read into, which
+// release gives back.
 func (t *tailWriter) hold(p *[]byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -221,15 +228,18 @@ func (t *tailWriter) hold(p *[]byte) {
 	t.peak = max(t.peak, t.held)
 }
 
-// release hands p back for the next piece; pool is false for a buffer an
-// abandoned write may still read, which is dropped instead. Only a buffer of
-// one chunk is pooled: a piece weighs its buffer's capacity in the window, so
-// a part's first-stripe buffer reused for a smaller piece would hold room the
-// piece does not need.
+// release hands p back for the next piece, and its share of the body budget;
+// pool is false for a buffer that is dropped instead: one an abandoned write
+// may still read, one a panicking write or body reader left, and a piece
+// stream gives up after a read error or EntityTooLarge, whose one deferred
+// release also serves a panic. Only a buffer of one chunk is pooled: a piece
+// weighs its buffer's capacity in the window, so a part's first-stripe buffer
+// reused for a smaller piece would hold room the piece does not need.
 func (t *tailWriter) release(p *[]byte, pool bool) {
 	t.mu.Lock()
 	t.held -= uint64(cap(*p))
 	t.mu.Unlock()
+	t.s.w.body.release(t.s.w.body.share(uint64(cap(*p))))
 	if pool && uint64(cap(*p)) == t.chunk {
 		t.s.tailBufs.Put(p)
 	}
@@ -409,9 +419,10 @@ func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64
 // stripe, a part's head chunk being the stripe size
 // (rgw_putobj_processor.cc:476-478 at v19.2.6, :510-512 at v20.2.4), until it
 // is whole or the body ends, then hands it to process_first_chunk. The
-// stripe takes its room in the put window before it is read, and is read
-// into a buffer sized as readHead sizes the head, so a small part costs no
-// whole stripe and no part holds more than the window and one byte.
+// stripe takes its room in the put window and its share of the body budget
+// before it is read, and is read into a buffer sized as readHead sizes the
+// head, so a small part costs no whole stripe and no part holds more than the
+// window and one byte.
 func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int64) (uint64, error) {
 	window := t.s.w.opts.putWindow
 	limit := min(t.m.Rules[0].StripeMaxSize, window+1)
@@ -420,7 +431,7 @@ func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int
 	if err := t.sem.Acquire(ctx, weight); err != nil {
 		return 0, err
 	}
-	f, err := t.readFirst(r, declared, limit)
+	f, err := t.readFirst(ctx, r, declared, limit)
 	if err == nil {
 		err = t.writeFirst(f)
 	}
@@ -437,8 +448,16 @@ func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int
 // BlockingAioThrottle::get, which fails it with EDEADLK
 // (rgw_aio_throttle.cc:40-42 at v19.2.6 and v20.2.4), answered 500
 // UnknownError by set_req_state_err; reading one byte past the window is
-// enough to know.
-func (t *tailWriter) readFirst(r io.Reader, declared int64, limit uint64) (*firstPiece, error) {
+// enough to know. The share of the body budget taken first is limit's, the
+// most the buffer can grow to; what the buffer does not weigh goes back once
+// it is read, and all of it if the body reader panics.
+func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64, limit uint64) (*firstPiece, error) {
+	body := t.s.w.body
+	reserved, err := body.acquire(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { body.release(reserved) }()
 	n := limit
 	if declared >= 0 && uint64(declared) < n {
 		n = uint64(declared)
@@ -462,6 +481,7 @@ func (t *tailWriter) readFirst(r io.Reader, declared int64, limit uint64) (*firs
 	}
 	p := &buf
 	t.hold(p)
+	reserved -= body.share(uint64(cap(*p)))
 	switch {
 	case err != nil:
 		t.release(p, true)
@@ -519,7 +539,16 @@ func (t *tailWriter) writeFirst(f *firstPiece) error {
 	w.Create(true)
 	w.SetAllocHint(0, 0, 0)
 	w.WriteFull((*f.p)[:f.n])
+	settled := false
+	defer func() {
+		// A panic in the write, which the request's recovery survives,
+		// must not keep the stripe's share of the body budget.
+		if !settled {
+			t.release(f.p, false)
+		}
+	}()
 	_, err := pool.Write(t.s.w.completions.ctx, stripe.OID(), w, radosclient.OpFlagNone)
+	settled = true
 	switch {
 	case err == nil:
 		t.release(f.p, true)
@@ -540,25 +569,36 @@ func (t *tailWriter) writeFirst(f *firstPiece) error {
 // and returns the body's length. done reports that r has ended already.
 func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done bool) (uint64, error) {
 	stripeMax := t.m.Rules[0].StripeMaxSize
+	// p is the piece being read until write takes it; whatever ends stream
+	// before then, a body reader's panic included, hands it back with its
+	// share of the body budget.
+	var p *[]byte
+	defer func() {
+		if p != nil {
+			t.release(p, false)
+		}
+	}()
 	for !done {
 		n := t.m.TailStripe(size)
 		idx := -1
 		for off := uint64(0); off < stripeMax && !done; {
 			want := min(t.chunk, stripeMax-off)
-			p := t.buf(want)
+			var err error
+			if p, err = t.buf(ctx); err != nil {
+				return 0, err
+			}
 			got, d, err := readPiece(r, (*p)[:want])
 			if err != nil {
-				t.release(p, true)
 				return 0, bodyErr(err)
 			}
 			done = d
 			if got == 0 {
 				t.release(p, true)
+				p = nil
 				continue
 			}
 			piece := uint64(got) //nolint:gosec // a read count is never negative
 			if size+piece > t.maxSize {
-				t.release(p, true)
 				return 0, op.ErrEntityTooLarge
 			}
 			if idx < 0 {
@@ -570,7 +610,9 @@ func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done 
 				// whether or not the client stays, as radosgw's does.
 				wctx = context.WithoutCancel(ctx)
 			}
-			if err := t.write(wctx, idx, off, p, got); err != nil {
+			taken := p
+			p = nil
+			if err := t.write(wctx, idx, off, taken, got); err != nil {
 				return 0, err
 			}
 			off += piece

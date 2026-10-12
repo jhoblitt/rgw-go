@@ -4943,6 +4943,40 @@ does the following.
   class](ceph-upstream-bugs.md#squid-labels-a-copy-to-another-storage-class-with-its-sources-class)").
   On a Squid cluster rgw-go reports STANDARD for such a copy where
   radosgw reports the source's class.
+- **Body tails share one byte budget.** radosgw reads a PUT's body chunk
+  by chunk (`get_data`, `rgw_op.cc:4391` at v19.2.6, `:4623` at v20.2.4)
+  and bounds only each writer's writes in flight, by
+  `rgw_put_obj_min_window_size` (`RadosStore::get_atomic_writer` and
+  `RadosMultipartUpload::get_writer`,
+  `driver/rados/rgw_sal_rados.cc:2284` and `:3730` at v19.2.6, `:2770` and
+  `:4593` at v20.2.4), so the body bytes it holds grow with the PUTs it
+  serves. rgw-go also bounds the tail pieces of every PUT, part upload and
+  streamed copy at once by one byte budget: its in-flight limiter's byte
+  bound, fifteen sixteenths of `objecter_inflight_op_bytes`, raised to one
+  piece for each request `rgw_max_concurrent_requests` admits, 4 GiB at
+  the defaults. There is no bound without a cap, nor with
+  `objecter_inflight_op_bytes` at 0, which turns librados's throttle and
+  the limiter off. A piece takes its share before
+  it is read and gives it back when its write ends, and a piece larger
+  than the whole budget takes all of it. So under load a PUT can wait for
+  the budget, with fewer pieces in flight, where radosgw would allocate. A
+  client that sends its body slowly holds its piece's share as long as it
+  does, since `request_timeout_ms` bounds each read and not the piece, as
+  beast's timer does (`StreamIO::recv_body`, `rgw_asio_frontend.cc:152-175`
+  at both tags); but the budget keeps a piece for every other request the
+  cap admits, so slow clients slow other PUTs and cannot stop them, as
+  radosgw's, which read a chunk before its throttle, stop others only by
+  filling that cap. The head a PUT keeps for its head write, at most
+  `rgw_max_chunk_size`, is outside the budget. A piece is sized from
+  `rgw_max_chunk_size` and `rgw_obj_stripe_size` as configured, not as a
+  pool's alignment raises them. Only an erasure-coded pool without
+  `allow_ec_overwrites` has an alignment, its stripe width
+  (`pg_pool_t::requires_aligned_append`, `osd_types.h:1754-1757` at
+  v19.2.6, `:1791-1794` at v20.2.4; `RGWRados::get_required_alignment`,
+  `driver/rados/rgw_rados.cc:659-693` and `:694-728`). On such a pool with
+  a stripe width over 4 MiB a slow client holds more than a piece's room
+  and slow clients can stop other PUTs, and a head, one aligned chunk,
+  exceeds `rgw_max_chunk_size`.
 
 ### Bucket index differences
 
