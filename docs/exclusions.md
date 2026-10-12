@@ -2090,6 +2090,18 @@ review and verified against the tree.
   of versions, a read of an object whose head is an olh, and the purging
   removals in "A purging bucket removal refuses a bucket whose versioning
   was ever enabled" (`refuseVersionedPurge`, `internal/op/adminpurge.go`).
+- **A stored lifecycle configuration answers 501 until phase 2.** `GET
+  /{bucket}?lifecycle` loads the bucket and authorizes
+  `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does
+  (`rgw_op.cc:5759-5770` at v19.2.6, `:6405-6416` at v20.2.4), and answers
+  a bucket without `user.rgw.lc` with radosgw's 404
+  NoSuchLifecycleConfiguration (`RGWGetLC_ObjStore_S3`,
+  `rgw_rest_s3.cc:3658-3696` at v19.2.6, `:4139-4177` at v20.2.4). A
+  bucket that carries the attr, empty or not, answers 501 NotImplemented,
+  where radosgw renders the configuration, or answers 500 UnknownError for
+  one that does not decode. `PUT` and `DELETE /{bucket}?lifecycle` answer
+  501 NotImplemented before any permission check and change nothing: their
+  routes have no handler.
 - **A requested bucket index answers 501 on Tentacle.** Tentacle's
   CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
   whose `Type` and `NumShards` set the new bucket's index, and refuses a

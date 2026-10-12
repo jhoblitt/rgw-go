@@ -10,10 +10,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
-// The bucket policy and tagging routes are RGWGetBucketPolicy,
+// The bucket policy, tagging and lifecycle routes are RGWGetBucketPolicy,
 // RGWPutBucketPolicy and RGWDeleteBucketPolicy, which have no S3 subclass,
 // and rgw_rest_s3.cc's RGWGetBucketTags_ObjStore_S3,
-// RGWPutBucketTags_ObjStore_S3 and RGWDeleteBucketTags_ObjStore_S3.
+// RGWPutBucketTags_ObjStore_S3, RGWDeleteBucketTags_ObjStore_S3 and
+// RGWGetLC_ObjStore_S3.
 
 // invalidRange is read_all_input's -ERANGE as the policy and tagging PUTs
 // pass it on: 416 InvalidRange.
@@ -124,6 +125,14 @@ func deleteBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request)
 	}
 	writeEmptyXML(w, r, http.StatusNoContent)
 	return nil
+}
+
+// getLifecycle is get_lifecycle, RGWGetLC_ObjStore_S3. The op answers every
+// request it serves with an error, which send_response renders through
+// end_header's error document (rgw_rest_s3.cc:3678-3696 at v19.2.6,
+// :4159-4177 at v20.2.4), so nothing is written here.
+func getLifecycle(ctx context.Context, _ http.ResponseWriter, r *op.Request) error {
+	return op.Run(ctx, &op.GetBucketLifecycle{}, r)
 }
 
 // writeEmptyXML is writeEmpty with Content-Type: application/xml: a
