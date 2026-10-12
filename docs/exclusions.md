@@ -903,8 +903,25 @@ review and verified against the tree.
     user completes it; an entry a failed write, a release or a removal left
     stays until a write of that user holding the key and a later one
     dropping it, or a user created again under that id holding the key and
-    then removed, frees it. Errors and logs name an entry by the index's
-    pool and kind, `user key holder index`, never by the key.
+    then removed, frees it. radosgw and radosgw-admin never touch the
+    index either, so a user, or a user's key, that either removes keeps its
+    entries, the likeliest source on a zone the two share: an rgw-go write
+    giving that key id to another user answers 409 KeyExists, for good,
+    where radosgw stores it. rgw-go never frees such an entry itself, since
+    nothing it reads tells a user gone for good from one about to hold the
+    key again. An operator who has checked that the user the entry names,
+    the uid in its data (`rados get`), no longer holds the key frees the id
+    by removing the entry, named by the access key id in the pool of the
+    zone's `user_keys_pool` (`radosgw-admin zone get`) under its namespace
+    with `.rgw-go-key-holders` appended: `rados -p default.rgw.meta -N
+    users.keys.rgw-go-key-holders rm <access key id>` in a default zone.
+    A removal outside rgw-go sends no cache notify, so an rgw-go gateway
+    that cached the entry, on its first read of it after a miss, less than
+    `rgw_cache_expiry_interval` ago (900 s by default) refuses the id until
+    that copy expires, which later reads do not postpone, or is evicted, or
+    the gateway restarts.
+    Errors and logs name an entry by the index's pool and kind, `user key
+    holder index`, never by the key.
   - A new key gets the `active` the request names. radosgw's
     `generate_key` never reads it and makes every new key active
     (`rgw_user.cc:536-639` at v19.2.6, `:541-644` at v20.2.4), so
