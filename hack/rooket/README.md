@@ -14,9 +14,10 @@ make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
 make read-gate RELEASE=squid      # the corpus read through rgw-go and the radosgw, compared
 make s3tests RELEASE=squid        # s3-tests against the radosgw, after the gate
-make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw, after the gate
+make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosgw
 make rgw-go-up RELEASE=squid      # rgw-go on the host at http://127.0.0.1:7481, under the parity settings
 make s3tests-parity RELEASE=squid # s3-tests against rgw-go, compared with radosgw's baseline
+make admin-parity RELEASE=squid   # go-ceph's rgw/admin suite against rgw-go, compared with radosgw's baseline
 make rgw-go-down RELEASE=squid
 make cluster-down RELEASE=squid
 
@@ -29,6 +30,7 @@ make s3tests RELEASE=tentacle
 make admin-suite RELEASE=tentacle
 make rgw-go-up RELEASE=tentacle
 make s3tests-parity RELEASE=tentacle
+make admin-parity RELEASE=tentacle
 make rgw-go-down RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
@@ -589,7 +591,6 @@ exclusion decides it, an upstream Ceph defect, which goes in
 ## go-ceph's rgw/admin suite
 
 ```sh
-make gate RELEASE=squid                                       # first: the gate counts the zone's users
 make admin-suite RELEASE=squid GATEWAY=radosgw RUN=try1       # GATEWAY=rgw-go runs it against rgw-go
 ```
 
@@ -611,6 +612,17 @@ each run it resets the checkout to the tag and applies two patches:
 
 Bumping the tag regenerates both patches with `git diff` in a checkout of the
 new tag and re-records both baselines.
+
+`go test` skips, on both gateways, the subtests
+`hack/admin/deselect-phase2.txt` names: subtests that set up what they read
+through the admin API with a phase 2 S3 feature, `PutBucketVersioning` or a
+CreateBucket with object lock, which rgw-go answers 501 until phase 2. Each
+line is a test id as `go test -json` reports it; `run.sh` turns the lines
+into one `-skip` pattern, stops before the run when a line names no method
+or subtest of the checkout, and after it when the run still reports one.
+`run.sh --print-deselect` prints a digest of the listed ids, which a
+recorded baseline carries. The PR that lands a feature deletes its lines and
+re-records both baselines.
 
 `go test` runs the suite with `-tags ceph_preview`, which the account tests
 need, and with `CEPH_CONF` naming `out/<release>/ceph.conf`, since
@@ -639,8 +651,10 @@ removes again, which a run that stops partway leaves behind: the users
 `leseb`, `test`, `test-user1`, `test-user2` and `test-user-bucket-rename`, the
 buckets `test`, `bucket-object-lock`, `initial-name` and `renamed-name`, the
 account `RGW12345678901234567`, and every key of `admin` but its own. The
-`admin` user stays, like the s3-tests users, so `make gate` runs before
-`make admin-suite`, never after.
+`admin` user signs with AWS's documented example keys and holds the users,
+buckets and accounts caps, so a trap removes it with `hack/admin/remove-user.sh`,
+which also collects the garbage the removal leaves, whenever `run.sh` exits,
+passed, failed or stopped partway. `make gate` passes after a run.
 
 For `GATEWAY=radosgw` the script sets, on the radosgw's own config entity, the
 usage-log options go-ceph's CI sets and `TestUsage` needs:
@@ -672,19 +686,24 @@ binary panicked, or the gateway could not be reached.
 recorded from two runs in a row:
 
 ```sh
-make admin-suite RELEASE=squid GATEWAY=radosgw RUN=base1
-make admin-suite RELEASE=squid GATEWAY=radosgw RUN=base2
-make parity-record SUITE=admin FORMAT=gotest OUT=test/admin/baseline/squid.json \
-	META="release=squid ceph_version=$(jq -r .ceph_version hack/rooket/out/squid/manifest.json) gateway=radosgw go_ceph_tag=v0.39.0" \
-	FILES="hack/admin/_out/squid-radosgw-base1.jsonl hack/admin/_out/squid-radosgw-base2.jsonl"
+make rgw-go-up RELEASE=squid     # sets the parity options on radosgw's entity too
+make admin-record RELEASE=squid  # OUT=FILE writes it elsewhere
 ```
 
-A test whose outcome differed between the runs is listed as `unstable`, and a
-comparison skips it. `make parity-check` refuses to compare results whose
-go-ceph tag, release or Ceph version differ, so bumping `GO_CEPH_TAG` or a
-Ceph pin re-records both releases' baselines in the same change.
+`make admin-record` runs the suite against radosgw twice, as `RUN=base1` and
+`RUN=base2`, and records both runs in `OUT`, by default
+`test/admin/baseline/<release>.json`, with the meta `release`, `ceph_version`
+from `manifest.json`, `gateway=radosgw`, `go_ceph_tag` and `deselect`. Like
+`make s3tests-record` it refuses to start before `make rgw-go-up`, so that
+radosgw records under the parity options rgw-go is compared under. A test
+whose outcome differed between the runs is listed as `unstable`, and a
+comparison skips it. The comparison refuses results whose go-ceph tag,
+deselect list, release or Ceph version differ, so bumping `GO_CEPH_TAG` or a
+Ceph pin, or changing a deselect list, re-records both releases' baselines in
+the same change.
 
-Each baseline holds the suite's 82 subtests. On both releases radosgw fails
+Each baseline holds the suite's 82 subtests less the two the deselect list
+skips. On both releases radosgw fails
 four of them, each because it lists the whole zone and expects only the
 suite's own buckets and users, while the populated zone also holds `plain`,
 `t1/tenanted`, `alice` and `t1$bob`:
@@ -700,3 +719,25 @@ suite's own buckets and users, while the populated zone also holds `plain`,
 rgw-go must fail them alike. A method whose subtests fail is left to them;
 the other methods pass. Squid skips `TestAccount`'s get and delete subtests,
 as above, and Tentacle passes them.
+
+### Comparing rgw-go with the baseline
+
+```sh
+make rgw-go-up RELEASE=squid
+make admin-parity RELEASE=squid
+make admin-parity RELEASE=squid ADMIN_BASELINE=path/to/just-recorded.json
+make rgw-go-down RELEASE=squid
+```
+
+`make admin-parity` runs the suite against the rgw-go `make rgw-go-up`
+started, as `make admin-suite GATEWAY=rgw-go RUN=parity`, records the run in
+`out/<release>/admin-rgw-go.json` with the release, the Ceph version from
+`manifest.json`, the go-ceph tag and the deselect digest, and compares it
+with `ADMIN_BASELINE`, by default `test/admin/baseline/<release>.json`. It
+prints one line per subtest whose outcome differs and fails unless there is
+none; as for `make s3tests-parity`, `bin/parity`'s status is 1 for a
+subtest that differs and 2 for a baseline recorded under another go-ceph tag,
+deselect list, Ceph version or release. No subtest differs for a recorded
+exclusion at this tag, so there is no known-differences list: a subtest that
+needs a later phase's feature goes on that phase's deselect list, and any
+other difference is a bug in rgw-go.

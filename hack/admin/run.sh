@@ -7,13 +7,15 @@
 # checks and a failure shows only on its method; subtest-t.patch makes each
 # subtest assert on its own, so hack/parity compares every check. The suite
 # signs as the user admin, which this script creates with the keys and caps
-# go-ceph's own CI gives it (testing/containers/micro-osd.sh). For the
+# go-ceph's own CI gives it (testing/containers/micro-osd.sh) and removes
+# when it exits. For the
 # radosgw it also sets the usage-log options that CI sets, which TestUsage
 # needs, on the radosgw's own config entity, and restarts the radosgw when
-# that changes them. Users are created through radosgw-admin, so run this
-# after make gate: the gate counts the zone's users.
+# that changes them. It removes the users, buckets and account it and the
+# suite create before and after each run, so make gate passes after it.
 #
 # Usage: run.sh squid|tentacle radosgw|rgw-go RUN-ID
+#        run.sh --print-tag | --print-deselect
 set -euo pipefail
 
 harness=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -28,6 +30,26 @@ readonly GO_CEPH_REPO=https://github.com/ceph/go-ceph
 # Bump by hand: regenerate both patches, recheck suite_version below, and
 # re-record the baselines.
 readonly GO_CEPH_TAG=v0.39.0
+
+# The subtests of later phases' features, by go test id, one file per phase.
+# A phase deletes its lines as it lands its features, and its file and entry
+# here with the last of them.
+readonly DESELECT_LISTS=("${harness}/deselect-phase2.txt")
+
+# deselected prints the ids the lists name, without comments and blanks.
+# Once no list is left, sed reads the empty stdin rather than the caller's.
+deselected() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "${DESELECT_LISTS[@]}" </dev/null; }
+
+case "${1:-}" in
+--print-tag)
+	echo "${GO_CEPH_TAG}"
+	exit 0
+	;;
+--print-deselect)
+	deselected | LC_ALL=C sort | sha256sum | cut -c1-12
+	exit 0
+	;;
+esac
 
 use_release "${1:-}"
 gateway=${2:-}
@@ -89,6 +111,35 @@ for patch in endpoint.patch subtest-t.patch; do
 	git -C "${src}" apply --whitespace=nowarn "${harness}/${patch}"
 done
 
+# go test's -skip takes one pattern, in which "|" separates alternatives and
+# "/" the levels of a test id, each level an expression of its own, so each
+# id becomes an alternative of anchored levels that matches it alone. go
+# test names a subtest by its t.Run name with its spaces as underscores.
+mapfile -t deselect < <(deselected)
+skip=
+for id in "${deselect[@]}"; do
+	IFS=/ read -r -a parts <<<"${id}"
+	if ((${#parts[@]} != 3)) || [[ "${parts[0]}" != TestRadosGWTestSuite ]]; then
+		die "the deselect id ${id} is not TestRadosGWTestSuite/<method>/<subtest>"
+	fi
+	# The method's body runs from its signature to the first closing brace at
+	# the start of a line, as gofmt lays a function out.
+	body=$(awk -v sig="func (suite *RadosGWTestSuite) ${parts[1]}() {" \
+		'index($0, sig) == 1 { on = 1 } on { print } on && /^}/ { exit }' "${src}"/rgw/admin/*_test.go)
+	if ! grep -qF -- "Run(\"${parts[2]//_/ }\"" <<<"${body}"; then
+		die "the deselect lists name ${id}, which go-ceph ${GO_CEPH_TAG}'s suite does not hold"
+	fi
+	alternative=
+	for part in "${parts[@]}"; do
+		# shellcheck disable=SC2001,SC2016 # sed escapes every regexp metacharacter
+		part=$(sed -e 's/[][\\.|$(){}?+*^]/\\&/g' <<<"${part}")
+		alternative+=${alternative:+/}^${part}\$
+	done
+	skip+=${skip:+|}${alternative}
+done
+skip_args=()
+[[ -z "${skip}" ]] || skip_args=(-skip "${skip}")
+
 use_site
 
 readonly admin_uid=admin admin_key=AKIAIOSFODNN7EXAMPLE admin_secret=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
@@ -112,6 +163,10 @@ fi
 jq -e --arg ak "${admin_key}" --arg sk "${admin_secret}" \
 	'any(.keys[]; .access_key == $ak and .secret_key == $sk)' <<<"${user}" >/dev/null ||
 	die "the user ${admin_uid} exists without the key ${admin_key} the suite signs with; remove it and rerun"
+# The user signs with AWS's documented example keys and holds the users,
+# buckets and accounts caps, so it goes when the script exits, whether the
+# run passed, failed or stopped partway; make gate also refuses it.
+trap '"${harness}/remove-user.sh" "${release}" "${admin_uid}" || echo "${script}: could not remove the user ${admin_uid}" >&2' EXIT
 
 reset_fixtures() {
 	local bucket uid info key keys
@@ -173,7 +228,7 @@ reset_fixtures
 echo "running go-ceph ${GO_CEPH_TAG}'s TestRadosGWTestSuite against the ${gateway} at ${endpoint}; log ${log}"
 status=0
 (cd "${src}" && GOWORK=off CEPH_CONF="${conf}" CEPH_VERSION="${suite_version}" RGW_GO_ADMIN_ENDPOINT="${endpoint}" \
-	go test -tags ceph_preview -count=1 -v -json -run TestRadosGWTestSuite ./rgw/admin/) >"${report}" 2>"${log}" || status=$?
+	go test -tags ceph_preview -count=1 -v -json -run TestRadosGWTestSuite "${skip_args[@]}" ./rgw/admin/) >"${report}" 2>"${log}" || status=$?
 reset_fixtures
 
 # go test exits 1 when a test failed, which hack/parity judges, but also
@@ -184,6 +239,10 @@ jq -e -s 'any(.[]; .Test == "TestRadosGWTestSuite" and (.Action == "pass" or .Ac
 	"${report}" >/dev/null || die "TestRadosGWTestSuite did not finish; see ${log} and ${report}"
 ! jq -e -s 'any(.[]; .Action == "output" and (.Output | startswith("panic: ")))' "${report}" >/dev/null ||
 	die "the test binary panicked; see ${report}"
+for id in "${deselect[@]}"; do
+	! jq -e -s --arg id "${id}" 'any(.[]; .Test == $id)' "${report}" >/dev/null ||
+		die "go test ran ${id}, which the deselect lists skip; see ${report}"
+done
 jq -r -s '[.[] | select((.Test // "" | startswith("TestRadosGWTestSuite/")) and (.Action | IN("pass", "fail", "skip")))]
 	| group_by(.Action) | map("\(length) \(.[0].Action)") | join(", ")' "${report}"
 echo "wrote ${report}"
