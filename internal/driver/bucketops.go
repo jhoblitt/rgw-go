@@ -337,8 +337,8 @@ func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) erro
 	}
 }
 
-// maxRemoveRetries bounds the instance removals a delete retries after
-// another write changed the instance.
+// maxRemoveRetries bounds the instance removals a delete or a rename
+// retries after another write changed the instance.
 const maxRemoveRetries = 20
 
 // DeleteBucket implements op.BucketStore as RGWDeleteBucket's own-bucket
