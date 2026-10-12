@@ -1450,7 +1450,7 @@ review and verified against the tree.
   marker's buffer
   ([radosgw's from_base64 reads before an all-'=' input](ceph-upstream-bugs.md#radosgws-from_base64-reads-before-an-all--input)).
 - **The admin metadata API serves three sections, and differs from
-  radosgw's in three more ways.** `GET`, `PUT` and `DELETE
+  radosgw's in four more ways.** `GET`, `PUT` and `DELETE
   /admin/metadata` are radosgw's `RGWHandler_Metadata` ops
   (`rgw_rest_metadata.cc`, the same at v19.2.6 and v20.2.4) over the
   sections "The metadata sections write only what keeps a user or bucket
@@ -1459,6 +1459,13 @@ review and verified against the tree.
     and the top-level listing, `GET /admin/metadata`, lists those three.
     radosgw also serves and lists `account`, `group`, `otp`, `roles` and
     `topic`, for each of which rgw-go answers 404 NoSuchKey.
+  - A put's `update-type` decides whether it applies on Tentacle too:
+    `update-by-version` applies a document only over the same tag at a
+    lower version and `update-by-timestamp` only over an older mtime, as
+    Squid's `check_versions` decides, and a put they refuse answers 204
+    with `RGWX_UPDATE_STATUS: skipped`. Tentacle's radosgw checks the
+    argument and then applies every put
+    ([Tentacle's metadata put ignores update-type](ceph-upstream-bugs.md#tentacles-metadata-put-ignores-update-type)).
   - A put's `RGWX_UPDATE_VERSION` names the version the put read, in every
     section. radosgw's user section names that version too, but its
     `bucket` and `bucket.instance` puts name the version their write left,
