@@ -52,6 +52,12 @@ upload it as the artifact `s3tests-baseline-<release>`, and compare rgw-go with 
 commit the artifact's file as `test/s3tests/baseline/<release>.json`. Locally,
 `make s3tests-record RELEASE=<release>` writes the same file.
 
+The `rook` workflow runs Rook's own object-store suite, reduced to the phase 1
+subset, on kind against the derived image with rgw-go as radosgw, for both releases
+with and without TLS. It runs nightly and on demand with `gh workflow run rook.yml`,
+and does not gate pull requests; the subset, the Rook pin and how to move it are in
+[hack/rook/README.md](hack/rook/README.md).
+
 A `v*` tag runs the `release` workflow. goreleaser builds rgw-go with cgo once per Ceph
 release, in a builder made from that release's Ceph image (`hack/image/cgo-build.sh`).
 For each release it publishes a `linux/amd64` archive and the derived Ceph image
