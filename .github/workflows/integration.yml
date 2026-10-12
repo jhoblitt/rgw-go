@@ -65,18 +65,19 @@ jobs:
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         run: make rgw-go-up "RELEASE=${RELEASE}"
 
-      # radosgw's own rgw/admin baseline, recorded in test/admin/baseline/. A
-      # drift here is a change in the Ceph image or the go-ceph tag, never an
-      # rgw-go bug: re-record on purpose (hack/rooket/README.md).
+      # radosgw's own rgw/admin baseline, the ledger in test/admin/baseline/.
+      # A drift here is a change in the Ceph image or the go-ceph tag, never an
+      # rgw-go bug: record on purpose, a reason for each changed outcome
+      # (hack/rooket/README.md).
       - name: go-ceph rgw/admin suite against radosgw
         id: radosgw-suite
         if: ${{ !cancelled() && steps.rgw-go.outcome == 'success' }}
         run: make admin-suite "RELEASE=${RELEASE}" GATEWAY=radosgw RUN=nightly
 
-      # The meta make admin-record writes, so that a run under another Ceph
-      # version, go-ceph tag or deselect list exits 2, the prompt to
-      # re-record. hack/parity runs built, as the Makefile runs it, because go
-      # run exits 1 for any failure.
+      # The meta make admin-record writes, so that a run at another go-ceph
+      # tag exits 2, and one under another Ceph version names each subtest
+      # stale, the prompt to record. hack/parity runs built, as the Makefile
+      # runs it, because go run exits 1 for any failure.
       - name: Compare with the recorded rgw/admin baseline
         id: baseline
         if: ${{ !cancelled() && steps.radosgw-suite.outcome == 'success' }}
