@@ -1,6 +1,7 @@
-// Package parity records test outcomes from run files and compares two
-// recorded results. hack/parity's package doc is the home of the result
-// file's schema and of the command line Run implements.
+// Package parity records test outcomes from run files into result files and
+// ledgers, and compares a result with a ledger. hack/parity's package doc is
+// the home of both files' schemas, of the comparison's rules and of the
+// command line Run implements.
 package parity
 
 import (
@@ -35,11 +36,6 @@ const (
 
 // metaRuns is the meta key Record sets to the number of runs it read.
 const metaRuns = "runs"
-
-// comparedMeta are the meta keys whose values Diff requires to agree: a
-// difference in any of them means the two results ran different tests or ran
-// them against a different Ceph.
-var comparedMeta = []string{"s3tests_commit", "go_ceph_tag", "release", "ceph_version", "deselect"}
 
 // Result is a result file: the outcome of every test of a suite and the
 // tests whose outcome differed between the runs it was recorded from.
@@ -135,44 +131,53 @@ func Record(format Format, suite string, meta map[string]string, files []string)
 	return Result{Suite: suite, Meta: m, Outcomes: last, Unstable: unstable}, nil
 }
 
-// Diff compares cand with base and returns one line per difference, by test
-// id: "<test>: baseline <outcome>, candidate <outcome>" for a test whose
-// outcome differs, with "missing" for a test one of them lacks. Tests in
-// base's unstable set are not compared. A compared test that a plain known
-// entry matches is expected to differ: when it does, it is skipped, and when
-// it agrees the line is "<test>: known difference no longer differs". A test
-// that only either-outcome entries match is skipped whatever its outcome.
-// Each entry that matches no compared test adds, after those, "<entry>: known
-// difference matches no test", the entry as ParseKnown read it.
+// Diff compares cand, a result, with base, a ledger, and returns one line
+// per difference, by test id, judging each test by its last entry:
+//   - a test with no entry prints "<test>: no baseline entry", unless a
+//     known entry, plain or either-outcome, matches it;
+//   - a retired test is skipped when cand lacks it, and prints "<test>:
+//     baseline retired, candidate <outcome>" when cand has it;
+//   - a test whose last entry is not valid prints "<test>: baseline stale,
+//     re-record": valid, its source is pinned at or after the chain's last
+//     base pin and its ceph_version is cand's;
+//   - an unstable test is skipped;
+//   - any other test is compared, and prints "<test>: baseline <outcome>,
+//     candidate <outcome>" when its outcome differs, with "missing" for a
+//     test cand lacks.
 //
-// Diff refuses to compare, and returns an error, when cand lacks a key of
-// comparedMeta that base carries, or, unless allowMetaDrift is set, carries it
-// with another value. A key only cand carries is not compared.
-func Diff(base, cand Result, allowMetaDrift bool, known KnownList) ([]string, error) {
+// A compared test that a plain known entry matches is expected to differ:
+// when it does, it is skipped, and when it agrees the line is "<test>: known
+// difference no longer differs". A test that only either-outcome entries
+// match is skipped whatever its outcome. A retired or stale test's line is
+// printed whatever the list says. Each entry that matches no test compared,
+// skipped for having no entry, or reported adds, after those, "<entry>:
+// known difference matches no test", the entry as ParseKnown read it.
+//
+// Diff refuses to compare, and returns an error, when cand lacks base's
+// source key, release or ceph_version, or, unless allowMetaDrift is set,
+// carries a source other than the chain's head or another release.
+// allowMetaDrift also compares a test whose last entry was recorded under
+// another Ceph version.
+func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList) ([]string, error) {
 	var drift []string
-	for _, key := range comparedMeta {
-		b, inBase := base.Meta[key]
-		if !inBase {
-			continue
+	for _, m := range []struct{ key, want string }{{base.SourceKey, base.head()}, {metaRelease, base.Release}} {
+		switch got, ok := cand.Meta[m.key]; {
+		case !ok:
+			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate missing", m.key, m.want))
+		case got != m.want && !allowMetaDrift:
+			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate %s", m.key, m.want, got))
 		}
-		c, inCand := cand.Meta[key]
-		switch {
-		case !inCand:
-			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate missing", key, b))
-		case b != c && !allowMetaDrift:
-			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate %s", key, b, c))
-		}
+	}
+	cephVersion, ok := cand.Meta[metaCephVersion]
+	if !ok {
+		drift = append(drift, metaCephVersion+": candidate missing")
 	}
 	if len(drift) > 0 {
 		return nil, fmt.Errorf("the results ran under different meta (%s)", strings.Join(drift, "; "))
 	}
 
-	unstable := map[string]bool{}
-	for _, id := range base.Unstable {
-		unstable[id] = true
-	}
 	ids := map[string]bool{}
-	for id := range base.Outcomes {
+	for id := range base.Tests {
 		ids[id] = true
 	}
 	for id := range cand.Outcomes {
@@ -182,21 +187,31 @@ func Diff(base, cand Result, allowMetaDrift bool, known KnownList) ([]string, er
 	matched := make([]bool, len(known.entries))
 	var diffs []string
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
-		if unstable[id] {
+		c, inCand := cand.Outcomes[id]
+		last, inBase := base.last(id)
+		var line string
+		switch {
+		case !inBase:
+			if strict, either := known.match(id, matched); strict || either {
+				continue
+			}
+			line = id + ": no baseline entry"
+		case last.Outcome == outcomeRetired:
+			if !inCand {
+				continue
+			}
+			line = fmt.Sprintf("%s: baseline retired, candidate %s", id, c)
+		case !base.current(last) || (last.CephVersion != cephVersion && !allowMetaDrift):
+			line = id + ": baseline stale, re-record"
+		case last.Unstable:
 			continue
 		}
-		b, c := outcome(base.Outcomes, id), outcome(cand.Outcomes, id)
-		strict, either := false, false
-		for i, k := range known.entries {
-			if k.re.MatchString(id) {
-				matched[i] = true
-				if k.eitherOutcome {
-					either = true
-				} else {
-					strict = true
-				}
-			}
+		strict, either := known.match(id, matched)
+		if line != "" {
+			diffs = append(diffs, line)
+			continue
 		}
+		b, c := last.Outcome, outcome(cand.Outcomes, id)
 		switch {
 		case strict && b == c:
 			diffs = append(diffs, id+": known difference no longer differs")
@@ -247,6 +262,22 @@ func (k knownEntry) String() string {
 // eitherOutcomeMarker starts an either-outcome entry. No test id starts with
 // it, so no plain entry that could match a test is read as one.
 const eitherOutcomeMarker = "~"
+
+// match marks in matched the entries that match id and reports whether a
+// plain one and an either-outcome one did.
+func (l KnownList) match(id string, matched []bool) (strict, either bool) {
+	for i, k := range l.entries {
+		if k.re.MatchString(id) {
+			matched[i] = true
+			if k.eitherOutcome {
+				either = true
+			} else {
+				strict = true
+			}
+		}
+	}
+	return strict, either
+}
 
 // Patterns returns the list's entries in their normalized written form.
 func (l KnownList) Patterns() []string {
