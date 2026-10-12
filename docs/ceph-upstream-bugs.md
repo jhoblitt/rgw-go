@@ -1556,7 +1556,8 @@ Every new entry adds its row to this table, in document order.
   removes the head as `delete_obj_aio` does, unguarded, and a write racing
   the purge leaks its tails the same way (`docs/exclusions.md`, "The admin
   bucket removal with bypass-gc deletes every tail, and with a bound").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit N, Task 14 review, 2026-10-12, reviewing the
   bypass-gc head removal; derived from the source, not reproduced.
 
@@ -10778,7 +10779,8 @@ Every new entry adds its row to this table, in document order.
   (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/exclusions.md`,
   "The admin bucket info reports a bucket named tenant/name whatever the
   uid's tenant").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
 
@@ -10913,9 +10915,10 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's beast frontend passes Boost error codes off as errno
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Classification pending:
-  rgw-bug-reproduction will classify it. Unreproduced: derived from the
-  source and the Boost headers.
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4. Not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-12): an error mismapped for the
+  request whose connection failed, and no stored data is affected.
+  Unreproduced: derived from the source and the Boost headers.
 - **Evidence:** paths are under `src/rgw/` and hold at v19.2.6 and v20.2.4
   unless a second line number is given.
   - The beast frontend's `write_data` and `recv_body` throw
@@ -10957,7 +10960,8 @@ Every new entry adds its row to this table, in document order.
   `io.ErrUnexpectedEOF`, which rgw-go answers 400 RequestTimeout
   (`bodyErr`, `internal/driver/stripe.go`; `docs/exclusions.md`, "A body
   cut short is 400 RequestTimeout").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit X, Task 3, 2026-10-08, reading what radosgw does
   for a client that disconnects; confirmed against the Boost headers in its
   review. Derived from the source, not reproduced.
@@ -11258,9 +11262,10 @@ Every new entry adds its row to this table, in document order.
 ## radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance
 
 - **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a write leaves the
-  bucket index out of step with the head it wrote. Classification pending:
-  rgw-bug-reproduction will classify it. Unreproduced: derived from the
-  source.
+  bucket index out of step with the head it wrote. Not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-12): the index and stats drift
+  stays in the bucket the request writes to. Unreproduced: derived from
+  the source.
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The request's key takes `versionId` verbatim as its instance
@@ -11298,7 +11303,8 @@ Every new entry adds its row to this table, in document order.
   (`newHeadVersioningUnserved`, `internal/op/putobject.go`;
   `docs/exclusions.md`, "Writes to a versioned or object-lock bucket answer
   501 until versioning is served").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
   review. Derived from the source, not reproduced.
@@ -11307,8 +11313,9 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, unfixed at v20.2.4, a regression from v19.2.6: a
   metadata put of a bucket instance overwrites what another write stored
-  after the put read the instance. Classification pending:
-  rgw-bug-reproduction will classify it. Unreproduced: derived from the
+  after the put read the instance. Not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-12): a lost update that only an
+  admin's or sync's metadata put causes. Unreproduced: derived from the
   source.
 - **Evidence:** paths are under `src/`.
   - `RGWMetadataManager::put` builds a fresh version tracker and sets only
@@ -11340,7 +11347,8 @@ Every new entry adds its row to this table, in document order.
   version it read, or creates the object exclusively
   (`putInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`,
   "The metadata sections write only what keeps a user or bucket whole").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, comparing the two
   releases' metadata handlers; derived from the source, not reproduced.
 
@@ -11408,9 +11416,10 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a user or bucket
   instance metadata put sets every attr its document names on the object,
   whatever its name, in the op that sets the object's version, so an attr
-  named `ceph.objclass.version` replaces that version. Classification
-  pending: rgw-bug-reproduction will classify it. Unreproduced: derived
-  from the source.
+  named `ceph.objclass.version` replaces that version. Not
+  security-relevant (rgw-bug-reproduction's triage, 2026-10-12): only a
+  holder of `metadata=write`, or metadata sync, writes such a document.
+  Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The user document's `attrs` decode into a map named as the JSON names
@@ -11459,7 +11468,8 @@ Every new entry adds its row to this table, in document order.
   attr outside `user.rgw.` answers 400 InvalidArgument and writes nothing
   (`RefuseRawAttrs`, `internal/op/metadata.go`; `docs/exclusions.md`, "The
   metadata sections write only what keeps a user or bucket whole").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** review of phase 1 unit N, Task 8, 2026-10-08; derived from the
   source, not reproduced.
 
@@ -11836,7 +11846,8 @@ Every new entry adds its row to this table, in document order.
   radosgw left running from before the users existed, `make rgw-go-up`
   wrote `s3tests-root1.buckets` at rgw-go's start, and the same removal
   left it.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** a follow-up to phase 1's s3-tests runs, whose cleanup left
   `s3tests-root1.buckets` and `s3tests-root2.buckets` for `make gate` to
   count; reproduced 2026-10-11.
@@ -11941,7 +11952,8 @@ Every new entry adds its row to this table, in document order.
   mtimes as Squid's `check_versions` does, on both releases (`PutMetadata`,
   `internal/op/adminmetadata.go`; `docs/exclusions.md`, "The admin metadata
   API serves three sections").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit N, Task 9, 2026-10-11, implementing the metadata
   put; derived from the source, not reproduced.
 
@@ -12123,7 +12135,8 @@ Every new entry adds its row to this table, in document order.
   and trims nothing (`getUsage` and `trimUsage`,
   `internal/admin/usage.go`; `docs/exclusions.md`, "The admin usage
   routes give a date they cannot parse a value of their own").
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
+  (non-security).
 - **Found:** phase 1 unit N, Task 10, 2026-10-11, reading the usage ops'
   arguments; derived from the source, not reproduced.
 
