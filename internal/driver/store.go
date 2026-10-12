@@ -253,11 +253,6 @@ func (s *Store) RemoveIndexEntries(context.Context, *op.BucketRecord, []meta.Obj
 	return op.ErrNotImplemented
 }
 
-// PurgeBypassGC implements op.BucketAdminStore.
-func (s *Store) PurgeBypassGC(context.Context, *op.BucketRecord) error {
-	return op.ErrNotImplemented
-}
-
 // GetRealm implements op.RealmStore.
 func (s *Store) GetRealm(context.Context, string, string) (meta.Realm, error) {
 	return meta.Realm{}, op.ErrNotImplemented

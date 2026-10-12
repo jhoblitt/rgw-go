@@ -3,6 +3,9 @@ package op
 import (
 	"context"
 	"errors"
+	"fmt"
+
+	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
 // purgePage is the page RadosBucket::remove lists the bucket in.
@@ -18,6 +21,9 @@ const purgePage = 1000
 // listing, where radosgw's delete_bucket does not check.
 func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
+		return err
+	}
+	if err := refuseVersionedPurge(rec); err != nil {
 		return err
 	}
 	p := ListObjectsParams{ListVersions: true, AllowUnordered: true, MaxKeys: purgePage}
@@ -61,8 +67,23 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
 	}
+	if err := refuseVersionedPurge(rec); err != nil {
+		return err
+	}
 	if err := env.BucketAdmin.PurgeBypassGC(ctx, rec); err != nil {
 		return err
 	}
 	return PurgeBucket(ctx, env, rec)
+}
+
+// refuseVersionedPurge answers NotImplemented for a bucket whose versioning
+// was ever enabled, before a purge deletes anything: its listing returns
+// object instances and their olh heads, which no delete here removes as
+// radosgw's versioned delete does, so a purge would release some versions
+// and then fail on an olh head (docs/exclusions.md).
+func refuseVersionedPurge(rec *BucketRecord) error {
+	if rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended) != 0 {
+		return fmt.Errorf("%w: purging bucket %s, whose versioning was enabled", ErrNotImplemented, rec.Info.Bucket.Name)
+	}
+	return nil
 }
