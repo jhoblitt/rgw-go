@@ -43,7 +43,7 @@ if [[ "${S3TESTS_REPO}" != *://* && ! "${S3TESTS_REPO}" =~ ^[^/]*: ]]; then
 	S3TESTS_REPO=$(cd "${S3TESTS_REPO}" && pwd)
 fi
 readonly S3TESTS_REPO
-readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3} # rgw-go-s3tests, 2026-10-12; bump by hand and re-record the baselines
+readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3} # rgw-go-s3tests, 2026-10-12; bump by hand and re-record the baselines, or move it to a reworded commit with repin.sh
 readonly S3TESTS_DIR=src/test/rgw/s3-tests
 # A result records the commit it ran, and the checkout and the venv are reused
 # while the commit stays the same, so it must be a commit id: a branch or tag

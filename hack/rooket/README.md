@@ -629,6 +629,19 @@ S3TESTS_REPO=$HOME/src/ceph S3TESTS_COMMIT=$(git -C "$HOME/src/ceph" rev-parse H
 	make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1
 ```
 
+Rewording commits, for example to sign them before they are pushed, gives
+the pin new commit ids but keeps every tree the baselines were recorded
+from. So `hack/s3tests/repin.sh` moves the pin in `run.sh` and both
+baselines' `s3tests_commit` together, with no re-record. Its first argument
+is a clone of Ceph that holds both the pinned and the new commit, and it
+stops unless each commit on the two lines since they met has the same tree,
+in the same order. Push the new commit to `rgw-go-s3tests` before the change
+that pins it: `run.sh` cannot fetch a pin that is not pushed, and says so.
+
+```sh
+hack/s3tests/repin.sh "$HOME/src/ceph" "$(git -C "$HOME/src/ceph" rev-parse rgw-go-s3tests)"
+```
+
 Each line of a deselect list is a pytest node id and, after `#`, the calls
 that need the feature. `run.sh` stops before any test runs when a line names
 no test the markers leave, because it was renamed, removed or marked at the
