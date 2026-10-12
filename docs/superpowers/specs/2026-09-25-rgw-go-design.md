@@ -336,20 +336,24 @@ entry, does not fail it. There is no s3-tests nightly. Tentacle parity is
 not in the per-pull-request check: it stays the local gate run plus a
 manual run in CI, a default the owner may still change. The check is
 affordable because its cost is the cluster's bring-up, not the suite: a
-local run of the set's 393 tests against rgw-go on a running cluster took
-about 133 seconds.
+local run of the set's 416 tests against rgw-go on a running cluster took
+about 130 seconds.
 
-Improvements to s3-tests are in phase 1's scope. The harness pins the
-jhoblitt/s3-tests fork, branch `rgw-go`, by commit, as go-ceph is pinned
-through jhoblitt/go-ceph. Each improvement lands on that branch and is also
-proposed to ceph/s3-tests as a pull request, each upstream post only with
-the owner's explicit go-ahead. The first candidates, found by a local run:
-one failed cleanup fails every later test, because `nuke_prefixed_buckets`
-raises on a leftover bucket; cleanup always deletes with a `VersionId`, so
-it needs versioning support; `test_bucket_concurrent_set_canned_acl` checks
-only that its calls succeed; and the `test_*_bad_expect_mismatch` tests
-require success for `Expect: 200`, which RFC 9110 lets a server refuse
-with 417.
+Improvements to s3-tests are in phase 1's scope. ceph/s3-tests takes no
+more changes: the suite lives in ceph/ceph, under `src/test/rgw/s3-tests`.
+The harness pins, by commit, the `rgw-go-s3tests` branch of the
+jhoblitt/ceph fork, ceph/ceph `main` with the improvements on top, as
+go-ceph is pinned through jhoblitt/go-ceph. Each improvement lands on that
+branch and is also proposed to ceph/ceph as a pull request, each upstream
+post only with the owner's explicit go-ahead. The first candidates, found
+by a local run: one failed cleanup fails every later test, because
+`nuke_prefixed_buckets` raises on a leftover bucket; cleanup always deletes
+with a `VersionId`, so it needs versioning support;
+`test_bucket_concurrent_set_canned_acl` checks only that its calls succeed;
+and the `test_*_bad_expect_mismatch` tests require success for
+`Expect: 200`, which RFC 9110 lets a server refuse with 417. The branch
+holds only rgw-go's own changes on the upstream base: it never re-creates
+or alters an existing upstream commit.
 
 **Phase 2, versioning, lifecycle and bucket configuration.** Versioning
 with the OLH protocol, ListObjectVersions, object lock with retention and

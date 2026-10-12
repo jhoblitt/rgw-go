@@ -535,9 +535,15 @@ make gate RELEASE=squid                                # first: the gate counts 
 make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1    # GATEWAY=rgw-go runs the same set against rgw-go
 ```
 
-`hack/s3tests/run.sh` runs [ceph/s3-tests](https://github.com/ceph/s3-tests)
-at the commit it pins (`run.sh --print-commit`) against the release's radosgw,
-or against the rgw-go whose URL `out/<release>/rgw-go.endpoint` holds. The set
+`hack/s3tests/run.sh` runs s3-tests, the suite ceph/ceph carries in
+`src/test/rgw/s3-tests` now that ceph/s3-tests takes no changes, at the commit
+it pins (`run.sh --print-commit`) on the `rgw-go-s3tests` branch of
+[jhoblitt/ceph](https://github.com/jhoblitt/ceph): ceph/ceph `main` with the
+suite fixes rgw-go needs on top. A commit is pushed to that branch before
+the change that pins it, and the branch only ever gains commits, so no
+rewrite can take a pinned commit away. It runs
+against the release's radosgw, or against the rgw-go whose URL
+`out/<release>/rgw-go.endpoint` holds. The set
 is `test_s3.py` and `test_headers.py` minus the s3-tests markers `run.sh`
 excludes, of features not implemented yet and of `docs/exclusions.md`, and
 minus the tests `hack/s3tests/deselect-phase2.txt` and `deselect-phase3.txt`
@@ -593,11 +599,48 @@ done
 Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
 report `hack/parity` reads, with `.log` (pytest's output), `.conf` (the
 s3-tests conf) and `.freeze` (the Python version and the packages the venv
-held; s3-tests' `requirements.txt` pins none) beside it. The checkout and the
-venv stay in `out/src` and `out/venv` and are rebuilt when the pin changes;
-the pin is bumped by hand, and the baselines re-recorded with it. `run.sh`
+held; s3-tests' `requirements.txt` pins none) beside it. `out/src` holds the
+pinned commit alone, fetched without file contents and checked out sparsely,
+so of all of Ceph only the suite in `src/test/rgw/s3-tests` is on disk, with
+the files directly in its parent directories and at the top level, which
+cone mode always keeps: a few megabytes. pytest runs from the suite's
+directory. It and the venv
+in `out/venv` are rebuilt when the pin changes; the pin is bumped by hand,
+and the baselines re-recorded with it. `run.sh`
 exits 0 when pytest ran the whole set, whatever the tests' outcomes, and
 nonzero when it could not.
+
+To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
+`S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
+calls it, run another clone of Ceph, a local clone's path among them (a
+relative path is taken from the directory `run.sh` starts in, which is the
+repository root under `make`), at another commit, which must be a full
+commit id. `run.sh --print-commit`
+prints that commit, so a result recorded from such a run carries it and
+`make s3tests-parity` refuses to compare it with a baseline recorded at the
+pin; `bin/parity diff --allow-meta-drift` compares the outcomes anyway. A
+local clone serves the fetch without file contents only with
+`uploadpack.allowFilter` set: without it git fetches every file of the
+commit, which a clone made without file contents cannot serve.
+
+```sh
+git -C "$HOME/src/ceph" config uploadpack.allowFilter true
+S3TESTS_REPO=$HOME/src/ceph S3TESTS_COMMIT=$(git -C "$HOME/src/ceph" rev-parse HEAD) \
+	make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1
+```
+
+Rewording commits, for example to sign them before they are pushed, gives
+the pin new commit ids but keeps every tree the baselines were recorded
+from. So `hack/s3tests/repin.sh` moves the pin in `run.sh` and both
+baselines' `s3tests_commit` together, with no re-record. Its first argument
+is a clone of Ceph that holds both the pinned and the new commit, and it
+stops unless each commit on the two lines since they met has the same tree,
+in the same order. Push the new commit to `rgw-go-s3tests` before the change
+that pins it: `run.sh` cannot fetch a pin that is not pushed, and says so.
+
+```sh
+hack/s3tests/repin.sh "$HOME/src/ceph" "$(git -C "$HOME/src/ceph" rev-parse rgw-go-s3tests)"
+```
 
 Each line of a deselect list is a pytest node id and, after `#`, the calls
 that need the feature. `run.sh` stops before any test runs when a line names

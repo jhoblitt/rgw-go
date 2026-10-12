@@ -2500,9 +2500,10 @@ crypto/tls and net/url ones go1.27.1's.
   (`request.go:1536-1538`, `hasToken` at `header.go:240-270`), so a
   value such as `100-continue, 200` gets its `100 Continue` once the
   handler reads the body, where radosgw sends none and serves the request
-  once the client sends the body unasked. s3-tests'
-  `test_bucket_create_bad_expect_mismatch` and
-  `test_object_create_bad_expect_mismatch` fail on the 417.
+  once the client sends the body unasked. At the s3-tests commit
+  `hack/s3tests/run.sh` pins, `test_bucket_create_bad_expect_mismatch`
+  and `test_object_create_bad_expect_mismatch` accept either a success or
+  a 417, so both gateways pass them.
 - **Shutdown drains.** On SIGTERM rgw-go stops accepting and lets the
   requests in flight finish for up to 20 s, before it closes every
   connection and ends the requests still running. radosgw closes every

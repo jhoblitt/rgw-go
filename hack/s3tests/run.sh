@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs ceph/s3-tests at a pinned commit against one gateway of a rooket
-# cluster and leaves a junit report for hack/parity. The parity set is
+# Runs s3-tests, the suite ceph/ceph carries in src/test/rgw/s3-tests, at a
+# pinned commit against one gateway of a rooket cluster and leaves a junit
+# report for hack/parity. The parity set is
 # test_s3.py and test_headers.py minus the markers of features not
 # implemented yet and of docs/exclusions.md, and minus the tests the
 # deselect-phase<N>.txt lists name: tests that call a later phase's feature
@@ -9,7 +10,7 @@
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users.
 #
-# Usage: run.sh squid|tentacle radosgw|rgw-go RUN-ID
+# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID
 #        run.sh --print-commit | --print-deselect
 set -euo pipefail
 
@@ -21,8 +22,33 @@ readonly script=run.sh
 # shellcheck source=hack/rooket/lib.sh
 source "${here}/lib.sh"
 
-readonly S3TESTS_REPO=https://github.com/ceph/s3-tests
-readonly S3TESTS_COMMIT=5522d1c351f75bc00ae0f64f742f3f095f5939d9 # master, 2026-05-27; bump by hand and re-record the baselines
+# ceph/s3-tests is frozen; the suite moved into ceph/ceph. The pin is a commit
+# on the rgw-go-s3tests branch of the jhoblitt/ceph fork: ceph/ceph main with
+# the suite fixes rgw-go needs on top, each also meant for ceph/ceph. A commit
+# is pushed to that branch before the change that pins it, and the branch only
+# ever gains commits, so no pin names a commit that a rewritten branch would
+# take away.
+#
+# S3TESTS_REPO and S3TESTS_COMMIT in the environment run another repository,
+# a local clone's path among them, at another commit, to try a change to
+# s3-tests before it is pinned. --print-commit prints the commit that runs,
+# which a recorded result carries, so hack/parity refuses to compare such a
+# run with a baseline recorded at the pin.
+S3TESTS_REPO=${S3TESTS_REPO:-https://github.com/jhoblitt/ceph}
+# git runs the fetch inside the checkout, so a path is made absolute here,
+# from the directory run.sh starts in. Neither a URL nor git's host:path
+# form is a path: the latter has a colon before any slash.
+if [[ "${S3TESTS_REPO}" != *://* && ! "${S3TESTS_REPO}" =~ ^[^/]*: ]]; then
+	[[ -d "${S3TESTS_REPO}" ]] || die "S3TESTS_REPO ${S3TESTS_REPO} is neither a URL nor a directory"
+	S3TESTS_REPO=$(cd "${S3TESTS_REPO}" && pwd)
+fi
+readonly S3TESTS_REPO
+readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3} # rgw-go-s3tests, 2026-10-12; bump by hand and re-record the baselines, or move it to a reworded commit with repin.sh
+readonly S3TESTS_DIR=src/test/rgw/s3-tests
+# A result records the commit it ran, and the checkout and the venv are reused
+# while the commit stays the same, so it must be a commit id: a branch or tag
+# names whatever it points at when fetched.
+[[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "S3TESTS_COMMIT ${S3TESTS_COMMIT} is not a full commit id"
 readonly PYTEST_TIMEOUT_VERSION=2.4.0
 
 # Features not implemented yet and docs/exclusions.md's, by s3-tests marker.
@@ -62,6 +88,7 @@ readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "${usage}; RUN-ID, which names the reports, is [A-Za-z0-9._-]+"
 
 src=${harness}/out/src
+suite=${src}/${S3TESTS_DIR}
 venv=${harness}/out/venv
 name=${harness}/out/${release}-${gateway}-${run_id}
 conf=${name}.conf
@@ -71,9 +98,22 @@ freeze=${name}.freeze
 mkdir -p "${harness}/out"
 rm -f "${conf}" "${report}" "${log}" "${freeze}"
 
-if [[ "$(git -C "${src}" rev-parse -q --verify HEAD 2>/dev/null)" != "${S3TESTS_COMMIT}" ]]; then
+# Only the suite is fetched from all of Ceph: the one commit, its trees
+# without their blobs, and then just the blobs the sparse checkout asks the
+# remote for as it checks them out: those under S3TESTS_DIR, and the files
+# directly in its parent directories and at the top level, which cone mode
+# always keeps. The checkout is reused only at the same commit and with the
+# same sparse directory.
+if [[ "$(git -C "${src}" rev-parse -q --verify HEAD 2>/dev/null)" != "${S3TESTS_COMMIT}" ||
+	"$(git -C "${src}" sparse-checkout list 2>/dev/null)" != "${S3TESTS_DIR}" ]]; then
+	rm -rf "${src}"
 	git init -q "${src}"
-	git -C "${src}" fetch -q --depth 1 "${S3TESTS_REPO}" "${S3TESTS_COMMIT}"
+	git -C "${src}" remote add origin "${S3TESTS_REPO}"
+	git -C "${src}" config remote.origin.promisor true
+	git -C "${src}" config remote.origin.partialclonefilter blob:none
+	git -C "${src}" sparse-checkout set --cone "${S3TESTS_DIR}"
+	git -C "${src}" fetch -q --depth 1 --filter=blob:none origin "${S3TESTS_COMMIT}" ||
+		die "cannot fetch ${S3TESTS_COMMIT} from ${S3TESTS_REPO}: a pin must be pushed to its branch first"
 	git -C "${src}" checkout -q FETCH_HEAD
 fi
 # pytest would also load an untracked file, a conftest.py among them.
@@ -83,11 +123,11 @@ dirty=$(git -C "${src}" status --porcelain)
 
 # requirements.txt pins no version, so the venv is built once per s3-tests
 # commit and every report is left beside a record of what the venv held.
-readonly venv_for="s3-tests ${S3TESTS_COMMIT}, pytest-timeout ${PYTEST_TIMEOUT_VERSION}"
+readonly venv_for="s3-tests ${S3TESTS_COMMIT} ${S3TESTS_DIR}, pytest-timeout ${PYTEST_TIMEOUT_VERSION}"
 if [[ "$(cat "${venv}/built-for" 2>/dev/null)" != "${venv_for}" ]]; then
 	rm -rf "${venv}"
 	python3 -m venv "${venv}"
-	"${venv}/bin/pip" install -q --disable-pip-version-check -r "${src}/requirements.txt" \
+	"${venv}/bin/pip" install -q --disable-pip-version-check -r "${suite}/requirements.txt" \
 		"pytest-timeout==${PYTEST_TIMEOUT_VERSION}"
 	echo "${venv_for}" >"${venv}/built-for"
 fi
@@ -246,7 +286,7 @@ for m in "${EXCLUDED_MARKERS[@]:1}"; do expr+=" and not ${m}"; done
 
 # test_s3.py parses the conf at import to parametrize its encryption tests,
 # so collecting needs the conf too.
-ids=$(cd "${src}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" --collect-only -q -p no:cacheprovider \
+ids=$(cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" --collect-only -q -p no:cacheprovider \
 	-m "${expr}" "${TEST_FILES[@]}") || die "pytest could not collect the parity set:"$'\n'"${ids}"
 mapfile -t deselect < <(deselected)
 declare -A listed=()
@@ -278,7 +318,7 @@ done
 purge_buckets
 echo "running ${selected} of the ${#collected[@]} tests the markers leave against the ${gateway} at ${endpoint}; log ${log}"
 status=0
-(cd "${src}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" -v -rA -p no:cacheprovider \
+(cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" -v -rA -p no:cacheprovider \
 	--timeout=300 --junitxml="${report}" -m "${expr}" "${deselect_args[@]}" "${TEST_FILES[@]}") >"${log}" 2>&1 || status=$?
 purge_buckets
 # A run deletes hundreds of megabytes of objects, whose tails radosgw leaves

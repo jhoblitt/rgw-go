@@ -15,7 +15,10 @@
 ^s3tests\.functional\.test_s3::test_object_head_zero_bytes(:|$)
 ^s3tests\.functional\.test_s3::test_object_read_not_exist(:|$)
 ^s3tests\.functional\.test_s3::test_bucket_create_special_key_names(:|$)
-^s3tests\.functional\.test_s3::test_100_continue(_error_retry)?(:|$)
+# test_100_continue_error_retry, a retry on the connection after an error
+# answer to Expect: 100-continue, is absent from ceph/ceph's tree and not
+# carried on rgw-go-s3tests.
+^s3tests\.functional\.test_s3::test_100_continue(:|$)
 # Writes racing writes: a read never sees a mix, and the last write wins.
 ^s3tests\.functional\.test_s3::test_atomic_(dual_)?(conditional_)?write_[a-z0-9_]+(:|$)
 # The body headers a PUT checks, Content-Length, Content-MD5, Content-Type
