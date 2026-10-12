@@ -2165,8 +2165,8 @@ review and verified against the tree.
   /{bucket}?versioning` is recognized and, once the request authenticates,
   answers 501 NotImplemented before any permission check and changes
   nothing, as does `GET /{bucket}?versioning`: the route has no handler
-  (`internal/s3/handler.go:371-374`, the `h.routes` lookup that answers
-  `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
+  (`Handler.serve` in `internal/s3/handler.go`, the `h.routes` lookup that
+  answers `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
   `BUCKET_VERSIONS_SUSPENDED` (`RGWSetBucketVersioning::execute`,
   `rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4). rgw-go
   therefore makes no bucket versioned or suspended itself; one that is

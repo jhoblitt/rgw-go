@@ -199,8 +199,8 @@ func (s *Store) discardInstance(ctx context.Context, info *meta.BucketInfo) {
 // its layout's log into the next try, and it reports a new bucket whose link
 // failed as created; rgw-go removes the abandoned try's objects and returns
 // the link's failure (docs/ceph-upstream-bugs.md, "radosgw's bucket creation
-// retry leaks the abandoned instance" and "radosgw reports a bucket whose
-// owner link failed as created").
+// retry leaks the abandoned instance and repeats its log layout" and
+// "radosgw reports a bucket whose owner link failed as created").
 func (s *Store) CreateBucket(ctx context.Context, p op.CreateBucketParams) (*op.BucketRecord, error) {
 	pl, err := s.Placement(p.Placement)
 	if err != nil {
