@@ -264,6 +264,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
 | [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
 | [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw's global ratelimit set rewrites the period config unguarded](#radosgws-global-ratelimit-set-rewrites-the-period-config-unguarded) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12067,3 +12068,39 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 12 security review, 2026-10-12; derived
   from the source, not reproduced.
+
+## radosgw's global ratelimit set rewrites the period config unguarded
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: `POST /admin/ratelimit`
+  with `global=true` reads `period_config.<realm>`, changes one scope's
+  limits and writes the whole object back with no version guard, so a
+  concurrent change to the same object is lost. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Ratelimit_Set::execute`'s global branch reads the config, sets
+    the bucket, anon or user limits and calls `period_config.write`
+    (`rgw_rest_ratelimit.cc:305-339`, the same at v19.2.6 and v20.2.4).
+  - `RGWPeriodConfig::write` encodes the whole config and writes it with
+    `set_exclusive(false)` and no objv tracker (`rgw_zone.cc:638-651` at
+    v19.2.6, `:646-659` at v20.2.4); the read carries none either
+    (`:616-636`, `:624-644`).
+  - The object also holds the global bucket and user quotas
+    (`RGWPeriodConfig::dump`, `rgw_zone.cc:662-669` at v19.2.6, `:670-677`
+    at v20.2.4), which `radosgw-admin global quota set` rewrites the same
+    way: a read, a change and a non-exclusive write with no objv
+    (`rgw_admin.cc:4820-4860` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:5092-5096` at v20.2.4;
+    `RadosConfigStore::write_period_config`,
+    `driver/rados/config/period_config.cc:44-53` at both tags).
+- **Impact:** two concurrent global ratelimit sets keep only the later
+  one's object, losing the other scope's change; a global ratelimit set
+  that races `radosgw-admin global quota set` or `global ratelimit set`
+  drops that change too, global quotas included. Nothing reports the loss.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** mirrors radosgw: its global ratelimit set reads, changes and
+  writes the period config unguarded (`SetRateLimit`,
+  `internal/op/admininfo.go`; `PutPeriodConfig`, `internal/driver/realm.go`),
+  so the same races lose the same changes.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 review, 2026-10-12, reading the global
+  ratelimit set; derived from the source, not reproduced.
