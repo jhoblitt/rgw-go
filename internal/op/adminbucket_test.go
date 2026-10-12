@@ -344,7 +344,7 @@ var _ = Describe("admin bucket ops", func() {
 				Expect(byID(ctx)).To(MatchError(want))
 				Expect(owner(ctx)).To(Equal(meta.UserOwner(uid("admin"))))
 			},
-			Entry("a store that cannot list the bucket section", op.ErrNotImplemented, op.ErrNotImplemented),
+			Entry("a listing that answers an op error of the store's own, passed through unchanged", op.ErrNotImplemented, op.ErrNotImplemented),
 			Entry("a listing that fails", errors.Join(op.ErrInternalError, errors.New("rados")), op.ErrInternalError),
 		)
 		It("refuses when a listed name loads nothing", func(ctx SpecContext) {

@@ -1028,11 +1028,10 @@ review and verified against the tree.
     when one under another name loads the bucket's id, and 409
     ConcurrentModification when a listed entry point loads nothing; a
     listing or a read that fails answers the store's error, 500
-    InternalError, or 501 NotImplemented from a store that cannot list; a
-    listing that reports the section missing answers 404 NotFound, and one
-    that makes no progress 500 InternalError: radosgw's own failed rename
-    leaves an instance carrying the live bucket's id that no entry point
-    names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
+    InternalError; a listing that reports the section missing answers 404
+    NotFound, and one that makes no progress 500 InternalError: radosgw's
+    own failed rename leaves an instance carrying the live bucket's id that
+    no entry point names, which radosgw's link by `bucket-id` names, giving one bucket's data two owners
     (docs/ceph-upstream-bugs.md, "radosgw's bucket link by bucket id takes
     the name from the live bucket"). Each such link reads every bucket. One
     unfinished rename whose new name's entry point names an instance not
