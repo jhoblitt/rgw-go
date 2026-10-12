@@ -121,13 +121,19 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	return putResult(o), nil
 }
 
-// DeleteObject implements op.ObjectStore. The conditions are checked as
-// Tentacle's Delete::delete_obj checks them, on both releases
-// (driver/rados/rgw_rados.cc:6609-6671 at v20.2.4): the mtime must not be
-// after UnmodifiedSince, the size must equal IfMatchSize, the mtime must
-// equal IfMatchLastModified, both in whole seconds, and If-Match "*" passes
-// any object while an ETag must match the object's.
+// DeleteObject implements op.ObjectStore. A bucket whose versioning is or
+// was enabled or that has object lock is refused, as the RADOS store
+// refuses it. The conditions are checked as Tentacle's Delete::delete_obj
+// checks them, on both releases (driver/rados/rgw_rados.cc:6609-6671 at
+// v20.2.4): the mtime must not be after UnmodifiedSince, the size must
+// equal IfMatchSize, the mtime must equal IfMatchLastModified, both in
+// whole seconds, and If-Match "*" passes any object while an ETag must
+// match the object's.
 func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
+	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
+		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
+			op.ErrNotImplemented, rec.Info.Bucket.Name)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.instance(rec)

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
 // purgePage is the page RadosBucket::remove lists the bucket in.
@@ -80,10 +78,14 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 // was ever enabled, before a purge deletes anything: its listing returns
 // object instances and their olh heads, which no delete here removes as
 // radosgw's versioned delete does, so a purge would release some versions
-// and then fail on an olh head (docs/exclusions.md).
+// and then fail on an olh head (docs/exclusions.md). It refuses a bucket
+// with object lock and without versioning too, a state radosgw never
+// writes, whose objects the store's delete refuses, so that the bypass-gc
+// purge, whose data pass does not delete through the store's delete,
+// refuses it as the plain purge does.
 func refuseVersionedPurge(rec *BucketRecord) error {
-	if rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended) != 0 {
-		return fmt.Errorf("%w: purging bucket %s, whose versioning was enabled", ErrNotImplemented, rec.Info.Bucket.Name)
+	if !neverVersioned(rec) {
+		return fmt.Errorf("%w: purging bucket %s, which is or was versioned or has object lock", ErrNotImplemented, rec.Info.Bucket.Name)
 	}
 	return nil
 }

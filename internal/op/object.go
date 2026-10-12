@@ -150,7 +150,11 @@ type ObjectStore interface {
 	ReadObject(ctx context.Context, st *ObjectState, rng ByteRange, sink io.Writer) error
 	PutObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, body io.Reader, p PutParams) (*PutResult, error)
 	// DeleteObject removes the object; a missing object is ErrNoSuchKey, which
-	// the S3 op turns into 204 as radosgw does.
+	// the S3 op turns into 204 as radosgw does. It takes radosgw's
+	// unversioned delete only: a bucket whose versioning is or was enabled or
+	// that has object lock is ErrNotImplemented before anything is read or
+	// removed, where radosgw's versioned delete would write a delete marker
+	// (driver/rados/rgw_rados.cc:5774-5812 at v19.2.6, :6462-6517 at v20.2.4).
 	DeleteObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p DeleteParams) error
 	// CopyObject writes src's data to dstKey in dst with src's ETag.
 	CopyObject(ctx context.Context, src *ObjectState, dst *BucketRecord, dstKey meta.ObjKey, p CopyParams) (*PutResult, error)

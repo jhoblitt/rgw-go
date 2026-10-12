@@ -324,7 +324,7 @@ var _ = Describe("PurgeBypassGC", func() {
 		})
 	})
 
-	DescribeTable("refuses a bucket whose versioning was ever enabled before it deletes anything",
+	DescribeTable("refuses a bucket whose versioning was ever enabled or that has object lock before it deletes anything",
 		func(ctx SpecContext, flags uint32, edit func(*op.RemoveBucketAdmin)) {
 			putObject(ctx, rec, "big", 9<<20)
 			putObject(ctx, rec, "small", 10)
@@ -353,6 +353,8 @@ var _ = Describe("PurgeBypassGC", func() {
 		Entry("purge-objects, versioning enabled", uint32(meta.BucketVersioned), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
 		Entry("bypass-gc, versioning enabled", uint32(meta.BucketVersioned), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
 		Entry("bypass-gc, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
+		Entry("purge-objects, object lock without versioning, which radosgw never writes", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
+		Entry("bypass-gc, object lock without versioning, which radosgw never writes", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
 	)
 
 	It("fails on a bucket without index objects, as read_stats fails", func(ctx SpecContext) {
