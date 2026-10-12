@@ -263,6 +263,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's usage show and trim take an unparsable date from an uninitialized variable](#radosgws-usage-show-and-trim-take-an-unparsable-date-from-an-uninitialized-variable) | pending | pending | ✓ |
 | [radosgw's usage read ends a listing early when a shard fills the page without truncation](#radosgws-usage-read-ends-a-listing-early-when-a-shard-fills-the-page-without-truncation) | pending | pending | ✓ |
 | [radosgw's ratelimit get reports a failure for limits it answered 200](#radosgws-ratelimit-get-reports-a-failure-for-limits-it-answered-200) | pending | pending | ✓ |
+| [radosgw hands a cloud tier's secret key to any holder of zone=read](#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -12020,3 +12021,49 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 12, 2026-10-12, reading the ratelimit
   op; derived from the source, not reproduced.
+
+## radosgw hands a cloud tier's secret key to any holder of zone=read
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.6 and
+  v20.2.4: `GET /admin/realm/period` writes the S3 access key and secret
+  key of every cloud tier in the period's zonegroups to a caller holding
+  only the `zone=read` cap. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Period_Get` checks `zone=read` alone
+    (`driver/rados/rgw_rest_realm.cc:57-62` at v19.2.6, `:58-63` at
+    v20.2.4), and its response is `encode_json("period", period)`
+    (`:48` at v19.2.6, `:49` at v20.2.4) on the request's own
+    formatter, which carries no `JSONEncodeFilter`: only radosgw-admin's
+    `JSONFormatter_PrettyZone` installs one, for zone ids alone
+    (`rgw_admin.cc:3304-3333` at v19.2.6,
+    `radosgw-admin/radosgw-admin.cc:3501-3530` at v20.2.4).
+  - The dump descends `RGWPeriod::dump` (`rgw_period.cc:234-246`),
+    `RGWPeriodMap::dump` (`rgw_zone.cc:1000-1005` at v19.2.6,
+    `:1040-1045` at v20.2.4), `RGWZoneGroup::dump` (`:735-750`,
+    `:743-758`), `RGWZoneGroupPlacementTarget::dump`'s `tier_targets`
+    (`:848-856`, `:858-866`) and `RGWZoneGroupPlacementTier::dump`'s
+    `s3` (`:895-904` for cloud-s3 at v19.2.6; `:929-944` for either cloud
+    type at v20.2.4) to `RGWZoneGroupPlacementTierS3::dump`, which writes
+    `access_key` and `secret` from the tier's key unredacted (`:966-979`
+    at v19.2.6, `:1006-1019` at v20.2.4).
+  - The same cap reads the zone's system key: `RGWOp_ZoneConfig_Get`
+    checks `zone=read` (`rgw_rest_config.h:27-31` at both tags) and
+    `RGWZoneParams::dump` writes `system_key` through
+    `RGWAccessKey::dump_plain`, secret included (`rgw_zone.cc:330` and
+    `rgw_common.cc:2968-2972` at v19.2.6, `:335` and `:3030-3034` at
+    v20.2.4).
+- **Impact:** a credential for an external S3 endpoint, which radosgw
+  needs only to transition objects, reaches every admin user granted
+  `zone=read`, a read cap a monitoring or tooling user may hold; Rook's
+  own admin ops user is granted it (`rgwAdminOpsUserCaps`,
+  `pkg/operator/ceph/object/admin.go:117` in rook/rook). A Rook-managed
+  single-site store has no cloud tier unless an operator adds one.
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, for fidelity: the period getter checks
+  `zone=read` before any read and writes the tier's key as radosgw does
+  (`internal/meta/dump_period.go`, `internal/admin/realm.go`); a refused
+  caller gets the error document alone. No other rgw-go path renders a
+  zonegroup or period, and none logs one.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** phase 1 unit N, Task 12 security review, 2026-10-12; derived
+  from the source, not reproduced.
