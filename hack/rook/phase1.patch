@@ -1,3 +1,20 @@
+diff --git a/tests/framework/utils/k8s_helper.go b/tests/framework/utils/k8s_helper.go
+index 2f7d1e7c6..3a6dc1a0f 100644
+--- a/tests/framework/utils/k8s_helper.go
++++ b/tests/framework/utils/k8s_helper.go
+@@ -144,6 +144,12 @@ func (k8sh *K8sHelper) GetDockerImage(image string) error {
+ 	if dockercmd == "" {
+ 		dockercmd = "docker"
+ 	}
++	// rgw-go: the derived Ceph image is built on the runner and pushed to no
++	// registry, so a pull of it is denied. An image already present needs none.
++	if _, err := k8sh.executor.ExecuteCommandWithOutput(dockercmd, "image", "inspect", image); err == nil {
++		k8slogger.Infof("image %q is present locally, not pulling it", image)
++		return nil
++	}
+ 	return k8sh.executor.ExecuteCommand(dockercmd, "pull", image)
+ }
+ 
 diff --git a/tests/integration/ceph_object_test.go b/tests/integration/ceph_object_test.go
 index 03bf91eb8..099ce3cd1 100644
 --- a/tests/integration/ceph_object_test.go
@@ -40,3 +57,20 @@ index 03bf91eb8..099ce3cd1 100644
  
  	// last: this builds and deletes a store of its own, so keep it clear of the
  	// packages sharing the fixture store
+diff --git a/tests/integration/object/util/sharedstore/sharedstore.go b/tests/integration/object/util/sharedstore/sharedstore.go
+index 986fc78ff..e6c378015 100644
+--- a/tests/integration/object/util/sharedstore/sharedstore.go
++++ b/tests/integration/object/util/sharedstore/sharedstore.go
+@@ -395,8 +395,10 @@ func Create(t *testing.T, k8sh *utils.K8sHelper, installer *installer.CephInstal
+ 		s.adminClient, err = client.NewAdminClient(objectStore, installer, k8sh, tlsEnable)
+ 		require.NoError(t, err)
+ 
+-		s.snsClient, err = client.NewSNSClient(objectStore, k8sh, installer, tlsEnable)
+-		require.NoError(t, err)
++		// rgw-go: no SNS client, so SnsClient returns nil. rgw-go does not
++		// implement bucket notifications yet and answers the client's
++		// ListTopics check with 405. This comes out when notifications land,
++		// with the topic and notification tests.
+ 	})
+ 
+ 	s.objectStore = objectStore

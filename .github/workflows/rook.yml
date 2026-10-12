@@ -141,12 +141,17 @@ jobs:
           tests/scripts/collect-logs.sh
 
       # The artifact is public, and a failed suite leaves its cluster up, so
-      # the files collect-logs.sh fills with cephx keys are deleted whatever
-      # the steps above did: `ceph auth ls`, and the secret dumps, whose keys
-      # are base64-encoded again where the guard cannot see them. The guard
-      # then blocks the upload if any other file holds a keyring line or a
-      # key in either encoding Squid and Tentacle create, AES ("AQ", 40
-      # characters) or AES256KRB5 ("Ag", 60).
+      # key material comes out of Rook's logs whatever the steps above did.
+      # The files collect-logs.sh fills with cephx keys are deleted: `ceph
+      # auth ls`, and the secret dumps, whose keys are base64-encoded again
+      # where no pattern can see them. In every other file, the descriptions
+      # and `get all` among them, each keyring entry (`key = `; the toolbox's
+      # keyring template prints one) and each whole key is redacted in place,
+      # in either encoding Squid and Tentacle create, AES ("AQ", 40
+      # characters) or AES256KRB5 ("Ag", 60). Only whole keys, so the
+      # redaction never cuts into other base64 data. The guard then blocks
+      # the upload if any file still holds a keyring entry or a key, one
+      # inside a longer base64 run included.
       - name: Drop key material from Rook's logs
         id: scrub
         if: always()
@@ -155,6 +160,11 @@ jobs:
         run: |
           [ -d "${ARTIFACT_DIR}" ] || exit 0
           find "${ARTIFACT_DIR}" -type f \( -name ceph-auth-ls.txt -o -name 'secret-get--*' \) -print -delete
+          find "${ARTIFACT_DIR}" -type f -exec perl -pi -e '
+            $n += s{key = \S*}{[key redacted]}g;
+            $n += s{(?<![A-Za-z0-9+/])(?:AQ[A-Za-z0-9+/]{36}==|Ag[A-Za-z0-9+/]{57}=)(?![A-Za-z0-9+/=])}{[cephx key redacted]}g;
+            if (eof) { print STDOUT "redacted $n in $ARGV\n" if $n; $n = 0 }
+          ' {} +
           rc=0
           hits=$(grep -rlE 'key = |AQ[A-Za-z0-9+/]{36}==|Ag[A-Za-z0-9+/]{57}=' "${ARTIFACT_DIR}") || rc=$?
           case "${rc}" in
