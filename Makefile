@@ -121,20 +121,34 @@ cluster-up: need-release ## Start the RELEASE cluster and write its client confi
 populate: need-release ## Write the fixed data set through the RELEASE cluster's radosgw
 	ROOKET=$(ROOKET_BIN) hack/rooket/populate.sh $(RELEASE)
 
-# Every package but the gate, which make gate runs on its own. The label
-# filter assumes every test package is a Ginkgo suite; a plain testing
-# package would reject the flag. ./test/integration runs in a go test of its
-# own after the others, never beside them: its specs link extra buckets to
-# the populated user alice and sync her stats, while internal/cls/user's
-# specs pin alice's bucket list and header to the population.
+# Every package outside test/ whose specs carry the integration label; the
+# gate is make gate's. -ginkgo.fail-on-empty fails a package whose filter
+# selects no spec, so a lost label or build tag cannot pass as a run.
+# ./test/integration runs in a go test of its own after the others, never
+# beside them: its specs link extra buckets to the populated user alice and
+# sync her stats, while internal/cls/user's specs pin alice's bucket list and
+# header to the population. The specs labelled rgw-go need the rgw-go make
+# rgw-go-up starts, which make admin-gate runs them against; make integration
+# leaves them out.
 .PHONY: integration
 integration: need-release ## Run the integration specs against the RELEASE cluster
 	@tags="$(GO_TAGS),integration"; \
-	pkgs=$$(go list "-tags=$$tags" ./... | grep -Ev '/test/(gate|integration)(/|$$)') || exit 1; \
+	pkgs=$$(grep -rl --include='*_test.go' 'Label("integration"' cmd hack internal | sed -e 's|/[^/]*$$||' -e 's|^|./|' | sort -u); \
+	[ -n "$$pkgs" ] || { echo "no package outside test/ holds an integration spec" >&2; exit 1; }; \
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
-	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration && \
+	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration -ginkgo.fail-on-empty && \
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
-	  go test "-tags=$$tags" -race -count=1 ./test/integration -ginkgo.label-filter=integration
+	  go test "-tags=$$tags" -race -count=1 ./test/integration '-ginkgo.label-filter=integration && !rgw-go' -ginkgo.fail-on-empty
+
+# The admin gate signs as rgwgo-admin, which holds every admin cap with keys
+# the spec commits; the specs remove it when they end, and the trap removes
+# it, with the garbage its removal leaves, when go test ends some other way.
+
+.PHONY: admin-gate
+admin-gate: need-release ## Compare the admin API of the rgw-go rgw-go-up started with the RELEASE cluster's radosgw
+	trap 'ROOKET=$(ROOKET_BIN) hack/admin/remove-user.sh $(RELEASE) rgwgo-admin || echo "could not remove the user rgwgo-admin" >&2' EXIT; \
+	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
+	  go test "-tags=$(GO_TAGS),integration" -race -count=1 ./test/integration -ginkgo.label-filter=rgw-go -ginkgo.fail-on-empty
 
 # The gate's read specs need an rgw-go beside the radosgw, which make
 # read-gate starts; make gate leaves them out.

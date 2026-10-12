@@ -1,0 +1,52 @@
+{
+    "key": "bucket.instance:plain:3029828a-78e3-4884-89db-3995e69c95af.4677.1",
+    "ver": {
+        "tag": "_tlFe0ZofLTWkIyN15yLZnjw",
+        "ver": 1
+    },
+    "mtime": "2026-10-08T23:14:07.371117Z",
+    "data": {
+        "bucket_info": {
+            "bucket": {
+                "name": "plain",
+                "marker": "3029828a-78e3-4884-89db-3995e69c95af.4677.1",
+                "bucket_id": "3029828a-78e3-4884-89db-3995e69c95af.4677.1",
+                "tenant": "",
+                "explicit_placement": {
+                    "data_pool": "",
+                    "data_extra_pool": "",
+                    "index_pool": ""
+                }
+            },
+            "creation_time": "2026-10-08T23:14:07.364314Z",
+            "owner": "alice",
+            "flags": 0,
+            "zonegroup": "361ccd0f-4d72-4a40-8327-d9fa9735164c",
+            "placement_rule": "default-placement",
+            "has_instance_obj": false,
+            "quota": {
+                "enabled": false,
+                "check_on_raw": false,
+                "max_size": -1,
+                "max_size_kb": 0,
+                "max_objects": -1
+            },
+            "num_shards": 11,
+            "bi_shard_hash_type": 0,
+            "requester_pays": false,
+            "has_website": false,
+            "swift_versioning": false,
+            "swift_ver_location": "",
+            "index_type": 0,
+            "mdsearch_config": [],
+            "reshard_status": 0,
+            "new_bucket_instance_id": ""
+        },
+        "attrs": [
+            {
+                "key": "user.rgw.acl",
+                "val": "AgKBAAAAAwISAAAABQAAAGFsaWNlBQAAAGFsaWNlBANjAAAAAQEAAAAFAAAAYWxpY2UPAAAAAQAAAAUAAABhbGljZQUDNgAAAAICBAAAAAAAAAAFAAAAYWxpY2UAAAAAAAAAAAICBAAAAA8AAAAFAAAAYWxpY2UAAAAAAAAAAAAAAAAAAAAA"
+            }
+        ]
+    }
+}

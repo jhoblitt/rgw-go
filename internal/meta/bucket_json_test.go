@@ -2,6 +2,7 @@ package meta_test
 
 import (
 	"encoding/json"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -127,5 +128,22 @@ var _ = Describe("BucketCompleteInfo", func() {
 		var got meta.BucketCompleteInfo
 		Expect(json.Unmarshal(data, &got)).To(Succeed())
 		Expect(got).To(Equal(bc))
+	})
+
+	It("decodes and re-marshals identically the data radosgw-admin metadata get printed for a bucket instance on Squid", func() {
+		doc, err := os.ReadFile("testdata/captured/bucket_instance.json")
+		Expect(err).NotTo(HaveOccurred())
+		var entry struct {
+			Data json.RawMessage `json:"data"`
+		}
+		Expect(json.Unmarshal(doc, &entry)).To(Succeed())
+		var bc meta.BucketCompleteInfo
+		Expect(json.Unmarshal(entry.Data, &bc)).To(Succeed())
+		Expect(bc.Info.Bucket.Name).To(Equal("plain"))
+		Expect(bc.Info.Layout.Current.Layout.Normal.NumShards).To(Equal(uint32(11)))
+		Expect(bc.Attrs).To(HaveKey(meta.AttrACL))
+		again, err := json.Marshal(bc)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again).To(MatchJSON(entry.Data))
 	})
 })

@@ -71,6 +71,19 @@ var _ = Describe("UserInfo.UnmarshalJSON", func() {
 		Expect(again).To(MatchJSON(doc))
 	})
 
+	It("decodes and re-marshals identically the document radosgw-admin user info printed on Squid", func() {
+		doc, err := os.ReadFile("testdata/captured/user_info.json")
+		Expect(err).NotTo(HaveOccurred())
+		var u meta.UserInfo
+		Expect(json.Unmarshal(doc, &u)).To(Succeed())
+		Expect(u.UserID).To(Equal(meta.UserID{ID: "rgwgo-admin"}))
+		Expect(u.Caps).To(HaveKeyWithValue("ratelimit", meta.CapAll))
+		Expect(u.AccessKeys).To(HaveKey("GATADMINEXAMPLEKEY01"))
+		again, err := json.Marshal(u)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again).To(MatchJSON(doc))
+	})
+
 	It("resets an absent member to its type's default, as JSONDecoder::decode_json does", func() {
 		var u meta.UserInfo
 		Expect(json.Unmarshal([]byte(`{"user_id":"bob"}`), &u)).To(Succeed())
