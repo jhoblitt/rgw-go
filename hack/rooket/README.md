@@ -18,6 +18,7 @@ make admin-suite RELEASE=squid    # go-ceph's rgw/admin suite against the radosg
 make rgw-go-up RELEASE=squid      # rgw-go on the host at http://127.0.0.1:7481, under the parity settings
 make s3tests-parity RELEASE=squid # s3-tests against rgw-go, compared with radosgw's baseline
 make admin-parity RELEASE=squid   # go-ceph's rgw/admin suite against rgw-go, compared with radosgw's baseline
+make admin-gate RELEASE=squid     # rgw-go's admin API compared with radosgw's, byte for byte
 make rgw-go-down RELEASE=squid
 make cluster-down RELEASE=squid
 
@@ -31,6 +32,7 @@ make admin-suite RELEASE=tentacle
 make rgw-go-up RELEASE=tentacle
 make s3tests-parity RELEASE=tentacle
 make admin-parity RELEASE=tentacle
+make admin-gate RELEASE=tentacle
 make rgw-go-down RELEASE=tentacle
 make cluster-down RELEASE=tentacle
 ```
@@ -741,3 +743,55 @@ deselect list, Ceph version or release. No subtest differs for a recorded
 exclusion at this tag, so there is no known-differences list: a subtest that
 needs a later phase's feature goes on that phase's deselect list, and any
 other difference is a bug in rgw-go.
+
+## Running the admin gate
+
+```sh
+make cluster-up RELEASE=squid && make populate RELEASE=squid && make rgw-go-up RELEASE=squid
+make admin-suite RELEASE=squid GATEWAY=rgw-go RUN=n1  # go-ceph's suite against rgw-go
+make admin-parity RELEASE=squid                       # the same, compared with radosgw's baseline
+make admin-gate RELEASE=squid                         # rgw-go's admin API compared with radosgw's
+```
+
+and the same with `RELEASE=tentacle`. go-ceph's admin client reaches rgw-go
+through `RGW_GO_ADMIN_ENDPOINT`: `hack/admin/run.sh` sets it to the URL in
+`out/<release>/rgw-go.endpoint` for `GATEWAY=rgw-go` (`hack/admin/endpoint.patch`
+makes the suite read it), and `make admin-gate` reads that file unless the
+variable names another rgw-go.
+
+`make admin-gate` runs the specs of `test/integration` labelled `rgw-go`,
+`admin_test.go`, which `make integration` leaves out because they need the
+rgw-go `make rgw-go-up` started. They sign as the user `rgwgo-admin`, which
+holds Rook's admin-ops caps and `info`, `ratelimit` and the write caps the
+trim, index check and metadata requests need, and they:
+
+- compare `GetInfo`'s `cluster_id` on both gateways with `ceph fsid`;
+- make the admin calls Rook makes, in Rook's order, through go-ceph's client
+  against rgw-go, asserting the fields Rook reads;
+- send every read the admin API serves, each gateway's own user and account
+  creates and changes, an AccessDenied, a NoSuchKey, a NoSuchBucket and a
+  405 of each path to both gateways in JSON and XML, and the info and an
+  error in HTML, and require the bodies to be equal byte for byte once the
+  values two runs of one gateway differ in are masked, keyed on their names:
+  the request and host ids, and for the fixtures each gateway creates their
+  ids, markers, versions, tags, times and keys. Each request also checks
+  `Content-Length`, `Content-Type` and `Accept-Ranges` on both gateways as
+  `docs/exclusions.md`, "Admin responses carry a Content-Type on every body",
+  says. A request whose answer a `docs/exclusions.md` entry records as
+  different names that entry and must differ;
+- page a metadata listing through rgw-go to the keys radosgw lists whole;
+- read a write rgw-go logged back from its usage log and trim it within 5 s;
+- remove buckets with tail stripes through each gateway with
+  `purge-objects`, whose tails go to the GC, and with `bypass-gc`, which
+  rgw-go removes whole and radosgw leaks one object's tail
+  (`docs/ceph-upstream-bugs.md`, "radosgw's admin API bypass-gc removal
+  leaks a tail and runs unbounded"); the spec removes the leaked stripe.
+
+Its fixtures are `rgwgo-admin` and users, buckets and accounts named
+`admin-gate-*`. The specs remove them, their usage records and the garbage
+their removal leaves before and after they run, so `make gate` passes after
+them. `rgwgo-admin` holds every admin cap with keys committed in the spec, so
+`make admin-gate` also removes it with `hack/admin/remove-user.sh` in a trap
+when `go test` ends, however it ends, as `run.sh` does for its `admin`. Neither
+user is in an account, so its removal also removes the `<uid>.buckets` object
+the gateways' quota sync wrote.
