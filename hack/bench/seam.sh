@@ -30,6 +30,13 @@
 # from the objecter throttle; and, per mode, read4k runs at 256 under a CPU
 # profile.
 #
+# BENCH_LIMITER=1 runs only that over-budget cell, in each mode, with the
+# limiter's byte bound at BENCH_INFLIGHT_BYTES and its operation bound
+# derived, into seam-<UTC time>-limited/, or seam-<UTC time>-limited-<bytes>/
+# for a bound other than the default. It writes no REPORT.md, since
+# hack/bench/report renders only a whole sweep. No floor run brackets that
+# cell, so it runs none and does not look for the floor image.
+#
 # A 4 MiB write cell or floor run writes BENCH_WRITE4M_OBJECTS objects, not
 # a time window, so that both sides write the same bytes, and starts only
 # once the pool reports BENCH_MIN_AVAIL_GIB available. Each rand floor reads
@@ -53,20 +60,29 @@
 #
 # Environment:
 #   BENCH_TIME              benchtime of each time-bounded cell (20s), in whole hours,
-#                           minutes and seconds (20s, 1m30s, or plain seconds), since the
-#                           watchdog's limits derive from it; go test's 1.5s, 500ms and
-#                           100x are refused at startup
+#                           minutes and seconds with their units (20s, 1m30s), from 1 s
+#                           to 99999999 s, since the watchdog's limits derive from it;
+#                           a plain number, which go test's -test.benchtime refuses, and
+#                           go test's 1.5s, 500ms and 100x are refused at startup
 #   BENCH_FLOOR_SECONDS     seconds of each time-bounded rados bench run (20)
 #   CONC                    concurrencies of the 4 KiB, head and index shapes (1,16,64,256,512)
 #   BENCH_LARGE_CONC        concurrencies of read4m and write4m (1,4,16); empty skips them
 #   BENCH_WRITE4M_OBJECTS   objects per 4 MiB write cell and floor run (1000, 3.9 GiB)
 #   BENCH_OVER_OBJECTS      objects per over-budget cell (640)
 #   BENCH_MIN_AVAIL_GIB     pool space a 4 MiB write waits for (5)
-#   BENCH_TIMEOUT           limit of each benchmark process, in seconds or as 1h30m (its
-#                           cell's planned duration, ten times BENCH_TIME or 0.1 s an
-#                           iteration of a count-bounded cell, plus 5m)
-#   BENCH_FLOOR_TIMEOUT     limit of each floor rados run (its window, plus 5m)
+#   BENCH_TIMEOUT           limit of each benchmark process, in seconds or as 1h30m, from
+#                           1 s to 99999999 s (its cell's planned duration, ten times
+#                           BENCH_TIME or 0.1 s an iteration of a count-bounded cell,
+#                           plus 5m)
+#   BENCH_FLOOR_TIMEOUT     limit of each floor rados run, in the same forms (its window,
+#                           plus 5m)
 #   BENCH_QUICK=1           5s, 5, CONC=16,256, BENCH_LARGE_CONC=16, 100 and 128 objects
+#   BENCH_LIMITER=1         the over-budget cell alone, under the limiter's byte bound
+#   BENCH_INFLIGHT_BYTES    with BENCH_LIMITER=1, that byte bound (104857600, 100 MiB), a
+#                           positive whole number of bytes
+#   BENCH_PLAN=1            with BENCH_LIMITER=1, check every setting, print the benchmark
+#                           processes it would run and their watchdog limits, and exit,
+#                           without touching a cluster
 #   GO_TAGS                 build tags besides integration (ceph_preview)
 #   BENCH_FLOOR_IMAGE       floor image (quay.io/ceph/ceph:v<linked librados version>); must run that release
 #   ROOKET_ENGINE           container engine that runs rados bench (podman)
@@ -90,6 +106,35 @@ fi
 : "${BENCH_TIME:=20s}" "${BENCH_FLOOR_SECONDS:=20}" "${CONC:=1,16,64,256,512}" "${BENCH_LARGE_CONC=1,4,16}"
 : "${BENCH_WRITE4M_OBJECTS:=1000}" "${BENCH_OVER_OBJECTS:=640}" "${BENCH_MIN_AVAIL_GIB:=5}"
 : "${GO_TAGS:=ceph_preview}"
+[[ -z "${BENCH_LIMITER:-}" || "${BENCH_LIMITER}" == 1 ]] || die "BENCH_LIMITER is ${BENCH_LIMITER}: set it to 1 or leave it unset"
+[[ -z "${BENCH_INFLIGHT_BYTES:-}" || "${BENCH_LIMITER:-}" == 1 ]] || die "BENCH_INFLIGHT_BYTES applies only with BENCH_LIMITER=1"
+
+# The over-budget cell: write4m at 64 in flight, 256 MiB, past the byte budget.
+readonly over_cell=(-shapes=write4m -conc=64 -budget-bytes=0)
+# librados's default objecter_inflight_op_bytes.
+readonly default_limited_bytes=104857600
+limited_bytes=${BENCH_INFLIGHT_BYTES:-${default_limited_bytes}}
+# At most 18 digits, so that the bound fits -inflight-bytes, an int64.
+[[ "${limited_bytes}" =~ ^[1-9][0-9]{0,17}$ ]] ||
+	die "BENCH_INFLIGHT_BYTES is ${limited_bytes}: give a positive whole number of bytes, at most 18 digits"
+# A bound other than the default names the run's directory, so that runs at
+# two bounds never share a name.
+limited_suffix=
+if [[ "${BENCH_LIMITER:-}" == 1 ]]; then
+	limited_suffix=-limited
+	[[ "${limited_bytes}" == "${default_limited_bytes}" ]] || limited_suffix+=-${limited_bytes}
+fi
+readonly limited_bytes limited_suffix
+
+# Counts the sweep passes on as numbers: to env.json through jq's --argjson,
+# to -test.benchtime=<n>x, to rados bench and to shell arithmetic, which would
+# read a leading zero as octal. At most 10 digits, so that a count-bounded
+# cell's limit, a tenth of a second an object, fits go test's -test.timeout.
+for v in BENCH_FLOOR_SECONDS BENCH_WRITE4M_OBJECTS BENCH_OVER_OBJECTS; do
+	[[ "${!v}" =~ ^[1-9][0-9]{0,9}$ ]] || die "${v} is ${!v}: give a positive whole number of at most 10 digits"
+done
+[[ "${BENCH_MIN_AVAIL_GIB}" =~ ^(0|[1-9][0-9]*)$ ]] || die "BENCH_MIN_AVAIL_GIB is ${BENCH_MIN_AVAIL_GIB}: give a whole number of GiB"
+
 engine=${ROOKET_ENGINE:-podman}
 # The floor's rados reads ${out}, so the Go cells take their client config
 # from there too, or the two halves of a ratio could measure two clusters.
@@ -97,40 +142,45 @@ conf=${out}/ceph.conf
 if [[ -n "${RGW_GO_TEST_CEPH_CONF:-}" && "$(realpath -m "${RGW_GO_TEST_CEPH_CONF}")" != "$(realpath -m "${conf}")" ]]; then
 	die "RGW_GO_TEST_CEPH_CONF is ${RGW_GO_TEST_CEPH_CONF}, but the floor reaches the ${release} cluster through ${conf}: unset it"
 fi
-[[ -f "${conf}" && -f "${out}/image" ]] || die "no ${conf} or ${out}/image: run make cluster-up RELEASE=${release}"
-cluster_image=$(cat "${out}/image")
-readonly pool=rgw-go-test
 
 # seconds_of prints a duration in whole seconds: a number of seconds, or Go's
 # notation in whole hours, minutes and seconds (1h30m, 20s). It refuses the
 # rest of what Go's durations and -test.benchtime accept, fractions (1.5s),
 # smaller units (500ms) and counts (100x), so a limit is never derived from a
-# duration misread.
+# duration misread. It refuses zero, which go test refuses as a benchtime and
+# which as a limit would stop every process at once, and anything over
+# 99999999 s, so that ten times it, a time-bounded cell's limit, still fits
+# go test's -test.timeout, a Go duration, and no part overflows the shell's
+# arithmetic.
 seconds_of() { # duration
 	local part total=0
-	if [[ "$1" =~ ^[0-9]+$ ]]; then
-		echo $((10#$1))
-		return
+	if [[ "$1" =~ ^[0-9]{1,9}$ ]]; then
+		total=$((10#$1))
+	else
+		[[ -n "$1" && "$1" =~ ^([0-9]{1,9}h)?([0-9]{1,9}m)?([0-9]{1,9}s)?$ ]] || return 1
+		for part in "${BASH_REMATCH[@]:1}"; do
+			case "${part}" in
+			*h) total=$((total + 10#${part%h} * 3600)) ;;
+			*m) total=$((total + 10#${part%m} * 60)) ;;
+			*s) total=$((total + 10#${part%s})) ;;
+			esac
+		done
 	fi
-	[[ -n "$1" && "$1" =~ ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$ ]] || return 1
-	for part in "${BASH_REMATCH[@]:1}"; do
-		case "${part}" in
-		*h) total=$((total + 10#${part%h} * 3600)) ;;
-		*m) total=$((total + 10#${part%m} * 60)) ;;
-		*s) total=$((total + 10#${part%s})) ;;
-		esac
-	done
+	((total > 0 && total <= 99999999)) || return 1
 	echo "${total}"
 }
-bench_time_s=$(seconds_of "${BENCH_TIME}") || die "BENCH_TIME ${BENCH_TIME} is not a duration in h, m and s"
+# go test's -test.benchtime takes a Go duration, which needs a unit.
+[[ ! "${BENCH_TIME}" =~ ^[0-9]+$ ]] || die "BENCH_TIME ${BENCH_TIME} has no unit, which go test's -test.benchtime needs, as in 20s"
+bench_time_s=$(seconds_of "${BENCH_TIME}") || die "BENCH_TIME ${BENCH_TIME} is not a duration in h, m and s from 1 s to 99999999 s"
 bench_timeout_s=
 if [[ -n "${BENCH_TIMEOUT:-}" ]]; then
-	bench_timeout_s=$(seconds_of "${BENCH_TIMEOUT}") || die "BENCH_TIMEOUT ${BENCH_TIMEOUT} is not a duration in h, m and s"
+	bench_timeout_s=$(seconds_of "${BENCH_TIMEOUT}") ||
+		die "BENCH_TIMEOUT ${BENCH_TIMEOUT} is not a duration in h, m and s from 1 s to 99999999 s"
 fi
 floor_timeout_s=
 if [[ -n "${BENCH_FLOOR_TIMEOUT:-}" ]]; then
 	floor_timeout_s=$(seconds_of "${BENCH_FLOOR_TIMEOUT}") ||
-		die "BENCH_FLOOR_TIMEOUT ${BENCH_FLOOR_TIMEOUT} is not a duration in h, m and s"
+		die "BENCH_FLOOR_TIMEOUT ${BENCH_FLOOR_TIMEOUT} is not a duration in h, m and s from 1 s to 99999999 s"
 fi
 readonly bench_time_s bench_timeout_s floor_timeout_s
 # A stopped benchmark process gets watchdog_grace seconds between SIGTERM and
@@ -139,7 +189,71 @@ readonly watchdog_grace=30 watchdog_margin=300
 # Bounds no cell reaches, which leave submission to the objecter throttle.
 readonly no_limit=(-inflight-ops=1048576 -inflight-bytes=1099511627776)
 
-dir=${repo}/hack/bench/out/${release}/seam-$(date -u +%Y%m%dT%H%M%SZ)
+conc_words() {
+	echo "${1//,/ }"
+}
+
+# The report pairs the 4 MiB cells with their floor runs only at 1, 4 and 16
+# in flight, so a cell elsewhere would get floor runs it shows as no floor.
+for c in $(conc_words "${BENCH_LARGE_CONC}"); do
+	case "${c}" in
+	1 | 4 | 16) ;;
+	*) die "BENCH_LARGE_CONC is ${BENCH_LARGE_CONC}: the 4 MiB cells run only at 1, 4 and 16, where the report pairs them with their floor" ;;
+	esac
+done
+
+# bench_limit prints a benchmark process's limit in seconds: BENCH_TIMEOUT
+# when set, else its one cell's planned duration and watchdog_margin. A cell
+# bounded by time plans ten times BENCH_TIME: testing.B's calibration calls,
+# the prepare and the cleanup took up to 6.3 times it in the preliminary
+# sweeps. A cell bounded by a count, -test.benchtime=<n>x, plans 0.1 s an
+# iteration, about eight times the slowest 4 MiB write rate they saw.
+bench_limit() { # benchmark arguments...
+	local arg planned=$((10 * bench_time_s))
+	if [[ -n "${bench_timeout_s}" ]]; then
+		echo "${bench_timeout_s}"
+		return
+	fi
+	for arg in "$@"; do
+		if [[ "${arg}" =~ ^-test\.benchtime=([0-9]+)x$ ]]; then
+			planned=$((BASH_REMATCH[1] / 10))
+		fi
+	done
+	echo $((planned + watchdog_margin))
+}
+
+# over_limited runs the over-budget cell in each mode, each in a benchmark
+# process of its own, with the limiter's byte bound at limited_bytes; its
+# operation bound stays derived, as rgw-go runs, which the cell's 64 in flight
+# do not reach. Given plan, it prints each process's arguments and watchdog
+# limit instead.
+over_limited() { # [plan]
+	local mode args
+	for mode in sync callback pipe; do
+		args=("${over_cell[@]}" -inflight-bytes="${limited_bytes}" -test.benchtime="${BENCH_OVER_OBJECTS}x")
+		if [[ "${1:-}" == plan ]]; then
+			echo "bench ${mode}: ${args[*]} -> overbudget-${mode}.jsonl (limit $(bench_limit "${args[@]}") s)"
+			continue
+		fi
+		wait_avail || die "not enough space for the over-budget cell in ${mode} mode"
+		bench "${mode}" "${dir}/overbudget-${mode}.jsonl" "${args[@]}"
+	done
+}
+
+# The plan exits after every check of a setting and before the first that
+# needs the cluster, so a plan that prints means the run's settings pass.
+if [[ "${BENCH_PLAN:-}" == 1 ]]; then
+	[[ "${BENCH_LIMITER:-}" == 1 ]] || die "BENCH_PLAN=1 prints the limiter re-run only: set BENCH_LIMITER=1"
+	echo "${script}: the ${release} limiter re-run at ${limited_bytes} B, into hack/bench/out/${release}/seam-<UTC time>${limited_suffix}/"
+	over_limited plan
+	exit 0
+fi
+
+[[ -f "${conf}" && -f "${out}/image" ]] || die "no ${conf} or ${out}/image: run make cluster-up RELEASE=${release}"
+cluster_image=$(cat "${out}/image")
+readonly pool=rgw-go-test
+
+dir=${repo}/hack/bench/out/${release}/seam-$(date -u +%Y%m%dT%H%M%SZ)${limited_suffix}
 bin=${repo}/hack/bench/out/${release}/seam.test
 mkdir -p "${dir}"
 log=${dir}/sweep.log
@@ -319,26 +433,6 @@ wait_avail() {
 	say "the pool has ${avail} bytes available"
 }
 
-# bench_limit prints a benchmark process's limit in seconds: BENCH_TIMEOUT
-# when set, else its one cell's planned duration and watchdog_margin. A cell
-# bounded by time plans ten times BENCH_TIME: testing.B's calibration calls,
-# the prepare and the cleanup took up to 6.3 times it in the preliminary
-# sweeps. A cell bounded by a count, -test.benchtime=<n>x, plans 0.1 s an
-# iteration, about eight times the slowest 4 MiB write rate they saw.
-bench_limit() { # benchmark arguments...
-	local arg planned=$((10 * bench_time_s))
-	if [[ -n "${bench_timeout_s}" ]]; then
-		echo "${bench_timeout_s}"
-		return
-	fi
-	for arg in "$@"; do
-		if [[ "${arg}" =~ ^-test\.benchtime=([0-9]+)x$ ]]; then
-			planned=$((BASH_REMATCH[1] / 10))
-		fi
-	done
-	echo $((planned + watchdog_margin))
-}
-
 # bench runs one benchmark process in mode, appending its cells to results
 # when one is given; the arguments after it are the test binary's.
 bench() {
@@ -497,10 +591,6 @@ cell_modes() { # shape conc
 	done
 }
 
-conc_words() {
-	echo "${1//,/ }"
-}
-
 # The concurrencies of CONC at which the throughput and latency criteria
 # compare read4k and write4k, and the rest.
 judged_small=()
@@ -509,15 +599,6 @@ for c in $(conc_words "${CONC}"); do
 	case "${c}" in
 	64 | 256) judged_small+=("${c}") ;;
 	*) other_small+=("${c}") ;;
-	esac
-done
-
-# The report pairs the 4 MiB cells with their floor runs only at 1, 4 and 16
-# in flight, so a cell elsewhere would get floor runs it shows as no floor.
-for c in $(conc_words "${BENCH_LARGE_CONC}"); do
-	case "${c}" in
-	1 | 4 | 16) ;;
-	*) die "BENCH_LARGE_CONC is ${BENCH_LARGE_CONC}: the 4 MiB cells run only at 1, 4 and 16, where the report pairs them with their floor" ;;
 	esac
 done
 
@@ -567,16 +648,25 @@ librados=$(linked_librados) || die "cannot tell which Ceph release the librados 
 read -r librados_path librados_version <<<"${librados}"
 [[ "${librados_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
 	die "the librados ${bin} links, ${librados_path}, is version '${librados_version}', not X.Y.Z"
-floor_image=${BENCH_FLOOR_IMAGE:-quay.io/ceph/ceph:v${librados_version}}
-if ! "${engine}" image inspect "${floor_image}" >/dev/null 2>&1; then
-	"${engine}" pull "${floor_image}" >>"${log}" 2>&1 ||
-		die "no floor image ${floor_image} for librados ${librados_version}: the floor's rados must be the release the benchmark links"
+# The limiter re-run runs no floor, so env.json records no floor image for it.
+floor_image=
+floor_version=
+if [[ "${BENCH_LIMITER:-}" != 1 ]]; then
+	floor_image=${BENCH_FLOOR_IMAGE:-quay.io/ceph/ceph:v${librados_version}}
+	if ! "${engine}" image inspect "${floor_image}" >/dev/null 2>&1; then
+		"${engine}" pull "${floor_image}" >>"${log}" 2>&1 ||
+			die "no floor image ${floor_image} for librados ${librados_version}: the floor's rados must be the release the benchmark links"
+	fi
+	floor_version=$("${engine}" run --rm "${floor_image}" rados --version | awk '{ print $3 }') ||
+		die "cannot run rados --version in ${floor_image}"
+	[[ "${floor_version}" == "${librados_version}" ]] ||
+		die "the floor image ${floor_image} runs Ceph ${floor_version}, but the benchmark links librados ${librados_version}"
+	say "floor from ${floor_image} (Ceph ${floor_version}, as ${librados_path}); the cluster runs ${cluster_image}"
 fi
-floor_version=$("${engine}" run --rm "${floor_image}" rados --version | awk '{ print $3 }') ||
-	die "cannot run rados --version in ${floor_image}"
-[[ "${floor_version}" == "${librados_version}" ]] ||
-	die "the floor image ${floor_image} runs Ceph ${floor_version}, but the benchmark links librados ${librados_version}"
-say "floor from ${floor_image} (Ceph ${floor_version}, as ${librados_path}); the cluster runs ${cluster_image}"
+limited_env=()
+if [[ "${BENCH_LIMITER:-}" == 1 ]]; then
+	limited_env=(--argjson limited true --argjson inflight_bytes "${limited_bytes}")
+fi
 
 # shellcheck disable=SC2153 # ROOKET_VERSION is the caller's, when set
 jq -n --arg release "${release}" --arg ceph_version "$(pinned_version)" --arg cluster_image "${cluster_image}" \
@@ -594,7 +684,15 @@ jq -n --arg release "${release}" --arg ceph_version "$(pinned_version)" --arg cl
 	--arg objecter_inflight_ops "$(objecter objecter_inflight_ops)" \
 	--arg objecter_inflight_op_bytes "$(objecter objecter_inflight_op_bytes)" \
 	--argjson pool_max_avail "$(pool_avail)" --arg load "$(cut -d' ' -f1-3 /proc/loadavg)" \
-	'$ARGS.named' >"${dir}/env.json"
+	"${limited_env[@]}" '$ARGS.named' >"${dir}/env.json"
+
+if [[ "${BENCH_LIMITER:-}" == 1 ]]; then
+	over_limited
+	left=$(toolbox rados -p "${pool}" ls --all | wc -l)
+	say "objects left in ${pool}: ${left}"
+	say "the limiter re-run's cells are in ${dir}; it renders no REPORT.md"
+	exit 0
+fi
 
 for shape in headread4k headwrite4k indexrtt; do
 	for c in $(conc_words "${CONC}"); do
@@ -624,7 +722,7 @@ for mode in callback pipe; do
 		extra=()
 		[[ "${limits}" == derived ]] || extra=("${no_limit[@]}")
 		wait_avail || die "not enough space for the over-budget cell in ${mode} mode"
-		bench "${mode}" "${dir}/overbudget-${mode}.jsonl" -shapes=write4m -conc=64 -budget-bytes=0 "${extra[@]}" \
+		bench "${mode}" "${dir}/overbudget-${mode}.jsonl" "${over_cell[@]}" "${extra[@]}" \
 			-test.benchtime="${BENCH_OVER_OBJECTS}x"
 	done
 done

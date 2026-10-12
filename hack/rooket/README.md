@@ -376,7 +376,12 @@ The Go cells take their client config from
 the release's rooket output, as the floor does, and the sweep refuses an
 `RGW_GO_TEST_CEPH_CONF` naming another file. A full sweep took about an hour per
 release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the
-script's header lists its other settings.
+script's header lists its other settings. `BENCH_LIMITER=1` runs only the
+over-budget cell, write4m at 64 in flight, in each mode with the in-flight
+limiter's byte bound at 100 MiB (`BENCH_INFLIGHT_BYTES` sets another), into
+`seam-<UTC time>-limited/` (`seam-<UTC time>-limited-<bytes>/` for another
+bound), and `BENCH_PLAN=1` beside it prints those runs without touching a
+cluster.
 
 ## Running the gateway comparison
 
