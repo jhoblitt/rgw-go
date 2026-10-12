@@ -45,7 +45,9 @@ type Parsed struct {
 const maxObjectNameLen = 1024
 
 // ParseRequest parses Host, path and query once, in RGWREST::preprocess and
-// RGWHandler_REST_S3::init_from_header's order. Errors are op.Error values,
+// RGWHandler_REST_S3::init_from_header's order. The path and query are the
+// request target as vhost.RequestTarget splits it, the split SigV2 and SigV4
+// sign, never net/http's parse of it. Errors are op.Error values,
 // the two radosgw answers before authentication: InvalidRequest for a NUL in
 // the path and MethodNotAllowed for a method no S3 op serves. The tenant,
 // bucket and object names are PostAuthInit's to check. A bucket token with
@@ -54,7 +56,7 @@ const maxObjectNameLen = 1024
 // at, and PostAuthInit rejects it.
 func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) {
 	host := vhost.Hostname(req.Host)
-	rawPath := req.URL.EscapedPath()
+	rawPath, rawQuery := vhost.RequestTarget(req)
 	uri := DecodedURI(req, cfg)
 	if strings.IndexByte(uri, 0) >= 0 {
 		return Parsed{}, op.ErrInvalidRequest // ERR_ZERO_IN_URL
@@ -63,17 +65,17 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 		return Parsed{}, op.ErrMethodNotAllowed
 	}
 
-	query := parseArgs(req.URL.RawQuery)
+	query := parseArgs(rawQuery)
 	r := &op.Request{
 		Time:          now,
 		Method:        req.Method,
 		Host:          strings.ToLower(host),
 		HTTPHost:      httpHost(req),
 		Domain:        vhost.Domain(host, cfg.DNSNames),
-		Path:          req.URL.Path,
+		Path:          rgwtext.URLDecode(rawPath, false),
 		RawPath:       rawPath,
 		Query:         query,
-		RawQuery:      req.URL.RawQuery,
+		RawQuery:      rawQuery,
 		Header:        req.Header,
 		Body:          req.Body,
 		ContentLength: req.ContentLength,
@@ -110,17 +112,31 @@ func httpHost(req *http.Request) *string {
 	return &req.Host
 }
 
-// DecodedURI is the path radosgw picks a request's API and bucket by, its
-// decoded_uri: with a bucket the Host names, preprocess puts the bucket in
-// front of the undecoded URI and decodes the two together
-// (rgw_rest.cc:2154-2161 and :2182 at v19.2.6, :2171-2177 and :2204 at
-// v20.2.4); otherwise it is the decoded path.
+// DecodedURI is decoded_uri, the path radosgw picks a request's API and
+// bucket by: url_decode of request_uri as preprocess leaves it, the target's
+// path with a bucket the Host names in front (rgw_rest.cc:2154-2161 and
+// :2182 at v19.2.6, :2171-2178 and :2204 at v20.2.4). The path is the one
+// SigV2 and SigV4 sign, so a request is routed on the path it is
+// authenticated for. It is not net/http's URL path for an absolute-form
+// target: get_abs_path takes the path from the first '/' after the
+// authority, in the query if that is where it lies, and keeps a target of
+// another scheme whole, which names no bucket.
 func DecodedURI(req *http.Request, cfg Config) string {
-	b := vhost.Bucket(vhost.Hostname(req.Host), cfg.DNSNames)
-	if b == "" {
-		return req.URL.Path
-	}
-	return rgwtext.URLDecode(withHostBucket(b, req.URL.EscapedPath()), false)
+	return rgwtext.URLDecode(requestURI(req, cfg), false)
+}
+
+// MalformedPath reports whether the URI DecodedURI decodes, the target's
+// path with a bucket the Host names in front, holds a '%' without two hex
+// digits after it. net/http refuses one with 400 in an origin-form or
+// absolute-form path, but checks neither a path radosgw takes from the
+// query or keeps whole, as in `http://h?x=/b/%zz`, nor the Host. At a bad
+// hex digit url_decode would empty the whole URI, the Host's bucket
+// included, while SigV4 signs that bucket in the Host and the path as "/",
+// the bucket's root; a malformed escape in the bucket itself serves another
+// bucket or none (docs/exclusions.md).
+func MalformedPath(req *http.Request, cfg Config) bool {
+	_, err := url.PathUnescape(requestURI(req, cfg))
+	return err != nil
 }
 
 // requestURI is req_info.request_uri as RGWREST::preprocess leaves it: the

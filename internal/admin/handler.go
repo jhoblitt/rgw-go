@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/s3"
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
@@ -149,14 +150,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if h.cfg.ServerHeader != "" {
 		w.Header().Set("Server", h.cfg.ServerHeader)
 	}
+	rawPath, rawQuery := vhost.RequestTarget(req)
 	r := &op.Request{
 		ID:            id,
 		Time:          now,
 		Method:        req.Method,
 		Host:          strings.ToLower(vhost.Hostname(req.Host)),
-		Path:          req.URL.Path,
-		RawPath:       req.URL.EscapedPath(),
-		RawQuery:      req.URL.RawQuery,
+		Path:          rgwtext.URLDecode(rawPath, false),
+		RawPath:       rawPath,
+		RawQuery:      rawQuery,
 		Header:        req.Header,
 		Body:          req.Body,
 		ContentLength: req.ContentLength,
@@ -225,7 +227,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		WriteError(ctx, w, r, st.q, op.ErrInvalidRequest)
 		return
 	}
-	q, err := ParseRequest(uri, h.cfg.Prefix, req.URL.RawQuery)
+	q, err := ParseRequest(uri, h.cfg.Prefix, r.RawQuery)
 	r.Query = q.Args.values()
 	if err != nil {
 		WriteError(ctx, w, r, st.q, err)

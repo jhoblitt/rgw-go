@@ -1,6 +1,7 @@
 package admin_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -325,6 +327,24 @@ var _ = Describe("admin handler", func() {
 		Expect(fx.metrics.ObserveCallCount()).To(Equal(1))
 		name, status, _, in, _ := fx.metrics.ObserveArgsForCall(0)
 		Expect([]any{name, status, in}).To(Equal([]any{"set_metadata", 200, int64(0)}))
+	})
+	// req_info splits an absolute-form target after get_abs_path, so the
+	// arguments are what follows the path's '?', the query auth signs, not
+	// all that follows the target's first '?'.
+	It("reads its arguments from the query req_info splits from the target", func() {
+		var got url.Values
+		fx.handler.Register("get_info", func(_ context.Context, w http.ResponseWriter, r *op.Request, _ admin.Request) error {
+			got = r.Query
+			admin.WriteEmpty(w, r, http.StatusOK)
+			return nil
+		})
+		raw := "GET http://127.0.0.1?uid=x&x/admin/info?format=xml HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Test-User: admin\r\n\r\n"
+		req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+		Expect(err).NotTo(HaveOccurred())
+		rec := httptest.NewRecorder()
+		fx.handler.ServeHTTP(rec, req)
+		Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+		Expect(got).To(Equal(url.Values{"format": {"xml"}}))
 	})
 	It("keeps the wire body when the authenticator replaces none", func() {
 		var got string

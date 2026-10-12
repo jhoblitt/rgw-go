@@ -1,9 +1,11 @@
 package s3_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -27,6 +29,16 @@ func parse(ctx context.Context, method, target string, hdr map[string]string, cf
 		req.Header.Set(k, v)
 	}
 	return s3.ParseRequest(req, cfg, time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC))
+}
+
+// readRequest reads an HTTP/1.1 request line for target with host as its
+// Host header, as the server does, so an absolute-form target's authority
+// becomes req.Host and its query is left unchecked.
+func readRequest(target, host string) *http.Request {
+	raw := "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"
+	req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+	Expect(err).NotTo(HaveOccurred(), "net/http reads %q", target)
+	return req
 }
 
 // virtualHosted is a gateway whose rgw_dns_name is s3.example.com.
@@ -135,6 +147,66 @@ var _ = Describe("ParseRequest", func() {
 			Entry("virtual-hosted", "plain.s3.example.com", "/a%2Fb", "/a/b", "/a%2Fb"),
 		)
 	})
+	// req_info reduces an absolute-form target with get_abs_path before it
+	// splits off the query, and preprocess decodes what is left: the path
+	// and query SigV2 and SigV4 sign, not net/http's URL.
+	DescribeTable("routes on the request target as req_info splits it",
+		func(target, host, uri, bucket, object, rawQuery string, query url.Values) {
+			req := readRequest(target, host)
+			Expect(s3.DecodedURI(req, virtualHosted())).To(Equal(uri), "decoded URI")
+			p, err := s3.ParseRequest(req, virtualHosted(), time.Unix(1, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal(bucket), "bucket")
+			Expect(p.Req.Object.Name).To(Equal(object), "object")
+			Expect(p.Req.RawQuery).To(Equal(rawQuery), "raw query")
+			Expect(p.Req.Query).To(Equal(query), "query")
+		},
+		Entry("origin form", "/b/k?acl", "s3.example.com", "/b/k", "b", "k", "acl", url.Values{"acl": {""}}),
+		Entry("absolute form", "http://s3.example.com/b/k?acl", "x", "/b/k", "b", "k", "acl", url.Values{"acl": {""}}),
+		Entry("absolute form over https", "https://s3.example.com/b/k", "x", "/b/k", "b", "k", "", url.Values{}),
+		Entry("a query holding the target's first slash", "http://s3.example.com?x=/b/k", "x",
+			"/b/k", "b", "k", "x=/b/k", url.Values{"x": {"/b/k"}}),
+		Entry("a query holding the first slash and a second ?, after which the arguments are", "http://s3.example.com?versionId=v1&x/b/k?acl", "x",
+			"/b/k", "b", "k", "acl", url.Values{"acl": {""}}),
+		Entry("an encoded slash in a query-held path", "http://s3.example.com?x=/b/a%2Fb", "x",
+			"/b/a/b", "b", "a/b", "x=/b/a%2Fb", url.Values{"x": {"/b/a/b"}}),
+		Entry("a plus in a query-held path stays a plus", "http://s3.example.com?x/b/a+b?", "x", "/b/a+b", "b", "a+b", "", url.Values{}),
+		Entry("an absolute-form target without a slash names no bucket", "http://s3.example.com", "x",
+			"http://s3.example.com", "", "", "", url.Values{}),
+		Entry("a query-only absolute-form target names no bucket", "http://s3.example.com?acl", "x",
+			"http://s3.example.com", "", "", "acl", url.Values{"acl": {""}}),
+		Entry("another scheme is kept whole and names no bucket", "ftp://s3.example.com/b/k", "x",
+			"ftp://s3.example.com/b/k", "", "", "", url.Values{}),
+		Entry("an upper-case scheme is kept whole", "HTTP://s3.example.com/b/k", "x",
+			"HTTP://s3.example.com/b/k", "", "", "", url.Values{}),
+		Entry("a scheme without an authority is kept whole", "foo:/b/k", "s3.example.com", "foo:/b/k", "", "", "", url.Values{}),
+		Entry("the asterisk form names no bucket", "*", "s3.example.com", "*", "", "", "", url.Values{}),
+		Entry("an encoded space", "/b/a%20b", "s3.example.com", "/b/a b", "b", "a b", "", url.Values{}),
+		Entry("a semicolon is an ordinary character", "/b/k;v=1", "s3.example.com", "/b/k;v=1", "b", "k;v=1", "", url.Values{}),
+		Entry("a double slash starts the key with a slash", "/b//k", "s3.example.com", "/b//k", "b", "/k", "", url.Values{}),
+		Entry("virtual-hosted origin form", "/k", "b.s3.example.com", "/b/k", "b", "k", "", url.Values{}),
+		Entry("a virtual-hosted query holding the first slash", "http://b.s3.example.com?x/k?acl", "x",
+			"/b/k", "b", "k", "acl", url.Values{"acl": {""}}),
+		Entry("a virtual-hosted target without a slash is a key", "http://b.s3.example.com", "x",
+			"/b/http://b.s3.example.com", "b", "http://b.s3.example.com", "", url.Values{}),
+	)
+	DescribeTable("finds a malformed percent-escape net/http leaves unchecked in the URI it decodes",
+		func(target, host string, want bool) {
+			Expect(s3.MalformedPath(readRequest(target, host), virtualHosted())).To(Equal(want))
+		},
+		Entry("a bad hex digit in a query-held path", "http://s3.example.com?x=/b/%zz", "x", true),
+		Entry("a bad hex digit in a virtual-hosted query-held path", "http://b.s3.example.com?x/%zz?", "x", true),
+		Entry("a truncated escape in a query-held path", "http://s3.example.com?x=/b/k%4", "x", true),
+		Entry("a lone percent sign ending a query-held path", "http://s3.example.com?x=/b/k%", "x", true),
+		Entry("a bad hex digit in a target kept whole", "foo:%zz", "s3.example.com", true),
+		Entry("a bad hex digit in the Host's bucket", "/k", "my%zz.s3.example.com", true),
+		Entry("a lone percent sign ending the Host's bucket", "/", "my%.s3.example.com", true),
+		Entry("a well-formed escape in the Host's bucket", "/k", "my%2Dbucket.s3.example.com", false),
+		Entry("a bad hex digit in a Host taken whole as the bucket", "/k", "my%zz.example.org", true),
+		Entry("a bad hex digit in the query alone", "http://s3.example.com/b/k?x=%zz", "x", false),
+		Entry("a well-formed escape in a query-held path", "http://s3.example.com?x=/b/a%2Fb", "x", false),
+		Entry("an origin-form path", "/b/a%2Fb", "s3.example.com", false),
+	)
 	It("fills the plain fields", func(ctx SpecContext) {
 		req := httptest.NewRequestWithContext(ctx, "PUT", "/plain/k", strings.NewReader("body"))
 		req.Header.Set("Referer", "http://ref/")

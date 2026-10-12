@@ -514,7 +514,9 @@ var _ = Describe("Handler", func() {
 		})
 		It("is answered 500 when the parse panics, observed under the name for no op", func(ctx SpecContext) {
 			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/plain", nil)
-			req.URL = nil // net/http never serves such a request; its parse dereferences the URL
+			// net/http never serves such a request; without a RequestURI its
+			// parse reads the target from the URL, and dereferences it.
+			req.URL, req.RequestURI = nil, ""
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			Expect(rec.Code).To(Equal(500))

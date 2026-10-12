@@ -2633,7 +2633,11 @@ Every new entry adds its row to this table, in document order.
 ## A malformed percent-escape in the path makes radosgw serve another path
 
 - **Kind:** defect, unfixed through main, with a fix in review. Reproduced
-  on a running radosgw at v19.2.6 and v20.2.4.
+  on a running radosgw at v19.2.6 and v20.2.4. The virtual-hosted signature
+  reuse under Evidence is security-relevant, low: a signature-scope escape,
+  in which a captured or shared SigV4 signature for a ListObjects on a
+  virtual-hosted bucket reads the signer's bucket list. That part is
+  unreproduced: derived from the source.
 - **Evidence:**
   - `RGWREST::preprocess` decodes the path with `url_decode` and checks
     the result only for a NUL (`rgw_rest.cc:2182-2186` at v19.2.6,
@@ -2649,15 +2653,30 @@ Every new entry adds its row to this table, in document order.
     object (`init_from_header`, `rgw_rest_s3.cc:4908-4914` at v19.2.6,
     `:5468-5474` at v20.2.4). So `GET /b/%zz` is served as `GET /`, a
     ListBuckets, and a request for the key `k%` acts on the key `k`.
-  - SigV4 signs the same decode: the canonical URI is `aws4_uri_recode`
-    of the path, and `/` when that is empty (`get_v4_canonical_uri`,
-    `rgw_auth_s3.h:598-612` at v19.2.6, `:601-615` at v20.2.4), so the
-    signature such a request needs is one over the path radosgw serves.
+  - For a path-style request, SigV4 signs the same decode: the canonical
+    URI is `aws4_uri_recode` of the path, and `/` when that is empty
+    (`get_v4_canonical_uri`, `rgw_auth_s3.h:598-612` at v19.2.6,
+    `:601-615` at v20.2.4), so the signature such a request needs is one
+    over the path radosgw serves.
+  - A virtual-hosted request is different (unreproduced). `preprocess`
+    saves the path SigV4 signs, `request_uri_aws4`, before it puts the
+    Host's bucket in front (`rgw_rest.cc:2024` at v19.2.6, `:2041` at
+    v20.2.4), and the bucket is signed only in the Host header. Take
+    `GET /%zz` with `Host: b.<domain>`. SigV4 signs the path `/`, exactly
+    as for `GET /`, a ListObjects on `b`, with the same Host. The decode
+    that serves it empties the bucket along with the path, so radosgw
+    serves a ListBuckets. A signature made for a ListObjects on a bucket
+    is thus accepted for a ListBuckets of the signer's buckets, with the
+    same query and headers.
 - **Releases:** v19.2.6, v20.2.4 and main (`url_decode` still returns an
   empty string, `rgw_common.cc:1815` at a956c21a8c9).
 - **rgw-go:** net/http answers such a request `400 Bad Request` before any
-  handler runs; `docs/exclusions.md` records the difference under
-  "Frontend differences".
+  handler runs. rgw-go's router gives the same answer where net/http does
+  not check: to a path radosgw takes from an absolute-form target's query,
+  to a target of another scheme that it keeps whole, and to the bucket a
+  Host names. So no request that reuses a signature this way reaches a
+  handler. `docs/exclusions.md` records the difference under "Frontend
+  differences".
 - **Upstream:** we filed [#81301](https://tracker.ceph.com/issues/81301),
   which cites #71458 and ceph/ceph#63521, rather than comment on the
   resolved CVE. The fix in review is
@@ -2677,6 +2696,11 @@ Every new entry adds its row to this table, in document order.
   `percent sign` and `bad escape` find #71458, its backports and
   unrelated issues; pull request terms `url_decode` and `invalid
   url-encoding` find no fix for the path.
+  The virtual-hosted signature reuse, security-relevant (Kind), is not
+  described in #81301, but the fix in review covers it: ceph/ceph#72301
+  refuses the malformed decode in `rgw_rest_transform_s3_vhost_style` as
+  well as in `preprocess`, and both run before authentication.
+  rgw-bug-reproduction's triage, 2026-10-12, found no other prior art.
 - **Found:** phase 1 auth work (unit A), checking the frontend's
   percent-escape entry against `url_decode`, 2026-09-30. The
   rgw-bug-reproduction session reproduced it on running v19.2.6 and v20.2.4
@@ -2684,7 +2708,10 @@ Every new entry adds its row to this table, in document order.
   `GET /repro/k%25` answers 404. `GET /repro/%zz` returns a ListAllMyBuckets
   result for a URL that names an object in bucket `repro`. The radosgw log
   shows the routing on the decoded path. The reproducer, written in Go, its
-  output and the log are attached to the tracker issue.
+  output and the log are attached to the tracker issue. The virtual-hosted
+  signature reuse was found on 2026-10-12, while routing rgw-go's requests
+  on the request target, by reading `preprocess` and
+  `get_v4_canonical_uri` at both tags.
 
 ## radosgw skips or never finishes every bucket-index batch on a zero rgw_bucket_index_max_aio
 

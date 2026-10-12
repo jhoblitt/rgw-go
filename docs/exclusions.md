@@ -2579,6 +2579,32 @@ crypto/tls and net/url ones go1.27.1's.
   request for the key `k%` acts on the key `k` (`docs/ceph-upstream-bugs.md`,
   "A malformed percent-escape in the path makes radosgw serve another
   path").
+  - rgw-go's router gives the same answer, before any handler, to a path
+    net/http does not check, which rgw-go otherwise routes as radosgw
+    does. One is the path `get_abs_path` takes from an absolute-form
+    target whose first `/` after the authority lies in the query, as in
+    `GET http://h?x=/b/%zz` (`rgw_common.cc:213-245` at v19.2.6,
+    `:213-255` at v20.2.4). The other is a target of another scheme,
+    which radosgw keeps whole and net/http parses as opaque, such as
+    `foo:%zz`.
+  - Routing such a path as radosgw does would serve the request on a path
+    its signature does not cover. With a virtual-hosted bucket,
+    `url_decode` empties the whole URI at a bad hex digit, bucket
+    included. SigV4 signs that bucket in the Host header, and the path's
+    empty decode as `/`, the bucket's root (`get_v4_canonical_uri`,
+    `rgw_auth_s3.h:598-612` at v19.2.6, `:601-615` at v20.2.4). So a
+    signature for ListObjects on the bucket would be served as
+    ListBuckets (`docs/ceph-upstream-bugs.md`, same entry).
+  - A truncated escape, which `url_decode` and SigV4 cut at the same
+    place, is refused too, so that every malformed escape in a path gets
+    net/http's answer whatever the target's form.
+  - The router refuses a malformed escape in the bucket a Host names too,
+    as in `Host: my%zz.<domain>` or `Host: my%.<domain>`: net/http lets a
+    `%` through in a Host header, and `preprocess` decodes that bucket
+    together with the path (`rgw_rest.cc:2154-2161` and `:2182` at
+    v19.2.6, `:2171-2178` and `:2204` at v20.2.4). radosgw serves
+    `GET /k` on the first as a ListBuckets, and `GET /` on the second as a
+    ListObjects on bucket `my`, another bucket than the Host names.
 - **Expectations other than 100-continue.** net/http answers `417
   Expectation Failed`, with `Connection: close`, no body and before any
   handler runs, a request whose `Expect` holds anything but a

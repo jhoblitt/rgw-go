@@ -522,7 +522,10 @@ func resourcePaths(entry string) []string {
 // or an unserved one goes to the manager at the longest of those paths, as
 // RGWRESTMgr::get_resource_mgr matches them (:1974-1997 at v19.2.6,
 // :1991-2014 at v20.2.4): the admin handler, or unserved. Any other request
-// goes to S3, the default manager, or to unserved when S3 is off.
+// goes to S3, the default manager, or to unserved when S3 is off. A request
+// whose decoded URI, Host-named bucket included, would come from a malformed
+// percent-escape (s3.MalformedPath) is answered as net/http answers one in
+// an origin-form path, before any handler.
 type router struct {
 	s3, admin, unserved http.Handler
 	cfg                 s3.Config
@@ -537,6 +540,10 @@ func newRouter(s3h, adminH http.Handler, adminPath string, unserved http.Handler
 }
 
 func (rt router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if s3.MalformedPath(req, rt.cfg) {
+		badRequest(w)
+		return
+	}
 	uri := s3.DecodedURI(req, rt.cfg)
 	matched, toAdmin := "", false
 	if rt.admin != nil && under(uri, rt.adminPath) {
@@ -555,6 +562,17 @@ func (rt router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		rt.s3.ServeHTTP(w, req)
 	}
+}
+
+// badRequest writes the response net/http's server writes for a request it
+// cannot parse, a request-target url.ParseRequestURI refuses among them
+// (net/http/server.go:2063-2100 at Go 1.27.1).
+func badRequest(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(http.StatusBadRequest)
+	// A failed write means the client is gone, with no one left to tell.
+	_, _ = io.WriteString(w, "400 Bad Request") //nolint:errcheck // see above
 }
 
 // under reports whether path is the resource p or below it.
