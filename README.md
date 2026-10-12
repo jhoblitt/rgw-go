@@ -33,6 +33,9 @@ clusters, one each for Squid and Tentacle, which [rooket](https://github.com/jho
 stands up on kind. The `integration` workflow runs them nightly and on demand with
 `gh workflow run integration.yml`. It does not gate pull requests; locally, the same
 steps are in [hack/rooket/README.md](hack/rooket/README.md).
+After the gate it checks radosgw's go-ceph rgw/admin outcomes against
+`test/admin/baseline/`, then runs `make admin-parity` and `make admin-gate` against
+rgw-go; it does not run the seam microbenchmark.
 
 The `s3tests` workflow runs on every pull request. When the pull request changes the
 S3 path, anything under `internal/`, `cmd/`, `hack/s3tests/`, `hack/rooket/`,

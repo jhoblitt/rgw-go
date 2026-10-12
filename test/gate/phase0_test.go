@@ -848,7 +848,7 @@ var _ = Describe("phase 0 gate", Label("integration"), func() {
 			gotUsers = append(gotUsers, oid)
 			if u, ok := wantUsers[oid]; ok {
 				Expect(uo.Info.AccessKeys).To(HaveKey(u.AccessKey))
-				Expect(uo.Info.AccessKeys[u.AccessKey].Secret).To(Equal(u.SecretKey))
+				Expect(secret(uo.Info.AccessKeys[u.AccessKey].Secret)).To(Equal(secret(u.SecretKey)), "the secret of %s's key %s", oid, u.AccessKey)
 			}
 		}
 		Expect(gotUsers).To(ConsistOf(slices.Collect(maps.Keys(wantUsers))))
