@@ -245,27 +245,15 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if err = watchRADOS(reg, s.mode, cluster); err != nil {
 		return fmt.Errorf("watching rados metrics: %w", err)
 	}
-	zone, zonegroup := store.Zone(), store.ZoneGroup()
-	env := store.Env()
-	authzCfg, err := authz.ConfigFrom(conf, store.Release())
+	zone := store.Zone()
+	gw, err := NewGateway(conf, store, cluster.InstanceID(), reg)
 	if err != nil {
 		return err
 	}
-	env.Authz = authz.New(authzCfg)
-	env.Metrics = reg
-	env.HostID = op.HostID(cluster.InstanceID(), zone.Name, zonegroup.Name)
-	s3cfg, err := s3Config(conf, store, cluster.InstanceID())
-	if err != nil {
-		return err
-	}
-	authCfg, err := auth.ConfigFrom(conf, s3cfg.DNSNames)
-	if err != nil {
-		return fmt.Errorf("reading auth options: %w", err)
-	}
-	verifier := auth.New(authCfg, store, store)
+	env, verifier, s3cfg := gw.env, gw.verifier, gw.cfg
 	var s3h http.Handler
 	if s3On {
-		s3h = s3.NewHandler(env, verifier, s3cfg)
+		s3h = gw.S3Handler()
 	}
 	var adminH http.Handler
 	if adminPath != "" {
@@ -317,6 +305,44 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	slog.InfoContext(ctx, "serving", slog.Any("addrs", addrs), slog.String("metrics_addr", metricsAddr),
 		slog.String("zone", zone.Name), slog.String("release", store.Release().String()))
 	return g.Wait()
+}
+
+// Gateway is what serve builds its handlers from over an open store: the
+// store's environment with the authorizer, the metrics and the host id set,
+// the authenticator, and the S3 handler's options. The S3 handler, the admin
+// API and the router share the environment.
+type Gateway struct {
+	env      *op.Env
+	verifier *auth.Verifier
+	cfg      s3.Config
+}
+
+// NewGateway reads the authorizer's, the S3 handler's and the
+// authenticator's options through conf and builds serve's gateway over
+// store, observed by m, for the RADOS client instanceID names.
+func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, m op.Metrics) (*Gateway, error) {
+	env := store.Env()
+	authzCfg, err := authz.ConfigFrom(conf, store.Release())
+	if err != nil {
+		return nil, err
+	}
+	env.Authz = authz.New(authzCfg)
+	env.Metrics = m
+	env.HostID = op.HostID(instanceID, store.Zone().Name, store.ZoneGroup().Name)
+	cfg, err := s3Config(conf, store, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	authCfg, err := auth.ConfigFrom(conf, cfg.DNSNames)
+	if err != nil {
+		return nil, fmt.Errorf("reading auth options: %w", err)
+	}
+	return &Gateway{env: env, verifier: auth.New(authCfg, store, store), cfg: cfg}, nil
+}
+
+// S3Handler is the S3 handler serve serves.
+func (g *Gateway) S3Handler() *s3.Handler {
+	return s3.NewHandler(g.env, g.verifier, g.cfg)
 }
 
 // serveAndRun starts the frontend's serve and the store's run in g. run's
