@@ -1400,7 +1400,8 @@ Every new entry adds its row to this table, in document order.
   `rgw_gc_max_concurrent_io` deletes in flight, counts a missing stripe as
   deleted and sends the tail deletes with `pool_full_try`, as the GC worker
   does (`rgw_gc.cc:371`, `:413-415`, `:677`). N's purge task records the
-  difference in `docs/exclusions.md`.
+  difference in `docs/exclusions.md`. rgw-go's `PurgeBypassGC`
+  (`internal/driver/purge.go`) implements it.
 - **Upstream:** we filed [#81304](https://tracker.ceph.com/issues/81304).
   The fix in review is
   [ceph/ceph#72304](https://github.com/ceph/ceph/pull/72304) (draft), which
@@ -1474,7 +1475,8 @@ Every new entry adds its row to this table, in document order.
   nautilus v14.2.4.
 - **rgw-go:** phase 1's purge (unit N) counts a missing tail stripe as
   deleted, as the GC worker does, so a removal that meets one completes. N's
-  purge task records the difference in `docs/exclusions.md`.
+  purge task records the difference in `docs/exclusions.md`. rgw-go's
+  `PurgeBypassGC` (`internal/driver/purge.go`) implements it.
 - **Upstream:** [#24789](https://tracker.ceph.com/issues/24789), open since
   2018 with no pull request. [#40587](https://tracker.ceph.com/issues/40587)
   reported it again in 2019 and is marked resolved by

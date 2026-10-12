@@ -266,9 +266,6 @@ var _ = Describe("the driver", func() {
 			Entry("RemoveIndexEntries", func(ctx context.Context, s *driver.Store) error {
 				return s.RemoveIndexEntries(ctx, &op.BucketRecord{}, []meta.ObjKey{{Name: "k"}})
 			}),
-			Entry("PurgeBypassGC", func(ctx context.Context, s *driver.Store) error {
-				return s.PurgeBypassGC(ctx, &op.BucketRecord{})
-			}),
 
 			Entry("GetRealm", func(ctx context.Context, s *driver.Store) error {
 				_, err := s.GetRealm(ctx, "", "")

@@ -1153,11 +1153,42 @@ review and verified against the tree.
     cannot see it (docs/ceph-upstream-bugs.md, "radosgw's admin bucket
     removal never recognizes a forwarded request"); rgw-go forwards
     nothing (Multisite).
-- **On the RADOS driver, a bypass-gc bucket removal answers 501
-  NotImplemented for now.** `DELETE /admin/bucket?bypass-gc=true` answers
-  501 until unit N's bypass-gc task implements the driver's data pass, and
-  removes nothing; `purge-objects=true` without `bypass-gc` works. The
-  memstore serves both.
+- **The admin bucket removal with bypass-gc deletes every tail, and with a
+  bound.** `DELETE /admin/bucket?bypass-gc=true` deletes the bucket's
+  object data directly instead of queueing it for garbage collection, as
+  radosgw's `remove_bypass_gc` does, with four differences. radosgw's
+  admin op never sets that loop's concurrency, so its budget starts at 0:
+  the first object whose manifest it walks keeps its tail stripes, neither
+  deleted nor queued, and every later delete is issued without a bound
+  ([`rgw_sal_rados.cc:505`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L505),
+  [`:542-550`](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L542-L550);
+  `rgw_bucket.h:248`). rgw-go deletes every object's tails and keeps at
+  most `rgw_gc_max_concurrent_io` deletes in flight, one when the option is
+  0 or less. A tail stripe or a head that is already gone counts as
+  deleted, as the garbage collector counts a stripe, so a retry of a
+  removal that stopped partway completes. radosgw's removal stops on
+  either, a missing stripe being tracker #24789: the admin op answers 404
+  NoSuchBucket for a bucket that still exists, after deleting every head it
+  reached, and a retry then removes the bucket. The tail deletes may use a
+  full pool's reserve, as the garbage collector's do, so the removal can
+  free space on a full cluster. And an object's head is removed only once
+  every one of its tail deletes has succeeded, and a head removal that
+  fails other than as
+  missing or timed out cancels its index change: radosgw issues the head's
+  removal and its index entry's removal alongside the tail deletes without
+  waiting for them, so a failed delete there leaves stripes no head or
+  index entry names, where rgw-go leaves the object listed for a retry to
+  finish. Until that retry the object reads as damaged: its head is there,
+  but the tails it names may already be released.
+- **A purging bucket removal refuses a bucket whose versioning was ever
+  enabled.** `DELETE /admin/bucket` with `purge-objects` or `bypass-gc`
+  answers 501 NotImplemented for a bucket whose versioning is enabled or
+  suspended before it deletes or aborts anything in it, until versioning is
+  served (phase 2); radosgw purges the bucket's versions and delete
+  markers. `DELETE /admin/user` with `purge-data` answers the same when it
+  reaches such a bucket, with the user and that bucket left whole and the
+  buckets it removed before then gone. A removal without a purge of an
+  empty versioned bucket goes on as before.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's
