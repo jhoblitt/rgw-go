@@ -252,6 +252,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw defines rgw_put_obj_max_window_size and never reads it](#radosgw-defines-rgw_put_obj_max_window_size-and-never-reads-it) | pending | pending |  |
 | [radosgw stores every x-amz- request header as an attr of the object it writes](#radosgw-stores-every-x-amz--request-header-as-an-attr-of-the-object-it-writes) | pending | pending |  |
 | [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | pending |  |
+| [radosgw's removal of an account user leaves the bucket list its quota sync wrote](#radosgws-removal-of-an-account-user-leaves-the-bucket-list-its-quota-sync-wrote) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11484,3 +11485,71 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit W, Task 12, 2026-10-08, in the reshard oracle's
   run under `make integration`.
+
+## radosgw's removal of an account user leaves the bucket list its quota sync wrote
+
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a leaked object. Not
+  security-relevant. Reproduced on v20.2.4; derived from the same source
+  at v19.2.6.
+- **Evidence:** paths are under `src/`; a pair of line numbers is
+  v19.2.6's, then v20.2.4's.
+  - With the quota threads on, the default, radosgw starts a user sync
+    thread whose first pass runs at once and the next after each
+    `rgw_user_quota_sync_interval` (`rgw/rgw_quota.cc:488-495`, `:415-433`;
+    `:509-516`, `:436-454`). A pass runs `sync_owner` on every key of the
+    user metadata section (`:665-702`; `:686-723`), which is every
+    `users.uid` object but the `.buckets` ones, an account's users and its
+    root included (`rgw/services/svc_user_rados.cc:54-57`; `:71-80`).
+  - For a user without a bucket list object, `load_stats` reads a zero
+    header, ENOENT being no error (`rgw/driver/rados/buckets.cc:153-184` at
+    both tags), so the idle and wait-time checks pass
+    (`rgw/rgw_quota.cc:636-648`; `:657-669`) and `rgw_sync_all_stats` runs.
+    It lists no buckets, the missing object ending the listing
+    (`buckets.cc:108-111` at both tags), and calls `complete_flush_stats`
+    for the user (`rgw/rgw_user.cc:51` at both tags).
+  - `complete_flush_stats` names the user's `<uid>.buckets` in `users.uid`,
+    whether or not the user is an account's (`get_owner_buckets_obj`,
+    `rgw/driver/rados/rgw_sal_rados.cc:123-125`; `:132-134`;
+    `get_buckets_obj`, `rgw/services/svc_user_rados.cc:109-113`; `:59-63`),
+    and `cls_user_complete_stats_sync` writes the header there
+    (`buckets.cc:261-273` at both tags; `cls/user/cls_user.cc:206-237` at
+    both tags), which creates the object. An account user's buckets are
+    listed in its account's `buckets.<account id>`, so this one holds an
+    empty list.
+  - `remove_user_info` removes `<uid>.buckets` only
+    `if (info.account_id.empty())` (`rgw/services/svc_user_rados.cc:592-600`;
+    `:566-574`), so removing an account user leaves it, by
+    `radosgw-admin user rm`, the admin API or IAM DeleteUser alike.
+  - Reproduced on a disposable v20.2.4 cluster with no rgw-go running: an
+    account `RGW11111111111111111` with the root `s3tests-root1`, created
+    as `hack/s3tests/run.sh` creates it, and a user in no account.
+    `users.uid` held neither user's `.buckets` until a restart of the
+    radosgw's deployment, whose first sync pass wrote both, stamped with
+    the radosgw's start. `user rm --purge-data` of both users and
+    `account rm` then left `s3tests-root1.buckets` alone of the four
+    objects.
+  - `account rm` likewise leaves the account's own `buckets.<account id>`
+    in the account pool: `rgwrados::account::remove` removes the account,
+    name, email and users objects only (`rgw/driver/rados/account.cc:394-438`
+    at both tags), and `buckets.RGW11111111111111111` stayed after the
+    removal above.
+- **Impact:** one empty object leaks in `users.uid` for each account user
+  that existed across a sync pass, and one in the account pool for each
+  account that ever had a bucket list. `metadata list user` hides the
+  former, so no listing shows it for removal. On rgw-go's clusters the
+  leak is the account roots' `.buckets` objects that `make gate` counts
+  after an s3-tests run (`hack/rooket/README.md`, "s3-tests").
+- **Releases:** v19.2.6 and v20.2.4.
+- **rgw-go:** reproduces it, as it must for a zone radosgw shares. Its
+  quota user sync writes the same object through the same class call at
+  rgw-go's start (`syncAllStats` and `completeOwnerStatsSync`,
+  `internal/driver/stats.go` and `internal/driver/ownerbuckets.go`), and
+  `RemoveUser` removes a user's bucket list only for a user without an
+  account (`internal/driver/user.go`). On the same cluster, with the
+  radosgw left running from before the users existed, `make rgw-go-up`
+  wrote `s3tests-root1.buckets` at rgw-go's start, and the same removal
+  left it.
+- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Found:** a follow-up to phase 1's s3-tests runs, whose cleanup left
+  `s3tests-root1.buckets` and `s3tests-root2.buckets` for `make gate` to
+  count; reproduced 2026-10-11.
