@@ -260,6 +260,20 @@ var _ = Describe("admin bucket routes", func() {
 		Expect(res.StatusCode).To(Equal(404))
 		Expect(errCode(res)).To(Equal("NoSuchKey"))
 	})
+	It("DELETE /admin/bucket?object answers 501 NotImplemented on a versioned bucket and keeps the object", func() {
+		ctx := context.Background()
+		putObject("test", "k1")
+		rec, err := fx.store.GetBucket(ctx, "", "test")
+		Expect(err).NotTo(HaveOccurred())
+		rec.Info.Flags |= meta.BucketVersioned
+		Expect(fx.store.PutBucketInfo(ctx, rec)).To(Succeed())
+		res := fx.request(http.MethodDelete, "/admin/bucket?object&bucket=test&object=k1", "admin")
+		Expect(res.StatusCode).To(Equal(http.StatusNotImplemented))
+		Expect(errCode(res)).To(Equal("NotImplemented"))
+		st, err := fx.store.StatObject(ctx, rec, meta.ObjKey{Name: "k1"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Exists).To(BeTrue(), "radosgw would hide k1 behind a delete marker, not remove it")
+	})
 	It("refuses every bucket route to a caller without the buckets cap", func() {
 		for _, rq := range []struct{ method, path string }{
 			{http.MethodGet, "/admin/bucket?bucket=test"},

@@ -845,14 +845,26 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 }
 
 // Execute is RGWBucket::init, then the object deleted as rgw_remove_object
-// deletes it, a missing object being -ENOENT, NoSuchKey. A name no object
-// can carry, empty, longer than 1024 bytes or not UTF-8, is answered
-// NoSuchKey without reaching the store, the answer radosgw's head read
-// gives it, where radosgw would hand a name of over about 2000 bytes to
-// RADOS, which refuses it as too long (docs/exclusions.md).
+// deletes it, a missing object being -ENOENT, NoSuchKey. A bucket whose
+// versioning is or was enabled or that has object lock is answered
+// NotImplemented before the store is asked about the object: radosgw keys
+// the object with no instance and passes the bucket's versioning
+// (rgw_bucket.cc:274-289 at v19.2.6, :275-290 at v20.2.4;
+// rgw_sal_rados.cc:2933-2937, :3775-3779), so on a versioned bucket it
+// writes a delete marker, whether or not the object exists
+// (driver/rados/rgw_rados.cc:5774-5812 at v19.2.6, :6462-6517 at v20.2.4),
+// where the store's unversioned delete would remove the object outright
+// (docs/exclusions.md). On any other bucket, a name no object can carry,
+// empty, longer than 1024 bytes or not UTF-8, is answered NoSuchKey without
+// reaching the store, the answer radosgw's head read gives it, where
+// radosgw would hand a name of over about 2000 bytes to RADOS, which
+// refuses it as too long (docs/exclusions.md).
 func (o *RemoveObjectAdmin) Execute(ctx context.Context, r *Request) error {
 	rec, err := loadAdminBucket(ctx, r.Env, meta.UserID{}, o.Bucket)
 	if err != nil {
+		return err
+	}
+	if err := versioningUnserved(rec); err != nil {
 		return err
 	}
 	if !validAdminObjectName(o.Object) {

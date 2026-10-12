@@ -744,6 +744,31 @@ var _ = Describe("admin bucket ops", func() {
 			Entry("over 1024 bytes", strings.Repeat("a", 1025)),
 			Entry("not UTF-8", "a\xffb"),
 		)
+		// radosgw decides on the bucket's versioning before the unversioned
+		// path's head read, whose ENOENT the name check stands in for, and its
+		// versioned path answers no ENOENT for a missing object
+		// (driver/rados/rgw_rados.cc:5774 and :5853 at v19.2.6, :6462 and :6592
+		// at v20.2.4).
+		DescribeTable("answers NotImplemented for a bucket whose versioning is or was enabled or that has object lock, before the name check and without asking the object store",
+			func(ctx context.Context, flags uint32) {
+				rec, err := store.GetBucket(ctx, "", "test")
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= flags
+				Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+				objs := new(opfakes.FakeObjectStore)
+				env.Objects = objs
+				r := op.NewRemoveObjectAdmin()
+				r.Bucket = "test"
+				for _, name := range []string{"k1", "", strings.Repeat("a", 1025)} {
+					r.Object = name
+					Expect(run(ctx, r)).To(MatchError(op.ErrNotImplemented), "object %q", name)
+				}
+				Expect(objs.Invocations()).To(BeEmpty())
+			},
+			Entry("BUCKET_VERSIONED", uint32(meta.BucketVersioned)),
+			Entry("BUCKET_VERSIONS_SUSPENDED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketVersionsSuspended)),
+			Entry("BUCKET_OBJ_LOCK_ENABLED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketObjLockEnabled)),
+		)
 	})
 
 	Describe("security", func() {

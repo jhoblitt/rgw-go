@@ -331,6 +331,28 @@ var _ = Describe("DeleteObject", func() {
 		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).To(Succeed())
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 	})
+
+	DescribeTable("refuses a bucket whose versioning is or was enabled or that has object lock before it reads the head",
+		func(ctx SpecContext, flags uint32) {
+			setup(ctx, denc.Squid)
+			rec.Info.Flags |= flags
+			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(MatchError(op.ErrNotImplemented),
+				"only the unversioned path is served, where radosgw writes a delete marker on a versioned bucket (rgw_rados.cc:5774-5812)")
+			Expect(c.Reads(testDataPool, "", headOID)).To(BeZero(), "no get_obj_state")
+			Expect(c.Writes(testDataPool, "", headOID)).To(BeZero())
+			Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil(), "the head")
+			Expect(c.Object(testDataPool, "", tail)).NotTo(BeNil(), "the tail")
+			Expect(indexWrites()).To(BeEmpty())
+			en, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue(), "the index entry")
+			Expect(en.Exists).To(BeTrue())
+			Expect(gcEntries()).To(BeEmpty())
+			Expect(driver.CachedBucketStatsForTest(s, rec).NumObjects).To(BeEquivalentTo(1))
+		},
+		Entry("BUCKET_VERSIONED", uint32(meta.BucketVersioned)),
+		Entry("BUCKET_VERSIONS_SUSPENDED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketVersionsSuspended)),
+		Entry("BUCKET_OBJ_LOCK_ENABLED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketObjLockEnabled)),
+	)
 })
 
 var _ = Describe("checkDiskState's multipart-part sweep", func() {

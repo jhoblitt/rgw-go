@@ -460,6 +460,31 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Entry("an owner that does not decode names none", func(*op.UserRecord) []byte { return []byte{1, 2, 3} }, false),
 		)
 
+		It("refuses to delete an object of a bucket that is or was versioned or has object lock, and keeps it", func(ctx SpecContext) {
+			u := newUser(ctx, "owner")
+			name := prefix + "-versioned"
+			rec := newBucket(ctx, u, name, meta.Quota{})
+			put(ctx, rec, u, "k", "v")
+			key := meta.ObjKey{Name: "k"}
+			setFlags := func(ctx context.Context, flags uint32) *op.BucketRecord {
+				GinkgoHelper()
+				cur, err := env.Buckets.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				cur.Info.Flags = flags
+				Expect(env.Buckets.PutBucketInfo(ctx, cur)).To(Succeed(), "flags %#x", flags)
+				return cur
+			}
+			// Runs before newBucket's cleanup, whose deletes the flags would refuse.
+			DeferCleanup(func(ctx context.Context) { setFlags(ctx, rec.Info.Flags) })
+			for _, flag := range []uint32{meta.BucketVersioned, meta.BucketVersionsSuspended, meta.BucketObjLockEnabled} {
+				cur := setFlags(ctx, rec.Info.Flags|flag)
+				Expect(env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).To(MatchError(op.ErrNotImplemented), "flag %#x", flag)
+				st, err := env.Objects.StatObject(ctx, cur, key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeTrue(), "k after the refusal under flag %#x", flag)
+			}
+		})
+
 		It("reports zero stats for an empty bucket", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
 			rec := newBucket(ctx, u, prefix+"-empty", meta.Quota{})

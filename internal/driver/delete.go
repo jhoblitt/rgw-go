@@ -24,7 +24,17 @@ import (
 // conditions are Tentacle's, and a delete is guarded, on both releases").
 // A missing key is ErrNoSuchKey; a lost race is ErrConcurrentModification,
 // which the op answers 204 as radosgw does (rgw_op.cc:5302-5304).
+//
+// A bucket whose versioning is or was enabled or that has object lock is
+// answered NotImplemented before the store is touched, so that no caller
+// takes this path there: radosgw takes the versioned one, which writes a
+// delete marker for a key with no instance (:5774-5812), where this one
+// would remove the object outright.
 func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
+	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
+		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
+			op.ErrNotImplemented, rec.Info.Bucket.Name)
+	}
 	if key.Instance == "null" {
 		key.Instance = "" // :5768-5770
 	}

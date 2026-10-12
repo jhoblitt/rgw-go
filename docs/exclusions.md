@@ -1177,7 +1177,11 @@ review and verified against the tree.
     answer 404 NoSuchKey for an object name no object can carry, empty,
     longer than 1024 bytes or not UTF-8, without reading RADOS. radosgw
     hands the name to RADOS, which answers ENOENT, radosgw's 404, for most
-    such names and refuses one of over about 2000 bytes as too long.
+    such names and refuses one of over about 2000 bytes as too long. On a
+    bucket whose versioning was ever enabled or that has object lock,
+    `DELETE /admin/bucket?object` answers 501 instead, whatever the name
+    ("The admin object removal refuses a bucket whose versioning was ever
+    enabled").
   - `GET /admin/bucket` without a uid answers a failure to list the
     bucket metadata section with its error; radosgw ends its listing
     there and answers 200 with what it listed.
@@ -1223,7 +1227,44 @@ review and verified against the tree.
   markers. `DELETE /admin/user` with `purge-data` answers the same when it
   reaches such a bucket, with the user and that bucket left whole and the
   buckets it removed before then gone. A removal without a purge of an
-  empty versioned bucket goes on as before.
+  empty versioned bucket goes on as before. Both purges, and `DELETE
+  /admin/user` with `purge-data`, also refuse a bucket whose flags carry
+  object lock without `BUCKET_VERSIONED`, a state no radosgw op writes:
+  bucket creation enables object lock only with versioning
+  (`driver/rados/rgw_rados.cc:2392` at v19.2.6, `:2497` at v20.2.4), and
+  `RGWPutBucketObjectLock` refuses a bucket whose versioning is not enabled
+  (`rgw_op.cc:8232` at v19.2.6, `:9180` at v20.2.4). A `bucket.instance`
+  metadata put stores the flags it is given, in radosgw
+  (`driver/rados/rgw_bucket.cc:2803-2864` at v19.2.6, `:2921-2997` at
+  v20.2.4) as in rgw-go, so such a bucket can still arrive. radosgw would
+  purge it as an unversioned one, as `versioning_status` reads only the
+  versioning flags (`rgw_common.h:1075` at v19.2.6, `:1117` at v20.2.4);
+  rgw-go's object delete refuses it, taking it for a versioned bucket.
+- **The admin object removal refuses a bucket whose versioning was ever
+  enabled.** `DELETE /admin/bucket?object` answers 501 NotImplemented for
+  a bucket whose versioning is enabled or suspended, or that has object
+  lock, and removes nothing, until versioning is served (phase 2). radosgw
+  keys the object with no instance and passes the bucket's versioning to
+  the delete (`RGWBucket::remove_object`,
+  `driver/rados/rgw_bucket.cc:274-289` at v19.2.6, `:275-290` at v20.2.4;
+  `RadosObject::delete_object`, `driver/rados/rgw_sal_rados.cc:2933-2937`
+  at v19.2.6, `:3775-3779` at v20.2.4), which on such a bucket writes a
+  delete marker whether or not the object exists
+  (`driver/rados/rgw_rados.cc:5774-5812` at v19.2.6, `:6462-6517` at
+  v20.2.4). With versioning enabled the marker takes a new instance and the
+  object survives as a noncurrent version. With versioning suspended the
+  marker is the null version, which replaces the pre-versioning object, the
+  bucket's null version: `rgw_bucket_link_olh` unlinks that object's entry
+  and logs its removal (`cls/rgw/cls_rgw.cc:1712-1725` and `:1809` at
+  v19.2.6, `:1853-1866` and `:1950` at v20.2.4), and `apply_olh_log`
+  removes it (`driver/rados/rgw_rados.cc:8283-8284` and `:8334-8345` at
+  v19.2.6, `:9225-9226` and `:9276-9287` at v20.2.4), as S3 has it for a
+  suspended bucket. rgw-go's delete takes the unversioned path, which
+  would remove the object's head, its tails and its index entry outright,
+  with no marker and no olh, on either. The refusal
+  follows the bucket load and comes before the object-name check, as
+  radosgw's versioned path answers no ENOENT for a missing object. The
+  RADOS store's object delete makes the same refusal whoever calls it.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's
@@ -2115,9 +2156,12 @@ review and verified against the tree.
   was made so by radosgw, and rgw-go refuses it where it cannot yet serve
   it: the writes in "Writes to a versioned or object-lock bucket answer
   501 until versioning is served", PutObjectAcl among them, the listing
-  of versions, a read of an object whose head is an olh, and the purging
+  of versions, a read of an object whose head is an olh, the purging
   removals in "A purging bucket removal refuses a bucket whose versioning
-  was ever enabled" (`refuseVersionedPurge`, `internal/op/adminpurge.go`).
+  was ever enabled" (`refuseVersionedPurge`, `internal/op/adminpurge.go`),
+  and `DELETE /admin/bucket?object` in "The admin object removal refuses
+  a bucket whose versioning was ever enabled" (`RemoveObjectAdmin`,
+  `internal/op/adminbucket.go`).
 - **A stored lifecycle configuration answers 501 until phase 2.** `GET
   /{bucket}?lifecycle` loads the bucket and authorizes
   `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does
