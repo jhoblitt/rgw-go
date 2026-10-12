@@ -38,4 +38,6 @@ sed -i -E "s|^(${decl})\"[^\"]*\"|\1\"${image}\"|" "${f}"
 got=$(sed -n -E "s|^${decl}\"([^\"]*)\".*|\1|p" "${f}")
 [[ "${got}" == "${image}" ]] || die "${const} reads '${got}' after the rewrite, not ${image}"
 (cd "${dir}" && go vet ./tests/framework/installer/)
-echo "${f}: ${const} = \"${image}\""
+# A line holding `<path>.go: ` is a Go diagnostic to setup-go's problem
+# matcher, which would show this one as an error.
+echo "${script}: ${const} = \"${image}\" in ${f}"

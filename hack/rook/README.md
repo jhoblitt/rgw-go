@@ -9,18 +9,22 @@ Squid or Tentacle, and one of the suite's two passes, `TestWithoutTLS` or
 `TestWithTLS`, run as Rook's CI runs them: Rook checked out at `ROOK_COMMIT`,
 Rook's cluster setup action on kind, and Rook's `go test` invocation.
 
-The workflow has not run yet. Its first run is the proof that this harness
-works end to end; until then, everything here is checked only against Rook's
-sources at the pin.
+No run has passed yet. The first showed that the derived image builds, that
+the operator accepts it, and that the object store and its canary user
+become Ready; everything past that is checked only against Rook's sources at
+the pin.
 
 A failed or cancelled job uploads Rook's logs as the artifact
 `rook-<release>-<pass>`. The artifact is public, and a failed suite leaves
 its cluster up, so before the upload the job deletes the two kinds of file
 `tests/scripts/collect-logs.sh` fills with cephx keys, `ceph-auth-ls.txt`
-and the `secret-get--*` dumps. Nothing else is scrubbed: pod logs, the
-operator log and the descriptions are uploaded as written, behind a guard
-that blocks the upload if any file still holds a keyring line (`key = `) or
-a cephx key in the AES or AES256KRB5 encoding.
+and the `secret-get--*` dumps. In every other file it redacts, in place,
+each keyring entry (`key = ` and the word after it) and each whole cephx key
+in the AES or AES256KRB5 encoding, which the pod descriptions and `kubectl
+get all` print; the toolbox's keyring template counts as an entry. A guard
+then blocks the upload if any file still holds `key = ` or a key in either
+encoding, including one inside a longer base64 run, which the redaction
+leaves alone.
 
 ## The phase 1 subset
 
@@ -40,6 +44,19 @@ every night and say nothing about the rest. What remains is the phase 1 gate:
 `user/{caps,keys,opmask,placement,storageclass}`, `cosi` (it skips itself in
 the TLS pass) and `dependents`. The full, unpatched suite is the phase 3
 gate.
+
+The patch makes two more changes so that the kept tests can run:
+
+- `GetDockerImage` (`tests/framework/utils/k8s_helper.go`) skips its
+  `docker pull` when `docker image inspect` finds the image. The installer
+  pulls the Ceph image before it installs Rook, and the registry denies a
+  pull of the derived image, which is never pushed.
+- The shared store fixture
+  (`tests/integration/object/util/sharedstore/sharedstore.go`) creates no
+  SNS client. The client's sanity check calls `ListTopics`, which rgw-go
+  answers with 405 until it implements bucket notifications, and only the
+  Kafka topic test, removed above, uses the client. This change comes out
+  when notifications land, with the topic and notification tests.
 
 ## Pointing the suite at the image
 
@@ -65,10 +82,11 @@ move it, in a scratch clone of rook/rook (`RGW_GO` is this checkout):
 ```sh
 git checkout <new commit>
 git apply --check "${RGW_GO}/hack/rook/phase1.patch" && git apply "${RGW_GO}/hack/rook/phase1.patch"
-# When it does not apply: check out the file again, delete the three imports
-# and calls in the table above by hand, and regenerate the patch.
+# When it does not apply: check out the files again, redo the changes in
+# "The phase 1 subset" by hand, and regenerate the patch.
 git diff >"${RGW_GO}/hack/rook/phase1.patch"
-GOFLAGS=-tags=ceph_preview go vet ./tests/integration/
+GOFLAGS=-tags=ceph_preview go vet ./tests/framework/utils/ ./tests/integration/ \
+  ./tests/integration/object/util/sharedstore/
 "${RGW_GO}/hack/rook/set-image.sh" squid ghcr.io/jhoblitt/rgw-go:local-v19.2.6 .
 "${RGW_GO}/hack/rook/set-image.sh" tentacle ghcr.io/jhoblitt/rgw-go:local-v20.2.4 .
 ```
