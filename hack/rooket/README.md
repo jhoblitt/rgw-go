@@ -538,7 +538,10 @@ It runs no gate, and needs none: nothing after it counts the users.
 the S3 path, one extended regular expression per line over `hack/parity`'s
 test ids, so that `grep -E -f` keeps a diff's lines for that area alone.
 The write path's, `w-groups.txt`, selects PUT, DELETE, COPY, DeleteObjects,
-the conditional writes and the object ACL and tagging subresources. After
+the conditional writes and the object ACL and tagging subresources; the
+multipart uploads', `p-groups.txt`, selects CreateMultipartUpload,
+UploadPart, UploadPartCopy, CompleteMultipartUpload, AbortMultipartUpload
+and ListMultipartUploads, and partNumber reads of the result. After
 `make s3tests-parity`:
 
 ```sh
