@@ -156,6 +156,7 @@ func conf(kv map[string]string) *cephconf.Options {
 		"rgw_gc_max_concurrent_io": "10", "rgw_gc_max_trim_chunk": "16", "rgw_gc_max_queue_size": "134213632", "rgw_gc_max_deferred": "50",
 		"rgw_enable_gc_threads": "true", "rgw_multi_obj_del_max_aio": "16", "rgw_max_copy_obj_concurrent_io": "10",
 		"rgw_mp_lock_max_time": "600", "rgw_multipart_min_part_size": "5242880", "rgw_multipart_part_upload_limit": "10000",
+		"rgw_max_concurrent_requests": "1024",
 	}
 	maps.Copy(m, kv)
 	return cephconf.NewOptions(m)
