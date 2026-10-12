@@ -254,6 +254,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores every x-amz- request header as an attr of the object it writes](#radosgw-stores-every-x-amz--request-header-as-an-attr-of-the-object-it-writes) | pending | pending |  |
 | [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | pending |  |
 | [radosgw's removal of an account user leaves the bucket list its quota sync wrote](#radosgws-removal-of-an-account-user-leaves-the-bucket-list-its-quota-sync-wrote) | pending | pending | ✓ |
+| [radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry](#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -11596,3 +11597,55 @@ Every new entry adds its row to this table, in document order.
 - **Found:** a follow-up to phase 1's s3-tests runs, whose cleanup left
   `s3tests-root1.buckets` and `s3tests-root2.buckets` for `make gate` to
   count; reproduced 2026-10-11.
+
+## radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry
+
+- **Kind:** defect, not security-relevant: an admin check misreports a part
+  of a live upload, and its `--fix` drops that part's index entry until the
+  upload ends. The report reproduced on v19.2.6 and v20.2.4; the `--fix`
+  path at both tags derived from the source, not reproduced.
+- **Evidence:** paths are under `src/rgw/driver/rados/`; each pair of lines
+  is v19.2.6's, then v20.2.4's.
+  - A part sent again finds its head, `<key>.<upload id>.<n>` in the
+    multipart namespace, already there, and
+    `MultipartObjectProcessor::process_first_chunk` writes the new upload
+    of the part under the prefix `<key>.<32 random characters>`
+    (`rgw_putobj_processor.cc:414-439`; `:448-473`), so its head's index
+    entry is `_multipart_<key>.<random>.<n>`. The upload's `.meta` entry
+    stays `_multipart_<key>.<upload id>.meta`.
+  - v19.2.6's `check_bad_index_multipart` lists the multipart namespace,
+    takes each entry's name up to its last dot for the upload it belongs
+    to, and reports under `invalid_multipart_entries` every entry whose
+    upload has no `.meta` entry (`rgw_bucket.cc:326-420`). The re-uploaded
+    part head's upload reads as `<key>.<random>`, which no `.meta` entry
+    names.
+  - v20.2.4's rewrite walks each shard's multipart entries in index order
+    and reports every run of part entries sharing a prefix that a `.meta`
+    entry with that prefix does not follow at once (`rgw_bucket.cc:343-482`).
+    No `.meta` entry carries the re-uploaded part head's prefix, so it is
+    reported there too.
+  - With `--fix` the reported entries go through `remove_objs_from_index`,
+    which removes the omap keys directly, without cls_rgw
+    (`rgw_rados.cc:10244-10321`; `:11168-11245`), and `check_index` then
+    rebuilds the header from the entries left (`rgw_bucket.cc:862-868`;
+    `:1013-1018`), so the bucket's stats stop counting the live part.
+  - Met on disposable v19.2.6 and v20.2.4 clusters by the multipart oracle
+    (`test/integration/multipart_test.go`, stage 4): on each, with an
+    upload through radosgw and one through rgw-go, each with part 1 sent
+    twice and part 2 once, `bucket check` listed exactly the two re-uploaded
+    part heads; once both uploads completed it listed none.
+- **Impact:** an operator who runs `bucket check` while a part is being
+  re-uploaded is told a live part is invalid. `bucket check --fix` then
+  removes the part's index entry, so the bucket's listing and stats, and
+  the quota checks that read them, leave the part out until the upload is
+  completed or aborted. The part's data and the upload are untouched: the
+  meta object still lists the part, and the completion or the abort
+  retires it from there.
+- **Releases:** v19.2.6 and v20.2.4, both reproduced.
+- **rgw-go:** reproduces it: a re-uploaded part's head takes the same
+  random prefix and index entry (`streamPart`,
+  `internal/driver/mp_part.go`), so `bucket check` reports rgw-go's part as
+  it reports radosgw's.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 1 unit P, Task 10, 2026-10-11, in the multipart oracle's
+  run against a disposable Squid cluster; reproduced on Tentacle the same day.

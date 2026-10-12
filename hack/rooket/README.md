@@ -43,6 +43,26 @@ on `PATH`.
 which removes the buckets it writes and the garbage they leave, so `make gate`
 still passes after it.
 
+It also runs the multipart oracle, `test/integration/multipart_test.go`,
+which serves rgw-go's S3 handler from the spec process over a RADOS
+connection of its own, beside the cluster's radosgw, and drives alice's
+uploads in the bucket `mp-oracle` through both gateways: each reads back what
+the other wrote, completes an upload the other started, and lists its parts
+and uploads with the same documents; a re-uploaded part's first upload and an
+aborted upload's parts reach the GC under the upload id; the
+`RGWCompleteMultipart` lock held from the spec refuses either gateway's
+completion with radosgw's 500; `radosgw-admin object stat` shows the manifest
+rgw-go decodes; and `bucket check` stays clean, but for a live upload's
+re-uploaded part head, which it reports for radosgw's upload too. It counts
+the RADOS operations a 5 MiB UploadPart costs rgw-go, and removes `mp-oracle`
+and its garbage when it ends. To run it alone against a release's cluster:
+
+```sh
+RGW_GO_TEST_CEPH_CONF=$PWD/hack/rooket/out/squid/ceph.conf \
+  go test -tags=ceph_preview,integration -race -count=1 ./test/integration \
+  -ginkgo.focus='multipart oracle'
+```
+
 `make cluster-up` rewrites `out/<release>/` without the `manifest.json` the
 gate reads, so `make populate` runs before `make gate` after every
 `make cluster-up`, in a fresh worktree too. Against a populated cluster it
