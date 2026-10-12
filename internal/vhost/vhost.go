@@ -1,8 +1,8 @@
 // Package vhost reads the bucket a virtual-hosted request's Host names, as
 // radosgw's RGWREST::preprocess does, and the request target req_info splits
-// before it. The S3 handler routes by that bucket and SigV2 signs it in front
-// of the path, so both read the bucket here; SigV2 and the S3 handler's
-// Location header read the target from RequestTarget.
+// before it. Routing and SigV2 read the bucket here; routing, SigV2, SigV4
+// and the S3 handler's Location header read the target from RequestTarget, so
+// a request is served on the path and query it is authenticated for.
 package vhost
 
 import (

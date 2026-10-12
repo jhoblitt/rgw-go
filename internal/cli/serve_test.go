@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -113,7 +115,7 @@ var _ = Describe("the router", func() {
 
 	serve := func(h http.Handler, method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "http://127.0.0.1/", nil)
-		req.URL.Path = path
+		req.RequestURI = path
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec
@@ -131,7 +133,7 @@ var _ = Describe("the router", func() {
 
 		serveHost := func(host, path string) int {
 			req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
-			req.Host, req.URL.Path = host, path
+			req.Host, req.RequestURI = host, path
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			return rec.Code
@@ -250,7 +252,7 @@ var _ = Describe("the router with the admin API", func() {
 
 	serve := func(h http.Handler, host, path string) int {
 		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
-		req.Host, req.URL.Path = host, path
+		req.Host, req.RequestURI = host, path
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code
@@ -310,6 +312,57 @@ var _ = Describe("the router with the admin API", func() {
 		Expect(serve(h, "127.0.0.1", "/admin/swift/x")).To(Equal(http.StatusMethodNotAllowed))
 		Expect(serve(h, "127.0.0.1", "/admin/info")).To(Equal(adminStatus))
 	})
+
+	// serveTarget reads the request line as the server does, so an
+	// absolute-form target's authority is the Host and its query unchecked.
+	serveTarget := func(h http.Handler, target string) *httptest.ResponseRecorder {
+		raw := "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+		req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+		Expect(err).NotTo(HaveOccurred(), "net/http reads %q", target)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	DescribeTable("routes an absolute-form target on the path get_abs_path takes from it",
+		func(target string, want int) {
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
+			Expect(serveTarget(h, target).Code).To(Equal(want))
+		},
+		Entry("its path", "http://127.0.0.1/admin/info", adminStatus),
+		Entry("a query holding the first slash", "http://127.0.0.1?x=/admin/info", adminStatus),
+		Entry("a query holding the first slash and a second ?", "http://127.0.0.1?x/admin/info?uid=u", adminStatus),
+		Entry("a query holding an unserved API's path", "http://127.0.0.1?x=/swift/v1", http.StatusMethodNotAllowed),
+		Entry("a query-held path past the admin entry, to S3", "http://127.0.0.1?x=/plain/admin", http.StatusTeapot),
+		Entry("a target without a slash, kept whole, to S3", "http://127.0.0.1?x", http.StatusTeapot),
+		Entry("another scheme, kept whole, to S3", "ftp://127.0.0.1/admin/info", http.StatusTeapot),
+	)
+
+	DescribeTable("answers a malformed escape in a path net/http leaves unchecked as net/http answers one it checks",
+		func(target string) {
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
+			rec := serveTarget(h, target)
+			Expect(rec.Code).To(Equal(http.StatusBadRequest))
+			Expect(rec.Header().Get("Content-Type")).To(Equal("text/plain; charset=utf-8"))
+			Expect(rec.Header().Get("Connection")).To(Equal("close"))
+			Expect(rec.Body.String()).To(Equal("400 Bad Request"))
+		},
+		Entry("a bad hex digit radosgw's decode empties the path at", "http://127.0.0.1?x=/admin/%zz"),
+		Entry("a bad hex digit under a virtual-hosted bucket", "http://b.s3.example.com?x/%zz?"),
+		Entry("a truncated escape radosgw's decode cuts the path at", "http://127.0.0.1?x=/admin/info%4"),
+		Entry("a bad hex digit in a target kept whole", "foo:%zz"),
+	)
+
+	// net/http checks a Host header only for the bytes a host may hold,
+	// '%' among them, so the bucket it names reaches the router unchecked.
+	DescribeTable("answers a malformed escape in the Host's bucket as net/http answers one in a path",
+		func(host, path string) {
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
+			Expect(serve(h, host, path)).To(Equal(http.StatusBadRequest))
+		},
+		Entry("a bad hex digit, which would empty the URI", "my%zz.s3.example.com", "/k"),
+		Entry("a percent sign ending the bucket, which would cut the URI", "my%.s3.example.com", "/"),
+	)
 })
 
 var _ = Describe("S3Config", func() {
