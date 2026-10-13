@@ -22,7 +22,7 @@ import (
 )
 
 // GatewayReport is a gateway comparison rendered from the run directories
-// hack/bench/gateway.sh writes.
+// hack/bench/gateway writes.
 type GatewayReport struct {
 	Markdown string
 	// Findings names every phase that had an error or a retry, each a finding
@@ -560,7 +560,8 @@ func (r *gwRun) readNoop() error {
 	return nil
 }
 
-// sample is one line of sample.sh's output.
+// sample is one line of samples-<profile>.csv, the gateway command's
+// sampler's.
 type sample struct {
 	t, cpu, threads, rssKiB float64
 }

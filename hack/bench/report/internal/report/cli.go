@@ -126,7 +126,7 @@ func newGatewayCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gateway --dir DIR [--dir DIR...] [--out FILE]",
 		Short: "Render gateway comparison runs side by side",
-		Long: "Render the run directories hack/bench/gateway.sh wrote side by side, each run's columns in the order " +
+		Long: "Render the run directories hack/bench/gateway wrote side by side, each run's columns in the order " +
 			"given, with each run's ratio to the first radosgw run. One run's report is written to its REPORT.md, " +
 			"several runs' to stdout, either to --out when it is given.",
 		Args: cobra.NoArgs,
@@ -162,7 +162,7 @@ func newGatewayCmd(v *viper.Viper) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringArray("dir", nil, "a run directory hack/bench/gateway.sh wrote; repeat it to compare runs (REPORT_DIR)")
+	cmd.Flags().StringArray("dir", nil, "a run directory hack/bench/gateway wrote; repeat it to compare runs (REPORT_DIR)")
 	cmd.Flags().String("out", "", "the file to write the report to (REPORT_OUT)")
 	return cmd
 }

@@ -84,7 +84,8 @@ func (g *gwRender) render(findings []string) string {
 }
 
 // frontendsNote names the frontends the run's gateway served with and the
-// TCP_NODELAY they gave its connections, as gateway.sh recorded them.
+// TCP_NODELAY they gave its connections, as the gateway command recorded
+// them.
 func (r *gwRun) frontendsNote() string {
 	frontends, noDelay := r.envString("frontends"), r.envString("tcp_nodelay")
 	if frontends == "" && noDelay == "" {

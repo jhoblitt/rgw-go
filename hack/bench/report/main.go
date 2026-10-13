@@ -27,7 +27,7 @@
 //
 //	go run ./hack/bench/report gateway --dir DIR [--dir DIR...] [--out FILE]
 //
-// gateway reads the run directories hack/bench/gateway.sh wrote and renders
+// gateway reads the run directories hack/bench/gateway wrote and renders
 // them side by side, each run's columns in the order given and, beside every
 // run but the first radosgw one, its ratio to that run: per profile, a row
 // per variant and concurrency with requests, objects and MiB per second, the
@@ -44,7 +44,8 @@
 //     them, since its JSON carries none.
 //   - every noop-<t>.json, httpload's, whose rows sit beside small-get's at
 //     the same concurrency.
-//   - samples-<profile>.csv, sample.sh's, for the CPU, threads and RSS.
+//   - samples-<profile>.csv, the gateway command's sampler's, for the CPU,
+//     threads and RSS.
 //   - gctrace-<profile>.log, rgw-go's GODEBUG=gctrace=1 lines, for its GC
 //     cycles and pauses, and config.json, the parity options.
 //

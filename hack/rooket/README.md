@@ -401,15 +401,19 @@ sweep reads are refused. Setting `BENCH_INFLIGHT_BYTES` without
 ## Running the gateway comparison
 
 `make bench-gateway RELEASE=<release> GATEWAY=radosgw|rgw-go` runs
-`hack/bench/gateway.sh`: elbencho against the gateway for the S3 profiles,
-`hack/bench/httpload` for the anonymous `GET /` baseline, `hack/bench/sample.sh`
-on the gateway's process once a second, and for rgw-go a CPU profile of each
+`hack/bench/gateway`, a Go command: elbencho against the gateway for the S3
+profiles, `hack/bench/httpload` for the anonymous `GET /` baseline, a sampler
+of the gateway's process once a second, and for rgw-go a CPU profile of each
 profile's last phase and its GC trace. It writes
 `hack/bench/out/<release>/gateway-<gateway>-<UTC time>/` and its `REPORT.md`;
-the script's header lists the profiles, the files and the settings.
+the command's package doc lists the profiles, the files and the settings, and
+`go run ./hack/bench/gateway --help` every flag and its environment name.
 `PROFILES="small-get noop"` runs some profiles only, and `BENCH_SMOKE=1` runs
 every profile with 5 s phases at one concurrency, which proves the tooling and
-measures nothing.
+measures nothing; any other value of it is refused. Every setting is checked
+before anything touches the cluster, and every command the run starts is
+killed past a bound of its own. A run that fails or is interrupted still
+removes the bench user, stops the rgw-go it started and compacts the OSD.
 
 `make elbencho` builds the pinned [jhoblitt/elbencho](https://github.com/jhoblitt/elbencho)
 fork statically in an Alpine container (`RGW_GO_ENGINE` picks the engine) into
@@ -443,7 +447,8 @@ RocksDB. `BENCH_PLAN=1 BENCH_IDLE_AVAIL=<bytes>` prints each profile's
 dataset against that much free space without touching a cluster, and `make
 bench-plan-check`, part of `make check`, fails when the defaults need more
 than 8 220 119 040 B, the least the data pool could take on an idle cluster
-in the seam sweeps.
+in the seam sweeps. `BENCH_IDLE_AVAIL` without `BENCH_PLAN=1` is refused
+rather than starting a run.
 
 Both gateways answer with TCP_NODELAY on. Rook starts the radosgw with the
 frontend `beast port=80`, and beast turns TCP_NODELAY on only for
