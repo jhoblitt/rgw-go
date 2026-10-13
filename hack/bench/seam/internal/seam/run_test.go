@@ -89,9 +89,12 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
   "pool_max_avail": 9286684672,
   "load": "0.98 0.96 1.31",
   "limited": true,
-  "inflight_bytes": 104857600
+  "inflight_bytes": 104857600,
+  "repo": "%s",
+  "rooket": "rooket",
+  "go_tags": "ceph_preview"
 }
-`, runtime.NumCPU())))
+`, runtime.NumCPU(), w.repo)))
 	})
 
 	It("reaches the cluster through the toolbox, naming it with ROOKET_NAME", func(ctx SpecContext) {

@@ -135,9 +135,12 @@ var _ = Describe("Runner.Run of the sweep", func() {
   "objecter_inflight_ops": "1024",
   "objecter_inflight_op_bytes": "104857600",
   "pool_max_avail": 9286684672,
-  "load": "0.98 0.96 1.31"
+  "load": "0.98 0.96 1.31",
+  "repo": "%s",
+  "rooket": "rooket",
+  "go_tags": "ceph_preview"
 }
-`, runtime.NumCPU())))
+`, runtime.NumCPU(), w.repo)))
 	})
 
 	It("records an empty BENCH_LARGE_CONC in env.json", func(ctx SpecContext) {

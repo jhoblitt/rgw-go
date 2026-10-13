@@ -195,9 +195,19 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 			err = r.cleanUp(ctx, st, err)
 		}
 	}()
+	// The run's first record also names the settings that name no measured
+	// quantity, and where they came from, since a config file can fill any of
+	// them.
+	settings := []any{
+		slog.String("config", cfg.ConfigFile), slog.String("repo", cfg.Repo),
+		slog.String("rooket", cfg.Rooket), slog.String("go_tags", cfg.GoTags),
+	}
 	if cfg.Limiter {
-		st.log.InfoContext(ctx, "seam limiter re-run", slog.String("release", cfg.Release),
-			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir), slog.Int64("inflight_bytes", cfg.InflightBytes))
+		st.log.InfoContext(ctx, "seam limiter re-run", append([]any{
+			slog.String("release", cfg.Release),
+			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir), slog.Int64("inflight_bytes", cfg.InflightBytes),
+		},
+			settings...)...)
 	} else {
 		var floorLog *os.File
 		floorLog, err = harness.OpenLog(filepath.Join(st.dir, "floor.log"))
@@ -206,8 +216,10 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 		}
 		defer func() { err = errors.Join(err, floorLog.Close()) }()
 		st.floorLog = floorLog
-		st.log.InfoContext(ctx, "seam sweep", slog.String("release", cfg.Release),
-			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir))
+		st.log.InfoContext(ctx, "seam sweep", append([]any{
+			slog.String("release", cfg.Release),
+			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir),
+		}, settings...)...)
 	}
 	bin := cfg.Bin()
 	st.log.InfoContext(ctx, "building the benchmark", slog.String("bin", bin))

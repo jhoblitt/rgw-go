@@ -51,6 +51,12 @@ type Environment struct {
 	Load                    string  `json:"load"`
 	Limited                 bool    `json:"limited,omitzero"`
 	InflightBytes           int64   `json:"inflight_bytes,omitzero"`
+	// The effective settings that name no measured quantity, and the config
+	// file the settings were read from, when one was.
+	Repo   string `json:"repo"`
+	Rooket string `json:"rooket"`
+	GoTags string `json:"go_tags"`
+	Config string `json:"config,omitzero"`
 }
 
 var versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
@@ -105,6 +111,10 @@ func (r *Runner) environment(ctx context.Context, st *state, lib librados) (Envi
 		ObjecterInflightOpBytes: cl.objecter(ctx, "objecter_inflight_op_bytes"),
 		PoolMaxAvail:            avail,
 		Load:                    load,
+		Repo:                    cfg.Repo,
+		Rooket:                  cfg.Rooket,
+		GoTags:                  cfg.GoTags,
+		Config:                  cfg.ConfigFile,
 	}
 	if cfg.Limiter {
 		env.Limited, env.InflightBytes = true, cfg.InflightBytes
