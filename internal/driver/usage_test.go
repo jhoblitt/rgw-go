@@ -196,7 +196,6 @@ var _ = Describe("the usage log", func() {
 		return cancel, done
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		t0 = time.Date(2026, 9, 28, 12, 34, 56, 0, time.UTC)
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")

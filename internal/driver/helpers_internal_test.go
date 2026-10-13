@@ -9,15 +9,26 @@ import (
 	"maps"
 	"strings"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 )
 
-// captureLog sends slog's default logger to w as JSON until restore runs.
+// The suite logs to GinkgoWriter, which prints a spec's lines with its
+// failure, or as they come under -ginkgo.v, and drops them when it passes. A
+// spec that asserts on its logs captures them itself, and its restore hands
+// them back here.
+var _ = BeforeSuite(func() {
+	DeferCleanup(captureLog(GinkgoWriter))
+})
+
+// captureLog sends slog's default logger to w as JSON until restore runs,
+// which puts back the logger in place when captureLog was called: the
+// suite's, unless another capture is open.
 // slog.SetDefault also points the log package's output at the new handler,
-// and restoring the old default logger leaves it there, so restore puts log's
-// writer and flags back too.
+// and restoring slog's own default logger leaves it there, so restore puts
+// log's writer and flags back too.
 func captureLog(w io.Writer) (restore func()) {
 	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(w, nil)))

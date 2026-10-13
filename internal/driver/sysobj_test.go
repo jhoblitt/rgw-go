@@ -209,7 +209,6 @@ var _ = Describe("sysobjs", func() {
 		now   time.Time
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(captureLog(GinkgoWriter))
 		root = meta.ParsePool("zone.rgw.meta:root")
 		obj = sysObj{pool: root, oid: "plain"}
 		name = normalName(root, "plain")
@@ -639,7 +638,6 @@ var _ = Describe("openSysObj", func() {
 		o      options
 	)
 	BeforeEach(func() {
-		DeferCleanup(captureLog(GinkgoWriter))
 		c = fakerados.New()
 		c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)
 		pools = newPoolCache(c)

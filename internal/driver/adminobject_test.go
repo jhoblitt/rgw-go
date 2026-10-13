@@ -36,7 +36,6 @@ var _ = Describe("RemoveObjectAdmin over the RADOS store", func() {
 		return out
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newPutCluster()
 		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_cache_enabled": "false"},
 			time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC))

@@ -37,7 +37,6 @@ var _ = Describe("the usage log's read and trim", func() {
 		p     radosclient.Pool
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
 		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)

@@ -102,7 +102,6 @@ var _ = Describe("StatsStore", func() {
 		c.Object(rookMetaPool, uids, owner+".buckets").OmapHdr = encode(h)
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		t0 = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 		clock = newFakeClock(t0)
 		c = newIndexCluster()

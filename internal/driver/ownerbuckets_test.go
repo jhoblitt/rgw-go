@@ -103,7 +103,6 @@ var _ = Describe("the owner's bucket list", func() {
 		return st
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
 		c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)

@@ -261,7 +261,6 @@ var _ = Describe("objectCache", func() {
 	})
 
 	It("invalidates on a notify whose op radosgw does not define", func() {
-		DeferCleanup(captureLog(GinkgoWriter))
 		c.put(name, cacheInfo{flags: meta.CacheFlagData, data: []byte("d")})
 		c.onNotify(meta.CacheNotifyInfo{Op: 7, Obj: meta.RawObj{Pool: root, OID: "plain"}})
 		_, err := c.get(name, meta.CacheFlagData)
