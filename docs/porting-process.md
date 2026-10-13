@@ -33,6 +33,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 | PP-10 | Controller tooling friction and context noise | Minor | subagent-driven-development; Claude Code | open |
 | PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | open |
 | PP-12 | Review findings were parked instead of fixed in their PR | Major | subagent-driven-development; writing-plans; project CLAUDE.md | open |
+| PP-13 | Unrelated changes were bundled into one PR | Major | writing-plans; subagent-driven-development; github-conventions | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -160,3 +161,17 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
   - A finding that truly lies outside the PR's change becomes, before that PR merges, a numbered task in the plan with its evidence, which the progress bar counts. A ledger line is never its only record.
   - The phase 2 plan states this as a Global Constraint, and phase 2's gate requires zero open findings.
 - **Candidate home:** subagent-driven-development (its "park findings in the ledger" path); writing-plans (Global Constraints); the project CLAUDE.md.
+
+## PP-13: Unrelated changes were bundled into one PR
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - The controller treated one task as one PR. A task that collected several independent fixes shipped them together, so the fastest waited for the slowest.
+  - X35 (#259) carried six commits on unrelated subjects: the shared request limit, a multipart unlock, a NUL in a metadata key, and three documentation fixes.
+  - X42 collected four unrelated findings. Three were finished and reviewed clean, yet waited for hours behind the fourth (a bucket rename retry) through its review rounds, until the owner objected on 2026-10-12.
+- **Cost:** finished fixes held back from main, larger mixed diffs to review, and a defect in one change blocking the others.
+- **Improvement:**
+  - A task may be decomposed into several PRs. Each independently testable change ships as its own PR as soon as it is done and reviewed; a PR never waits on an unrelated change.
+  - Unrelated changes never share a PR. Related changes that must land together share one, as a logical commit series.
+  - A plan task states its PR split where it holds more than one independent change. The controller splits a branch before opening a PR, not after review.
+- **Candidate home:** writing-plans (task-to-PR decomposition); subagent-driven-development (PR boundaries in the task loop); github-conventions (PR scope).
