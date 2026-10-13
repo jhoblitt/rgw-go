@@ -1,11 +1,13 @@
 package driver_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,6 +58,68 @@ func (l *entryPointLister) List(_ context.Context, section, marker string, _ int
 		next = keys[len(keys)-1]
 	}
 	return keys, next, false, nil
+}
+
+// lostReplyCluster is c with pools whose write failAfter names lands and
+// then answers ETIMEDOUT, as a write does whose reply is lost after the OSD
+// applied it, where FailNextWrite fails a write that never lands.
+type lostReplyCluster struct {
+	*fakerados.Cluster
+	mu    sync.Mutex
+	oid   string
+	n     int
+	fired bool
+}
+
+// failAfter makes the n-th write to oid from here on land and answer
+// ETIMEDOUT.
+func (c *lostReplyCluster) failAfter(oid string, n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.oid, c.n, c.fired = oid, n, false
+}
+
+// lose counts a write to oid that landed, and reports whether its reply is
+// the one to lose.
+func (c *lostReplyCluster) lose(oid string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if oid != c.oid || c.n == 0 {
+		return false
+	}
+	c.n--
+	c.fired = c.n == 0
+	return c.fired
+}
+
+// lost reports whether the write failAfter named has landed and lost its
+// reply.
+func (c *lostReplyCluster) lost() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fired
+}
+
+func (c *lostReplyCluster) Pool(ctx context.Context, pool, ns string) (radosclient.Pool, error) {
+	p, err := c.Cluster.Pool(ctx, pool, ns)
+	if err != nil {
+		return nil, err
+	}
+	return &lostReplyPool{Pool: p, c: c}, nil
+}
+
+// lostReplyPool is a pool of a lostReplyCluster.
+type lostReplyPool struct {
+	radosclient.Pool
+	c *lostReplyCluster
+}
+
+func (p *lostReplyPool) Write(ctx context.Context, oid string, w *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
+	v, err := p.Pool.Write(ctx, oid, w, flags)
+	if err != nil || !p.c.lose(oid) {
+		return v, err
+	}
+	return v, &radosclient.Error{Errno: int32(syscall.ETIMEDOUT), Op: "write " + oid}
 }
 
 // carolOwner is a third owner the bucket admin specs move buckets to.
@@ -514,6 +578,24 @@ var _ = Describe("BucketAdminStore", func() {
 			Expect(got.Attrs).NotTo(HaveKey(op.RenameIntentAttr), "the rename's record is removed")
 			Expect(listOwnerBuckets(ctx, bobOwner)).To(ConsistOf("dst"))
 			Expect(listOwnerBuckets(ctx, aliceOwner)).To(BeEmpty())
+		}
+		// refusedBeforeWriting expects retry, a retry of the rename of the
+		// bucket with id, to answer ConcurrentModification having written
+		// nothing: no instance, entry point or claim.
+		refusedBeforeWriting := func(ctx context.Context, id string, retry func() error) {
+			GinkgoHelper()
+			c.ResetCounters()
+			Expect(retry()).To(MatchError(op.ErrConcurrentModification))
+			Expect(c.WriteOrder(rookMetaPool, rookRoot)).To(BeEmpty(), "no instance or entry point written")
+			Expect(c.WriteOrder(rookMetaPool, rookRoot+".rgw-go-bucket-claims")).To(BeEmpty(), "no claim written")
+			holds(ctx, id)
+		}
+		// loaded is the bucket name loads.
+		loaded := func(ctx context.Context, name string) *op.BucketRecord {
+			GinkgoHelper()
+			got, err := s.GetBucket(ctx, "", name)
+			Expect(err).NotTo(HaveOccurred())
+			return got
 		}
 		// asBefore is the bucket with id as it was before a rename of src
 		// for bob: alice's under src, in alice's list alone, with no record,
@@ -1105,6 +1187,18 @@ var _ = Describe("BucketAdminStore", func() {
 				Expect(rec.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(policy)))
 				Expect(rec.Info.Flags & meta.BucketVersioned).NotTo(BeZero())
 			}
+			// reconcile is an operator's answer to a refused retry: the
+			// configuration the bucket should keep, policy and versioning,
+			// written through both names.
+			reconcile := func(ctx context.Context, policy string) {
+				GinkgoHelper()
+				for _, name := range []string{"src", "dst"} {
+					rec, err := s.GetBucket(ctx, "", name)
+					Expect(err).NotTo(HaveOccurred())
+					rec.Info.Flags |= meta.BucketVersioned
+					Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrIAMPolicy: []byte(policy)}, nil)).To(Succeed())
+				}
+			}
 			DescribeTable("is kept under the new name, landing at any step between the copy and the old instance's removal",
 				func(ctx context.Context, step int) {
 					rec := createBucket(ctx, "src", aliceOwner)
@@ -1125,7 +1219,7 @@ var _ = Describe("BucketAdminStore", func() {
 				Entry("after the new instance", 3),
 				Entry("after the new owner's link", 4),
 			)
-			It("fails the rename with both names loading the bucket when such writes keep landing, and the retry keeps the last", func(ctx SpecContext) {
+			It("fails the rename with both names loading the bucket when such writes keep landing, refuses the retry, and completes once reconciled", func(ctx SpecContext) {
 				rec := createBucket(ctx, "src", aliceOwner)
 				id := rec.Info.Bucket.ID
 				dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
@@ -1143,6 +1237,9 @@ var _ = Describe("BucketAdminStore", func() {
 				Expect(got.Info.Bucket.ID).To(Equal(id))
 				hasWrite(got, fmt.Sprintf(`{"v":%d}`, n))
 
+				refusedBeforeWriting(ctx, id, func() error { return retryRename(ctx) })
+				hasWrite(loaded(ctx, "src"), fmt.Sprintf(`{"v":%d}`, n))
+				reconcile(ctx, fmt.Sprintf(`{"v":%d}`, n))
 				Expect(retryRename(ctx)).To(Succeed())
 				completed(ctx, id)
 				got, err = s.GetBucket(ctx, "", "dst")
@@ -1168,6 +1265,662 @@ var _ = Describe("BucketAdminStore", func() {
 				got, err = s.GetBucket(ctx, "", "dst")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"new":1}`)))
+			})
+		})
+		Describe("bucket config writes made through either name between a failed rename and its retry", func() {
+			// writeVia is an S3 bucket config write through name, made as the
+			// S3 ops make it: the bucket loaded by its name and written whole
+			// under the version loaded, with attr set to value, or removed
+			// when value is empty.
+			writeVia := func(ctx context.Context, name, attr, value string) {
+				GinkgoHelper()
+				rec, err := s.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				if value == "" {
+					Expect(s.PutBucketAttrs(ctx, rec, nil, []string{attr})).To(Succeed(), "the removal through %s is acknowledged", name)
+					return
+				}
+				Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{attr: []byte(value)}, nil)).To(Succeed(), "the write through %s is acknowledged", name)
+			}
+			// infoVia is an S3 write of the bucket's info through name, such
+			// as PutBucketVersioning or PutBucketRequestPayment.
+			infoVia := func(ctx context.Context, name string, change func(*meta.BucketInfo)) {
+				GinkgoHelper()
+				rec, err := s.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				change(&rec.Info)
+				Expect(s.PutBucketInfo(ctx, rec)).To(Succeed(), "the write through %s is acknowledged", name)
+			}
+			versioned := func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned }
+			requesterPays := func(on bool) func(*meta.BucketInfo) {
+				return func(i *meta.BucketInfo) { i.RequesterPays = on }
+			}
+			// retryVia is the rename's retry through name: LinkBucket with
+			// bucket=src and new-bucket-name=dst, or bucket=dst and no
+			// new-bucket-name, which ChangeBucketOwner takes as the rename its
+			// record names.
+			retryVia := func(ctx context.Context, name string) error {
+				rec, err := s.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				var to *meta.BucketID
+				if name == "src" {
+					to = &meta.BucketID{Name: "dst"}
+				}
+				return s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", to)
+			}
+			// refusedRetry expects a retry through name to answer
+			// ConcurrentModification having written nothing.
+			refusedRetry := func(ctx context.Context, id, name string) {
+				GinkgoHelper()
+				refusedBeforeWriting(ctx, id, func() error { return retryVia(ctx, name) })
+			}
+			// both makes write through each name, as an operator reconciles
+			// the two after a refused retry.
+			both := func(write func(name string)) {
+				for _, name := range []string{"src", "dst"} {
+					write(name)
+				}
+			}
+			// failAtLinkWith is failRename past the new instance's write, for
+			// the bucket setup changes first: both names load the bucket, and
+			// the new instance holds what the rename copied.
+			failAtLinkWith := func(ctx context.Context, setup func(*op.BucketRecord)) string {
+				GinkgoHelper()
+				rec := createBucket(ctx, "src", aliceOwner)
+				id := rec.Info.Bucket.ID
+				setup(rec)
+				f := renameWrites(id)[4]
+				c.FailNextWrite(f.pool, f.ns, f.oid, syscall.ETIMEDOUT)
+				Expect(s.ChangeBucketOwner(ctx, loaded(ctx, "src"), bobOwner, "Bob", &meta.BucketID{Name: "dst"})).NotTo(Succeed())
+				holds(ctx, id)
+				return id
+			}
+			failAtLink := func(ctx context.Context) string {
+				GinkgoHelper()
+				return failAtLinkWith(ctx, func(*op.BucketRecord) {})
+			}
+			withPolicy := func(ctx context.Context) func(*op.BucketRecord) {
+				return func(rec *op.BucketRecord) {
+					Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrIAMPolicy: []byte(`{"open":1}`)}, nil)).To(Succeed())
+				}
+			}
+			// failPastMark runs a retry by the old name whose copy onto the
+			// new instance fails ETIMEDOUT, after its mark of the old one.
+			failPastMark := func(ctx context.Context, id string) {
+				GinkgoHelper()
+				c.FailNextWrite(rookMetaPool, rookRoot, meta.BucketID{Name: "dst", ID: id}.InstanceOID(), syscall.ETIMEDOUT)
+				Expect(retryVia(ctx, "src")).To(MatchError(op.ErrRequestTimedOut))
+			}
+			// ownersACL is an ACL the new owner writes once the rename gave it
+			// the bucket: its own, under another display name than the
+			// default the rename wrote.
+			ownersACL := func() []byte { return aclOf(bobOwner, "Bob, who set this ACL") }
+
+			// failRetryAtLink runs a retry by the old name that copies onto
+			// the new instance under the version it read and then fails at
+			// the new owner's link.
+			failRetryAtLink := func(ctx context.Context, id string) {
+				GinkgoHelper()
+				f := renameWrites(id)[4]
+				c.FailNextWrite(f.pool, f.ns, f.oid, syscall.ETIMEDOUT)
+				Expect(retryVia(ctx, "src")).To(MatchError(op.ErrRequestTimedOut))
+			}
+			DescribeTable("completes a retry when neither name was written since the last attempt",
+				func(ctx context.Context, before func(context.Context, string), retry string) {
+					id := failAtLink(ctx)
+					before(ctx, id)
+					Expect(retryVia(ctx, retry)).To(Succeed())
+					completed(ctx, id)
+				},
+				Entry("after a failure at the new owner's link, retried by the old name", func(context.Context, string) {}, "src"),
+				Entry("after a failure at the new owner's link, retried by the new name", func(context.Context, string) {}, "dst"),
+				Entry("after a retry failed between its mark and its copy, retried by the old name", failPastMark, "src"),
+				Entry("after a retry failed between its mark and its copy, retried by the new name", failPastMark, "dst"),
+				Entry("after a retry copied over the new instance and failed at the link, retried by the old name", failRetryAtLink, "src"),
+				Entry("after a retry copied over the new instance and failed at the link, retried by the new name", failRetryAtLink, "dst"),
+			)
+			DescribeTable("refuses a retry after a write through either name since the last attempt, writing nothing and keeping the write, until it is written through both",
+				func(ctx context.Context, via, retry, what string) {
+					setup := func(*op.BucketRecord) {}
+					if what == "removal" {
+						setup = withPolicy(ctx)
+					}
+					id := failAtLinkWith(ctx, setup)
+					write := func(name string) {
+						switch what {
+						case "versioning":
+							infoVia(ctx, name, versioned)
+						case "acl":
+							writeVia(ctx, name, meta.AttrACL, string(ownersACL()))
+						case "removal":
+							writeVia(ctx, name, op.AttrIAMPolicy, "")
+						default:
+							writeVia(ctx, name, op.AttrIAMPolicy, `{"between":1}`)
+						}
+					}
+					holdsWrite := func(rec *op.BucketRecord) bool {
+						switch what {
+						case "versioning":
+							return rec.Info.Flags&meta.BucketVersioned != 0
+						case "acl":
+							return bytes.Equal(rec.Attrs[meta.AttrACL], ownersACL())
+						case "removal":
+							_, ok := rec.Attrs[op.AttrIAMPolicy]
+							return !ok
+						}
+						return bytes.Equal(rec.Attrs[op.AttrIAMPolicy], []byte(`{"between":1}`))
+					}
+					other := map[string]string{"src": "dst", "dst": "src"}[via]
+					write(via)
+					refusedRetry(ctx, id, retry)
+					Expect(holdsWrite(loaded(ctx, via))).To(BeTrue(), "the %s through %s is kept", what, via)
+					Expect(holdsWrite(loaded(ctx, other))).To(BeFalse(), "nothing reached %s", other)
+
+					both(write)
+					Expect(retryVia(ctx, retry)).To(Succeed())
+					completed(ctx, id)
+					Expect(holdsWrite(loaded(ctx, "dst"))).To(BeTrue(), "the %s the names agree on", what)
+				},
+				Entry("a policy through the new name, retried by the old", "dst", "src", "policy"),
+				Entry("a policy through the old name, retried by the new", "src", "dst", "policy"),
+				Entry("a policy through the old name, retried by the old", "src", "src", "policy"),
+				Entry("a policy through the new name, retried by the new", "dst", "dst", "policy"),
+				Entry("versioning through the new name, retried by the old", "dst", "src", "versioning"),
+				Entry("versioning through the old name, retried by the new", "src", "dst", "versioning"),
+				Entry("the new owner's ACL through the new name, retried by the old", "dst", "src", "acl"),
+				Entry("the new owner's ACL through the old name, retried by the new", "src", "dst", "acl"),
+				Entry("a policy removal through the new name, retried by the old", "dst", "src", "removal"),
+				Entry("a policy removal through the old name, retried by the new", "src", "dst", "removal"),
+			)
+			DescribeTable("completes a retry that finds only one instance, keeping a write made through its name, as nothing can be lost",
+				func(ctx context.Context, step int, via string) {
+					id := failRename(ctx, step)
+					writeVia(ctx, via, op.AttrIAMPolicy, `{"one":1}`)
+					Expect(retryRename(ctx)).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"one":1}`)))
+				},
+				Entry("the old instance, the copy having failed", 3, "src"),
+				Entry("the new instance, the old one removed", 6, "dst"),
+			)
+			It("refuses a retry after the new instance was made anew, though its version counts as far as the last attempt left it", func(ctx SpecContext) {
+				id := failAtLink(ctx)
+				got := loaded(ctx, "dst")
+				attrs := maps.Clone(got.Attrs)
+				attrs[op.AttrIAMPolicy] = []byte(`{"anew":1}`)
+				Expect(driver.RemoveInstance(s, ctx, got.Info.Bucket)).To(Succeed())
+				Expect(driver.WriteInstanceAttrs(s, ctx, got.Info, attrs)).To(Succeed(), "made anew at version 1 of a fresh tag")
+				refusedRetry(ctx, id, "src")
+				Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"anew":1}`)))
+
+				both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"anew":1}`) })
+				Expect(retryVia(ctx, "src")).To(Succeed())
+				completed(ctx, id)
+				Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"anew":1}`)))
+			})
+			Describe("after a retry failed between its mark of the old instance and its copy onto the new one", func() {
+				It("refuses the next retry after a policy written through the new name met that retry's copy, keeping the policy", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					c.BeforeWrite(rookMetaPool, rookRoot, dstInst, func(*fakerados.Object) {
+						c.BeforeWrite(rookMetaPool, rookRoot, dstInst, nil)
+						writeVia(ctx, "dst", op.AttrIAMPolicy, `{"open":1}`)
+					})
+					Expect(retryVia(ctx, "src")).To(MatchError(op.ErrConcurrentModification), "its copy lost to the write")
+					refusedRetry(ctx, id, "src")
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"open":1}`)))
+
+					both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"open":1}`) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"open":1}`)))
+				})
+				DescribeTable("refuses a retry after a policy removal through the new name, keeping the removal",
+					func(ctx context.Context, retry string) {
+						id := failAtLinkWith(ctx, withPolicy(ctx))
+						failPastMark(ctx, id)
+						writeVia(ctx, "dst", op.AttrIAMPolicy, "")
+						refusedRetry(ctx, id, retry)
+						Expect(loaded(ctx, "dst").Attrs).NotTo(HaveKey(op.AttrIAMPolicy), "the removal is kept")
+						Expect(loaded(ctx, "src").Attrs).To(HaveKey(op.AttrIAMPolicy))
+
+						both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, "") })
+						Expect(retryVia(ctx, retry)).To(Succeed())
+						completed(ctx, id)
+						Expect(loaded(ctx, "dst").Attrs).NotTo(HaveKey(op.AttrIAMPolicy))
+					},
+					Entry("retried by the new name", "dst"),
+					Entry("retried by the old name", "src"),
+				)
+				It("refuses a retry after requester pays was turned off through the new name, keeping it off", func(ctx SpecContext) {
+					id := failAtLinkWith(ctx, func(rec *op.BucketRecord) {
+						requesterPays(true)(&rec.Info)
+						Expect(s.PutBucketInfo(ctx, rec)).To(Succeed())
+					})
+					failPastMark(ctx, id)
+					infoVia(ctx, "dst", requesterPays(false))
+					refusedRetry(ctx, id, "src")
+					Expect(loaded(ctx, "dst").Info.RequesterPays).To(BeFalse(), "turned off through dst")
+					Expect(loaded(ctx, "src").Info.RequesterPays).To(BeTrue())
+
+					both(func(name string) { infoVia(ctx, name, requesterPays(false)) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Info.RequesterPays).To(BeFalse())
+				})
+				It("refuses a retry after an ACL set through the new name and set back, though the names then hold the same ACL", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					failPastMark(ctx, id)
+					base := loaded(ctx, "dst").Attrs[meta.AttrACL]
+					writeVia(ctx, "dst", meta.AttrACL, string(ownersACL()))
+					writeVia(ctx, "dst", meta.AttrACL, string(base))
+					refusedRetry(ctx, id, "src")
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(meta.AttrACL, base), "the ACL set back through dst")
+
+					both(func(name string) { writeVia(ctx, name, meta.AttrACL, string(base)) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(meta.AttrACL, base))
+				})
+				It("refuses a retry after two policies through the new name, keeping the second", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					failPastMark(ctx, id)
+					writeVia(ctx, "dst", op.AttrIAMPolicy, `{"first":1}`)
+					writeVia(ctx, "dst", op.AttrIAMPolicy, `{"second":1}`)
+					refusedRetry(ctx, id, "dst")
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"second":1}`)))
+
+					both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"second":1}`) })
+					Expect(retryVia(ctx, "dst")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"second":1}`)))
+				})
+			})
+			Describe("when both names were written since the last attempt", func() {
+				DescribeTable("refuses a retry though each name wrote other parts, until the names hold the same configuration",
+					func(ctx context.Context, retry string) {
+						id := failAtLink(ctx)
+						writeVia(ctx, "src", op.AttrIAMPolicy, `{"old":1}`)
+						infoVia(ctx, "src", versioned)
+						writeVia(ctx, "dst", op.AttrLC, "lifecycle")
+						refusedRetry(ctx, id, retry)
+
+						writeVia(ctx, "src", op.AttrLC, "lifecycle")
+						writeVia(ctx, "dst", op.AttrIAMPolicy, `{"old":1}`)
+						infoVia(ctx, "dst", versioned)
+						Expect(retryVia(ctx, retry)).To(Succeed())
+						completed(ctx, id)
+						got := loaded(ctx, "dst")
+						Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"old":1}`)))
+						Expect(got.Info.Flags & meta.BucketVersioned).NotTo(BeZero())
+						Expect(got.Attrs).To(HaveKeyWithValue(op.AttrLC, []byte("lifecycle")))
+					},
+					Entry("retried by the old name", "src"),
+					Entry("retried by the new name", "dst"),
+				)
+				DescribeTable("refuses a retry after a policy through one name and one written and removed through the other, until the names agree",
+					func(ctx context.Context, other, back, retry string) {
+						id := failAtLink(ctx)
+						writeVia(ctx, other, op.AttrIAMPolicy, `{"open":1}`)
+						writeVia(ctx, back, op.AttrIAMPolicy, `{"x":1}`)
+						writeVia(ctx, back, op.AttrIAMPolicy, "")
+						refusedRetry(ctx, id, retry)
+						Expect(loaded(ctx, back).Attrs).NotTo(HaveKey(op.AttrIAMPolicy), "the removal through %s is kept", back)
+						Expect(loaded(ctx, other).Attrs).To(HaveKey(op.AttrIAMPolicy), "the policy through %s is kept", other)
+
+						writeVia(ctx, other, op.AttrIAMPolicy, "")
+						Expect(retryVia(ctx, retry)).To(Succeed())
+						completed(ctx, id)
+						Expect(loaded(ctx, "dst").Attrs).NotTo(HaveKey(op.AttrIAMPolicy), "the names agree on the removal")
+					},
+					Entry("the removal through the new name, retried by the old", "src", "dst", "src"),
+					Entry("the removal through the old name, retried by the new", "dst", "src", "dst"),
+				)
+				It("refuses a retry while the names hold different changes to the bucket's info, until they agree", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					infoVia(ctx, "src", versioned)
+					infoVia(ctx, "dst", requesterPays(true))
+					refusedRetry(ctx, id, "src")
+					Expect(loaded(ctx, "src").Info.Flags & meta.BucketVersioned).NotTo(BeZero())
+					Expect(loaded(ctx, "dst").Info.RequesterPays).To(BeTrue())
+
+					infoVia(ctx, "src", requesterPays(true))
+					infoVia(ctx, "dst", versioned)
+					Expect(retryVia(ctx, "dst")).To(Succeed())
+					completed(ctx, id)
+					got := loaded(ctx, "dst")
+					Expect(got.Info.Flags & meta.BucketVersioned).NotTo(BeZero())
+					Expect(got.Info.RequesterPays).To(BeTrue())
+				})
+			})
+			Describe("with concurrent retries", func() {
+				It("refuses a retry after two concurrent retries each left one name, writing nothing, until the names are reconciled", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					bobPool, bobOID := driver.OwnerBucketsObj(s, bobOwner)
+					bReady := make(chan struct{})
+					release := make(chan struct{})
+					// letGo lets B past its mark, at the latest when the spec
+					// ends, so a failure in A's retry leaves no goroutine held.
+					letGo := sync.OnceFunc(func() { close(release) })
+					DeferCleanup(letGo)
+					bDone := make(chan error, 1)
+					// A's mark lands; B reads both instances as A's mark
+					// left them and holds before its own mark; A copies and
+					// fails at its link; then B marks, and its copy loses
+					// to A's.
+					c.AfterWrite(rookMetaPool, rookRoot, srcInst, func() {
+						c.AfterWrite(rookMetaPool, rookRoot, srcInst, nil)
+						c.BeforeWrite(rookMetaPool, rookRoot, srcInst, func(*fakerados.Object) {
+							c.BeforeWrite(rookMetaPool, rookRoot, srcInst, nil)
+							close(bReady)
+							<-release
+						})
+						go func() {
+							defer GinkgoRecover()
+							bDone <- retryVia(ctx, "src")
+						}()
+						Eventually(bReady).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeClosed(), "B reached its mark")
+						c.AfterWrite(rookMetaPool, rookRoot, dstInst, func() {
+							c.AfterWrite(rookMetaPool, rookRoot, dstInst, nil)
+							c.FailNextWrite(bobPool.Name, bobPool.NS, bobOID, syscall.ETIMEDOUT)
+						})
+					})
+					errA := retryVia(ctx, "src")
+					letGo()
+					var errB error
+					Eventually(bDone).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(Receive(&errB))
+					Expect(errA).To(MatchError(op.ErrRequestTimedOut), "A failed past its copy")
+					Expect(errB).To(MatchError(op.ErrConcurrentModification), "B's copy met A's")
+
+					refusedRetry(ctx, id, "src")
+					both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"agreed":1}`) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"agreed":1}`)))
+				})
+				It("refuses a concurrent retry and the next after a write through the old name between them, keeping the write", func(ctx SpecContext) {
+					id := failAtLink(ctx)
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					bobPool, bobOID := driver.OwnerBucketsObj(s, bobOwner)
+					// A's mark lands; s2 goes through the old name; B, the
+					// concurrent retry, is refused; A copies and fails at
+					// its link.
+					c.AfterWrite(rookMetaPool, rookRoot, srcInst, func() {
+						c.AfterWrite(rookMetaPool, rookRoot, srcInst, nil)
+						writeVia(ctx, "src", op.AttrIAMPolicy, `{"s2":1}`)
+						refusedRetry(ctx, id, "src")
+						c.AfterWrite(rookMetaPool, rookRoot, dstInst, func() {
+							c.AfterWrite(rookMetaPool, rookRoot, dstInst, nil)
+							c.FailNextWrite(bobPool.Name, bobPool.NS, bobOID, syscall.ETIMEDOUT)
+						})
+					})
+					Expect(retryVia(ctx, "src")).To(MatchError(op.ErrRequestTimedOut), "A failed past its copy")
+					refusedRetry(ctx, id, "src")
+					Expect(loaded(ctx, "src").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"s2":1}`)), "the write through src is kept")
+
+					both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"s2":1}`) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"s2":1}`)))
+				})
+				It("fails a retry whose creation of the new instance meets one a concurrent retry created", func(ctx SpecContext) {
+					id := failRename(ctx, 3)
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					c.BeforeWrite(rookMetaPool, rookRoot, dstInst, func(*fakerados.Object) {
+						c.BeforeWrite(rookMetaPool, rookRoot, dstInst, nil)
+						Expect(retryVia(ctx, "src")).To(Succeed(), "the concurrent retry")
+						c.ResetCounters()
+					})
+					Expect(retryVia(ctx, "src")).To(MatchError(op.ErrConcurrentModification))
+					alicePool, _ := driver.OwnerBucketsObj(s, aliceOwner)
+					Expect(c.WriteOrder(alicePool.Name, alicePool.NS)).To(BeEmpty(), "the retry stops at the instance it finds created")
+					Expect(c.WriteOrder(rookMetaPool, rookRoot)).To(BeEmpty(), "the retry stops at the instance it finds created")
+					completed(ctx, id)
+				})
+			})
+			It("keeps a write made through the old name during a retry, copying the old instance again", func(ctx SpecContext) {
+				id := failAtLink(ctx)
+				srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+				c.AfterWrite(rookMetaPool, rookRoot, srcInst, func() {
+					c.AfterWrite(rookMetaPool, rookRoot, srcInst, nil)
+					writeVia(ctx, "src", op.AttrIAMPolicy, `{"during":1}`)
+				})
+				Expect(retryVia(ctx, "src")).To(Succeed())
+				completed(ctx, id)
+				Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"during":1}`)))
+			})
+			Describe("after an attempt copied the old instance again and then failed", func() {
+				// failAfterCopyAgain runs a rename whose copy meets a policy
+				// written through the old name, which it copies again, and
+				// which then fails at the old instance's removal.
+				failAfterCopyAgain := func(ctx context.Context) string {
+					GinkgoHelper()
+					rec := createBucket(ctx, "src", aliceOwner)
+					id := rec.Info.Bucket.ID
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					copies := 0
+					c.AfterWrite(rookMetaPool, rookRoot, dstInst, func() {
+						copies++
+						switch copies {
+						case 1:
+							writeVia(ctx, "src", op.AttrIAMPolicy, `{"old":1}`)
+						case 2:
+							c.AfterWrite(rookMetaPool, rookRoot, dstInst, nil)
+							c.FailNextWrite(rookMetaPool, rookRoot, srcInst, syscall.ETIMEDOUT)
+						}
+					})
+					Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrRequestTimedOut))
+					Expect(copies).To(Equal(2), "the copy, then the copy again after the old name's write")
+					holds(ctx, id)
+					return id
+				}
+				It("completes a retry when neither name was written since", func(ctx SpecContext) {
+					id := failAfterCopyAgain(ctx)
+					Expect(retryVia(ctx, "src")).To(Succeed(), "the instances are as the copy again left them")
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"old":1}`)))
+				})
+				It("refuses a retry after a policy through the new name set back, though the names then hold the same configuration", func(ctx SpecContext) {
+					id := failAfterCopyAgain(ctx)
+					writeVia(ctx, "dst", op.AttrIAMPolicy, `{"x":1}`)
+					writeVia(ctx, "dst", op.AttrIAMPolicy, `{"old":1}`)
+					refusedRetry(ctx, id, "src")
+
+					both(func(name string) { writeVia(ctx, name, op.AttrIAMPolicy, `{"old":1}`) })
+					Expect(retryVia(ctx, "src")).To(Succeed())
+					completed(ctx, id)
+					Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"old":1}`)))
+				})
+			})
+			It("fails a retry whose read of the other name's instance fails, writing nothing, and completes on the next", func(ctx SpecContext) {
+				id := failAtLink(ctx)
+				dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+				c.FailNextRead(rookMetaPool, rookRoot, dstInst, syscall.ETIMEDOUT)
+				c.ResetCounters()
+				Expect(retryVia(ctx, "src")).To(MatchError(op.ErrRequestTimedOut))
+				Expect(c.WriteOrder(rookMetaPool, rookRoot)).To(BeEmpty())
+				Expect(c.WriteOrder(rookMetaPool, rookRoot+".rgw-go-bucket-claims")).To(BeEmpty())
+				holds(ctx, id)
+
+				Expect(retryVia(ctx, "src")).To(Succeed())
+				completed(ctx, id)
+			})
+			Describe("when a write of the rename lands and its reply is lost", func() {
+				// w is a gateway over lc, which loses the reply of the write
+				// failAfter names once it has landed.
+				var (
+					lc *lostReplyCluster
+					w  *driver.Store
+				)
+				BeforeEach(func(ctx SpecContext) {
+					lc = &lostReplyCluster{Cluster: c}
+					st, err := driver.Open(ctx, lc, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{})
+					Expect(err).NotTo(HaveOccurred())
+					DeferCleanup(st.Close)
+					w = st
+				})
+				// lostReply runs an attempt of the rename on w, the first or,
+				// with retry, one after a failure at the new owner's link,
+				// whose n-th write of the instance under name lands and
+				// answers ETIMEDOUT. With during, a policy is written through
+				// the old name after the attempt's mark, so the attempt copies
+				// the old instance again. It returns the bucket's id.
+				lostReply := func(ctx context.Context, retry bool, name string, n int, during bool) string {
+					GinkgoHelper()
+					var id string
+					if retry {
+						id = failAtLink(ctx)
+					} else {
+						id = createBucket(ctx, "src", aliceOwner).Info.Bucket.ID
+					}
+					if during {
+						srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+						c.AfterWrite(rookMetaPool, rookRoot, srcInst, func() {
+							c.AfterWrite(rookMetaPool, rookRoot, srcInst, nil)
+							writeVia(ctx, "src", op.AttrIAMPolicy, `{"during":1}`)
+						})
+					}
+					lc.failAfter(meta.BucketID{Name: name, ID: id}.InstanceOID(), n)
+					rec, err := w.GetBucket(ctx, "", "src")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(w.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrRequestTimedOut))
+					Expect(lc.lost()).To(BeTrue(), "the write landed and its reply was lost")
+					holds(ctx, id)
+					return id
+				}
+				DescribeTable("completes the next retry when neither name was written since",
+					func(ctx context.Context, retry bool, name string, n int, during bool) {
+						id := lostReply(ctx, retry, name, n, during)
+						Expect(retryVia(ctx, "src")).To(Succeed())
+						completed(ctx, id)
+						if during {
+							Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"during":1}`)), "the write through the old name is kept")
+						}
+					},
+					Entry("a first attempt's mark of the old instance", false, "src", 1, false),
+					Entry("a retry's mark of the old instance", true, "src", 1, false),
+					Entry("a first attempt's creation of the new instance", false, "dst", 1, false),
+					Entry("a retry's copy onto the new instance", true, "dst", 1, false),
+					Entry("a first attempt's copy again after a write through the old name", false, "dst", 2, true),
+					Entry("a retry's copy again after a write through the old name", true, "dst", 2, true),
+				)
+				DescribeTable("refuses the next retry after a write through the new name, writing nothing and keeping the write, until it is written through both",
+					func(ctx context.Context, retry bool, name string, n int, during bool) {
+						id := lostReply(ctx, retry, name, n, during)
+						writeVia(ctx, "dst", op.AttrIAMPolicy, `{"after":1}`)
+						refusedRetry(ctx, id, "src")
+						Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"after":1}`)))
+
+						both(func(via string) { writeVia(ctx, via, op.AttrIAMPolicy, `{"after":1}`) })
+						Expect(retryVia(ctx, "src")).To(Succeed())
+						completed(ctx, id)
+						Expect(loaded(ctx, "dst").Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"after":1}`)))
+					},
+					Entry("a retry's mark of the old instance", true, "src", 1, false),
+					Entry("a first attempt's creation of the new instance", false, "dst", 1, false),
+					Entry("a retry's copy onto the new instance", true, "dst", 1, false),
+					Entry("a first attempt's copy again after a write through the old name", false, "dst", 2, true),
+					Entry("a retry's copy again after a write through the old name", true, "dst", 2, true),
+				)
+			})
+			Describe("on a gateway whose metadata cache serves, after another gateway's write whose cache notify was lost", func() {
+				const controlPool = "ceph-objectstore.rgw.control"
+				// other is the gateway the write between the attempts goes
+				// through; s, from here, is a gateway whose cache serves.
+				var other *driver.Store
+				BeforeEach(func(ctx SpecContext) {
+					other = s
+					st, err := driver.Open(ctx, c, conf(nil), driver.Options{})
+					Expect(err).NotTo(HaveOccurred())
+					DeferCleanup(st.Close)
+					runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+					done := make(chan error, 1)
+					go func() { done <- st.Run(runCtx) }()
+					DeferCleanup(func() {
+						cancel()
+						Eventually(done).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Receive())
+					})
+					Eventually(func(g Gomega) {
+						_, err := st.GetBucket(ctx, "", "probe")
+						g.Expect(err).To(MatchError(op.ErrNoSuchBucket))
+						n := c.Reads(rookMetaPool, rookRoot, "probe")
+						_, err = st.GetBucket(ctx, "", "probe")
+						g.Expect(err).To(MatchError(op.ErrNoSuchBucket))
+						g.Expect(c.Reads(rookMetaPool, rookRoot, "probe")).To(Equal(n), "the second lookup is served from the cache")
+					}).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Succeed())
+					s = st
+				})
+				// failNotifies makes the next cache notify sent on each
+				// control object fail, or, with n 0, none.
+				failNotifies := func(n int) {
+					for i := range 8 {
+						c.FailNotify(controlPool, "", fmt.Sprintf("notify.%d", i), n, radosclient.ErrPermission)
+					}
+				}
+				// staleWrite caches on s the bucket name loads, then writes a
+				// policy through name on other, whose cache notify is lost,
+				// and expects s to serve the old copy while RADOS holds the
+				// write.
+				staleWrite := func(ctx context.Context, name, policy string) {
+					GinkgoHelper()
+					before := loaded(ctx, name)
+					failNotifies(1)
+					rec, err := other.GetBucket(ctx, "", name)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(other.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrIAMPolicy: []byte(policy)}, nil)).To(Succeed())
+					failNotifies(0)
+					Expect(loaded(ctx, name).Attrs).To(Equal(before.Attrs), "this gateway's cache still holds the old copy")
+					inRADOS, err := other.GetBucket(ctx, "", name)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(inRADOS.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(policy)), "RADOS holds the write")
+				}
+				// reconciled writes policy through both names on other, whose
+				// cache notifies reach s, then retries through retry and
+				// expects the renamed bucket, read from RADOS, to carry it.
+				reconciled := func(ctx context.Context, id, retry, policy string) {
+					GinkgoHelper()
+					for _, name := range []string{"src", "dst"} {
+						rec, err := other.GetBucket(ctx, "", name)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(other.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrIAMPolicy: []byte(policy)}, nil)).To(Succeed())
+					}
+					Eventually(func(g Gomega) {
+						got, err := s.GetBucket(ctx, "", retry)
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(policy)))
+					}).WithTimeout(5*time.Second).WithPolling(5*time.Millisecond).Should(Succeed(), "the notify reached this gateway")
+					Expect(retryVia(ctx, retry)).To(Succeed())
+					completed(ctx, id)
+					got, err := other.GetBucket(ctx, "", "dst")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(policy)))
+				}
+				DescribeTable("refuses a retry after a write the cache does not show, through the name the retry does not come through, writing nothing",
+					func(ctx context.Context, via, retry string) {
+						id := failAtLink(ctx)
+						loaded(ctx, retry)
+						staleWrite(ctx, via, `{"elsewhere":1}`)
+						refusedRetry(ctx, id, retry)
+						reconciled(ctx, id, retry, `{"elsewhere":1}`)
+					},
+					Entry("through the new name, retried by the old", "dst", "src"),
+					Entry("through the old name, retried by the new", "src", "dst"),
+				)
+				DescribeTable("refuses a retry through a name whose instance the cache shows stale, writing nothing, and the next while the write stands alone",
+					func(ctx context.Context, name string) {
+						id := failAtLink(ctx)
+						staleWrite(ctx, name, `{"elsewhere":1}`)
+						refusedRetry(ctx, id, name)
+						refusedRetry(ctx, id, name)
+						reconciled(ctx, id, name, `{"elsewhere":1}`)
+					},
+					Entry("the new name", "dst"),
+					Entry("the old name", "src"),
+				)
 			})
 		})
 		It("refuses a link by bucket id onto a name another bucket now holds, writing nothing", func(ctx SpecContext) {

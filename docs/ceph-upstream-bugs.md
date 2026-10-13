@@ -10700,8 +10700,17 @@ Every new entry adds its row to this table, in document order.
     PutBucketPolicy (`rgw_op.cc:8110-8115`; `:9036-9046`),
     DeleteBucketPolicy (`:8204-8209`; `:9151-9157`) and
     PutPublicAccessBlock (`:8656-8660`; `:9637-9641`).
+  - A retry of a rename that failed after writing the new instance writes
+    that instance exclusively (`:1138-1144`; `:1289-1295`), and
+    `RGWSI_Bucket_SObj::store_bucket_instance_info` turns the -EEXIST of
+    that write into success without writing
+    (`services/svc_bucket_sobj.cc:548-557`; `:488-497`). The new instance
+    keeps what the failed attempt copied, and the retry then removes the
+    old instance unchecked as above, so a write made through the old name
+    between the attempts is lost as well.
 - **Impact:** a write acknowledged through the old name between `init`
-  and the old instance's removal is lost silently. The renamed bucket
+  and the old instance's removal, or between a failed rename and its
+  retry, is lost silently. The renamed bucket
   carries the policy, public access block, tags, versioning and other
   configuration the rename read. A lost DeleteBucketPolicy, narrowing
   PutBucketPolicy or PutPublicAccessBlock leaves the bucket more open than
@@ -10710,27 +10719,36 @@ Every new entry adds its row to this table, in document order.
   the rename, and the write must land in a window a few metadata writes
   long.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** does not reproduce it within one rename attempt. Each attempt
-  removes the old instance only under the version its own mark wrote. A
-  write made through the old name since fails that removal, and the
-  attempt then copies the old instance whole onto the new name again,
-  under the version it last wrote there, and retries, up to 20 times.
-  After that it answers 409 ConcurrentModification with both names loading
-  the bucket and the write kept. Across a failed attempt and its retry it
-  can still lose a write: a retry through the new name writes the new
-  instance from that name's own instance, so a copy it makes replaces a
-  write made through the new name between the attempts, and a retry by
-  either name can drop a write made between the attempts through the
-  other (`dropSource`, `internal/driver/bucketadmin.go`;
+- **rgw-go:** does not reproduce it, within an attempt or across a failed
+  attempt and its retry. Each attempt removes the old instance only under
+  the version its own mark wrote. A write made through the old name since
+  fails that removal, and the attempt then copies the old instance whole
+  onto the new name again, under the version it last wrote there, and
+  retries, up to 20 times. After that it answers 409
+  ConcurrentModification with both names loading the bucket and the write
+  kept. A retry merges nothing. Each attempt records the RADOS version it
+  leaves on both instances, and a retry reads both past the metadata cache.
+  When either instance has changed since the last attempt left it, by a
+  write through either name or by a concurrent retry, the retry answers
+  409 ConcurrentModification having written nothing, with each write kept
+  where it was made. It goes on once the operator has written the
+  configuration to keep through both names, so that the two hold the
+  same, or when only one instance is there. It writes both instances under
+  the versions it read, so a write made through either name during the
+  retry fails it rather than being overwritten (`retryable`, `markSource`,
+  `writeCopy` and `dropSource`, `internal/driver/bucketadmin.go`;
   `docs/exclusions.md`, "Bucket link and unlink write differently from
   radosgw").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12 together with "[radosgw's failed bucket rename leaves the old
   name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner)",
-  as one combined fix; awaiting response.
+  as one combined fix; awaiting response. The retry-path evidence above
+  was found after that report and passed to rgw-bug-reproduction as an
+  addendum.
 - **Found:** phase 1 closing review, an unverified lead traced in
-  follow-up X40, 2026-10-12, reading the admin bucket rename; derived from
-  the source, not reproduced.
+  follow-up X40, 2026-10-12, reading the admin bucket rename; the retry
+  path in follow-up X42, 2026-10-12; derived from the source, not
+  reproduced.
 
 ## radosgw's bucket link to an account moves the bucket out of the account's tenant
 
