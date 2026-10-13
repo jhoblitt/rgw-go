@@ -8,9 +8,10 @@
 # without carrying such a marker. Both gateways run exactly this set.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
-# counts the zone's users.
+# counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
+# one a line, each of which the set must hold.
 #
-# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID
+# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID [TESTS-FILE]
 #        run.sh --print-commit | --print-deselect
 set -euo pipefail
 
@@ -25,15 +26,16 @@ source "${here}/lib.sh"
 # ceph/s3-tests is frozen; the suite moved into ceph/ceph. The pin is a commit
 # on the rgw-go-s3tests branch of the jhoblitt/ceph fork: ceph/ceph main with
 # the suite fixes rgw-go needs on top, each also meant for ceph/ceph. A commit
-# is pushed to that branch before the change that pins it, and the branch only
-# ever gains commits, so no pin names a commit that a rewritten branch would
-# take away.
+# is merged into that branch before the change that pins it, and the branch
+# only ever gains commits, so no pin names a commit that a rewritten branch
+# would take away.
 #
 # S3TESTS_REPO and S3TESTS_COMMIT in the environment run another repository,
 # a local clone's path among them, at another commit, to try a change to
 # s3-tests before it is pinned. --print-commit prints the commit that runs,
-# which a recorded result carries, so hack/parity refuses to compare such a
-# run with a baseline recorded at the pin.
+# which a recorded result carries, and says on stderr where it came from;
+# hack/parity refuses to compare such a run with a baseline recorded at the
+# pin, and to record it.
 S3TESTS_REPO=${S3TESTS_REPO:-https://github.com/jhoblitt/ceph}
 # git runs the fetch inside the checkout, so a path is made absolute here,
 # from the directory run.sh starts in. Neither a URL nor git's host:path
@@ -43,12 +45,21 @@ if [[ "${S3TESTS_REPO}" != *://* && ! "${S3TESTS_REPO}" =~ ^[^/]*: ]]; then
 	S3TESTS_REPO=$(cd "${S3TESTS_REPO}" && pwd)
 fi
 readonly S3TESTS_REPO
-readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3} # rgw-go-s3tests, 2026-10-12; bump by hand and re-record the baselines, or move it to a reworded commit with repin.sh
+# The pin is hack/s3tests/PIN, the single place it is set: exactly 40
+# lowercase hex digits and a newline, read here by the rule hack/parity reads
+# it by too. Move it with make s3tests-pin, or write it by hand and record the
+# baselines in full. S3TESTS_COMMIT in the environment runs another commit for
+# a local try.
+pin_file=${harness}/PIN
+[[ -f "${pin_file}" && ! -L "${pin_file}" && "$(wc -c <"${pin_file}")" -eq 41 ]] && IFS= read -r pin <"${pin_file}" &&
+	[[ "${pin}" =~ ^[0-9a-f]{40}$ ]] || die "${pin_file} is not exactly 40 lowercase hex digits and a newline"
+readonly pin_file pin
+readonly S3TESTS_COMMIT=${S3TESTS_COMMIT:-${pin}}
 readonly S3TESTS_DIR=src/test/rgw/s3-tests
 # A result records the commit it ran, and the checkout and the venv are reused
 # while the commit stays the same, so it must be a commit id: a branch or tag
 # names whatever it points at when fetched.
-[[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "S3TESTS_COMMIT ${S3TESTS_COMMIT} is not a full commit id"
+[[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "the s3-tests commit ${S3TESTS_COMMIT}, from the environment, is not a full commit id"
 readonly PYTEST_TIMEOUT_VERSION=2.4.0
 
 # Features not implemented yet and docs/exclusions.md's, by s3-tests marker.
@@ -72,6 +83,11 @@ deselected() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "${DESELECT_LI
 case "${1:-}" in
 --print-commit)
 	echo "${S3TESTS_COMMIT}"
+	if [[ "${S3TESTS_COMMIT}" == "${pin}" ]]; then
+		echo "${script}: s3-tests ${S3TESTS_COMMIT}, from ${pin_file}" >&2
+	else
+		echo "${script}: s3-tests ${S3TESTS_COMMIT}, from the environment, not ${pin_file}'s ${pin}" >&2
+	fi
 	exit 0
 	;;
 --print-deselect)
@@ -83,9 +99,15 @@ esac
 use_release "${1:-}"
 gateway=${2:-}
 run_id=${3:-}
-readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID"
+readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID [TESTS-FILE]"
 [[ "${gateway}" == radosgw || "${gateway}" == rgw-go ]] || die "${usage}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "${usage}; RUN-ID, which names the reports, is [A-Za-z0-9._-]+"
+only=()
+if [[ -n "${4:-}" ]]; then
+	[[ -f "$4" ]] || die "no tests file $4"
+	mapfile -t only < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$4")
+	((${#only[@]} > 0)) || die "the tests file $4 names no test"
+fi
 
 src=${harness}/out/src
 suite=${src}/${S3TESTS_DIR}
@@ -299,7 +321,7 @@ done
 # a line must remove exactly the test it names, and a line that names nothing
 # the markers leave is stale.
 mapfile -t collected < <(grep -E '^s3tests/.+\.py::' <<<"${ids}")
-declare -A seen=()
+declare -A seen=() in_set=()
 selected=0
 for c in "${collected[@]}"; do
 	if [[ -n "${listed[${c%%\[*}]:-}" ]]; then
@@ -309,17 +331,23 @@ for c in "${collected[@]}"; do
 	for id in "${deselect[@]}"; do
 		[[ "${c}" != "${id}"* ]] || die "${id} would also deselect ${c} (pytest matches --deselect as a node-id prefix)"
 	done
+	in_set[${c}]=1 in_set[${c%%\[*}]=1
 	selected=$((selected + 1))
 done
 for id in "${deselect[@]}"; do
 	[[ -n "${seen[${id}]:-}" ]] || die "${id} names no test the markers leave: renamed, removed or marker-excluded at this commit"
 done
+targets=("${TEST_FILES[@]}")
+for id in "${only[@]}"; do
+	[[ -n "${in_set[${id}]:-}" ]] || die "${id} is not in the set: no such test, or the markers or a deselect list remove it"
+done
+((${#only[@]} == 0)) || { targets=("${only[@]}") && selected=${#only[@]}; }
 
 purge_buckets
 echo "running ${selected} of the ${#collected[@]} tests the markers leave against the ${gateway} at ${endpoint}; log ${log}"
 status=0
 (cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" -v -rA -p no:cacheprovider \
-	--timeout=300 --junitxml="${report}" -m "${expr}" "${deselect_args[@]}" "${TEST_FILES[@]}") >"${log}" 2>&1 || status=$?
+	--timeout=300 --junitxml="${report}" -m "${expr}" "${deselect_args[@]}" "${targets[@]}") >"${log}" 2>&1 || status=$?
 purge_buckets
 # A run deletes hundreds of megabytes of objects, whose tails radosgw leaves
 # to its garbage collector: that waits rgw_gc_obj_min_wait (2 h), and the

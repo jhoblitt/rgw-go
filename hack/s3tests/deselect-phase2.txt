@@ -3,7 +3,8 @@
 # S3TESTS_COMMIT. run.sh deselects every line on both gateways, and stops when
 # a line names no collected test or, since pytest's --deselect matches node-id
 # prefixes, would deselect a test the lists do not name. The PR that lands a
-# feature deletes its lines and re-records the radosgw baselines.
+# feature deletes its lines and records the tests they free in the radosgw
+# ledgers with make s3tests-record-tests.
 # Format: a pytest node id, then "#" and the calls that need the feature.
 
 # bucket versioning: each enables it (PutBucketVersioning)

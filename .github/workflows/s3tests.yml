@@ -1,8 +1,8 @@
 # s3-tests parity: the phase 1 s3-tests set against rgw-go on a disposable
 # Rook cluster, compared with radosgw's recorded baseline by make
 # s3tests-parity (hack/rooket/README.md). On every pull request, Squid only,
-# and on demand for either release, where it can also re-record radosgw's
-# baseline on the runner.
+# and on demand for either release, where it can also append a fresh record
+# of radosgw to a copy of the committed ledger on the runner.
 #
 # The workflow always starts and its changes job decides whether the pull
 # request touches the S3 path: a required check that a trigger's path filter
@@ -22,7 +22,7 @@ on:
         options: [squid, tentacle]
         default: squid
       record-baseline:
-        description: Re-record radosgw's baseline on the runner, upload it, and compare rgw-go with it instead of the committed one
+        description: Append a record of radosgw to a copy of the committed ledger, upload it, and compare rgw-go with it instead of the committed one
         type: boolean
         default: false
 
@@ -101,11 +101,29 @@ jobs:
         run: make rgw-go-up "RELEASE=${RELEASE}"
 
       # After rgw-go-up, so radosgw records under the parity options it sets.
+      # The record appends to a copy of the committed ledger as a draft: an
+      # entry that needs a reason, a changed outcome or unstable flag or a
+      # retired test, takes "unreviewed: recorded by <this run>", which the
+      # comparison below accepts and make ledger-check and the ci workflow
+      # refuse, so the copy is committed only once each is explained. The
+      # job summary lists each.
       - name: Record radosgw's baseline
         if: inputs.record-baseline
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          set -euo pipefail
+          committed="test/s3tests/baseline/${RELEASE}.json"
           baseline="${RUNNER_TEMP}/s3tests-baseline/${RELEASE}.json"
-          make s3tests-record "RELEASE=${RELEASE}" "OUT=${baseline}"
+          mkdir -p "$(dirname "${baseline}")"
+          cp "${committed}" "${baseline}"
+          make s3tests-record "RELEASE=${RELEASE}" "OUT=${baseline}" "DRAFT=recorded by ${RUN_URL}"
+          {
+            echo "### ${RELEASE}: appended entries that change an outcome or an unstable flag, or retire a test"
+            echo '```'
+            bin/parity check --draft --old "${committed}" --new "${baseline}" --list-reasoned
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
           echo "RECORDED_BASELINE=${baseline}" >>"$GITHUB_ENV"
 
       - name: Upload radosgw's baseline

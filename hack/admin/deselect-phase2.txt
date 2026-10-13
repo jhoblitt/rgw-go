@@ -2,8 +2,8 @@
 # phase 2 S3 feature to set up what they then read through the admin API.
 # run.sh skips every line on both gateways with go test -skip, and stops when
 # a line names no subtest of the checkout or when the run still reports one.
-# The PR that lands a feature deletes its lines and re-records the radosgw
-# baselines.
+# The PR that lands a feature deletes its lines and records both radosgw
+# ledgers with make admin-record, which enters the subtests it frees.
 # Format: a go test id, as go test -json reports it, then "#" and the calls
 # that need the feature.
 

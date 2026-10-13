@@ -27,10 +27,41 @@ func mustKnown(list string) parity.KnownList {
 	return known
 }
 
-// candidate returns a result with outcomes and the meta of the diff specs'
-// baseline.
+// candidate returns a result with outcomes and the meta of ledgerOf's
+// ledger.
 func candidate(outcomes map[string]string) parity.Result {
-	return parity.Result{Meta: map[string]string{"s3tests_commit": "aaa", "release": "squid"}, Outcomes: outcomes}
+	return parity.Result{
+		Suite:    "s3tests",
+		Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid", "ceph_version": "19.2.6"},
+		Outcomes: outcomes,
+	}
+}
+
+// entry returns an entry of outcome recorded at source on 19.2.6 from two
+// runs.
+func entry(source, outcome string) parity.Entry {
+	return parity.Entry{Outcome: outcome, Source: source, CephVersion: "19.2.6", Recorded: "2026-10-12T16:55:39Z", Runs: 2}
+}
+
+// reasoned returns e with the reason given.
+func reasoned(e parity.Entry, reason string) parity.Entry {
+	e.Reason = reason
+	return e
+}
+
+// withCeph returns e recorded under the Ceph version given.
+func withCeph(e parity.Entry, version string) parity.Entry {
+	e.CephVersion = version
+	return e
+}
+
+// ledgerOf returns an s3-tests ledger for squid, its chain one base pin at
+// aaa, holding tests.
+func ledgerOf(tests map[string][]parity.Entry) *parity.Ledger {
+	return &parity.Ledger{
+		Suite: "s3tests", Release: "squid", SourceKey: "s3tests_commit",
+		Pins: []parity.Pin{{Source: "aaa", Admitted: parity.AdmitBase}}, Tests: tests,
+	}
 }
 
 var _ = Describe("record", func() {
@@ -174,108 +205,143 @@ var _ = Describe("record", func() {
 })
 
 var _ = Describe("diff", func() {
-	var base parity.Result
+	var base *parity.Ledger
 
 	BeforeEach(func() {
-		base = parity.Result{
-			Suite: "s3tests", Meta: map[string]string{"s3tests_commit": "aaa", "release": "squid"},
-			Outcomes: map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"}, Unstable: []string{"t3"},
-		}
+		unstable := entry("aaa", "passed")
+		unstable.Unstable = true
+		base = ledgerOf(map[string][]parity.Entry{
+			"t1": {entry("aaa", "passed")}, "t2": {entry("aaa", "failed")}, "t3": {unstable},
+		})
 	})
 
 	It("is equal when only unstable tests differ", func() {
-		cand := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid", "gateway": "rgw-go"},
-			Outcomes: map[string]string{"t1": "passed", "t2": "failed", "t3": "failed"},
-		}
+		cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "failed"})
+		cand.Meta["gateway"] = "rgw-go"
 		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
 
 	It("names every stable test whose outcome changed, and a test missing from the candidate", func() {
-		cand := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid"},
-			Outcomes: map[string]string{"t1": "failed", "t3": "passed"},
-		}
+		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t3": "passed"}), false, parity.KnownList{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed", "t2: baseline failed, candidate missing"}))
+	})
+
+	It("names a candidate test the ledger holds no entry for", func() {
+		cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed", "t4": "error"})
 		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(diffs).To(ConsistOf("t1: baseline passed, candidate failed", "t2: baseline failed, candidate missing"))
+		Expect(diffs).To(Equal([]string{"t4: no baseline entry"}))
 	})
 
-	It("names a test missing from the baseline", func() {
-		cand := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid"},
-			Outcomes: map[string]string{"t1": "passed", "t2": "failed", "t3": "passed", "t4": "error"},
-		}
-		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(diffs).To(Equal([]string{"t4: baseline missing, candidate error"}))
-	})
-
-	It("refuses to compare across a different s3-tests commit unless told to", func() {
-		cand := parity.Result{Meta: map[string]string{"s3tests_commit": "bbb", "release": "squid"}, Outcomes: base.Outcomes}
-		_, err := parity.Diff(base, cand, false, parity.KnownList{})
-		Expect(err).To(MatchError(ContainSubstring("s3tests_commit")))
-		_, err = parity.Diff(base, cand, true, parity.KnownList{})
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("refuses to compare results run under different deselect lists", func() {
-		listed := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid", "deselect": "111111111111"},
-			Outcomes: base.Outcomes,
-		}
-		cand := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid", "deselect": "222222222222"},
-			Outcomes: base.Outcomes,
-		}
-		_, err := parity.Diff(listed, cand, false, parity.KnownList{})
-		Expect(err).To(MatchError(ContainSubstring("deselect")))
-	})
-
-	It("names every compared key that differs", func() {
-		baseMeta := map[string]string{
-			"s3tests_commit": "aaa", "go_ceph_tag": "v0.39.0", "release": "squid", "ceph_version": "19.2.6", "deselect": "111111111111",
-		}
-		candMeta := map[string]string{
-			"s3tests_commit": "bbb", "go_ceph_tag": "v0.40.0", "release": "tentacle", "ceph_version": "20.2.4", "deselect": "222222222222",
-		}
-		_, err := parity.Diff(parity.Result{Meta: baseMeta, Outcomes: base.Outcomes},
-			parity.Result{Meta: candMeta, Outcomes: base.Outcomes}, false, parity.KnownList{})
-		for _, key := range []string{"s3tests_commit", "go_ceph_tag", "release", "ceph_version", "deselect"} {
-			Expect(err).To(MatchError(ContainSubstring("%s: baseline %s, candidate %s", key, baseMeta[key], candMeta[key])), "key %q", key)
-		}
-	})
-
-	It("refuses a candidate that lacks a compared key the baseline carries, drift allowed or not", func() {
-		cand := parity.Result{Meta: map[string]string{"release": "squid"}, Outcomes: base.Outcomes}
-		_, err := parity.Diff(base, cand, false, parity.KnownList{})
-		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline aaa, candidate missing")))
-		_, err = parity.Diff(base, cand, true, parity.KnownList{})
-		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline aaa, candidate missing")))
-	})
-
-	It("allows a compared key only the candidate carries", func() {
-		cand := parity.Result{
-			Meta: map[string]string{
-				"s3tests_commit": "aaa", "release": "squid", "deselect": "136c2f295daa", "go_ceph_tag": "v0.39.0", "ceph_version": "19.2.6",
-			},
-			Outcomes: base.Outcomes,
-		}
-		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+	It("judges a test by its last entry", func() {
+		base.Tests["t1"] = append(base.Tests["t1"], reasoned(entry("aaa", "failed"), "radosgw 19.2.6 answers 400"))
+		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t2": "failed"}), false, parity.KnownList{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
 
-	It("ignores keys outside the compared set, such as the gateway", func() {
-		cand := parity.Result{
-			Meta:     map[string]string{"s3tests_commit": "aaa", "release": "squid", "gateway": "rgw-go"},
-			Outcomes: base.Outcomes,
-		}
-		withGateway := base
-		withGateway.Meta = map[string]string{"s3tests_commit": "aaa", "release": "squid", "gateway": "radosgw"}
-		diffs, err := parity.Diff(withGateway, cand, false, parity.KnownList{})
+	Describe("a retired test", func() {
+		BeforeEach(func() {
+			base.Tests["t2"] = append(base.Tests["t2"], reasoned(entry("aaa", "retired"), "deselected"))
+		})
+
+		It("is not missing from a candidate that lacks it", func() {
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed"}), false, parity.KnownList{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(BeEmpty())
+		})
+
+		It("is named when the candidate runs it again", func() {
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, parity.KnownList{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t2: baseline retired, candidate failed"}))
+		})
+	})
+
+	Describe("validity", func() {
+		It("is stale for a last entry recorded under another Ceph version, unless meta drift is allowed", func() {
+			base.Tests["t1"] = []parity.Entry{withCeph(entry("aaa", "passed"), "19.2.5")}
+			cand := candidate(map[string]string{"t1": "failed", "t2": "failed"})
+			diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t1: baseline stale, re-record"}))
+			diffs, err = parity.Diff(base, cand, true, parity.KnownList{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed"}))
+		})
+
+		It("is stale for a last entry whose source a later base pin replaced, the chain reset", func() {
+			base.Pins = append(base.Pins, parity.Pin{Source: "bbb", Admitted: parity.AdmitBase})
+			base.Tests["t1"] = append(base.Tests["t1"], entry("bbb", "passed"))
+			cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
+			cand.Meta["s3tests_commit"] = "bbb"
+			for _, drift := range []bool{false, true} {
+				diffs, err := parity.Diff(base, cand, drift, parity.KnownList{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(Equal([]string{"t2: baseline stale, re-record", "t3: baseline stale, re-record"}), "drift %v", drift)
+			}
+		})
+
+		DescribeTable("holds across a pin proven to keep the outcomes",
+			func(admitted parity.Admission) {
+				base.Pins = append(base.Pins, parity.Pin{Source: "bbb", Admitted: admitted})
+				base.Tests["t4"] = []parity.Entry{entry("bbb", "passed")}
+				cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t4": "passed"})
+				cand.Meta["s3tests_commit"] = "bbb"
+				diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed"}))
+			},
+			Entry("additive", parity.AdmitAdditive),
+			Entry("reworded", parity.AdmitReworded),
+		)
+
+		It("is judged before an unstable last entry is skipped", func() {
+			base.Tests["t3"][0].CephVersion = "19.2.5"
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"}), false, parity.KnownList{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t3: baseline stale, re-record"}))
+		})
+	})
+
+	It("refuses a candidate run at a source other than the chain's head unless told to", func() {
+		base.Pins = append(base.Pins, parity.Pin{Source: "bbb", Admitted: parity.AdmitAdditive})
+		cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
+		_, err := parity.Diff(base, cand, false, parity.KnownList{})
+		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline bbb, candidate aaa")))
+		_, err = parity.Diff(base, cand, true, parity.KnownList{})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("names every compared key that differs", func() {
+		cand := candidate(map[string]string{"t1": "passed"})
+		cand.Meta["s3tests_commit"], cand.Meta["release"] = "bbb", "tentacle"
+		_, err := parity.Diff(base, cand, false, parity.KnownList{})
+		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline aaa, candidate bbb")))
+		Expect(err).To(MatchError(ContainSubstring("release: baseline squid, candidate tentacle")))
+	})
+
+	DescribeTable("refuses a candidate that lacks a key it needs, drift allowed or not",
+		func(key, want string) {
+			cand := candidate(map[string]string{"t1": "passed"})
+			delete(cand.Meta, key)
+			for _, drift := range []bool{false, true} {
+				_, err := parity.Diff(base, cand, drift, parity.KnownList{})
+				Expect(err).To(MatchError(ContainSubstring(want)), "drift %v", drift)
+			}
+		},
+		Entry("the source key", "s3tests_commit", "s3tests_commit: baseline aaa, candidate missing"),
+		Entry("the release", "release", "release: baseline squid, candidate missing"),
+		Entry("the Ceph version", "ceph_version", "ceph_version: candidate missing"),
+	)
+
+	It("ignores the deselect digest, the gateway and any key outside the source, release and Ceph version", func() {
+		cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
+		cand.Meta["deselect"], cand.Meta["gateway"], cand.Meta["go_ceph_tag"] = "222222222222", "rgw-go", "v0.39.0"
+		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
@@ -296,9 +362,24 @@ var _ = Describe("diff", func() {
 		})
 
 		It("reports an entry that matches no compared test, an unstable one included", func() {
-			diffs, err := parity.Diff(base, candidate(base.Outcomes), false, mustKnown("t9\nt3\n"))
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("t9\nt3\n"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(ConsistOf("t9: known difference matches no test", "t3: known difference matches no test"))
+		})
+
+		It("skips a test with no baseline entry that a plain or an either-outcome entry matches", func() {
+			cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t4": "error", "t5": "passed", "t6": "passed"})
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t4\n~ t5\n"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t6: no baseline entry"}))
+		})
+
+		It("leaves a stale test's line alone, and counts the entry matching it as matched", func() {
+			base.Tests["t1"][0].CephVersion = "19.2.5"
+			cand := candidate(map[string]string{"t1": "failed", "t2": "failed"})
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t1\n"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(diffs).To(Equal([]string{"t1: baseline stale, re-record"}))
 		})
 
 		It("matches a pattern against the whole test id", func() {
@@ -338,7 +419,7 @@ var _ = Describe("diff", func() {
 			})
 
 			It("is reported, as written, when it matches no compared test", func() {
-				diffs, err := parity.Diff(base, candidate(base.Outcomes), false, mustKnown("~ t9\n~ t3\n"))
+				diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("~ t9\n~ t3\n"))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(ConsistOf("~ t9: known difference matches no test", "~ t3: known difference matches no test"))
 			})

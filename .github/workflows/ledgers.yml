@@ -1,0 +1,90 @@
+# The parity ledgers' append-only check, a required check on every pull
+# request. Its hygiene follows github-conventions' references/workflows.md.
+name: ledgers
+
+# pull_request_target, not pull_request: GitHub runs this file as the
+# default branch holds it, so every pull request is checked by the rules
+# already merged, and a change to them takes effect once it merges. No paths
+# filter: a required check must report on every pull request, and the
+# checker itself picks the ledgers out.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # The parity baselines are a regression test's, and this job runs its
+  # integrity checks, hack/parity's check --base (its package doc), against
+  # honest mistakes in a pull request:
+  # - the baseline stays append-only: no ledger is removed, and every pin
+  #   and entry the base holds stays in place unchanged;
+  # - an appended entry that changes an outcome, an unstable flag or retires
+  #   a test, and an appended base pin, carries a reason, not a draft's;
+  # - a pin bump that does not only add tests cannot carry the old outcomes
+  #   over: an additive or reworded s3-tests pin is proven again, and any
+  #   other needs a full record;
+  # - every s3-tests pin, in a ledger or in hack/s3tests/PIN, the single
+  #   place the pin is set, stays on jhoblitt/ceph's rgw-go-s3tests history,
+  #   its tip or an ancestor of it.
+  # The checker is built from the default branch and reads the pull
+  # request's head commit with git, against the merge base of the head and
+  # its base. pull_request_target runs with the repository's token, so the
+  # job reads the pull request and never checks it out or runs it. The job
+  # summary lists each changed ledger's appended pins, each base pin with
+  # every outcome it re-stamps, and every appended entry that changes an
+  # outcome or an unstable flag, with its reason; a pull request that
+  # changes no ledger passes with an empty summary.
+  ledgers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No cache: the checker builds from the default branch's sources and
+      # the module proxy alone, with caches of its own.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: false
+
+      - name: Build the ledger checker from the default branch
+        run: |
+          set -euo pipefail
+          export GOMODCACHE GOCACHE
+          GOMODCACHE=$(mktemp -d "$RUNNER_TEMP/gomodcache.XXXXXX")
+          GOCACHE=$(mktemp -d "$RUNNER_TEMP/gocache.XXXXXX")
+          go env GOMODCACHE GOCACHE
+          go build -o "$RUNNER_TEMP/parity" ./hack/parity
+
+      # The ids come from the event as data and are checked before git sees
+      # them; the head's objects are fetched, never checked out.
+      - name: Fetch the pull request's head as data
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          re='^[0-9a-f]{40}$'
+          if [[ ! "$HEAD_SHA" =~ $re || ! "$BASE_SHA" =~ $re ]]; then
+            echo "::error::the event's head or base is not a full commit id"
+            exit 1
+          fi
+          git fetch -q --no-tags origin "$HEAD_SHA" "$BASE_SHA"
+          base=$(git merge-base --end-of-options "$BASE_SHA" "$HEAD_SHA")
+          echo "HEAD_SHA=${HEAD_SHA}" >>"$GITHUB_ENV"
+          echo "MERGE_BASE=${base}" >>"$GITHUB_ENV"
+
+      - name: Check that the pull request only appends to the parity ledgers
+        run: '"$RUNNER_TEMP/parity" check --base "$MERGE_BASE" --head "$HEAD_SHA" --summary "$GITHUB_STEP_SUMMARY"'
