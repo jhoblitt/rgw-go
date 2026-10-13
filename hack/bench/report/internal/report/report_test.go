@@ -345,7 +345,7 @@ var _ = Describe("Seam", func() {
 	})
 
 	It("measures thread growth against both baselines where a mode's cells shared a process", func(ctx SpecContext) {
-		// Without process ids, as before seam.sh gave each cell a process:
+		// Without process ids, as before the sweep gave each cell a process:
 		// callback's twelve measured cells ran in one process, each starting
 		// where the last one peaked.
 		i := 0

@@ -13,8 +13,8 @@ type benchProcess struct {
 	cells           map[cellKey]bool
 }
 
-// errMixedProcesses refuses a sweep whose cells are partly from before
-// seam.sh recorded process ids, which no layout explains.
+// errMixedProcesses refuses a sweep whose cells are partly from before the
+// sweep recorded process ids, which no layout explains.
 var errMixedProcesses = errors.New("some cells carry a process id and some do not")
 
 func (s *sweep) newProcess(mode string, c *Cell) int {

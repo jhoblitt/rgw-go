@@ -2,7 +2,7 @@
 //
 //	go run ./hack/bench/report seam --dir hack/bench/out/<release>/seam-<date>
 //
-// seam reads a sweep directory that hack/bench/seam.sh wrote and writes its
+// seam reads a sweep directory that hack/bench/seam wrote and writes its
 // REPORT.md there, then prints the report's path and which of the callback
 // and pipe modes pass all four of the cgo question's criteria. It reads:
 //
