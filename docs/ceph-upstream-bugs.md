@@ -4690,8 +4690,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw swaps aws:CurrentTime and aws:EpochTime
 
-- **Kind:** defect, unfixed through main. Unreproduced: derived from the
-  source.
+- **Kind:** defect, security-relevant: a Deny bounded in time by a numeric
+  `aws:EpochTime` condition never applies; unfixed through main.
+  Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`; each pair of lines is v19.2.6's,
   then v20.2.4's, and a single line is the same at both.
   - `rgw_build_iam_environment` sets `aws:CurrentTime` to the request time
@@ -4727,7 +4728,8 @@ Every new entry adds its row to this table, in document order.
   releases not checked.
 - **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
   radosgw does, so `docs/exclusions.md` records no difference.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12; awaiting response.
 - **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
   2026-10-08, reading `rgw_build_iam_environment` at both tags; derived
   from the source, not reproduced.
@@ -9410,8 +9412,8 @@ Every new entry adds its row to this table, in document order.
   or HEAD from rgw-go omits the metadata header that radosgw would send
   (`docs/exclusions.md`, "A user metadata name that is not a valid field
   name is not sent", added by #202).
-- **Upstream:** pending: rgw-bug-reproduction will classify it (sent the
-  intake on 2026-10-08). CVE-2020-1760 is the response-* parameter
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12; awaiting response. CVE-2020-1760 is the response-* parameter
   variant, and its fix does not reach a stored name. The fix would refuse,
   or strip, control characters in a metadata name, wherever it arrives.
 - **Found:** phase 1, X14's task review, 2026-10-08, while checking header
@@ -10266,7 +10268,9 @@ Every new entry adds its row to this table, in document order.
   serves no Swift authentication in phase 1 (`docs/exclusions.md`, "Swift
   API and Swift authentication"); a later phase that adds it must refuse
   an empty key.
-- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07.
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12; awaiting response. rgw-bug-reproduction classified it on
+  2026-10-07.
 - **Found:** phase 1 unit N, Task 5, 2026-10-07, transcribing
   `RGWAccessKeyPool` for the admin key and subuser routes; derived from
   the source, and confirmed by rgw-bug-reproduction.
@@ -10605,8 +10609,9 @@ Every new entry adds its row to this table, in document order.
   that check keeps it (`claimName` and `ChangeBucketOwner`,
   `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
   unlink write differently from radosgw").
-- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08;
-  not yet disclosed.
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12; awaiting response. rgw-bug-reproduction classified it on
+  2026-10-08.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
 
@@ -10652,8 +10657,11 @@ Every new entry adds its row to this table, in document order.
   name, so every name that loads the bucket names one owner at every step
   (`renameBucket`, `internal/driver/bucketadmin.go`; `docs/exclusions.md`,
   "Bucket link and unlink write differently from radosgw").
-- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
-  (transient; heals on retry); not yet disclosed.
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12 together with "[radosgw's bucket rename loses a bucket config
+  write made through the old name](#radosgws-bucket-rename-loses-a-bucket-config-write-made-through-the-old-name)",
+  as one combined fix; awaiting response. rgw-bug-reproduction classified
+  it on 2026-10-08 (transient; heals on retry).
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
   routes; derived from the source, not reproduced.
 
@@ -10716,7 +10724,10 @@ Every new entry adds its row to this table, in document order.
   other (`dropSource`, `internal/driver/bucketadmin.go`;
   `docs/exclusions.md`, "Bucket link and unlink write differently from
   radosgw").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12 together with "[radosgw's failed bucket rename leaves the old
+  name to the old owner](#radosgws-failed-bucket-rename-leaves-the-old-name-to-the-old-owner)",
+  as one combined fix; awaiting response.
 - **Found:** phase 1 closing review, an unverified lead traced in
   follow-up X40, 2026-10-12, reading the admin bucket rename; derived from
   the source, not reproduced.
@@ -12326,8 +12337,9 @@ Every new entry adds its row to this table, in document order.
   checks `zone=read` before any read and writes the system key as radosgw
   does (`getZoneConfig`, `internal/admin/info.go`; `ZoneParams.Dump`,
   `internal/meta/dump_zone.go`), and logs neither.
-- **Upstream:** none. rgw-bug-reproduction's prior-art search found no
-  report or fix for this endpoint and cap. Main is unfixed:
+- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  2026-10-12; awaiting response. rgw-bug-reproduction's prior-art search
+  found no report or fix for this endpoint and cap. Main is unfixed:
   `RGWOp_ZoneConfig_Get` still checks `zone=read` alone and dumps the zone
   parameters (`rgw_rest_config.h:28` and `rgw_rest_config.cc:47` on main
   at 4fd0af757f7), whose dump writes the system key with
