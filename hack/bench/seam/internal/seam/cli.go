@@ -6,18 +6,18 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
-// envNames binds the keys whose environment names are not BENCH_ and the
+// envNames are the environment names of the keys that are not BENCH_ and the
 // key upper-cased: the Makefile passes the cluster's ceph.conf, the rooket
 // binary and the build tags under these names, and the sweep has always read
-// BENCH_TIME, CONC and rooket's ROOKET_ENGINE.
+// BENCH_TIME, CONC and rooket's ROOKET_ENGINE. No other name reads them.
 var envNames = map[string]string{
 	"ceph-conf":  "RGW_GO_TEST_CEPH_CONF",
 	"rooket":     "ROOKET",
@@ -114,19 +114,15 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, adjust func(*Runner))
 	return cmd
 }
 
-// configure binds the flags and the environment into v, reads the config
-// file when one is named, and installs the default logger.
+// configure binds the flags and the environment into v, each key to the one
+// environment variable that names it, reads the config file when one is
+// named, and installs the default logger.
 func configure(cmd *cobra.Command, v *viper.Viper, stderr io.Writer) error {
-	v.SetEnvPrefix("BENCH")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
-	v.AutomaticEnv()
-	for key, name := range envNames {
-		if err := v.BindEnv(key, name); err != nil {
-			return fmt.Errorf("binding %s: %w", name, err)
-		}
-	}
 	if err := v.BindPFlags(cmd.Flags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
+	}
+	if err := harness.BindEnv(v, "BENCH", envNames); err != nil {
+		return fmt.Errorf("binding the environment: %w", err)
 	}
 	if cfg := v.GetString("config"); cfg != "" {
 		v.SetConfigFile(cfg)
@@ -183,6 +179,7 @@ func settings(cmd *cobra.Command, v *viper.Viper, release string) Settings {
 		FloorTimeout:   v.GetString("floor-timeout"),
 		FloorImage:     v.GetString("floor-image"),
 		Engine:         v.GetString("engine"),
+		ConfigFile:     v.ConfigFileUsed(),
 	}
 }
 

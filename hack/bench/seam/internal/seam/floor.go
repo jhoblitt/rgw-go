@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 // resolveFloorImage settles the image whose rados runs the floor: the Ceph
@@ -25,9 +27,9 @@ import (
 func (r *Runner) resolveFloorImage(ctx context.Context, st *state, lib librados) error {
 	engine := st.cfg.Engine
 	image := cmp.Or(st.cfg.FloorImage, "quay.io/ceph/ceph:v"+lib.version)
-	if _, err := r.local(ctx, r.LocalTimeout, Cmd{Name: engine, Args: []string{"image", "inspect", image}}); err != nil {
+	if _, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: engine, Args: []string{"image", "inspect", image}}); err != nil {
 		st.log.InfoContext(ctx, "pulling the floor image", slog.String("image", image))
-		out, err := r.local(ctx, r.PullTimeout, Cmd{Name: engine, Args: []string{"pull", image}})
+		out, err := r.local(ctx, r.PullTimeout, harness.Cmd{Name: engine, Args: []string{"pull", image}})
 		r.floorHeader(st, engine+" pull "+image)
 		if _, werr := st.floorLog.Write(out); werr != nil {
 			return fmt.Errorf("writing floor.log: %w", werr)
@@ -37,7 +39,7 @@ func (r *Runner) resolveFloorImage(ctx context.Context, st *state, lib librados)
 				image, lib.version, err)
 		}
 	}
-	out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: engine, Args: []string{"run", "--rm", image, "rados", "--version"}})
+	out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: engine, Args: []string{"run", "--rm", image, "rados", "--version"}})
 	if err != nil {
 		return fmt.Errorf("cannot run rados --version in %s: %w", image, err)
 	}
@@ -188,7 +190,7 @@ func (r *Runner) radosBench(ctx context.Context, st *state, m measured) error {
 	if err != nil {
 		return fmt.Errorf("encoding the floor of %s: %w", m.run, err)
 	}
-	f, err := openLog(filepath.Join(st.dir, "floor.jsonl"))
+	f, err := harness.OpenLog(filepath.Join(st.dir, "floor.jsonl"))
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,6 @@ package seam
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 // Runner runs the sweep or the limiter re-run against a release's cluster.
@@ -22,7 +23,7 @@ import (
 // processes and floor runs, /proc, the clock, the environment and the
 // intervals it waits.
 type Runner struct {
-	Exec     Execer
+	Exec     harness.Execer
 	Launcher Launcher
 	// Proc is /proc.
 	Proc    fs.FS
@@ -67,13 +68,13 @@ type Runner struct {
 // clock and the process's environment.
 func NewRunner(stdout, stderr io.Writer, handler func(io.Writer) slog.Handler) *Runner {
 	return &Runner{
-		Exec:         execer{waitDelay: execWaitDelay},
+		Exec:         harness.NewExecer(harness.ExecWaitDelay),
 		Launcher:     watchdog{},
 		Proc:         os.DirFS("/proc"),
 		Now:          time.Now,
 		Getenv:       os.Getenv,
 		Resolve:      filepath.EvalSymlinks,
-		Sleep:        sleepContext,
+		Sleep:        harness.Sleep,
 		Pid:          os.Getpid(),
 		Stdout:       stdout,
 		Stderr:       stderr,
@@ -133,13 +134,9 @@ func (l *leftovers) namespaces() []string {
 	return append([]string{l.bench}, l.floor...)
 }
 
-// local runs a command on this host within timeout: its whole process group
-// is killed at the deadline, as a toolbox call's is, so no command can hold
-// the run.
-func (r *Runner) local(ctx context.Context, timeout time.Duration, c Cmd) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return r.Exec.Output(ctx, c)
+// local runs a command on this host within timeout, as harness.Output does.
+func (r *Runner) local(ctx context.Context, timeout time.Duration, c harness.Cmd) ([]byte, error) {
+	return harness.Output(ctx, r.Exec, timeout, c)
 }
 
 // Run builds the benchmark, records env.json and runs cfg's schedule into
@@ -149,7 +146,7 @@ func (r *Runner) local(ctx context.Context, timeout time.Duration, c Cmd) ([]byt
 // that failed, and returns the failure, whether or not the removal succeeds.
 func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 	conf, image := cfg.CephConf(), filepath.Join(cfg.clusterOut(), "image")
-	if !isFile(conf) || !isFile(image) {
+	if !harness.IsFile(conf) || !harness.IsFile(image) {
 		return fmt.Errorf("no %s or %s: run make cluster-up RELEASE=%s", conf, image, cfg.Release)
 	}
 	data, err := os.ReadFile(image) //nolint:gosec // the path is the release's rooket output
@@ -162,7 +159,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 	if err != nil {
 		return fmt.Errorf("creating the run directory: %w", err)
 	}
-	sweepLog, err := openLog(filepath.Join(st.dir, "sweep.log"))
+	sweepLog, err := harness.OpenLog(filepath.Join(st.dir, "sweep.log"))
 	if err != nil {
 		return err
 	}
@@ -179,7 +176,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 			st.log.ErrorContext(ctx, "the sweep failed", slog.Any("error", err))
 		}
 	}()
-	noiseLog, err := openLog(filepath.Join(st.dir, "noise.log"))
+	noiseLog, err := harness.OpenLog(filepath.Join(st.dir, "noise.log"))
 	if err != nil {
 		return err
 	}
@@ -192,29 +189,41 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 	defer wg.Wait()
 	defer stopSampling()
 
-	st.cl = cluster{exec: r.Exec, rooket: cfg.Rooket, release: cfg.Release, callTimeout: r.CallTimeout}
+	st.cl = cluster{harness.Cluster{Exec: r.Exec, Rooket: cfg.Rooket, Release: cfg.Release, CallTimeout: r.CallTimeout}}
 	defer func() {
 		if err != nil {
 			err = r.cleanUp(ctx, st, err)
 		}
 	}()
+	// The run's first record also names the settings that name no measured
+	// quantity, and where they came from, since a config file can fill any of
+	// them.
+	settings := []any{
+		slog.String("config", cfg.ConfigFile), slog.String("repo", cfg.Repo),
+		slog.String("rooket", cfg.Rooket), slog.String("go_tags", cfg.GoTags),
+	}
 	if cfg.Limiter {
-		st.log.InfoContext(ctx, "seam limiter re-run", slog.String("release", cfg.Release),
-			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir), slog.Int64("inflight_bytes", cfg.InflightBytes))
+		st.log.InfoContext(ctx, "seam limiter re-run", append([]any{
+			slog.String("release", cfg.Release),
+			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir), slog.Int64("inflight_bytes", cfg.InflightBytes),
+		},
+			settings...)...)
 	} else {
 		var floorLog *os.File
-		floorLog, err = openLog(filepath.Join(st.dir, "floor.log"))
+		floorLog, err = harness.OpenLog(filepath.Join(st.dir, "floor.log"))
 		if err != nil {
 			return err
 		}
 		defer func() { err = errors.Join(err, floorLog.Close()) }()
 		st.floorLog = floorLog
-		st.log.InfoContext(ctx, "seam sweep", slog.String("release", cfg.Release),
-			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir))
+		st.log.InfoContext(ctx, "seam sweep", append([]any{
+			slog.String("release", cfg.Release),
+			slog.String("cluster_image", st.clusterImage), slog.String("dir", st.dir),
+		}, settings...)...)
 	}
 	bin := cfg.Bin()
 	st.log.InfoContext(ctx, "building the benchmark", slog.String("bin", bin))
-	if _, err = r.local(ctx, r.BuildTimeout, Cmd{Name: "go", Args: []string{
+	if _, err = r.local(ctx, r.BuildTimeout, harness.Cmd{Name: "go", Args: []string{
 		"-C", cfg.Repo, "test", "-c",
 		"-tags=" + cfg.GoTags + ",integration", "-o", bin, "./test/bench/seam",
 	}}); err != nil {
@@ -234,7 +243,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 	if err != nil {
 		return err
 	}
-	err = writeJSON(filepath.Join(st.dir, "env.json"), env)
+	err = harness.WriteJSON(filepath.Join(st.dir, "env.json"), env)
 	if err != nil {
 		return err
 	}
@@ -265,7 +274,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 
 // render renders the sweep's REPORT.md with hack/bench/report.
 func (r *Runner) render(ctx context.Context, st *state) error {
-	out, err := r.local(ctx, r.BuildTimeout, Cmd{Name: "go", Args: []string{
+	out, err := r.local(ctx, r.BuildTimeout, harness.Cmd{Name: "go", Args: []string{
 		"-C", st.cfg.Repo, "run", "-tags=" + st.cfg.GoTags, "./hack/bench/report", "seam", "--dir", st.dir,
 	}})
 	if err != nil {
@@ -290,7 +299,7 @@ func (r *Runner) cleanUp(ctx context.Context, st *state, failure error) error {
 	st.log.InfoContext(ctx, "removing what the failed run left in the pool", slog.String("pool", pool),
 		slog.Any("namespaces", namespaces))
 	cl := st.cl
-	cl.callTimeout = r.PurgeWait
+	cl.CallTimeout = r.PurgeWait
 	var errs []error
 	for _, ns := range namespaces {
 		purge, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.PurgeWait)
@@ -344,7 +353,7 @@ func (r *Runner) bench(ctx context.Context, st *state, b benchStep) (err error) 
 			return err
 		}
 	}
-	out, err := openLog(filepath.Join(st.dir, "bench-"+b.mode+".log"))
+	out, err := harness.OpenLog(filepath.Join(st.dir, "bench-"+b.mode+".log"))
 	if err != nil {
 		return err
 	}
@@ -382,35 +391,9 @@ func (r *Runner) bench(ctx context.Context, st *state, b benchStep) (err error) 
 
 // load is the host's three load averages, or unknown.
 func (r *Runner) load() string {
-	load, err := loadavg(r.Proc)
+	load, err := harness.Loadavg(r.Proc)
 	if err != nil {
 		return "unknown"
 	}
 	return load
-}
-
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
-}
-
-func openLog(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // the path is in the run directory
-	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", path, err)
-	}
-	return f, nil
-}
-
-// writeJSON writes v to path as indented JSON.
-func writeJSON(path string, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding %s: %w", filepath.Base(path), err)
-	}
-	err = os.WriteFile(path, append(data, '\n'), 0o600) //nolint:gosec // the path is in the run directory
-	if err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	return nil
 }

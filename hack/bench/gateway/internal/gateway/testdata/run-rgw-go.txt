@@ -1,0 +1,182 @@
+REPO/hack/bench/elbencho-build.sh
+go -C REPO build -o REPO/hack/bench/out/httpload ./hack/bench/httpload
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 service dump -f json
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph get pods -l app=rook-ceph-rgw -o jsonpath={.items[*].status.podIP}
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_frontends
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph get pods -l app=rook-ceph-rgw -o jsonpath={.items[*].metadata.name}
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+go -C REPO build -tags=ceph_preview -o bin/rgw-go ./cmd/rgw-go
+GODEBUG=gctrace=1 GO_TAGS=ceph_preview ROOKET=rooket REPO/hack/rooket/rgw-go-up.sh tentacle
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_dynamic_resharding
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_gc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_lc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_run_sync_thread
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_d3n_l1_local_datacache_enabled
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_usage_log
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_tick_interval
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_dynamic_resharding
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_gc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_lc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_run_sync_thread
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_d3n_l1_local_datacache_enabled
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_usage_log
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_tick_interval
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin zonegroup get --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_dynamic_resharding
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_gc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_lc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_run_sync_thread
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_d3n_l1_local_datacache_enabled
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_usage_log
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_tick_interval
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_dynamic_resharding
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_gc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_lc_threads
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_run_sync_thread
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_d3n_l1_local_datacache_enabled
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_usage_log
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_tick_interval
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_flush_threshold
+REPO/hack/bench/out/elbencho --version
+ROOKET_NAME=rgw-go-tentacle rooket version
+go version
+git -C REPO describe --always --dirty
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin user info --uid bench --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin user create --uid bench --display-name bench --access-key BENCH0000000000000AK --secret-key bench-secret-0123456789abcdefghijklmnopqrstuv --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -d -t 1 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 1 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 8 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 32 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 64 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 128 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-put.csv --jsonfile DIR/small-put.json -w -t 256 -n 0 -N 3000 -s 4k -b 4k --timelimit 60 bench-small
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 1 bench-small
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -d -w -t 256 -n 0 -N 400 -s 4k -b 4k bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 1 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 8 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 32 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 64 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 128 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/small-get.csv --jsonfile DIR/small-get.json -r -t 256 -n 0 -N 400 -s 4k -b 4k --timelimit 60 --infloop bench-small
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 1 bench-small
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 1 -duration 60s -out DIR/noop-1.json
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 8 -duration 60s -out DIR/noop-8.json
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 32 -duration 60s -out DIR/noop-32.json
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 64 -duration 60s -out DIR/noop-64.json
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 128 -duration 60s -out DIR/noop-128.json
+sleep 2
+REPO/hack/bench/out/httpload -url http://127.0.0.1:7481/ -threads 256 -duration 60s -out DIR/noop-256.json
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 1 bench-small
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -d -t 1 bench-large bench-large-mpu
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/large-put.csv --jsonfile DIR/large-put.json -w -t 32 -n 0 -N 1 -s 64m -b 64m --timelimit 60 bench-large
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -F -t 32 -n 0 -N 1 --nodelerr bench-large
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/large-put.csv --jsonfile DIR/large-put.json -w -t 32 -n 0 -N 1 -s 64m -b 8m --timelimit 60 bench-large-mpu
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -F -t 32 -n 0 -N 1 --nodelerr bench-large-mpu
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 3 bench-small bench-large bench-large-mpu
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -d -w -t 32 -n 0 -N 1 -s 64m -b 64m bench-large
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/large-get.csv --jsonfile DIR/large-get.json -r -t 32 -n 0 -N 1 -s 64m -b 4m --timelimit 60 --infloop bench-large
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/large-get.csv --jsonfile DIR/large-get.json -r -t 32 -n 0 -N 1 -s 64m -b 64m --timelimit 60 --infloop bench-large
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -F -t 32 -n 0 -N 1 --nodelerr bench-large
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 3 bench-small bench-large bench-large-mpu
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive -d -w -t 64 -n 0 -N 1600 -s 0 bench-list
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/list.csv --jsonfile DIR/list.json --s3listobj 102400 -t 1 --timelimit 60 --infloop bench-list
+sleep 2
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://127.0.0.1:7481 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --lat --latpercent --latpercent9s 1 --lathisto --csvfile DIR/list.csv --jsonfile DIR/list.json --s3listobjpar -t 64 -n 0 -N 1600 --timelimit 60 --infloop bench-list
+sleep 2
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 4 bench-small bench-large bench-large-mpu bench-list
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+go -C REPO run -tags=ceph_preview ./hack/bench/report gateway --dir DIR
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-small --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-large-mpu --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket stats --bucket bench-list --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+AWS_SECRET_ACCESS_KEY=bench-secret-0123456789abcdefghijklmnopqrstuv REPO/hack/bench/out/elbencho --s3endpoints http://10.89.0.34:80 --s3key BENCH0000000000000AK --s3region ceph-objectstore --s3nocompress --s3reqtimeout 30000 --nolive --s3multidel 1000 -t 4 bench-small bench-large bench-large-mpu bench-list
+ROOKET=rooket REPO/hack/admin/remove-user.sh tentacle bench
+ROOKET=rooket REPO/hack/rooket/rgw-go-down.sh tentacle
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc process --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin gc list --include-all --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 tell osd.* compact
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 df -f json

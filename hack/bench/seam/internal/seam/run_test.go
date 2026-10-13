@@ -16,8 +16,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness/harnessfakes"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
-	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam/seamfakes"
 )
 
 var _ = Describe("Runner.Run of the limiter re-run", func() {
@@ -33,7 +34,7 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 
 		bin := filepath.Join(w.repo, "hack", "bench", "out", "squid", "seam.test")
 		_, build := w.exec.OutputArgsForCall(0)
-		Expect(build).To(Equal(seam.Cmd{Name: "go", Args: []string{
+		Expect(build).To(Equal(harness.Cmd{Name: "go", Args: []string{
 			"-C", w.repo, "test", "-c",
 			"-tags=ceph_preview,integration", "-o", bin, "./test/bench/seam",
 		}}))
@@ -88,21 +89,24 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
   "pool_max_avail": 9286684672,
   "load": "0.98 0.96 1.31",
   "limited": true,
-  "inflight_bytes": 104857600
+  "inflight_bytes": 104857600,
+  "repo": "%s",
+  "rooket": "rooket",
+  "go_tags": "ceph_preview"
 }
-`, runtime.NumCPU())))
+`, runtime.NumCPU(), w.repo)))
 	})
 
 	It("reaches the cluster through the toolbox, naming it with ROOKET_NAME", func(ctx SpecContext) {
 		Expect(w.run(ctx, w.limiterConfig())).To(Succeed())
-		var df []seam.Cmd
+		var df []harness.Cmd
 		for i := range w.exec.OutputCallCount() {
 			if _, c := w.exec.OutputArgsForCall(i); strings.Contains(c.String(), " df ") {
 				df = append(df, c)
 			}
 		}
 		Expect(df).To(HaveLen(4), "once for env.json and once before each process")
-		Expect(df[0]).To(Equal(seam.Cmd{
+		Expect(df[0]).To(Equal(harness.Cmd{
 			Name: "rooket",
 			Args: append(slices.Clone(toolboxArgs), "ceph", "--connect-timeout=20", "--rados-mon-op-timeout=20", "df", "-f", "json"),
 			Env:  []string{"ROOKET_NAME=rgw-go-squid"},
@@ -112,7 +116,7 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 	It("takes the rooket and Ceph versions it can from the environment, and falls back where a host has no rpm", func(ctx SpecContext) {
 		w.failWith["rpm -q "] = errors.New("exit status 1")
 		w.failWith["rpm -qf"] = errors.New("exit status 1")
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			switch c.String() {
 			case "dpkg -S /usr/lib64/librados.so.2.0.0":
 				return []byte("librados2:amd64: /usr/lib64/librados.so.2.0.0\n"), nil
@@ -188,7 +192,7 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 		list := strings.Join(append(append([]string{"rooket"}, toolboxArgs...),
 			"rados", "--rados-osd-op-timeout=120", "--rados-mon-op-timeout=120", "-p", "rgw-go-test", "-N", "bench-4243", "ls"), " ")
 		var listed int
-		var removals []seam.Cmd
+		var removals []harness.Cmd
 		for i := range w.exec.OutputCallCount() {
 			_, c := w.exec.OutputArgsForCall(i)
 			switch {
@@ -199,7 +203,7 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 			}
 		}
 		Expect(listed).To(Equal(1))
-		Expect(removals).To(Equal([]seam.Cmd{{
+		Expect(removals).To(Equal([]harness.Cmd{{
 			Name:  "rooket",
 			Args:  purgeArgs("bench-4243"),
 			Env:   []string{"ROOKET_NAME=rgw-go-squid"},
@@ -275,12 +279,12 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
 			set(r)
-			host := seam.NewExecer(time.Second)
-			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+			host := harness.NewExecer(time.Second)
+			r.Exec = &harnessfakes.FakeExecer{OutputStub: func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 				if c.Name == name {
 					// A shell that forks a child holding its output, as a
 					// wedged tool would.
-					return host.Output(ctx, seam.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
+					return host.Output(ctx, harness.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
 				}
 				return w.output(ctx, c)
 			}}
@@ -319,12 +323,12 @@ esac
 		// run runs against the fake rooket through the real execer, and every
 		// other command through the fakes.
 		run := func(ctx context.Context, adjust func(*seam.Runner)) (time.Duration, error) {
-			host := seam.NewExecer(time.Second)
+			host := harness.NewExecer(time.Second)
 			cfg := w.limiterConfig()
 			cfg.Rooket = rooket
 			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
-			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+			r.Exec = &harnessfakes.FakeExecer{OutputStub: func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 				if c.Name == rooket {
 					return host.Output(ctx, c)
 				}
@@ -380,8 +384,8 @@ esac
 				r.CallTimeout, r.PurgeWait = time.Minute, time.Second
 				// A wait delay well past the bound, so that the call ends in time
 				// only when the group's kill closes every end of its pipes.
-				host := seam.NewExecer(30 * time.Second)
-				r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+				host := harness.NewExecer(30 * time.Second)
+				r.Exec = &harnessfakes.FakeExecer{OutputStub: func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 					if c.Name == rooket {
 						return host.Output(ctx, c)
 					}
@@ -422,12 +426,12 @@ esac
 				// The wait's deadline runs on the clock, which must move.
 				r.Now = time.Now
 				inner := r.Exec
-				r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+				r.Exec = &harnessfakes.FakeExecer{OutputStub: func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 					if c.Name == rooket && strings.Contains(c.String(), " df ") {
 						calls++
 						if calls > 1 {
 							// From the first wait on, df hangs as a stuck mon would.
-							return seam.NewExecer(time.Second).Output(ctx, seam.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
+							return harness.NewExecer(time.Second).Output(ctx, harness.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
 						}
 					}
 					return inner.Output(ctx, c)
@@ -487,13 +491,13 @@ esac
 		})
 
 		It("removes every batch but the failed one, and reports the failure once the session ends", func(ctx SpecContext) {
-			host := seam.NewExecer(time.Second)
+			host := harness.NewExecer(time.Second)
 			cfg := w.limiterConfig()
 			cfg.Rooket = rooket
 			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
 			sessions := 0
-			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+			r.Exec = &harnessfakes.FakeExecer{OutputStub: func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 				if c.Name != rooket {
 					return w.output(ctx, c)
 				}
@@ -536,7 +540,7 @@ esac
 	})
 
 	It("refuses a librados it cannot place in a Ceph release", func(ctx SpecContext) {
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "rpm" && c.Args[0] == "-qf" {
 				return []byte("19.2.6~rc1"), nil
 			}
@@ -547,7 +551,7 @@ esac
 	})
 
 	It("refuses a binary that links no librados", func(ctx SpecContext) {
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "ldd" {
 				return []byte("\tlibc.so.6 => /lib64/libc.so.6 (0x00007f)\n"), nil
 			}

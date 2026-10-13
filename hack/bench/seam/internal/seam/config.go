@@ -125,6 +125,10 @@ type Settings struct {
 
 	// Engine is the container engine that runs the floor's rados bench.
 	Engine string
+
+	// ConfigFile is the config file the settings were read from, empty when
+	// none was.
+	ConfigFile string
 }
 
 // Config is a run's checked settings.
@@ -157,6 +161,10 @@ type Config struct {
 	// Ceph image of the release of the librados the benchmark links.
 	FloorImage string
 	Engine     string
+
+	// ConfigFile is the config file the settings were read from, absolute,
+	// or empty when none was.
+	ConfigFile string
 }
 
 // Check checks every setting and returns the run's Config, or the first
@@ -195,6 +203,11 @@ func (s Settings) Check() (Config, error) {
 		Plan:        s.Plan == "1",
 		OverObjects: defaultOverObjects,
 		MinAvailGiB: defaultMinAvailGiB,
+	}
+	if s.ConfigFile != "" {
+		if cfg.ConfigFile, err = filepath.Abs(s.ConfigFile); err != nil {
+			return Config{}, fmt.Errorf("resolving the config file: %w", err)
+		}
 	}
 	if quick {
 		cfg.OverObjects = quickOverObjects

@@ -66,8 +66,7 @@ hack/bench/seam/                            the sweep command: one process per m
 hack/bench/report/main.go                   renders seam and gateway results into markdown tables
 hack/bench/report/report_suite_test.go, main_test.go
 hack/bench/elbencho-build.sh                static elbencho from the pinned fork commit
-hack/bench/sample.sh                        CPU, threads and RSS sampler for a pid or the rgw pod
-hack/bench/gateway.sh                       the gateway comparison profiles
+hack/bench/gateway/                         the gateway comparison profiles and their CPU, threads and RSS sampler
 hack/parity/main.go                         record and diff: junit and go test -json into baseline JSON
 hack/parity/parity_suite_test.go, main_test.go
 hack/s3tests/run.sh                         pinned s3-tests, venv, users, conf, marker set, deselect lists, junit
@@ -1709,7 +1708,7 @@ First, the radosgw check: `make rgw-go-up` sets Task 11's parity options on rado
 ### Task 14: elbencho build and the gateway comparison
 
 **Files:**
-- Create: `hack/bench/elbencho-build.sh`, `hack/bench/sample.sh`, `hack/bench/gateway.sh`, `hack/bench/httpload/main.go`, `hack/bench/httpload/main_test.go` (the no-op pipeline-baseline load)
+- Create: `hack/bench/elbencho-build.sh`, `hack/bench/gateway/` (the comparison and its sampler), `hack/bench/httpload/main.go`, `hack/bench/httpload/main_test.go` (the no-op pipeline-baseline load)
 - Modify: `hack/bench/report/main.go` (subcommand `gateway`), `hack/bench/report/main_test.go`, `hack/bench/report/testdata/gateway/` (one elbencho JSON, one `httpload` JSON, one samples CSV, one gctrace log), `Makefile` (targets `elbencho`, `bench-gateway`), `hack/rooket/README.md`
 
 **Interfaces:**
@@ -1718,9 +1717,9 @@ First, the radosgw check: `make rgw-go-up` sets Task 11's parity options on rado
 
 `elbencho-build.sh`: fetches `https://github.com/jhoblitt/elbencho` at `ELBENCHO_COMMIT=0637a922cbb71d56625f553750dbfbf12e5f0167` into `hack/bench/out/elbencho-src`, runs the fork's Alpine static build (`build_helpers/docker/build_static_local.sh`'s recipe with the engine from `RGW_GO_ENGINE`, `S3_SUPPORT=1`, `BUILD_STATIC=1`; the aws-sdk-cpp download is over a gigabyte and the build takes minutes, so the source directory is kept between runs), and installs `hack/bench/out/elbencho`, verifying `elbencho --version` prints the fork's version and `elbencho --help | grep -q s3reqtimeout` proves the fork's flag is present.
 
-`sample.sh TARGET OUT`, where TARGET is `pid:<pid>` or `pod:<name>`, appends one CSV line per second: for a pid from `/proc/<pid>/stat` (fields 14 and 15, utime and stime in ticks, converted with `getconf CLK_TCK`) and `/proc/<pid>/status` (`Threads`, `VmRSS`); for a pod through `k -n rook-ceph exec POD -- cat /proc/1/stat /proc/1/status` (Rook's rgw container runs radosgw as PID 1; the script asserts `/proc/1/comm` is `radosgw` on its first sample and dies otherwise). It stops on `TERM`.
+The command's sampler, for a TARGET of `pid:<pid>` or `pod:<name>`, appends one CSV line per second to `samples-<profile>.csv`: for a pid from `/proc/<pid>/stat` (fields 14 and 15, utime and stime in ticks of USER_HZ) and `/proc/<pid>/status` (`Threads`, `VmRSS`); for a pod through `k -n rook-ceph exec POD -c rgw -- cat /proc/<pid>/stat /proc/<pid>/status`, the pid of the one process named `radosgw` in the pod, which it finds first (Rook gives the pod a shared process namespace when its log collector runs, so radosgw is not PID 1 there). It stops when its profile ends.
 
-`gateway.sh RELEASE GATEWAY [PROFILE...]`: ensures elbencho; creates the user `bench` with fixed keys through `admin`; resolves the endpoint and `api_name` as Task 4 does; writes `env.json` and `config.json`; for `rgw-go` restarts it through `rgw-go-up.sh` with `GODEBUG=gctrace=1` exported so the GC pauses land in `rgw-go.log`, which the run slices per profile by timestamps; starts the sampler; runs the profiles; stops the sampler; renders the report. Profiles, each writing `--csvfile` and `--jsonfile` into the run directory and driving elbencho with `--s3endpoints "$endpoint" --s3key "$ak" --s3secret "$sk" --s3region "$api_name" --s3nocompress --s3reqtimeout 30 --lat --latpercent --latpercent9s`:
+`go run ./hack/bench/gateway RELEASE GATEWAY [PROFILE...]`, a Go command: ensures elbencho; creates the user `bench` with fixed keys through `admin`; resolves the endpoint and `api_name` as Task 4 does; writes `env.json` and `config.json`; for `rgw-go` restarts it through `rgw-go-up.sh` with `GODEBUG=gctrace=1` exported so the GC pauses land in `rgw-go.log`, which the run slices per profile by timestamps; starts the sampler; runs the profiles; stops the sampler; renders the report. Profiles, each writing `--csvfile` and `--jsonfile` into the run directory and driving elbencho with `--s3endpoints "$endpoint" --s3key "$ak" --s3secret "$sk" --s3region "$api_name" --s3nocompress --s3reqtimeout 30 --lat --latpercent --latpercent9s`:
 
 | Profile | Command core | Answers |
 |---|---|---|
@@ -1742,12 +1741,12 @@ elbencho: ## Build the pinned jhoblitt/elbencho fork statically into hack/bench/
 
 .PHONY: bench-gateway
 bench-gateway: need-release ## Run the gateway comparison profiles against GATEWAY (radosgw|rgw-go) on the RELEASE cluster
-	ROOKET=$(ROOKET_BIN) hack/bench/gateway.sh $(RELEASE) $(GATEWAY) $(PROFILES)
+	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) RGW_GO_FLAGS="$(RGW_GO_FLAGS)" go run ./hack/bench/gateway $(RELEASE) $(GATEWAY) $(PROFILES)
 ```
 
 - [ ] **Step 1: Write the report's `gateway` subcommand test-first** against `testdata/gateway/` (an elbencho JSON captured from a two-second local run of the pinned build against the Squid radosgw, a ten-line samples CSV, a five-line gctrace log): the table has one row per profile and concurrency with throughput, p50/p99/p999, CPU ms per request, peak threads, RSS, errors and retries, and two runs given as `-dir` render side by side with the ratio column `rgw-go/radosgw`.
 
-- [ ] **Step 2: Build elbencho; write `sample.sh` and `gateway.sh`; `shellcheck`; run the small profiles against radosgw on Squid** (cluster-backed)
+- [ ] **Step 2: Build elbencho; write the `hack/bench/gateway` command, its specs passing under `-race` against fakes for every process and command it runs; run the small profiles against radosgw on Squid** (cluster-backed)
 
 ```sh
 make elbencho

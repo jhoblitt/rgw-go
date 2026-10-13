@@ -1,20 +1,16 @@
 package seam
 
 import (
-	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 // Environment is a run's env.json: the host, the cluster and the settings
@@ -55,27 +51,30 @@ type Environment struct {
 	Load                    string  `json:"load"`
 	Limited                 bool    `json:"limited,omitzero"`
 	InflightBytes           int64   `json:"inflight_bytes,omitzero"`
+	// The effective settings that name no measured quantity, and the config
+	// file the settings were read from, when one was.
+	Repo   string `json:"repo"`
+	Rooket string `json:"rooket"`
+	GoTags string `json:"go_tags"`
+	Config string `json:"config,omitzero"`
 }
 
-var (
-	cephTagPattern = regexp.MustCompile(`^v(\d+\.\d+\.\d+)$`)
-	versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
-)
+var versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 // environment collects the run's env.json, once the run knows the librados
 // the benchmark links, the client release the cells ran, and the sweep its
 // floor image.
 func (r *Runner) environment(ctx context.Context, st *state, lib librados) (Environment, error) {
 	cfg, cl := st.cfg, st.cl
-	cephVersion, err := pinnedVersion(cfg)
+	cephVersion, err := harness.PinnedVersion(cfg.Repo, cfg.Release)
 	if err != nil {
 		return Environment{}, err
 	}
-	memTotal, err := memTotalKiB(r.Proc)
+	memTotal, err := harness.MemTotalKiB(r.Proc)
 	if err != nil {
 		return Environment{}, err
 	}
-	load, err := loadavg(r.Proc)
+	load, err := harness.Loadavg(r.Proc)
 	if err != nil {
 		return Environment{}, err
 	}
@@ -89,7 +88,7 @@ func (r *Runner) environment(ctx context.Context, st *state, lib librados) (Envi
 	}
 	rooketVersion := r.Getenv("ROOKET_VERSION")
 	if rooketVersion == "" {
-		rooketVersion = r.firstLine(ctx, Cmd{Name: cfg.Rooket, Args: []string{"version"}})
+		rooketVersion = r.firstLine(ctx, harness.Cmd{Name: cfg.Rooket, Args: []string{"version"}})
 	}
 	env := Environment{
 		Release:                 cfg.Release,
@@ -101,17 +100,21 @@ func (r *Runner) environment(ctx context.Context, st *state, lib librados) (Envi
 		RooketVersion:           rooketVersion,
 		NProc:                   runtime.NumCPU(),
 		MemTotalKiB:             memTotal,
-		CPU:                     cpuModel(r.Proc),
+		CPU:                     harness.CPUModel(r.Proc),
 		Kernel:                  strings.TrimSpace(string(kernel)),
-		GoVersion:               r.firstLine(ctx, Cmd{Name: "go", Args: []string{"version"}}),
+		GoVersion:               r.firstLine(ctx, harness.Cmd{Name: "go", Args: []string{"version"}}),
 		HostLibrados:            r.hostLibrados(ctx),
-		GitDescribe:             r.firstLine(ctx, Cmd{Name: "git", Args: []string{"-C", cfg.Repo, "describe", "--always", "--dirty"}}),
+		GitDescribe:             r.firstLine(ctx, harness.Cmd{Name: "git", Args: []string{"-C", cfg.Repo, "describe", "--always", "--dirty"}}),
 		GOMAXPROCS:              cmp.Or(r.Getenv("GOMAXPROCS"), "unset"),
 		OverObjects:             cfg.OverObjects,
 		ObjecterInflightOps:     cl.objecter(ctx, "objecter_inflight_ops"),
 		ObjecterInflightOpBytes: cl.objecter(ctx, "objecter_inflight_op_bytes"),
 		PoolMaxAvail:            avail,
 		Load:                    load,
+		Repo:                    cfg.Repo,
+		Rooket:                  cfg.Rooket,
+		GoTags:                  cfg.GoTags,
+		Config:                  cfg.ConfigFile,
 	}
 	if cfg.Limiter {
 		env.Limited, env.InflightBytes = true, cfg.InflightBytes
@@ -143,41 +146,13 @@ type librados struct {
 }
 
 // firstLine is the first line of c's output, or empty when c fails.
-func (r *Runner) firstLine(ctx context.Context, c Cmd) string {
-	out, err := r.local(ctx, r.LocalTimeout, c)
-	if err != nil {
-		return ""
-	}
-	line, _, _ := strings.Cut(string(out), "\n")
-	return strings.TrimSpace(line)
-}
-
-// pinnedVersion is the Ceph version the release's chart values pin, the one
-// place a release's Ceph image is set.
-func pinnedVersion(cfg Config) (string, error) {
-	path := filepath.Join(cfg.Repo, "hack", "rooket", cfg.Release, "values", "rook-ceph-cluster.yaml")
-	data, err := os.ReadFile(path) //nolint:gosec // the path is the release's own chart values
-	if err != nil {
-		return "", fmt.Errorf("reading the chart values: %w", err)
-	}
-	var values struct {
-		CephImage struct {
-			Tag string `yaml:"tag"`
-		} `yaml:"cephImage"`
-	}
-	if err := yaml.Unmarshal(data, &values); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", path, err)
-	}
-	m := cephTagPattern.FindStringSubmatch(values.CephImage.Tag)
-	if m == nil {
-		return "", fmt.Errorf("%s: cephImage.tag %q is not a vX.Y.Z version", path, values.CephImage.Tag)
-	}
-	return m[1], nil
+func (r *Runner) firstLine(ctx context.Context, c harness.Cmd) string {
+	return harness.FirstLine(ctx, r.Exec, r.LocalTimeout, c)
 }
 
 // linkedLibrados returns the librados bin links.
 func (r *Runner) linkedLibrados(ctx context.Context, bin string) (librados, error) {
-	out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "ldd", Args: []string{bin}})
+	out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "ldd", Args: []string{bin}})
 	if err != nil {
 		return librados{}, fmt.Errorf("listing the libraries %s links: %w", bin, err)
 	}
@@ -207,15 +182,15 @@ func (r *Runner) linkedLibrados(ctx context.Context, bin string) (librados, erro
 // packageVersion is the upstream version of the rpm or deb package that owns
 // path: a deb version's epoch and Debian revision are dropped.
 func (r *Runner) packageVersion(ctx context.Context, path string) (string, error) {
-	if out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "rpm", Args: []string{"-qf", "--qf", "%{VERSION}", path}}); err == nil {
+	if out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "rpm", Args: []string{"-qf", "--qf", "%{VERSION}", path}}); err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
-	owner, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "dpkg", Args: []string{"-S", path}})
+	owner, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "dpkg", Args: []string{"-S", path}})
 	if err != nil {
 		return "", fmt.Errorf("neither rpm nor dpkg owns %s: %w", path, err)
 	}
 	pkg, _, _ := strings.Cut(strings.TrimSpace(string(owner)), ":")
-	out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "dpkg-query", Args: []string{"-W", "-f", "${Version}", pkg}})
+	out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "dpkg-query", Args: []string{"-W", "-f", "${Version}", pkg}})
 	if err != nil {
 		return "", fmt.Errorf("reading the version of %s: %w", pkg, err)
 	}
@@ -232,58 +207,12 @@ func (r *Runner) packageVersion(ctx context.Context, path string) (string, error
 // librados2 is not installed" to stdout, so a query's output counts only when
 // it succeeds.
 func (r *Runner) hostLibrados(ctx context.Context) string {
-	if out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "rpm", Args: []string{"-q", "--qf", "%{VERSION}-%{RELEASE}", "librados2"}}); err == nil {
+	if out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "rpm", Args: []string{"-q", "--qf", "%{VERSION}-%{RELEASE}", "librados2"}}); err == nil {
 		return strings.TrimSpace(string(out))
 	}
-	out, err := r.local(ctx, r.LocalTimeout, Cmd{Name: "dpkg-query", Args: []string{"-W", "-f", "${Version}", "librados2"}})
+	out, err := r.local(ctx, r.LocalTimeout, harness.Cmd{Name: "dpkg-query", Args: []string{"-W", "-f", "${Version}", "librados2"}})
 	if v := strings.TrimSpace(string(out)); err == nil && v != "" {
 		return v
 	}
 	return "unknown"
-}
-
-// memTotalKiB is /proc/meminfo's MemTotal.
-func memTotalKiB(proc fs.FS) (int64, error) {
-	data, err := fs.ReadFile(proc, "meminfo")
-	if err != nil {
-		return 0, fmt.Errorf("reading meminfo: %w", err)
-	}
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for sc.Scan() {
-		if f := strings.Fields(sc.Text()); len(f) >= 2 && f[0] == "MemTotal:" {
-			n, err := strconv.ParseInt(f[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parsing MemTotal %q: %w", f[1], err)
-			}
-			return n, nil
-		}
-	}
-	return 0, fmt.Errorf("meminfo has no MemTotal: %w", sc.Err())
-}
-
-// cpuModel is /proc/cpuinfo's first model name, or empty where it has none.
-func cpuModel(proc fs.FS) string {
-	data, err := fs.ReadFile(proc, "cpuinfo")
-	if err != nil {
-		return ""
-	}
-	for line := range strings.Lines(string(data)) {
-		if key, value, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(key) == "model name" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-// loadavg is /proc/loadavg's three load averages.
-func loadavg(proc fs.FS) (string, error) {
-	data, err := fs.ReadFile(proc, "loadavg")
-	if err != nil {
-		return "", fmt.Errorf("reading loadavg: %w", err)
-	}
-	f := strings.Fields(string(data))
-	if len(f) < 3 {
-		return "", fmt.Errorf("loadavg %q has no three load averages", data)
-	}
-	return strings.Join(f[:3], " "), nil
 }

@@ -17,8 +17,8 @@
 // failed ones included), errors, ops_per_s, lat_us (p50, p99 and p999 of the
 // listings, in µs, nearest rank), start (when the window opened) and command.
 //
-// It takes only the standard library's flags, single-dash as gateway.sh
-// passes them, and exits 2 on a bad command line.
+// It takes only the standard library's flags, single-dash as the gateway
+// command passes them, and exits 2 on a bad command line.
 package main
 
 import (

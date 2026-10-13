@@ -3,6 +3,7 @@ package seam_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
@@ -165,10 +167,58 @@ var _ = Describe("Run", func() {
 		Expect(stdout.String()).To(Equal(strings.Repeat("BenchmarkSeam/shape=write4m/conc=64\n", 3)), "the processes' output goes to stdout")
 	})
 
+	// Each alias, were it read, would fail the run: a sweep setting under
+	// BENCH_LIMITER=1 is refused, another ceph.conf is refused, and the world
+	// answers no other rooket.
+	DescribeTable("reads its documented variables from those names only",
+		func(ctx SpecContext, env map[string]string, tags string) {
+			GinkgoT().Setenv("BENCH_LIMITER", "1")
+			for name, value := range env {
+				GinkgoT().Setenv(name, value)
+			}
+			Expect(run(ctx, "squid")).To(Succeed())
+			_, build := w.exec.OutputArgsForCall(0)
+			Expect(build.Args).To(ContainElement("-tags=" + tags + ",integration"))
+		},
+		Entry("a BENCH_ alias beside each, which overrides none of them",
+			map[string]string{
+				"GO_TAGS": "ceph_preview,doc", "BENCH_GO_TAGS": "alias", "ROOKET": "rooket", "BENCH_ROOKET": "/alias/rooket",
+				"BENCH_CEPH_CONF": "/alias/ceph.conf", "BENCH_BENCH_TIME": "5s", "BENCH_CONC": "64",
+			},
+			"ceph_preview,doc"),
+		Entry("a BENCH_ alias alone, which stands in for none of them",
+			map[string]string{
+				"BENCH_GO_TAGS": "alias", "BENCH_ROOKET": "/alias/rooket", "BENCH_CEPH_CONF": "/alias/ceph.conf",
+				"BENCH_BENCH_TIME": "5s", "BENCH_CONC": "64",
+			},
+			"ceph_preview"),
+	)
+
+	It("records the config file it read and the repository, rooket and build tags in effect, in env.json and its first log record", func(ctx SpecContext) {
+		config := filepath.Join(GinkgoT().TempDir(), "seam.yaml")
+		Expect(os.WriteFile(config, []byte("go-tags: ceph_preview,fromfile\nover-objects: \"300\"\n"), 0o600)).To(Succeed())
+		GinkgoT().Setenv("BENCH_LIMITER", "1")
+		GinkgoT().Setenv("BENCH_CONFIG", config)
+		Expect(run(ctx, "squid")).To(Succeed())
+		env, err := os.ReadFile(filepath.Join(w.limiterDir(), "env.json"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(env)).To(SatisfyAll(
+			ContainSubstring(`"over_objects": 300,`),
+			HaveSuffix(fmt.Sprintf("  \"inflight_bytes\": 104857600,\n  \"repo\": %q,\n  \"rooket\": \"rooket\",\n"+
+				"  \"go_tags\": \"ceph_preview,fromfile\",\n  \"config\": %q\n}\n", w.repo, config))))
+		first := fmt.Sprintf(`"msg":"seam limiter re-run","release":"squid","cluster_image":"quay.io/ceph/ceph:v20.2.4","dir":%q,`+
+			`"inflight_bytes":104857600,"config":%q,"repo":%q,"rooket":"rooket","go_tags":"ceph_preview,fromfile"}`,
+			w.limiterDir(), config, w.repo)
+		Expect(stderr.String()).To(ContainSubstring(first))
+		sweep, err := os.ReadFile(filepath.Join(w.limiterDir(), "sweep.log"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(sweep)).To(ContainSubstring(first))
+	})
+
 	It("runs the toolbox through ROOKET", func(ctx SpecContext) {
 		GinkgoT().Setenv("BENCH_LIMITER", "1")
 		GinkgoT().Setenv("ROOKET", "/opt/bin/rooket")
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "/opt/bin/rooket" {
 				c.Name = "rooket"
 			}
@@ -188,7 +238,7 @@ var _ = Describe("Run", func() {
 		GinkgoT().Setenv("BENCH_QUICK", "1")
 		GinkgoT().Setenv("ROOKET_ENGINE", "docker")
 		GinkgoT().Setenv("BENCH_FLOOR_IMAGE", "registry.local/ceph:v19.2.6")
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "docker" {
 				c.Name = "podman"
 			}

@@ -113,13 +113,17 @@
 //	                        and the floor must reach the same cluster
 //	ROOKET                  the rooket binary (rooket)
 //
-// The other flags read BENCH_ and the flag's name upper-cased with "-" as "_"
-// (--repo as BENCH_REPO), and every flag the config file --config names. The
-// command line wins over the environment, and the environment over the file.
-// --plan and --quick alone mean 1. The root's --log-level (debug, info, warn
-// or error; info by default) and --log-format (json or text; json by
-// default) set the logger, which writes to stderr and, during a run, to
-// sweep.log.
+// Each flag above reads the variable beside it and no other name: --bench-time
+// reads BENCH_TIME, --conc CONC and --engine ROOKET_ENGINE. The flags not
+// listed, --repo, --config, --log-level and --log-format, read BENCH_ and the
+// flag's name upper-cased with "-" as "_" (--repo as BENCH_REPO). Any flag can
+// also come from the config file --config (BENCH_CONFIG) names. The command
+// line wins over the environment, and the environment over the file. --plan
+// and --quick alone mean 1. The run's first log record and env.json name the
+// config file read, if any, and the repository, rooket and build tags in
+// effect. The root's --log-level (debug, info, warn or error; info by default)
+// and --log-format (json or text; json by default) set the logger, which
+// writes to stderr and, during a run, to sweep.log.
 //
 // Managed by go-conventions (references/layout.md owns the main shape).
 package main
@@ -129,6 +133,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
@@ -137,7 +142,7 @@ func main() {
 }
 
 func run() int {
-	ctx, stop := seam.NotifyContext(context.Background())
+	ctx, stop := harness.NotifyContext(context.Background())
 	defer stop()
 	if err := seam.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "seam:", err)
