@@ -129,6 +129,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
@@ -137,7 +138,7 @@ func main() {
 }
 
 func run() int {
-	ctx, stop := seam.NotifyContext(context.Background())
+	ctx, stop := harness.NotifyContext(context.Background())
 	defer stop()
 	if err := seam.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "seam:", err)

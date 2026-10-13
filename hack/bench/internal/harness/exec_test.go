@@ -1,4 +1,4 @@
-package seam_test
+package harness_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 // processState is a process's state letter from /proc, or "gone".
@@ -54,12 +54,12 @@ var _ = Describe("Execer", func() {
 		pidFile = filepath.Join(GinkgoT().TempDir(), "child")
 	})
 
-	sh := func(script string) seam.Cmd {
-		return seam.Cmd{Name: "/bin/sh", Args: []string{"-c", script}, Env: []string{"CHILD=" + pidFile}}
+	sh := func(script string) harness.Cmd {
+		return harness.Cmd{Name: "/bin/sh", Args: []string{"-c", script}, Env: []string{"CHILD=" + pidFile}}
 	}
 
 	It("returns a command's output", func(ctx SpecContext) {
-		out, err := seam.NewExecer(10*time.Second).Output(ctx, sh(`echo "$CHILD"`))
+		out, err := harness.NewExecer(10*time.Second).Output(ctx, sh(`echo "$CHILD"`))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(out)).To(Equal(pidFile + "\n"))
 	})
@@ -67,13 +67,13 @@ var _ = Describe("Execer", func() {
 	It("passes the command its stdin", func(ctx SpecContext) {
 		c := sh("cat")
 		c.Stdin = []byte("seam-w0-0\nseam-w1-1\n")
-		out, err := seam.NewExecer(10*time.Second).Output(ctx, c)
+		out, err := harness.NewExecer(10*time.Second).Output(ctx, c)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(out)).To(Equal("seam-w0-0\nseam-w1-1\n"))
 	})
 
 	It("names the command and its stderr when it fails", func(ctx SpecContext) {
-		_, err := seam.NewExecer(10*time.Second).Output(ctx, sh("echo no such pool >&2; exit 2"))
+		_, err := harness.NewExecer(10*time.Second).Output(ctx, sh("echo no such pool >&2; exit 2"))
 		Expect(err).To(MatchError(`/bin/sh -c echo no such pool >&2; exit 2: exit status 2: no such pool`))
 	})
 
@@ -81,7 +81,7 @@ var _ = Describe("Execer", func() {
 		deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		defer cancel()
 		start := time.Now()
-		_, err := seam.NewExecer(10*time.Second).Output(deadline, sh(`sleep 30 & echo $! > "$CHILD"; wait; true`))
+		_, err := harness.NewExecer(10*time.Second).Output(deadline, sh(`sleep 30 & echo $! > "$CHILD"; wait; true`))
 		elapsed := time.Since(start)
 		Expect(err).To(MatchError(ContainSubstring("signal: killed")))
 		Expect(elapsed).To(BeNumerically("<", 3*time.Second), "returned after %s, not after the child's 30 s or the 10 s wait delay", elapsed)
@@ -93,7 +93,7 @@ var _ = Describe("Execer", func() {
 
 	It("returns once the command exits, though a process it left behind keeps its output open", func(ctx SpecContext) {
 		start := time.Now()
-		_, err := seam.NewExecer(300*time.Millisecond).Output(ctx, sh(`sleep 30 & echo $! > "$CHILD"`))
+		_, err := harness.NewExecer(300*time.Millisecond).Output(ctx, sh(`sleep 30 & echo $! > "$CHILD"`))
 		elapsed := time.Since(start)
 		pid := childPid(pidFile)
 		DeferCleanup(syscall.Kill, pid, syscall.SIGKILL)

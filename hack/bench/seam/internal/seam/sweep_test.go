@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
@@ -270,13 +271,13 @@ var _ = Describe("Runner.Run of the sweep", func() {
 		gomod, err := exec.CommandContext(ctx, "go", "env", "GOMOD").Output()
 		Expect(err).NotTo(HaveOccurred())
 		root := filepath.Dir(strings.TrimSpace(string(gomod)))
-		host := seam.NewExecer(time.Second)
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		host := harness.NewExecer(time.Second)
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "go" && slices.Contains(c.Args, "run") {
 				// The report in this repository, not the world's.
 				args := slices.Clone(c.Args)
 				args[slices.Index(args, "-C")+1] = root
-				return host.Output(ctx, seam.Cmd{Name: "go", Args: args})
+				return host.Output(ctx, harness.Cmd{Name: "go", Args: args})
 			}
 			return w.output(ctx, c)
 		}
@@ -315,8 +316,8 @@ var _ = Describe("Runner.Run of the sweep", func() {
 			return nss
 		}
 		// removals are the toolbox sessions that removed objects by name.
-		removals := func() []seam.Cmd {
-			var cmds []seam.Cmd
+		removals := func() []harness.Cmd {
+			var cmds []harness.Cmd
 			for i := range w.exec.OutputCallCount() {
 				if _, c := w.exec.OutputArgsForCall(i); slices.Contains(c.Args, "xargs") {
 					cmds = append(cmds, c)
@@ -334,7 +335,7 @@ var _ = Describe("Runner.Run of the sweep", func() {
 			Expect(w.events[len(w.events)-1]).To(Equal("failed"), "nothing runs after the failure")
 			Expect(touched()).To(Equal([]string{"bench-5150", "bench-floor-4096"}), "no 4 MiB floor had run")
 			Expect(w.commands()).To(ContainElement(ContainSubstring("-N bench-floor-4096 cleanup --prefix benchmark_data -t 64")))
-			Expect(removals()).To(Equal([]seam.Cmd{{
+			Expect(removals()).To(Equal([]harness.Cmd{{
 				Name: "rooket", Args: purgeArgs("bench-5150"), Env: []string{"ROOKET_NAME=rgw-go-squid"},
 				Stdin: []byte("seam-w0-0\nseam-w1-1\n"),
 			}}), "the floor's namespace listed nothing left to remove")
@@ -423,7 +424,7 @@ var _ = Describe("Runner.Run of the sweep", func() {
 
 		It("exits 130 when SIGINT interrupts a floor run, once it has removed what it left", func(ctx SpecContext) {
 			sigs := make(chan os.Signal, 1)
-			runCtx, stop := seam.WatchSignals(ctx, sigs)
+			runCtx, stop := harness.WatchSignals(ctx, sigs)
 			defer stop()
 			w.launch.FloorStub = func(ctx context.Context, c seam.Container) error {
 				if slices.Contains(c.Args, "floor-write4k-16-single-v19.2.6") && !slices.Contains(c.Args, "cleanup") {
@@ -444,12 +445,12 @@ var _ = Describe("Runner.Run of the sweep", func() {
 
 		It("exits 143 when SIGTERM interrupts a wait for the pool's space, once it has removed what it left", func(ctx SpecContext) {
 			sigs := make(chan os.Signal, 1)
-			runCtx, stop := seam.WatchSignals(ctx, sigs)
+			runCtx, stop := harness.WatchSignals(ctx, sigs)
 			defer stop()
 			// env.json's df, then a pool too full for the first write4m floor.
 			w.avail = []int64{9286684672, 1 << 30}
 			dfs := 0
-			w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+			w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 				if strings.Contains(c.String(), " df ") {
 					if dfs++; dfs == 3 {
 						sigs <- syscall.SIGTERM
@@ -458,7 +459,7 @@ var _ = Describe("Runner.Run of the sweep", func() {
 				return w.output(ctx, c)
 			}
 			err := w.run(runCtx, w.sweepConfig("1"))
-			Expect(err).To(MatchError(seam.Interrupted{Signal: syscall.SIGTERM}))
+			Expect(err).To(MatchError(harness.Interrupted{Signal: syscall.SIGTERM}))
 			Expect(seam.ExitStatus(runCtx, err)).To(Equal(143), "128 and SIGTERM, as the shell reports it")
 			Expect(w.events[len(w.events)-1]).To(Equal("floor floor-read4m-16-single-v20.2.4 cleanup"), "the write4m floor never started")
 			Expect(touched()).To(Equal([]string{"bench-floor-4096", "bench-floor-4194304"}))

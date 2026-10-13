@@ -1,10 +1,10 @@
-package seam_test
+package harness_test
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 // cephDF is ceph df -f json's shape, trimmed to what the run reads and a
@@ -19,21 +19,21 @@ const cephDF = `{
 
 var _ = Describe("DecodePoolAvail", func() {
 	It("reads the pool's max_avail", func() {
-		Expect(seam.DecodePoolAvail([]byte(cephDF), "rgw-go-test")).To(BeEquivalentTo(9286684672))
+		Expect(harness.DecodePoolAvail([]byte(cephDF), "rgw-go-test")).To(BeEquivalentTo(9286684672))
 	})
 
 	It("refuses output that lists no such pool", func() {
-		_, err := seam.DecodePoolAvail([]byte(cephDF), "rgw-go-missing")
+		_, err := harness.DecodePoolAvail([]byte(cephDF), "rgw-go-missing")
 		Expect(err).To(MatchError("ceph df lists no pool rgw-go-missing"))
 	})
 
 	It("refuses a pool with no max_avail rather than reading it as zero", func() {
-		_, err := seam.DecodePoolAvail([]byte(`{"pools":[{"name":"rgw-go-test","stats":{}}]}`), "rgw-go-test")
+		_, err := harness.DecodePoolAvail([]byte(`{"pools":[{"name":"rgw-go-test","stats":{}}]}`), "rgw-go-test")
 		Expect(err).To(MatchError("ceph df gives pool rgw-go-test no max_avail"))
 	})
 
 	It("refuses output that is not JSON", func() {
-		_, err := seam.DecodePoolAvail([]byte("Error EACCES: access denied"), "rgw-go-test")
+		_, err := harness.DecodePoolAvail([]byte("Error EACCES: access denied"), "rgw-go-test")
 		Expect(err).To(MatchError(ContainSubstring("decoding ceph df")))
 	})
 })

@@ -19,6 +19,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness/harnessfakes"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam/seamfakes"
 )
@@ -52,7 +54,7 @@ const (
 // processes and floor runs, and /proc.
 type world struct {
 	repo   string
-	exec   *seamfakes.FakeExecer
+	exec   *harnessfakes.FakeExecer
 	launch *seamfakes.FakeLauncher
 	proc   fstest.MapFS
 	stdout *bytes.Buffer
@@ -74,7 +76,7 @@ type world struct {
 func newWorld() *world {
 	w := &world{
 		repo:     GinkgoT().TempDir(),
-		exec:     &seamfakes.FakeExecer{},
+		exec:     &harnessfakes.FakeExecer{},
 		launch:   &seamfakes.FakeLauncher{},
 		stdout:   &bytes.Buffer{},
 		avail:    []int64{9286684672},
@@ -108,7 +110,7 @@ func (w *world) writeCluster(image string) {
 }
 
 // output answers a command as the host and the cluster would.
-func (w *world) output(_ context.Context, c seam.Cmd) ([]byte, error) {
+func (w *world) output(_ context.Context, c harness.Cmd) ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	line := c.String()

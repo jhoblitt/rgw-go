@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 )
 
 const (
@@ -18,9 +20,6 @@ const (
 	// window to be named in noise.log, and busyMax how many are named.
 	busyPercent = 5.0
 	busyMax     = 12
-	// userHZ is the clock-tick rate of /proc/<pid>/stat's utime and stime,
-	// USER_HZ, which Linux fixes at 100 for user space.
-	userHZ = 100
 )
 
 // noise samples the host's load and its busiest processes into noise.log,
@@ -48,7 +47,7 @@ func (n noise) run(ctx context.Context, w io.Writer, every time.Duration) {
 // busyPercent of a CPU or more over the window, busiest first. The time and
 // load come first, so that a run ending inside the window still shows them.
 func (n noise) sample(ctx context.Context, w io.Writer) error {
-	load, err := loadavg(n.proc)
+	load, err := harness.Loadavg(n.proc)
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ func (n noise) sample(ctx context.Context, w io.Writer) error {
 		if !ok || b.comm != a.comm || a.ticks < b.ticks {
 			continue
 		}
-		percent := float64(a.ticks-b.ticks) * 100 / userHZ / n.window.Seconds()
+		percent := float64(a.ticks-b.ticks) * 100 / harness.UserHZ / n.window.Seconds()
 		if percent >= busyPercent {
 			procs = append(procs, busy{percent, a.comm})
 		}
@@ -120,37 +119,11 @@ func cpuTicks(proc fs.FS) map[int]procTicks {
 	return ticks
 }
 
-// parseStat reads the name and utime plus stime of /proc/<pid>/stat. The
-// name sits in parentheses and may hold spaces and parentheses itself, so
-// the fields are counted from the last closing parenthesis: state is the
-// first after it, utime the twelfth and stime the thirteenth.
+// parseStat reads the name and utime plus stime of /proc/<pid>/stat.
 func parseStat(stat string) (procTicks, bool) {
-	open := strings.IndexByte(stat, '(')
-	end := strings.LastIndexByte(stat, ')')
-	if open < 0 || end < open {
+	s, ok := harness.ParseStat(stat)
+	if !ok {
 		return procTicks{}, false
 	}
-	f := strings.Fields(stat[end+1:])
-	if len(f) < 13 {
-		return procTicks{}, false
-	}
-	utime, uerr := strconv.ParseUint(f[11], 10, 64)
-	stime, serr := strconv.ParseUint(f[12], 10, 64)
-	if uerr != nil || serr != nil {
-		return procTicks{}, false
-	}
-	return procTicks{comm: stat[open+1 : end], ticks: utime + stime}, true
-}
-
-// sleepContext waits d, or until ctx ends, returning why it ended: a signal's
-// Interrupted when one interrupted the run.
-func sleepContext(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-t.C:
-		return nil
-	}
+	return procTicks{comm: s.Comm, ticks: s.UTime + s.STime}, true
 }

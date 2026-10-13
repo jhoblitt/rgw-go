@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
@@ -168,7 +169,7 @@ var _ = Describe("Run", func() {
 	It("runs the toolbox through ROOKET", func(ctx SpecContext) {
 		GinkgoT().Setenv("BENCH_LIMITER", "1")
 		GinkgoT().Setenv("ROOKET", "/opt/bin/rooket")
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "/opt/bin/rooket" {
 				c.Name = "rooket"
 			}
@@ -188,7 +189,7 @@ var _ = Describe("Run", func() {
 		GinkgoT().Setenv("BENCH_QUICK", "1")
 		GinkgoT().Setenv("ROOKET_ENGINE", "docker")
 		GinkgoT().Setenv("BENCH_FLOOR_IMAGE", "registry.local/ceph:v19.2.6")
-		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c harness.Cmd) ([]byte, error) {
 			if c.Name == "docker" {
 				c.Name = "podman"
 			}
