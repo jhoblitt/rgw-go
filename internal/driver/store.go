@@ -22,6 +22,10 @@ type Options struct {
 	// Release overrides the encoding release detected from the cluster's
 	// required OSD release; nil detects.
 	Release *denc.Release
+	// MaxConcurrentRequests is the cap on the requests the gateway admits at
+	// once, rgw_max_concurrent_requests as the gateway reads it; 0 or less
+	// is no cap. The body budget keeps a piece for each request it admits.
+	MaxConcurrentRequests int64
 }
 
 // Store is the RADOS driver: one type implementing every store interface in
@@ -127,6 +131,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
 	}
+	wopts.maxRequests = o.MaxConcurrentRequests
 	mp, err := readMPOptions(conf)
 	if err != nil {
 		return nil, errors.Join(err, pools.closeAll())
@@ -166,6 +171,10 @@ func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, nam
 	zc, err := resolveZone(ctx, roots, names, rel)
 	return zc, roots, err
 }
+
+// MaxConcurrentRequests is the cap on the requests the gateway admits that
+// Open was given, which the body budget keeps a piece for each of.
+func (s *Store) MaxConcurrentRequests() int64 { return s.w.opts.maxRequests }
 
 // Close cancels the stats caches' refreshes under way and waits for them,
 // then closes the pools the Store opened. The workers stop with Run's

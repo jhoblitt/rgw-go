@@ -620,11 +620,12 @@ var _ = Describe("body byte budget", func() {
 	}
 	held := func() int64 { return s.BodyBudgetForTest().Held }
 	// openBounded opens a Store over c as a cluster whose in-flight limiter
-	// bounds its payload at limit bytes, with the options kv.
-	openBounded := func(ctx context.Context, limit int64, kv map[string]string) *driver.Store {
+	// bounds its payload at limit bytes, with the options kv, for a gateway
+	// that admits requests requests at once.
+	openBounded := func(ctx context.Context, limit, requests int64, kv map[string]string) *driver.Store {
 		GinkgoHelper()
 		rel := denc.Squid
-		st, err := driver.Open(ctx, boundedCluster{Cluster: c, bytes: limit}, conf(kv), driver.Options{Release: &rel})
+		st, err := driver.Open(ctx, boundedCluster{Cluster: c, bytes: limit}, conf(kv), driver.Options{Release: &rel, MaxConcurrentRequests: requests})
 		Expect(err).NotTo(HaveOccurred())
 		return st
 	}
@@ -633,29 +634,38 @@ var _ = Describe("body byte budget", func() {
 		Expect(s.BodyBudgetForTest().Size).To(BeEquivalentTo(int64(math.MaxInt64)), "fakerados has none")
 	})
 
-	DescribeTable("is the in-flight limiter's byte bound, raised to a piece for every request rgw_max_concurrent_requests admits",
-		func(ctx SpecContext, limit int64, kv map[string]string, want int64) {
-			Expect(openBounded(ctx, limit, kv).BodyBudgetForTest().Size).To(Equal(want))
+	DescribeTable("is the in-flight limiter's byte bound, raised to a piece for every request the gateway admits",
+		func(ctx SpecContext, limit, requests int64, kv map[string]string, want int64) {
+			st := openBounded(ctx, limit, requests, kv)
+			Expect(st.MaxConcurrentRequests()).To(Equal(requests), "the cap the store was given")
+			Expect(st.BodyBudgetForTest().Size).To(Equal(want))
 		},
 		Entry("radosgw's defaults: 1024 four-MiB pieces, above the limiter's fifteen sixteenths of 100 MiB",
-			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "1024"}, int64(1024*(4<<20))),
+			int64(98304000), int64(1024), nil, int64(1024*(4<<20))),
 		Entry("the limiter's bound, above the pieces of a small cap",
-			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "2"}, int64(98304000)),
+			int64(98304000), int64(2), nil, int64(98304000)),
 		Entry("a part's first stripe, larger than a chunk, as the piece",
-			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "1024", "rgw_obj_stripe_size": "8388608"}, int64(1024*(8<<20))),
+			int64(98304000), int64(1024), map[string]string{"rgw_obj_stripe_size": "8388608"}, int64(1024*(8<<20))),
 		Entry("a first stripe past the window, as the window and the byte that shows it",
-			int64(1), map[string]string{"rgw_max_concurrent_requests": "2", "rgw_obj_stripe_size": "33554432"}, int64(2*((16<<20)+1))),
+			int64(1), int64(2), map[string]string{"rgw_obj_stripe_size": "33554432"}, int64(2*((16<<20)+1))),
 		Entry("no request cap, under which radosgw holds as many bodies as it serves",
-			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "0"}, int64(math.MaxInt64)),
+			int64(98304000), int64(0), nil, int64(math.MaxInt64)),
+		Entry("a negative cap, which caps nothing",
+			int64(98304000), int64(-1), nil, int64(math.MaxInt64)),
 		Entry("a cap whose pieces pass 2^63",
-			int64(98304000), map[string]string{"rgw_max_concurrent_requests": "9223372036854775807"}, int64(math.MaxInt64)),
+			int64(98304000), int64(math.MaxInt64), nil, int64(math.MaxInt64)),
 		Entry("a limiter turned off, as librados's throttle at 0",
-			int64(math.MaxInt64), map[string]string{"rgw_max_concurrent_requests": "1024"}, int64(math.MaxInt64)),
+			int64(math.MaxInt64), int64(1024), nil, int64(math.MaxInt64)),
 	)
+
+	It("keeps a piece for each request the gateway admits, whatever rgw_max_concurrent_requests the driver could read", func(ctx SpecContext) {
+		st := openBounded(ctx, 98304000, 1024, map[string]string{"rgw_max_concurrent_requests": "2"})
+		Expect(st.BodyBudgetForTest().Size).To(Equal(int64(1024 * (4 << 20))))
+	})
 
 	It("lets a PUT through while slow clients each hold a piece's share, the budget keeping a piece for every request", func(ctx SpecContext) {
 		// A limiter bound that two pieces fill, and a cap of three requests.
-		s = openBounded(ctx, 8<<20, map[string]string{"rgw_max_concurrent_requests": "3"})
+		s = openBounded(ctx, 8<<20, 3, nil)
 		slowCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		slowDone := make(chan error, 2)

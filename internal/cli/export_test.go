@@ -28,6 +28,20 @@ func NewRouter(s3h http.Handler, env *op.Env, cfg s3.Config, paths []string) htt
 	return newRouter(s3h, nil, "", newUnservedHandler(env, cfg), cfg, paths)
 }
 
+// testGatewayStore is a gatewayStore over a zone fake and a request cap.
+type testGatewayStore struct {
+	op.ZoneInfo
+	maxConcurrent int64
+}
+
+func (s testGatewayStore) MaxConcurrentRequests() int64 { return s.maxConcurrent }
+
+// GatewayStoreForTest is what S3Config takes from a store: zi's zone and
+// the request cap maxConcurrent.
+func GatewayStoreForTest(zi op.ZoneInfo, maxConcurrent int64) gatewayStore {
+	return testGatewayStore{ZoneInfo: zi, maxConcurrent: maxConcurrent}
+}
+
 // NewGatewayForTest is the gateway NewGateway builds, over env, a and cfg
 // rather than a store's.
 func NewGatewayForTest(env *op.Env, a s3.Authenticator, cfg s3.Config) *Gateway {

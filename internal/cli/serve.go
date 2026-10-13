@@ -237,7 +237,11 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 		slog.WarnContext(ctx, "ignoring frontends", slog.Any("frontends", others))
 	}
 
-	store, err := driver.Open(ctx, cluster, conf, driver.Options{})
+	dopts, err := DriverOptions(conf)
+	if err != nil {
+		return err
+	}
+	store, err := driver.Open(ctx, cluster, conf, dopts)
 	if err != nil {
 		return fmt.Errorf("opening the driver: %w", err)
 	}
@@ -312,9 +316,29 @@ type Gateway struct {
 	cfg      s3.Config
 }
 
+// DriverOptions are the options serve opens the store with: the cap on the
+// requests the gateway admits, rgw_max_concurrent_requests, which the
+// store's body budget keeps a piece for each of. NewGateway takes its cap
+// back from the store, so the two are one value.
+func DriverOptions(conf *cephconf.Options) (driver.Options, error) {
+	maxConcurrent, err := conf.Int64("rgw_max_concurrent_requests")
+	if err != nil {
+		return driver.Options{}, fmt.Errorf("reading rgw_max_concurrent_requests: %w", err)
+	}
+	return driver.Options{MaxConcurrentRequests: maxConcurrent}, nil
+}
+
+// gatewayStore is what the S3 handler's options come from besides the
+// configuration: the zone, and the request cap the store was opened with.
+type gatewayStore interface {
+	op.ZoneInfo
+	MaxConcurrentRequests() int64
+}
+
 // NewGateway reads the authorizer's, the S3 handler's and the
 // authenticator's options through conf and builds serve's gateway over
-// store, observed by m, for the RADOS client instanceID names.
+// store, observed by m, for the RADOS client instanceID names. Its request
+// cap is the one store was opened with (DriverOptions).
 func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, m op.Metrics) (*Gateway, error) {
 	env := store.Env()
 	authzCfg, err := authz.ConfigFrom(conf, store.Release())
@@ -398,18 +422,15 @@ func watchRADOS(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster) 
 
 // s3Config reads the options the S3 handler takes: rgw_dns_name joined with
 // the zonegroup's hostnames as rgw_rest_init joins them (rgw_rest.cc:215-223
-// at v19.2.6 and v20.2.4), and the Server header end_header sends,
+// at v19.2.6 and v20.2.4), the Server header end_header sends,
 // rgw_service_provider_name when it is set (:637-642 at v19.2.6, :642-647
-// at v20.2.4).
-func s3Config(conf *cephconf.Options, zi op.ZoneInfo, instanceID uint64) (s3.Config, error) {
+// at v20.2.4), and the request cap zi was opened with.
+func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Config, error) {
 	dns, err := conf.List("rgw_dns_name")
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_dns_name: %w", err)
 	}
-	maxConcurrent, err := conf.Int64("rgw_max_concurrent_requests")
-	if err != nil {
-		return s3.Config{}, fmt.Errorf("reading rgw_max_concurrent_requests: %w", err)
-	}
+	maxConcurrent := zi.MaxConcurrentRequests()
 	server, err := conf.String("rgw_service_provider_name")
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_service_provider_name: %w", err)

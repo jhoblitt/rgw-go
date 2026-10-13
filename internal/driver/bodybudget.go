@@ -56,11 +56,11 @@ func newBodyBudget(size int64) *bodyBudget {
 }
 
 // bodyBudgetSize is the byte bound of cluster's in-flight limiter, which
-// every piece is written through, raised to one piece for each request
-// rgw_max_concurrent_requests admits: a request reads one piece at a time,
-// a chunk of its tail or a part's first stripe, which takes the window and
-// one byte when it runs past the window. A cluster without a limiter, or no
-// request cap, leaves the budget unbounded.
+// every piece is written through, raised to one piece for each request the
+// gateway admits (Options.MaxConcurrentRequests): a request reads one piece
+// at a time, a chunk of its tail or a part's first stripe, which takes the
+// window and one byte when it runs past the window. A cluster without a
+// limiter, or no request cap, leaves the budget unbounded.
 func bodyBudgetSize(cluster radosclient.Cluster, o writeOptions) int64 {
 	l, ok := cluster.(radosclient.InflightLimiter)
 	if !ok || l.MaxInflightBytes() <= 0 || o.maxRequests <= 0 {
