@@ -1,172 +1,26 @@
 package seam_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
-	"testing/fstest"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
 
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam/seamfakes"
 )
 
-// toolboxArgs is how every toolbox call starts.
-var toolboxArgs = []string{"kubectl", "-n", "rook-ceph", "exec", "deploy/rook-ceph-tools", "--"}
-
-// world is a fake host and cluster: a repository holding the release's
-// rooket output and chart values, the commands' answers, and /proc.
-type world struct {
-	repo   string
-	exec   *seamfakes.FakeExecer
-	launch *seamfakes.FakeLauncher
-	proc   fstest.MapFS
-	stdout *bytes.Buffer
-
-	mu sync.Mutex
-	// avail is what each ceph df reports in turn, the last one from then on.
-	avail []int64
-	// left is what rados ls lists in a benchmark's namespace.
-	left []string
-	// failWith answers the commands whose line contains a key with its error.
-	failWith map[string]error
-}
-
-func newWorld() *world {
-	w := &world{
-		repo:     GinkgoT().TempDir(),
-		exec:     &seamfakes.FakeExecer{},
-		launch:   &seamfakes.FakeLauncher{},
-		stdout:   &bytes.Buffer{},
-		avail:    []int64{9286684672},
-		failWith: map[string]error{},
-		proc: fstest.MapFS{
-			"meminfo":              {Data: []byte("MemTotal:       65007132 kB\nMemFree:        12345678 kB\n")},
-			"cpuinfo":              {Data: []byte("processor\t: 0\nmodel name\t: AMD Ryzen 9 7950X3D 16-Core Processor\n\nprocessor\t: 1\nmodel name\t: other\n")},
-			"loadavg":              {Data: []byte("0.98 0.96 1.31 2/1203 98765\n")},
-			"sys/kernel/osrelease": {Data: []byte("7.2.8-100.fc43.x86_64\n")},
-		},
-	}
-	out := filepath.Join(w.repo, "hack", "rooket", "out", "squid")
-	values := filepath.Join(w.repo, "hack", "rooket", "squid", "values")
-	Expect(os.MkdirAll(out, 0o750)).To(Succeed())
-	Expect(os.MkdirAll(values, 0o750)).To(Succeed())
-	Expect(os.WriteFile(filepath.Join(out, "ceph.conf"), []byte("[global]\n"), 0o600)).To(Succeed())
-	Expect(os.WriteFile(filepath.Join(out, "image"), []byte("quay.io/ceph/ceph:v19.2.6\n"), 0o600)).To(Succeed())
-	Expect(os.WriteFile(filepath.Join(values, "rook-ceph-cluster.yaml"),
-		[]byte("cephImage:\n  repository: quay.io/ceph/ceph\n  tag: v19.2.6\ncephBlockPools: []\n"), 0o600)).To(Succeed())
-	w.exec.OutputStub = w.output
-	w.launch.BenchStub = func(_ context.Context, p seam.Process) (int, error) {
-		results, ok := strings.CutPrefix(p.Args[slices.IndexFunc(p.Args, func(a string) bool { return strings.HasPrefix(a, "-results=") })], "-results=")
-		Expect(ok).To(BeTrue())
-		Expect(os.WriteFile(results, []byte(`{"mode":"x"}`+"\n"), 0o600)).To(Succeed())
-		fmt.Fprintln(p.Out, "BenchmarkSeam/shape=write4m/conc=64")
-		return 4242 + w.launch.BenchCallCount(), nil
-	}
-	return w
-}
-
-// output answers a command as the host and the cluster would.
-func (w *world) output(_ context.Context, c seam.Cmd) ([]byte, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	line := c.String()
-	for key, err := range w.failWith {
-		if strings.Contains(line, key) {
-			return nil, err
-		}
-	}
-	args := c.Args
-	if c.Name == "rooket" && slices.Equal(args[:min(len(args), len(toolboxArgs))], toolboxArgs) {
-		args = args[len(toolboxArgs):]
-	}
-	switch {
-	case c.Name == "go" && args[0] == "version":
-		return []byte("go version go1.27.1 linux/amd64\n"), nil
-	case c.Name == "go":
-		return nil, nil
-	case c.Name == "ldd":
-		return []byte("\tlinux-vdso.so.1 (0x00007ffd)\n\tlibrados.so.2 => /usr/lib64/librados.so.2 (0x00007f12)\n"), nil
-	case c.Name == "rpm" && args[0] == "-qf":
-		return []byte("19.2.6"), nil
-	case c.Name == "rpm":
-		return []byte("19.2.6-1.fc43"), nil
-	case c.Name == "git":
-		return []byte("af535e4-dirty\n"), nil
-	case c.Name == "rooket" && args[0] == "version":
-		return []byte("rooket v0.0.0-20260928053658-3d8551957e08\nbuilt by go1.27.1\n"), nil
-	case args[0] == "ceph" && slices.Contains(args, "df"):
-		avail := w.avail[0]
-		if len(w.avail) > 1 {
-			w.avail = w.avail[1:]
-		}
-		return fmt.Appendf(nil, `{"pools":[{"name":"rgw-go-test","stats":{"max_avail":%d}}]}`, avail), nil
-	case args[0] == "ceph" && slices.Contains(args, "objecter_inflight_ops"):
-		return []byte("1024\n"), nil
-	case args[0] == "ceph" && slices.Contains(args, "objecter_inflight_op_bytes"):
-		return []byte("104857600\n"), nil
-	case args[0] == "rados" && slices.Contains(args, "--all"):
-		return []byte("bench-floor-4096\tleft-behind\n"), nil
-	case args[0] == "rados" && args[len(args)-1] == "ls":
-		return []byte(strings.Join(w.left, "\n") + "\n"), nil
-	case args[0] == "rados" && slices.Contains(args, "rm"):
-		return nil, nil
-	}
-	return nil, fmt.Errorf("unexpected command %s", line)
-}
-
-// commands are the command lines run so far.
-func (w *world) commands() []string {
-	var lines []string
-	for i := range w.exec.OutputCallCount() {
-		_, c := w.exec.OutputArgsForCall(i)
-		lines = append(lines, c.String())
-	}
-	return lines
-}
-
-func (w *world) runner(r *seam.Runner) {
-	r.Exec, r.Launcher, r.Proc = w.exec, w.launch, w.proc
-	r.Now = func() time.Time { return runStart }
-	r.Getenv = func(string) string { return "" }
-	r.Resolve = func(p string) (string, error) { return p + ".0.0", nil }
-	r.Stdout = w.stdout
-	r.Stderr = GinkgoWriter
-	r.Handler = func(out io.Writer) slog.Handler { return slog.NewJSONHandler(out, nil) }
-	r.Poll, r.AvailWait = time.Millisecond, time.Minute
-	r.NoiseEvery, r.NoiseWindow = time.Hour, time.Millisecond
-	r.Grace = 30 * time.Second
-}
-
-func (w *world) config() seam.Config {
-	cfg, err := seam.Settings{Release: "squid", Limiter: "1", Repo: w.repo}.Check()
-	Expect(err).NotTo(HaveOccurred())
-	return cfg
-}
-
-func (w *world) run(ctx context.Context, cfg seam.Config) error {
-	r := seam.NewRunner(io.Discard, io.Discard, nil)
-	w.runner(r)
-	return r.Run(ctx, cfg)
-}
-
-func (w *world) dir() string {
-	return filepath.Join(w.repo, "hack", "bench", "out", "squid", "seam-20261012T210509Z-limited")
-}
-
-var _ = Describe("Runner.Run", func() {
+var _ = Describe("Runner.Run of the limiter re-run", func() {
 	var w *world
 
 	BeforeEach(func() {
@@ -174,7 +28,7 @@ var _ = Describe("Runner.Run", func() {
 	})
 
 	It("builds the benchmark, records env.json and runs the cell in each mode under the limiter", func(ctx SpecContext) {
-		cfg := w.config()
+		cfg := w.limiterConfig()
 		Expect(w.run(ctx, cfg)).To(Succeed())
 
 		bin := filepath.Join(w.repo, "hack", "bench", "out", "squid", "seam.test")
@@ -188,34 +42,34 @@ var _ = Describe("Runner.Run", func() {
 		for i, mode := range []string{"sync", "callback", "pipe"} {
 			_, p := w.launch.BenchArgsForCall(i)
 			Expect(p.Path).To(Equal(bin), "mode %s", mode)
-			Expect(p.Args).To(Equal(cfg.BenchArgs(mode, filepath.Join(w.dir(), "overbudget-"+mode+".jsonl"))), "mode %s", mode)
+			Expect(p.Args).To(Equal(cfg.BenchArgs(mode, filepath.Join(w.limiterDir(), "overbudget-"+mode+".jsonl"), cfg.CellArgs())), "mode %s", mode)
 			Expect(p.Env).To(Equal([]string{"RGW_GO_TEST_CEPH_CONF=" + filepath.Join(w.repo, "hack/rooket/out/squid/ceph.conf")}), "mode %s", mode)
 			Expect([]time.Duration{p.Limit, p.Grace}).To(Equal([]time.Duration{364 * time.Second, 30 * time.Second}), "mode %s", mode)
-			Expect(filepath.Join(w.dir(), "overbudget-"+mode+".jsonl")).To(BeARegularFile())
-			log, err := os.ReadFile(filepath.Join(w.dir(), "bench-"+mode+".log"))
+			Expect(filepath.Join(w.limiterDir(), "overbudget-"+mode+".jsonl")).To(BeARegularFile())
+			log, err := os.ReadFile(filepath.Join(w.limiterDir(), "bench-"+mode+".log"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(log)).To(Equal("BenchmarkSeam/shape=write4m/conc=64\n"), "mode %s", mode)
 		}
 		Expect(w.stdout.String()).To(Equal(strings.Repeat("BenchmarkSeam/shape=write4m/conc=64\n", 3)))
 
-		sweep, err := os.ReadFile(filepath.Join(w.dir(), "sweep.log"))
+		sweep, err := os.ReadFile(filepath.Join(w.limiterDir(), "sweep.log"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.Count(string(sweep), `"msg":"bench done"`)).To(Equal(3))
 		Expect(string(sweep)).To(ContainSubstring(`"msg":"objects left in the pool","pool":"rgw-go-test","objects":1`))
-		noise, err := os.ReadFile(filepath.Join(w.dir(), "noise.log"))
+		noise, err := os.ReadFile(filepath.Join(w.limiterDir(), "noise.log"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(noise)).To(HavePrefix("== 21:05:09 load 0.98 0.96 1.31\n"))
-		Expect(filepath.Join(w.dir(), "REPORT.md")).NotTo(BeAnExistingFile())
+		Expect(filepath.Join(w.limiterDir(), "REPORT.md")).NotTo(BeAnExistingFile())
 	})
 
 	It("records env.json with the run's host, cluster, librados and bound", func(ctx SpecContext) {
-		Expect(w.run(ctx, w.config())).To(Succeed())
-		data, err := os.ReadFile(filepath.Join(w.dir(), "env.json"))
+		Expect(w.run(ctx, w.limiterConfig())).To(Succeed())
+		data, err := os.ReadFile(filepath.Join(w.limiterDir(), "env.json"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(Equal(fmt.Sprintf(`{
   "release": "squid",
   "ceph_version": "19.2.6",
-  "cluster_image": "quay.io/ceph/ceph:v19.2.6",
+  "cluster_image": "quay.io/ceph/ceph:v20.2.4",
   "librados_version": "19.2.6",
   "librados_path": "/usr/lib64/librados.so.2.0.0",
   "date": "2026-10-12T21:05:09Z",
@@ -240,7 +94,7 @@ var _ = Describe("Runner.Run", func() {
 	})
 
 	It("reaches the cluster through the toolbox, naming it with ROOKET_NAME", func(ctx SpecContext) {
-		Expect(w.run(ctx, w.config())).To(Succeed())
+		Expect(w.run(ctx, w.limiterConfig())).To(Succeed())
 		var df []seam.Cmd
 		for i := range w.exec.OutputCallCount() {
 			if _, c := w.exec.OutputArgsForCall(i); strings.Contains(c.String(), " df ") {
@@ -272,8 +126,8 @@ var _ = Describe("Runner.Run", func() {
 		r.Getenv = func(name string) string {
 			return map[string]string{"ROOKET_VERSION": "rooket v1.2.3", "GOMAXPROCS": "8"}[name]
 		}
-		Expect(r.Run(ctx, w.config())).To(Succeed())
-		data, err := os.ReadFile(filepath.Join(w.dir(), "env.json"))
+		Expect(r.Run(ctx, w.limiterConfig())).To(Succeed())
+		data, err := os.ReadFile(filepath.Join(w.limiterDir(), "env.json"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(SatisfyAll(
 			ContainSubstring(`"librados_version": "19.2.6",`),
@@ -284,17 +138,17 @@ var _ = Describe("Runner.Run", func() {
 	})
 
 	It("writes the directory of another bound under its own name", func(ctx SpecContext) {
-		cfg := w.config()
+		cfg := w.limiterConfig()
 		cfg.InflightBytes = 67108864
 		Expect(w.run(ctx, cfg)).To(Succeed())
-		Expect(w.dir() + "-67108864").To(BeADirectory())
+		Expect(w.limiterDir() + "-67108864").To(BeADirectory())
 		_, p := w.launch.BenchArgsForCall(0)
 		Expect(p.Args).To(ContainElement("-inflight-bytes=67108864"))
 	})
 
 	It("waits for the pool to report the free space before each process", func(ctx SpecContext) {
 		w.avail = []int64{9286684672, 1 << 30, 2 << 30, 9286684672}
-		Expect(w.run(ctx, w.config())).To(Succeed())
+		Expect(w.run(ctx, w.limiterConfig())).To(Succeed())
 		Expect(w.launch.BenchCallCount()).To(Equal(3))
 		var dfs int
 		for _, line := range w.commands() {
@@ -313,38 +167,46 @@ var _ = Describe("Runner.Run", func() {
 		r.Now = func() time.Time { return start.Add(time.Duration(w.exec.OutputCallCount()) * time.Minute) }
 		r.AvailWait = 2 * time.Minute
 		dir := filepath.Join(w.repo, "hack", "bench", "out", "squid")
-		Expect(r.Run(ctx, w.config())).To(MatchError(
+		Expect(r.Run(ctx, w.limiterConfig())).To(MatchError(
 			"not enough space for the over-budget cell in sync mode: the pool has 1073741824 bytes available, under 5 GiB"))
 		Expect(w.launch.BenchCallCount()).To(BeZero())
 		Expect(dir).To(BeADirectory())
 	})
 
 	It("removes what a stopped process left in its namespace, then fails naming its mode", func(ctx SpecContext) {
-		w.left = make([]string, 1500)
-		for i := range w.left {
-			w.left[i] = fmt.Sprintf("seam-w%d-%d", i%64, i)
+		left := make([]string, 1500)
+		for i := range left {
+			left[i] = fmt.Sprintf("seam-w%d-%d", i%64, i)
 		}
+		w.left["bench-4243"] = left
 		w.launch.BenchReturnsOnCall(1, 4243, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
-		err := w.run(ctx, w.config())
+		err := w.run(ctx, w.limiterConfig())
 		Expect(err).To(MatchError(seam.ErrStopped))
 		Expect(err).To(MatchError("bench callback: stopped past its limit of 6m4s"))
 		Expect(w.launch.BenchCallCount()).To(Equal(2), "pipe does not run after callback failed")
 
-		prefix := strings.Join(append(append([]string{"rooket"}, toolboxArgs...),
-			"rados", "--rados-osd-op-timeout=120", "--rados-mon-op-timeout=120", "-p", "rgw-go-test", "-N", "bench-4243"), " ")
-		var listed, removed []int
-		for _, line := range w.commands() {
+		list := strings.Join(append(append([]string{"rooket"}, toolboxArgs...),
+			"rados", "--rados-osd-op-timeout=120", "--rados-mon-op-timeout=120", "-p", "rgw-go-test", "-N", "bench-4243", "ls"), " ")
+		var listed int
+		var removals []seam.Cmd
+		for i := range w.exec.OutputCallCount() {
+			_, c := w.exec.OutputArgsForCall(i)
 			switch {
-			case line == prefix+" ls":
-				listed = append(listed, 1)
-			case strings.HasPrefix(line, prefix+" rm "):
-				removed = append(removed, len(strings.Fields(strings.TrimPrefix(line, prefix+" rm "))))
+			case c.String() == list:
+				listed++
+			case slices.Contains(c.Args, "xargs"):
+				removals = append(removals, c)
 			}
 		}
-		Expect(listed).To(HaveLen(1))
-		Expect(removed).To(Equal([]int{1024, 476}), "1024 names a rados rm")
+		Expect(listed).To(Equal(1))
+		Expect(removals).To(Equal([]seam.Cmd{{
+			Name:  "rooket",
+			Args:  purgeArgs("bench-4243"),
+			Env:   []string{"ROOKET_NAME=rgw-go-squid"},
+			Stdin: []byte(strings.Join(left, "\n") + "\n"),
+		}}), "one toolbox session, its xargs removing the listed names eight rados rm at a time, 1024 names each")
 
-		sweep, err := os.ReadFile(filepath.Join(w.dir(), "sweep.log"))
+		sweep, err := os.ReadFile(filepath.Join(w.limiterDir(), "sweep.log"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(sweep)).To(ContainSubstring(`"level":"ERROR","msg":"bench stopped past its limit","mode":"callback","limit_s":364`))
 		Expect(string(sweep)).To(ContainSubstring(`"level":"ERROR","msg":"the limiter re-run failed","error":"bench callback: stopped past its limit of 6m4s"`))
@@ -352,23 +214,23 @@ var _ = Describe("Runner.Run", func() {
 
 	It("removes nothing for a process that never started", func(ctx SpecContext) {
 		w.launch.BenchReturnsOnCall(0, 0, errors.New("starting seam.test: no such file"))
-		Expect(w.run(ctx, w.config())).To(MatchError("bench sync: starting seam.test: no such file"))
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError("bench sync: starting seam.test: no such file"))
 		for _, line := range w.commands() {
 			Expect(line).NotTo(ContainSubstring("bench-"), "no namespace to remove")
 		}
 	})
 
 	It("reports a failed removal beside the process's failure", func(ctx SpecContext) {
-		w.left = []string{"seam-w0-0"}
-		w.failWith[" rm "] = errors.New("rados: permission denied")
+		w.left["bench-4242"] = []string{"seam-w0-0"}
+		w.failWith["xargs"] = errors.New("exit status 123: rados: permission denied")
 		w.launch.BenchReturnsOnCall(0, 4242, errors.New("exit status 2"))
-		err := w.run(ctx, w.config())
+		err := w.run(ctx, w.limiterConfig())
 		Expect(err).To(MatchError(ContainSubstring("bench sync: exit status 2")))
-		Expect(err).To(MatchError(ContainSubstring("removing the objects left in bench-4242: rados: permission denied")))
-		sweep, err := os.ReadFile(filepath.Join(w.dir(), "sweep.log"))
+		Expect(err).To(MatchError(ContainSubstring("removing the objects left in bench-4242: exit status 123: rados: permission denied")))
+		sweep, err := os.ReadFile(filepath.Join(w.limiterDir(), "sweep.log"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(sweep)).To(ContainSubstring(`"msg":"bench failed","mode":"sync","error":"exit status 2"`))
-		Expect(string(sweep)).To(ContainSubstring(`"msg":"the limiter re-run failed","error":"bench sync: exit status 2\nremoving the objects left in bench-4242: rados: permission denied"`))
+		Expect(string(sweep)).To(ContainSubstring(`"msg":"the limiter re-run failed","error":"bench sync: exit status 2\nremoving the objects left in bench-4242: exit status 123: rados: permission denied"`))
 	})
 
 	It("records why a run failed in sweep.log when the pool lacks the space", func(ctx SpecContext) {
@@ -376,14 +238,14 @@ var _ = Describe("Runner.Run", func() {
 		r := seam.NewRunner(io.Discard, io.Discard, nil)
 		w.runner(r)
 		r.AvailWait = 0
-		Expect(r.Run(ctx, w.config())).To(MatchError(ContainSubstring("not enough space for the over-budget cell in sync mode")))
-		sweep, err := os.ReadFile(filepath.Join(w.dir(), "sweep.log"))
+		Expect(r.Run(ctx, w.limiterConfig())).To(MatchError(ContainSubstring("not enough space for the over-budget cell in sync mode")))
+		sweep, err := os.ReadFile(filepath.Join(w.limiterDir(), "sweep.log"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(sweep)).To(ContainSubstring(`"msg":"the limiter re-run failed","error":"not enough space for the over-budget cell in sync mode`))
 	})
 
 	It("gives every command a deadline of its own", func(ctx SpecContext) {
-		Expect(w.run(ctx, w.config())).To(Succeed())
+		Expect(w.run(ctx, w.limiterConfig())).To(Succeed())
 		kinds := map[string]int{}
 		var unbounded []string
 		for i := range w.exec.OutputCallCount() {
@@ -423,7 +285,7 @@ var _ = Describe("Runner.Run", func() {
 				return w.output(ctx, c)
 			}}
 			start := time.Now()
-			err := r.Run(ctx, w.config())
+			err := r.Run(ctx, w.limiterConfig())
 			elapsed := time.Since(start)
 			Expect(err).To(MatchError(ContainSubstring(want)))
 			Expect(err).To(MatchError(ContainSubstring("signal: killed")))
@@ -458,7 +320,7 @@ esac
 		// other command through the fakes.
 		run := func(ctx context.Context, adjust func(*seam.Runner)) (time.Duration, error) {
 			host := seam.NewExecer(time.Second)
-			cfg := w.config()
+			cfg := w.limiterConfig()
 			cfg.Rooket = rooket
 			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
@@ -479,10 +341,65 @@ esac
 			w.launch.BenchReturnsOnCall(0, 4242, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
 			elapsed, err := run(ctx, func(r *seam.Runner) { r.CallTimeout, r.PurgeWait = time.Minute, 500*time.Millisecond })
 			Expect(err).To(MatchError(ContainSubstring("bench sync: stopped past its limit of 6m4s")))
-			Expect(err).To(MatchError(ContainSubstring("listing the objects in rgw-go-test")))
+			Expect(err).To(MatchError(ContainSubstring("listing the objects in bench-4242 of rgw-go-test")))
 			Expect(err).To(MatchError(ContainSubstring("signal: killed")))
 			Expect(elapsed).To(BeNumerically("<", 5*time.Second), "returned after %s, not after the hang's 30 s", elapsed)
 			GinkgoWriter.Printf("a 500ms purge bound returned after %s\n", elapsed)
+		})
+
+		It("ends a removal whose toolbox session hangs at the purge's deadline, its group killed, its unread stdin no hold on the call", func(ctx SpecContext) {
+			dir := GinkgoT().TempDir()
+			// Far more names than a pipe buffers, so that the goroutine feeding
+			// them is blocked writing when the deadline comes.
+			var names strings.Builder
+			for i := range 100000 {
+				fmt.Fprintf(&names, "seam-w%d-%d\n", i%64, i)
+			}
+			Expect(os.WriteFile(filepath.Join(dir, "names"), []byte(names.String()), 0o600)).To(Succeed())
+			child := filepath.Join(dir, "child")
+			GinkgoT().Setenv("SEAM_NAMES", filepath.Join(dir, "names"))
+			GinkgoT().Setenv("SEAM_CHILD", child)
+			// The listing answers; the removal's session reads none of its
+			// stdin and hangs, with a child that holds the stdin pipe open.
+			Expect(os.WriteFile(rooket, []byte(`#!/bin/sh
+case "$*" in
+*" df "*) echo '{"pools":[{"name":"rgw-go-test","stats":{"max_avail":9286684672}}]}' ;;
+*" config get "*) echo 1024 ;;
+*" ls") cat "$SEAM_NAMES" ;;
+*" xargs "*)
+	exec 3<&0
+	sleep 30 <&3 &
+	echo $! >"$SEAM_CHILD"
+	wait
+	true ;;
+esac
+`), 0o700)).To(Succeed()) //nolint:gosec // the fixture is a script the spec runs
+			w.launch.BenchReturnsOnCall(0, 4242, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
+			before := gleak.Goroutines()
+			elapsed, err := run(ctx, func(r *seam.Runner) {
+				r.CallTimeout, r.PurgeWait = time.Minute, time.Second
+				// A wait delay well past the bound, so that the call ends in time
+				// only when the group's kill closes every end of its pipes.
+				host := seam.NewExecer(30 * time.Second)
+				r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+					if c.Name == rooket {
+						return host.Output(ctx, c)
+					}
+					return w.output(ctx, c)
+				}}
+			})
+			Expect(err).To(MatchError(ContainSubstring("bench sync: stopped past its limit of 6m4s")))
+			Expect(err).To(MatchError(ContainSubstring("removing the objects left in bench-4242: " + rooket + " kubectl -n rook-ceph exec -i")))
+			Expect(err).To(MatchError(ContainSubstring("signal: killed")))
+			Expect(err).NotTo(MatchError(ContainSubstring("listing the objects")), "the listing answered")
+			Expect(elapsed).To(BeNumerically("<", 5*time.Second),
+				"returned after %s, not after the hang's 30 s or the 30 s wait delay", elapsed)
+			pid := childPid(child)
+			Eventually(func() string { return processState(pid) }).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).
+				Should(Or(Equal("gone"), Equal("Z")), "the session's child %d died with its group", pid)
+			Eventually(gleak.Goroutines).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).
+				ShouldNot(gleak.HaveLeaked(before), "no goroutine of the call, the one feeding its stdin included, outlives it")
+			GinkgoWriter.Printf("a 1s purge bound over a hung removal returned after %s\n", elapsed)
 		})
 
 		It("fails a toolbox call that outlives its own timeout", func(ctx SpecContext) {
@@ -522,10 +439,90 @@ esac
 		})
 	})
 
+	Context("with the real execer, and the host's xargs and a fake rados in the toolbox", func() {
+		var rooket, removed string
+
+		BeforeEach(func() {
+			dir := GinkgoT().TempDir()
+			// The fake rooket answers its version and ceph itself and runs
+			// anything else here, with its stdin, as kubectl exec -i runs it in
+			// the toolbox.
+			rooket = filepath.Join(dir, "rooket")
+			Expect(os.WriteFile(rooket, []byte(`#!/bin/sh
+[ "$1" = kubectl ] || { echo rooket v0.0.0; exit 0; }
+while [ "$1" != "--" ]; do shift; done
+shift
+case "$*" in
+ceph*" df "*) echo '{"pools":[{"name":"rgw-go-test","stats":{"max_avail":9286684672}}]}' ;;
+ceph*) echo 1024 ;;
+*) exec "$@" ;;
+esac
+`), 0o700)).To(Succeed()) //nolint:gosec // the fixture is a script the spec runs
+			// The fake rados lists SEAM_NAMES, and records each rm's count and
+			// first name, failing the whole first batch at seam-500 as rados rm
+			// fails at the first object it cannot remove.
+			bin := filepath.Join(dir, "bin")
+			Expect(os.MkdirAll(bin, 0o750)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(bin, "rados"), []byte(`#!/bin/sh
+case "$*" in
+*" ls") cat "$SEAM_NAMES" ;;
+*" rm "*)
+	shift 5
+	echo "$# $1" >>"$SEAM_RM"
+	for name in "$@"; do [ "$name" = seam-500 ] && exit 1; done
+	exit 0 ;;
+esac
+`), 0o700)).To(Succeed()) //nolint:gosec // the fixture is a script the spec runs
+			// Ten batches, more than xargs runs at once, so that some start
+			// only after the first has failed.
+			var names strings.Builder
+			for i := range 10000 {
+				fmt.Fprintf(&names, "seam-%d\n", i)
+			}
+			Expect(os.WriteFile(filepath.Join(dir, "names"), []byte(names.String()), 0o600)).To(Succeed())
+			removed = filepath.Join(dir, "removed")
+			GinkgoT().Setenv("SEAM_NAMES", filepath.Join(dir, "names"))
+			GinkgoT().Setenv("SEAM_RM", removed)
+			GinkgoT().Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		})
+
+		It("removes every batch but the failed one, and reports the failure once the session ends", func(ctx SpecContext) {
+			host := seam.NewExecer(time.Second)
+			cfg := w.limiterConfig()
+			cfg.Rooket = rooket
+			r := seam.NewRunner(io.Discard, io.Discard, nil)
+			w.runner(r)
+			sessions := 0
+			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
+				if c.Name != rooket {
+					return w.output(ctx, c)
+				}
+				if slices.Contains(c.Args, "xargs") {
+					sessions++
+				}
+				return host.Output(ctx, c)
+			}}
+			w.launch.BenchReturnsOnCall(0, 4242, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
+			err := r.Run(ctx, cfg)
+			Expect(err).To(MatchError(ContainSubstring("bench sync: stopped past its limit of 6m4s")))
+			Expect(err).To(MatchError(ContainSubstring("removing the objects left in bench-4242: ")))
+			Expect(err).To(MatchError(ContainSubstring("exit status 123")), "xargs's status when an invocation failed")
+			Expect(sessions).To(Equal(1))
+			data, rerr := os.ReadFile(removed)
+			Expect(rerr).NotTo(HaveOccurred())
+			var batches []string
+			for b := range 10 {
+				batches = append(batches, fmt.Sprintf("%d seam-%d", min(1024, 10000-b*1024), b*1024))
+			}
+			Expect(strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")).To(ConsistOf(batches),
+				"every batch ran, eight at a time, though the first failed")
+		})
+	})
+
 	It("fails before it creates the run directory when the cluster is not up", func(ctx SpecContext) {
 		Expect(os.Remove(filepath.Join(w.repo, "hack", "rooket", "out", "squid", "image"))).To(Succeed())
 		out := filepath.Join(w.repo, "hack", "rooket", "out", "squid")
-		Expect(w.run(ctx, w.config())).To(MatchError(fmt.Sprintf("no %s or %s: run make cluster-up RELEASE=squid",
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError(fmt.Sprintf("no %s or %s: run make cluster-up RELEASE=squid",
 			filepath.Join(out, "ceph.conf"), filepath.Join(out, "image"))))
 		Expect(filepath.Join(w.repo, "hack", "bench")).NotTo(BeAnExistingFile())
 		Expect(w.exec.OutputCallCount()).To(BeZero())
@@ -533,7 +530,7 @@ esac
 
 	It("runs no process when the build fails", func(ctx SpecContext) {
 		w.failWith["test -c"] = errors.New("exit status 1: cannot find package")
-		Expect(w.run(ctx, w.config())).To(MatchError(ContainSubstring("building " +
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError(ContainSubstring("building " +
 			filepath.Join(w.repo, "hack", "bench", "out", "squid", "seam.test") + ": exit status 1: cannot find package")))
 		Expect(w.launch.BenchCallCount()).To(BeZero())
 	})
@@ -545,7 +542,7 @@ esac
 			}
 			return w.output(ctx, c)
 		}
-		Expect(w.run(ctx, w.config())).To(MatchError(ContainSubstring(`, /usr/lib64/librados.so.2.0.0, is version "19.2.6~rc1", not X.Y.Z`)))
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError(ContainSubstring(`, /usr/lib64/librados.so.2.0.0, is version "19.2.6~rc1", not X.Y.Z`)))
 		Expect(w.launch.BenchCallCount()).To(BeZero())
 	})
 
@@ -556,12 +553,12 @@ esac
 			}
 			return w.output(ctx, c)
 		}
-		Expect(w.run(ctx, w.config())).To(MatchError(ContainSubstring("links no librados.so.2")))
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError(ContainSubstring("links no librados.so.2")))
 	})
 
 	It("refuses chart values whose Ceph tag is no version", func(ctx SpecContext) {
 		Expect(os.WriteFile(filepath.Join(w.repo, "hack", "rooket", "squid", "values", "rook-ceph-cluster.yaml"),
 			[]byte("cephImage:\n  tag: latest\n"), 0o600)).To(Succeed())
-		Expect(w.run(ctx, w.config())).To(MatchError(ContainSubstring(`cephImage.tag "latest" is not a vX.Y.Z version`)))
+		Expect(w.run(ctx, w.limiterConfig())).To(MatchError(ContainSubstring(`cephImage.tag "latest" is not a vX.Y.Z version`)))
 	})
 })

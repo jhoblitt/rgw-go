@@ -11,18 +11,19 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// Cmd is one command to run: its name, its arguments and the environment it
-// takes beyond this process's.
+// Cmd is one command to run: its name, its arguments, the environment it
+// takes beyond this process's, and what it reads on stdin, nothing when nil.
 type Cmd struct {
-	Name string
-	Args []string
-	Env  []string
+	Name  string
+	Args  []string
+	Env   []string
+	Stdin []byte
 }
 
 // String is the command line, for errors and logs.
@@ -53,6 +54,9 @@ type execer struct {
 func (e execer) Output(ctx context.Context, c Cmd) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...) //nolint:gosec // running the configured tools is the command's purpose
 	cmd.Env = append(os.Environ(), c.Env...)
+	if c.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(c.Stdin)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -87,12 +91,23 @@ type cluster struct {
 // names its cluster through ROOKET_NAME: without it rooket falls back to a
 // name derived from the working directory.
 func (c cluster) toolbox(ctx context.Context, args ...string) ([]byte, error) {
+	return c.toolboxIn(ctx, nil, args...)
+}
+
+// toolboxIn is toolbox with stdin passed to args, which kubectl exec forwards
+// with -i; rooket hands kubectl its own stdin (rooket cmd/kubectl.go).
+func (c cluster) toolboxIn(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.callTimeout)
 	defer cancel()
+	prefix := []string{"kubectl", "-n", "rook-ceph", "exec", "deploy/rook-ceph-tools", "--"}
+	if stdin != nil {
+		prefix = []string{"kubectl", "-n", "rook-ceph", "exec", "-i", "deploy/rook-ceph-tools", "--"}
+	}
 	return c.exec.Output(ctx, Cmd{
-		Name: c.rooket,
-		Args: append([]string{"kubectl", "-n", "rook-ceph", "exec", "deploy/rook-ceph-tools", "--"}, args...),
-		Env:  []string{"ROOKET_NAME=rgw-go-" + c.release},
+		Name:  c.rooket,
+		Args:  append(prefix, args...),
+		Env:   []string{"ROOKET_NAME=rgw-go-" + c.release},
+		Stdin: stdin,
 	})
 }
 
@@ -164,6 +179,9 @@ func (c cluster) objects(ctx context.Context, ns string) ([]string, error) {
 	}
 	out, err := c.rados(ctx, args...)
 	if err != nil {
+		if ns != "" {
+			return nil, fmt.Errorf("listing the objects in %s of %s: %w", ns, pool, err)
+		}
 		return nil, fmt.Errorf("listing the objects in %s: %w", pool, err)
 	}
 	var names []string
@@ -175,12 +193,33 @@ func (c cluster) objects(ctx context.Context, ns string) ([]string, error) {
 	return names, nil
 }
 
-// purgeBatch is how many names one rados rm takes.
-const purgeBatch = 1024
+// purgeBatch is how many names one rados rm takes, and purgeAtOnce how many
+// rados rm run at once: a large write4k cell leaves hundreds of thousands of
+// objects, which one rm at a time takes most of an hour to remove.
+const (
+	purgeBatch  = 1024
+	purgeAtOnce = 8
+)
 
-// purge removes every object left in namespace ns, the objects of a
-// benchmark process that did not end cleanly: one that does removes its own.
+// floorNamespace is the prefix of the namespaces the floor's rados bench
+// writes in, bench-floor-<object size>.
+const floorNamespace = "bench-floor-"
+
+// purge removes every object left in namespace ns: in a floor namespace, rados
+// bench's data objects with one concurrent cleanup, then whatever is left by
+// name, a run's metadata or the objects of a benchmark process that did not
+// end cleanly; one that does removes its own.
+//
+// The names go on stdin to one toolbox session whose xargs runs rados rm
+// purgeAtOnce at a time, purgeBatch names each. xargs keeps starting batches
+// after one fails and exits non-zero once all have run, so a failed batch
+// loses only its own names, and one session spares a kubectl exec a batch.
 func (c cluster) purge(ctx context.Context, log *slog.Logger, ns string) error {
+	if strings.HasPrefix(ns, floorNamespace) {
+		if _, err := c.rados(ctx, "-N", ns, "cleanup", "--prefix", "benchmark_data", "-t", "64"); err != nil {
+			return fmt.Errorf("removing rados bench's objects in %s: %w", ns, err)
+		}
+	}
 	names, err := c.objects(ctx, ns)
 	if err != nil {
 		return err
@@ -189,10 +228,10 @@ func (c cluster) purge(ctx context.Context, log *slog.Logger, ns string) error {
 		return nil
 	}
 	log.InfoContext(ctx, "removing the objects left", slog.String("namespace", ns), slog.Int("objects", len(names)))
-	for batch := range slices.Chunk(names, purgeBatch) {
-		if _, err := c.rados(ctx, append([]string{"-N", ns, "rm"}, batch...)...); err != nil {
-			return fmt.Errorf("removing the objects left in %s: %w", ns, err)
-		}
+	if _, err := c.toolboxIn(ctx, []byte(strings.Join(names, "\n")+"\n"),
+		"xargs", "-r", "-d", `\n`, "-n", strconv.Itoa(purgeBatch), "-P", strconv.Itoa(purgeAtOnce),
+		"rados", "-p", pool, "-N", ns, "rm"); err != nil {
+		return fmt.Errorf("removing the objects left in %s: %w", ns, err)
 	}
 	log.InfoContext(ctx, "removed the objects left", slog.String("namespace", ns))
 	return nil

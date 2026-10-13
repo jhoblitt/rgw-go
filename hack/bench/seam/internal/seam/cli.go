@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,14 +14,21 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
-// envNames binds the keys whose environment names make bench-seam's
-// interface: the Makefile passes the cluster's ceph.conf, the rooket binary
-// and the build tags under the names hack/bench/seam.sh reads.
+// envNames binds the keys whose environment names are not BENCH_ and the
+// key upper-cased: the Makefile passes the cluster's ceph.conf, the rooket
+// binary and the build tags under these names, and the sweep has always read
+// BENCH_TIME, CONC and rooket's ROOKET_ENGINE.
 var envNames = map[string]string{
-	"ceph-conf": "RGW_GO_TEST_CEPH_CONF",
-	"rooket":    "ROOKET",
-	"go-tags":   "GO_TAGS",
+	"ceph-conf":  "RGW_GO_TEST_CEPH_CONF",
+	"rooket":     "ROOKET",
+	"go-tags":    "GO_TAGS",
+	"bench-time": "BENCH_TIME",
+	"conc":       "CONC",
+	"engine":     "ROOKET_ENGINE",
 }
+
+// largeConcEnv is BENCH_LARGE_CONC, which counts when set, even when empty.
+const largeConcEnv = "BENCH_LARGE_CONC"
 
 // Run executes the command against args on this host and returns the first
 // error.
@@ -44,7 +52,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, adjust func(*Runner))
 	v := viper.New()
 	cmd := &cobra.Command{
 		Use:           "seam squid|tentacle",
-		Short:         "Re-run the seam microbenchmark's over-budget cell under the in-flight limiter",
+		Short:         "Sweep the seam microbenchmark and its rados bench floor, or re-run its over-budget cell under the in-flight limiter",
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -53,7 +61,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, adjust func(*Runner))
 			return configure(cmd, v, stderr)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := settings(v, args[0]).Check()
+			cfg, err := settings(cmd, v, args[0]).Check()
 			if err != nil {
 				return err
 			}
@@ -79,17 +87,26 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, adjust func(*Runner))
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (BENCH_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (BENCH_LOG_FORMAT)")
 	f := cmd.Flags()
-	f.String("limiter", "", "must be 1: bench-seam's switch to this run (BENCH_LIMITER)")
-	f.String("plan", "", "1: check every setting, print the benchmark processes and their watchdog limits, and exit without touching a cluster (BENCH_PLAN)")
-	f.String("inflight-bytes", "", "the limiter's byte bound, a positive whole number of bytes (BENCH_INFLIGHT_BYTES; 104857600)")
-	f.String("over-objects", "", "objects per benchmark process (BENCH_OVER_OBJECTS; 640, or 128 with --quick)")
-	f.String("quick", "", "1: a short run, 128 objects per process (BENCH_QUICK)")
+	f.String("limiter", "", "1: re-run only the over-budget cell under the in-flight limiter (BENCH_LIMITER)")
+	f.String("plan", "", "1: check every setting, print the schedule of benchmark processes and floor runs with their watchdog limits, and exit without touching a cluster (BENCH_PLAN)")
+	f.String("quick", "", "1: a short run where unset otherwise: BENCH_TIME=5s, BENCH_FLOOR_SECONDS=5, CONC=16,256, BENCH_LARGE_CONC=16, "+
+		"100 write4m objects and 128 over-budget objects (BENCH_QUICK)")
 	// --plan and --quick alone mean 1, as BENCH_PLAN=1 and BENCH_QUICK=1 do;
 	// any value but 1 is refused, as the environment's is.
 	f.Lookup("plan").NoOptDefVal = "1"
 	f.Lookup("quick").NoOptDefVal = "1"
-	f.String("timeout", "", "each benchmark process's limit, in seconds or as 1h30m (BENCH_TIMEOUT; a tenth of a second an object, plus 5m)")
-	f.String("min-avail-gib", "", "pool space each process waits for, in GiB (BENCH_MIN_AVAIL_GIB; 5)")
+	f.String("bench-time", "", "benchtime of each time-bounded cell, in whole hours, minutes and seconds (BENCH_TIME; 20s)")
+	f.String("floor-seconds", "", "seconds of each time-bounded rados bench run (BENCH_FLOOR_SECONDS; 20)")
+	f.String("conc", "", "concurrencies of the 4 KiB, head and index shapes, comma separated (CONC; 1,16,64,256,512)")
+	f.String("large-conc", "", "concurrencies of read4m and write4m among 1, 4 and 16; empty skips them (BENCH_LARGE_CONC; 1,4,16)")
+	f.String("write4m-objects", "", "objects per 4 MiB write cell and floor run (BENCH_WRITE4M_OBJECTS; 1000)")
+	f.String("over-objects", "", "objects per over-budget cell (BENCH_OVER_OBJECTS; 640)")
+	f.String("inflight-bytes", "", "the limiter re-run's byte bound, a positive whole number of bytes (BENCH_INFLIGHT_BYTES; 104857600)")
+	f.String("min-avail-gib", "", "pool space each 4 MiB write waits for, in GiB (BENCH_MIN_AVAIL_GIB; 5)")
+	f.String("timeout", "", "each benchmark process's limit, in seconds or as 1h30m (BENCH_TIMEOUT; its cell's planned duration plus 5m)")
+	f.String("floor-timeout", "", "each floor run's limit, in seconds or as 1h30m (BENCH_FLOOR_TIMEOUT; its window plus 5m)")
+	f.String("floor-image", "", "the image whose rados runs the floor, which must run the release of the librados the benchmark links (BENCH_FLOOR_IMAGE; quay.io/ceph/ceph:v<that release>)")
+	f.String("engine", "", "the container engine that runs rados bench (ROOKET_ENGINE; podman)")
 	f.String("ceph-conf", "", "unset, or the release's hack/rooket/out/<release>/ceph.conf (RGW_GO_TEST_CEPH_CONF)")
 	f.String("rooket", "rooket", "the rooket binary (ROOKET)")
 	f.String("go-tags", "ceph_preview", "build tags besides integration (GO_TAGS)")
@@ -143,20 +160,47 @@ func newHandler(v *viper.Viper) (func(io.Writer) slog.Handler, error) {
 	}
 }
 
-// settings reads the run's settings from v.
-func settings(v *viper.Viper, release string) Settings {
+// settings reads the run's settings from cmd's flags and v.
+func settings(cmd *cobra.Command, v *viper.Viper, release string) Settings {
 	return Settings{
-		Release:       release,
-		Limiter:       v.GetString("limiter"),
-		InflightBytes: v.GetString("inflight-bytes"),
-		OverObjects:   v.GetString("over-objects"),
-		Timeout:       v.GetString("timeout"),
-		MinAvailGiB:   v.GetString("min-avail-gib"),
-		CephConf:      v.GetString("ceph-conf"),
-		Rooket:        v.GetString("rooket"),
-		GoTags:        v.GetString("go-tags"),
-		Repo:          v.GetString("repo"),
-		Plan:          v.GetString("plan"),
-		Quick:         v.GetString("quick"),
+		Release:        release,
+		Limiter:        v.GetString("limiter"),
+		InflightBytes:  v.GetString("inflight-bytes"),
+		OverObjects:    v.GetString("over-objects"),
+		Timeout:        v.GetString("timeout"),
+		MinAvailGiB:    v.GetString("min-avail-gib"),
+		CephConf:       v.GetString("ceph-conf"),
+		Rooket:         v.GetString("rooket"),
+		GoTags:         v.GetString("go-tags"),
+		Repo:           v.GetString("repo"),
+		Plan:           v.GetString("plan"),
+		Quick:          v.GetString("quick"),
+		BenchTime:      v.GetString("bench-time"),
+		FloorSeconds:   v.GetString("floor-seconds"),
+		Conc:           v.GetString("conc"),
+		LargeConc:      largeConc(cmd, v),
+		Write4mObjects: v.GetString("write4m-objects"),
+		FloorTimeout:   v.GetString("floor-timeout"),
+		FloorImage:     v.GetString("floor-image"),
+		Engine:         v.GetString("engine"),
 	}
+}
+
+// largeConc is --large-conc, BENCH_LARGE_CONC or the config file's
+// large-conc, in that order, or nil when none is set. viper takes an empty
+// environment variable for an unset one, which here would run the 4 MiB cells
+// an empty value skips.
+func largeConc(cmd *cobra.Command, v *viper.Viper) *string {
+	if f := cmd.Flags().Lookup("large-conc"); f.Changed {
+		value := f.Value.String()
+		return &value
+	}
+	if value, ok := os.LookupEnv(largeConcEnv); ok {
+		return &value
+	}
+	if v.InConfig("large-conc") {
+		value := v.GetString("large-conc")
+		return &value
+	}
+	return nil
 }

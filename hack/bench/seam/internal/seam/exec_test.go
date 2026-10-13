@@ -64,6 +64,14 @@ var _ = Describe("Execer", func() {
 		Expect(string(out)).To(Equal(pidFile + "\n"))
 	})
 
+	It("passes the command its stdin", func(ctx SpecContext) {
+		c := sh("cat")
+		c.Stdin = []byte("seam-w0-0\nseam-w1-1\n")
+		out, err := seam.NewExecer(10*time.Second).Output(ctx, c)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(out)).To(Equal("seam-w0-0\nseam-w1-1\n"))
+	})
+
 	It("names the command and its stderr when it fails", func(ctx SpecContext) {
 		_, err := seam.NewExecer(10*time.Second).Output(ctx, sh("echo no such pool >&2; exit 2"))
 		Expect(err).To(MatchError(`/bin/sh -c echo no such pool >&2; exit 2: exit status 2: no such pool`))

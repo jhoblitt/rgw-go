@@ -23,6 +23,18 @@ type FakeLauncher struct {
 		result1 int
 		result2 error
 	}
+	FloorStub        func(context.Context, seam.Container) error
+	floorMutex       sync.RWMutex
+	floorArgsForCall []struct {
+		arg1 context.Context
+		arg2 seam.Container
+	}
+	floorReturns struct {
+		result1 error
+	}
+	floorReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -90,6 +102,68 @@ func (fake *FakeLauncher) BenchReturnsOnCall(i int, result1 int, result2 error) 
 		result1 int
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *FakeLauncher) Floor(arg1 context.Context, arg2 seam.Container) error {
+	fake.floorMutex.Lock()
+	ret, specificReturn := fake.floorReturnsOnCall[len(fake.floorArgsForCall)]
+	fake.floorArgsForCall = append(fake.floorArgsForCall, struct {
+		arg1 context.Context
+		arg2 seam.Container
+	}{arg1, arg2})
+	stub := fake.FloorStub
+	fakeReturns := fake.floorReturns
+	fake.recordInvocation("Floor", []interface{}{arg1, arg2})
+	fake.floorMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeLauncher) FloorCallCount() int {
+	fake.floorMutex.RLock()
+	defer fake.floorMutex.RUnlock()
+	return len(fake.floorArgsForCall)
+}
+
+func (fake *FakeLauncher) FloorCalls(stub func(context.Context, seam.Container) error) {
+	fake.floorMutex.Lock()
+	defer fake.floorMutex.Unlock()
+	fake.FloorStub = stub
+}
+
+func (fake *FakeLauncher) FloorArgsForCall(i int) (context.Context, seam.Container) {
+	fake.floorMutex.RLock()
+	defer fake.floorMutex.RUnlock()
+	argsForCall := fake.floorArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeLauncher) FloorReturns(result1 error) {
+	fake.floorMutex.Lock()
+	defer fake.floorMutex.Unlock()
+	fake.FloorStub = nil
+	fake.floorReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeLauncher) FloorReturnsOnCall(i int, result1 error) {
+	fake.floorMutex.Lock()
+	defer fake.floorMutex.Unlock()
+	fake.FloorStub = nil
+	if fake.floorReturnsOnCall == nil {
+		fake.floorReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.floorReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *FakeLauncher) Invocations() map[string][][]interface{} {
