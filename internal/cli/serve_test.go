@@ -20,6 +20,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/metrics"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -390,7 +391,7 @@ var _ = Describe("S3Config", func() {
 	})
 
 	It("reads the options the S3 handler takes, rgw_dns_name joined with the zonegroup's hostnames", func() {
-		Expect(cli.S3Config(cephconf.NewOptions(opts), zi, 4107)).To(Equal(s3.Config{
+		Expect(cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)).To(Equal(s3.Config{
 			DNSNames:      []string{"s3.example.com", "s3.internal", "zg.example.com"},
 			MaxConcurrent: 1024,
 			TransIDSuffix: "-4107-zone-a",
@@ -398,25 +399,45 @@ var _ = Describe("S3Config", func() {
 		}))
 	})
 
+	It("caps the requests it admits at the cap the store keeps the body budget for, not at a second read of the option", func() {
+		opts["rgw_max_concurrent_requests"] = "2"
+		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.MaxConcurrent).To(Equal(1024))
+	})
+
 	It("names the cluster's release in the Server header", func() {
 		zi.ReleaseReturns(denc.Tentacle)
-		cfg, err := cli.S3Config(cephconf.NewOptions(opts), zi, 4107)
+		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.ServerHeader).To(Equal("Ceph Object Gateway (tentacle)"))
 	})
 
 	It("sends rgw_service_provider_name as the Server header when it is set, as end_header does", func() {
 		opts["rgw_service_provider_name"] = "Example Storage"
-		cfg, err := cli.S3Config(cephconf.NewOptions(opts), zi, 4107)
+		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.ServerHeader).To(Equal("Example Storage"))
 	})
 
 	It("names an option it cannot read", func() {
 		delete(opts, "rgw_service_provider_name")
-		_, err := cli.S3Config(cephconf.NewOptions(opts), zi, 4107)
+		_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
 		Expect(err).To(MatchError(cephconf.ErrUnknownOption))
 		Expect(err).To(MatchError(HavePrefix("reading rgw_service_provider_name: ")))
+	})
+})
+
+var _ = Describe("DriverOptions", func() {
+	It("passes rgw_max_concurrent_requests to the driver as the cap on the requests the gateway admits", func() {
+		o, err := cli.DriverOptions(cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "1024"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o).To(Equal(driver.Options{MaxConcurrentRequests: 1024}))
+	})
+
+	It("names the option when it cannot read it", func() {
+		_, err := cli.DriverOptions(cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "lots"}))
+		Expect(err).To(MatchError(HavePrefix("reading rgw_max_concurrent_requests: ")))
 	})
 })
 

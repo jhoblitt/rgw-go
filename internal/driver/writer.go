@@ -60,7 +60,7 @@ type writeOptions struct {
 	gcThreads          bool   // rgw_enable_gc_threads, true
 	multiObjDelMaxAIO  int    // rgw_multi_obj_del_max_aio, 16, floored to 1 as RGWDeleteMultiObj::execute does
 	copyConcurrentIO   int    // rgw_max_copy_obj_concurrent_io, 10, 0 used as 1 with an error-level log line
-	maxRequests        int64  // rgw_max_concurrent_requests, 1024, which the body budget keeps a piece for each of
+	maxRequests        int64  // Options.MaxConcurrentRequests, which Open sets
 }
 
 // readWriteOptions reads the write options through conf, each through the
@@ -93,11 +93,6 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 		gcMaxDeferred:      readOption(&r, conf.Uint64, "rgw_gc_max_deferred"),
 		gcThreads:          readOption(&r, conf.Bool, "rgw_enable_gc_threads"),
 		copyConcurrentIO:   int(readOption(&r, conf.Int64, "rgw_max_copy_obj_concurrent_io")),
-		// The body budget keeps a piece for each request the gateway admits
-		// only while this agrees with the cap s3Config reads for admission
-		// (internal/cli/serve.go): the same option, conf and accessor, read
-		// once at startup, 0 or less meaning no cap.
-		maxRequests: readOption(&r, conf.Int64, "rgw_max_concurrent_requests"),
 	}
 	gcObjs := readOption(&r, conf.Int64, "rgw_gc_max_objs")
 	minWait := readOption(&r, conf.Int64, "rgw_gc_obj_min_wait")

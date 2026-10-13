@@ -26,6 +26,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cli"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
@@ -67,10 +68,14 @@ func connect(ctx context.Context, args ...string) radosclient.Cluster {
 	return c
 }
 
-// open opens the driver over c and closes it when the suite ends.
+// open opens the driver over c as serve opens it and closes it when the
+// suite ends.
 func open(ctx context.Context, c radosclient.Cluster) *driver.Store {
 	GinkgoHelper()
-	s, err := driver.Open(ctx, c, cephconf.NewOptions(c), driver.Options{})
+	options := cephconf.NewOptions(c)
+	dopts, err := cli.DriverOptions(options)
+	Expect(err).NotTo(HaveOccurred())
+	s, err := driver.Open(ctx, c, options, dopts)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { Expect(s.Close()).To(Succeed()) })
 	return s
