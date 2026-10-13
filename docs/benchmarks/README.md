@@ -22,7 +22,7 @@ any sample. Each sweep took its three CPU profiles itself, as its last
 cells. Their REPORT.md files are rendered from the committed data by the
 current `hack/bench/report`.
 
-A seam run is `make bench-seam RELEASE=<release>` (`hack/bench/seam.sh`,
+A seam run is `make bench-seam RELEASE=<release>` (`hack/bench/seam`,
 described in `hack/rooket/README.md`). Its directory holds `env.json`, the
 host, cluster and sweep settings; `seam-<mode>.jsonl`, every call of every
 cell `BenchmarkSeam` ran in that completion mode; `overbudget-<mode>.jsonl`,
@@ -35,7 +35,7 @@ them but `noise.log`.
 
 The floor's `rados bench` runs from the floor image, the Ceph container image
 of the release of the librados the benchmark binary links, so that the Go
-cells and their floor use one client release; `seam.sh` stops when it cannot
+cells and their floor use one client release; the sweep stops when it cannot
 find that image. A host's librados need not match the cluster: where the
 cluster runs another release, its own image's `rados bench` runs once more at
 each cell the criteria compare and is reported beside the judged floor, not
@@ -45,7 +45,10 @@ hint, and `env.json` records `floor_no_hints`. read4m is shown against its
 floor but not judged, as `docs/cgo-limitations.md` explains.
 
 A sweep that fails partway, including one whose benchmark process or floor
-run a watchdog stops, removes what it left in the pool before it exits. The
-toolbox removes a benchmark's objects eight `rados rm` at a time; in a
-cut-down Squid run that took 56 s for 52082 objects, so the roughly 530000 a
-failed large write4k cell can leave take about ten minutes.
+run a watchdog stops, removes what it left in the pool before it exits. It
+hands the names of a benchmark's objects to one toolbox session, whose xargs
+removes them eight `rados rm` at a time, 1024 names each, as
+`hack/bench/seam.sh`, the shell sweep the command replaced, did. A cut-down
+Squid run of `seam.sh` removed 52082 objects that way in 56 s, so the roughly
+530000 a failed large write4k cell can leave should take about ten minutes;
+no run of the Go command has measured it yet.

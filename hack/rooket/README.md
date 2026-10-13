@@ -348,7 +348,7 @@ populated cluster and is no benchmark.
 
 ## The seam microbenchmark
 
-`make bench-seam RELEASE=squid` runs `hack/bench/seam.sh`, which sweeps the
+`make bench-seam RELEASE=squid` runs `hack/bench/seam`, a Go command, which sweeps the
 seam microbenchmark in `test/bench/seam` over the `rgw-go-test` pool, each
 cell in each completion mode in a benchmark process of its own, so that a
 cell's thread growth is its own, measures its floor with `rados bench`,
@@ -375,13 +375,16 @@ to benchmarks; `BENCH_TIMEOUT` and `BENCH_FLOOR_TIMEOUT` override the limits.
 The Go cells take their client config from
 the release's rooket output, as the floor does, and the sweep refuses an
 `RGW_GO_TEST_CEPH_CONF` naming another file. A full sweep took about an hour per
-release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep, and the
-script's header lists its other settings.
+release on a 32-thread host. `BENCH_QUICK=1` runs a short sweep; any other
+value of it is refused. Every setting is checked before anything touches the
+cluster, and `BENCH_PLAN=1` prints the sweep's schedule, each benchmark
+process with its watchdog limit, each floor run and each wait for the pool's
+space, then exits. The command's package doc lists its settings, and
+`go run ./hack/bench/seam --help` every flag and its environment name.
 
 `make bench-seam RELEASE=squid BENCH_LIMITER=1` re-runs only the sweep's
 over-budget cell, write4m at 64 in flight past the byte budget, under the
-in-flight limiter. It runs `hack/bench/limited`, a Go command, rather than
-`seam.sh`. The cell runs in sync, callback and pipe mode, each in a
+in-flight limiter. The cell runs in sync, callback and pipe mode, each in a
 benchmark process of its own, with the limiter's byte bound at 100 MiB,
 librados's default `objecter_inflight_op_bytes`, and its operation bound
 derived, as rgw-go runs. `BENCH_INFLIGHT_BYTES` sets another bound. The run
@@ -389,12 +392,10 @@ writes `overbudget-<mode>.jsonl`, `env.json`, `sweep.log`, `noise.log` and
 `bench-<mode>.log` into `hack/bench/out/<release>/seam-<UTC time>-limited/`,
 or `seam-<UTC time>-limited-<bytes>/` for another bound. It runs no floor and
 renders no `REPORT.md`, since `hack/bench/report` renders only a whole sweep.
-Every setting is checked before anything touches the cluster, and
-`BENCH_PLAN=1` prints each benchmark process's arguments and watchdog limit,
-then exits. `BENCH_QUICK=1` runs 128 objects a process instead of 640, and
-`BENCH_OVER_OBJECTS`, `BENCH_TIMEOUT` and `BENCH_MIN_AVAIL_GIB` work as they
-do for the sweep. `go run ./hack/bench/limited --help` lists every flag and
-its environment name. Setting `BENCH_PLAN` or `BENCH_INFLIGHT_BYTES` without
+`BENCH_PLAN=1` prints its schedule. `BENCH_QUICK=1` runs 128 objects a
+process instead of 640, and `BENCH_OVER_OBJECTS`, `BENCH_TIMEOUT` and
+`BENCH_MIN_AVAIL_GIB` work as they do for the sweep; the settings only the
+sweep reads are refused. Setting `BENCH_INFLIGHT_BYTES` without
 `BENCH_LIMITER=1` is refused rather than starting the sweep.
 
 ## Running the gateway comparison

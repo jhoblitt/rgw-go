@@ -1,4 +1,4 @@
-package limited
+package seam
 
 import (
 	"context"
@@ -19,6 +19,10 @@ var Watchdog Launcher = watchdog{}
 // place of execWaitDelay, so that a spec can run its deadline against real
 // processes without waiting out the default.
 func NewExecer(waitDelay time.Duration) Execer { return execer{waitDelay: waitDelay} }
+
+// WatchSignals is watchSignals, so that a spec can deliver a signal to a run
+// without sending one to the suite.
+var WatchSignals = watchSignals
 
 // DecodePoolAvail is decodePoolAvail, so that a spec can feed it ceph df's
 // output directly.

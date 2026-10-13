@@ -26,7 +26,7 @@ import (
 // is its measurement.
 type Cell struct {
 	// Process identifies the benchmark process the cell ran in; files
-	// written before seam.sh gave each cell a process carry none.
+	// written before the sweep gave each cell a process carry none.
 	Process     string  `json:"process"`
 	Time        string  `json:"time"`
 	Release     string  `json:"release"`
@@ -137,8 +137,8 @@ var (
 	modeOrder  = []string{"sync", "callback", "pipe"}
 )
 
-// artifacts are the files seam.sh writes into every sweep directory before
-// it renders the report.
+// artifacts are the files hack/bench/seam writes into every sweep directory
+// before it renders the report.
 func artifacts() []string {
 	names := []string{"env.json", "floor.jsonl"}
 	for _, m := range modeOrder {
@@ -544,8 +544,8 @@ func runName(bracket string) string {
 	return bracket
 }
 
-// readEnv reads env.json, which seam.sh writes before the sweep, keeping
-// its numbers as written.
+// readEnv reads env.json, which hack/bench/seam writes before the sweep,
+// keeping its numbers as written.
 func (s *sweep) readEnv() error {
 	data, err := os.ReadFile(filepath.Join(s.dir, "env.json"))
 	if err != nil {

@@ -62,7 +62,7 @@ test/bench/seam/seam_suite_test.go
 test/bench/seam/shapes_test.go              hermetic: each shape builds the steps radosgw builds
 test/bench/seam/metrics_test.go             hermetic: percentiles and the sampler
 test/bench/seam/seam_bench_test.go          //go:build integration: BenchmarkSeam, flags, JSON results
-hack/bench/seam.sh                          the sweep: one process per mode, rados bench floor, results dir
+hack/bench/seam/                            the sweep command: one process per mode, rados bench floor, results dir
 hack/bench/report/main.go                   renders seam and gateway results into markdown tables
 hack/bench/report/report_suite_test.go, main_test.go
 hack/bench/elbencho-build.sh                static elbencho from the pinned fork commit
@@ -386,7 +386,7 @@ Expected: every cell reports 0 errors; sync mode's `threads_peak` at conc 64 exc
 ### Task 2: Microbenchmark sweep, `rados bench` floor, preliminary cgo answer
 
 **Files:**
-- Create: `hack/bench/seam.sh`, `hack/bench/report/main.go`, `hack/bench/report/report_suite_test.go`, `hack/bench/report/main_test.go`, `hack/bench/report/testdata/seam.jsonl`, `hack/bench/report/testdata/floor.jsonl`
+- Create: `hack/bench/seam/`, `hack/bench/report/main.go`, `hack/bench/report/report_suite_test.go`, `hack/bench/report/main_test.go`, `hack/bench/report/testdata/seam.jsonl`, `hack/bench/report/testdata/floor.jsonl`
 - Modify: `Makefile` (target `bench-seam`), `.gitignore` (`/hack/bench/out/`), `docs/cgo-limitations.md` (the measured section), `hack/rooket/README.md` (one paragraph on `make bench-seam`)
 
 **Interfaces:**
@@ -397,7 +397,7 @@ Expected: every cell reports 0 errors; sync mode's `threads_peak` at conc 64 exc
 {"kind":"floor","tool":"rados bench","op":"write","size":4096,"conc":64,"seconds":20,"ops_per_sec":31250.5,"mean_us":2044.1,"bandwidth_mbps":122.07}
 ```
 
-`hack/bench/seam.sh squid|tentacle` does, in order, sourcing `hack/rooket/lib.sh` for the cluster: write `env.json` (release, `ceph_version` from `pinned_version`, `ROOKET_VERSION` if set, `nproc`, `MemTotal`, `uname -r`, `go version`, `git describe --always --dirty`); check `ceph df` reports at least 16 GiB available before allowing the 4 MiB shapes, else pass `-shapes` without them and say so; for each mode in `sync callback pipe` run the benchmark in a fresh process (`go test ... -run '^$' -bench BenchmarkSeam -benchtime "$BENCH_TIME" -args -mode=$mode -conc=$CONC -results=$dir/seam-$mode.jsonl`), then one deliberate over-budget cell per async mode (`-shapes=write4m -conc=64 -inflight-bytes=0 -benchtime=5s`) whose thread growth is the evidence decision D8's limiter exists for; a CPU profile of `read4k` at 256 in the callback mode (`-cpuprofile "$dir/cpu-callback-read4k-256.pprof" -shapes=read4k -conc=256`); the floor with `rados bench` from the cluster's image on the host, so it sits where the Go process sits:
+`go run ./hack/bench/seam squid|tentacle`, a Go command, does, in order, reaching the cluster as `hack/rooket/lib.sh` does: write `env.json` (release, `ceph_version` from `pinned_version`, `ROOKET_VERSION` if set, `nproc`, `MemTotal`, `uname -r`, `go version`, `git describe --always --dirty`); check `ceph df` reports at least 16 GiB available before allowing the 4 MiB shapes, else pass `-shapes` without them and say so; for each mode in `sync callback pipe` run the benchmark in a fresh process (`go test ... -run '^$' -bench BenchmarkSeam -benchtime "$BENCH_TIME" -args -mode=$mode -conc=$CONC -results=$dir/seam-$mode.jsonl`), then one deliberate over-budget cell per async mode (`-shapes=write4m -conc=64 -inflight-bytes=0 -benchtime=5s`) whose thread growth is the evidence decision D8's limiter exists for; a CPU profile of `read4k` at 256 in the callback mode (`-cpuprofile "$dir/cpu-callback-read4k-256.pprof" -shapes=read4k -conc=256`); the floor with `rados bench` from the cluster's image on the host, so it sits where the Go process sits:
 
 ```sh
 engine=${ROOKET_ENGINE:-podman}
@@ -439,15 +439,15 @@ Keep the rendering in a `report` package under `hack/bench/report/internal/repor
 
 - [ ] **Step 2: Implement `report`, run the specs to pass**
 
-- [ ] **Step 3: Write `hack/bench/seam.sh` and the Makefile target**
+- [ ] **Step 3: Write the `hack/bench/seam` command and the Makefile target**
 
 ```make
 .PHONY: bench-seam
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster
-	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf hack/bench/seam.sh $(RELEASE)
+	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) go run ./hack/bench/seam $(RELEASE)
 ```
 
-`shellcheck hack/bench/seam.sh` clean.
+Its specs pass under `-race`, against fakes for every process and command it runs.
 
 - [ ] **Step 4: Run the full sweep on Squid, then Tentacle** (cluster-backed)
 

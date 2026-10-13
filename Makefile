@@ -322,8 +322,7 @@ s3tests-pin: ## Move the s3-tests pin to NEW, a commit of rgw-go-s3tests proven 
 
 .PHONY: bench-seam
 bench-seam: need-release ## Sweep the seam microbenchmark and the rados bench floor against the RELEASE cluster; BENCH_LIMITER=1 re-runs only its over-budget cell under the in-flight limiter
-	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) \
-	  $(if $(BENCH_LIMITER)$(BENCH_PLAN)$(BENCH_INFLIGHT_BYTES),go run ./hack/bench/limited,hack/bench/seam.sh) $(RELEASE)
+	ROOKET=$(ROOKET_BIN) RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf GO_TAGS=$(GO_TAGS) go run ./hack/bench/seam $(RELEASE)
 
 .PHONY: elbencho
 elbencho: ## Build the pinned jhoblitt/elbencho fork statically into hack/bench/out/elbencho

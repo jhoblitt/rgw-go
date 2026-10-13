@@ -118,7 +118,7 @@ func newSeamCmd(v *viper.Viper) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("dir", "", "the sweep directory hack/bench/seam.sh wrote (REPORT_DIR)")
+	cmd.Flags().String("dir", "", "the sweep directory hack/bench/seam wrote (REPORT_DIR)")
 	return cmd
 }
 

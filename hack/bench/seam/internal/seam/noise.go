@@ -1,4 +1,4 @@
-package limited
+package seam
 
 import (
 	"cmp"
@@ -142,13 +142,14 @@ func parseStat(stat string) (procTicks, bool) {
 	return procTicks{comm: stat[open+1 : end], ticks: utime + stime}, true
 }
 
-// sleepContext waits d, or until ctx ends.
+// sleepContext waits d, or until ctx ends, returning why it ended: a signal's
+// Interrupted when one interrupted the run.
 func sleepContext(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	case <-t.C:
 		return nil
 	}
