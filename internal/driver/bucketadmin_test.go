@@ -1266,6 +1266,76 @@ var _ = Describe("BucketAdminStore", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(got.Attrs).To(HaveKeyWithValue(op.AttrIAMPolicy, []byte(`{"new":1}`)))
 			})
+			Describe("once the old instance's removal has lost", func() {
+				// beforeRemoval runs fn just before the rename of a bucket
+				// with id removes the instance under src: that instance's
+				// second write after the rename starts, its mark the first.
+				beforeRemoval := func(id string, fn func()) {
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					seen := 0
+					c.BeforeWrite(rookMetaPool, rookRoot, srcInst, func(*fakerados.Object) {
+						if seen++; seen < 2 {
+							return
+						}
+						c.BeforeWrite(rookMetaPool, rookRoot, srcInst, nil)
+						fn()
+					})
+				}
+				It("takes an old instance gone by the time it is read again as removed, and completes", func(ctx SpecContext) {
+					rec := createBucket(ctx, "src", aliceOwner)
+					id := rec.Info.Bucket.ID
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					beforeRemoval(id, func() {
+						Expect(driver.RemoveInstance(s, ctx, meta.BucketID{Name: "src", ID: id})).To(Succeed())
+					})
+					c.ResetCounters()
+					Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(Succeed())
+					Expect(c.Writes(rookMetaPool, rookRoot, srcInst)).To(Equal(3), "the mark, the removal staged before the rename's, and the rename's")
+					applied := slices.DeleteFunc(c.WriteOrder(rookMetaPool, rookRoot), func(oid string) bool { return oid != srcInst })
+					Expect(applied).To(HaveLen(2), "the rename's guarded removal lost to the instance being gone")
+					completed(ctx, id)
+				})
+				It("fails the rename with the error of reading the old instance again, both names loading the bucket, refuses the retry, and completes once reconciled", func(ctx SpecContext) {
+					rec := createBucket(ctx, "src", aliceOwner)
+					id := rec.Info.Bucket.ID
+					srcInst := meta.BucketID{Name: "src", ID: id}.InstanceOID()
+					beforeRemoval(id, func() {
+						writeThroughOldName(ctx, `{"v":1}`)
+						c.FailNextRead(rookMetaPool, rookRoot, srcInst, syscall.ETIMEDOUT)
+					})
+					Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrRequestTimedOut))
+					holds(ctx, id)
+					hasWrite(loaded(ctx, "src"), `{"v":1}`)
+					Expect(loaded(ctx, "dst").Attrs).NotTo(HaveKey(op.AttrIAMPolicy), "nothing was copied past the failed read")
+
+					refusedBeforeWriting(ctx, id, func() error { return retryRename(ctx) })
+					hasWrite(loaded(ctx, "src"), `{"v":1}`)
+					reconcile(ctx, `{"v":1}`)
+					Expect(retryRename(ctx)).To(Succeed())
+					completed(ctx, id)
+					hasWrite(loaded(ctx, "dst"), `{"v":1}`)
+				})
+				It("fails the rename with the error of copying the old instance again, both names loading the bucket, refuses the retry, and completes once reconciled", func(ctx SpecContext) {
+					rec := createBucket(ctx, "src", aliceOwner)
+					id := rec.Info.Bucket.ID
+					dstInst := meta.BucketID{Name: "dst", ID: id}.InstanceOID()
+					beforeRemoval(id, func() {
+						writeThroughOldName(ctx, `{"v":1}`)
+						c.FailNextWrite(rookMetaPool, rookRoot, dstInst, syscall.ETIMEDOUT)
+					})
+					Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).To(MatchError(op.ErrRequestTimedOut))
+					holds(ctx, id)
+					hasWrite(loaded(ctx, "src"), `{"v":1}`)
+					Expect(loaded(ctx, "dst").Attrs).NotTo(HaveKey(op.AttrIAMPolicy), "the failed copy wrote nothing")
+
+					refusedBeforeWriting(ctx, id, func() error { return retryRename(ctx) })
+					hasWrite(loaded(ctx, "src"), `{"v":1}`)
+					reconcile(ctx, `{"v":1}`)
+					Expect(retryRename(ctx)).To(Succeed())
+					completed(ctx, id)
+					hasWrite(loaded(ctx, "dst"), `{"v":1}`)
+				})
+			})
 		})
 		Describe("bucket config writes made through either name between a failed rename and its retry", func() {
 			// writeVia is an S3 bucket config write through name, made as the
