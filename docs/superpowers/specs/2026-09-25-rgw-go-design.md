@@ -281,16 +281,32 @@ guard, OLH epochs, compression codecs, user statistics, lock names and
 radosgw's signature quirks, are in `docs/exclusions.md` and are
 requirements of this design.
 
-Coexistence extends to radosgw's defects. When upstream Ceph behaves
-wrongly, or surprisingly, in a way a correct client meets, rgw-go matches
-it on the releases that carry it, works around it, or states why it is
-unaffected. The choice is recorded per defect in `docs/ceph-upstream-bugs.md`,
-together with the affected releases, evidence at a named release tag, and
-the defect's upstream status. The registry is maintained for the life of
-the project: an entry is added whenever work meets a defect and updated when
-upstream fixes it. It distinguishes defects from intended behaviour that
-surprises a reimplementation, and leaves go-ceph's defects to
-`docs/cgo-limitations.md`.
+Compatibility means RADOS state, in both directions. rgw-go serves whatever
+objects, xattrs, omap entries and index state radosgw wrote, and radosgw
+reads and serves whatever rgw-go writes. It does not mean reproducing
+radosgw's defects. When upstream Ceph behaves wrongly, or surprisingly, in
+a way a correct client meets, rgw-go does the correct thing for the S3 API
+as long as the RADOS state it writes stays compatible. It reads correctly
+whatever state the defect leaves behind, or states why it is unaffected.
+Where a radosgw defect could corrupt data the two gateways share, rgw-go
+acts to prevent the corruption, even though radosgw allows it. A serious
+defect is reported upstream once a running release reproduces it. Where
+rgw-go's correct behaviour differs from radosgw's at the S3 API, the
+difference is an exclusion, and the parity check's known-differences file
+lists it. The choice is recorded per defect in
+`docs/ceph-upstream-bugs.md`, together with the affected releases, evidence
+at a named release tag, and the defect's upstream status. The registry is
+maintained for the life of the project: an entry is added whenever work
+meets a defect and updated when upstream fixes it. It distinguishes defects
+from intended behaviour that surprises a reimplementation, and leaves
+go-ceph's defects to `docs/cgo-limitations.md`.
+
+Every defect the project finds is public. It goes into
+`docs/ceph-upstream-bugs.md` with its security class and its reproduction
+status, which stays unreproduced until a running release shows the defect.
+A possible security defect is also handed to the rgw-bug-reproduction
+session. No defect is held back from the registry for disclosure, and the
+registry links no private disclosure material.
 
 ## 9. Phases and gates
 
