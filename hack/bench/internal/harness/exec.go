@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,11 +21,14 @@ import (
 
 // Cmd is one command to run: its name, its arguments, the environment it
 // takes beyond this process's, and what it reads on stdin, nothing when nil.
+// Its standard output and error go to Out as it runs when Out is set, and
+// Output then returns none.
 type Cmd struct {
 	Name  string
 	Args  []string
 	Env   []string
 	Stdin []byte
+	Out   io.Writer
 }
 
 // String is the command line, for errors and logs.
@@ -71,6 +75,13 @@ func (e execer) Output(ctx context.Context, c Cmd) ([]byte, error) {
 		return err
 	}
 	cmd.WaitDelay = e.waitDelay
+	if c.Out != nil {
+		cmd.Stdout, cmd.Stderr = c.Out, c.Out
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("%s: %w", c, err)
+		}
+		return nil, nil
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && len(exitErr.Stderr) > 0 {

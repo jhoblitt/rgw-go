@@ -99,13 +99,14 @@ parity-options-check: ## Fail when a release's chart values start radosgw under 
 # bytes: Tentacle's in a seam sweep of 2026-10-02.
 BENCH_PLAN_IDLE ?= 8220119040
 
-# Every setting gateway.sh sizes a profile from is unset, so the check judges
-# the defaults whatever the caller's shell exports.
+# Every setting the gateway command sizes a profile from is unset, and the
+# config file that could set them, so the check judges the defaults whatever
+# the caller's shell exports.
 .PHONY: bench-plan-check
 bench-plan-check: ## Fail when a gateway comparison profile's default dataset is more than half of BENCH_PLAN_IDLE bytes
 	@out=$$(env -u BENCH_SMOKE -u BENCH_SECONDS -u BENCH_CONC -u BENCH_PUT_OBJECTS -u BENCH_GET_OBJECTS \
-	  -u BENCH_LARGE_THREADS -u BENCH_LARGE_OBJECTS -u BENCH_LIST_THREADS -u BENCH_LIST_OBJECTS \
-	  BENCH_PLAN=1 BENCH_IDLE_AVAIL=$(BENCH_PLAN_IDLE) hack/bench/gateway.sh tentacle radosgw 2>&1) || \
+	  -u BENCH_LARGE_THREADS -u BENCH_LARGE_OBJECTS -u BENCH_LIST_THREADS -u BENCH_LIST_OBJECTS -u BENCH_CONFIG \
+	  BENCH_PLAN=1 BENCH_IDLE_AVAIL=$(BENCH_PLAN_IDLE) go run ./hack/bench/gateway tentacle radosgw 2>&1) || \
 	  { printf '%s\n' "$$out"; exit 1; }
 
 # The parity ledgers, radosgw's baselines; hack/parity's package doc owns
@@ -331,12 +332,12 @@ elbencho: ## Build the pinned jhoblitt/elbencho fork statically into hack/bench/
 # Extra rgw-go serve flags for rgw-go-up and bench-gateway, such as
 # --rados-completions=pipe.
 RGW_GO_FLAGS ?=
-# The gateway comparison's profiles; empty runs them all (hack/bench/gateway.sh).
+# The gateway comparison's profiles; empty runs them all (hack/bench/gateway).
 PROFILES ?=
 
 .PHONY: bench-gateway
 bench-gateway: need-release ## Run the gateway comparison profiles against GATEWAY (radosgw|rgw-go) on the RELEASE cluster
-	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) RGW_GO_FLAGS="$(RGW_GO_FLAGS)" hack/bench/gateway.sh $(RELEASE) $(GATEWAY) $(PROFILES)
+	ROOKET=$(ROOKET_BIN) GO_TAGS=$(GO_TAGS) RGW_GO_FLAGS="$(RGW_GO_FLAGS)" go run ./hack/bench/gateway $(RELEASE) $(GATEWAY) $(PROFILES)
 
 .PHONY: rgw-go-up
 rgw-go-up: need-release ## Build rgw-go and run it on the host against the RELEASE cluster under the parity settings

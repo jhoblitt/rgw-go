@@ -1,6 +1,7 @@
 package harness_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -70,6 +71,40 @@ var _ = Describe("Execer", func() {
 		out, err := harness.NewExecer(10*time.Second).Output(ctx, c)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(out)).To(Equal("seam-w0-0\nseam-w1-1\n"))
+	})
+
+	It("streams a command's output and errors to Out as it runs, returning none", func(ctx SpecContext) {
+		var out bytes.Buffer
+		c := sh(`echo out; echo err >&2; echo "$CHILD"`)
+		c.Out = &out
+		got, err := harness.NewExecer(10*time.Second).Output(ctx, c)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeNil())
+		Expect(out.String()).To(Equal("out\nerr\n" + pidFile + "\n"))
+	})
+
+	It("names a streaming command when it fails, its errors left in Out", func(ctx SpecContext) {
+		var out bytes.Buffer
+		c := sh("echo no such bucket >&2; exit 3")
+		c.Out = &out
+		_, err := harness.NewExecer(10*time.Second).Output(ctx, c)
+		Expect(err).To(MatchError("/bin/sh -c echo no such bucket >&2; exit 3: exit status 3"))
+		Expect(out.String()).To(Equal("no such bucket\n"))
+	})
+
+	It("kills a streaming command's whole process group at its deadline", func(ctx SpecContext) {
+		deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		defer cancel()
+		c := sh(`sleep 30 & echo $! > "$CHILD"; wait; true`)
+		c.Out = &bytes.Buffer{}
+		start := time.Now()
+		_, err := harness.NewExecer(10*time.Second).Output(deadline, c)
+		elapsed := time.Since(start)
+		Expect(err).To(MatchError(ContainSubstring("signal: killed")))
+		Expect(elapsed).To(BeNumerically("<", 3*time.Second), "returned after %s, not after the child's 30 s or the 10 s wait delay", elapsed)
+		pid := childPid(pidFile)
+		Eventually(func() string { return processState(pid) }).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).
+			Should(Or(Equal("gone"), Equal("Z")), "the child %d died with its group", pid)
 	})
 
 	It("names the command and its stderr when it fails", func(ctx SpecContext) {

@@ -18,9 +18,22 @@ type Cluster struct {
 	CallTimeout time.Duration
 }
 
-// Toolbox runs args in the toolbox, within CallTimeout. Every rooket call
-// names its cluster through ROOKET_NAME: without it rooket falls back to a
-// name derived from the working directory.
+// Env is the environment every rooket call takes: ROOKET_NAME names its
+// cluster, without which rooket falls back to a name derived from the working
+// directory.
+func (c Cluster) Env() []string {
+	return []string{"ROOKET_NAME=rgw-go-" + c.Release}
+}
+
+// Kubectl runs rooket's kubectl with args against the cluster, within
+// CallTimeout.
+func (c Cluster) Kubectl(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.CallTimeout)
+	defer cancel()
+	return c.Exec.Output(ctx, Cmd{Name: c.Rooket, Args: append([]string{"kubectl"}, args...), Env: c.Env()})
+}
+
+// Toolbox runs args in the toolbox, within CallTimeout.
 func (c Cluster) Toolbox(ctx context.Context, args ...string) ([]byte, error) {
 	return c.ToolboxIn(ctx, nil, args...)
 }
@@ -37,7 +50,7 @@ func (c Cluster) ToolboxIn(ctx context.Context, stdin []byte, args ...string) ([
 	return c.Exec.Output(ctx, Cmd{
 		Name:  c.Rooket,
 		Args:  append(prefix, args...),
-		Env:   []string{"ROOKET_NAME=rgw-go-" + c.Release},
+		Env:   c.Env(),
 		Stdin: stdin,
 	})
 }

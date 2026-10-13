@@ -1,0 +1,6 @@
+small-put dataset    98304000 B, needs   196608000 B of  8220119040 B free: fits
+small-get dataset     1638400 B, needs     3276800 B of  8220119040 B free: fits
+noop      dataset           0 B, needs           0 B of  8220119040 B free: fits
+large-put dataset   268435456 B, needs   536870912 B of  8220119040 B free: fits
+large-get dataset   268435456 B, needs   536870912 B of  8220119040 B free: fits
+list      dataset           0 B, needs           0 B of  8220119040 B free: fits
