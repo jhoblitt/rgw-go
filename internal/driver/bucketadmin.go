@@ -278,7 +278,10 @@ func (s *Store) ChangeBucketOwner(ctx context.Context, rec *op.BucketRecord, own
 		if !live {
 			from = previousOwners(rec, pol)
 		}
-		return s.renameBucket(ctx, rec, pol, src, dst, owner, displayName, from)
+		return s.renameBucket(ctx, rec, pol, rename{
+			src: src, dst: dst, owner: owner, displayName: displayName, retry: live,
+			intent: op.RenameIntent{SrcTenant: src.Tenant, SrcName: src.Name, DstTenant: dst.Tenant, DstName: dst.Name, Owner: owner.String(), From: from},
+		})
 	}
 
 	epv, exclusive, err := s.claimName(ctx, src)
@@ -412,25 +415,31 @@ func (s *Store) linkEntryPoint(ctx context.Context, cur *op.BucketRecord, owner 
 }
 
 // renameBucket moves the bucket rec holds, its instance under src or dst,
-// from src to dst under owner, each step done again or found done by a
-// retry:
+// from src to dst under owner, as r describes it, each step done again or
+// found done by a retry:
 //  1. the entry point of dst is read: one naming another bucket is
-//     BucketAlreadyExists, before anything is written;
+//     BucketAlreadyExists; then the instances under src and dst are read
+//     past the cache, rec, one of them, refused when RADOS holds another
+//     version (readCopies), and a retry is refused when either instance
+//     has changed since the rename's last attempt left it (retryable), all
+//     before anything is written;
 //  2. the entry point of dst is created naming the bucket, or rewritten
 //     under the version step 1 read, which secures the name before the
 //     bucket changes: a rename that loses the name to a bucket created
 //     since step 1 has written nothing. It carries the rename's record
 //     too, so RemoveDanglingEntryPoint knows the rename that reserved it;
 //  3. the instance under src, while there is one, gets owner, a default
-//     ACL and the rename's record (op.RenameIntentAttr), under the version
-//     read: a rename that loses this write to a removal's claim or to
-//     RemoveDanglingEntryPoint's rewrite has changed nothing of the bucket;
+//     ACL, or on a retry the ACL it holds, and the rename's record
+//     (op.RenameIntentAttr), under the version read: a rename that loses
+//     this write to a removal's claim, to RemoveDanglingEntryPoint's
+//     rewrite or to a write made through src since has changed nothing of
+//     the bucket;
 //  4. the list entries naming the bucket under src go, those of the owners
 //     the record names it was taken from and of its current owners; a
 //     retry, which only the rename's owner can make, finds its own entry
 //     under dst, which step 6 writes again;
-//  5. the instance under dst is written, with the bucket's id and marker,
-//     owner, the ACL and the record;
+//  5. the instance under dst is written the same, under the version read,
+//     or created when there was none (writeCopy);
 //  6. owner's list gains dst;
 //  7. the entry point of src is read, and the instance under src removed
 //     under the version step 3 wrote, step 5 done again from it while
@@ -438,6 +447,10 @@ func (s *Store) linkEntryPoint(ctx context.Context, cur *op.BucketRecord, owner 
 //  8. that entry point is removed while it names the bucket, under the
 //     version step 7 read;
 //  9. the record is removed from the instance under dst.
+//
+// Each record the rename writes onto an instance holds the versions its
+// attempt leaves on both instances (op.RenameLeft), which the next retry
+// compares (retryable).
 //
 // Before step 2 the bucket's metadata claim is moved to dst, keeping src
 // as its old name, and after step 9 the old name is dropped from it
@@ -455,56 +468,74 @@ func (s *Store) linkEntryPoint(ctx context.Context, cur *op.BucketRecord, owner 
 // instance, so a failure leaves the old name to the old owner and an
 // instance only the retry removes (docs/ceph-upstream-bugs.md, "radosgw's
 // failed bucket rename leaves the old name to the old owner").
-func (s *Store) renameBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Policy, src, dst meta.BucketID, owner meta.Owner, displayName string, from []string) error {
-	epv, exclusive, err := s.claimName(ctx, dst)
+func (s *Store) renameBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Policy, r rename) error {
+	epv, exclusive, err := s.claimName(ctx, r.dst)
 	if err != nil {
 		return err
 	}
-	intent := op.RenameIntent{SrcTenant: src.Tenant, SrcName: src.Name, DstTenant: dst.Tenant, DstName: dst.Name, Owner: owner.String(), From: from}
-	return s.moveBucket(ctx, rec, pol, intent, owner, displayName, epv, exclusive)
+	return s.moveBucket(ctx, rec, pol, r, epv, exclusive)
 }
 
-// moveBucket is renameBucket past step 1, which read dst's entry point
-// version into epv, or found none, exclusive.
-func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Policy, intent op.RenameIntent, owner meta.Owner, displayName string, epv *objv, exclusive bool) error {
-	src := rec.Info.Bucket
-	src.Tenant, src.Name = intent.SrcTenant, intent.SrcName
-	dst := rec.Info.Bucket
-	dst.Tenant, dst.Name = intent.DstTenant, intent.DstName
-	cur := withOwner(rec, owner, displayName, s.release)
-	cur.Attrs[op.RenameIntentAttr] = intent.Encode()
+// rename is one rename of a bucket: from src to dst for owner, as intent
+// records it, and whether it is the retry of an unfinished one.
+type rename struct {
+	src, dst    meta.BucketID
+	intent      op.RenameIntent
+	owner       meta.Owner
+	displayName string
+	retry       bool
+}
 
-	if err := s.moveClaim(ctx, src, dst); err != nil {
+// moveBucket is renameBucket past the entry point read of step 1, which
+// read dst's entry point version into epv, or found none, exclusive.
+func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Policy, r rename, epv *objv, exclusive bool) error {
+	old, prev, rerr := s.readCopies(ctx, rec, r.src, r.dst)
+	if rerr != nil {
+		return rerr
+	}
+	if r.retry {
+		if rerr := retryable(old, prev); rerr != nil {
+			return rerr
+		}
+	}
+	content := old
+	if content == nil {
+		content = prev
+	}
+	cur := withOwner(content, r.owner, r.displayName, s.release)
+	if a := content.Attrs[meta.AttrACL]; r.retry && len(a) > 0 {
+		cur.Attrs[meta.AttrACL] = a
+	}
+	cur.Attrs[op.RenameIntentAttr] = r.intent.Encode()
+
+	if err := s.moveClaim(ctx, r.src, r.dst); err != nil {
 		return err
 	}
 	ep := meta.NewBucketEntryPoint()
-	ep.Bucket, ep.Owner, ep.CreationTime, ep.Linked = dst, owner, cur.Info.CreationTime, true
-	claim := map[string][]byte{op.RenameIntentAttr: intent.Encode()}
+	ep.Bucket, ep.Owner, ep.CreationTime, ep.Linked = r.dst, r.owner, cur.Info.CreationTime, true
+	claim := map[string][]byte{op.RenameIntentAttr: r.intent.Encode()}
 	if err := s.writeEntryPoint(ctx, ep, claim, exclusive, s.sysobj.now(), epv); err != nil {
 		return err
 	}
 	cur.EntryPoint, cur.EPVersion = ep, epv.read
 
-	srcv, err := s.markSource(ctx, rec, &cur, src, owner, displayName, intent)
+	srcv, err := s.markSource(ctx, &cur, old, prev, r)
 	if err != nil {
 		return err
 	}
-	if err := s.unlinkFrom(ctx, intent.From, rec, pol, src); err != nil {
+	if err := s.unlinkFrom(ctx, r.intent.From, rec, pol, r.src); err != nil {
 		return err
 	}
 
-	cur.Info.Bucket = dst
-	now := s.sysobj.now()
-	v := &objv{write: newWriteVersion()}
-	if err := s.writeInstance(ctx, &cur.Info, cur.Attrs, false, now, v); err != nil {
+	cur.Info.Bucket = r.dst
+	if err := s.writeCopy(ctx, &cur, prev, srcv, r.intent); err != nil {
 		return err
 	}
-	cur.Version, cur.Mtime = v.read, now
-	if err := s.linkBucket(ctx, owner, dst, cur.Info.CreationTime.Time); err != nil {
+	if err := s.linkBucket(ctx, r.owner, r.dst, cur.Info.CreationTime.Time); err != nil {
 		return op.FromRADOS(err, op.ScopeBucket)
 	}
 
-	if err := s.removeSource(ctx, &cur, src, srcv); err != nil {
+	if err := s.removeSource(ctx, &cur, r.src, srcv, r.intent); err != nil {
 		return err
 	}
 
@@ -512,7 +543,7 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 	if err := s.PutBucketInfo(ctx, &cur); err != nil {
 		return err
 	}
-	s.settleClaim(ctx, dst)
+	s.settleClaim(ctx, r.dst)
 	*rec = cur
 	return nil
 }
@@ -520,12 +551,12 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 // removeSource is renameBucket's steps 7 and 8: src's entry point read,
 // the instance under src removed by dropSource, then that entry point
 // removed while it named the bucket, under the version read.
-func (s *Store) removeSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion) error {
+func (s *Store) removeSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion, intent op.RenameIntent) error {
 	oldEP, err := s.readEntryPoint(ctx, src.Tenant, src.Name)
 	if err != nil && !errors.Is(err, op.ErrNoSuchBucket) {
 		return err
 	}
-	if rerr := s.dropSource(ctx, cur, src, srcv); rerr != nil {
+	if rerr := s.dropSource(ctx, cur, src, srcv, intent); rerr != nil {
 		return rerr
 	}
 	if oldEP == nil || oldEP.ep.Bucket.ID != src.ID {
@@ -542,17 +573,18 @@ func (s *Store) removeSource(ctx context.Context, cur *op.BucketRecord, src meta
 // markSource wrote. The old name loads that instance until it goes, so a
 // bucket config write made through it since is acknowledged and fails the
 // removal: the instance is then read again and written whole over cur, the
-// instance under dst, under the version cur holds, and its removal tried
-// again under the version read. A write through the new name since this
-// attempt last wrote cur fails that rewrite, and maxRemoveRetries lost
-// removals fail the rename, both with ConcurrentModification and both
-// instances left. Writes are kept within one attempt only: a retry through
-// the new name builds cur from that name's own instance, so a rewrite in it
-// replaces a write made through the new name between the attempts. radosgw
-// removes the old instance unchecked (rgw_bucket.cc:1175-1179; v20.2.4
-// :1326-1330), losing such a write (docs/ceph-upstream-bugs.md, "radosgw's
-// bucket rename loses a bucket config write made through the old name").
-func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion) error {
+// instance under dst, under the version cur holds, with a record of the
+// versions read and written, and its removal tried again under the version
+// read. A write through the new name since this attempt last wrote cur
+// fails that copy, and maxRemoveRetries lost removals fail the rename, both
+// with ConcurrentModification and both instances left, each holding what
+// was written through its name; the retry then refuses until both names
+// hold the same configuration (retryable). An instance already gone when it
+// is read again counts as removed. radosgw removes the old instance
+// unchecked (rgw_bucket.cc:1175-1179; v20.2.4 :1326-1330), losing such a
+// write (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a
+// bucket config write made through the old name").
+func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion, intent op.RenameIntent) error {
 	for range maxRemoveRetries {
 		err := s.removeInstance(ctx, src, &objv{read: srcv})
 		if !errors.Is(err, op.ErrConcurrentModification) {
@@ -566,8 +598,9 @@ func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.B
 			return err
 		}
 		next := *cur
-		next.Info, next.Attrs = old.Info, old.Attrs
+		next.Info, next.Attrs = old.Info, maps.Clone(old.Attrs)
 		next.Info.Bucket = cur.Info.Bucket
+		record(&next, intent, &old.Version, afterWrite(cur.Version))
 		if err := s.PutBucketInfo(ctx, &next); err != nil {
 			return err
 		}
@@ -576,30 +609,188 @@ func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.B
 	return fmt.Errorf("%w: bucket instance %s kept changing as the rename removed it", op.ErrConcurrentModification, src.InstanceOID())
 }
 
-// markSource writes the rename's owner, ACL and record into the instance
-// under src: cur itself when rec is that instance, else the instance read
-// under src, when one is left. It returns the version it wrote, none when
-// no instance is left.
-func (s *Store) markSource(ctx context.Context, rec, cur *op.BucketRecord, src meta.BucketID, owner meta.Owner, displayName string, intent op.RenameIntent) (meta.ObjVersion, error) {
-	if rec.Info.Bucket.Tenant == src.Tenant && rec.Info.Bucket.Name == src.Name {
-		if err := s.PutBucketInfo(ctx, cur); err != nil {
-			return meta.ObjVersion{}, err
-		}
-		return cur.Version, nil
-	}
-	old, err := s.GetBucketInstance(ctx, src)
-	if errors.Is(err, op.ErrNoSuchBucket) {
+// markSource writes cur, the bucket's content with the rename's owner, ACL
+// and record, into old, the instance under src, under the version old was
+// read at, recording the version the mark leaves on old and the one prev,
+// the instance read under dst, holds, and returns the version it wrote,
+// none when no instance is left under src.
+func (s *Store) markSource(ctx context.Context, cur, old, prev *op.BucketRecord, r rename) (meta.ObjVersion, error) {
+	if old == nil {
 		return meta.ObjVersion{}, nil
 	}
-	if err != nil {
-		return meta.ObjVersion{}, err
-	}
-	marked := withOwner(old, owner, displayName, s.release)
-	marked.Attrs[op.RenameIntentAttr] = intent.Encode()
+	marked := *cur
+	marked.Attrs = maps.Clone(cur.Attrs)
+	marked.Info.Bucket = r.src
+	marked.Version = old.Version
+	record(&marked, r.intent, afterWrite(old.Version), versionOf(prev))
 	if err := s.PutBucketInfo(ctx, &marked); err != nil {
 		return meta.ObjVersion{}, err
 	}
 	return marked.Version, nil
+}
+
+// writeCopy writes cur, the bucket under dst, over prev, the instance read
+// under dst, under the version prev was read at, or creates it when prev is
+// nil, recording srcv, the version the mark left on the instance under src,
+// none when there is none, and the version the write leaves: a write made
+// through the new name since that read fails it rather than being
+// overwritten, and so does an instance another attempt of the rename
+// created since, where radosgw's exclusive write of the new instance takes
+// that instance as its own (svc_bucket_sobj.cc:548-557; v20.2.4 :488-497).
+func (s *Store) writeCopy(ctx context.Context, cur, prev *op.BucketRecord, srcv meta.ObjVersion, intent op.RenameIntent) error {
+	var oldv *meta.ObjVersion
+	if srcv.Ver != 0 {
+		oldv = &srcv
+	}
+	if prev != nil {
+		cur.Version = prev.Version
+		record(cur, intent, oldv, afterWrite(prev.Version))
+		return s.PutBucketInfo(ctx, cur)
+	}
+	now := s.sysobj.now()
+	v := &objv{write: newWriteVersion()}
+	record(cur, intent, oldv, &v.write)
+	_, err := s.sysobj.write(ctx, s.instanceObj(cur.Info.Bucket), encodeAt(cur.Info, s.release), cur.Attrs, true, now, v)
+	switch {
+	case errors.Is(err, radosclient.ErrExists):
+		return fmt.Errorf("%w: bucket instance %s was created since the rename read it", op.ErrConcurrentModification, cur.Info.Bucket.InstanceOID())
+	case err != nil:
+		return mapBucketErr(err)
+	}
+	cur.Version, cur.Mtime = v.read, now
+	return nil
+}
+
+// record sets rec's rename record to intent with the versions an attempt
+// leaves on the instance under the old name, oldv, and under the new, newv,
+// each nil for a name without one.
+func record(rec *op.BucketRecord, intent op.RenameIntent, oldv, newv *meta.ObjVersion) {
+	intent.Left = &op.RenameLeft{Old: oldv, New: newv}
+	rec.Attrs[op.RenameIntentAttr] = intent.Encode()
+}
+
+// afterWrite is the version a write guarded by v leaves: cls_version's inc
+// keeps the tag and advances the counter (cls/version/cls_version.cc:148-170
+// at v19.2.6 and v20.2.4; obj_version::inc, cls_version_types.h:33-34 at
+// v19.2.6, :41-42 at v20.2.4), as objv.applyWrite takes it. The zero version
+// guards nothing, and what such a write leaves is not known: nil.
+func afterWrite(v meta.ObjVersion) *meta.ObjVersion {
+	if v.Ver == 0 {
+		return nil
+	}
+	return &meta.ObjVersion{Ver: v.Ver + 1, Tag: v.Tag}
+}
+
+// versionOf is the version rec was read at, nil for no instance.
+func versionOf(rec *op.BucketRecord) *meta.ObjVersion {
+	if rec == nil {
+		return nil
+	}
+	return &rec.Version
+}
+
+// readCopies are the bucket's instances under src, old, and under dst,
+// prev, each nil when there is none, read past the metadata cache, which
+// keeps a copy another gateway has changed until that gateway's notify
+// arrives: rec where it is the one, else the one read, whose version
+// guards the rename's write of it. rec is what the request loaded, through
+// the cache, and checked, so one RADOS no longer holds is
+// ConcurrentModification before anything is written; the read drops the
+// cached copy, so a retry loads the instance afresh. radosgw's link loads
+// the bucket through its cache and writes nothing under its version
+// (rgw_bucket.cc:1044 and :1138-1144; v20.2.4 :1195 and :1289-1295).
+func (s *Store) readCopies(ctx context.Context, rec *op.BucketRecord, src, dst meta.BucketID) (old, prev *op.BucketRecord, err error) {
+	read := func(b meta.BucketID) (*op.BucketRecord, error) {
+		r, rerr := s.rereadInstance(ctx, b)
+		if rec.Info.Bucket.Tenant != b.Tenant || rec.Info.Bucket.Name != b.Name {
+			if errors.Is(rerr, op.ErrNoSuchBucket) {
+				return nil, nil
+			}
+			return r, rerr
+		}
+		switch {
+		case errors.Is(rerr, op.ErrNoSuchBucket), rerr == nil && r.Version != rec.Version:
+			return nil, fmt.Errorf("%w: bucket instance %s changed since the request loaded it", op.ErrConcurrentModification, b.InstanceOID())
+		case rerr != nil:
+			return nil, rerr
+		}
+		return rec, nil
+	}
+	if old, err = read(src); err != nil {
+		return nil, nil, err
+	}
+	if prev, err = read(dst); err != nil {
+		return nil, nil, err
+	}
+	return old, prev, nil
+}
+
+// retryable is nil when a retry of the rename may copy old, the bucket's
+// instance under the old name, onto prev, the one under the new name, and
+// ConcurrentModification otherwise, before anything is written. The retry
+// merges nothing: it goes on when
+//   - one record either instance carries names the versions both hold now,
+//     so neither has changed since that attempt left it;
+//   - only one instance is there, so nothing can be lost or reconciled; or
+//   - both have been written since every record and hold the same
+//     configuration (sameConfig), which is how an operator reconciles the
+//     two after a refusal: the configuration they want, written through
+//     each name.
+//
+// Any other change to either instance, a config write, an ACL or an attr
+// through either name or a concurrent retry's write, is refused, so no
+// write acknowledged through one name is overwritten by the other's. radosgw
+// checks nothing: its retry writes the new instance exclusively and, finding
+// it, leaves it as it is (rgw_bucket.cc:1138-1144, svc_bucket_sobj.cc:548-557;
+// v20.2.4 :1289-1295 and :488-497), then removes the old one unchecked
+// (rgw_bucket.cc:1175-1179; v20.2.4 :1326-1330), losing a write made through
+// the old name between the attempts (docs/ceph-upstream-bugs.md, "radosgw's
+// bucket rename loses a bucket config write made through the old name").
+func retryable(old, prev *op.BucketRecord) error {
+	if old == nil || prev == nil {
+		return nil
+	}
+	oldSeen, prevSeen := false, false
+	for _, rec := range []*op.BucketRecord{old, prev} {
+		i, ok := op.DecodeRenameIntent(rec.Attrs)
+		if !ok || i.Left == nil {
+			continue
+		}
+		o, p := sameVersion(i.Left.Old, old), sameVersion(i.Left.New, prev)
+		if o && p {
+			return nil
+		}
+		oldSeen, prevSeen = oldSeen || o, prevSeen || p
+	}
+	if !oldSeen && !prevSeen && sameConfig(old, prev) {
+		return nil
+	}
+	return fmt.Errorf("%w: bucket %s changed under its old or new name since the rename's last attempt; write the configuration it should keep through both names, then retry",
+		op.ErrConcurrentModification, old.Info.Bucket.Key())
+}
+
+// sameVersion reports whether v is the version rec holds.
+func sameVersion(v *meta.ObjVersion, rec *op.BucketRecord) bool {
+	return v != nil && *v == rec.Version
+}
+
+// sameConfig reports whether a and b, the bucket's instances under its two
+// names, hold the same configuration: the info but for the name, encoded at
+// the newest release, whose encoding carries every field, and the attrs but
+// for the rename's record.
+func sameConfig(a, b *op.BucketRecord) bool {
+	ai, bi := a.Info, b.Info
+	ai.Bucket.Tenant, ai.Bucket.Name = "", ""
+	bi.Bucket.Tenant, bi.Bucket.Name = "", ""
+	if !bytes.Equal(encodeAt(ai, denc.Tentacle), encodeAt(bi, denc.Tentacle)) {
+		return false
+	}
+	without := func(attrs map[string][]byte) map[string][]byte {
+		m := maps.Clone(attrs)
+		delete(m, op.RenameIntentAttr)
+		return m
+	}
+	return maps.EqualFunc(without(a.Attrs), without(b.Attrs), bytes.Equal)
 }
 
 // RemoveDanglingEntryPoint implements op.BucketAdminStore. The entry point

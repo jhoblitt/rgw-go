@@ -1053,7 +1053,9 @@ review and verified against the tree.
     retry the rename, then the link.
   - A rename records itself in the bucket's instances while it runs, in an
     xattr of radosgw's attr namespace, `user.rgw.rgw-go-rename`, which
-    radosgw carries and never reads. Until the rename completes, rgw-go
+    radosgw carries and never reads; each record an attempt writes also
+    holds the RADOS version that attempt leaves on each of the two
+    instances. Until the rename completes, rgw-go
     answers every other link, unlink or chown of the bucket 409
     ConcurrentModification, and so do an S3 DeleteBucket and an admin
     bucket removal, with or without `purge-objects` or `bypass-gc`, by
@@ -1103,7 +1105,8 @@ review and verified against the tree.
     radosgw neither writes nor reads the xattr.
   - The rename writes in another order than radosgw: the new name's entry
     point is created first, which secures the name; the instance under the
-    old name gets the new owner, a default ACL and the record, under the
+    old name gets the new owner, a default ACL, or on a retry the ACL it
+    holds, and the record, under the
     version read, so a rename that loses that write to a removal or to the
     freeing of its claim below has changed nothing of the bucket; the old
     owners' list entries go, those the record names too; the instance
@@ -1140,24 +1143,56 @@ review and verified against the tree.
     having written only its claim of the new name: the bucket
     keeps its old name, its owner, its ACL and its owner's list entry, and
     carries no record, so a later request is not refused.
-  - A bucket configuration write made through the old name during one
-    attempt of a rename, such as a policy, ACL, tagging or versioning
-    change, is kept: the attempt removes the old instance only under the
-    version its own mark wrote, and when such a write has changed it since,
-    copies it whole to the new name and retries the removal, up to 20
-    times. Then it answers 409 ConcurrentModification, with both names
-    loading the bucket and the write in the old one, and a retry of the
-    rename completes it. A write made through the new name after the
-    attempt last wrote the new instance fails a later copy, and the
-    attempt, the same way. This holds within one attempt only: a retry
-    through the new name writes the new instance from that name's own
-    instance, so a copy it makes replaces a write made through the new
-    name between the attempts, and a retry by either name can drop a write
-    made between the attempts through the other. radosgw removes the
-    old instance unchecked (`rgw_bucket.cc:1175-1179` at v19.2.6,
-    `:1326-1330` at v20.2.4), so it answers such a write 200 and loses it
-    (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket
-    config write made through the old name").
+  - A bucket configuration write made through either name while a rename
+    is unfinished, such as a policy, ACL, tagging or versioning change, is
+    never overwritten: a retry merges nothing, and refuses rather than copy
+    over it.
+    - Within one attempt, the rename removes the old instance only under
+      the version its own mark wrote. When a write through the old name has
+      changed it since, the attempt copies it whole to the new name and
+      retries the removal, up to 20 times. Then it answers 409
+      ConcurrentModification, with both names loading the bucket and the
+      write in the old one. A write made through the new name after the
+      attempt last wrote the new instance fails a later copy, and the
+      attempt, the same way.
+    - A retry, by either name, reads both instances from RADOS, past the
+      metadata cache, before it writes anything. The cache can hold a copy
+      another gateway changed until that gateway's notify arrives. When the
+      instance the request loaded through the cache is no longer the one
+      RADOS holds, the retry answers 409 ConcurrentModification having
+      written nothing, and drops the cached copy so the next retry loads it
+      afresh.
+    - The retry then compares each instance's RADOS version with the
+      versions the attempts' records hold. It goes on when one attempt's
+      record names the versions both instances hold now, or when only one
+      instance is there, as nothing can be lost then. Any other change to
+      either instance since the last attempt left it answers 409
+      ConcurrentModification having written nothing, with both names
+      loading the bucket and each write where it was made. That covers a
+      config write, an ACL or an attr through either name, one written and
+      set back, and a concurrent retry's own write.
+    - After such a refusal the operator reconciles the two names by writing
+      the configuration the bucket should keep through both. A retry goes
+      on once both instances have been written since every record and hold
+      the same configuration (the info but for the name, and the attrs but
+      for the record), as copying the one onto the other then changes
+      nothing.
+    - The retry writes each instance under the version it read, so a write
+      made through either name during it fails the retry rather than being
+      overwritten. A new instance a concurrent retry created since the read
+      found none fails it too, where radosgw's exclusive write of the new
+      instance takes that -EEXIST as success
+      (`services/svc_bucket_sobj.cc:548-557` at v19.2.6, `:488-497` at
+      v20.2.4).
+    - radosgw checks nothing. It removes the old instance unchecked
+      (`rgw_bucket.cc:1175-1179` at v19.2.6, `:1326-1330` at v20.2.4), so it
+      answers a write made through the old name 200 and loses it. Its retry
+      writes the new instance exclusively and, finding it, leaves it as it
+      is (`rgw_bucket.cc:1138-1144` and `services/svc_bucket_sobj.cc:548-557`
+      at v19.2.6, `:1289-1295` and `:488-497` at v20.2.4), so a write made
+      through the old name between the attempts is lost too
+      (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket
+      config write made through the old name").
   - The owners' bucket list entries a link removes are the ACL owner's and
     the instance owner's when it differs, each only while it names the
     bucket's instance, and a failure is returned; radosgw removes the ACL

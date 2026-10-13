@@ -139,6 +139,19 @@ type RenameIntent struct {
 	// entries a retry still has to remove after the first try gave the
 	// instance to Owner.
 	From []string `json:"from,omitempty"`
+	// Left is how the attempt that wrote this record onto an instance left
+	// the bucket's instances, which rgw-go's RADOS driver records and a
+	// retry compares; nil in the record the new name's entry point carries.
+	Left *RenameLeft `json:"left,omitempty"`
+}
+
+// RenameLeft is the RADOS version of each of the bucket's instances, under
+// the old name and the new, as a rename attempt left them: the version its
+// own write gave the instance, or the one it read there; nil for a name
+// that had no instance.
+type RenameLeft struct {
+	Old *meta.ObjVersion `json:"old,omitempty"`
+	New *meta.ObjVersion `json:"new,omitempty"`
 }
 
 // RemovingAttr is the bucket instance xattr rgw-go's RADOS driver writes,
