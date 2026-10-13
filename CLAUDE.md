@@ -47,3 +47,21 @@ before writing Go here.
 - `docs/exclusions.md` is canonical for rgw-rs too: announce every material change to the
   rgw-rs Claude session.
 - Design: docs/superpowers/specs/2026-09-25-rgw-go-design.md. Plans: docs/superpowers/plans/.
+
+## Working rules (end-of-phase-1 review, docs/porting-process.md)
+
+- A review finding is fixed in the PR whose review found it. One truly outside the PR's change
+  becomes a numbered plan task before that PR merges; a ledger line is never its only record
+  (PP-12).
+- Unrelated changes never share a PR, and one task may ship as several PRs (PP-13).
+- Every defect found is public: it goes into `docs/ceph-upstream-bugs.md`, and each possible
+  security defect is also sent to the rgw-bug-reproduction session. Never ask the owner about
+  disclosure, and never link that session's private disclosure gists from the registry (PP-4).
+- The parity ledgers and their tooling are a regression test, not a security boundary: harden
+  them against honest mistakes only. Adversarial review is for the security boundaries the spec
+  names (PP-14).
+- An instruction to act once a condition holds is the go-ahead: when it holds, check what can be
+  observed (agents drained, sessions idle, load, running processes) and act, without asking
+  again (PP-16).
+- Every rgw-go fix, where it is reasonable, carries an s3-tests test that covers it, merged into
+  jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task.
