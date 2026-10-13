@@ -250,12 +250,22 @@ var _ = Describe("the router with the admin API", func() {
 		adminH = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(adminStatus) })
 	})
 
-	serve := func(h http.Handler, host, path string) int {
+	serveHost := func(h http.Handler, host, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
 		req.Host, req.RequestURI = host, path
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		return rec.Code
+		return rec
+	}
+	serve := func(h http.Handler, host, path string) int { return serveHost(h, host, path).Code }
+	// isBadRequest expects rec to be the answer net/http's server writes for
+	// a request it cannot parse.
+	isBadRequest := func(rec *httptest.ResponseRecorder) {
+		GinkgoHelper()
+		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+		Expect(rec.Header().Get("Content-Type")).To(Equal("text/plain; charset=utf-8"))
+		Expect(rec.Header().Get("Connection")).To(Equal("close"))
+		Expect(rec.Body.String()).To(Equal("400 Bad Request"))
 	}
 
 	DescribeTable("sends the admin entry and what lies under it to the admin handler, as get_resource_mgr matches it",
@@ -341,11 +351,7 @@ var _ = Describe("the router with the admin API", func() {
 	DescribeTable("answers a malformed escape in a path net/http leaves unchecked as net/http answers one it checks",
 		func(target string) {
 			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
-			rec := serveTarget(h, target)
-			Expect(rec.Code).To(Equal(http.StatusBadRequest))
-			Expect(rec.Header().Get("Content-Type")).To(Equal("text/plain; charset=utf-8"))
-			Expect(rec.Header().Get("Connection")).To(Equal("close"))
-			Expect(rec.Body.String()).To(Equal("400 Bad Request"))
+			isBadRequest(serveTarget(h, target))
 		},
 		Entry("a bad hex digit radosgw's decode empties the path at", "http://127.0.0.1?x=/admin/%zz"),
 		Entry("a bad hex digit under a virtual-hosted bucket", "http://b.s3.example.com?x/%zz?"),
@@ -358,7 +364,7 @@ var _ = Describe("the router with the admin API", func() {
 	DescribeTable("answers a malformed escape in the Host's bucket as net/http answers one in a path",
 		func(host, path string) {
 			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, []string{"/swift"})
-			Expect(serve(h, host, path)).To(Equal(http.StatusBadRequest))
+			isBadRequest(serveHost(h, host, path))
 		},
 		Entry("a bad hex digit, which would empty the URI", "my%zz.s3.example.com", "/k"),
 		Entry("a percent sign ending the bucket, which would cut the URI", "my%.s3.example.com", "/"),
