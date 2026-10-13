@@ -134,8 +134,11 @@ func lowerASCII(s string) string {
 	return string(b)
 }
 
-// conf is Options over every option the driver's specs need, at radosgw's
-// defaults, with kv on top.
+// conf is Options over every option the driver's specs need, with kv on top:
+// radosgw's defaults, but for rgw_dynamic_resharding and rgw_run_sync_thread,
+// false as the parity clusters set them (hack/rooket/lib.sh, parity_options).
+// rgw-go runs neither worker, and Open logs each one enabled, once for every
+// store a spec opens.
 func conf(kv map[string]string) *cephconf.Options {
 	m := cephconf.MapGetter{
 		"rgw_realm": "", "rgw_realm_id": "", "rgw_zonegroup": "", "rgw_zonegroup_id": "", "rgw_zone": "", "rgw_zone_id": "",
@@ -148,8 +151,8 @@ func conf(kv map[string]string) *cephconf.Options {
 		"rgw_enable_quota_threads": "true", "rgw_bucket_default_quota_max_objects": "-1", "rgw_bucket_default_quota_max_size": "-1",
 		"rgw_user_default_quota_max_objects": "-1", "rgw_user_default_quota_max_size": "-1", "rgw_account_default_quota_max_objects": "-1", "rgw_account_default_quota_max_size": "-1",
 		"rgw_list_bucket_min_readahead": "1000", "rgw_max_listing_results": "1000", "rgw_override_bucket_index_max_shards": "0", "rgw_bucket_index_max_aio": "128",
-		"rgw_dynamic_resharding": "true", "rgw_list_buckets_max_chunk": "1000", "rgw_relaxed_s3_bucket_names": "false", "rgw_max_put_param_size": "1048576",
-		"rgw_acl_grants_max_num": "100", "rgw_run_sync_thread": "true", "rgw_max_chunk_size": "4194304",
+		"rgw_dynamic_resharding": "false", "rgw_list_buckets_max_chunk": "1000", "rgw_relaxed_s3_bucket_names": "false", "rgw_max_put_param_size": "1048576",
+		"rgw_acl_grants_max_num": "100", "rgw_run_sync_thread": "false", "rgw_max_chunk_size": "4194304",
 		"rgw_get_obj_max_req_size": "4194304", "rgw_get_obj_window_size": "16777216",
 		"rgw_put_obj_min_window_size": "16777216", "rgw_obj_stripe_size": "4194304", "rgw_max_put_size": "5368709120",
 		"rgw_gc_max_objs": "32", "rgw_gc_obj_min_wait": "7200", "rgw_gc_processor_max_time": "3600", "rgw_gc_processor_period": "3600",
