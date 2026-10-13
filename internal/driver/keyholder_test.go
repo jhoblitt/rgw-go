@@ -21,7 +21,6 @@ var _ = Describe("the key holder index", func() {
 		s *driver.Store
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newIndexCluster()
 		st, err := driver.Open(ctx, c, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{})
 		Expect(err).NotTo(HaveOccurred())
@@ -266,7 +265,6 @@ var _ = Describe("the email index claim", func() {
 		s *driver.Store
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newIndexCluster()
 		st, err := driver.Open(ctx, c, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{})
 		Expect(err).NotTo(HaveOccurred())

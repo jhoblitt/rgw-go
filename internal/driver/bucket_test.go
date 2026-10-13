@@ -49,7 +49,6 @@ var _ = Describe("BucketStore: entry point and instance", func() {
 		s *driver.Store
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
 		c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)

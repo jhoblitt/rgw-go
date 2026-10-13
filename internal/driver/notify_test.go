@@ -82,7 +82,6 @@ var _ = Describe("notifier", func() {
 		sleeps  *recorder[time.Duration]
 	)
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(captureLog(GinkgoWriter))
 		c = fakerados.New()
 		p, err := c.Pool(ctx, control, "")
 		Expect(err).NotTo(HaveOccurred())

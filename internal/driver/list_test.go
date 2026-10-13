@@ -58,7 +58,6 @@ var _ = Describe("ListObjects", func() {
 		return e
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newIndexCluster()
 		var err error
 		s, err = driver.Open(ctx, c, conf(nil), driver.Options{})

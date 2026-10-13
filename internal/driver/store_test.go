@@ -87,6 +87,10 @@ var _ = Describe("the driver", func() {
 	BeforeEach(func() {
 		c := fakerados.New()
 		c.SetRequiredOSDRelease("squid")
+		// Open's gc shard initialization and the passes of the gc worker Run
+		// starts call cls_version and cls_rgw too, which every OSD loads.
+		c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)
+		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
 		seedRookZone(c, "ceph-objectstore", true)
 		cluster = &recordingCluster{Cluster: c}
 		opts = conf(map[string]string{"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore"})

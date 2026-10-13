@@ -116,7 +116,6 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 	}
 	writesTo := func(oid string) int { return c.Writes(rookMetaPool, rookRoot, oid) }
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newIndexCluster()
 		s = open(ctx, nil)
 	})

@@ -185,7 +185,6 @@ var _ = Describe("BucketAdminStore", func() {
 		return names
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newIndexCluster()
 		st, err := driver.Open(ctx, c, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{})
 		Expect(err).NotTo(HaveOccurred())

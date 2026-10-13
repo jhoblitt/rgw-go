@@ -706,7 +706,6 @@ var _ = Describe("DeleteBucket aborts in-flight uploads", func() {
 		return r
 	}
 	BeforeEach(func(ctx SpecContext) {
-		DeferCleanup(driver.CaptureLog(GinkgoWriter))
 		c = newPutCluster()
 		s = openPutStore(ctx, c, denc.Squid, nil, time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC))
 		DeferCleanup(s.Close)
