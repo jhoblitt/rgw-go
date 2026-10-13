@@ -1,4 +1,4 @@
-package limited_test
+package seam_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
 // processState is a process's state letter from /proc, or "gone".
@@ -54,18 +54,18 @@ var _ = Describe("Execer", func() {
 		pidFile = filepath.Join(GinkgoT().TempDir(), "child")
 	})
 
-	sh := func(script string) limited.Cmd {
-		return limited.Cmd{Name: "/bin/sh", Args: []string{"-c", script}, Env: []string{"CHILD=" + pidFile}}
+	sh := func(script string) seam.Cmd {
+		return seam.Cmd{Name: "/bin/sh", Args: []string{"-c", script}, Env: []string{"CHILD=" + pidFile}}
 	}
 
 	It("returns a command's output", func(ctx SpecContext) {
-		out, err := limited.NewExecer(10*time.Second).Output(ctx, sh(`echo "$CHILD"`))
+		out, err := seam.NewExecer(10*time.Second).Output(ctx, sh(`echo "$CHILD"`))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(out)).To(Equal(pidFile + "\n"))
 	})
 
 	It("names the command and its stderr when it fails", func(ctx SpecContext) {
-		_, err := limited.NewExecer(10*time.Second).Output(ctx, sh("echo no such pool >&2; exit 2"))
+		_, err := seam.NewExecer(10*time.Second).Output(ctx, sh("echo no such pool >&2; exit 2"))
 		Expect(err).To(MatchError(`/bin/sh -c echo no such pool >&2; exit 2: exit status 2: no such pool`))
 	})
 
@@ -73,7 +73,7 @@ var _ = Describe("Execer", func() {
 		deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		defer cancel()
 		start := time.Now()
-		_, err := limited.NewExecer(10*time.Second).Output(deadline, sh(`sleep 30 & echo $! > "$CHILD"; wait; true`))
+		_, err := seam.NewExecer(10*time.Second).Output(deadline, sh(`sleep 30 & echo $! > "$CHILD"; wait; true`))
 		elapsed := time.Since(start)
 		Expect(err).To(MatchError(ContainSubstring("signal: killed")))
 		Expect(elapsed).To(BeNumerically("<", 3*time.Second), "returned after %s, not after the child's 30 s or the 10 s wait delay", elapsed)
@@ -85,7 +85,7 @@ var _ = Describe("Execer", func() {
 
 	It("returns once the command exits, though a process it left behind keeps its output open", func(ctx SpecContext) {
 		start := time.Now()
-		_, err := limited.NewExecer(300*time.Millisecond).Output(ctx, sh(`sleep 30 & echo $! > "$CHILD"`))
+		_, err := seam.NewExecer(300*time.Millisecond).Output(ctx, sh(`sleep 30 & echo $! > "$CHILD"`))
 		elapsed := time.Since(start)
 		pid := childPid(pidFile)
 		DeferCleanup(syscall.Kill, pid, syscall.SIGKILL)

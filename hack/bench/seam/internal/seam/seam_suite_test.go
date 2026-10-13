@@ -1,4 +1,4 @@
-package limited_test
+package seam_test
 
 import (
 	"testing"
@@ -10,10 +10,10 @@ import (
 // Managed by go-conventions (references/testing.md owns the bootstrap):
 // spec order is randomized within the suite and a committed Pending or
 // focused spec fails the run under plain go test.
-func TestLimited(t *testing.T) {
+func TestSeam(t *testing.T) {
 	RegisterFailHandler(Fail)
 	suiteCfg, reporterCfg := GinkgoConfiguration()
 	suiteCfg.RandomizeAllSpecs = true
 	suiteCfg.FailOnPending = true
-	RunSpecs(t, "limited suite", suiteCfg, reporterCfg)
+	RunSpecs(t, "seam suite", suiteCfg, reporterCfg)
 }

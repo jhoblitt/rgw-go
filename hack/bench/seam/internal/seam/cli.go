@@ -1,4 +1,4 @@
-package limited
+package seam
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, adjust func(*Runner)) *cobra.Command {
 	v := viper.New()
 	cmd := &cobra.Command{
-		Use:           "limited squid|tentacle",
+		Use:           "seam squid|tentacle",
 		Short:         "Re-run the seam microbenchmark's over-budget cell under the in-flight limiter",
 		Version:       version.String(),
 		SilenceUsage:  true,

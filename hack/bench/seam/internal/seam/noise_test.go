@@ -1,4 +1,4 @@
-package limited_test
+package seam_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
 // stat is a /proc/<pid>/stat line for comm with ticks of CPU time, split
@@ -53,7 +53,7 @@ var _ = Describe("Sample", func() {
 		proc["300/stat"] = stat(300, "conmon", 0)
 		proc["500/stat"] = stat(500, "bash", 5)
 		proc["self"] = &fstest.MapFile{Data: []byte("not a pid")}
-		out, err := limited.Sample(ctx, proc, at, time.Second, across(map[string]*fstest.MapFile{
+		out, err := seam.Sample(ctx, proc, at, time.Second, across(map[string]*fstest.MapFile{
 			"100/stat": stat(100, "seam.test", 160), // 150 ticks in 1 s: 150% of a CPU
 			"200/stat": stat(200, "kworker/0:1", 5), // 4%: under the floor
 			"300/stat": stat(300, "conmon", 6),      // 6%
@@ -70,7 +70,7 @@ var _ = Describe("Sample", func() {
 			proc[fmt.Sprintf("%d/stat", pid+1)] = stat(pid+1, fmt.Sprintf("p%02d", pid), 0)
 			after[fmt.Sprintf("%d/stat", pid+1)] = stat(pid+1, fmt.Sprintf("p%02d", pid), 10+pid)
 		}
-		out, err := limited.Sample(ctx, proc, at, time.Second, across(after))
+		out, err := seam.Sample(ctx, proc, at, time.Second, across(after))
 		Expect(err).NotTo(HaveOccurred())
 		lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 		Expect(lines).To(HaveLen(13), "the header and 12 processes")
@@ -80,7 +80,7 @@ var _ = Describe("Sample", func() {
 
 	It("scales the ticks by the window", func(ctx SpecContext) {
 		proc["100/stat"] = stat(100, "seam.test", 0)
-		out, err := limited.Sample(ctx, proc, at, 2*time.Second, func(_ context.Context, _ time.Duration) error {
+		out, err := seam.Sample(ctx, proc, at, 2*time.Second, func(_ context.Context, _ time.Duration) error {
 			proc["100/stat"] = stat(100, "seam.test", 30)
 			return nil
 		})
@@ -91,7 +91,7 @@ var _ = Describe("Sample", func() {
 
 var _ = Describe("ParseStat", func() {
 	parse := func(stat string) []any {
-		comm, ticks, ok := limited.ParseStat(stat)
+		comm, ticks, ok := seam.ParseStat(stat)
 		return []any{comm, ticks, ok}
 	}
 
@@ -106,7 +106,7 @@ var _ = Describe("ParseStat", func() {
 	})
 
 	It("refuses a line cut short", func() {
-		_, _, ok := limited.ParseStat("7 (sh) R 1 7")
+		_, _, ok := seam.ParseStat("7 (sh) R 1 7")
 		Expect(ok).To(BeFalse())
 	})
 })

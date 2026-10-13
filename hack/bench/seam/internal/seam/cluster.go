@@ -1,4 +1,4 @@
-package limited
+package seam
 
 //go:generate go tool counterfeiter -generate
 

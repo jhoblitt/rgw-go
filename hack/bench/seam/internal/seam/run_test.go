@@ -1,4 +1,4 @@
-package limited_test
+package seam_test
 
 import (
 	"bytes"
@@ -19,8 +19,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited"
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited/limitedfakes"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam/seamfakes"
 )
 
 // toolboxArgs is how every toolbox call starts.
@@ -30,8 +30,8 @@ var toolboxArgs = []string{"kubectl", "-n", "rook-ceph", "exec", "deploy/rook-ce
 // rooket output and chart values, the commands' answers, and /proc.
 type world struct {
 	repo   string
-	exec   *limitedfakes.FakeExecer
-	launch *limitedfakes.FakeLauncher
+	exec   *seamfakes.FakeExecer
+	launch *seamfakes.FakeLauncher
 	proc   fstest.MapFS
 	stdout *bytes.Buffer
 
@@ -47,8 +47,8 @@ type world struct {
 func newWorld() *world {
 	w := &world{
 		repo:     GinkgoT().TempDir(),
-		exec:     &limitedfakes.FakeExecer{},
-		launch:   &limitedfakes.FakeLauncher{},
+		exec:     &seamfakes.FakeExecer{},
+		launch:   &seamfakes.FakeLauncher{},
 		stdout:   &bytes.Buffer{},
 		avail:    []int64{9286684672},
 		failWith: map[string]error{},
@@ -68,7 +68,7 @@ func newWorld() *world {
 	Expect(os.WriteFile(filepath.Join(values, "rook-ceph-cluster.yaml"),
 		[]byte("cephImage:\n  repository: quay.io/ceph/ceph\n  tag: v19.2.6\ncephBlockPools: []\n"), 0o600)).To(Succeed())
 	w.exec.OutputStub = w.output
-	w.launch.BenchStub = func(_ context.Context, p limited.Process) (int, error) {
+	w.launch.BenchStub = func(_ context.Context, p seam.Process) (int, error) {
 		results, ok := strings.CutPrefix(p.Args[slices.IndexFunc(p.Args, func(a string) bool { return strings.HasPrefix(a, "-results=") })], "-results=")
 		Expect(ok).To(BeTrue())
 		Expect(os.WriteFile(results, []byte(`{"mode":"x"}`+"\n"), 0o600)).To(Succeed())
@@ -79,7 +79,7 @@ func newWorld() *world {
 }
 
 // output answers a command as the host and the cluster would.
-func (w *world) output(_ context.Context, c limited.Cmd) ([]byte, error) {
+func (w *world) output(_ context.Context, c seam.Cmd) ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	line := c.String()
@@ -137,7 +137,7 @@ func (w *world) commands() []string {
 	return lines
 }
 
-func (w *world) runner(r *limited.Runner) {
+func (w *world) runner(r *seam.Runner) {
 	r.Exec, r.Launcher, r.Proc = w.exec, w.launch, w.proc
 	r.Now = func() time.Time { return runStart }
 	r.Getenv = func(string) string { return "" }
@@ -150,14 +150,14 @@ func (w *world) runner(r *limited.Runner) {
 	r.Grace = 30 * time.Second
 }
 
-func (w *world) config() limited.Config {
-	cfg, err := limited.Settings{Release: "squid", Limiter: "1", Repo: w.repo}.Check()
+func (w *world) config() seam.Config {
+	cfg, err := seam.Settings{Release: "squid", Limiter: "1", Repo: w.repo}.Check()
 	Expect(err).NotTo(HaveOccurred())
 	return cfg
 }
 
-func (w *world) run(ctx context.Context, cfg limited.Config) error {
-	r := limited.NewRunner(io.Discard, io.Discard, nil)
+func (w *world) run(ctx context.Context, cfg seam.Config) error {
+	r := seam.NewRunner(io.Discard, io.Discard, nil)
 	w.runner(r)
 	return r.Run(ctx, cfg)
 }
@@ -179,7 +179,7 @@ var _ = Describe("Runner.Run", func() {
 
 		bin := filepath.Join(w.repo, "hack", "bench", "out", "squid", "seam.test")
 		_, build := w.exec.OutputArgsForCall(0)
-		Expect(build).To(Equal(limited.Cmd{Name: "go", Args: []string{
+		Expect(build).To(Equal(seam.Cmd{Name: "go", Args: []string{
 			"-C", w.repo, "test", "-c",
 			"-tags=ceph_preview,integration", "-o", bin, "./test/bench/seam",
 		}}))
@@ -241,14 +241,14 @@ var _ = Describe("Runner.Run", func() {
 
 	It("reaches the cluster through the toolbox, naming it with ROOKET_NAME", func(ctx SpecContext) {
 		Expect(w.run(ctx, w.config())).To(Succeed())
-		var df []limited.Cmd
+		var df []seam.Cmd
 		for i := range w.exec.OutputCallCount() {
 			if _, c := w.exec.OutputArgsForCall(i); strings.Contains(c.String(), " df ") {
 				df = append(df, c)
 			}
 		}
 		Expect(df).To(HaveLen(4), "once for env.json and once before each process")
-		Expect(df[0]).To(Equal(limited.Cmd{
+		Expect(df[0]).To(Equal(seam.Cmd{
 			Name: "rooket",
 			Args: append(slices.Clone(toolboxArgs), "ceph", "--connect-timeout=20", "--rados-mon-op-timeout=20", "df", "-f", "json"),
 			Env:  []string{"ROOKET_NAME=rgw-go-squid"},
@@ -258,7 +258,7 @@ var _ = Describe("Runner.Run", func() {
 	It("takes the rooket and Ceph versions it can from the environment, and falls back where a host has no rpm", func(ctx SpecContext) {
 		w.failWith["rpm -q "] = errors.New("exit status 1")
 		w.failWith["rpm -qf"] = errors.New("exit status 1")
-		w.exec.OutputStub = func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 			switch c.String() {
 			case "dpkg -S /usr/lib64/librados.so.2.0.0":
 				return []byte("librados2:amd64: /usr/lib64/librados.so.2.0.0\n"), nil
@@ -267,7 +267,7 @@ var _ = Describe("Runner.Run", func() {
 			}
 			return w.output(ctx, c)
 		}
-		r := limited.NewRunner(io.Discard, io.Discard, nil)
+		r := seam.NewRunner(io.Discard, io.Discard, nil)
 		w.runner(r)
 		r.Getenv = func(name string) string {
 			return map[string]string{"ROOKET_VERSION": "rooket v1.2.3", "GOMAXPROCS": "8"}[name]
@@ -307,7 +307,7 @@ var _ = Describe("Runner.Run", func() {
 
 	It("fails, naming the mode, when the pool lacks the space past the wait", func(ctx SpecContext) {
 		w.avail = []int64{9286684672, 1 << 30}
-		r := limited.NewRunner(io.Discard, io.Discard, nil)
+		r := seam.NewRunner(io.Discard, io.Discard, nil)
 		w.runner(r)
 		start := time.Now()
 		r.Now = func() time.Time { return start.Add(time.Duration(w.exec.OutputCallCount()) * time.Minute) }
@@ -324,9 +324,9 @@ var _ = Describe("Runner.Run", func() {
 		for i := range w.left {
 			w.left[i] = fmt.Sprintf("seam-w%d-%d", i%64, i)
 		}
-		w.launch.BenchReturnsOnCall(1, 4243, fmt.Errorf("%w of 6m4s", limited.ErrStopped))
+		w.launch.BenchReturnsOnCall(1, 4243, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
 		err := w.run(ctx, w.config())
-		Expect(err).To(MatchError(limited.ErrStopped))
+		Expect(err).To(MatchError(seam.ErrStopped))
 		Expect(err).To(MatchError("bench callback: stopped past its limit of 6m4s"))
 		Expect(w.launch.BenchCallCount()).To(Equal(2), "pipe does not run after callback failed")
 
@@ -373,7 +373,7 @@ var _ = Describe("Runner.Run", func() {
 
 	It("records why a run failed in sweep.log when the pool lacks the space", func(ctx SpecContext) {
 		w.avail = []int64{9286684672, 1 << 30}
-		r := limited.NewRunner(io.Discard, io.Discard, nil)
+		r := seam.NewRunner(io.Discard, io.Discard, nil)
 		w.runner(r)
 		r.AvailWait = 0
 		Expect(r.Run(ctx, w.config())).To(MatchError(ContainSubstring("not enough space for the over-budget cell in sync mode")))
@@ -409,16 +409,16 @@ var _ = Describe("Runner.Run", func() {
 	})
 
 	DescribeTable("fails a hung local command at its deadline",
-		func(ctx SpecContext, name string, set func(*limited.Runner), want string) {
-			r := limited.NewRunner(io.Discard, io.Discard, nil)
+		func(ctx SpecContext, name string, set func(*seam.Runner), want string) {
+			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
 			set(r)
-			host := limited.NewExecer(time.Second)
-			r.Exec = &limitedfakes.FakeExecer{OutputStub: func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+			host := seam.NewExecer(time.Second)
+			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 				if c.Name == name {
 					// A shell that forks a child holding its output, as a
 					// wedged tool would.
-					return host.Output(ctx, limited.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
+					return host.Output(ctx, seam.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
 				}
 				return w.output(ctx, c)
 			}}
@@ -431,9 +431,9 @@ var _ = Describe("Runner.Run", func() {
 			Expect(w.launch.BenchCallCount()).To(BeZero())
 			GinkgoWriter.Printf("a hung %s returned after %s\n", name, elapsed)
 		},
-		Entry("ldd, at LocalTimeout", "ldd", func(r *limited.Runner) { r.LocalTimeout = 300 * time.Millisecond },
+		Entry("ldd, at LocalTimeout", "ldd", func(r *seam.Runner) { r.LocalTimeout = 300 * time.Millisecond },
 			"listing the libraries"),
-		Entry("the build, at BuildTimeout", "go", func(r *limited.Runner) { r.BuildTimeout = 300 * time.Millisecond },
+		Entry("the build, at BuildTimeout", "go", func(r *seam.Runner) { r.BuildTimeout = 300 * time.Millisecond },
 			"building "),
 	)
 
@@ -442,12 +442,12 @@ var _ = Describe("Runner.Run", func() {
 
 		BeforeEach(func() {
 			// The fake rooket answers ceph df and config get, and hangs where
-			// LIMITED_HANG says, as a shell that forks a child sharing its
+			// SEAM_HANG says, as a shell that forks a child sharing its
 			// output, the way rooket forks kubectl.
 			rooket = filepath.Join(w.repo, "rooket")
 			Expect(os.WriteFile(rooket, []byte(`#!/bin/sh
 case "$*" in
-*" $LIMITED_HANG "*) sleep 30; true ;;
+*" $SEAM_HANG "*) sleep 30; true ;;
 *" df "*) echo '{"pools":[{"name":"rgw-go-test","stats":{"max_avail":9286684672}}]}' ;;
 *" config get "*) echo 1024 ;;
 esac
@@ -456,13 +456,13 @@ esac
 
 		// run runs against the fake rooket through the real execer, and every
 		// other command through the fakes.
-		run := func(ctx context.Context, adjust func(*limited.Runner)) (time.Duration, error) {
-			host := limited.NewExecer(time.Second)
+		run := func(ctx context.Context, adjust func(*seam.Runner)) (time.Duration, error) {
+			host := seam.NewExecer(time.Second)
 			cfg := w.config()
 			cfg.Rooket = rooket
-			r := limited.NewRunner(io.Discard, io.Discard, nil)
+			r := seam.NewRunner(io.Discard, io.Discard, nil)
 			w.runner(r)
-			r.Exec = &limitedfakes.FakeExecer{OutputStub: func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+			r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 				if c.Name == rooket {
 					return host.Output(ctx, c)
 				}
@@ -475,9 +475,9 @@ esac
 		}
 
 		It("ends the purge within its bound, kubectl's stand-in killed with rooket's", func(ctx SpecContext) {
-			GinkgoT().Setenv("LIMITED_HANG", "rados")
-			w.launch.BenchReturnsOnCall(0, 4242, fmt.Errorf("%w of 6m4s", limited.ErrStopped))
-			elapsed, err := run(ctx, func(r *limited.Runner) { r.CallTimeout, r.PurgeWait = time.Minute, 500*time.Millisecond })
+			GinkgoT().Setenv("SEAM_HANG", "rados")
+			w.launch.BenchReturnsOnCall(0, 4242, fmt.Errorf("%w of 6m4s", seam.ErrStopped))
+			elapsed, err := run(ctx, func(r *seam.Runner) { r.CallTimeout, r.PurgeWait = time.Minute, 500*time.Millisecond })
 			Expect(err).To(MatchError(ContainSubstring("bench sync: stopped past its limit of 6m4s")))
 			Expect(err).To(MatchError(ContainSubstring("listing the objects in rgw-go-test")))
 			Expect(err).To(MatchError(ContainSubstring("signal: killed")))
@@ -486,8 +486,8 @@ esac
 		})
 
 		It("fails a toolbox call that outlives its own timeout", func(ctx SpecContext) {
-			GinkgoT().Setenv("LIMITED_HANG", "df")
-			elapsed, err := run(ctx, func(r *limited.Runner) { r.CallTimeout = 300 * time.Millisecond })
+			GinkgoT().Setenv("SEAM_HANG", "df")
+			elapsed, err := run(ctx, func(r *seam.Runner) { r.CallTimeout = 300 * time.Millisecond })
 			Expect(err).To(MatchError(ContainSubstring("reading ceph df")))
 			Expect(err).To(MatchError(ContainSubstring("signal: killed")))
 			Expect(elapsed).To(BeNumerically("<", 5*time.Second), "returned after %s, not after the hang's 30 s", elapsed)
@@ -496,21 +496,21 @@ esac
 		})
 
 		It("bounds each space-wait poll by what the wait has left", func(ctx SpecContext) {
-			GinkgoT().Setenv("LIMITED_HANG", "rados")
+			GinkgoT().Setenv("SEAM_HANG", "rados")
 			// The polls run through the real execer; only the rados count at
 			// the end would hang, and the wait fails first.
 			calls := 0
-			elapsed, err := run(ctx, func(r *limited.Runner) {
+			elapsed, err := run(ctx, func(r *seam.Runner) {
 				r.CallTimeout, r.AvailWait, r.Poll = time.Minute, 2*time.Second, 10*time.Millisecond
 				// The wait's deadline runs on the clock, which must move.
 				r.Now = time.Now
 				inner := r.Exec
-				r.Exec = &limitedfakes.FakeExecer{OutputStub: func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+				r.Exec = &seamfakes.FakeExecer{OutputStub: func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 					if c.Name == rooket && strings.Contains(c.String(), " df ") {
 						calls++
 						if calls > 1 {
 							// From the first wait on, df hangs as a stuck mon would.
-							return limited.NewExecer(time.Second).Output(ctx, limited.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
+							return seam.NewExecer(time.Second).Output(ctx, seam.Cmd{Name: "/bin/sh", Args: []string{"-c", "sleep 30; true"}})
 						}
 					}
 					return inner.Output(ctx, c)
@@ -539,7 +539,7 @@ esac
 	})
 
 	It("refuses a librados it cannot place in a Ceph release", func(ctx SpecContext) {
-		w.exec.OutputStub = func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 			if c.Name == "rpm" && c.Args[0] == "-qf" {
 				return []byte("19.2.6~rc1"), nil
 			}
@@ -550,7 +550,7 @@ esac
 	})
 
 	It("refuses a binary that links no librados", func(ctx SpecContext) {
-		w.exec.OutputStub = func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 			if c.Name == "ldd" {
 				return []byte("\tlibc.so.6 => /lib64/libc.so.6 (0x00007f)\n"), nil
 			}

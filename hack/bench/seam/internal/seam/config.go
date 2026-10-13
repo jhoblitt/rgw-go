@@ -1,10 +1,10 @@
-// Package limited re-runs the seam microbenchmark's over-budget cell under
+// Package seam re-runs the seam microbenchmark's over-budget cell under
 // the in-flight limiter: write4m at 64 in flight past the byte budget, in
 // each completion mode, each in a benchmark process of its own, with the
 // limiter's byte bound set and its operation bound derived, as rgw-go runs.
 // It is the evidence that the limiter parks the excess submissions on
 // goroutines rather than on OS threads blocked inside C.
-package limited
+package seam
 
 import (
 	"cmp"
@@ -294,7 +294,7 @@ func (c Config) BenchArgs(mode, results string) []string {
 // WritePlan writes the run's plan to w: the run directory and, per mode, the
 // cell's arguments, its results file and its process's limit.
 func (c Config) WritePlan(w io.Writer) {
-	fmt.Fprintf(w, "limited: the %s limiter re-run at %d B, into hack/bench/out/%s/seam-<UTC time>%s/\n",
+	fmt.Fprintf(w, "seam: the %s limiter re-run at %d B, into hack/bench/out/%s/seam-<UTC time>%s/\n",
 		c.Release, c.InflightBytes, c.Release, c.Suffix())
 	limit := int64(c.Limit() / time.Second)
 	for _, mode := range modes {

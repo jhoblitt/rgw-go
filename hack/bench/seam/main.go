@@ -1,8 +1,8 @@
-// Command limited re-runs the seam microbenchmark's over-budget cell under
+// Command seam re-runs the seam microbenchmark's over-budget cell under
 // the in-flight limiter against one release's rooket cluster:
 //
 //	make bench-seam RELEASE=squid|tentacle BENCH_LIMITER=1 [BENCH_PLAN=1] [BENCH_INFLIGHT_BYTES=N]
-//	go run ./hack/bench/limited squid|tentacle --limiter=1 [--plan] [--inflight-bytes N] ...
+//	go run ./hack/bench/seam squid|tentacle --limiter=1 [--plan] [--inflight-bytes N] ...
 //
 // It runs write4m at 64 in flight past the byte budget, -budget-bytes=0, in
 // sync, callback and pipe mode, each in a benchmark process of its own, with
@@ -58,7 +58,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
 func main() {
@@ -68,8 +68,8 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := limited.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "limited:", err)
+	if err := seam.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "seam:", err)
 		return 1
 	}
 	return 0

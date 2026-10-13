@@ -380,7 +380,7 @@ script's header lists its other settings.
 
 `make bench-seam RELEASE=squid BENCH_LIMITER=1` re-runs only the sweep's
 over-budget cell, write4m at 64 in flight past the byte budget, under the
-in-flight limiter. It runs `hack/bench/limited`, a Go command, rather than
+in-flight limiter. It runs `hack/bench/seam`, a Go command, rather than
 `seam.sh`. The cell runs in sync, callback and pipe mode, each in a
 benchmark process of its own, with the limiter's byte bound at 100 MiB,
 librados's default `objecter_inflight_op_bytes`, and its operation bound
@@ -393,7 +393,7 @@ Every setting is checked before anything touches the cluster, and
 `BENCH_PLAN=1` prints each benchmark process's arguments and watchdog limit,
 then exits. `BENCH_QUICK=1` runs 128 objects a process instead of 640, and
 `BENCH_OVER_OBJECTS`, `BENCH_TIMEOUT` and `BENCH_MIN_AVAIL_GIB` work as they
-do for the sweep. `go run ./hack/bench/limited --help` lists every flag and
+do for the sweep. `go run ./hack/bench/seam --help` lists every flag and
 its environment name. Setting `BENCH_PLAN` or `BENCH_INFLIGHT_BYTES` without
 `BENCH_LIMITER=1` is refused rather than starting the sweep.
 

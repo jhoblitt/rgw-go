@@ -1,4 +1,4 @@
-package limited
+package seam
 
 import (
 	"bufio"

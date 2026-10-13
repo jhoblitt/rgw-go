@@ -1,4 +1,4 @@
-package limited_test
+package seam_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/limited/internal/limited"
+	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
 )
 
 // settingEnv is every environment variable the command reads, cleared in
@@ -37,7 +37,7 @@ var _ = Describe("Run", func() {
 	// run runs the command against the fake world, keeping the streams and
 	// the log handler the command gave the Runner.
 	run := func(ctx context.Context, args ...string) error {
-		return limited.RunWith(ctx, append([]string{"--repo", w.repo}, args...), nil, stdout, stderr, func(r *limited.Runner) {
+		return seam.RunWith(ctx, append([]string{"--repo", w.repo}, args...), nil, stdout, stderr, func(r *seam.Runner) {
 			out, errOut, handler := r.Stdout, r.Stderr, r.Handler
 			w.runner(r)
 			r.Stdout, r.Stderr, r.Handler = out, errOut, handler
@@ -96,7 +96,7 @@ var _ = Describe("Run", func() {
 	It("runs the toolbox through ROOKET", func(ctx SpecContext) {
 		GinkgoT().Setenv("BENCH_LIMITER", "1")
 		GinkgoT().Setenv("ROOKET", "/opt/bin/rooket")
-		w.exec.OutputStub = func(ctx context.Context, c limited.Cmd) ([]byte, error) {
+		w.exec.OutputStub = func(ctx context.Context, c seam.Cmd) ([]byte, error) {
 			if c.Name == "/opt/bin/rooket" {
 				c.Name = "rooket"
 			}
