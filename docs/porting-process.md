@@ -15,29 +15,55 @@ A process and planning review runs at four points:
 
 Each review reads every open entry. It applies the fixes the next planning round needs, and it marks each entry **fixed** (naming the change), **carried** (to the next review) or **dropped** (with the reason).
 
-The **Major** entries below must be settled at the end-of-phase-1 review, before phase 2's tasks are planned.
+The end-of-phase-1 review settled the **Major** entries on 2026-10-13, before phase 2's tasks were planned.
+
+### Review 1: end of phase 1 (2026-10-13)
+
+Each fix below that is not this document lands on main before phase 2's tasks start.
+
+| ID | Settlement | Change |
+|---|---|---|
+| PP-1 | fixed | The owner's global CLAUDE.md rule, "Implementation plans — behaviour and seams, not code". Phase 2's plan is written to it. |
+| PP-2 | fixed | `hack/citecheck` resolves every `path:line@tag#symbol` citation and every ceph/ceph link at its tag. Phase 2's plan passes it before its review, and phase 2's research cites the source at both tags. |
+| PP-3 | fixed | The design spec's compatibility rule (§8, the owner, 2026-10-13). Compatibility means RADOS state in both directions, not reproducing radosgw's defects. Where the RADOS state stays compatible, rgw-go does the correct thing for the S3 API. It prevents corruption of shared data even where radosgw allows it. Each difference is recorded as an exclusion, and a serious defect is reported upstream once it is reproduced. Each phase 2 unit lists the radosgw defects it meets and its choice for each. |
+| PP-4 | fixed | The design spec and the project CLAUDE.md state the owner's policy of 2026-10-12. A found defect is public by default and goes into the registry. Each possible security defect is also sent to the rgw-bug-reproduction session. The controller does not ask the owner about disclosure. The registry never links that session's private disclosure gists. Registry entries carry a security field and a reproduction status. |
+| PP-5 | fixed | Phase 2's plan sets the file structure. fakerados gives each class method a file of its own, registered from a table, and the first phase 2 task makes that split. Any other file that two tasks touch has one owner task, or the tasks that touch it are ordered. The registries stay single files: tasks only append, and the controller's union rebase merges them. |
+| PP-6 | fixed | Phase 2's plan sizes tasks: one layer per task (op, driver, emulator, handler or admin), a brief under about 250 lines, and a split wherever one reviewer could not judge the task in one pass. |
+| PP-7 | fixed | The global CLAUDE.md's "Subagent budget" keeps the concurrency limit in one place, and its "Durable subagent work" has agents write skeletons and notes as they go. The missing usage view is Claude Code's to provide, and this registry drops it. |
+| PP-8 | fixed; carried to review 4 | The owner granted merge authority behind `merge_gate.sh`, and `override_check.sh` checks the merged tree. Both are controller tools. Whether to ship them with the workflow is the end-of-phase-4 skill decision. |
+| PP-9 | carried | It recurred on 2026-10-13: X41's merge was not counted until its ledger line read `X41: MERGED`. |
+| PP-10 | carried | It recurred on 2026-10-13. Language-server errors from agents' worktrees kept reaching the controller, and two background pollers would have looped forever: one waited on a superseded commit, the other passed `gh` an option it does not take. |
+| PP-11 | fixed | The global CLAUDE.md's bar for filing: a defect not yet reproduced on a running system stays in the registry, marked unreproduced. Phase 2's research records each defect's reproduction status. |
+| PP-12 | fixed | The owner's rule of 2026-10-12 is a Global Constraint of phase 2's plan and a line in the project CLAUDE.md. A finding is fixed in its PR. A finding truly outside the change becomes a numbered task before the merge. Phase 2's gate requires zero open findings. On 2026-10-13, #275 through #278 each fixed every finding their reviews raised, in the same PR. |
+| PP-13 | fixed | The owner's rule of 2026-10-12, a line in the project CLAUDE.md, and phase 2's plan, which states each task's PR split. X43 shipped as two PRs, #277 and #278. |
+| PP-14 | fixed | New; see its entry. |
+| PP-15 | fixed | New; see its entry. |
+| PP-16 | fixed | New; see its entry. |
 
 ## Index
 
 | ID | Problem | Severity | Candidate home | Status |
 |---|---|---|---|---|
-| PP-1 | Plan code treated as binding mandated a data-loss race | Major | writing-plans | open |
-| PP-2 | Wrong radosgw facts in plans reached specs and reviews | Major | writing-plans; a citation checker | open |
-| PP-3 | No up-front rule on reproducing a floor's security defects | Major | design spec; writing-plans | open |
-| PP-4 | Disclosure policy for found defects was settled piecemeal | Major | design spec; project CLAUDE.md | open |
-| PP-5 | Hot files shared by parallel tasks force a rebase on every merge | Major | writing-plans (file structure) | open |
-| PP-6 | Tasks too large for one implement-and-review loop | Major | writing-plans (task sizing) | open |
-| PP-7 | No view of usage limits; throttling discards in-flight work | Minor | subagent-driven-development; Claude Code | open |
-| PP-8 | Merge authority and the merge gate were settled mid-execution | Minor | github-conventions; subagent-driven-development | open |
-| PP-9 | The progress ledger has an implicit grammar | Minor | subagent-driven-development scripts | open |
-| PP-10 | Controller tooling friction and context noise | Minor | subagent-driven-development; Claude Code | open |
-| PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | open |
-| PP-12 | Review findings were parked instead of fixed in their PR | Major | subagent-driven-development; writing-plans; project CLAUDE.md | open |
-| PP-13 | Unrelated changes were bundled into one PR | Major | writing-plans; subagent-driven-development; github-conventions | open |
+| PP-1 | Plan code treated as binding mandated a data-loss race | Major | writing-plans | fixed |
+| PP-2 | Wrong radosgw facts in plans reached specs and reviews | Major | writing-plans; a citation checker | fixed |
+| PP-3 | No up-front rule on reproducing a floor's security defects | Major | design spec; writing-plans | fixed |
+| PP-4 | Disclosure policy for found defects was settled piecemeal | Major | design spec; project CLAUDE.md | fixed |
+| PP-5 | Hot files shared by parallel tasks force a rebase on every merge | Major | writing-plans (file structure) | fixed |
+| PP-6 | Tasks too large for one implement-and-review loop | Major | writing-plans (task sizing) | fixed |
+| PP-7 | No view of usage limits; throttling discards in-flight work | Minor | subagent-driven-development; Claude Code | fixed |
+| PP-8 | Merge authority and the merge gate were settled mid-execution | Minor | github-conventions; subagent-driven-development | fixed; carried to review 4 |
+| PP-9 | The progress ledger has an implicit grammar | Minor | subagent-driven-development scripts | carried |
+| PP-10 | Controller tooling friction and context noise | Minor | subagent-driven-development; Claude Code | carried |
+| PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | fixed |
+| PP-12 | Review findings were parked instead of fixed in their PR | Major | subagent-driven-development; writing-plans; project CLAUDE.md | fixed |
+| PP-13 | Unrelated changes were bundled into one PR | Major | writing-plans; subagent-driven-development; github-conventions | fixed |
+| PP-14 | A regression test was hardened as a security boundary | Major | writing-plans; the task-review brief; project CLAUDE.md | fixed |
+| PP-15 | Large shell scripts were written where Go commands were due | Major | global CLAUDE.md; writing-plans | fixed |
+| PP-16 | An instructed action was turned into a question at its trigger | Major | subagent-driven-development; project CLAUDE.md | fixed |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:** W's plan, Task 5, gives the stripe writer as complete code. Each piece of a stripe is written from its own goroutine, `WriteFull` at offset 0 and `Write` at later offsets, with nothing ordering them. The implementer followed it. The task review found that a stripe's later `Write` can land before its `WriteFull`, which then truncates the stripe while the manifest records its full size. With Go limited to one CPU thread, a 4 MiB body at a 1 MiB chunk loses data every time. radosgw submits a stripe's pieces in order from one thread (`rgw_putobj_processor.cc:140-159`).
 - **Cost:** one Critical finding, a fix round that overrode the plan, and a defect that W8's `putStream` would have inherited.
 - **Improvement:** a plan states behaviour and the invariants between tasks, not function bodies. An ordering requirement is one of those invariants ("the pieces of one stripe reach RADOS in stream order"), so the plan says it in words, and a test pins it. Code a plan does carry is labelled as a sketch, and the stated behaviour overrides it. Phase 1's plans total about 37,800 lines, most of them code.
@@ -45,7 +71,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-2: Wrong radosgw facts in plans reached specs and reviews
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:**
   - W's plan, Task 5's condition table, expects Squid to answer If-None-Match with another ETag on a missing key with ENOENT. v19.2.6 answers 412 (`rgw_rados.cc:6536-6542`).
   - The same plan links `src/rgw/rgw_op.cc#L6493-L6512` for code that lives in `src/rgw/driver/rados/rgw_rados.cc`.
@@ -58,7 +84,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-3: No up-front rule on reproducing a floor's security defects
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:** W's plan (W-D3) keys conditional PUT on the release, so it reproduces v19.2.6's skip of every condition on a head with a fake tag. The task review and the defect triage later classified that skip as a security defect: an update is lost (tracker #68183), fixed upstream after v19.2.6 was tagged. The owner then ruled, during the fix round, that rgw-go applies v20.2.4's check on both releases. The same question is open for radosgw's silent drop of an unparseable role policy.
 - **Cost:** an owner decision in the middle of a fix round, rework of finished code, and a security behaviour that would have shipped if the triage had not caught it.
 - **Improvement:** decide the rule in the design spec before planning. A suggested rule: parity with the floor release, except that rgw-go follows the fixed release where the floor has a security or fail-open defect that upstream has fixed, and records an exclusion. Each plan lists every floor defect it reproduces, with its security class.
@@ -66,7 +92,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-4: Disclosure policy for found defects was settled piecemeal
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:** defects found while porting were held, released one at a time, released all at once ("All public"), and then needed a fresh ruling when a new security-class defect appeared. One commit message and its PR body were reworded and force-pushed before merge to keep a held defect out of a tracked file (#145).
 - **Cost:** owner interruptions, held work, and history rewritten on a branch already pushed for review.
 - **Improvement:** state the disclosure policy in the spec before phase 2: what is public by default, what a security classification changes, and who classifies. Give registry entries a security field. Then a new security finding has a rule to follow instead of a question to ask.
@@ -74,7 +100,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-5: Hot files shared by parallel tasks force a rebase on every merge
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:**
   - `internal/testutil/fakerados/cls_rgw.go` gets an addition from W4, W5, P2, M8 and M10b, both to its write-method list and to its class switch.
   - `docs/ceph-upstream-bugs.md` and `docs/exclusions.md` get an addition from nearly every task.
@@ -85,7 +111,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-6: Tasks too large for one implement-and-review loop
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:**
   - M's Task 10 was split mid-execution into 10a (op, #71) and 10b (driver).
   - W's Task 5 brief runs to 1,101 lines.
@@ -96,7 +122,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-7: No view of usage limits; throttling discards in-flight work
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Minor. **Status:** fixed (review 1).
 - **Observed:**
   - No tool in the session exposes the 5-hour or weekly usage figures.
   - A parallel session reported usage percentages it had no source for, and later retracted them.
@@ -110,7 +136,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-8: Merge authority and the merge gate were settled mid-execution
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Minor. **Status:** fixed; carried to review 4 (review 1).
 - **Observed:**
   - Merging stopped until the owner granted permission to merge without human review behind a self-review gate.
   - The gate (state, CI, alerts, a trial merge) and a check that builds and tests the merged tree when main has moved since CI (needed for #152) were written as ad hoc scripts.
@@ -120,7 +146,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-9: The progress ledger has an implicit grammar
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Minor. **Status:** carried (review 1).
 - **Observed:** the progress report counts a task as done only when its ledger has a line `- Task N: MERGED`. A merge recorded as "complete" was not counted (P's Task 2, #151) until the line was rewritten.
 - **Cost:** a wrong progress report, caught by eye.
 - **Improvement:** give the ledger a schema, and write it through a script instead of free-form appends.
@@ -128,7 +154,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-10: Controller tooling friction and context noise
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Minor. **Status:** carried (review 1).
 - **Observed:**
   - The worktree guard refuses compound git commands that name another worktree, so every such command became a script file.
   - The working directory drifted into the ledger tree, and relative pathspecs then came back empty.
@@ -140,7 +166,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-11: Defect claims from source reading alone were sometimes wrong
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Minor. **Status:** fixed (review 1).
 - **Observed:**
   - A claimed radosgw defect (an endless loop when `rgw_max_chunk_size` is 0) was disproved at registry triage, before publication (#150): the PUT gets 400 RequestTimeout instead.
   - Independent classification also changed the severity of other entries.
@@ -150,7 +176,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-12: Review findings were parked instead of fixed in their PR
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:**
   - The controller marked review findings it judged minor or out of scope as "parked": recorded as a line in a task's progress ledger, while the PR merged without them. The phase 1 ledgers mention parking 28 times across eight task streams.
   - A follow-up series, X1 to X42, collected findings and review leads after their PRs had merged.
@@ -164,7 +190,7 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
 
 ## PP-13: Unrelated changes were bundled into one PR
 
-- **Severity:** Major. **Status:** open.
+- **Severity:** Major. **Status:** fixed (review 1).
 - **Observed:**
   - The controller treated one task as one PR. A task that collected several independent fixes shipped them together, so the fastest waited for the slowest.
   - X35 (#259) carried six commits on unrelated subjects: the shared request limit, a multipart unlock, a NUL in a metadata key, and three documentation fixes.
@@ -175,3 +201,44 @@ The **Major** entries below must be settled at the end-of-phase-1 review, before
   - Unrelated changes never share a PR. Related changes that must land together share one, as a logical commit series.
   - A plan task states its PR split where it holds more than one independent change. The controller splits a branch before opening a PR, not after review.
 - **Candidate home:** writing-plans (task-to-PR decomposition); subagent-driven-development (PR boundaries in the task loop); github-conventions (PR scope).
+
+## PP-14: A regression test was hardened as a security boundary
+
+- **Severity:** Major. **Status:** fixed (review 1).
+- **Observed:**
+  - X41 turned the parity baselines into append-only ledgers that are checked on every pull request.
+  - Its reviews treated a pull request's author as an attacker: argument and output injection, symbolic links, trust in the base's `run.sh`, forged workflow commands. Each round found another way around the checker and added another fix.
+  - On 2026-10-12 the owner ruled: "This is not a security boundary. It's a regression test." The hardening stopped and the documents were reframed. A protected-path extension to the merge gate was reverted. Test names that still spoke of a trust boundary were renamed before the merge (#275).
+- **Cost:** several review and fix rounds on X41, a larger tool than its job needed, and the owner's intervention.
+- **Improvement:**
+  - A plan names each component's threat model: whether it defends against honest mistakes or against an adversary.
+  - Reviews judge a component against its model.
+  - Adversarial review is for the components the spec names as security boundaries, such as authentication, authorization and the parsers that face clients. Test and build tooling is not among them.
+- **Fix:** phase 2's plan gives each unit a threat-model line. The task-review brief tells reviewers to judge against it. A line in the project CLAUDE.md states it.
+- **Candidate home:** writing-plans; the task-review brief.
+
+## PP-15: Large shell scripts were written where Go commands were due
+
+- **Severity:** Major. **Status:** fixed (review 1).
+- **Observed:**
+  - T15a's limiter re-run was first written as a 737-line bash script that did its parsing and arithmetic in shell.
+  - The owner rejected it: "A 737 line bash script is completely unacceptable." and "parsing output in bash is a red flag". It was redone as a Go command (#268).
+  - The benchmark scripts beside it were large too, all written in phase 1: `seam.sh` (639 lines), `gateway.sh` (614) and `sample.sh` (104).
+- **Cost:** a rejected change, its redo, and two ports.
+- **Fix:**
+  - The global CLAUDE.md rule "Shell is thin glue, never the program", approved on 2026-10-12.
+  - X43 ported `seam.sh`, `gateway.sh` and `sample.sh` to Go (#277, #278).
+  - `hack/rooket`'s scripts remain shell: `populate.sh` (311 lines), `rgw-go-up.sh` (194) and `lib.sh` (178). Under the rule, each is ported before it next grows.
+- **Candidate home:** the global CLAUDE.md (done); writing-plans, so that no plan task specifies shell beyond glue.
+
+## PP-16: An instructed action was turned into a question at its trigger
+
+- **Severity:** Major. **Status:** fixed (review 1).
+- **Observed:**
+  - On 2026-10-13 the owner said to run the benchmarks after phase 1 completed.
+  - When phase 1 completed, the controller asked the owner to confirm the quiet-run conditions (the other sessions paused, the desktop idle) instead of running them. Its quiet-run procedure listed that confirmation as a step.
+  - By the time the owner answered, the host was no longer quiet: "WTF, I told you to run the benchmarks after phase 1 work ended and you didn't." The run was deferred.
+- **Cost:** a lost quiet window. Phase 2's tasks now wait for the next one, since the spec runs the benchmarks before them.
+- **Improvement:** an instruction to act when a condition is met is the go-ahead at that moment. The controller checks the preconditions it can observe itself (agents drained, the other sessions idle, the load average, the processes running) and acts. It asks only for what it cannot observe, and asks before the trigger, not at it.
+- **Fix:** the quiet-run procedure's owner-confirmation step becomes a controller check. A line in the project CLAUDE.md states the rule.
+- **Candidate home:** subagent-driven-development (its "four things stop you" list); the project CLAUDE.md.
