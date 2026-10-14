@@ -2,7 +2,7 @@
 # Regenerates golden files from the ceph-object-corpus with ceph-dencoder run inside the
 # Ceph image, so `go test` never needs the binary. Usage: hack/goldens/gen.sh [types.txt]
 #
-# quay.io/ceph/ceph:v19.2.6 ships /usr/bin/ceph-dencoder, so no derived image is needed.
+# quay.io/ceph/ceph:v19.2.7 ships /usr/bin/ceph-dencoder, so no derived image is needed.
 # Each line of types.txt is `<C++ type> <package dir>`; the goldens land in
 # <package dir>/testdata/goldens/<type>/<archive>/<object>.{bin,json,reenc}, where .json
 # is dump_json of the decoded object and .reenc is its re-encoding at the image's version.
@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 CORPUS=${CORPUS:-/home/jhoblitt/github/ceph/ceph-object-corpus/archive}
-IMAGE=${IMAGE:-quay.io/ceph/ceph:v19.2.6}
+IMAGE=${IMAGE:-quay.io/ceph/ceph:v19.2.7}
 TYPES=${1:-hack/goldens/types.txt}
 while read -r typ pkgdir; do
   case $typ in '' | '#'*) continue ;; esac
