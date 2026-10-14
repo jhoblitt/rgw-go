@@ -595,13 +595,43 @@ Found by F12's task review (Important 1), and numbered here before F12 merged (P
   versioned-write refusal already says rgw-go answers 501, which F14 makes true for the completion.
 - **Depends on:** nothing. **PR:** its own. **Brief:** about 35 lines.
 
+### Task F15: auth, SigV2 refuses a renamed header carrying an x-amz directive
+
+Found by F13's adversarial review (Minor 5), and numbered here before F13 merged (PP-12).
+
+- **Layer:** auth. **Cluster:** no.
+- **Files:** modify internal/auth/sigv2.go and its specs; docs/exclusions.md; the "rgw-go:" line of
+  F13's registry entry for the SigV2 relabelling.
+- **Behaviour:**
+  1. SigV2's string to sign builds its canonical amz headers from `x_meta_map`
+     ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246)), where `init_meta_info` has renamed
+     X-Goog-, X-Dho-, X-Rgw-, X-Object-, X-Container- and X-Account- onto `x-amz-*` names, while
+     radosgw reads its directives from the raw headers: tagging
+     ([rgw_rest_s3.cc:2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2634)), object lock
+     ([rgw_rest_s3.cc:2648](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2648)) and copy source
+     ([rgw_rest_s3.cc:5056](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5056)). So a signed `X-Amz-Copy-Source` resent as
+     `X-Goog-Copy-Source` keeps the signature and drops the directive. rgw-go copies the
+     construction.
+  2. Under SigV2, rgw-go refuses with AccessDenied, on both releases, a header under a renamed prefix
+     whose `x-amz-*` name rgw-go reads only from the raw header: every name but the meta and the
+     server-side-encryption ones that the renamed maps carry. A spec pins the refused set to every
+     raw `x-amz-*` read in rgw-go's handlers, so a new read cannot be missed.
+  3. Meta under a renamed prefix still works under SigV2.
+- **Specs:** copy source, the object lock headers and tagging under X-Goog-, each refused;
+  X-Goog-Meta-* accepted; the raw X-Amz-* forms unchanged; every prefix.
+- **s3-tests:** a SigV2 request resending a signed `X-Amz-Copy-Source` as `X-Goog-Copy-Source`
+  answers 403, if s3-tests can sign SigV2 that way; otherwise the report says why not.
+- **Exclusions and registry:** a new exclusion (rgw-go refuses where radosgw drops the directive);
+  the registry entry's "rgw-go:" line.
+- **Depends on:** F13. **PR:** its own. **Brief:** about 45 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
