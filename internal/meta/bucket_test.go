@@ -424,6 +424,7 @@ var _ = Describe("BucketInfo", func() {
 	})
 	It("refuses to marshal JSON for a website or sync policy it holds opaque", func() {
 		b := full()
+		b.ObjLock = nil
 		_, err := b.MarshalJSON()
 		Expect(err).To(MatchError(meta.ErrOpaqueJSON))
 		b.Website = nil

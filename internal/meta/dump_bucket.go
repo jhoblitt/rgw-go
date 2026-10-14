@@ -42,10 +42,10 @@ func (b BucketEntryPoint) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is RGWBucketInfo::dump (rgw_common.cc:2515-2542 at v19.2.6,
-// :2577-2604 at v20.2.4). The website configuration and the sync policy are
-// carried opaque, so a bucket with either fails the formatter as MarshalJSON
-// fails.
+// Dump is RGWBucketInfo::dump at v19.2.7 (rgw_common.cc:2515-2545) on both
+// releases, as MarshalJSON writes it. The website configuration and the sync
+// policy are carried opaque, so a bucket with either fails the formatter as
+// MarshalJSON fails, and so does an ObjLock that does not decode.
 func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	if b.HasWebsite() {
 		f.Fail(fmt.Errorf("%w: website_conf", ErrOpaqueJSON))
@@ -53,6 +53,11 @@ func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 	if b.SyncPolicy != nil && !syncPolicyEmpty(b.SyncPolicy) {
 		f.Fail(fmt.Errorf("%w: sync_policy", ErrOpaqueJSON))
+		return
+	}
+	lock, err := b.ObjectLock()
+	if err != nil {
+		f.Fail(err)
 		return
 	}
 	current := b.Layout.Current.Layout
@@ -76,6 +81,37 @@ func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 		func(f formatter.Formatter, v uint32) { f.DumpUnsigned("val", uint64(v)) })
 	f.DumpInt("reshard_status", int64(b.ReshardStatus))
 	f.DumpString("new_bucket_instance_id", b.NewBucketInstanceID)
+	if b.ObjLockEnabled() {
+		dumpSection(f, "obj_lock", lock, rel)
+	}
+}
+
+// Dump is RGWObjectLock::dump at v19.2.7 (rgw_object_lock.cc:93-101): enabled
+// only when true.
+func (l ObjectLock) Dump(f formatter.Formatter, rel denc.Release) {
+	if l.Enabled {
+		f.DumpBool("enabled", true)
+	}
+	f.DumpBool("rule_exist", l.Rule != nil)
+	if l.Rule != nil {
+		dumpSection(f, "rule", *l.Rule, rel)
+	}
+}
+
+// Dump is ObjectLockRule::dump at v19.2.7 (rgw_object_lock.cc:56-58).
+func (r ObjectLockRule) Dump(f formatter.Formatter, rel denc.Release) {
+	dumpSection(f, "defaultRetention", r.DefaultRetention, rel)
+}
+
+// Dump is DefaultRetention::dump at v19.2.7 (rgw_object_lock.cc:26-33): the
+// mode, then days when positive, else years.
+func (r DefaultRetention) Dump(f formatter.Formatter, _ denc.Release) {
+	f.DumpString("mode", r.Mode)
+	if r.Days > 0 {
+		f.DumpInt("days", int64(r.Days))
+	} else {
+		f.DumpInt("years", int64(r.Years))
+	}
 }
 
 // Dump is RGWBucketCompleteInfo::dump (driver/rados/rgw_bucket.cc:2112-2115

@@ -8,6 +8,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/formatter"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
@@ -101,6 +103,120 @@ var _ = Describe("BucketInfo.UnmarshalJSON", func() {
 		Entry("flags that are no number", `{"flags":"versioned"}`),
 		Entry("an mdsearch value that is no number", `{"mdsearch_config":[{"key":"k","val":"x"}]}`),
 		Entry("a quota whose size overflows", `{"quota":{"max_size_kb":9007199254740992}}`),
+	)
+})
+
+// No corpus instance enables object lock, so the obj_lock forms below are
+// built by hand from RGWBucketInfo::dump and decode_json
+// (rgw_common.cc:2542-2544 and :2588-2590 at v19.2.7), RGWObjectLock's,
+// ObjectLockRule's and DefaultRetention's (rgw_object_lock.cc:93-101,
+// :56-58, :26-33 and :65-71, :44-46, :8-12 at v19.2.7), and
+// JSONDecoder::decode_json, which gives an absent member T()
+// (ceph_json.h:334-346 at v19.2.7).
+var _ = Describe("BucketInfo obj_lock", func() {
+	dump := func(b meta.BucketInfo, rel denc.Release) (string, error) {
+		f := formatter.NewJSON(false)
+		f.OpenObjectSection("x")
+		b.Dump(f, rel)
+		f.CloseSection()
+		return string(f.Bytes()), f.Err()
+	}
+
+	It("is not written without the flag, whatever ObjLock holds", func() {
+		b := normalBucket()
+		b.ObjLock = meta.RawStruct(lockBytes(true, new(governanceDays())))
+		Expect(mustMarshal(b)).To(HaveSuffix(`"new_bucket_instance_id":""}`))
+		for _, r := range []denc.Release{denc.Squid, denc.Tentacle} {
+			out, err := dump(b, r)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(HaveSuffix(`"new_bucket_instance_id":""}`), "%s", r)
+		}
+	})
+
+	DescribeTable("is written after new_bucket_instance_id with the flag, by Dump as by MarshalJSON on both releases, and read back",
+		func(raw []byte, obj string, back []byte) {
+			b := lockedBucket(raw)
+			want := `"new_bucket_instance_id":"","obj_lock":` + obj + `}`
+			data := mustMarshal(b)
+			Expect(data).To(HaveSuffix(want))
+			for _, r := range []denc.Release{denc.Squid, denc.Tentacle} {
+				out, err := dump(b, r)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(HaveSuffix(want), "%s", r)
+				Expect(out).To(MatchJSON(data), "%s", r)
+			}
+			var got meta.BucketInfo
+			Expect(json.Unmarshal([]byte(data), &got)).To(Succeed())
+			Expect(got.ObjLock).To(Equal(meta.RawStruct(back)))
+		},
+		Entry("RGWObjectLock() when ObjLock is nil", nil,
+			`{"enabled":true,"rule_exist":false}`, lockBytes(true, nil)),
+		Entry("a GOVERNANCE rule in days", lockBytes(true, new(governanceDays())),
+			`{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}`,
+			lockBytes(true, new(governanceDays()))),
+		Entry("a COMPLIANCE rule in years", lockBytes(true, new(complianceYears())),
+			`{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"COMPLIANCE","years":7}}}`,
+			lockBytes(true, new(complianceYears()))),
+		Entry("a configuration not enabled, which leaves enabled out", lockBytes(false, new(governanceDays())),
+			`{"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}`,
+			lockBytes(false, new(governanceDays()))),
+		Entry("a rule whose days are not positive, which writes its years alone",
+			lockBytes(true, &meta.DefaultRetention{Mode: "GOVERNANCE", Days: -1, Years: 2}),
+			`{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","years":2}}}`,
+			lockBytes(true, &meta.DefaultRetention{Mode: "GOVERNANCE", Years: 2})),
+		Entry("a rule with both days and years positive, which writes its days alone",
+			lockBytes(true, &meta.DefaultRetention{Mode: "GOVERNANCE", Days: 30, Years: 7}),
+			`{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}`,
+			lockBytes(true, new(governanceDays()))),
+	)
+
+	It("fails MarshalJSON and Dump with the error of an ObjLock that does not decode", func() {
+		b := lockedBucket(meta.RawStruct{1, 1, 1, 0, 0, 0, 1})
+		_, err := b.MarshalJSON()
+		Expect(err).To(MatchError(denc.ErrShortBuffer))
+		_, err = dump(b, denc.Tentacle)
+		Expect(err).To(MatchError(denc.ErrShortBuffer))
+	})
+
+	DescribeTable("is read under the document's flag, ObjLock nil exactly when it is absent",
+		func(doc string, want []byte) {
+			var got meta.BucketInfo
+			Expect(json.Unmarshal([]byte(doc), &got)).To(Succeed())
+			if want == nil {
+				Expect(got.ObjLock).To(BeNil())
+			} else {
+				Expect(got.ObjLock).To(Equal(meta.RawStruct(want)))
+			}
+		},
+		Entry("absent", `{"flags":32}`, nil),
+		Entry("present as RGWObjectLock()", `{"flags":32,"obj_lock":{"enabled":true,"rule_exist":false}}`,
+			lockBytes(true, nil)),
+		Entry("present with a rule",
+			`{"flags":32,"obj_lock":{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}}`,
+			lockBytes(true, new(governanceDays()))),
+		Entry("present without the flag, which ignores it",
+			`{"flags":2,"obj_lock":{"enabled":true,"rule_exist":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}}`,
+			nil),
+		Entry("without the flag, not read even to refuse it", `{"flags":2,"obj_lock":{"enabled":"maybe"}}`, nil),
+		Entry("empty, whose absent enabled is false", `{"flags":32,"obj_lock":{}}`, lockBytes(false, nil)),
+		Entry("rule_exist without a rule, the rule's defaults", `{"flags":32,"obj_lock":{"enabled":true,"rule_exist":true}}`,
+			lockBytes(true, &meta.DefaultRetention{})),
+		Entry("a rule without rule_exist, which is not read",
+			`{"flags":32,"obj_lock":{"enabled":true,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":30}}}}`,
+			lockBytes(true, nil)),
+		Entry("the boolean and number texts decode_json_obj reads",
+			`{"flags":32,"obj_lock":{"enabled":"TRUE","rule_exist":1,"rule":{"defaultRetention":{"mode":"GOVERNANCE","days":"30"}}}}`,
+			lockBytes(true, new(governanceDays()))),
+	)
+
+	DescribeTable("refuses under the flag an obj_lock member decode_json_obj cannot read",
+		func(lock string) {
+			var got meta.BucketInfo
+			Expect(json.Unmarshal([]byte(`{"flags":32,"obj_lock":`+lock+`}`), &got)).To(MatchError(meta.ErrBadJSONValue), lock)
+		},
+		Entry("an enabled that is no boolean", `{"enabled":"maybe"}`),
+		Entry("days past int's range", `{"rule_exist":true,"rule":{"defaultRetention":{"days":2147483648}}}`),
+		Entry("a mode that is no string", `{"rule_exist":true,"rule":{"defaultRetention":{"mode":{}}}}`),
 	)
 })
 

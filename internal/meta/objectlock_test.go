@@ -77,3 +77,101 @@ var _ = Describe("ObjectLegalHold", func() {
 		expectOrder(l, want, func(e *denc.Encoder) { l.Encode(e, denc.Tentacle) }, meta.DecodeObjectLegalHold)
 	})
 })
+
+// lockBytes is RGWObjectLock::encode of enabled and, when it is non-nil, a
+// rule of the default retention r, each struct ENCODE_START(1, 1)
+// (rgw_object_lock.h:127-135, :74-78 and :34-40 at v19.2.7).
+func lockBytes(enabled bool, r *meta.DefaultRetention) []byte {
+	return encoded(func(e *denc.Encoder) {
+		beginEnd(e, 1, 1, func() {
+			e.Bool(enabled)
+			e.Bool(r != nil)
+			if r != nil {
+				beginEnd(e, 1, 1, func() {
+					beginEnd(e, 1, 1, func() {
+						e.String(r.Mode)
+						e.I32(r.Days)
+						e.I32(r.Years)
+					})
+				})
+			}
+		})
+	})
+}
+
+func governanceDays() meta.DefaultRetention {
+	return meta.DefaultRetention{Mode: "GOVERNANCE", Days: 30}
+}
+
+func complianceYears() meta.DefaultRetention {
+	return meta.DefaultRetention{Mode: "COMPLIANCE", Years: 7}
+}
+
+// lockedBucket is a bucket whose flags enable object lock, with raw as its
+// ObjLock.
+func lockedBucket(raw []byte) meta.BucketInfo {
+	b := normalBucket()
+	b.Flags |= meta.BucketObjLockEnabled
+	b.ObjLock = raw
+	return b
+}
+
+var _ = Describe("ObjectLock", func() {
+	DescribeTable("round-trips byte for byte, through the bucket's ObjLock too",
+		func(l meta.ObjectLock, want []byte) {
+			for _, r := range []denc.Release{denc.Squid, denc.Tentacle} {
+				expectOrder(l, want, func(e *denc.Encoder) { l.Encode(e, r) }, meta.DecodeObjectLock)
+			}
+			b := lockedBucket(want)
+			got, err := b.ObjectLock()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(l))
+			b.SetObjectLock(got)
+			Expect(b.ObjLock).To(Equal(meta.RawStruct(want)))
+		},
+		Entry("RGWObjectLock(), enabled with no rule, as ceph-dencoder writes it",
+			meta.ObjectLock{Enabled: true}, []byte{1, 1, 2, 0, 0, 0, 1, 0}),
+		Entry("a GOVERNANCE rule in days",
+			meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: governanceDays()}}, lockBytes(true, new(governanceDays()))),
+		Entry("a COMPLIANCE rule in years",
+			meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: complianceYears()}}, lockBytes(true, new(complianceYears()))),
+	)
+
+	It("skips what a later version appends, and the bucket keeps those bytes until SetObjectLock", func() {
+		v1 := lockBytes(true, new(governanceDays()))
+		later := reframe(v1, 2, []byte("later"))
+		l := decodeWhole(later, meta.DecodeObjectLock)
+		Expect(l).To(Equal(meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: governanceDays()}}))
+		b := decodeWhole(encodeWith(denc.Squid, lockedBucket(later).Encode), meta.DecodeBucketInfo)
+		Expect(b.ObjLock).To(Equal(meta.RawStruct(later)))
+		b.SetObjectLock(l)
+		Expect(b.ObjLock).To(Equal(meta.RawStruct(v1)))
+	})
+
+	It("is the disabled zero value without the flag, whatever ObjLock holds", func() {
+		b := lockedBucket(lockBytes(true, new(governanceDays())))
+		b.Flags &^= meta.BucketObjLockEnabled
+		Expect(b.ObjectLock()).To(Equal(meta.ObjectLock{}))
+	})
+
+	It("is RGWObjectLock() with the flag and no encoding", func() {
+		Expect(lockedBucket(nil).ObjectLock()).To(Equal(meta.ObjectLock{Enabled: true}))
+	})
+
+	It("decodes the rule with the flag", func() {
+		Expect(lockedBucket(lockBytes(true, new(complianceYears()))).ObjectLock()).To(
+			Equal(meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: complianceYears()}}))
+	})
+
+	It("fails on an encoding that does not decode", func() {
+		_, err := lockedBucket(meta.RawStruct{1, 1, 1, 0, 0, 0, 1}).ObjectLock()
+		Expect(err).To(MatchError(denc.ErrShortBuffer))
+	})
+
+	It("sets ObjLock and leaves the flags to the caller", func() {
+		b := normalBucket()
+		b.SetObjectLock(meta.ObjectLock{Enabled: true})
+		Expect(b.Flags).To(Equal(uint32(meta.BucketVersioned)))
+		Expect(b.ObjLock).To(Equal(meta.RawStruct{1, 1, 2, 0, 0, 0, 1, 0}))
+	})
+})
