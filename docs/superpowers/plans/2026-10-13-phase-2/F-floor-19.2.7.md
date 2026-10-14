@@ -566,13 +566,42 @@ Found in F4's work, and numbered here before F4 merged (PP-12).
   to x-amz-*", on both releases. The registry entry's "rgw-go:" line names the fix.
 - **Depends on:** F4, which changes the same loop. **PR:** its own. **Brief:** about 50 lines.
 
+### Task F14: op, a CompleteMultipartUpload naming a version answers 501
+
+Found by F12's task review (Important 1), and numbered here before F12 merged (PP-12).
+
+- **Layer:** op. **Cluster:** no.
+- **Files:** modify internal/op/completemultipart.go and its specs; docs/ceph-upstream-bugs.md (the
+  entry for `versionId` honoured on a bucket not versioning-enabled).
+- **Behaviour:**
+  1. rgw-go reads `?versionId` into the object's instance for every op
+     (internal/s3/request.go:100). PutObject and CopyObject refuse a write that names a version with
+     501 (`newHeadVersioningUnserved`, internal/op/putobject.go:147, internal/op/copyobject.go:203);
+     CompleteMultipartUpload has no such gate (internal/op/completemultipart.go:66-95). So on a bucket
+     never versioned, a completion naming `null` indexes the plain head under the null instance, and
+     one naming another id writes that instance without radosgw's versioned op.
+  2. CompleteMultipartUpload calls `newHeadVersioningUnserved` with the request's key before it
+     touches the store, as PutObject does, and answers the same 501. The upload stays in place.
+  3. radosgw takes the URL's instance unless versioning is enabled
+     ([rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469),
+     [rgw_op.cc:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291)),
+     so the registry entry for PutObject's `versionId` covers the completion too; its "rgw-go:" line
+     names F14's refusal. Phase 2 replaces the 501 with D3, which now names the completion (V11).
+- **Specs:** on an unversioned bucket, a completion naming `null` and one naming another id answer
+  501 and leave the upload listable; one without `versionId` completes as before.
+- **s3-tests:** none. The 501 is phase 1's refusal, which V11 replaces with D3, and V11's s3-tests
+  cover D3.
+- **Exclusions and registry:** the registry entry's text and "rgw-go:" line; exclusions.md's
+  versioned-write refusal already says rgw-go answers 501, which F14 makes true for the completion.
+- **Depends on:** nothing. **PR:** its own. **Brief:** about 35 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13 | F2 and F3 (F5 and F6 only F2; F13 after F4) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
