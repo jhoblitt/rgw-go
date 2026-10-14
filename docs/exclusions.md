@@ -3406,6 +3406,64 @@ does the following.
   `test_sigv4_presigned_contenttype_unsigned` and
   `test_sigv4_without_signed_content_sha256` send such requests, and
   v20.2.4's radosgw fails them (`test/s3tests/baseline/tentacle.json`).
+- **SigV4 refuses an unsigned header that radosgw renames to `x-amz-*`.**
+  Unless `rgw_sigv4_insecure` is set, rgw-go refuses with 403 AccessDenied
+  a SigV4 request, header-signed or presigned, carrying a header under
+  `X-Goog-`, `X-Dho-`, `X-Rgw-`, `X-Object-`, `X-Container-` or
+  `X-Account-` that its SignedHeaders do not list, as it refuses an
+  unsigned `x-amz-*` header, on both releases (`canonicalHeadersV4`).
+  radosgw's CVE-2026-54330 check looks only at headers whose environment
+  name starts `HTTP_X_AMZ_`
+  ([rgw_auth_s3.cc:819-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841),
+  [rgw_auth_s3.cc:780-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796)),
+  but `init_meta_info` files a header under any of the six in `x_meta_map`
+  under its `x-amz-` name, and an SSE one in `crypt_attribute_map` too
+  ([rgw_common.cc:413-464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464),
+  [rgw_common.cc:426-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477)).
+  So radosgw stores an unsigned `X-Goog-Meta-*` as user metadata the signer
+  never named, or joins it to the signed value of the same name, and lets
+  an unsigned `X-Goog-Server-Side-Encryption-*` replace the signed SSE
+  parameters (`docs/ceph-upstream-bugs.md`, "[radosgw's SigV4 check misses
+  the meta-prefixed headers init_meta_info renames to
+  x-amz](ceph-upstream-bugs.md#radosgws-sigv4-check-misses-the-meta-prefixed-headers-init_meta_info-renames-to-x-amz)").
+  rgw-go's prefix set is the one SigV2 signs and the request attributes and
+  the SSE condition keys rename (`amzHeaderPrefixes`). Two names under it
+  may still go unsigned (`mayGoUnsigned`):
+  - `x-amz-content-sha256`, by that name alone, so an unsigned
+    `X-Goog-Content-Sha256` is refused;
+  - `x-rgw-auth`, in any case, on a GET or HEAD alone. radosgw's nginx cache
+    front end, rgw-cache, adds `x-rgw-auth: yes` unsigned to the
+    authentication subrequest it sends with a client's Authorization before
+    it serves the client's GET from its cache; that subrequest's location
+    answers 200 itself, without asking radosgw, to a PUT, POST, HEAD, COPY
+    or DELETE, to a request for `/`, to one with a query string, a
+    presigned URL among them, to one with an If-Match, and to one not
+    signed with SigV4
+    ([nginx-default.conf:13-56](https://github.com/ceph/ceph/blob/v19.2.7/examples/rgw/rgw-cache/nginx-default.conf#L13-L56),
+    the same in
+    [nginx-noprefetch.conf:13-56](https://github.com/ceph/ceph/blob/v19.2.7/examples/rgw/rgw-cache/nginx-noprefetch.conf#L13-L56)
+    and
+    [nginx-slicing.conf:13-56](https://github.com/ceph/ceph/blob/v19.2.7/examples/rgw/rgw-cache/nginx-slicing.conf#L13-L56),
+    and at v20.2.4; the "Auth API" of
+    [rgw-cache.rst:32-36](https://github.com/ceph/ceph/blob/v19.2.7/doc/radosgw/rgw-cache.rst?plain=1#L32-L36)).
+    Refused, it would fail every GET whose authentication rgw-cache sends to
+    radosgw. rgw-cache never sends it on a HEAD, which is exempt as well
+    because, like a GET, it stores nothing, while a write would store it as
+    `user.rgw.x-amz-auth`, so it is refused unsigned on every other method. rgw-go then serves the GET as it
+    serves any other ("X-Rgw-Auth").
+
+  A client that signs every header it sends, as the AWS SDKs do, sees no
+  difference, and neither does rgw-cache. A signed header under any of the
+  prefixes is renamed as radosgw renames it. SigV2 is unchanged, since its
+  string to sign already carries every renamed header
+  ([rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)),
+  though there a signed directive can be moved under another prefix
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's SigV2 signature survives
+  moving a signed x-amz directive under another meta
+  prefix](ceph-upstream-bugs.md#radosgws-sigv2-signature-survives-moving-a-signed-x-amz-directive-under-another-meta-prefix)").
+  s3-tests' `test_sigv4_presigned_put_xgoog_meta_unsigned`
+  ([jhoblitt/ceph#4](https://github.com/jhoblitt/ceph/pull/4)) sends such a
+  presigned PUT, which radosgw stores and rgw-go refuses.
 
 ### Authorization differences
 
@@ -4040,7 +4098,10 @@ does the following.
   follow the conditionals; a GET carrying it does not prefetch
   (`rgw_op.cc:2179` and `:2271-2274` at v19.2.6, `:2414` and `:2507-2510`
   at v20.2.4). rgw-go ignores the header: it makes those checks, which can
-  refuse the request, and serves a GET's body.
+  refuse the request, and serves a GET's body. rgw-cache sends the header
+  on a GET alone; rgw-go's SigV4 check lets it go unsigned on a GET or HEAD
+  and refuses it unsigned on any other method ("SigV4 refuses an unsigned
+  header that radosgw renames to `x-amz-*`").
 - **A refused response-* parameter.** rgw-go answers 400 InvalidRequest to
   a request whose `response-*` parameter radosgw refuses, because the
   request is anonymous or the value holds a control character. radosgw

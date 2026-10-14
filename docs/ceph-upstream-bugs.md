@@ -41,6 +41,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-x-amz-content-sha256-is-unsigned) | [#79803](https://tracker.ceph.com/issues/79803), [#79873](https://tracker.ceph.com/issues/79873), [#79871](https://tracker.ceph.com/issues/79871), [#79872](https://tracker.ceph.com/issues/79872) | [ceph/ceph#71292](https://github.com/ceph/ceph/pull/71292), [ceph/ceph#71360](https://github.com/ceph/ceph/pull/71360), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
 | [radosgw's SigV4 check misses the meta-prefixed headers init_meta_info renames to x-amz](#radosgws-sigv4-check-misses-the-meta-prefixed-headers-init_meta_info-renames-to-x-amz) | pending | pending | ✓ |
+| [radosgw's SigV2 signature survives moving a signed x-amz directive under another meta prefix](#radosgws-sigv2-signature-survives-moving-a-signed-x-amz-directive-under-another-meta-prefix) | pending | pending | ✓ |
 | [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | none | none | ✓ |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
@@ -1112,6 +1113,17 @@ Every new entry adds its row to this table, in document order.
   - SigV2 is unaffected: its string to sign carries `x_meta_map` whole,
     renamed headers included ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
     [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)).
+    The same keying lets a signed header be moved between prefixes
+    ("[radosgw's SigV2 signature survives moving a signed x-amz directive
+    under another meta
+    prefix](#radosgws-sigv2-signature-survives-moving-a-signed-x-amz-directive-under-another-meta-prefix)").
+  - A fix that refuses every renamed prefix unsigned would refuse radosgw's
+    own nginx cache front end, rgw-cache, whose authentication subrequest
+    for a client's GET adds `x-rgw-auth: yes` unsigned to the client's
+    signed headers
+    ([nginx-default.conf:13-56](https://github.com/ceph/ceph/blob/v19.2.7/examples/rgw/rgw-cache/nginx-default.conf#L13-L56),
+    and nginx-noprefetch.conf and nginx-slicing.conf alike), unless it lets
+    that one name go unsigned on a read, as rgw-go does.
 - **Impact:** the holder of a SigV4 signature, the user of a presigned PUT
   URL among them, can add such headers unsigned, and through them alter
   headers the signer did sign. An `X-Goog-Meta-*` header stores metadata
@@ -1123,26 +1135,142 @@ Every new entry adds its row to this table, in document order.
   readers of `x_meta_map` do with a renamed name was not traced.
 - **Releases:** every release with the CVE-2026-54330 check: v19.2.6,
   v19.2.7 and v20.2.4, and main at d8552606423.
-- **rgw-go:** has the same gap. `canonicalHeadersV4`
-  (`internal/auth/sigv4.go`) refuses only unsigned `x-amz-*` names, while
-  `headerMeta` (`internal/s3/requestattrs.go`) and `cryptAttr`
-  (`internal/authz/env.go`) rename the same prefixes in the same order.
+- **rgw-go:** closes the gap, on both releases (`docs/exclusions.md`,
+  "SigV4 refuses an unsigned header that radosgw renames to `x-amz-*`").
+  Unless `rgw_sigv4_insecure` is set, `canonicalHeadersV4`
+  (`internal/auth/sigv4.go`) refuses with 403 AccessDenied a header under
+  any of the seven prefixes that SignedHeaders does not list, header-signed
+  or presigned. Two names may still go unsigned (`mayGoUnsigned`):
+  `x-amz-content-sha256`, and rgw-cache's `x-rgw-auth` on a GET or HEAD
+  alone, never on a write, which would store it. Its prefix set is
+  `amzHeaderPrefixes` (`internal/auth/request.go`), which a spec
+  (`internal/auth/metaprefixes_test.go`) pins to the tables `headerMeta`
+  (`internal/s3/requestattrs.go`) and `cryptAttr` (`internal/authz/env.go`)
+  rename by, in the same order as radosgw. s3-tests'
+  `test_sigv4_presigned_put_xgoog_meta_unsigned`, in
+  [jhoblitt/ceph#4](https://github.com/jhoblitt/ceph/pull/4) for
+  jhoblitt/ceph's `rgw-go-s3tests` branch, sends a presigned PUT with an
+  unsigned `X-Goog-Meta-Foo`, which rgw-go refuses and radosgw stores. A
+  header that passes, signed or exempt or under `rgw_sigv4_insecure`, is
+  renamed as radosgw renames it:
   - PutObject refuses a write that asks for encryption, a renamed SSE
     header included, with 501 NotImplemented before it authorizes
     (`refuseEncryption`, internal/s3/putobject.go:87).
   - CreateMultipartUpload reads its parameters only once authorized
-    (internal/s3/multipart.go:54-61), so there an unsigned renamed SSE
-    header feeds the `s3:x-amz-server-side-encryption*` condition keys
-    (`cryptKeys`, internal/authz/env.go:205-212) before the 501. Nothing
-    is stored.
+    (internal/s3/multipart.go:54-61), so there a renamed SSE header feeds
+    the `s3:x-amz-server-side-encryption*` condition keys (`cryptKeys`,
+    internal/authz/env.go:205-212) before the 501. Nothing is stored.
   - The meta form is stored, and a renamed meta value is comma-appended to
     a signed one of the same name, as in radosgw (`headerMeta`'s join,
     which internal/s3/requestattrs_test.go:71-80 pins for `X-Amz-Meta-Foo`
     and `X-Goog-Meta-Foo`).
-  - Task F13 of the phase 2 plan closes the gap.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit F, task F4, 2026-10-14, in the threat analysis of
   the SigV4 relaxation; derived from the source, not reproduced.
+
+## radosgw's SigV2 signature survives moving a signed x-amz directive under another meta prefix
+
+- **Kind:** defect, possibly security-relevant, found by us: the SigV2 side
+  of "[radosgw's SigV4 check misses the meta-prefixed headers init_meta_info
+  renames to
+  x-amz](#radosgws-sigv4-check-misses-the-meta-prefixed-headers-init_meta_info-renames-to-x-amz)".
+  Unfixed at v19.2.7 and v20.2.4. Unreproduced: derived from the source.
+- **Evidence:**
+  - SigV2's string to sign carries `x_meta_map`
+    ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
+    [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)), which
+    `init_meta_info` keys by the `x-amz-` name whatever meta prefix a
+    header came under
+    ([rgw_common.cc:413-464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464),
+    [rgw_common.cc:426-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477)). So
+    `X-Amz-Copy-Source: b/k` and `X-Goog-Copy-Source: b/k` sign alike.
+  - radosgw reads the directives from the raw `HTTP_X_AMZ_*` headers
+    instead:
+    - the copy source in `RGWHandler_REST_S3::init`, which `op_put` then
+      takes to choose CopyObject over PutObject
+      ([rgw_rest_s3.cc:5056](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5056) and
+      [rgw_rest_s3.cc:4875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4875);
+      [rgw_rest_s3.cc:5586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586) and
+      [rgw_rest_s3.cc:5402](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5402));
+    - the canned ACL, whether any grant header is present, and the storage
+      class, also in `RGWHandler_REST_S3::init`
+      ([rgw_rest_s3.cc:5050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050),
+      [rgw_rest_s3.cc:5054](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5054) and
+      [rgw_rest_s3.cc:5073](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5073);
+      [rgw_rest_s3.cc:5580](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580),
+      [rgw_rest_s3.cc:5584](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5584) and
+      [rgw_rest_s3.cc:5603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5603)),
+      and the grants themselves, which `create_policy_from_headers` reads
+      by their `HTTP_X_AMZ_GRANT_*` names
+      ([rgw_acl_s3.cc:484-488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L484-L488),
+      [rgw_acl_s3.cc:484-488](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L484-L488));
+    - a PutObject's tagging and object lock in
+      `RGWPutObj_ObjStore_S3::get_params`
+      ([rgw_rest_s3.cc:2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2634) and
+      [rgw_rest_s3.cc:2648-2650](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2648-L2650);
+      [rgw_rest_s3.cc:2787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787) and
+      [rgw_rest_s3.cc:2801-2803](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2801-L2803)),
+      and CreateMultipartUpload's in `RGWInitMultipart_ObjStore_S3::get_params`
+      ([rgw_rest_s3.cc:4013](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4013) and
+      [rgw_rest_s3.cc:4026-4028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4026-L4028);
+      [rgw_rest_s3.cc:4464](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4464) and
+      [rgw_rest_s3.cc:4477-4479](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4477-L4479));
+    - a CopyObject's copy-source conditionals and metadata directive in
+      `RGWCopyObj_ObjStore_S3::get_params`
+      ([rgw_rest_s3.cc:3541-3544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3541-L3544) and
+      [rgw_rest_s3.cc:3555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3555);
+      [rgw_rest_s3.cc:3791-3794](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3791-L3794) and
+      [rgw_rest_s3.cc:3805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3805)).
+  - So the string to sign names a header's value under its `x-amz-` name,
+    not the prefix it came under, and a header can be moved between
+    prefixes with its signature intact, both ways. A signed `X-Amz-*`
+    directive resent under `X-Goog-` is dropped. A header the signer sent
+    under `X-Goog-`, which radosgw does not act on, resent under `X-Amz-`
+    becomes the directive.
+  - SigV4 is unaffected: a signed header the request no longer carries is
+    left out of the canonical request
+    ([rgw_auth_s3.cc:757](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L757),
+    [rgw_auth_s3.cc:734](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L734)), whose
+    signature then differs from the signer's.
+- **Impact:** the holder of a SigV2 signature, the user of a presigned
+  SigV2 URL among them, can move any header the string to sign names from
+  one meta prefix to another.
+  - Moved off `X-Amz-`, a signed directive is dropped. A CopyObject becomes
+    a PutObject of the request's own body at the destination the signer
+    named. An upload is stored without the canned ACL, the grants, the
+    storage class, the tags or the object lock it was signed with. A
+    conditional copy becomes unconditional, and a copy signed with a
+    `REPLACE` metadata directive copies the source's metadata instead.
+  - Moved onto `X-Amz-`, a header the signer sent under another prefix,
+    such as `X-Goog-Acl` or `X-Goog-Copy-Source`, becomes the directive it
+    names: a CopyObject from that source, that canned ACL or grant, that
+    tag set or that object lock, none of which radosgw applied to the
+    request as signed.
+- **Releases:** v19.2.7 and v20.2.4, by source reading; earlier releases
+  were not checked.
+- **rgw-go:** has the same gap. `amzHeadersV2` (`internal/auth/sigv2.go`)
+  signs a renamed header under its `x-amz-` name, as radosgw does, while
+  the handlers read the directives by their `X-Amz-` names:
+  - the copy source in the PUT routing and the copy
+    (internal/s3/putobject.go:44, internal/s3/request.go:227 and :274,
+    internal/s3/copyobject.go:37) and in the authorizer
+    (internal/authz/env.go:258 and :266);
+  - the canned ACL and the grants (internal/s3/putobject.go:51,
+    internal/s3/multipart.go:140, internal/authz/write.go:118, :175 and
+    :200-204, internal/authz/env.go:293, :300-304 and :325);
+  - the storage class (internal/s3/putobject.go:51,
+    internal/s3/copyobject.go:44, internal/s3/multipart.go:60);
+  - the tagging (internal/s3/putobject.go:90) and the object lock
+    (internal/s3/putobject.go:193 and :204);
+  - a copy's conditionals and metadata directive
+    (internal/s3/copyobject.go:45-48 and :91, internal/authz/env.go:268).
+
+  Plan task F15, added by
+  [jhoblitt/rgw-go#302](https://github.com/jhoblitt/rgw-go/pull/302),
+  closes rgw-go's implementation of the gap.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 unit F, the review of task F13, 2026-10-14; derived
+  from the source, not reproduced.
 
 ## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
 
