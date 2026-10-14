@@ -4447,13 +4447,16 @@ does the following.
   action, `s3:DeleteObjectVersion` and the rest, as radosgw authorizes any
   key naming a version (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6,
   `:5535-5537` and `:7766-7768` at v20.2.4); the reads naming it were served
-  already. A PutObject or CopyObject naming the null version, as its
-  destination or its source, still answers 501: radosgw writes such a head
-  at the plain key's oid but files it in the index under the instance
-  `null`, apart from the plain key's entry (`driver/rados/rgw_rados.cc:9473`
-  and `:7133` at v19.2.6, `:10405` and `:7984` at v20.2.4;
-  `encode_obj_index_key`, `cls/rgw/cls_rgw.cc:339-346` at v19.2.6,
-  `:389-396` at v20.2.4; `docs/ceph-upstream-bugs.md`, "[radosgw indexes a
+  already. A PutObject, a CompleteMultipartUpload or a CopyObject naming
+  the null version, a copy as its destination or its source, still
+  answers 501: radosgw writes such a head at the plain key's oid but files
+  it in the index under the instance `null`, apart from the plain key's
+  entry (`driver/rados/rgw_rados.cc:9473` and `:7133` at v19.2.6,
+  `:10405` and `:7984` at v20.2.4; `encode_obj_index_key`,
+  `cls/rgw/cls_rgw.cc:339-346` at v19.2.6, `:389-396` at v20.2.4), then
+  links the key to an OLH as a versioned object
+  ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375)
+  at v19.2.7; `docs/ceph-upstream-bugs.md`, "[radosgw indexes a
   PutObject naming versionId=null on an unversioned bucket under the null
   instance](ceph-upstream-bugs.md#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance)"),
   and copies from a source naming it without the checks of a copy onto
