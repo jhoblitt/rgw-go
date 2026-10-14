@@ -8,8 +8,8 @@ phase-1-exec worktree's HEAD, af535e4, is behind main); ceph at v19.2.6 and v20.
 origin/main 292995374d9 where upstream has fixed a floor defect (the local `main` ref,
 7ed73efc1be, is stale); s3-tests at the PIN f6f2529dd9ef; AWS S3 documentation where the
 owner's rule of 2026-10-13 makes AWS the reference. Every fact below is in
-`research-bucketconfig.notes.md` with its source. Citations to upstream main use the commit as
-the ref (`@4e056f98e78`), which `hack/citecheck` resolves like a tag.
+`research-bucketconfig.notes.md` with its source. Citations to upstream main link to lines at a
+commit (`blob/292995374d9/`), which `hack/citecheck` resolves like a tag.
 
 **The owner's rule of 2026-10-13 governs every choice in this report.** Compatibility means RADOS
 state in both directions. Where radosgw's S3 behaviour is wrong, rgw-go does the correct S3

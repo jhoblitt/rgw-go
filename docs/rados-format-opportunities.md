@@ -12,7 +12,7 @@ Add an entry whenever work meets a format cost, and update it when a measurement
 ## <format element>: <the cost>
 
 - **Format element:** the object, xattr, omap key or encoding, with its
-  definition at v19.2.6 and v20.2.4 (`path:line`).
+  definition at v19.2.6 and v20.2.4 (a link to its lines at each tag).
 - **Cost:** what it costs today, and how that was seen: a measurement (a
   `docs/benchmarks/` run, or the method) or reasoning from the code.
 - **Proposal:** the changed format.

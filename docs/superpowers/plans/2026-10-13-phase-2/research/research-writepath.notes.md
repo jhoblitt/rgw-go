@@ -1,6 +1,6 @@
 # research-writepath findings
 
-Each line: the claim, `path:line@tag`, the release.
+Each line: the claim, a link to its lines at the tag, the release.
 
 ## Checksums
 

@@ -1,6 +1,6 @@
 # lock-lifecycle research: verified facts
 
-Each entry: the claim, `path:line@tag`, the release. Appended as verified.
+Each entry: the claim, a link to its lines at the tag, the release. Appended as verified.
 
 ## Object lock types (rgw_object_lock.{h,cc}; blob-identical at v19.2.6 and v20.2.4, verified by diff)
 

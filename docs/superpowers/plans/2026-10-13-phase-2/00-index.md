@@ -28,7 +28,7 @@ The owner's rule, which settles PP-1: the plan carries behaviour and seams, not 
 - the specs that pin it;
 - its order.
 
-No fenced block runs past 8 lines, and `hack/citecheck` resolves every `src/<path>:<lines>@<tag>#<symbol>` citation in the set (PP-2). Where a task's text and an implementer's compiler disagree, the stated behaviour and the seams bind; the implementer records the ruling.
+No fenced block runs past 8 lines, and every Ceph citation in the set is a link to its lines at the tag or commit it was read at, `[<basename>:<from>-<to>](https://github.com/ceph/ceph/blob/<ref>/<path>#L<from>-L<to>)` (CL-D1), which `hack/citecheck` resolves (PP-2, PP-17). Where a task's text and an implementer's compiler disagree, the stated behaviour and the seams bind; the implementer records the ruling.
 
 The set's files:
 

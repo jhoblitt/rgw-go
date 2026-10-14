@@ -1,8 +1,8 @@
 # Notes ledger: versioning research
 
-Each entry: the claim; `path:line@tag` (ceph repo root paths for radosgw, repo-relative for
-rgw-go at origin/main); the release(s) it holds on. Entries are appended as verified; nothing here
-is from memory.
+Each entry: the claim; its source (a link to the lines at the tag for radosgw, a repo-relative
+`path:line` at origin/main for rgw-go); the release(s) it holds on. Entries are appended as
+verified; nothing here is from memory.
 
 ## Citation form
 
