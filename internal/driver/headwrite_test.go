@@ -109,13 +109,39 @@ var _ = Describe("the head write's guard", func() {
 		Entry("on Tentacle", denc.Tentacle),
 	)
 
-	It("guards an If-None-Match: * write by existence alone", func(ctx SpecContext) {
-		s := openPutStore(ctx, c, denc.Tentacle, nil, time.Now())
-		_, err := s.PutObject(ctx, rec, key, strings.NewReader("new"), op.PutParams{Size: 3, Tag: "new", IfNoneMatch: "*"})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(c.LastWrite(testDataPool, "", headOID).Steps()[0]).To(Equal(&radosclient.CreateStep{Exclusive: true}),
-			"no cmpxattr for If-None-Match: *, the exclusive create guards")
-	})
+	// The fake bucket index refuses a versioned key, so the guard is driven
+	// directly over a tagged head as read.
+	DescribeTable("compares the write tag of a key with no instance, never of an instance",
+		func(ctx SpecContext, rel denc.Release, k meta.ObjKey, want []radosclient.Step) {
+			s := openPutStore(ctx, c, rel, nil, time.Now())
+			st := &op.ObjectState{Bucket: rec, Key: k, Exists: true, WriteTag: "old", Attrs: map[string][]byte{meta.AttrIDTag: []byte("old\x00")}}
+			w := radosclient.NewWriteOp()
+			Expect(s.GuardHeadForTest(w, driver.HeadWriteForTest{Key: k}, st)).To(Succeed())
+			Expect(w.Steps()).To(Equal(want))
+		},
+		Entry("a key with no instance on Squid", denc.Squid, meta.ObjKey{Name: "k"},
+			[]radosclient.Step{&radosclient.CmpXattrStep{Name: meta.AttrIDTag, Op: radosclient.CmpEQ, Value: []byte("old\x00")}}),
+		Entry("a key with no instance on Tentacle", denc.Tentacle, meta.ObjKey{Name: "k"},
+			[]radosclient.Step{&radosclient.CmpXattrStep{Name: meta.AttrIDTag, Op: radosclient.CmpEQ, Value: []byte("old\x00")}}),
+		Entry("a versioned instance on Squid", denc.Squid, meta.ObjKey{Name: "k", Instance: "v1"}, []radosclient.Step(nil)),
+		Entry("a versioned instance on Tentacle", denc.Tentacle, meta.ObjKey{Name: "k", Instance: "v1"}, []radosclient.Step(nil)),
+		Entry("the null instance, whose head is the plain key's, on Squid", denc.Squid,
+			meta.ObjKey{Name: "k", Instance: meta.NullInstance}, []radosclient.Step(nil)),
+		Entry("the null instance, whose head is the plain key's, on Tentacle", denc.Tentacle,
+			meta.ObjKey{Name: "k", Instance: meta.NullInstance}, []radosclient.Step(nil)),
+	)
+
+	DescribeTable("guards an If-None-Match: * write by existence alone",
+		func(ctx SpecContext, rel denc.Release) {
+			s := openPutStore(ctx, c, rel, nil, time.Now())
+			_, err := s.PutObject(ctx, rec, key, strings.NewReader("new"), op.PutParams{Size: 3, Tag: "new", IfNoneMatch: "*"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.LastWrite(testDataPool, "", headOID).Steps()[0]).To(Equal(&radosclient.CreateStep{Exclusive: true}),
+				"no cmpxattr for If-None-Match: *, the exclusive create guards")
+		},
+		Entry("on Squid", denc.Squid),
+		Entry("on Tentacle", denc.Tentacle),
+	)
 })
 
 var _ = Describe("the head write's placement, atomicity, category and index knobs", func() {
