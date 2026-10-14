@@ -65,3 +65,9 @@ before writing Go here.
   again (PP-16).
 - Every rgw-go fix, where it is reasonable, carries an s3-tests test that covers it, merged into
   jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task.
+- A citation of Ceph source is a GitHub link pinned to the tag or commit it was written against:
+  in Markdown a link such as
+  [rgw_op.cc:6902-6904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6902-L6904),
+  in a Go comment the raw URL. rgw-go's own code is cited as a plain `path:line`. `make citecheck`
+  checks them, and no other notation is used. Until unit CL's sweep (CL4) reaches a package, its
+  Go comments keep their plain form, unchecked.
