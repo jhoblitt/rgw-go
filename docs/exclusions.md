@@ -1549,13 +1549,17 @@ review and verified against the tree.
     key, where radosgw keeps a stored instance's name from the document.
     A stored instance keeps its marker, its index layout, its explicit
     placement and placement rule, as radosgw keeps the last two, its
-    object lock configuration, which neither release's JSON carries
-    (docs/ceph-upstream-bugs.md, "radosgw's bucket instance metadata put
-    drops the bucket's object lock rule"), and the attrs rgw-go keeps for
-    itself, `user.rgw.rgw-go-rename` and `user.rgw.rgw-go-removing`, which a
-    document cannot write; a document changing the marker, the shard
-    count, the hash type or the index type, or turning object lock off,
-    answers 400 InvalidArgument, where radosgw writes it, re-sharding the
+    object lock configuration, which v20.2.4's JSON does not carry and
+    v19.2.7's carries as `obj_lock` when the flags enable object lock
+    (`src/rgw/rgw_common.cc:2542-2544@v19.2.7`), where rgw-go's document
+    carries none and a v19.2.7 put stores the document's, or the default
+    for a document without one (docs/ceph-upstream-bugs.md, "radosgw's
+    bucket instance metadata put drops the bucket's object lock rule"),
+    and the attrs rgw-go keeps for itself, `user.rgw.rgw-go-rename` and
+    `user.rgw.rgw-go-removing`, which a document cannot write; a document
+    changing the marker, the shard count, the hash type or the index type,
+    or turning object lock off, answers 400 InvalidArgument, where radosgw
+    writes it, re-sharding the
     index under its entries. An owner other than that of the entry point
     naming the instance answers 400. A new instance's marker must be its
     id (400), and another instance carrying its id as its id or its marker
@@ -3609,22 +3613,26 @@ rgw-go does the following.
   decode refuses the request"), so only an admin meets these refusals.
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
-  DeleteObject that names a version, and a DeleteObjects any of whose keys
-  names one, with 403 AccessDenied unless the request's MFA token
-  verified (`rgw_op.cc:5158-5163` and `:7055-7068` at v19.2.6, `:5548-5553`
-  at v20.2.4). rgw-go refuses each of them, whatever the header holds, an
-  admin's included: radosgw checks the delete permission first, and when
-  it refuses an admin its override lets the delete through without the MFA
-  check (`rgw_process.cc:228-236` at v19.2.6, `:228-239` at v20.2.4). On
-  a Tentacle zone radosgw's DeleteObjects check is inverted: it asks for
-  MFA when a key names no version, and lets a request whose every key
-  names a version through without it (`:7969-7983` at v20.2.4;
-  `docs/ceph-upstream-bugs.md`, "[Tentacle's DeleteObjects asks for MFA for
-  the keys that need none and not for the versions that
-  do](ceph-upstream-bugs.md#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do)").
-  rgw-go checks as v19.2.6 and ceph main do on both releases, so on a
-  Tentacle zone it refuses a request naming a version that radosgw serves,
-  and serves one naming none that radosgw refuses without MFA.
+  DeleteObject that names a version with 403 AccessDenied unless the
+  request's MFA token verified (`src/rgw/rgw_op.cc:5158-5163@v19.2.7`,
+  `src/rgw/rgw_op.cc:5548-5553@v20.2.4`), and ceph main refuses a
+  DeleteObjects any of whose keys names one likewise. rgw-go refuses each
+  of them, whatever the header holds, an admin's included: radosgw checks
+  the delete permission first, and when it refuses an admin its override
+  lets the delete through without the MFA check
+  (`src/rgw/rgw_process.cc:228-236@v19.2.7`,
+  `src/rgw/rgw_process.cc:228-239@v20.2.4`). On both releases radosgw's
+  DeleteObjects check is inverted: it asks for MFA when a key names no
+  version, and lets a request whose every key names a version through
+  without it (`src/rgw/rgw_op.cc:7067-7081@v19.2.7`,
+  `src/rgw/rgw_op.cc:7969-7983@v20.2.4`; `docs/ceph-upstream-bugs.md`,
+  "[radosgw's DeleteObjects asks for MFA for the keys that need none and
+  not for the versions that
+  do](ceph-upstream-bugs.md#radosgws-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do)").
+  rgw-go checks as ceph main does, and as v19.2.6 did, on both releases,
+  so on a zone of either release it refuses a request naming a version
+  that radosgw serves, and serves one naming none that radosgw refuses
+  without MFA.
 - **Tags that cannot be read refuse the request.** When a bucket policy or
   an identity policy names an `s3:ExistingObjectTag` or `s3:ResourceTag`
   key, radosgw reads the object's or bucket's tags into the policy
@@ -4223,77 +4231,65 @@ does the following.
   multipart-namespace parts. Only their order and overlap differ from
   v19.2.6's.
 - **Write conditions are Tentacle's on Squid too.** rgw-go checks a PUT's
-  If-Match and If-None-Match as v20.2.4's `check_preconditions` does
-  (`driver/rados/rgw_rados.cc:7286-7328` at v20.2.4), on both releases,
-  keeping its comparison of a condition's start over the ETag's length. A
-  client of a Squid zone sees these differences from v19.2.6
-  (`prepare_atomic_modification`, `:6493-6544` at v19.2.6):
-  - The conditions of a head with a manifest and no write tag, whose tag
-    radosgw fakes, are checked, where v19.2.6 skips them and overwrites.
-  - A quoted If-Match naming the current ETag is accepted, where v19.2.6
-    answers 412 PreconditionFailed.
-  - A quoted If-None-Match naming the current ETag answers 412
-    PreconditionFailed, where v19.2.6 overwrites.
-  - If-None-Match naming an ETag succeeds on a missing key and on an
-    existing object with no ETag, where v19.2.6 answers 412
-    PreconditionFailed.
-  - If-Match, `*` or an ETag, on a missing key answers 404 NoSuchKey, where
-    v19.2.6 answers 412 PreconditionFailed.
-  - CompleteMultipartUpload honors both headers as v20.2.4 does
-    (`rgw_rest_s3.cc:4572-4573`, `driver/rados/rgw_sal_rados.cc:4481-4482`
-    at v20.2.4), where v19.2.6 reads neither for it
-    (`RGWCompleteMultipart_ObjStore_S3::get_params`, `rgw_rest_s3.cc:4064-4074`
-    at v19.2.6) and completes over whatever the key holds. A refused
-    completion leaves the upload whole, so it can be completed again.
+  If-Match and If-None-Match as `check_preconditions` does at v19.2.7 and
+  v20.2.4
+  (`src/rgw/driver/rados/rgw_rados.cc:6672-6714@v19.2.7#RGWRados::Object::check_preconditions`,
+  `src/rgw/driver/rados/rgw_rados.cc:7286-7328@v20.2.4#RGWRados::Object::check_preconditions`),
+  on both releases, keeping its comparison of a condition's start over the
+  ETag's length. A client of a Squid zone sees one difference from
+  v19.2.7: CompleteMultipartUpload honors both headers as v20.2.4 does,
+  which takes both
+  (`src/rgw/rgw_rest_s3.cc:4565@v20.2.4#RGWCompleteMultipart_ObjStore_S3::get_params`)
+  and hands them to the head's write
+  (`src/rgw/driver/rados/rgw_sal_rados.cc:4481-4482@v20.2.4`), where
+  v19.2.7 still reads neither for it
+  (`src/rgw/rgw_rest_s3.cc:4094-4104@v19.2.7#RGWCompleteMultipart_ObjStore_S3::get_params`)
+  and completes over whatever the key holds. A refused completion leaves
+  the upload whole, so it can be completed again.
 
-  v19.2.6 skips the check on a head with a fake tag (`need_guard`,
-  `:6493-6495` at v19.2.6), which lets a conditional write overwrite an
-  update it was meant to protect; [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348)
+  Squid before v19.2.7 skipped the check on a head with a fake tag
+  (`need_guard`), which let a conditional write overwrite an update it was
+  meant to protect; [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348)
   fixed it for Tentacle, and its Squid backport,
-  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), merged after
-  v19.2.6 (`docs/ceph-upstream-bugs.md`, "[Squid's write conditions fail an
-  If-None-Match ETag on a missing key and skip a head without a write
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), is first
+  tagged in v19.2.7 (`docs/ceph-upstream-bugs.md`, "[Squid's write
+  conditions fail an If-None-Match ETag on a missing key and skip a head
+  without a write
   tag](ceph-upstream-bugs.md#squids-write-conditions-fail-an-if-none-match-etag-on-a-missing-key-and-skip-a-head-without-a-write-tag)").
 - **Delete conditions are Tentacle's, and a delete is guarded, on both
   releases.** rgw-go checks a DeleteObject's If-Match,
-  `x-amz-if-match-size` and `x-amz-if-match-last-modified-time` as
-  v20.2.4's `Delete::delete_obj` does, with `check_preconditions` and an
-  `obj_check_mtime` EQ in the removal op
-  (`driver/rados/rgw_rados.cc:6663-6671` and `:7260-7329` at v20.2.4), on
-  both releases. On both it also sends the head's removal behind v19.2.6's
-  `cmpxattr` on the write tag the delete read (`prepare_atomic_modification`,
-  `:5914` and `:6493-6513` at v19.2.6). A client sees these differences:
-  - On a Squid zone, a delete that carries one of the three conditions and
-    fails it answers 412 PreconditionFailed, where v19.2.6, which does not
-    implement them, deletes: its S3 handler reads only
-    `x-amz-delete-if-unmodified-since` (`rgw_rest_s3.cc:3427-3453` at
-    v19.2.6) and `RGWDeleteObj` has no member for the others
-    (`rgw_op.h:1461-1495` at v19.2.6). Conditional delete came upstream with
-    [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348) (tracker
-    [#68183](https://tracker.ceph.com/issues/68183)), in v20.2.4 through
-    [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949); it reaches
-    Squid at 19.2.7 through
-    [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932), merged after
-    v19.2.6.
-  - DeleteObjects checks each `<Object>`'s ETag, Size and LastModifiedTime
-    as v20.2.4 does (`rgw_op.cc:7830-7832` at v20.2.4), on both releases.
-    On a Squid zone, a key whose condition fails is answered with 412
-    PreconditionFailed in its result and kept, where v19.2.6, whose parser
-    reads only Key and VersionId (`rgw_multi_del.cc:17-36` and `:57-72` at
-    v19.2.6), deletes it. A document whose LastModifiedTime is empty or does
-    not parse, or whose Size is no integer, fails its parse on a Squid zone
-    too, as v20.2.4's parser fails it (`rgw_multi_del.cc:42-58` at
-    v20.2.4), answered with Squid's 400 status line alone, where v19.2.6
-    ignores both elements and deletes the keys.
-  - On a Tentacle zone, a delete whose object another writer replaced
-    between the delete's read and its removal fails the removal and answers
-    204 with the replacement standing, as on Squid. v20.2.4 removes the
-    replacement, even under an If-Match naming the replaced object's ETag,
-    and leaves the replacement's tails unreferenced
-    (`docs/ceph-upstream-bugs.md`, "[Tentacle's DeleteObject removes the
-    head without checking its write
-    tag](ceph-upstream-bugs.md#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag)").
-    The removal op carries the `cmpxattr` step v20.2.4 does not send.
+  `x-amz-if-match-size` and `x-amz-if-match-last-modified-time`, and each
+  DeleteObjects `<Object>`'s ETag, Size and LastModifiedTime, as v19.2.7
+  and v20.2.4 do, on both releases. Both read the three headers
+  (`src/rgw/rgw_rest_s3.cc:3435-3483@v19.2.7#RGWDeleteObj_ObjStore_S3::get_params`,
+  `src/rgw/rgw_rest_s3.cc:3685-3733@v20.2.4#RGWDeleteObj_ObjStore_S3::get_params`)
+  and parse the three elements with the same parser
+  (`src/rgw/rgw_multi_del.cc:17-62@v19.2.7#RGWMultiDelObject::xml_end`,
+  `src/rgw/rgw_multi_del.cc:17-62@v20.2.4#RGWMultiDelObject::xml_end`),
+  hand each key's conditions to its delete
+  (`src/rgw/rgw_op.cc:6902-6904@v19.2.7#RGWDeleteMultiObj::handle_individual_object`,
+  `src/rgw/rgw_op.cc:7830-7832@v20.2.4#RGWDeleteMultiObj::handle_individual_object`),
+  and `Delete::delete_obj` compares them with `check_preconditions` and
+  puts an `obj_check_mtime` EQ in the removal op
+  (`src/rgw/driver/rados/rgw_rados.cc:6049-6057@v19.2.7`,
+  `src/rgw/driver/rados/rgw_rados.cc:6663-6671@v20.2.4`). Conditional
+  delete came upstream with
+  [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348) (tracker
+  [#68183](https://tracker.ceph.com/issues/68183)), in v20.2.4 through
+  [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), and on Squid
+  through [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932),
+  first tagged in v19.2.7. The same change dropped the guard v19.2.6's
+  delete sends ahead of the head's removal, a `cmpxattr` on the write tag
+  the delete read; rgw-go keeps it on both releases. A client of a zone of
+  either release sees one difference: a delete whose object another writer
+  replaced between the delete's read and its removal fails the removal and
+  answers 204 with the replacement standing. v19.2.7 and v20.2.4 remove
+  the replacement, even under an If-Match naming the replaced object's
+  ETag, and leave the replacement's tails unreferenced
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObject removes the head
+  without checking its write
+  tag](ceph-upstream-bugs.md#radosgws-deleteobject-removes-the-head-without-checking-its-write-tag)").
+  The removal op carries the `cmpxattr` step neither sends.
 - **DeleteObjectTagging keeps the object's mtime on Squid too.** rgw-go
   removes an object's tags as v20.2.4's `RGWDeleteObjTags::execute` does,
   with the object's attrs loaded first, so the head and its index entry
@@ -4672,16 +4668,18 @@ does the following.
   request before they read what the store holds for it").
 - **UploadPart ignores If-Match and If-None-Match.** rgw-go writes a part
   head without the request's write conditions on both releases, as
-  v19.2.6's `MultipartObjectProcessor::complete` does
-  (`driver/rados/rgw_putobj_processor.cc:491-531` at v19.2.6). v20.2.4's
-  passes them to the part head's write (`:563-564`), where they are
-  checked against the part head the request has just created: If-None-Match:
-  `*`, and If-Match naming an ETag, then fail with 412 PreconditionFailed for
-  a part in the bucket placement's pool, and any If-Match with 404
-  NoSuchKey for a part whose storage class lives in another pool, after
-  the body was received (`docs/ceph-upstream-bugs.md`, "[Tentacle fails an
-  UploadPart that sends If-None-Match: * for a part in the bucket
-  placement's pool](ceph-upstream-bugs.md#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool)").
+  v19.2.7's `MultipartObjectProcessor::complete` does, which still passes
+  none
+  (`src/rgw/driver/rados/rgw_putobj_processor.cc:491-531@v19.2.7#MultipartObjectProcessor::complete`).
+  v20.2.4's passes them to the part head's write
+  (`src/rgw/driver/rados/rgw_putobj_processor.cc:563-564@v20.2.4`), where
+  they are checked against the part head the request has just created:
+  If-None-Match: `*`, and If-Match naming an ETag, then fail with 412
+  PreconditionFailed for a part in the bucket placement's pool, and any
+  If-Match with 404 NoSuchKey for a part whose storage class lives in
+  another pool, after the body was received (`docs/ceph-upstream-bugs.md`,
+  "[Tentacle fails an UploadPart that sends If-None-Match: * for a part in
+  the bucket placement's pool](ceph-upstream-bugs.md#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool)").
   Where a Tentacle radosgw answers those, rgw-go stores the part.
 - **UploadPartCopy reads one version of its source.** rgw-go copies a
   part's source range from the one state the request read: the head bytes
