@@ -9,3 +9,8 @@
 # depends on timing, as its exclusion says; its outcome is accepted whether
 # it differs or agrees. Either kind fails the comparison when it matches no
 # test.
+
+# An unsigned Content-Type or x-amz-content-sha256, accepted as v19.2.7 accepts them; Tentacle's radosgw refuses them (exclusions: "SigV4 accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle too")
+^s3tests\.functional\.test_headers::test_sigv4_contenttype_unsigned$
+^s3tests\.functional\.test_headers::test_sigv4_presigned_contenttype_unsigned$
+^s3tests\.functional\.test_headers::test_sigv4_without_signed_content_sha256$

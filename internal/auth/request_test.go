@@ -102,8 +102,6 @@ var _ = Describe("requestView", func() {
 		Expect(v).To(Equal("5"))
 		_, ok = rv.header("x-amz-missing")
 		Expect(ok).To(BeFalse(), "x-amz-missing was not sent")
-		Expect(rv.hasHeader("content-type")).To(BeTrue(), "Content-Type was sent")
-		Expect(rv.hasHeader("content-md5")).To(BeFalse(), "Content-MD5 was not sent")
 		Expect(rv.chunkedTE()).To(BeFalse(), "no Transfer-Encoding was sent")
 	})
 

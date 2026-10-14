@@ -40,6 +40,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-x-amz-content-sha256-is-unsigned) | [#79803](https://tracker.ceph.com/issues/79803), [#79873](https://tracker.ceph.com/issues/79873), [#79871](https://tracker.ceph.com/issues/79871), [#79872](https://tracker.ceph.com/issues/79872) | [ceph/ceph#71292](https://github.com/ceph/ceph/pull/71292), [ceph/ceph#71360](https://github.com/ceph/ceph/pull/71360), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
+| [radosgw's SigV4 check misses the meta-prefixed headers init_meta_info renames to x-amz](#radosgws-sigv4-check-misses-the-meta-prefixed-headers-init_meta_info-renames-to-x-amz) | pending | pending | ✓ |
 | [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | none | none | ✓ |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
@@ -972,14 +973,19 @@ Every new entry adds its row to this table, in document order.
   exemption; squid took it separately, and v19.2.7 carries it too ("radosgw
   19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is
   unsigned", below).
-- **rgw-go:** reproduces it, as both floor releases carry it.
-  `canonicalHeadersV4` (`internal/auth/sigv4.go`) answers AccessDenied to a
-  request with a Content-Type its SignedHeaders do not list, as it does to
-  an unsigned `host` or `x-amz-*` header, unless `rgw_sigv4_insecure`
-  (`auth.Config.Insecure`) is set. The vector
-  `internal/auth/testdata/v4/unsigned-content-type-rejected.json` pins it.
-  Because rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry
-  for it.
+- **rgw-go:** accepts an unsigned Content-Type on both releases, as
+  v19.2.7 does. `canonicalHeadersV4` (`internal/auth/sigv4.go`) does not
+  require a present Content-Type to be signed and still answers
+  AccessDenied to an unsigned `host` or `x-amz-*` header other than
+  x-amz-content-sha256, unless `rgw_sigv4_insecure`
+  (`auth.Config.Insecure`) is set. On Tentacle that differs from v20.2.4,
+  which `docs/exclusions.md` records with why the relaxation is safe ("SigV4
+  accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle
+  too"). The vectors
+  `internal/auth/testdata/v4/unsigned-content-type-accepted.json` and
+  `presigned-unsigned-content-type-accepted.json` pin it, and
+  `unsigned-content-type-and-x-amz-acl-rejected.json` the `x-amz-*` refusal
+  beside it.
 - **Upstream:** [#79674](https://tracker.ceph.com/issues/79674), resolved,
   with its duplicate [#79708](https://tracker.ceph.com/issues/79708) and its
   backports [#79723](https://tracker.ceph.com/issues/79723) (squid),
@@ -1038,10 +1044,17 @@ Every new entry adds its row to this table, in document order.
   (merge 7e2e2072822, 2026-09-03); no Tentacle tag carries it (checked at
   ab83d026c29, 2026-10-12). The first tag that carries it is the umbrella
   release candidate v21.1.1 (2026-09-10).
-- **rgw-go:** reproduces it on both releases: `canonicalHeadersV4`
-  (`internal/auth/sigv4.go`) answers AccessDenied to a request with any
-  unsigned `x-amz-*` header, x-amz-content-sha256 included, unless
-  `rgw_sigv4_insecure` (`auth.Config.Insecure`) is set.
+- **rgw-go:** accepts an unsigned x-amz-content-sha256 on both releases,
+  as v19.2.7 does. `canonicalHeadersV4` (`internal/auth/sigv4.go`) leaves
+  it out of its scan of the `x-amz-*` headers, since `expectedPayloadHash`
+  makes its value the canonical request's payload hash, and still answers
+  AccessDenied to any other unsigned one unless `rgw_sigv4_insecure`
+  (`auth.Config.Insecure`) is set. On Tentacle that differs from v20.2.4,
+  which `docs/exclusions.md` records with why the relaxation is safe ("SigV4
+  accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle
+  too"). The vectors
+  `internal/auth/testdata/v4/unsigned-content-sha256-accepted.json` and
+  `presigned-unsigned-content-sha256-accepted.json` pin it.
 - **Upstream:** [#79803](https://tracker.ceph.com/issues/79803), named by the
   fix commits' `Fixes:` trailers with its backports
   [#79873](https://tracker.ceph.com/issues/79873) (squid),
@@ -1056,6 +1069,80 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 planning, the Squid floor's move to v19.2.7,
   2026-10-13, reading the commits between v19.2.6 and v19.2.7; derived from
   the source, not reproduced.
+
+## radosgw's SigV4 check misses the meta-prefixed headers init_meta_info renames to x-amz
+
+- **Kind:** defect, security-relevant, found by us: a gap in the
+  CVE-2026-54330 fix (GHSA-rmjq-ffrm-j6vj), which refuses an unsigned
+  `x-amz-*` header but not one that radosgw renames to an `x-amz-*` name and
+  then treats as one. Unfixed at v19.2.7, v20.2.4 and main. Unreproduced:
+  derived from the source.
+- **Evidence:**
+  - Unless `rgw_sigv4_insecure` is set, `get_v4_canonical_headers` refuses
+    an unsigned header only when its environment name starts `HTTP_X_AMZ_`
+    ([rgw_auth_s3.cc:819-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841),
+    [rgw_auth_s3.cc:780-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796); on main,
+    [rgw_auth_s3.cc:817](https://github.com/ceph/ceph/blob/d8552606423/src/rgw/rgw_auth_s3.cc#L817)).
+  - `req_info::init_meta_info` files six more prefixes into `x_meta_map`
+    under an `x-amz-` name: `HTTP_X_GOOG_`, `HTTP_X_DHO_`, `HTTP_X_RGW_`,
+    `HTTP_X_OBJECT_`, `HTTP_X_CONTAINER_` and `HTTP_X_ACCOUNT_`, so
+    `X-Goog-Meta-K` is filed as `x-amz-meta-k`. A renamed name starting
+    `x-amz-server-side-en` also goes into `crypt_attribute_map`
+    ([rgw_common.cc:413-464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464),
+    [rgw_common.cc:426-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477)), from which the SSE code reads
+    its parameters ([rgw_crypt.cc:906-910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L906-L910),
+    [rgw_crypt.cc:921-925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L921-L925), used by
+    `rgw_s3_prepare_encrypt` at [rgw_crypt.cc:1036](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1036) and
+    [rgw_crypt.cc:1051](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1051)).
+  - It walks the environment in name order, which `RGWEnv::get_map()`
+    keeps without regard to case, as a `std::map` ordered by `ltstr_nocase`
+    ([rgw_common.h:488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L488), [rgw_common.h:512](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L512)),
+    so the prefixes come ACCOUNT, AMZ, CONTAINER, DHO, GOOG, OBJECT, RGW.
+    For a name reached twice, `x_meta_map` gets the later value
+    comma-appended to the earlier one, while in `crypt_attribute_map` the
+    later value overwrites the earlier
+    ([rgw_common.cc:445-457](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L445-L457),
+    [rgw_common.cc:458-470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L458-L470)). So an unsigned value under
+    CONTAINER, DHO, GOOG, OBJECT or RGW overwrites a signed
+    `x-amz-server-side-encryption*` value. `X-Account-` sorts before
+    `X-Amz-`, so it cannot override a signed SSE value, but it can still
+    set one where none was signed. A renamed meta value under any of the
+    six is joined to a signed one of the same name: after it, or before it
+    for `X-Account-`.
+  - SigV2 is unaffected: its string to sign carries `x_meta_map` whole,
+    renamed headers included ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
+    [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)).
+- **Impact:** the holder of a SigV4 signature, the user of a presigned PUT
+  URL among them, can add such headers unsigned, and through them alter
+  headers the signer did sign. An `X-Goog-Meta-*` header stores metadata
+  the signer never named, or extends a signed value. An
+  `X-Goog-Server-Side-Encryption-*` header sets or replaces the upload's
+  encryption parameters, SSE-C key included. Both are vectors the fix's
+  own guard lists under their `x-amz-*` names
+  ([test_rgw_auth_sigv4.cc:141-184](https://github.com/ceph/ceph/blob/v19.2.7/src/test/rgw/test_rgw_auth_sigv4.cc#L141-L184)). What other
+  readers of `x_meta_map` do with a renamed name was not traced.
+- **Releases:** every release with the CVE-2026-54330 check: v19.2.6,
+  v19.2.7 and v20.2.4, and main at d8552606423.
+- **rgw-go:** has the same gap. `canonicalHeadersV4`
+  (`internal/auth/sigv4.go`) refuses only unsigned `x-amz-*` names, while
+  `headerMeta` (`internal/s3/requestattrs.go`) and `cryptAttr`
+  (`internal/authz/env.go`) rename the same prefixes in the same order.
+  - PutObject refuses a write that asks for encryption, a renamed SSE
+    header included, with 501 NotImplemented before it authorizes
+    (`refuseEncryption`, internal/s3/putobject.go:87).
+  - CreateMultipartUpload reads its parameters only once authorized
+    (internal/s3/multipart.go:54-61), so there an unsigned renamed SSE
+    header feeds the `s3:x-amz-server-side-encryption*` condition keys
+    (`cryptKeys`, internal/authz/env.go:205-212) before the 501. Nothing
+    is stored.
+  - The meta form is stored, and a renamed meta value is comma-appended to
+    a signed one of the same name, as in radosgw (`headerMeta`'s join,
+    which internal/s3/requestattrs_test.go:71-80 pins for `X-Amz-Meta-Foo`
+    and `X-Goog-Meta-Foo`).
+  - Task F13 of the phase 2 plan closes the gap.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 unit F, task F4, 2026-10-14, in the threat analysis of
+  the SigV4 relaxation; derived from the source, not reproduced.
 
 ## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
 

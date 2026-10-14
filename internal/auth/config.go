@@ -23,9 +23,10 @@ type Config struct {
 	// mirrors radosgw.
 	DisablePresignedURLs bool
 	// Insecure is rgw_sigv4_insecure (default false): it skips the checks
-	// that host, a present content-type and every x-amz-* header are signed
-	// (CVE-2026-54330, rgw_auth_s3.cc:788-820 at v19.2.6, :765-797 at
-	// v20.2.4).
+	// that host and every x-amz-* header but x-amz-content-sha256 are signed
+	// (CVE-2026-54330, rgw_auth_s3.cc:788-842 at v19.2.7, :765-797 at
+	// v20.2.4, which also checks a present content-type and
+	// x-amz-content-sha256).
 	Insecure bool
 	// DNSNames is rgw_dns_name plus the zonegroup hostnames, the list
 	// s3.Config.DNSNames also gets: the SigV2 canonical resource starts with

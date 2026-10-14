@@ -310,6 +310,40 @@ var _ = Describe("Verifier", func() {
 			Expect(err).To(MatchError(op.ErrContentSHA256Mismatch))
 		})
 
+		It("holds the body to an x-amz-content-sha256 the request does not sign", func(ctx SpecContext) {
+			creds := aws.Credentials{AccessKeyID: accessKeyOf("alice"), SecretAccessKey: secretOf("alice")}
+			overHello := func(body string, sent ...string) *http.Request {
+				req := newBodyRequest(ctx, http.MethodPut, "http://s3.example.com/b/k", body)
+				return auth.SignOverHashForTest(ctx, req, creds, fixedNow(), helloSHA256, sent...)
+			}
+			res, err := v.Authenticate(ctx, overHello("hello", helloSHA256), anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.PayloadSHA256).To(Equal(helloSHA256))
+			Expect(io.ReadAll(res.Body)).To(Equal([]byte("hello")))
+
+			res, err = v.Authenticate(ctx, overHello("jello", helloSHA256), anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = io.ReadAll(res.Body)
+			Expect(err).To(MatchError(op.ErrContentSHA256Mismatch), "a body other than the one the signed hash names")
+
+			// A captured request with UNSIGNED-PAYLOAD prepended: the last
+			// value is the one read, so the substituted body is still checked.
+			res, err = v.Authenticate(ctx, overHello("jello", "UNSIGNED-PAYLOAD", helloSHA256), anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.PayloadSHA256).To(Equal(helloSHA256))
+			Expect(res.Body).NotTo(BeNil(), "a body the signed hash names is verified")
+			_, err = io.ReadAll(res.Body)
+			Expect(err).To(MatchError(op.ErrContentSHA256Mismatch), "a prepended UNSIGNED-PAYLOAD skips nothing")
+
+			jello := sha256.Sum256([]byte("jello"))
+			for _, sent := range [][]string{
+				{hex.EncodeToString(jello[:])}, {"UNSIGNED-PAYLOAD"}, {streamingUnsignedTrailer}, {helloSHA256, "UNSIGNED-PAYLOAD"},
+			} {
+				_, err = v.Authenticate(ctx, overHello("jello", sent...), anyPayload)
+				Expect(err).To(MatchError(op.ErrSignatureDoesNotMatch), "x-amz-content-sha256 %q under a signature over hello's hash", sent)
+			}
+		})
+
 		It("decodes an aws-chunked payload, with its decoded length", func(ctx SpecContext) {
 			req := unsignedPut(ctx, streamingUnsignedTrailer, helloWorldTrailerBody)
 			req.Header.Set("X-Amz-Decoded-Content-Length", "11")

@@ -125,12 +125,6 @@ func (rv *requestView) header(name string) (string, bool) {
 	return vs[len(vs)-1], true
 }
 
-// hasHeader is RGWEnv::exists for a signed-header token.
-func (rv *requestView) hasHeader(name string) bool {
-	_, ok := rv.header(name)
-	return ok
-}
-
 // contentLength is the request's Content-Length, -1 for a chunked transfer
 // encoding.
 func (rv *requestView) contentLength() int64 { return rv.req.ContentLength }

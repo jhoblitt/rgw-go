@@ -3360,6 +3360,52 @@ does the following.
   authenticator's verifying reader before it parses or acts on it, and
   refuses one whose hash does not match with 400 XAmzContentSHA256Mismatch,
   changing nothing.
+- **SigV4 accepts an unsigned Content-Type and x-amz-content-sha256 on
+  Tentacle too.** Unless `rgw_sigv4_insecure` is set, v20.2.4 refuses with
+  403 AccessDenied a request that carries a Content-Type or an
+  `x-amz-content-sha256` header its SignedHeaders do not list, as it
+  refuses an unsigned `host` or any other unsigned `x-amz-*` header
+  ([rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797)). v19.2.7 requires neither to
+  be signed and keeps the rest
+  ([rgw_auth_s3.cc:788-842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L842)); the tentacle branch carries
+  both fixes, which no Tentacle tag does yet (`docs/ceph-upstream-bugs.md`,
+  "[radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is
+  unsigned](ceph-upstream-bugs.md#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned)"
+  and "[radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose
+  x-amz-content-sha256 is
+  unsigned](ceph-upstream-bugs.md#radosgw-1926-and-2024-reject-a-sigv4-request-whose-x-amz-content-sha256-is-unsigned)").
+  rgw-go takes v19.2.7's rule on both releases (`canonicalHeadersV4`), so
+  on Tentacle it verifies such a request on its signature where radosgw
+  refuses it: a presigned URL used with a Content-Type of the client's own,
+  as a browser upload sends, and a request whose signer left either header
+  out of SignedHeaders. The checks came with the CVE-2026-54330 hardening
+  (GHSA-rmjq-ffrm-j6vj), and the relaxation keeps what they close. The
+  advisory's escalation is an unsigned `x-amz-*` header that radosgw then
+  applies, granting more than the signer intended; every `x-amz-*` header
+  but `x-amz-content-sha256` is still refused unsigned, beside an unsigned
+  Content-Type or not. `x-amz-content-sha256` is read once as the payload
+  hash, which ends the canonical request and is what the body is then held
+  to, on the header route, the presigned route and the boto2 fallback alike
+  (`expectedPayloadHash`, as radosgw's
+  [rgw_auth_s3.h:641-664](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L641-L664)), so any
+  value but the one the signer used fails the signature. A Content-Type
+  grants no authority, since rgw-go routes nothing on it, but what the
+  relaxation does allow is this: on Tentacle, whoever holds a presigned PUT,
+  or any request that does not sign Content-Type, chooses the type the
+  object is stored under and later served with, `text/html` included,
+  which v20.2.4 refuses. v19.2.7 behaves the same; what AWS S3 accepts is
+  untested. A signer that wants the type fixed signs it. AWS's SigV4 page,
+  https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
+  (read 2026-10-14), asks for "any `x-amz-*` headers" to be signed, so for
+  `x-amz-content-sha256` the rule is looser than AWS's letter; it stays safe
+  because the value is the canonical request's HashedPayload. On
+  Content-Type the page is inconsistent: a present one "must" be added to
+  CanonicalHeaders, yet other standard headers "such as content-type" are
+  optional. The owner decided on 2026-10-13 that Tentacle takes the rule too
+  once that analysis held. s3-tests' `test_sigv4_contenttype_unsigned`,
+  `test_sigv4_presigned_contenttype_unsigned` and
+  `test_sigv4_without_signed_content_sha256` send such requests, and
+  v20.2.4's radosgw fails them (`test/s3tests/baseline/tentacle.json`).
 
 ### Authorization differences
 

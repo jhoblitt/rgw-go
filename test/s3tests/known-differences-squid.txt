@@ -31,3 +31,8 @@
 
 # Tentacle's x-amz-expected-bucket-owner check, served on Squid too; Squid's radosgw ignores the header (exclusions: "Squid clusters get Tentacle's checks outside the policy language")
 ^s3tests\.functional\.test_s3::test_expected_bucket_owner$
+
+# An unsigned Content-Type or x-amz-content-sha256, accepted as v19.2.7 accepts them; the Squid ledger, recorded at 19.2.6, has radosgw refuse them, and these lines go when it is re-recorded at 19.2.7 (registry: "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned", "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned")
+^s3tests\.functional\.test_headers::test_sigv4_contenttype_unsigned$
+^s3tests\.functional\.test_headers::test_sigv4_presigned_contenttype_unsigned$
+^s3tests\.functional\.test_headers::test_sigv4_without_signed_content_sha256$
