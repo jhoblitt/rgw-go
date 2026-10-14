@@ -87,7 +87,7 @@ func syncPolicyEmpty(p RawStruct) bool {
 
 // BucketInfo is RGWBucketInfo, the bucket instance. Owner is a user for every
 // bucket written before version 24.
-type BucketInfo struct {
+type BucketInfo struct { //nolint:recvcheck // SetObjectLock sets the encoding in place, while it encodes and reads by value as every stored type does
 	Bucket         BucketID
 	Owner          Owner
 	Flags          uint32
@@ -323,8 +323,8 @@ func (b BucketInfo) IndexShardOID(gen IndexLayoutGen, shard uint32) string {
 	}
 }
 
-// bucketInfoDump is the field layout of RGWBucketInfo::dump as Squid and
-// Tentacle write it; main adds obj_lock.
+// bucketInfoDump is the field layout of RGWBucketInfo::dump at v19.2.7, whose
+// obj_lock v20.2.4 lacks.
 type bucketInfoDump struct {
 	Bucket              BucketID                    `json:"bucket"`
 	CreationTime        Time                        `json:"creation_time"`
@@ -344,18 +344,29 @@ type bucketInfoDump struct {
 	MDSearchConfig      []jsonEntry[string, uint32] `json:"mdsearch_config"`
 	ReshardStatus       int                         `json:"reshard_status"`
 	NewBucketInstanceID string                      `json:"new_bucket_instance_id"`
+	ObjLock             *ObjectLock                 `json:"obj_lock,omitzero"`
 }
 
-// MarshalJSON is RGWBucketInfo::dump as Squid and Tentacle write it: of the
-// layout only the current index's shard count, hash type and index type. It
-// fails with ErrOpaqueJSON when the dump would include website_conf or
-// sync_policy, which are held as RawStruct.
+// MarshalJSON is RGWBucketInfo::dump at v19.2.7 (rgw_common.cc:2515-2545), on
+// Tentacle too: of the layout only the current index's shard count, hash type
+// and index type, and obj_lock while the flags enable object lock, which
+// v20.2.4 does not write (:2577-2604). It fails with ErrOpaqueJSON when the
+// dump would include website_conf or sync_policy, which are held as
+// RawStruct, and with ObjectLock's error when ObjLock does not decode.
 func (b BucketInfo) MarshalJSON() ([]byte, error) {
 	if b.HasWebsite() {
 		return nil, fmt.Errorf("%w: website_conf", ErrOpaqueJSON)
 	}
 	if b.SyncPolicy != nil && !syncPolicyEmpty(b.SyncPolicy) {
 		return nil, fmt.Errorf("%w: sync_policy", ErrOpaqueJSON)
+	}
+	var lock *ObjectLock
+	if b.ObjLockEnabled() {
+		l, err := b.ObjectLock()
+		if err != nil {
+			return nil, err
+		}
+		lock = &l
 	}
 	mdsearch := make([]jsonEntry[string, uint32], 0, len(b.MDSearchConfig))
 	for _, k := range slices.Sorted(maps.Keys(b.MDSearchConfig)) {
@@ -381,5 +392,6 @@ func (b BucketInfo) MarshalJSON() ([]byte, error) {
 		MDSearchConfig:      mdsearch,
 		ReshardStatus:       int(b.ReshardStatus),
 		NewBucketInstanceID: b.NewBucketInstanceID,
+		ObjLock:             lock,
 	})
 }

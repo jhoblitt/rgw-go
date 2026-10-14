@@ -89,17 +89,20 @@ func (b *BucketEntryPoint) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON is RGWBucketInfo::decode_json (rgw_common.cc:2544-2585 at
-// v19.2.6, :2606-2647 at v20.2.4) over RGWBucketInfo's defaults: the layout
-// is NewBucketLayout's with the dump's num_shards, bi_shard_hash_type and
-// index_type, and a Normal index gets its in-index log, as
-// init_default_bucket_layout gives one (driver/rados/rgw_bucket.cc:2781-2801
-// at v19.2.6, :2895-2919 at v20.2.4); "region" stands in for an absent or
-// empty zonegroup. A website configuration or a sync policy with groups is
-// ErrOpaqueJSON, as they are carried opaque, and a hash type, index type or
-// reshard status the enums do not name is refused. The object lock
-// configuration has no JSON form at either release, so it is the default,
-// and decode_json does not read new_bucket_instance_id, so it is empty.
+// UnmarshalJSON is RGWBucketInfo::decode_json at v19.2.7
+// (rgw_common.cc:2547-2591), on Tentacle too, over RGWBucketInfo's
+// defaults: the layout is NewBucketLayout's with the dump's num_shards,
+// bi_shard_hash_type and index_type, and a Normal index gets its in-index
+// log, as init_default_bucket_layout gives one
+// (driver/rados/rgw_bucket.cc:2781-2801 at v19.2.7, :2895-2919 at v20.2.4);
+// "region" stands in for an absent or empty zonegroup. A website
+// configuration or a sync policy with groups is ErrOpaqueJSON, as they are
+// carried opaque, and a hash type, index type or reshard status the enums do
+// not name is refused. obj_lock is read only while the document's flags
+// enable object lock, though v20.2.4 never reads it (:2606-2647), and
+// ObjLock is nil exactly when it is not read, where v19.2.7 takes an absent
+// obj_lock as RGWObjectLock(). decode_json does not read
+// new_bucket_instance_id, so it is empty.
 func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
 	if err != nil {
@@ -148,6 +151,12 @@ func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 	}
 	if f.has("sync_policy") && len(f.object("sync_policy").elems("groups")) > 0 {
 		return fmt.Errorf("%w: sync_policy", ErrOpaqueJSON)
+	}
+	if out.ObjLockEnabled() {
+		var l ObjectLock
+		if f.decode("obj_lock", &l) {
+			out.SetObjectLock(l)
+		}
 	}
 	if f.err != nil {
 		return f.err
