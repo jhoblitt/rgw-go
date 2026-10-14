@@ -107,13 +107,15 @@ func rawTag(st *op.ObjectState, name string) string { return string(st.Attrs[nam
 // bytes without their trailing NULs.
 func rgwBlStr(b []byte) string { return strings.TrimRight(string(b), "\x00") }
 
-// checkPreconditions is v20.2.4's check_preconditions for a write's If-Match
-// and If-None-Match (rgw_rados.cc:7286-7328 at v20.2.4), on both releases
-// (docs/exclusions.md, "Write conditions are Tentacle's on Squid too"): a
-// condition is unquoted with rgw_string_unquote and matches when it begins
-// with the stored ETag, compared over the ETag's length (:7299, :7321).
-// If-Match on a missing object is NoSuchKey; If-None-Match with an ETag
-// passes an object that has none.
+// checkPreconditions is check_preconditions for a write's If-Match and
+// If-None-Match (rgw_rados.cc:7286-7328 at v20.2.4, :6672-6714 at v19.2.7),
+// which both releases apply to a PutObject alike. A
+// CompleteMultipartUpload's conditions reach it on Squid too, where v19.2.7
+// reads none (docs/exclusions.md, "Write conditions are Tentacle's on Squid
+// too"). A condition is unquoted with rgw_string_unquote and matches when it
+// begins with the stored ETag, compared over the ETag's length (:7299, :7321
+// at v20.2.4). If-Match on a missing object is NoSuchKey; If-None-Match with
+// an ETag passes an object that has none.
 func (s *Store) checkPreconditions(st *op.ObjectState, ifMatch, ifNoneMatch string) error {
 	etag, hasETag := st.Attrs[meta.AttrETag]
 	if ifMatch != "" {
@@ -313,13 +315,13 @@ func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error)
 }
 
 // guardHead checks the write's conditions, then adds
-// prepare_atomic_modification's guard (rgw_rados.cc:6493-6513 at v19.2.6;
-// :3298-3300 and :7345-7349 at v20.2.4): a cmpxattr on the head's write tag
-// when the head has a manifest or a tag radosgw did not fake. Neither release
-// compares the tag for If-None-Match: *, which the exclusive create guards,
-// and Tentacle guards no versioned instance. Squid's guard also covers any
-// write with conditions, which only its own condition checks rely on, and
-// those are v20.2.4's here.
+// prepare_atomic_modification's guard (rgw_rados.cc:3201-3202 and :6731-6735
+// at v19.2.7, :3298-3300 and :7345-7349 at v20.2.4): a cmpxattr on the head's
+// write tag when the head has a manifest or a tag radosgw did not fake. Both
+// releases guard alike: neither compares the tag for If-None-Match: *, which
+// the exclusive create guards, or for a versioned instance. Below Tentacle
+// this still guards a versioned instance, as v19.2.6 did, a difference from
+// v19.2.7 that is yet to be removed.
 func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectState) error {
 	if err := s.checkPreconditions(st, hw.ifMatch, hw.ifNoneMatch); err != nil {
 		return err

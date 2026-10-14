@@ -9,15 +9,13 @@ import (
 )
 
 // deleteObject is delete_obj (RGWDeleteObj_ObjStore_S3, get_params
-// :3427-3453, [T] :3685-3733; send_response :3455-3470, [T] :3735-3750).
-// Each condition is its header's last value, nil when the header is absent:
-// x-amz-delete-if-unmodified-since and x-amz-if-match-last-modified-time
-// url-decoded, If-Match and x-amz-if-match-size as sent. v19.2.6 reads only
-// the first; rgw-go reads all four on both releases (docs/exclusions.md,
-// "Delete conditions are Tentacle's, and a delete is guarded, on both
-// releases"). The success, a missing key's included, is 204 with
-// x-amz-version-id when the delete names one and x-amz-delete-marker when it
-// made one, and no body.
+// :3435-3483 and send_response :3485-3500 at v19.2.7, [T] :3685-3733 and
+// :3735-3750). Each condition is its header's last value, nil when the
+// header is absent: x-amz-delete-if-unmodified-since and
+// x-amz-if-match-last-modified-time url-decoded, If-Match and
+// x-amz-if-match-size as sent, all four read by both releases alike. The
+// success, a missing key's included, is 204 with x-amz-version-id when the
+// delete names one and x-amz-delete-marker when it made one, and no body.
 func deleteObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.DeleteObject{
 		UnmodifiedSince:     decodedHeader(r, "X-Amz-Delete-If-Unmodified-Since"),

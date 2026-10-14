@@ -58,13 +58,12 @@ func (o *DeleteObject) OpMask() uint32 { return OpTypeDelete }
 
 // Init loads the bucket, as init_permissions does, and then parses the
 // conditions as RGWDeleteObj_ObjStore_S3::get_params does during
-// init_processing, before verify_permission (rgw_rest_s3.cc:3427-3453 at
-// v19.2.6, :3685-3733 at v20.2.4): x-amz-delete-if-unmodified-since by
-// utime_t::parse_date, x-amz-if-match-last-modified-time by parse_time and
-// x-amz-if-match-size by strict_strtoll, each that does not parse, an empty
-// one included, InvalidArgument. v19.2.6 reads only the first; rgw-go reads all three on
-// both releases (docs/exclusions.md, "Delete conditions are Tentacle's, and
-// a delete is guarded, on both releases").
+// init_processing, before verify_permission, the same at both releases
+// (rgw_rest_s3.cc:3435-3483 at v19.2.7, :3685-3733 at v20.2.4):
+// x-amz-delete-if-unmodified-since by utime_t::parse_date,
+// x-amz-if-match-last-modified-time by parse_time and x-amz-if-match-size by
+// strict_strtoll, each that does not parse, an empty one included,
+// InvalidArgument.
 func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	if err := loadBucket(ctx, r); err != nil {

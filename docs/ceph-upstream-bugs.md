@@ -6466,8 +6466,9 @@ Every new entry adds its row to this table, in document order.
   object; v19.2.6, v19.2.7 and v20.2.4 for the prefix.
 - **rgw-go:** checks the conditions as v20.2.4 does on both releases:
   quoted conditions are unquoted, and the prefix comparison is kept
-  (`checkPreconditions`, `internal/driver/headwrite.go`; `docs/exclusions.md`,
-  "Write conditions are Tentacle's on Squid too").
+  (`checkPreconditions`, `internal/driver/headwrite.go`). v19.2.7 judges a
+  PutObject's conditions as v20.2.4 does, so this is no difference from
+  either floor.
 - **Upstream:** [#64439](https://tracker.ceph.com/issues/64439) (open; a
   quoted If-Match is rejected) and
   [#80924](https://tracker.ceph.com/issues/80924) (Fix Under Review; the
@@ -6537,8 +6538,9 @@ Every new entry adds its row to this table, in document order.
   and, on Tentacle, in v20.2.1, the first tag with f28f0d9147d; v20.2.4 is
   not affected.
 - **rgw-go:** checks the conditions as v20.2.4 does on both releases
-  (`guardHead` and `checkPreconditions`, `internal/driver/headwrite.go`;
-  `docs/exclusions.md`, "Write conditions are Tentacle's on Squid too").
+  (`guardHead` and `checkPreconditions`, `internal/driver/headwrite.go`).
+  v19.2.7 judges a PutObject's conditions as v20.2.4 does, so this is no
+  difference from either floor.
 - **Upstream:** [#68183](https://tracker.ceph.com/issues/68183) (Resolved);
   related: [#80925](https://tracker.ceph.com/issues/80925),
   [#80906](https://tracker.ceph.com/issues/80906),
