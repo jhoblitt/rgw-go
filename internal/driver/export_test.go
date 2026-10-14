@@ -423,6 +423,12 @@ func (s *Store) WriteMetaForTest(ctx context.Context, rec *op.BucketRecord, hw H
 	return res.epoch, err
 }
 
+// GuardHeadForTest is guardHead of hw's key and conditions over st, the head
+// as read, adding the guard's steps to w.
+func (s *Store) GuardHeadForTest(w *radosclient.WriteOp, hw HeadWriteForTest, st *op.ObjectState) error {
+	return s.guardHead(w, &headWrite{key: hw.Key, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch}, st)
+}
+
 // MetaRef is mpRef with its fields exported for the specs.
 type MetaRef struct {
 	Pool     radosclient.Pool

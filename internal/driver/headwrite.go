@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
-	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -319,9 +318,7 @@ func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error)
 // at v19.2.7, :3298-3300 and :7345-7349 at v20.2.4): a cmpxattr on the head's
 // write tag when the head has a manifest or a tag radosgw did not fake. Both
 // releases guard alike: neither compares the tag for If-None-Match: *, which
-// the exclusive create guards, or for a versioned instance. Below Tentacle
-// this still guards a versioned instance, as v19.2.6 did, a difference from
-// v19.2.7 that is yet to be removed.
+// the exclusive create guards, or for a versioned instance.
 func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectState) error {
 	if err := s.checkPreconditions(st, hw.ifMatch, hw.ifNoneMatch); err != nil {
 		return err
@@ -341,10 +338,7 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectSt
 	// (:6238-6245); a fake tag is never compared.
 	fake := st.Manifest != nil && st.WriteTag == ""
 	guard := (st.Manifest != nil || st.WriteTag != "") && !fake
-	if s.release >= denc.Tentacle && hw.key.Instance != "" {
-		guard = false
-	}
-	if guard && hw.ifNoneMatch != "*" {
+	if guard && hw.key.Instance == "" && hw.ifNoneMatch != "*" {
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	}
 	return nil
