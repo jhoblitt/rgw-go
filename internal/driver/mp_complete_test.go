@@ -458,21 +458,18 @@ var _ = Describe("Complete", func() {
 		Expect(allGCEntries(c)).To(BeEmpty())
 	})
 
-	It("answers a re-sent completion of a finished upload as radosgw does on each release, and 500 for an unknown id", func(ctx SpecContext) {
+	It("answers a re-sent completion of a finished upload with the stored ETag on both releases, and 500 for an unknown id", func(ctx SpecContext) {
 		up, etags := uploadWithParts(ctx, 5<<20, 5<<20)
 		first, err := s.Complete(ctx, up, completeParts(etags))
 		Expect(err).NotTo(HaveOccurred())
 		settle(s)
 		c.ResetCounters()
-		again, err := s.Complete(ctx, up, completeParts(etags))
-		Expect(err).NotTo(HaveOccurred(), "check_previously_completed: the etags match")
-		Expect(again.ETag).To(BeEmpty(), "Squid returns before etag is assigned (rgw_op.cc:6438-6441, :6533 at v19.2.6)")
-		Expect([]any{again.Size, again.Mtime}).To(Equal([]any{first.Size, first.Mtime}))
+		want := &op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}
+		for _, st := range []*driver.Store{s, openStore(ctx, denc.Tentacle)} {
+			Expect(st.Complete(ctx, up, completeParts(etags))).To(Equal(want),
+				"%v: check_previously_completed matches the etags and sets etag = oetag (rgw_op.cc:6584 at v19.2.7, :7472 at v20.2.4)", st.Release())
+		}
 		Expect(c.Writes(testDataPool, "", headOID)).To(BeZero())
-		s2 := openStore(ctx, denc.Tentacle)
-		again, err = s2.Complete(ctx, up, completeParts(etags))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(again.ETag).To(Equal(first.ETag), "Tentacle sets etag = oetag (rgw_op.cc:7472 at v20.2.4)")
 		_, err = s.Complete(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: key}, completeParts(etags[:1]))
 		Expect(err).To(MatchError(op.ErrInternalError), "a lock on a missing object is ENOENT, and the etag does not match")
 	})

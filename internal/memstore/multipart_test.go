@@ -327,8 +327,8 @@ var _ = Describe("multipart", func() {
 			_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: md5Hex([]byte("small"))}, {Number: 2, ETag: tailETag}})
 			Expect(err).To(MatchError(op.ErrEntityTooSmall))
 		})
-		DescribeTable("answers a completion retried after it succeeded as the driver does, per release",
-			func(ctx SpecContext, release denc.Release, wantETag string) {
+		DescribeTable("answers a completion retried after it succeeded with the stored ETag, as the driver does",
+			func(ctx SpecContext, release denc.Release) {
 				store = memstore.New(memstore.Config{Release: release, Now: (&clock{t: start}).now})
 				rec = mustCreate(ctx, store, "", "b", owner("alice"))
 				var err error
@@ -345,10 +345,7 @@ var _ = Describe("multipart", func() {
 
 				again, err := store.Complete(ctx, up, parts)
 				Expect(err).NotTo(HaveOccurred(), "check_previously_completed finds the key's ETag the parts make")
-				if wantETag == "stored" {
-					wantETag = first.ETag
-				}
-				Expect(again).To(Equal(&op.PutResult{ETag: wantETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}))
+				Expect(again).To(Equal(&op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}))
 
 				reversed, err := store.Complete(ctx, up, []op.CompletePart{parts[1], parts[0]})
 				Expect(err).NotTo(HaveOccurred(), "the parts are sorted by number before the ETag is recomputed, as std::map orders them")
@@ -368,8 +365,8 @@ var _ = Describe("multipart", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(st.ETag).To(Equal(first.ETag), "the object is untouched")
 			},
-			Entry("Squid answers 200 without an ETag (v19.2.6 rgw_op.cc:6438-6441, :6543-6580)", denc.Squid, ""),
-			Entry("Tentacle answers 200 with the stored ETag (v20.2.4 rgw_op.cc:7252-7255, :7472)", denc.Tentacle, "stored"),
+			Entry("on Squid (v19.2.7 rgw_op.cc:6441-6444, :6584)", denc.Squid),
+			Entry("on Tentacle (v20.2.4 rgw_op.cc:7252-7255, :7472)", denc.Tentacle),
 		)
 		It("keeps the 500 for a missing upload when the key holds an object of another ETag", func(ctx SpecContext) {
 			mustPut(ctx, store, rec, "big", "old")
