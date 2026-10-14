@@ -16,26 +16,19 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
-var (
-	// signedSubresourcesV2 is signed_subresources (rgw_auth_s3.cc:31-60 at
-	// v19.2.6, :32-61 at v20.2.4): the SigV2 canonical resource appends the
-	// ones the request carries, in this order. RGWHTTPArgs::append never files
-	// encryption or object-lock as a sub-resource (rgw_common.cc:925-975 at
-	// v19.2.6, :938-988 at v20.2.4), so neither is ever signed, as in radosgw
-	// (docs/ceph-upstream-bugs.md).
-	signedSubresourcesV2 = []string{
-		"acl", "cors", "delete", "encryption", "lifecycle", "location", "logging",
-		"notification", "partNumber", "policy", "policyStatus", "publicAccessBlock", "requestPayment",
-		"response-cache-control", "response-content-disposition", "response-content-encoding",
-		"response-content-language", "response-content-type", "response-expires", "tagging", "torrent",
-		"uploadId", "uploads", "versionId", "versioning", "versions", "website", "object-lock",
-	}
-
-	// amzHeaderPrefixes is meta_prefixes (rgw_common.cc:413-420 at v19.2.6,
-	// :426-433 at v20.2.4) as header names: a header with any of them is filed
-	// under x-amz- and the rest of its name.
-	amzHeaderPrefixes = []string{"x-amz-", "x-goog-", "x-dho-", "x-rgw-", "x-object-", "x-container-", "x-account-"}
-)
+// signedSubresourcesV2 is signed_subresources (rgw_auth_s3.cc:31-60 at
+// v19.2.6, :32-61 at v20.2.4): the SigV2 canonical resource appends the
+// ones the request carries, in this order. RGWHTTPArgs::append never files
+// encryption or object-lock as a sub-resource (rgw_common.cc:925-975 at
+// v19.2.6, :938-988 at v20.2.4), so neither is ever signed, as in radosgw
+// (docs/ceph-upstream-bugs.md).
+var signedSubresourcesV2 = []string{
+	"acl", "cors", "delete", "encryption", "lifecycle", "location", "logging",
+	"notification", "partNumber", "policy", "policyStatus", "publicAccessBlock", "requestPayment",
+	"response-cache-control", "response-content-disposition", "response-content-encoding",
+	"response-content-language", "response-content-type", "response-expires", "tagging", "torrent",
+	"uploadId", "uploads", "versionId", "versioning", "versions", "website", "object-lock",
+}
 
 // authDataV2 is AWSGeneralAbstractor::get_auth_data_v2 (rgw_rest_s3.cc
 // :6033-6113 at v19.2.6, :6604-6684 at v20.2.4). Without a non-empty

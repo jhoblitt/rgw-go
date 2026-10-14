@@ -168,6 +168,26 @@ var _ = Describe("Verifier", func() {
 		Entry("unsigned x-amz header", func(r *http.Request) { r.Header.Set("X-Amz-Meta-Late", "x") }, op.ErrAccessDenied),
 	)
 
+	It("refuses an unsigned header radosgw renames to x-amz, naming it", func(ctx SpecContext) {
+		req := signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice")
+		req.Header.Set("X-Goog-Meta-Late", "x")
+		_, err := v.Authenticate(ctx, req, anyPayload)
+		Expect(err).To(SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-meta-late is not signed"))))
+	})
+
+	It("authenticates rgw-cache's authentication subrequest, an unsigned X-Rgw-Auth on a GET, as its signer", func(ctx SpecContext) {
+		req := signedAs(ctx, newGet(ctx, "http://s3.example.com/b/k"), "alice")
+		req.Header.Set("X-Rgw-Auth", "yes")
+		res, err := v.Authenticate(ctx, req, anyPayload)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
+
+		put := signedAs(ctx, newBodyRequest(ctx, http.MethodPut, "http://s3.example.com/b/k", ""), "alice")
+		put.Header.Set("X-Rgw-Auth", "yes")
+		_, err = v.Authenticate(ctx, put, anyPayload)
+		Expect(err).To(SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-rgw-auth is not signed"))), "on a PUT")
+	})
+
 	It("denies everything without a backend, and every signed request when presigned URLs are disabled", func(ctx SpecContext) {
 		off := cfg
 		off.UseRados = false
