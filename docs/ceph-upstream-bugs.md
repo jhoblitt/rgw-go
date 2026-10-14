@@ -274,6 +274,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry](#radosgws-user-suspension-and-account-adoption-act-on-another-owners-bucket-through-a-stale-list-entry) | none | none | ✓ |
 | [radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule](#radosgws-x-amz-expiration-reports-a-noncurrentversionexpiration-rule) | [#77564](https://tracker.ceph.com/issues/77564) | [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642), [ceph/ceph#70493](https://github.com/ceph/ceph/pull/70493), [ceph/ceph#70494](https://github.com/ceph/ceph/pull/70494) |  |
 | [radosgw's lifecycle transition of an encrypted multipart object drops its part lengths](#radosgws-lifecycle-transition-of-an-encrypted-multipart-object-drops-its-part-lengths) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807), [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826) |  |
+| [s3-tests' TargetObjectKeyFormat probe always answers True](#s3-tests-targetobjectkeyformat-probe-always-answers-true) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -13038,3 +13039,86 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 planning, the Squid floor's move to v19.2.7,
   2026-10-13, reading the commits between v19.2.6 and v19.2.7; derived from
   the source, not reproduced.
+
+## s3-tests' TargetObjectKeyFormat probe always answers True
+
+- **Kind:** defect, in ceph/ceph's s3-tests suite (`src/test/rgw/s3-tests`),
+  not in radosgw. Not security-relevant: it decides only which checks two
+  bucket-logging tests run. Reproduced off-cluster, against stubbed and
+  model-stripped botocore clients.
+- **Evidence:** paths are under `src/test/rgw/s3-tests/s3tests/functional/`.
+  - `_has_target_object_key_format` puts a bucket logging configuration
+    carrying `TargetObjectKeyFormat` on a bucket that does not exist, to
+    learn whether the installed botocore knows the parameter. Its `except
+    ParamValidationError` returns False, but its `finally` returns True,
+    which overrides that return and swallows every other exception, so it
+    answers True whatever happens
+    ([test_s3.py:16439-16453](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16439-L16453)
+    at main d8552606423,
+    [test_s3.py:14838-14852](https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L14838-L14852)
+    at v20.2.4). Python 3.14 reports the construct when it compiles the
+    module: "SyntaxWarning: 'return' in a 'finally' block". The sibling
+    probe `_has_bucket_logging_extension` has the intended shape: False on
+    `ParamValidationError`, True on `ClientError` and after the `try`
+    ([test_s3.py:16420-16436](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16420-L16436)).
+  - Two tests branch on it. `test_put_bucket_logging`
+    ([test_s3.py:16563](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16563))
+    then expects GetBucketLogging to return the default key format
+    ([test_s3.py:16588-16591](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16588-L16591))
+    and puts a simple and a partitioned one. `test_put_bucket_logging_errors`
+    puts an invalid `PartitionDateSource` and catches only `ClientError`
+    ([test_s3.py:17603-17620](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L17603-L17620)).
+  - Reproduced on 2026-10-14 with Python 3.14.7 and botocore 1.43.90, by
+    calling a verbatim copy of the helper from rgw-go-s3tests e2e0a0bba6f
+    outside a cluster. It answered True for a client whose
+    `put_bucket_logging` raises `ParamValidationError`, for a real client
+    whose S3 model has `LoggingEnabled.TargetObjectKeyFormat` deleted, and
+    for a client whose put raises a connection error. Under that model the
+    put of the parameter raises `ParamValidationError`, and a
+    GetBucketLogging body carrying the element parses without it.
+- **Impact:** with a botocore that lacks the parameter, both tests run the
+  key-format checks they are meant to skip. `test_put_bucket_logging` fails
+  the comparison that expects the default key format, since botocore drops
+  the element from the response, and `test_put_bucket_logging_errors`
+  fails on the `ParamValidationError` it does not catch. A connection error
+  during the probe reads as support instead of failing there. With a
+  botocore that knows the parameter, as 1.43.90 does, the probe's answer is
+  right and no outcome changes.
+- **Releases:** main since 868d20182a0, "test/rgw: Include s3-tests in Ceph
+  repo" (2026-06-11), which added the suite with the helper, through
+  d8552606423 (2026-10-14), in no tag. Tentacle since that import's backport
+  e2a4b832e0c (2026-06-26), so v20.2.3 and v20.2.4. Squid's copy of the
+  suite has no such helper (checked at v19.2.7 and at the squid branch's
+  226f1401666, 2026-10-12).
+- **rgw-go:** unaffected as a gateway: the defect is in the test suite, and
+  rgw-go's s3-tests runs never call the probe. Both callers carry the
+  `bucket_logging` marker
+  ([test_s3.py:16560](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16560)
+  and
+  [test_s3.py:17558](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L17558),
+  at main, as at rgw-go's pin f6f2529dd9e). `hack/s3tests/run.sh:66-72` lists
+  that marker among the excluded ones, and `hack/s3tests/run.sh:306-312`
+  turns the list into the `-m` expression it collects with, so both tests
+  are deselected and no ledger outcome changes:
+  `test/s3tests/baseline/squid.json`, `test/s3tests/baseline/tentacle.json`
+  and the known-differences files name neither. Once a later phase enables
+  the marker, the probe answers right: the venvs of the 2026-10-12 runs,
+  recorded in the `.freeze` files `hack/s3tests/run.sh` leaves beside each
+  report, hold botocore 1.43.111, whose S3 model has the parameter. The
+  fix, from task T-5, is
+  [jhoblitt/ceph#3](https://github.com/jhoblitt/ceph/pull/3) into
+  jhoblitt/ceph's `rgw-go-s3tests` branch. It gives the helper the shape of
+  `_has_bucket_logging_extension`, and rgw-go's s3-tests pin does not move
+  for it.
+- **Upstream:** pending: not security-relevant, so not sent to
+  rgw-bug-reproduction. A first search on 2026-10-14 found nothing:
+  `gh search prs` on ceph/ceph for `_has_target_object_key_format` and
+  `TargetObjectKeyFormat`, the second of which finds the unrelated
+  [ceph/ceph#71101](https://github.com/ceph/ceph/pull/71101) outside its
+  title, and pull requests and issues on the archived ceph/s3-tests for
+  the helper's name, a method that finds
+  [ceph/s3-tests#752](https://github.com/ceph/s3-tests/pull/752) by
+  `bucket logging`. tracker.ceph.com is not searched yet.
+- **Found:** review of phase 2 Task F5, the Squid floor's move to v19.2.7,
+  2026-10-14, from the SyntaxWarning in its report's py_compile output;
+  reproduced off-cluster in Task T-5 the same day.
