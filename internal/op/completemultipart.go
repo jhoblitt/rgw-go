@@ -55,8 +55,16 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 }
 
-// Execute is RGWCompleteMultipart::execute in its order (rgw_op.cc:6367-6416
-// at v19.2.6, :7163-7211 at v20.2.4): get_params, whose empty upload id is
+// Execute first refuses, once the requester is authorized and as PutObject
+// does, a bucket whose versioning or object lock rgw-go does not serve and a
+// completion naming a version, the null one included
+// (newHeadVersioningUnserved): radosgw keeps the URL's instance for the head
+// unless the bucket's versioning is enabled (rgw_op.cc:6462-6469 at v19.2.7,
+// :7284-7291 at v20.2.4), so on a bucket never versioned it would file the
+// head in the index under that instance and then link the key to an OLH as
+// a versioned object (rgw_rados.cc:3369-3375 at v19.2.7). Then it is
+// RGWCompleteMultipart::execute in its order (rgw_op.cc:6367-6416 at
+// v19.2.6, :7163-7211 at v20.2.4): get_params, whose empty upload id is
 // -ENOTSUP, 500 UnknownError, and whose body is read as ReadParamBody reads
 // it under rgw_max_put_param_size; an empty body, a document that does not
 // parse or holds no part, MalformedXML; more parts than
@@ -64,6 +72,9 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // (-ERANGE); then the completion, whose head takes the request id as its
 // tag.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
+	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
+		return err
+	}
 	if o.UploadID == "" {
 		return fmt.Errorf("%w: no upload id", ErrUnknown)
 	}

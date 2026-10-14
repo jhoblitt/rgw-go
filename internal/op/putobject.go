@@ -246,14 +246,17 @@ func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 
 // newHeadVersioningUnserved is versioningUnserved for a write that creates a
 // head, whose keys may not name even the null version. radosgw writes the
-// head of a PutObject or CopyObject naming it at the plain key's oid but
-// files it in the index under the instance (cls_obj_prepare_op and
-// UpdateIndex::complete, driver/rados/rgw_rados.cc:9473 and :7133 at
-// v19.2.6, :10405 and :7984 at v20.2.4), which cls_rgw keeps apart from the
-// plain key's entry (encode_obj_index_key, cls/rgw/cls_rgw.cc:339-346 at
-// v19.2.6, :389-396 at v20.2.4); and it copies from a source naming it
-// without the checks of a copy onto itself (rgw_rest_s3.cc:3541-3548 at
-// v19.2.6, :3821-3828 at v20.2.4; copy_obj, rgw_rados.cc:4890 and :5150).
+// head of a PutObject, CopyObject or CompleteMultipartUpload naming it at
+// the plain key's oid but files it in the index under the instance
+// (cls_obj_prepare_op and UpdateIndex::complete,
+// driver/rados/rgw_rados.cc:9473 and :7133 at v19.2.6, :10405 and :7984 at
+// v20.2.4), which cls_rgw keeps apart from the plain key's entry
+// (encode_obj_index_key, cls/rgw/cls_rgw.cc:339-346 at v19.2.6, :389-396 at
+// v20.2.4), then links the key to an OLH as a versioned object
+// (driver/rados/rgw_rados.cc:3369-3375 at v19.2.7); and it copies from a
+// source naming it without the checks of a copy onto itself
+// (rgw_rest_s3.cc:3541-3548 at v19.2.6, :3821-3828 at v20.2.4; copy_obj,
+// rgw_rados.cc:4890 and :5150).
 func newHeadVersioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 	if err := versioningUnserved(rec); err != nil {
 		return err

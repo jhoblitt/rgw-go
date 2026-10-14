@@ -45,3 +45,21 @@ var _ = Describe("x-amz-version-id on CompleteMultipartUpload", func() {
 		Entry("Tentacle", denc.Tentacle),
 	)
 })
+
+var _ = Describe("a CompleteMultipartUpload naming a version", func() {
+	DescribeTable("is answered 501 NotImplemented on an unversioned bucket and leaves the upload",
+		func(ctx SpecContext, rel denc.Release) {
+			w := newWriteWorld(ctx, rel)
+			id := w.initUpload(w.alice, "/plain/k")
+			Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x").Code).To(Equal(200))
+			for _, v := range []string{"null", "v1"} {
+				expectError(w.send(w.alice, http.MethodPost, "/plain/k?uploadId="+id+"&versionId="+v, completion(md5Hex("x"))), 501, "NotImplemented")
+			}
+			Expect(w.uploads(ctx)).To(ConsistOf(HaveField("ID", id)))
+			Expect(w.parts(ctx, "k", id)).To(HaveLen(1))
+			Expect(w.stat(ctx, "k").Exists).To(BeFalse())
+		},
+		Entry("Squid", denc.Squid),
+		Entry("Tentacle", denc.Tentacle),
+	)
+})

@@ -11441,11 +11441,14 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw indexes a PutObject naming versionId=null on an unversioned bucket under the null instance
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a write leaves the
-  bucket index out of step with the head it wrote. Not security-relevant
-  (rgw-bug-reproduction's triage, 2026-10-12): the index and stats drift
-  stays in the bucket the request writes to. Unreproduced: derived from
-  the source.
+- **Kind:** defect, unfixed at v19.2.6, v19.2.7 and v20.2.4: on a bucket
+  whose versioning was never enabled, a write naming the null version
+  links the key as a versioned object, and leaves the plain key's earlier
+  entry out of step with the head it names. Not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-12, made before the OLH link
+  and the completion's path were found): the index and stats drift stays
+  in the bucket the request writes to. Unreproduced: derived from the
+  source.
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The request's key takes `versionId` verbatim as its instance
@@ -11453,6 +11456,26 @@ Every new entry adds its row to this table, in document order.
     replaces the instance only when the bucket's versioning is enabled
     (`rgw/rgw_op.cc:4278-4285`; `:4491-4498`), so on an unversioned bucket
     the key keeps `null`.
+  - CompleteMultipartUpload keeps it the same way.
+    `RGWCompleteMultipart::execute` replaces the instance only when the
+    bucket's versioning is enabled
+    ([rgw_op.cc:6459-6466](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6459-L6466)
+    at v19.2.6,
+    [:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469)
+    at v19.2.7,
+    [:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291)
+    at v20.2.4). `RadosMultipartUpload::complete` then writes the head
+    under the request's key through `write_meta`
+    ([rgw_sal_rados.cc:3622-3639](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3622-L3639)
+    at v19.2.7,
+    [:4466-4485](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4466-L4485)
+    at v20.2.4), as PutObject's atomic writer does
+    ([rgw_putobj_processor.cc:393](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L393)
+    at v19.2.7,
+    [:427](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L427)
+    at v20.2.4). Both writers also pass `write_meta` an OLH epoch (below),
+    so everything that follows holds for a completion naming
+    `versionId=null` as it does for a PutObject.
   - The head lands at the plain key's oid: `rgw_obj_key::get_oid` never
     encodes the instance `null` (`rgw/rgw_obj_types.h:234-254` at both
     tags).
@@ -11468,26 +11491,121 @@ Every new entry adds its row to this table, in document order.
     for the entries created when bucket versioning is not enabled or
     suspended", and clears `null` on its cloud-transition and restore paths
     (`rgw/driver/rados/rgw_rados.cc:5150-5154` at v19.2.6; `:5455-5459` and
-    `:5515-5520` at v20.2.4), but not in `RGWPutObj`.
-- **Impact:** after a PutObject naming `versionId=null` on a bucket whose
-  versioning was never enabled:
-  - the plain key's index entry, when there is one, keeps its old size and
-    ETag over the new head, and a fresh key is missing from the listing
-    while its data reads back;
-  - the bucket's stats count both entries;
-  - a later delete naming no version removes the head and the plain entry
-    and leaves the `null` instance entry behind.
-- **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** does not reproduce it. A PutObject or CopyObject naming the
-  null version answers 501 NotImplemented on every bucket
-  (`newHeadVersioningUnserved`, `internal/op/putobject.go`;
-  `docs/exclusions.md`, "Writes to a versioned or object-lock bucket answer
-  501 until versioning is served").
+    `:5515-5520` at v20.2.4), but not in `RGWPutObj` or
+    `RGWCompleteMultipart`.
+  - The index complete is not the write's last step. `write_meta` takes a
+    write whose key names any instance, `null` included, for a versioned
+    op, and links it to an OLH whenever the write carries an OLH epoch
+    ([rgw_rados.cc:3312-3315](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3312-L3315)
+    and
+    [:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375)
+    at v19.2.7,
+    [:3280-3283](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3280-L3283)
+    and
+    [:3337-3343](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3337-L3343)
+    at v19.2.6,
+    [:3433-3436](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3433-L3436)
+    and
+    [:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496)
+    at v20.2.4). Both writers carry one. The epoch is a `std::optional`
+    ([rgw_rados.h:811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L811)
+    at v19.2.7). The completion sets it from its own `olh_epoch`, 0 unless
+    a system request names one
+    ([rgw_op.cc:6376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6376),
+    [rgw_sal_rados.cc:3636](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3636)
+    at v19.2.7), and PutObject's atomic writer sets it from the `uint64_t`
+    it is built with
+    ([rgw_sal_rados.h:967-976](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.h#L967-L976),
+    [rgw_putobj_processor.h:171](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.h#L171),
+    [rgw_putobj_processor.cc:385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L385)
+    at v19.2.7).
+  - `set_olh` makes no versioning check and takes the plain key for the
+    OLH
+    ([rgw_rados.cc:8669-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8669-L8759),
+    the key at
+    [:8679-8680](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8679-L8680),
+    at v19.2.7). On the key's first such write, the plain key's head is the
+    object the write just wrote, with no OLH tag, so it becomes an OLH that
+    points at itself
+    ([:7828-7866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7828-L7866)).
+    The link is sent for `{name, "null"}` unnormalized
+    ([:8155](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8155)),
+    and `apply_olh_log` makes that key the OLH's target
+    ([:8519-8526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8519-L8526)).
+  - On the key's first such write, cls_rgw's `rgw_bucket_link_olh` finds
+    no OLH entry. With no epoch from the request it takes epoch 2
+    ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517)
+    at v19.2.7). It converts the plain key's entry, when there is one,
+    into a noncurrent version with an empty instance and epoch 1, its size
+    and ETag kept, and writes a version marker in the plain slot
+    ([:1792-1799](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1792-L1799),
+    [:1587-1634](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1587-L1634),
+    [:1568-1579](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1568-L1579)).
+    It then writes `{name, "null"}` as the current version, with a list
+    entry in the plain namespace
+    ([:1764-1766](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1764-L1766),
+    [:1823-1827](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1823-L1827),
+    [:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+    [:302-315](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L302-L315)).
+    v20.2.4 does the same
+    ([cls_rgw.cc:1905-1907](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1905-L1907),
+    [:1936](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1936),
+    [:1965](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1965)).
+  - A repeat write keeps the OLH on the head: the head write sets the OLH
+    tag again and keeps the OLH attrs
+    ([rgw_rados.cc:3223-3224](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3223-L3224),
+    [:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803)
+    at v19.2.7), so `set_olh` guards on that tag
+    ([:7825-7827](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7825-L7827)).
+    cls_rgw finds the OLH the first link wrote and promotes
+    `{name, "null"}` again at a higher epoch, with no demote since the
+    OLH's key is the same, and rewrites its list entry with the new size
+    and ETag
+    ([cls_rgw.cc:1768-1791](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1791),
+    [:1410-1418](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1418)).
+    The Impact below holds after a repeat too.
+- **Impact:** after a PutObject or a CompleteMultipartUpload naming
+  `versionId=null` on a bucket whose versioning was never enabled, as
+  derived from the source and not reproduced:
+  - the key is a versioned object on a bucket that was never versioned.
+    Its head is an OLH whose target is `{name, "null"}`, and a plain
+    listing shows the `null` version with the write's size and ETag, a
+    fresh key included
+    ([cls_rgw.cc:604-612](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L612)
+    at v19.2.7);
+  - the plain key's earlier entry, when there was one, stays as a
+    noncurrent version that keeps the old size and ETag, while its head is
+    the object the write overwrote;
+  - the bucket's stats count that earlier entry and the `null` one. The
+    index complete adds the `null` entry beside the plain one
+    ([cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198)
+    at v19.2.7), and the link rewrites entries without accounting for them
+    ([:1244-1249](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1244-L1249)).
+
+  What a later DeleteObject naming no version does to this state is not
+  traced. It takes the unversioned path the bucket's flags select
+  ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850)
+  at v19.2.7).
+- **Releases:** v19.2.6, v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. A PutObject, a CopyObject or a
+  CompleteMultipartUpload naming the null version answers 501
+  NotImplemented on every bucket (`newHeadVersioningUnserved`,
+  `internal/op/putobject.go`, which the completion calls since task F14,
+  `internal/op/completemultipart.go`; `docs/exclusions.md`, "Writes to a
+  versioned or object-lock bucket answer 501 until versioning is served").
+  Before F14 a completion naming it wrote the plain head and filed it
+  under `{name, "null"}` beside the plain entry, as radosgw's index
+  complete does, but linked no OLH, so the bucket matched neither
+  radosgw's result nor an unversioned write's. One naming another version
+  wrote that instance without radosgw's versioned op (F12's task review,
+  2026-10-14).
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
-  review. Derived from the source, not reproduced.
+  review. The completion's path: F12's task review, 2026-10-14; the OLH
+  link: F14's task review, 2026-10-14. Derived from the source, not
+  reproduced.
 
 ## radosgw's bucket instance metadata put overwrites unguarded on Tentacle
 
