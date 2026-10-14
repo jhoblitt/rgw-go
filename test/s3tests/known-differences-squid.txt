@@ -10,18 +10,8 @@
 # it differs or agrees. Either kind fails the comparison when it matches no
 # test.
 
-# Tentacle's PUT If-Match and If-None-Match, served on Squid too; Squid's radosgw fails them (exclusions: "Write conditions are Tentacle's on Squid too")
-^s3tests\.functional\.test_s3::test_put_object_if_match$
-^s3tests\.functional\.test_s3::test_put_object_ifmatch_nonexisted_failed$
+# Tentacle's CompleteMultipartUpload If-Match and If-None-Match, served on Squid too; Squid's radosgw ignores them (exclusions: "Write conditions are Tentacle's on Squid too")
 ^s3tests\.functional\.test_s3::test_multipart_put_object_if_match$
-
-# Tentacle's DeleteObject and DeleteObjects conditions, served on Squid too; Squid's radosgw fails them (exclusions: "Delete conditions are Tentacle's, and a delete is guarded, on both releases")
-^s3tests\.functional\.test_s3::test_delete_object_if_match$
-^s3tests\.functional\.test_s3::test_delete_object_if_match_size$
-^s3tests\.functional\.test_s3::test_delete_object_if_match_last_modified_time$
-^s3tests\.functional\.test_s3::test_delete_objects_if_match$
-^s3tests\.functional\.test_s3::test_delete_objects_if_match_size$
-^s3tests\.functional\.test_s3::test_delete_objects_if_match_last_modified_time$
 
 # GetObjectAttributes, served on Squid too; Squid's radosgw answers GET ?attributes as a GetObject (exclusions: "GetObjectAttributes is served on Squid too")
 ^s3tests\.functional\.test_s3::test_get_object_attributes$
@@ -31,8 +21,3 @@
 
 # Tentacle's x-amz-expected-bucket-owner check, served on Squid too; Squid's radosgw ignores the header (exclusions: "Squid clusters get Tentacle's checks outside the policy language")
 ^s3tests\.functional\.test_s3::test_expected_bucket_owner$
-
-# An unsigned Content-Type or x-amz-content-sha256, accepted as v19.2.7 accepts them; the Squid ledger, recorded at 19.2.6, has radosgw refuse them, and these lines go when it is re-recorded at 19.2.7 (registry: "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned", "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned")
-^s3tests\.functional\.test_headers::test_sigv4_contenttype_unsigned$
-^s3tests\.functional\.test_headers::test_sigv4_presigned_contenttype_unsigned$
-^s3tests\.functional\.test_headers::test_sigv4_without_signed_content_sha256$
