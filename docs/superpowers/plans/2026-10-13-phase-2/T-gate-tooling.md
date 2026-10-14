@@ -329,6 +329,29 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
 - **Depends on:** every task of every unit. **PR split:** (a) the empty lists' removal; (b) the
   gate record; (c) the benchmark results. **Brief:** about 120 lines.
 
+### Task T-5: s3-tests, `_has_target_object_key_format` reports what it probes
+
+Found by F5's task review (Minor 2), and numbered here before F5 merged (PP-12).
+
+- **Layer:** s3-tests, on jhoblitt/ceph's `rgw-go-s3tests` branch. **Cluster:** no.
+- **Files:** src/test/rgw/s3-tests/s3tests/functional/test_s3.py (`_has_target_object_key_format`),
+  merged into `rgw-go-s3tests` by PR; docs/ceph-upstream-bugs.md (a new entry).
+- **Behaviour:**
+  1. The helper puts a bucket logging configuration with `TargetObjectKeyFormat` on a bucket that
+     does not exist, and is meant to answer False when botocore refuses the parameter. Its
+     `finally: return True` overrides the `except` branch's `return False` and swallows every other
+     exception, so it always answers True ([test_s3.py:16439-16453](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16439-L16453), at ceph main
+     d8552606423). Its callers ([test_s3.py:16563](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16563), [test_s3.py:17603](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L17603)) never
+     take the feature-absent path.
+  2. The fix answers False on `ParamValidationError` and True once the request reaches the server,
+     whatever the server answers, with nothing returned from `finally`.
+- **Specs:** none in rgw-go. The changed module compiles and collects (`py_compile`, pytest
+  `--collect-only`).
+- **Exclusions and registry:** a new registry entry for the helper. It is not security-relevant, and
+  its Upstream line is pending. rgw-go's pin does not move here.
+- **Depends on:** nothing. **PR:** the s3-tests PR into `rgw-go-s3tests`, and the registry entry
+  in its own rgw-go PR. **Brief:** about 25 lines.
+
 ## Order
 
 The unit starts at once (index, Order 2).
@@ -340,6 +363,7 @@ The unit starts at once (index, Order 2).
 | 3 | T-1 | WP-23 |
 | cluster, one at a time | T-2 (b), then T-3 | T-1; T-2 (b) and WP-23 |
 | any time after its inputs | T-4 (its smoke run is a cluster slot) | V7a, V11, WP-7, WP-8, WP-10 (b), T-2 (a) |
+| any time | T-5 | nothing |
 | last | T-gate (a), (b), (c) | every task of every unit |
 
 The cluster tasks share the plan's one-at-a-time slot with every unit's.
