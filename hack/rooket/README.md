@@ -8,7 +8,7 @@ store on one OSD, with host networking so that librados and S3 clients on the
 host reach its mon, OSD and radosgw. Nothing here touches any other cluster.
 
 ```sh
-make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.6 under Rook v1.20.7
+make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.7 under Rook v1.20.7
 make populate RELEASE=squid
 make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
@@ -974,7 +974,7 @@ sets it. At this tag the only ones that differ between `squid`, `tentacle`
 and `main` are `TestAccount`'s skips of GET and DELETE on `/admin/account`,
 which it takes for every release up to `tentacle`:
 
-- Squid runs as `squid` and keeps the skips: v19.2.6's radosgw checks a cap
+- Squid runs as `squid` and keeps the skips: v19.2.7's radosgw checks a cap
   named `account` for both calls, which no caps command grants, so they
   answer 403 to the `admin` user.
 - Tentacle runs as `main`: v20.2.4's radosgw checks `accounts`, which the

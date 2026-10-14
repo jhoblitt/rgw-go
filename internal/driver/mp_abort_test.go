@@ -412,7 +412,7 @@ var _ = Describe("Abort", func() {
 			delete(obj.Xattrs, "user.rgw.mp_completion_tag")
 			delete(obj.Xattrs, "user.rgw.mp_completion_instance")
 			c.ResetCounters()
-			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrNoSuchUpload), "a floor radosgw's completion left the meta object; v19.2.6 and v20.2.4 would queue the object's parts")
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrNoSuchUpload), "a floor radosgw's completion left the meta object; v19.2.7 and v20.2.4 would queue the object's parts")
 			settle(s)
 			Expect(execMethods(c.WritesTo(extraPoolName, "", mOID))).To(Equal([]string{"lock", "unlock"}))
 			Expect(c.WriteOrder(rookIndexPool, "")).To(BeEmpty(), "no index change")

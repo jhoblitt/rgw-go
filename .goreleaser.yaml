@@ -10,7 +10,7 @@ version: 2
 # home of its image; make release-pins-check fails until these follow them.
 env:
   - CEPH_REPOSITORY=quay.io/ceph/ceph
-  - SQUID_CEPH_TAG=v19.2.6
+  - SQUID_CEPH_TAG=v19.2.7
   - TENTACLE_CEPH_TAG=v20.2.4
 
 # Every build is cgo inside a builder made from the release's Ceph image

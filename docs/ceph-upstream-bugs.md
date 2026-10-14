@@ -490,7 +490,7 @@ Every new entry adds its row to this table, in document order.
   (ceph/ceph#62740) is in v19.2.3 and later.
 - **Releases:** on Squid, v19.2.0 through v19.2.2, all below rgw-go's floor.
   The check runs in the OSD, so the OSD's release decides.
-- **rgw-go:** unaffected. Every release it supports, v19.2.6 and later on
+- **rgw-go:** unaffected. Every release it supports, v19.2.7 and later on
   Squid, carries the fix, so phase 2's versioning needs no handling for it.
 - **Upstream:** fixed by
   [ceph/ceph#54957](https://github.com/ceph/ceph/pull/54957), and on squid by
@@ -9259,7 +9259,7 @@ Every new entry adds its row to this table, in document order.
 
 ## A multipart completion whose meta object outlives its head write lets a retry or an abort delete the object's data
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: data loss. Reproduced
+- **Kind:** defect, unfixed at v19.2.6, v19.2.7 and v20.2.4: data loss. Reproduced
   upstream (tracker #80896); derived from the source here.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
   then v20.2.4's.
@@ -9284,7 +9284,14 @@ Every new entry adds its row to this table, in document order.
   stand but its data is gone, and a GET answers 404 NoSuchKey. A principal
   allowed s3:AbortMultipartUpload on the bucket but not s3:DeleteObject
   reaches the same through an abort, given such a leftover upload.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.6, v19.2.7 and v20.2.4. v19.2.7's source is identical:
+  its `RGWCompleteMultipart::execute`
+  ([rgw_op.cc:6370-6544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6370-L6544)),
+  `RGWAbortMultipart::execute`
+  ([rgw_op.cc:6620-6656](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6620-L6656))
+  and `RadosMultipartUpload::abort`
+  ([rgw_sal_rados.cc:3155-3267](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3155-L3267))
+  are v19.2.6's line for line.
 - **rgw-go:** does not reproduce it for an upload rgw-go completes, and
   reproduces it in two mixed-fleet cases: a retry, by rgw-go, of an upload
   whose meta object a floor radosgw left behind and whose object was then
@@ -9314,7 +9321,7 @@ Every new entry adds its row to this table, in document order.
   head write. rgw-go's AbortMultipartUpload honors the record as the PR's
   abort does: when the key's head carries the recorded tag it removes the
   meta object alone and queues no part. Without a record it does not
-  reproduce the abort half either, where v19.2.6 and v20.2.4 queue the
+  reproduce the abort half either, where v19.2.7 and v20.2.4 queue the
   object's parts: when the key's head names an object of the upload, it
   answers 404 NoSuchUpload and changes nothing (`Store.Abort`,
   `internal/driver/mp_abort.go`; `docs/exclusions.md`,
@@ -11330,7 +11337,7 @@ Every new entry adds its row to this table, in document order.
     end of stream into `partial_message` for a message with a
     Content-Length or chunked body that is not complete
     (`boost/beast/http/impl/basic_parser.ipp:245-251` at Boost 1.82, the
-    floor v19.2.6's `CMakeLists.txt:709` requires; the enum, in
+    floor v19.2.7's [CMakeLists.txt:709](https://github.com/ceph/ceph/blob/v19.2.7/CMakeLists.txt#L709) requires; the enum, in
     `boost/beast/http/error.hpp`, is the same at 1.83; v20.2.4 requires
     1.87, `CMakeLists.txt:754`, whose headers were not checked here).
   - `recv_body` returns the value negated, -2 (`rgw_rest.cc:819-820` at

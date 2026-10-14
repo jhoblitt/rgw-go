@@ -47,7 +47,7 @@ const (
 // returned and the manifest, whose prefix is random.
 var perRequest = []string{meta.AttrIDTag, meta.AttrTailTag, meta.AttrPGVer, meta.AttrManifest}
 
-// squidStoredHeaders are the request headers a v19.2.6 radosgw stores as
+// squidStoredHeaders are the request headers a v19.2.7 radosgw stores as
 // attrs and rgw-go never does, since it applies v20.2.4's blocklist on both
 // releases (docs/exclusions.md, "Request headers stored as attrs follow
 // Tentacle's blocklist").
@@ -133,7 +133,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 				drop := []string{}
 				if store.Release() == denc.Squid {
 					for _, h := range squidStoredHeaders {
-						Expect(theirs).To(HaveKey(h), "v19.2.6 stores %s", h)
+						Expect(theirs).To(HaveKey(h), "v19.2.7 stores %s", h)
 					}
 					drop = squidStoredHeaders
 				}
@@ -270,25 +270,12 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 				"radosgw: If-None-Match * on an existing key")
 			Expect(put("obj", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String(etag) })).To(Equal(http.StatusOK),
 				"radosgw: a bare If-Match naming the ETag")
-			if store.Release() == denc.Squid {
-				// docs/exclusions.md, "Write conditions are Tentacle's on Squid
-				// too"; docs/ceph-upstream-bugs.md, "Squid's PUT refuses a
-				// quoted If-Match that matches the object's ETag" and "Squid's
-				// write conditions fail an If-None-Match ETag on a missing key".
-				Expect(put("missing", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String("*") })).To(Equal(http.StatusPreconditionFailed),
-					"v19.2.6: If-Match * on a missing key")
-				Expect(put("obj", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String(`"` + etag + `"`) })).To(Equal(http.StatusPreconditionFailed),
-					"v19.2.6: a quoted If-Match naming the ETag")
-				Expect(put("absent", func(in *awss3.PutObjectInput) { in.IfNoneMatch = aws.String(etag) })).To(Equal(http.StatusPreconditionFailed),
-					"v19.2.6: If-None-Match naming an ETag on a missing key")
-			} else {
-				Expect(put("missing", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String("*") })).To(Equal(http.StatusNotFound),
-					"v20.2.4: If-Match * on a missing key")
-				Expect(put("obj", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String(`"` + etag + `"`) })).To(Equal(http.StatusOK),
-					"v20.2.4: a quoted If-Match naming the ETag")
-				Expect(put("absent", func(in *awss3.PutObjectInput) { in.IfNoneMatch = aws.String(etag) })).To(Equal(http.StatusOK),
-					"v20.2.4: If-None-Match naming an ETag on a missing key")
-			}
+			Expect(put("missing", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String("*") })).To(Equal(http.StatusNotFound),
+				"radosgw: If-Match * on a missing key")
+			Expect(put("obj", func(in *awss3.PutObjectInput) { in.IfMatch = aws.String(`"` + etag + `"`) })).To(Equal(http.StatusOK),
+				"radosgw: a quoted If-Match naming the ETag")
+			Expect(put("absent", func(in *awss3.PutObjectInput) { in.IfNoneMatch = aws.String(etag) })).To(Equal(http.StatusOK),
+				"radosgw: If-None-Match naming an ETag on a missing key")
 			expectBucketCheckClean(ctx, name)
 		})
 	})
@@ -547,7 +534,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			}
 
 			// Copied into the placement's default class without naming one,
-			// a v19.2.6 radosgw keeps the source's label on a head in
+			// a v19.2.7 radosgw keeps the source's label on a head in
 			// STANDARD (docs/ceph-upstream-bugs.md, "Squid labels a copy to
 			// another storage class with its source's class"); rgw-go labels
 			// the copy by its destination, as v20.2.4 does (docs/exclusions.md,
@@ -572,8 +559,8 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			Expect(listed).To(HaveKeyWithValue("cd-rgwgo", HaveField("Meta.StorageClass", "STANDARD")), "rgw-go's copy's index entry")
 			if store.Release() == denc.Squid {
 				Expect(rawXattrs(ctx, headOID(stat(ctx, rec, "cd-radosgw")))).To(HaveKeyWithValue(meta.AttrStorageClass, []byte("COMP_ZLIB")),
-					"v19.2.6 keeps the source's class")
-				Expect(headClass("cd-radosgw")).To(BeEquivalentTo("COMP_ZLIB"), "v19.2.6 reports the source's class")
+					"v19.2.7 keeps the source's class")
+				Expect(headClass("cd-radosgw")).To(BeEquivalentTo("COMP_ZLIB"), "v19.2.7 reports the source's class")
 			}
 
 			_, want := getRadosgw(ctx, "plain", "comp-zlib.bin")

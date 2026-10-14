@@ -87,7 +87,7 @@ git apply --check "${RGW_GO}/hack/rook/phase1.patch" && git apply "${RGW_GO}/hac
 git diff >"${RGW_GO}/hack/rook/phase1.patch"
 GOFLAGS=-tags=ceph_preview go vet ./tests/framework/utils/ ./tests/integration/ \
   ./tests/integration/object/util/sharedstore/
-"${RGW_GO}/hack/rook/set-image.sh" squid ghcr.io/jhoblitt/rgw-go:local-v19.2.6 .
+"${RGW_GO}/hack/rook/set-image.sh" squid ghcr.io/jhoblitt/rgw-go:local-v19.2.7 .
 "${RGW_GO}/hack/rook/set-image.sh" tentacle ghcr.io/jhoblitt/rgw-go:local-v20.2.4 .
 ```
 

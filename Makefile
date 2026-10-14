@@ -257,7 +257,7 @@ RECORD_FLAGS = $(if $(REASONS),--reasons $(REASONS)) $(if $(DRAFT),--draft "$(DR
   $(if $(PIN_REASON),--pin-reason "$(PIN_REASON)")
 
 .PHONY: parity-record
-parity-record: ## Append RUN-FILES to a ledger: make parity-record SUITE=s3tests FORMAT=junit LEDGER=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.6 s3tests_commit=..." FILES="a.xml b.xml" [SUBSET=1] [REASONS=FILE] [PIN_REASON=TEXT]
+parity-record: ## Append RUN-FILES to a ledger: make parity-record SUITE=s3tests FORMAT=junit LEDGER=test/s3tests/baseline/squid.json META="release=squid ceph_version=19.2.7 s3tests_commit=..." FILES="a.xml b.xml" [SUBSET=1] [REASONS=FILE] [PIN_REASON=TEXT]
 	go run ./hack/parity record --format $(FORMAT) --suite $(SUITE) --ledger $(LEDGER) $(if $(SUBSET),--subset) $(RECORD_FLAGS) \
 	  $(foreach kv,$(META),--meta $(kv)) $(FILES)
 

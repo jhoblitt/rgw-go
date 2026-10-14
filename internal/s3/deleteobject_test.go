@@ -70,7 +70,7 @@ var _ = Describe("delete_obj", func() {
 	for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
 		Describe("on "+rel.String(), func() {
 			BeforeEach(func(ctx SpecContext) { w = newWriteWorld(ctx, rel) })
-			DescribeTable("checks Tentacle's match conditions, which v19.2.6 lacks",
+			DescribeTable("checks the match conditions as v19.2.7 and v20.2.4 do",
 				func(ctx SpecContext, deleted bool, hdr ...string) {
 					rec := w.send(w.alice, http.MethodDelete, "/plain/src", "", hdr...)
 					if deleted {
