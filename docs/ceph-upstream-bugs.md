@@ -39,6 +39,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped) | none | none | ✓ |
 | [radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input) | [#81230](https://tracker.ceph.com/issues/81230) | [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) | ✓ |
 | [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-content-type-is-unsigned) | [#79674](https://tracker.ceph.com/issues/79674), [#79708](https://tracker.ceph.com/issues/79708), [#79723](https://tracker.ceph.com/issues/79723), [#79725](https://tracker.ceph.com/issues/79725), [#79724](https://tracker.ceph.com/issues/79724) | [ceph/ceph#71192](https://github.com/ceph/ceph/pull/71192), [ceph/ceph#71296](https://github.com/ceph/ceph/pull/71296), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
+| [radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned](#radosgw-1926-and-2024-reject-a-sigv4-request-whose-x-amz-content-sha256-is-unsigned) | [#79803](https://tracker.ceph.com/issues/79803), [#79873](https://tracker.ceph.com/issues/79873), [#79871](https://tracker.ceph.com/issues/79871), [#79872](https://tracker.ceph.com/issues/79872) | [ceph/ceph#71292](https://github.com/ceph/ceph/pull/71292), [ceph/ceph#71360](https://github.com/ceph/ceph/pull/71360), [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364), [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) |  |
 | [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | none | none | ✓ |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
@@ -158,7 +159,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A delimiter starting with an underscore hides the objects whose names start with one](#a-delimiter-starting-with-an-underscore-hides-the-objects-whose-names-start-with-one) | pending | pending |  |
 | [radosgw creates a multipart upload's meta object without the exclusive create its flags ask for](#radosgw-creates-a-multipart-uploads-meta-object-without-the-exclusive-create-its-flags-ask-for) | none | none | ✓ |
 | [radosgw keeps every modified bucket for good when its quota threads are off](#radosgw-keeps-every-modified-bucket-for-good-when-its-quota-threads-are-off) | none | none |  |
-| [Tentacle's DeleteObject removes the head without checking its write tag](#tentacles-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
+| [radosgw's DeleteObject removes the head without checking its write tag](#radosgws-deleteobject-removes-the-head-without-checking-its-write-tag) | [#80898](https://tracker.ceph.com/issues/80898), [#80906](https://tracker.ceph.com/issues/80906) | [ceph/ceph#72100](https://github.com/ceph/ceph/pull/72100), [ceph/ceph#72096](https://github.com/ceph/ceph/pull/72096), [ceph/ceph#72101](https://github.com/ceph/ceph/pull/72101) |  |
 | [radosgw evaluates a tag-conditioned policy without the tags it fails to read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read) | pending | pending |  |
 | [A failed UploadPart shrinks radosgw's quota cache](#a-failed-uploadpart-shrinks-radosgws-quota-cache) | none | none | ✓ |
 | [Tentacle fails an UploadPart that sends If-None-Match: * for a part in the bucket placement's pool](#tentacle-fails-an-uploadpart-that-sends-if-none-match--for-a-part-in-the-bucket-placements-pool) | [#68183](https://tracker.ceph.com/issues/68183) | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) |  |
@@ -189,7 +190,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw never checks a SigV4 credential scope's date, region or service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service) | pending | pending |  |
 | [radosgw's ListMultipartUploads drops its common prefixes and the uploads under them](#radosgws-listmultipartuploads-drops-its-common-prefixes-and-the-uploads-under-them) | none | none | ✓ |
 | [radosgw's ListMultipartUploads applies the prefix and the delimiter to the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name) | none | none | ✓ |
-| [Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#tentacles-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869), [#78708](https://tracker.ceph.com/issues/78708) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
+| [radosgw's DeleteObjects asks for MFA for the keys that need none and not for the versions that do](#radosgws-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do) | [#77869](https://tracker.ceph.com/issues/77869), [#78708](https://tracker.ceph.com/issues/78708) | [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821) |  |
 | [radosgw's parse_date writes a NUL one byte past its format buffer](#radosgws-parse_date-writes-a-nul-one-byte-past-its-format-buffer) | none | none | ✓ |
 | [radosgw lets a public ACL through a block of public ACLs on PutObject's grant headers, CopyObject and CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload) | none | none | ✓ |
 | [RESTArgs::get_string url-decodes an admin argument a second time](#restargsget_string-url-decodes-an-admin-argument-a-second-time) | pending | pending |  |
@@ -254,7 +255,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's set_obj_attrs moves an object's mtime one nanosecond on](#radosgws-set_obj_attrs-moves-an-objects-mtime-one-nanosecond-on) | pending | pending |  |
 | [radosgw defines rgw_put_obj_max_window_size and never reads it](#radosgw-defines-rgw_put_obj_max_window_size-and-never-reads-it) | pending | pending |  |
 | [radosgw stores every x-amz- request header as an attr of the object it writes](#radosgw-stores-every-x-amz--request-header-as-an-attr-of-the-object-it-writes) | pending | pending |  |
-| [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | pending |  |
+| [radosgw fails a write whose bucket was resharded since the request read it](#radosgw-fails-a-write-whose-bucket-was-resharded-since-the-request-read-it) | pending | [ceph/ceph#66553](https://github.com/ceph/ceph/pull/66553), [ceph/ceph#70498](https://github.com/ceph/ceph/pull/70498), [ceph/ceph#70497](https://github.com/ceph/ceph/pull/70497) |  |
 | [radosgw's removal of an account user leaves the bucket list its quota sync wrote](#radosgws-removal-of-an-account-user-leaves-the-bucket-list-its-quota-sync-wrote) | pending | pending | ✓ |
 | [radosgw-admin bucket check reports a live re-uploaded part as an invalid multipart entry](#radosgw-admin-bucket-check-reports-a-live-re-uploaded-part-as-an-invalid-multipart-entry) | pending | pending |  |
 | [Tentacle's metadata put ignores update-type](#tentacles-metadata-put-ignores-update-type) | pending | pending | ✓ |
@@ -270,6 +271,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's account modify answers BucketAlreadyExists for a taken name or email](#radosgws-account-modify-answers-bucketalreadyexists-for-a-taken-name-or-email) | pending | pending | ✓ |
 | [radosgw's bucket delete and user purge orphan the objects of a bucket with no zonegroup id](#radosgws-bucket-delete-and-user-purge-orphan-the-objects-of-a-bucket-with-no-zonegroup-id) | pending | pending | ✓ |
 | [radosgw's user suspension and account adoption act on another owner's bucket through a stale list entry](#radosgws-user-suspension-and-account-adoption-act-on-another-owners-bucket-through-a-stale-list-entry) | none | none | ✓ |
+| [radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule](#radosgws-x-amz-expiration-reports-a-noncurrentversionexpiration-rule) | [#77564](https://tracker.ceph.com/issues/77564) | [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642), [ceph/ceph#70493](https://github.com/ceph/ceph/pull/70493), [ceph/ceph#70494](https://github.com/ceph/ceph/pull/70494) |  |
+| [radosgw's lifecycle transition of an encrypted multipart object drops its part lengths](#radosgws-lifecycle-transition-of-an-encrypted-multipart-object-drops-its-part-lengths) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807), [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -289,7 +292,9 @@ Every new entry adds its row to this table, in document order.
     allowed while resharding". It is in v20.0.0 and later (v20.2.4
     `rgw_rados.cc:10823` and `:11061`).
   - It is not on the squid branch as of a742f50 (2026-09-03).
-- **Releases:** Squid, every release through v19.2.6.
+- **Releases:** Squid, every release through v19.2.7, which still sends both
+  suggestions unguarded (`src/rgw/driver/rados/rgw_rados.cc:10095-10098@v19.2.7`
+  and `src/rgw/driver/rados/rgw_rados.cc:10331-10334@v19.2.7`).
 - **rgw-go:** follows the cluster's release. Its Tentacle-level listing guards
   its suggestions; its Squid-level listing matches radosgw and does not.
   `docs/exclusions.md` states the guard per release. Realized in
@@ -614,6 +619,16 @@ Every new entry adds its row to this table, in document order.
   also clamps a 0 already stored in the configuration when it is loaded.
   [#75958](https://tracker.ceph.com/issues/75958), a crash when
   rgw_gc_max_objs changes at runtime, is related but has a different trigger.
+  That crash is kept from happening at both floors: "rgw/gc: mark
+  rgw_gc_max_objs as startup-only" (main's c3e57712272, first tagged in
+  v21.0.1) gives the option the `startup` flag, so a runtime change is
+  refused. Squid has it as 88c57354a9f, first tagged in v19.2.7
+  (`src/common/options/rgw.yaml.in:1713-1714@v19.2.7`), and Tentacle as
+  ef2ac0f274e, first tagged in v20.2.3
+  (`src/common/options/rgw.yaml.in:1795-1796@v20.2.4`). None of the three
+  commits names a tracker issue, so #75958 is not taken as closed. The
+  flag adds no minimum: v19.2.7's option still accepts a 0
+  (`src/common/options/rgw.yaml.in:1693-1715@v19.2.7`).
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-019); verified 2026-09-27;
   not reproduced on a running cluster.
 
@@ -926,8 +941,8 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned
 
-- **Kind:** defect, a regression; fixed upstream, but in no squid or tentacle
-  release yet.
+- **Kind:** defect, a regression; fixed in v19.2.7, unfixed through
+  v20.2.4. The tentacle branch carries the fix, but no Tentacle tag does.
 - **Evidence:**
   - Unless `rgw_sigv4_insecure` is set, `get_v4_canonical_headers` refuses a
     request that carries a Content-Type header its SignedHeaders do not list,
@@ -941,13 +956,22 @@ Every new entry adds its row to this table, in document order.
     683fad73231 on tentacle, both 2026-06-16); v19.2.5 and v20.2.3 do not
     have it.
   - The fix, 534308306f2, removes the Content-Type requirement and keeps the
-    `host` and `x-amz-*` checks.
-- **Releases:** v19.2.6 and v20.2.4. The fix is on main (c3179de982f,
-  2026-08-21), the squid branch (18d35e32770, 2026-08-26) and the tentacle
-  branch (7e2e2072822, 2026-09-03), but neither branch has had a release
-  since (checked 2026-09-30). The first tag that carries it is v21.1.1
-  (2026-09-10), an umbrella release candidate; no umbrella tag ever carried
-  the check.
+    `host` and `x-amz-*` checks. Its squid pick, eb63ba5d7de, is in v19.2.7,
+    which no longer requires a present Content-Type to be signed and still
+    refuses an unsigned `host`, or an unsigned `x-amz-*` header other than
+    `x-amz-content-sha256` (`src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`).
+    v20.2.4 still refuses an unsigned Content-Type
+    (`src/rgw/rgw_auth_s3.cc:774-779@v20.2.4`).
+- **Releases:** v19.2.6 and v20.2.4. v19.2.7 carries the fix, eb63ba5d7de
+  (squid ceph/ceph#71296, merge 18d35e32770, 2026-08-26). It is also on main
+  (c3179de982f, 2026-08-21) and the tentacle branch (7e2e2072822,
+  2026-09-03), and no Tentacle tag carries it (checked at ab83d026c29,
+  2026-10-12). The first tag that carries it is v21.1.1 (2026-09-10), an
+  umbrella release candidate; no umbrella tag ever carried the check. The
+  tentacle and umbrella backports also carry the x-amz-content-sha256
+  exemption; squid took it separately, and v19.2.7 carries it too ("radosgw
+  19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is
+  unsigned", below).
 - **rgw-go:** reproduces it, as both floor releases carry it.
   `canonicalHeadersV4` (`internal/auth/sigv4.go`) answers AccessDenied to a
   request with a Content-Type its SignedHeaders do not list, as it does to
@@ -968,6 +992,70 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 authentication work (unit A), 2026-09-30, in the
   prior-art search for url_decode; verified in the source at both tags. Not
   reproduced by rgw-go; the reporter of #79674 met it on a v20.2.4 cluster.
+
+## radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned
+
+- **Kind:** defect, from the same CVE-2026-54330 hardening as "radosgw
+  19.2.6 and 20.2.4 reject a SigV4 request whose Content-Type is unsigned";
+  fixed in v19.2.7, unfixed through v20.2.4. An S3-correctness defect, not
+  security-relevant: it fails closed. Prior art: upstream reported and
+  fixed it before we met it. Unreproduced: derived from the source.
+- **Evidence:**
+  - Unless `rgw_sigv4_insecure` is set, `get_v4_canonical_headers` refuses a
+    request that carries an `x-amz-*` header its SignedHeaders do not list,
+    `x-amz-content-sha256` among them
+    (`src/rgw/rgw_auth_s3.cc:788-820@v19.2.6`, the same block at
+    `src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`), and the request is answered
+    403 AccessDenied (`src/rgw/rgw_rest_s3.cc:5838-5846@v19.2.7`, the same at
+    `src/rgw/rgw_rest_s3.cc:6364-6372@v20.2.4`;
+    `src/rgw/rgw_common.cc:89@v19.2.7`).
+  - Upstream's fix holds that SigV4 does not ask an S3 request to sign the
+    header: "aws sigv4 does not require s3 requests to sign
+    x-amz-content-sha256 because it's already present in the canonical
+    request as HashedPayload" (1890af92ec3's message). AWS's own rule is
+    not checked here. radosgw's half of that reasoning is its code: the
+    header's value enters the canonical request as the HashedPayload
+    whether it is signed or not
+    (`src/rgw/rgw_auth_s3.h:638-660@v19.2.7#get_v4_exp_payload_hash`, used at
+    `src/rgw/rgw_rest_s3.cc:5858@v19.2.7`).
+  - The fix, 1db3ab3b185, "rgw/auth: don't require x-amz-content-sha256 in
+    signed headers" (the squid pick of main's 1890af92ec3), skips the header
+    in the scan and keeps the `host` and every other `x-amz-*` check
+    (`src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`, the skip at
+    `src/rgw/rgw_auth_s3.cc:830-835@v19.2.7`). Its TODO there notes that the
+    skip is not limited to the s3 service.
+  - radosgw's s3-tests ledgers record
+    `test_sigv4_without_signed_content_sha256` failing on 19.2.6 and 20.2.4
+    (`test/s3tests/baseline/squid.json`, `test/s3tests/baseline/tentacle.json`),
+    which this defect would explain; no run has been read for its cause.
+- **Impact:** on v19.2.6 and v20.2.4, a client that sends
+  x-amz-content-sha256 without listing it in SignedHeaders, which
+  upstream's fix takes SigV4 to allow for S3, is refused 403 AccessDenied.
+- **Releases:** v19.2.6 and v20.2.4. v19.2.7 carries the fix, 1db3ab3b185
+  (squid ceph/ceph#71360, merge d23da67eaa3, 2026-09-03). It is also on main
+  (1890af92ec3, merge e1ecde02004, 2026-08-25) and on the tentacle branch as
+  a1dd71be880, which came with the Content-Type fix's tentacle backport
+  (merge 7e2e2072822, 2026-09-03); no Tentacle tag carries it (checked at
+  ab83d026c29, 2026-10-12). The first tag that carries it is the umbrella
+  release candidate v21.1.1 (2026-09-10).
+- **rgw-go:** reproduces it on both releases: `canonicalHeadersV4`
+  (`internal/auth/sigv4.go`) answers AccessDenied to a request with any
+  unsigned `x-amz-*` header, x-amz-content-sha256 included, unless
+  `rgw_sigv4_insecure` (`auth.Config.Insecure`) is set.
+- **Upstream:** [#79803](https://tracker.ceph.com/issues/79803), named by the
+  fix commits' `Fixes:` trailers with its backports
+  [#79873](https://tracker.ceph.com/issues/79873) (squid),
+  [#79871](https://tracker.ceph.com/issues/79871) (tentacle) and
+  [#79872](https://tracker.ceph.com/issues/79872) (umbrella). The fix is
+  [ceph/ceph#71292](https://github.com/ceph/ceph/pull/71292), backported by
+  [ceph/ceph#71360](https://github.com/ceph/ceph/pull/71360) (squid),
+  [ceph/ceph#71364](https://github.com/ceph/ceph/pull/71364) (tentacle) and
+  [ceph/ceph#71363](https://github.com/ceph/ceph/pull/71363) (umbrella), the
+  last two shared with the Content-Type fix; read from the commits and
+  merges in the ceph git history. The trackers' own state is not checked.
+- **Found:** phase 2 planning, the Squid floor's move to v19.2.7,
+  2026-10-13, reading the commits between v19.2.6 and v19.2.7; derived from
+  the source, not reproduced.
 
 ## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
 
@@ -1656,7 +1744,10 @@ Every new entry adds its row to this table, in document order.
   it is in v21.0.0 and later, and its backport 15de1799510 (ceph/ceph#66491)
   is in v20.2.3 and later (v20.2.4 `rgw_notify.cc:130`). It is not on the
   squid branch as of a742f50 (2026-09-03).
-- **Releases:** every Squid release through v19.2.6; v20.2.0 through v20.2.2.
+- **Releases:** every Squid release through v19.2.7, whose `read_queue_list`
+  still never advances `start_after`
+  (`src/rgw/driver/rados/rgw_notify.cc:106-128@v19.2.7`); v20.2.0 through
+  v20.2.2.
 - **rgw-go:** cannot fix a coexisting radosgw; `docs/exclusions.md` records
   the hazard. Phase 3's own reading of the registry must advance its marker.
 - **Upstream:** [#73812](https://tracker.ceph.com/issues/73812), fixed by
@@ -1709,8 +1800,9 @@ Every new entry adds its row to this table, in document order.
     Ceph commit 92dd2b9c380, "rgw/http: check 'done' under mutex", in v20.0.0
     and later. The lock path is otherwise the same (`rgw_pubsub_push.cc:97`,
     `:124`, `:432-438`).
-- **Releases:** v19.1.1 (a release candidate) and v19.2.0 through v19.2.6,
-  and the squid branch as of a742f50616e (2026-09-03). The unlocked check
+- **Releases:** v19.1.1 (a release candidate) and v19.2.0 through v19.2.7,
+  whose `wait` still checks `done` without the lock
+  (`src/rgw/rgw_http_client.cc:73-82@v19.2.7`). The unlocked check
   dates from 57887f6a364, "rgw: http client drops mutex before suspending
   coroutine", first in v15.1.0. The lock that turns it into a reload hang
   arrived with 220bd93999b, the squid fix for #65337, first in v19.1.1. Reef
@@ -1729,9 +1821,9 @@ Every new entry adds its row to this table, in document order.
   merged. [#66100](https://tracker.ceph.com/issues/66100) has the same
   symptom but stalls earlier, joining the data-sync thread. Its squid
   backport, [#74738](https://tracker.ceph.com/issues/74738)
-  ([ceph/ceph#67439](https://github.com/ceph/ceph/pull/67439)), is not in
-  v19.2.6. The fix for [#65337](https://tracker.ceph.com/issues/65337)
-  created the lock path. Searched 2026-09-29: the tracker's full text for
+  ([ceph/ceph#67439](https://github.com/ceph/ceph/pull/67439), merge
+  9b37aaf1a91), is first tagged in v19.2.7. The fix for
+  [#65337](https://tracker.ceph.com/issues/65337) created the lock path. Searched 2026-09-29: the tracker's full text for
   `shutdown_http_manager`, `RGWHTTPManager::stop`, `notify::shutdown`,
   `s_http_manager_mutex`, `rgw_http_req_data`, "Frontends paused" and
   realm-reload hang, deadlock and stuck; and ceph/ceph pull requests, by
@@ -4606,9 +4698,11 @@ Every new entry adds its row to this table, in document order.
   value or the key holds another; a Deny so guarded denies it. A `Null`
   condition that asks for the key's presence holds exactly when the key is
   absent.
-- **Releases:** v19.2.6 and the squid branch head (a742f50616e,
-  2026-09-03), and v20.2.0 through v20.2.2; v20.2.3 and v20.2.4 carry both
-  changes. Older squid releases not checked.
+- **Releases:** v19.2.6 and v19.2.7, which still evaluates the negated
+  operators with `orrible` and `Null` by absence alone
+  (`src/rgw/rgw_iam_policy.cc:890-892@v19.2.7`,
+  `src/rgw/rgw_iam_policy.cc:857-859@v19.2.7`), and v20.2.0 through v20.2.2;
+  v20.2.3 and v20.2.4 carry both changes. Older squid releases not checked.
 - **rgw-go:** follows the zone's release: `policy.Semantics`'s
   `NotMeansNone` and `NullTestsValues` select v19.2.6's rule on Squid and
   v20.2.4's on Tentacle (`internal/policy/condition.go`).
@@ -5972,8 +6066,9 @@ Every new entry adds its row to this table, in document order.
   statement for a named principal, such as a grant to one user;
   GetBucketPolicyStatus reports such a policy public. It over-blocks and
   fails closed.
-- **Releases:** v19.2.6 and the squid branch head (a742f50616e, 2026-09-03),
-  which still has the `none_of`. The first tag carrying the fix is v20.0.0,
+- **Releases:** v19.2.6 and v19.2.7, which still has the `none_of`
+  (`src/rgw/rgw_iam_policy.cc:1900-1916@v19.2.7#IsPublicStatement`). The
+  first tag carrying the fix is v20.0.0,
   released v20.2.0; checked at v20.2.4. Older squid releases not checked.
 - **rgw-go:** follows the zone's release: `policy.Semantics`'s
   `PublicNeedsWildcardPrincipal` selects v19.2.6's rule on Squid and
@@ -6320,8 +6415,8 @@ Every new entry adds its row to this table, in document order.
 
 ## Squid's PUT refuses a quoted If-Match that matches the object's ETag
 
-- **Kind:** defect, fixed in Tentacle and, after v19.2.6, in Squid; the
-  prefix acceptance below is unfixed at v20.2.4. The quoted rejection fails
+- **Kind:** defect, fixed in Tentacle and in v19.2.7; the prefix acceptance
+  below is unfixed at v19.2.7 and v20.2.4. The quoted rejection fails
   closed and is not security-relevant; the prefix acceptance fails open,
   but its reach is low, since the condition must start with the current
   ETag. The quoted rejection and the 412 for a missing object are
@@ -6351,18 +6446,24 @@ Every new entry adds its row to this table, in document order.
   - An If-Match on a missing object, `*` or an ETag, answers 412 on Squid
     (`:6519`, `:6523-6525` at v19.2.6) and ENOENT, 404, on Tentacle
     (`:7291`, `:7304` at v20.2.4).
+  - v19.2.7 carries ce98cebb815, the squid pick of the fix: the head write
+    calls `check_preconditions` before its guard
+    (`src/rgw/driver/rados/rgw_rados.cc:3197-3200@v19.2.7`), which unquotes
+    both conditions, keeps the prefix comparison and answers ENOENT for an
+    If-Match on a missing object, as v20.2.4 does
+    (`src/rgw/driver/rados/rgw_rados.cc:6673-6712@v19.2.7#RGWRados::Object::check_preconditions`).
   - Reproduced on a disposable v19.2.6 cluster through aws-sdk-go-v2's
     PutObject (`test/integration/write_test.go`, "answers the write
     conditions as radosgw does"): an If-Match of the object's ETag in
     quotes answers 412 PreconditionFailed, the bare ETag 200, and
     `If-Match: *` on a missing key 412.
-- **Impact:** on Squid a conditional PUT with a quoted If-Match fails 412
+- **Impact:** on v19.2.6 a conditional PUT with a quoted If-Match fails 412
   whatever the object holds, and one with a quoted If-None-Match naming the
   current ETag overwrites the object; clients that send ETags as they
-  received them cannot use either condition. On both releases a condition
-  that only begins with the current ETag counts as naming it.
-- **Releases:** v19.2.6 for the quoted condition; v19.2.6 and v20.2.4 for
-  the prefix.
+  received them cannot use either condition. On every release here a
+  condition that only begins with the current ETag counts as naming it.
+- **Releases:** v19.2.6 for the quoted condition and the 412 on a missing
+  object; v19.2.6, v19.2.7 and v20.2.4 for the prefix.
 - **rgw-go:** checks the conditions as v20.2.4 does on both releases:
   quoted conditions are unquoted, and the prefix comparison is kept
   (`checkPreconditions`, `internal/driver/headwrite.go`; `docs/exclusions.md`,
@@ -6372,8 +6473,10 @@ Every new entry adds its row to this table, in document order.
   [#80924](https://tracker.ceph.com/issues/80924) (Fix Under Review; the
   prefix comparison takes any If-Match or If-None-Match that begins with
   the current ETag for one naming it, which survives the fix at v20.2.4
-  `rgw_rados.cc:7299` and `:7321`). #80924 names the write path's
-  `check_preconditions` and the read path's
+  `rgw_rados.cc:7299` and `:7321`, and at
+  `src/rgw/driver/rados/rgw_rados.cc:6685@v19.2.7` and
+  `src/rgw/driver/rados/rgw_rados.cc:6707@v19.2.7`). #80924 names the
+  write path's `check_preconditions` and the read path's
   `RGWRados::Object::Read::prepare` alike, under "radosgw's GET compares
   If-Match and If-None-Match as prefixes and takes `*` literally" below;
   its fix, [ceph/ceph#72117](https://github.com/ceph/ceph/pull/72117)
@@ -6381,8 +6484,8 @@ Every new entry adds its row to this table, in document order.
   fixed by [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
   backports [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949)
   (tentacle, in v20.2.4) and
-  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merged
-  after v19.2.6).
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merge
+  a742f50616e, first tagged in v19.2.7).
 - **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
   preconditions; derived from the source. Upstream reported it first.
   Reproduced on v19.2.6 in unit W, Task 12, 2026-10-08.
@@ -6391,7 +6494,7 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, and a security issue: an integrity bypass that defeats
   If-None-Match: * and If-Match and so loses an update (triage estimate
-  CVSS about 6.5). Fixed in Tentacle and, after v19.2.6, in Squid. The
+  CVSS about 6.5). Fixed in Tentacle and in v19.2.7. The
   412 for an If-None-Match ETag on a missing key is reproduced on
   v19.2.6; the skipped check on a head without a write tag is derived
   from the source.
@@ -6417,12 +6520,22 @@ Every new entry adds its row to this table, in document order.
     (`check_preconditions`, called at `:3294-3297` at v20.2.4), and passes an
     If-None-Match ETag when the object has no ETag (`:7315-7324` at
     v20.2.4).
-- **Impact:** on Squid, If-None-Match: * does not stop an overwrite of a
-  head without a write tag, and If-Match does not stop one whose ETag has
-  changed, so a conditional writer overwrites an update it meant to keep;
-  and a PUT with an If-None-Match ETag fails 412 on a new key, or on an
-  object stored without an ETag.
-- **Releases:** v19.2.6. v20.2.4 is not affected.
+  - v19.2.7, with ce98cebb815, does the same: the head write calls
+    `check_preconditions` before its guard
+    (`src/rgw/driver/rados/rgw_rados.cc:3197-3200@v19.2.7`), and an
+    If-None-Match ETag passes when the object has no ETag
+    (`src/rgw/driver/rados/rgw_rados.cc:6701-6711@v19.2.7`).
+- **Impact:** on an affected release, If-None-Match: * does not stop an
+  overwrite of a head without a write tag, and If-Match does not stop one
+  whose ETag has changed, so a conditional writer overwrites an update it
+  meant to keep; and a PUT with an If-None-Match ETag fails 412 on a new
+  key, or on an object stored without an ETag.
+- **Releases:** v19.2.6, and the other releases checked that test the
+  conditions only under the guard, v19.2.5 and v20.2.0
+  (`src/rgw/driver/rados/rgw_rados.cc:6493-6544@v19.2.5`,
+  `src/rgw/driver/rados/rgw_rados.cc:7086-7135@v20.2.0`). Fixed in v19.2.7
+  and, on Tentacle, in v20.2.1, the first tag with f28f0d9147d; v20.2.4 is
+  not affected.
 - **rgw-go:** checks the conditions as v20.2.4 does on both releases
   (`guardHead` and `checkPreconditions`, `internal/driver/headwrite.go`;
   `docs/exclusions.md`, "Write conditions are Tentacle's on Squid too").
@@ -6435,10 +6548,10 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
   backports [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949)
   (tentacle, in v20.2.4) and
-  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merged
-  after v19.2.6). The same pull request added conditional DELETE and
-  brought in the regression in "Tentacle's DeleteObject removes the head
-  without checking its write tag".
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (squid, merge
+  a742f50616e, first tagged in v19.2.7). The same pull request added
+  conditional DELETE and brought in the regression in "radosgw's
+  DeleteObject removes the head without checking its write tag".
 - **Found:** phase 1 unit W, Task 5, 2026-10-04, writing the head write's
   preconditions; derived from the source. Upstream reported it first. The
   missing-key 412 reproduced on v19.2.6 in unit W, Task 12, 2026-10-08.
@@ -7064,7 +7177,7 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit M, Task 9, 2026-10-05, transcribing
   `RGWOwnerStatsCache`; derived from the source, not reproduced.
 
-## Tentacle's DeleteObject removes the head without checking its write tag
+## radosgw's DeleteObject removes the head without checking its write tag
 
 - **Kind:** defect, a regression: a low-severity integrity defect (triage
   estimate CVSS about 2.2), found upstream first. Unreproduced: derived
@@ -7088,7 +7201,12 @@ Every new entry adds its row to this table, in document order.
     the object: it is `obj_remove`, after `obj_check_mtime` when a time
     condition is set (`:6609-6624`, `:6665-6668`, `:6690-6699` at
     v20.2.4). The same code is on main (`rgw_rados.cc:7214-7250` at
-    origin/main, 2026-10-04) and on the squid branch after v19.2.6.
+    origin/main, 2026-10-04) and in v19.2.7, which compares the conditions
+    with the state it read and adds only `obj_check_mtime`, for a time
+    condition, to the head's removal
+    (`src/rgw/driver/rados/rgw_rados.cc:6049-6057@v19.2.7`); its only call
+    of `prepare_atomic_modification` left is the head write's
+    (`src/rgw/driver/rados/rgw_rados.cc:3203@v19.2.7`).
 - **Impact:** when a PUT replaces an object between a delete's read and its
   removal:
   - a delete with If-Match or `x-amz-if-match-size` naming the replaced
@@ -7102,9 +7220,9 @@ Every new entry adds its row to this table, in document order.
 
   Severity is low: the race window lies inside one request's handling,
   between its head read and its removal.
-- **Releases:** v20.2.4, main, and the squid branch after v19.2.6, where
-  ceph/ceph#65932 merged after v19.2.6 was tagged, so the next Squid release
-  carries it too. v19.2.6 is not affected.
+- **Releases:** v19.2.7, v20.2.4 and main; ceph/ceph#65932 brought it to
+  squid after v19.2.6 (merge a742f50616e), and v19.2.7 is its first Squid
+  tag. v19.2.6 is not affected.
 - **rgw-go:** unaffected: rgw-go keeps the guard on both releases
   (`internal/driver/delete.go`; `docs/exclusions.md`, "Delete conditions
   are Tentacle's, and a delete is guarded, on both releases").
@@ -7261,7 +7379,10 @@ Every new entry adds its row to this table, in document order.
   storage class in another pool fails on any If-Match instead; on Squid
   every such request succeeds. The outcome depends on the upload's storage
   class, not on any state the client can see.
-- **Releases:** v20.2.4; v19.2.6 ignores the conditions.
+- **Releases:** v20.2.4; v19.2.6 and v19.2.7 ignore the conditions, since
+  v19.2.7's `MultipartObjectProcessor::complete` still sets neither on the
+  part head's write
+  (`src/rgw/driver/rados/rgw_putobj_processor.cc:519-529@v19.2.7#MultipartObjectProcessor::complete`).
 - **rgw-go:** does not reproduce it: a part write takes no conditions on
   either release (`PutPart`, `internal/driver/mp_part.go`;
   `docs/exclusions.md`, "UploadPart ignores If-Match and If-None-Match").
@@ -7270,7 +7391,7 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with its backports
   [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949) (tentacle, in
   v20.2.4) and [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932)
-  (squid, merged after v19.2.6). Related:
+  (squid, first tagged in v19.2.7). Related:
   [#80907](https://tracker.ceph.com/issues/80907) and
   [#80925](https://tracker.ceph.com/issues/80925).
 - **Found:** phase 1 unit P, Task 4, 2026-10-05, comparing
@@ -7554,10 +7675,11 @@ Every new entry adds its row to this table, in document order.
     a deleted pool; a put that keeps failing still stalls it.
 - **Impact:** a gc shard that stops collecting, its tails leaking, with an
   error logged on each pass.
-- **Releases:** v19.2.6 and v20.2.4; main for the persistent put failure.
-  The squid branch does not carry main's fix as of a742f50616e
-  (2026-09-03); its cherry-pick, 7b77cbc4466, is only on the umbrella
-  branches.
+- **Releases:** v19.2.6, v19.2.7 and v20.2.4; main for the persistent put
+  failure. v19.2.7 does not carry main's fix: a pool it cannot open still
+  ends a converted shard's pass
+  (`src/rgw/driver/rados/rgw_gc.cc:661-668@v19.2.7`). Its cherry-pick,
+  7b77cbc4466, is only on the umbrella branches.
 - **rgw-go:** meets it as the floor releases do: on a queue shard its gc
   worker removes a page's entries only once every put of the page
   succeeded, and a pool it cannot open, a deleted one included, a put it
@@ -7569,10 +7691,19 @@ Every new entry adds its row to this table, in document order.
   [#77098](https://tracker.ceph.com/issues/77098) the stall behind an entry
   that cannot be freed. Main's fix is
   [ceph/ceph#59902](https://github.com/ceph/ceph/pull/59902) (merge
-  ccd9d3e94bc, 73535b105de). rgw-bug-reproduction's triage reports a squid
-  backport, [ceph/ceph#70395](https://github.com/ceph/ceph/pull/70395), as
-  merged, and a tentacle backport,
-  [ceph/ceph#70396](https://github.com/ceph/ceph/pull/70396), as open.
+  ccd9d3e94bc, 73535b105de). Its backports:
+  - [ceph/ceph#70395](https://github.com/ceph/ceph/pull/70395) merged into
+    the umbrella branch (f3d504afa9e, 2026-08-06), whose pick of
+    73535b105de, 7b77cbc4466, is first tagged in v21.1.1. It is not on squid
+    at 226f1401666 (2026-10-12), which has no pick of 73535b105de, and not
+    in v19.2.7 (Releases, above).
+  - [ceph/ceph#70396](https://github.com/ceph/ceph/pull/70396), listed here
+    as the tentacle backport, has no merge on the tentacle branch, and the
+    branch at ab83d026c29 (2026-10-12) has no pick of 73535b105de.
+
+  This entry earlier called ceph/ceph#70395 a merged squid backport, a
+  claim never checked against the branch. The branch heads are the ceph
+  clone's as of its last fetch, 2026-10-12.
 - **Found:** phase 1 unit W, Task 9, 2026-10-05, transcribing
   `RGWGC::process` and `RGWGCIOManager`; derived from the source, not
   reproduced.
@@ -7953,8 +8084,8 @@ Every new entry adds its row to this table, in document order.
 ## Squid labels a copy to another storage class with its source's class
 
 - **Kind:** defect, not security-relevant, fixed in v20.2.3 and v21.0.0,
-  not on squid as of a742f50616e; prior art, fixed upstream before we met
-  it. Reproduced on v19.2.6.
+  not in v19.2.7; prior art, fixed upstream before we met it. Reproduced on
+  v19.2.6.
 - **Evidence:** paths are under `src/rgw/`.
   - v19.2.6's `copy_obj` keeps the source's `user.rgw.storage_class` in
     the attrs a COPY directive carries over
@@ -7994,8 +8125,9 @@ Every new entry adds its row to this table, in document order.
   same), after which the listing shows the wrong class too,
   and lifecycle, which reads the index entry, can transition the object by
   it.
-- **Releases:** v19.2.6, and Tentacle before v20.2.3. v20.2.4 is not
-  affected.
+- **Releases:** v19.2.6 and v19.2.7, whose `copy_obj` still keeps the
+  source's attr (`src/rgw/driver/rados/rgw_rados.cc:4797-4825@v19.2.7`),
+  and Tentacle before v20.2.3. v20.2.4 is not affected.
 - **rgw-go:** works around it on Squid: it drops the source's attr on
   both releases, as v20.2.4 does, so a copy is labeled with its
   destination placement's class alone (`copyAttrs`,
@@ -8006,7 +8138,11 @@ Every new entry adds its row to this table, in document order.
   for CopyObject, by [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794)
   and on tentacle by
   [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277). The issue's
-  Backport field names squid, but the squid branch carries no backport.
+  Backport field names squid, but of ceph/ceph#63794's commits v19.2.7
+  carries only the lifecycle transition fix, b9b65194f64 (through
+  [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807); "radosgw's
+  lifecycle transition of an encrypted multipart object drops its part
+  lengths"), not this one.
 - **Found:** phase 1 unit W, Task 8, 2026-10-05, comparing `copy_obj` at
   both tags; derived from the source. Reproduced on v19.2.6 in unit W,
   Task 12, 2026-10-08.
@@ -8554,12 +8690,12 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit P, Task 5, 2026-10-05, transcribing
   `list_multiparts` at both tags; derived from the source, not reproduced.
 
-## Tentacle's DeleteObjects asks for MFA for the keys that need none and not for the versions that do
+## radosgw's DeleteObjects asks for MFA for the keys that need none and not for the versions that do
 
 - **Kind:** defect, security-relevant, high: a version-id delete skips MFA
   delete (triage estimate CVSS about 8.1). A regression, fixed on main,
-  not on the release branches; not found by us. Unreproduced: derived from
-  the source.
+  not on the release branches, and carried by both floor releases, v19.2.7
+  and v20.2.4; not found by us. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - On a bucket with MFA delete enabled, `RGWDeleteMultiObj::execute` asks
     for a verified MFA token when the request names a version. v19.2.6
@@ -8572,26 +8708,27 @@ Every new entry adds its row to this table, in document order.
     `!i.instance.empty()`; v20.2.1 through v20.2.4 carry the inversion.
   - Squid's backport of conditional delete,
     [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (merged
-    a742f50616e, after v19.2.6), carries it too, as ce98cebb815: the squid
-    branch tests `instance.empty()` (`rgw_op.cc:7071` at a742f50616e). No
-    v19.2.x tag contains ce98cebb815.
+    a742f50616e, after v19.2.6), carries it too, as ce98cebb815, which is
+    in v19.2.7: v19.2.7 tests `instance.empty()`, as v20.2.4 does
+    (`src/rgw/rgw_op.cc:7067-7081@v19.2.7`, against
+    `src/rgw/rgw_op.cc:7969-7983@v20.2.4`).
   - b703ec465f3, "rgw: fix inverted MFA check in DeleteMultiObj", restores
-    the test on main. The tentacle branch (7411a080411, 2026-09-30) and the
-    squid branch (a742f50616e) still carry the inversion.
+    the test on main. The tentacle branch (ab83d026c29, 2026-10-12) and the
+    squid branch (226f1401666, 2026-10-12) still carry the inversion.
   - DeleteObject's own check is unaffected (`rgw_op.cc:5548-5553` at
     v20.2.4).
 - **Impact:** on an affected gateway, a DeleteObjects on a bucket with MFA
   delete whose every key names a version deletes those versions without
   MFA, which MFA delete exists to prevent; one that names a key without a
   version is refused unless MFA verified, which S3 does not ask for.
-- **Releases:** only Tentacle's v20.2.1 through v20.2.4 (f28f0d9147d is
-  first in v20.2.1), checked at v20.2.0 and v20.2.4; the squid branch after
-  v19.2.6, in no release yet. v19.2.6 is not affected.
-- **rgw-go:** checks as v19.2.6 and main do, on both releases, so on
-  Tentacle it uses main's corrected check. It verifies no MFA token, so it
-  refuses every DeleteObjects naming a version on such a bucket
-  (`internal/op/deleteobjects.go`; `docs/exclusions.md`, "Deletes that
-  need MFA are refused").
+- **Releases:** v19.2.7, and Tentacle's v20.2.1 through v20.2.4
+  (f28f0d9147d is first in v20.2.1), checked at v20.2.0 and v20.2.4.
+  v19.2.6 is not affected.
+- **rgw-go:** checks as v19.2.6 and main do, on both releases, so it uses
+  main's corrected check where v19.2.7 and v20.2.4 carry the inversion. It
+  verifies no MFA token, so it refuses every DeleteObjects naming a
+  version on such a bucket (`internal/op/deleteobjects.go`;
+  `docs/exclusions.md`, "Deletes that need MFA are refused").
 - **Upstream:** [#77869](https://tracker.ceph.com/issues/77869), fixed on
   main by [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821)
   (merge 8131835af85). The backport tracker,
@@ -9000,7 +9137,10 @@ Every new entry adds its row to this table, in document order.
     when a renewal failed (merge c1f7de9e4e6, not an ancestor of v20.2.4).
 - **Impact:** a completed object whose data the GC removes; reached only by
   a completion slower than `rgw_mp_lock_max_time`.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.6, v19.2.7 and v20.2.4. v19.2.7 still takes the lock
+  once for `rgw_mp_lock_max_time` and never renews it
+  (`src/rgw/rgw_op.cc:6431-6438@v19.2.7`,
+  `src/rgw/driver/rados/rgw_sal_rados.cc:3754-3764@v19.2.7#MPRadosSerializer::try_lock`).
 - **rgw-go:** renews the lock with `LOCK_FLAG_MUST_RENEW` just before the
   head write and answers the same 500 when it no longer holds it
   (`Store.renewAndRecord`, `internal/driver/mp_cleanup.go`; `docs/exclusions.md`,
@@ -9102,8 +9242,8 @@ Every new entry adds its row to this table, in document order.
 
 ## Squid answers a re-sent CompleteMultipartUpload of a finished upload with an empty ETag
 
-- **Kind:** defect, fixed on main and both release branches; in no Squid
-  tag through v19.2.6. A client that retries a completion whose response it
+- **Kind:** defect, fixed on main and both release branches, and first in a
+  Squid tag in v19.2.7. A client that retries a completion whose response it
   lost gets 200 with an empty quoted ETag, `<ETag>&quot;&quot;</ETag>` on
   the wire. Unreproduced here: derived from the source; upstream reported
   it first.
@@ -9120,13 +9260,21 @@ Every new entry adds its row to this table, in document order.
   - At v20.2.4 the same return (`rgw_op.cc:7248-7256`) follows a check that
     sets `etag = oetag` (`:7472`), so Tentacle answers with the stored ETag
     (`rgw_rest_s3.cc:4634`).
+  - v19.2.7 carries 4b567265365, which adds the same assignment: the return
+    (`src/rgw/rgw_op.cc:6441-6444@v19.2.7`) follows a check that sets
+    `etag = oetag`
+    (`src/rgw/rgw_op.cc:6546-6586@v19.2.7#RGWCompleteMultipart::check_previously_completed`,
+    the assignment at `src/rgw/rgw_op.cc:6584@v19.2.7`).
 - **Impact:** a retried completion reports success without the object's
   ETag; a client that records or checks the returned ETag gets `""`. The
   object itself is untouched.
-- **Releases:** v19.2.6; v20.2.4 carries the fix. Fixed on main by
-  565077e2f1c, on the tentacle branch by 4ab2e9722c7 (first in v20.2.3),
-  and on the squid branch by 4b567265365, merged 2026-07-27 and in no tag
-  through v19.2.6.
+- **Releases:** Squid through v19.2.6, checked at v19.2.0 and v19.2.6, and
+  Tentacle v20.2.0 through v20.2.2, whose check sets no `etag`
+  (`src/rgw/rgw_op.cc:7264-7302@v20.2.2#RGWCompleteMultipart::check_previously_completed`);
+  v19.2.7 and v20.2.4 carry the fix. Fixed on main by 565077e2f1c, on the
+  tentacle branch by 4ab2e9722c7 (first in v20.2.3), and on the squid
+  branch by 4b567265365, merged 2026-07-27 (merge cda2ac214b4) and first
+  tagged in v19.2.7.
 - **rgw-go:** reproduces it per release: on Squid it answers the re-sent
   completion 200 with an empty ETag, on Tentacle with the stored one
   (`Store.Complete`, `internal/driver/mp_complete.go`, and
@@ -10142,8 +10290,9 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** the token, and on Squid such a customer key, sit in the
   clear in the object's xattrs, where only a reader of the data pool or of
   `radosgw-admin object stat` sees them; no S3 principal reads them.
-- **Releases:** v19.2.6 for the copy-source key; v19.2.6 and v20.2.4 for
-  the session token.
+- **Releases:** v19.2.6 and v19.2.7 for the copy-source key; v19.2.6,
+  v19.2.7 and v20.2.4 for the session token. v19.2.7's blocklist is
+  v19.2.6's (`src/rgw/rgw_op.h:2181-2186@v19.2.7`).
 - **rgw-go:** does not reproduce it: it applies v20.2.4's blocklist on both
   releases and adds `x-amz-security-token` to it (`requestAttrs`,
   `internal/s3/requestattrs.go`; `docs/exclusions.md`, "Request headers
@@ -11383,12 +11532,14 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's bucket instance metadata put drops the bucket's object lock rule
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed on main and in
-  v19.2.7; the tentacle branch carries the fix, but no Tentacle release
-  does yet: a bucket instance's metadata document has no object lock
-  configuration, so writing one back loses the bucket's default retention.
-  Prior art: upstream reported and fixed it before we met it. Unreproduced:
-  derived from the source.
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a bucket instance's
+  metadata document has no object lock configuration, so writing one back
+  loses the bucket's default retention. Fixed on main and in v19.2.7, and
+  on the tentacle branch, which no Tentacle release carries yet, except
+  for a residual that every fixed tree keeps: a document that enables
+  object lock without `obj_lock` still resets the rule. Prior art: upstream
+  reported and fixed it before we met it; no prior-art search has run for
+  the residual. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - `RGWBucketInfo::dump` writes no `obj_lock`, and `decode_json` reads
@@ -11406,7 +11557,25 @@ Every new entry adds its row to this table, in document order.
     once it is on.
   - main writes and reads `obj_lock` in the bucket instance's JSON
     (commit c2d235788c4, "rgw/multisite: sync bucket obj_lock. add json
-    encoding/decoding to members"); neither release has it.
+    encoding/decoding to members"); v19.2.6 and v20.2.4 do not.
+  - v19.2.7 has it: the dump writes `obj_lock` and the decode reads it, both
+    only when the flags carry `BUCKET_OBJ_LOCK_ENABLED`
+    (`src/rgw/rgw_common.cc:2542-2544@v19.2.7`,
+    `src/rgw/rgw_common.cc:2588-2590@v19.2.7`). A member the document lacks
+    decodes as a default-constructed value
+    (`src/common/ceph_json.h:334-346@v19.2.7`), so a document that enables
+    object lock but carries no `obj_lock`, such as one a v19.2.6 or v20.2.4
+    gateway dumped, still decodes to `RGWObjectLock`'s default, enabled with
+    no rule (`src/rgw/rgw_object_lock.h:102@v19.2.7`), and the put stores
+    it (`src/rgw/driver/rados/rgw_bucket.cc:2866-2887@v19.2.7#RGWMetadataHandlerPut_BucketInstance::put_checked`).
+  - main and the tentacle branch keep the same residual: the same
+    flag-gated decode (`src/rgw/rgw_common.cc:2663-2665@v21.0.0`, and at the
+    clone's heads, 2026-10-12, `src/rgw/rgw_common.cc:2740-2742@292995374d9`
+    on main and `src/rgw/rgw_common.cc:2653-2655@ab83d026c29` on tentacle),
+    the same default for a missing member
+    (`src/common/ceph_json.h:348-350@292995374d9`,
+    `src/common/ceph_json.h:347-349@ab83d026c29`), and a put that carries no
+    stored rule over (`src/rgw/driver/rados/rgw_bucket.cc:3036-3071@292995374d9#RGWBucketInstanceMetadataHandler::put`).
 - **Impact:** a metadata get and put of a bucket instance, through
   `radosgw-admin metadata get` and `put`, the admin API's metadata routes,
   or multisite metadata sync to another zone, removes the bucket's default
@@ -11414,7 +11583,10 @@ Every new entry adds its row to this table, in document order.
   retention, while the bucket still reports object lock enabled. Admin and
   sync only; it weakens a WORM bucket.
 - **Releases:** Squid through v19.2.6 and Tentacle through v20.2.4. The
-  fix is first tagged in v19.2.7, and on main in v21.0.0.
+  fix is first tagged in v19.2.7, and on main in v21.0.0. The residual, for
+  a document that enables object lock without `obj_lock`, is in v19.2.7,
+  in main from v21.0.0 on and on the tentacle branch (checked at
+  292995374d9 and ab83d026c29, 2026-10-12).
 - **rgw-go:** does not reproduce it. A put over a stored instance keeps
   its object lock configuration, and one that would turn object lock off
   answers 400 InvalidArgument (`keepInstance`, `internal/driver/metadata.go`;
@@ -11436,9 +11608,15 @@ Every new entry adds its row to this table, in document order.
   [#73068](https://tracker.ceph.com/issues/73068), was rejected. The fix
   decodes `obj_lock` only when the document's flags enable object lock,
   so a document without `BUCKET_OBJ_LOCK_ENABLED` still turns object lock
-  off. rgw-bug-reproduction's triage, 2026-10-12, found the prior art.
+  off, and one with the flag but without `obj_lock` still resets the rule.
+  rgw-bug-reproduction's triage, 2026-10-12, found the prior art. The
+  residual, whose fix belongs on main: pending; sent to the project's
+  bug-reproduction triage.
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, writing the bucket
-  instance's JSON decoder; derived from the source, not reproduced.
+  instance's JSON decoder; derived from the source, not reproduced. The
+  residual: phase 2 planning, the Squid floor's move to v19.2.7,
+  2026-10-13, and its reach to main and tentacle in that task's review;
+  derived from the source, not reproduced.
 
 ## radosgw's metadata put writes a document's attrs raw, the object's version among them
 
@@ -11769,8 +11947,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw fails a write whose bucket was resharded since the request read it
 
-- **Kind:** defect, unfixed at v19.2.6 and v20.2.4: a write fails with a
-  404 where it could re-read the bucket. Not security-relevant.
+- **Kind:** defect, unfixed at v19.2.6 and v20.2.4, fixed in v19.2.7 and on
+  main: a write fails with a 404 where it could re-read the bucket. Not
+  security-relevant. Prior art: upstream fixed it before we met it.
   Unreproduced on radosgw: derived from the source, and met by rgw-go's
   driver, which sends the same requests, on a v19.2.6 cluster.
 - **Evidence:** paths are under `src/rgw/driver/rados/`; a pair of line
@@ -11797,20 +11976,45 @@ Every new entry adds its row to this table, in document order.
     PutObjects, each reading the bucket through the cache the reshard's
     notify invalidates, one failed with ENOENT on
     `.dir.<bucket id>.5`, a shard of the index the reshard had removed.
+  - v19.2.7 carries the fix, 596eaf34725, "rgw/reshard: bucket reshard may
+    race with bucket index update": both guards retry an ENOENT within
+    NUM_RESHARD_RETRIES, ten
+    (`src/rgw/driver/rados/rgw_rados.cc:7225-7230@v19.2.7`, the bound at
+    `src/rgw/driver/rados/rgw_rados.cc:7216@v19.2.7`;
+    `src/rgw/driver/rados/rgw_rados.cc:7929-7933@v19.2.7`), and the retry
+    re-reads the bucket instance, since `init_bs` passes the target's
+    bucket info (`src/rgw/driver/rados/rgw_rados.h:947-955@v19.2.7`) to the
+    `BucketShard::init` that reads it
+    (`src/rgw/driver/rados/rgw_rados.cc:2804-2830@v19.2.7`). The prepare
+    takes that guard (`src/rgw/driver/rados/rgw_rados.cc:7289-7291@v19.2.7`).
+    v20.2.4's guard still breaks on any answer but busy-resharding
+    (`src/rgw/driver/rados/rgw_rados.cc:7888-7891@v20.2.4`).
 - **Impact:** a PUT, DELETE, CopyObject or attribute change in flight
   across a reshard's commit can fail with 404 NoSuchKey, and the client
   must send it again. The window is short for a small write, but a PUT
   loads the bucket before its body arrives and prepares only after it, so
   a large upload spans the commit of any reshard that finishes meanwhile,
   dynamic resharding's among them, and is lost at its end.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.6 and v20.2.4. Fixed in v19.2.7 by 596eaf34725, and
+  on the tentacle branch by 183829b915c, which no tag carries (checked at
+  ab83d026c29, 2026-10-12); on main by e34067f8cea, first tagged in
+  v21.0.0.
 - **rgw-go:** reproduces it: `indexOp.guardReshard`
   (`internal/driver/indexop.go`) re-reads the bucket on a busy answer
   alone, as `guard_reshard` does, so rgw-go answers such a write 404
   NoSuchKey too.
-- **Upstream:** pending: rgw-bug-reproduction will classify it.
+- **Upstream:** fixed before we met it, by e34067f8cea on main through
+  [ceph/ceph#66553](https://github.com/ceph/ceph/pull/66553) (merge
+  bc119378344, 2026-02-12), with the backports
+  [ceph/ceph#70498](https://github.com/ceph/ceph/pull/70498) (squid, merge
+  fdbef6c8b7f, 2026-07-30, first tagged in v19.2.7) and
+  [ceph/ceph#70497](https://github.com/ceph/ceph/pull/70497) (tentacle,
+  merge 5fb187aabab, 2026-08-20, in no tag), read from the merge commits in
+  the ceph git history. No commit or merge names a tracker issue; the
+  tracker search is pending.
 - **Found:** phase 1 unit W, Task 12, 2026-10-08, in the reshard oracle's
-  run under `make integration`.
+  run under `make integration`. Its upstream fix: phase 2 planning, the
+  Squid floor's move to v19.2.7, 2026-10-13.
 
 ## radosgw's removal of an account user leaves the bucket list its quota sync wrote
 
@@ -12615,3 +12819,122 @@ Every new entry adds its row to this table, in document order.
   round, and the adoption of a listed instance another owner holds and
   the name pointed back at a stale instance in its review; derived from
   the source, not reproduced on a running cluster.
+
+## radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule
+
+- **Kind:** defect, fixed in v19.2.7, unfixed through v20.2.4; the tentacle
+  branch carries the fix, but no Tentacle tag does. An S3-correctness
+  defect, not security-relevant: a response header names the wrong rule
+  and date. Prior art: upstream reported and fixed it before we met it.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `s3_expiration_header` computes each matching rule's date from its
+    Expiration when the key it is given has no instance, and from its
+    NoncurrentVersionExpiration otherwise
+    (`src/rgw/rgw_lc.cc:2846-2849@v19.2.6`,
+    `src/rgw/rgw_lc.cc:2913-2928@v20.2.4`).
+  - The REST helper gives it the object's key
+    (`src/rgw/rgw_rest_s3.cc:117-123@v20.2.4`), into which the read has
+    written the instance it resolved
+    (`src/rgw/driver/rados/rgw_sal_rados.cc:2859-2863@v19.2.6`,
+    `src/rgw/driver/rados/rgw_sal_rados.cc:3695-3699@v20.2.4`). So a GET or
+    HEAD that names no version is judged as a request for a noncurrent one
+    whenever the current version has a version id. A null current version,
+    written before versioning was enabled, keeps an empty instance and is
+    judged by its Expiration rule.
+  - The fix, 4dac1850993, "rgw/lc: report x-amz-expiration only for the
+    current version" (the squid pick of main's 960b330d87d), returns no
+    header for a request that names a version and takes the date from the
+    Expiration rule alone
+    (`src/rgw/rgw_lc.cc:2750-2888@v19.2.7#s3_expiration_header`, the checks
+    at `src/rgw/rgw_lc.cc:2766-2767@v19.2.7` and
+    `src/rgw/rgw_lc.cc:2852@v19.2.7`), and its helper passes the key with
+    the request's own versionId (`src/rgw/rgw_rest_s3.cc:112-126@v19.2.7`).
+- **Impact:** on v19.2.6 and v20.2.4, a GET or HEAD of a version that has
+  a version id reports the expiry date and rule id of a
+  NoncurrentVersionExpiration rule as the object's x-amz-expiration, and
+  not its Expiration rule. That holds whether the request names the
+  version or reaches it as the current one. A null current version reached
+  without a versionId is judged by its Expiration rule. The objects
+  themselves expire as their rules say.
+- **Releases:** v19.2.6 and v20.2.4. Fixed in v19.2.7 by 4dac1850993
+  (squid ceph/ceph#70493, merge f70cd9b3af8, 2026-07-30); on the tentacle
+  branch by 30daa120099 (merge 4da10a4c072, 2026-08-20), which no tag
+  carries (checked at ab83d026c29, 2026-10-12); on main by 960b330d87d
+  (merge 5dac2a76694, 2026-07-22), in no tag.
+- **rgw-go:** unaffected before phase 2: it reads no lifecycle
+  configuration and sends x-amz-expiration for no object
+  (`docs/exclusions.md`, "Object read differences", "No
+  x-amz-expiration"). Phase 2's lifecycle is planned to compute the header
+  in v19.2.7's form on both releases.
+- **Upstream:** [#77564](https://tracker.ceph.com/issues/77564), named by
+  the fix commits' `Tracker:` trailer; the fix is
+  [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642) on main, with
+  the backports [ceph/ceph#70493](https://github.com/ceph/ceph/pull/70493)
+  (squid) and [ceph/ceph#70494](https://github.com/ceph/ceph/pull/70494)
+  (tentacle), read from the merge commits in the ceph git history. The
+  tracker's own state is not checked.
+- **Found:** phase 2 planning, the Squid floor's move to v19.2.7,
+  2026-10-13, reading the commits between v19.2.6 and v19.2.7; derived from
+  the source, not reproduced.
+
+## radosgw's lifecycle transition of an encrypted multipart object drops its part lengths
+
+- **Kind:** defect, silent data corruption on read: a GET of a
+  transitioned encrypted multipart object answers wrong bytes past its
+  first part and reports no error. Fixed in v19.2.7 and v20.2.2. It
+  corrupts what the owner reads back and grants no access. Prior art:
+  upstream reported and fixed it before we met it. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - A GET of an encrypted object decrypts across part boundaries with part
+    lengths it takes from `RGW_ATTR_CRYPT_PARTS` when the object has it,
+    and from the manifest otherwise
+    (`src/rgw/rgw_rest_s3.cc:677-698@v19.2.6#RGWGetObj_ObjStore_S3::get_decrypt_filter`).
+    `read_manifest_parts` starts a part at each stripe 0 of the manifest
+    and returns no error
+    (`src/rgw/rgw_crypt.cc:685-710@v19.2.6#RGWGetObj_BlockDecrypt::read_manifest_parts`).
+  - A lifecycle transition copies the object's stored bytes into a new
+    object of the target storage class with `copy_obj_data`, so its
+    manifest is rewritten and no longer holds the parts
+    (`src/rgw/driver/rados/rgw_rados.cc:5117-5175@v19.2.6#RGWRados::transition_obj`).
+    At v19.2.6, v20.2.0 and v20.2.1 it records no part lengths first, so
+    they are lost.
+  - The fix, b9b65194f64, "rgw: fix lifecycle transition of encrypted
+    multipart objects" (the squid pick of main's 77b86722300), stores the
+    source manifest's part lengths in `RGW_ATTR_CRYPT_PARTS` before the
+    copy (`src/rgw/driver/rados/rgw_rados.cc:5155-5182@v19.2.7#fixup_manifest_to_parts_len`,
+    called at `src/rgw/driver/rados/rgw_rados.cc:5211@v19.2.7`); v20.2.4
+    has it too (`src/rgw/driver/rados/rgw_rados.cc:5388@v20.2.4`, called at
+    `src/rgw/driver/rados/rgw_rados.cc:5444@v20.2.4`).
+- **Impact:** once a lifecycle rule moves an encrypted multipart object to
+  another storage class, its rewritten manifest holds a single part, so a
+  GET decrypts the object as one part: it answers the first part right
+  and every byte after it wrong, and it neither fails nor logs an error.
+  Its stored bytes are intact, but the part lengths their decryption needs
+  are gone. The fix records them only at the transition it performs, so an
+  object an affected gateway transitioned keeps reading back wrong after an
+  upgrade.
+- **Releases:** v19.2.6, v20.2.0 and v20.2.1, checked at those tags; older
+  releases not checked. Fixed in v19.2.7 by b9b65194f64 (squid
+  ceph/ceph#68807, merge b70e8a607e4, 2026-07-28) and in v20.2.2 by
+  ec11f6284d0 (tentacle ceph/ceph#68826, merge 4319b618c80, 2026-05-20);
+  on main by 77b86722300, which came with ceph/ceph#63794 (merge
+  7e15bef2403, 2025-12-01) and is first tagged in v21.0.0.
+- **rgw-go:** unaffected before phase 2: it has no lifecycle transition,
+  and it refuses an encrypted copy source (`copyAttrs`,
+  `internal/driver/copy.go`). Phase 2's transition must record the part
+  lengths as both floors do; it cannot repair an object an affected
+  gateway transitioned.
+- **Upstream:** [#23264](https://tracker.ceph.com/issues/23264), named by
+  the fix commits' `Fixes:` trailer, the server-side encryption work that
+  also fixed "Squid labels a copy to another storage class with its
+  source's class"; the fix came with
+  [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794) on main, with
+  the backports [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807)
+  (squid) and [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826)
+  (tentacle), read from the merge commits in the ceph git history. The
+  tracker's own state is not checked.
+- **Found:** phase 2 planning, the Squid floor's move to v19.2.7,
+  2026-10-13, reading the commits between v19.2.6 and v19.2.7; derived from
+  the source, not reproduced.
