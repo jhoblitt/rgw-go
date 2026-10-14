@@ -1,21 +1,29 @@
 // Command citecheck checks the Ceph source citations in markdown files, such
-// as a plan's or a spec's, against a clone of ceph/ceph at the revision each
-// names, so that a line range that points at the wrong file or the wrong
-// lines is found before work is planned on it, and rewrites the code spans
-// that once cited Ceph into links.
+// as a plan's or a spec's, and in Go files' comments against a clone of
+// ceph/ceph at the revision each names, so that a line range that points at
+// the wrong file or the wrong lines is found before work is planned on it,
+// and rewrites the code spans and plain file:line citations that once cited
+// Ceph into links.
 //
 //	go run ./hack/citecheck [--ceph DIR] [--fix | --form-only] FILE...
 //	make citecheck FILES="FILE..."
 //	make citecheck-fix FILES="FILE..."
 //	make citecheck-links FILES="FILE..."
+//	make citecheck-go PKGS="DIR..."
+//	make citecheck-go-fix PKGS="DIR..."
+//
+// A FILE whose name ends in .go is read as Go source, as Go comments below
+// says; every other is read as markdown. The Go targets read every .go file
+// under each DIR, at any depth, outside testdata directories.
 //
 // --ceph names the clone, /home/jhoblitt/github/ceph by default; it can also
 // come from CITECHECK_CEPH, or from the config file --config (CITECHECK_CONFIG)
 // names, under the key ceph. The command line wins over the environment, and
 // the environment over the file. --fix (CITECHECK_FIX; make citecheck-fix)
-// rewrites code span citations into links, as Rewriting below says.
-// --form-only (CITECHECK_FORM_ONLY; make citecheck-links) checks only what
-// needs no clone, so that CI can run it; it cannot be combined with --fix.
+// rewrites code span citations into links, as Rewriting below says, and
+// plain citations in Go comments, as Go comments says. --form-only
+// (CITECHECK_FORM_ONLY; make citecheck-links) checks only what needs no
+// clone, so that CI can run it; it cannot be combined with --fix.
 // The --log-level (debug, info, warn or error; info by default;
 // CITECHECK_LOG_LEVEL) and --log-format (json or text; json by default;
 // CITECHECK_LOG_FORMAT) flags set the logger, which writes to stderr. The
@@ -179,26 +187,157 @@
 // place, after every file is checked, only when a span in it was rewritten.
 // A second run rewrites nothing.
 //
+// # Go comments
+//
+// In a .go file only // comments are read, as go/scanner finds them: not a
+// string; not a cgo preamble, C code, whether a block comment or // lines
+// right above an import of "C"; not a block comment at all; not a directive
+// such as //go:build or //nolint, nor a line with no blank after its "//";
+// and not a code block, the indented lines that do not start a list item.
+// Each link in them is a citation, checked as a markdown link is. A plain
+// citation is a file and lines, or lines alone, a continuation of a file
+// named before it, either with an optional [S] or [T] marker on its lines:
+//
+//	rgw_op.cc:5158-5163
+//	driver/rados/rgw_rados.cc [T]:6847
+//	:6884-6890
+//
+// A file is a path whose last segment ends in .cc, .h, .hpp, .c, .py, .go,
+// .yaml.in, .yaml, .yml, .sh, .txt, .json, .cmake or .proto, and neither it
+// nor a continuation touches a path or identifier byte, or a bracket for a
+// continuation, so that a slice expression is none. It cites ceph when its
+// file, or a continuation's nearest candidate file (below), is a file in the
+// clone at its ref or at v19.2.6 or v20.2.4, the releases [S] and [T] name,
+// and so does a continuation that follows no file but follows a header
+// convention (below). Any other, such as rgw-go's own bucketops.go or
+// internal/driver/put.go, a Go standard library file, or a port written as a
+// line number, is not a citation and is left alone. Without --fix a plain
+// citation of ceph fails as not a link. Under --form-only, which has no
+// clone, one fails so when its file is not a Go file and the rules below
+// give it a ref; one with no ref is not judged.
+//
+// --fix resolves each into the raw link to its lines at its ref, which it
+// writes in the citation's place. A comment is a run of // lines with nothing
+// else on them, or a single comment after code, and a paragraph of one is
+// read with its lines joined by single blanks:
+//
+//   - ref, the first rule that gives one: an "at", "in" or "on" and a tag
+//     after it, past any citations listed with it by blanks, commas, "and"
+//     or "or", or after the comma that closes them; "at both tags", which is
+//     v19.2.6 when the cited lines are the same at v19.2.6 and v20.2.4; its
+//     own [S] or [T]; the last marker or tag in its clause before it, the
+//     clause cut at the last "(", ";" or ". " and an "at <tag>" that leads it
+//     left to the citation before, unless the clause names another release
+//     too, by tag, marker or codename, and the last is not right before it,
+//     which leaves it with none; the one release, by tag, marker or codename
+//     (Squid, Tentacle), the words before the "(" it opens name, back to the
+//     last citation, "(", ")", ". ", ";" or ","; for a continuation, the ref
+//     of the citation it is listed after, though not past that citation's
+//     own "at <tag>"; and the file's header convention, the nearest comment
+//     above it saying what a bare line number means. A header that names a
+//     file gives its tag only to a citation that turns out to be of that
+//     file. With none it is unresolved: there is no default ref.
+//   - file: a continuation's candidates are, nearest first, the citations
+//     and the file names without lines before it in its comment, then the
+//     file the header convention names or, when it names none, those its
+//     paragraph names before it.
+//   - path: the one path in the clone at the ref that is the written path or
+//     ends in "/" and it; of several, those under src/rgw/ and src/cls/ when
+//     any is; of several still, the one whose cited lines hold an identifier
+//     named beside the citation.
+//   - content: when identifiers are named beside it, within 220 bytes before
+//     it and 100 after, one must stand as a whole word in the cited lines or
+//     the 3 either side or, for a citation that names its file and for a
+//     continuation's nearest candidate, in the header of a block that
+//     encloses them, as a function's does its body. A continuation takes the
+//     first candidate file where one does, and with no identifier its
+//     nearest, unless its clause names two files or more and its own is not
+//     named right before it, which leaves it unresolved; it moves past the
+//     first file it tries only on the cited lines
+//     and the 3 either side, and only for a strong identifier, one with an
+//     "_", a lower-case letter before a capital, or ten bytes or more, so a
+//     generic name, such as a base class's, never moves it. An identifier is
+//     any name in backticks, and outside them a name with an "_", a
+//     lower-case letter before a capital, or two capitals and a lower-case
+//     letter first, less a few stop words and less the names that are
+//     rgw-go's: every identifier the Go file's own code writes, and every
+//     name a package the file imports qualifies, as op.UserStore.
+//
+// So these read as at the refs on their right, the continuations as in
+// rgw_op.cc, with no header convention:
+//
+//	rgw_op.cc:5158-5163 at v20.2.4    v20.2.4
+//	rgw_op.cc:10 and :20 at v20.2.4   v20.2.4 for both
+//	rgw_op.cc:10, :20, at v20.2.4     v20.2.4 for both
+//	rgw_op.cc [T]:10                  v20.2.4
+//	(rgw_op.cc:10; v20.2.4 :12)       none, then v20.2.4
+//	rgw_op.cc:10 at v19.2.6, :12      v19.2.6, then none
+//	[T] rgw_op.cc:10, :12             v20.2.4 for both
+//	as v20.2.4 does (rgw_op.cc:10)    v20.2.4
+//
+// and these are header conventions:
+//
+//	A bare line number below is v19.2.6's.
+//	A bare line number below is v19.2.6's rgw_op.cc.
+//	A bare line number is rgw_op.cc's at v19.2.6.
+//	A bare rgw_op.cc line is v19.2.6's.
+//
+// A citation is unresolved, left as it is and listed with why, when it has
+// no ref, or only a header's that names another file, or only a clause's
+// that names two releases; when its ref names no commit in the clone; when
+// its paragraph names rook, go-ceph or s3-tests, whose files the clone does
+// not hold; when only the header convention gives its ref and the words that
+// lead to it, back to the last citation, ". ", ";" or ",", name another
+// release, by tag, marker or codename; when it is cited at both tags and its
+// lines differ between them; when it is a continuation with no candidate
+// file, or with no identifier beside it in a clause that names two files;
+// when its file is no file at the ref, or several that no identifier tells
+// apart; when the lines hold no identifier named beside it; and when its
+// link fails a check a link must pass, such as lines past the file's end.
+//
+// The text around a link is kept, an "at <tag>" after it included, but a
+// marker that gave citations their ref, with the blanks after it, is dropped
+// once each of them is a link, and so is every other citation listed after
+// the first, and only blanks or a "(" stand between the marker and the
+// first. A paragraph a link is written into is rewrapped to the width of
+// its widest line, in runes, a word wider than that on a line of its own,
+// where a link and the "at <tag>" or "at both tags" right after it are one
+// word; the lines before the first link are kept, and so are those after
+// the last once the new lines end where an old line did. A list item, a
+// heading, a comment after code, and a paragraph whose lines' prefixes
+// differ or that holds a tab or two blanks running are not rewrapped: the
+// link is written in place, a citation there that runs across a line break
+// is listed instead, and a marker that would run across one is kept. Nor is
+// a paragraph rewrapped when a line of the rewrap would read as a list item,
+// a heading or a link definition. When the file was gofmt-clean and the
+// rewrapping leaves it not, its links are written in place instead, and when
+// that leaves it not clean either, none is written. A second run rewrites
+// nothing.
+//
 // # Output
 //
 // citecheck prints a line for each citation that fails,
 //
 //	FILE:LINE: <citation>: <reason>
 //
-// where FILE is as given, LINE is the markdown line the citation starts on
-// and the citation is as written, then citations checked: N, failed: M, and
-// under --fix rewritten: K, the code span citations it rewrote. It exits 0
+// where FILE is as given, LINE is the line the citation starts on and the
+// citation is as written, then citations checked: N, failed: M, and under
+// --fix rewritten: K, the code span and plain citations it rewrote. With
+// --log-level debug, each plain citation --fix resolves in a Go file is
+// logged with its file and line, its ref and the rule that gave it, its
+// path, the identifiers its lines were checked for, and the files and
+// releases its clause names. It exits 0
 // when none fails, 1 when one does, and 2 for a refused command line, a file
 // it cannot read or, under --fix, write, a clone that is not a git
 // repository or is a partial one, or a git that cannot answer. go run
 // reports any nonzero status as 1, and make any failed recipe as 2, so a
 // caller that tells the statuses apart runs a binary go build made. Every
-// file is read before any is checked. git is run only as rev-parse, config
-// and cat-file, which never check out or change a full clone, and each ref
-// is resolved and each file read once. A partial clone, one whose
-// extensions.partialClone is set or one of whose remotes is a promisor, is
-// refused, since git cat-file fetches an object such a clone lacks from the
-// remote and writes it into the clone.
+// file is read before any is checked. git is run only as rev-parse, config,
+// cat-file and ls-tree, which never check out or change a full clone, and
+// each ref is resolved, each file read and each tree listed once. A partial
+// clone, one whose extensions.partialClone is set or one of whose remotes
+// is a promisor, is refused, since git cat-file fetches an object such a
+// clone lacks from the remote and writes it into the clone.
 //
 // Managed by go-conventions (references/layout.md owns the main shape).
 package main

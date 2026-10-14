@@ -52,13 +52,13 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	v := viper.New()
 	cmd := &cobra.Command{
 		Use:           "citecheck [--ceph DIR] [--fix | --form-only] FILE...",
-		Short:         "Check the Ceph source citations in markdown files against a ceph/ceph clone",
+		Short:         "Check the Ceph source citations in markdown files and Go comments against a ceph/ceph clone",
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return errors.New("no markdown file given")
+				return errors.New("no file given")
 			}
 			return nil
 		},
@@ -92,7 +92,8 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("log-format", "json", "log format: json or text (CITECHECK_LOG_FORMAT)")
 	f := cmd.Flags()
 	f.String("ceph", defaultCeph, "the clone of ceph/ceph to check against (CITECHECK_CEPH)")
-	f.Bool("fix", false, "rewrite each code span citation that holds into a link, in place (CITECHECK_FIX)")
+	f.Bool("fix", false, "rewrite each code span citation that holds, and each plain citation in a Go comment that resolves, "+
+		"into a link, in place (CITECHECK_FIX)")
 	f.Bool("form-only", false, "check only the citations' form, without a clone (CITECHECK_FORM_ONLY)")
 	return cmd
 }
@@ -158,11 +159,15 @@ const (
 // notALink is why a code span citation fails, unless --fix rewrites it.
 const notALink = "not a link"
 
+// isGo reports whether a file is Go source, whose comments are read for
+// citations, rather than markdown.
+func isGo(name string) bool { return strings.HasSuffix(name, ".go") }
+
 // check reads every file before it checks any, so that a file that cannot
 // be read refuses the run before anything is printed, then prints each
 // citation that does not hold and the count of those checked and failed.
-// Under fix it then writes back each file it rewrote a code span citation
-// in, and counts the citations rewritten.
+// Under fix it then writes back each file it rewrote a citation in, and
+// counts the citations rewritten.
 func check(ctx context.Context, ceph string, m mode, files []string, out io.Writer) error {
 	docs := make([][]byte, len(files))
 	for i, name := range files {
@@ -180,8 +185,22 @@ func check(ctx context.Context, ceph string, m mode, files []string, out io.Writ
 		}
 	}
 	checked, failed, rewritten := 0, 0, 0
-	edits := make([][]edit, len(files))
+	outs, counts := make([][]byte, len(files)), make([]int, len(files))
 	for i, name := range files {
+		if isGo(name) {
+			res, err := checkGo(ctx, c, m, name, docs[i])
+			if err != nil {
+				return fmt.Errorf("%s:%w", name, err)
+			}
+			checked += res.checked
+			for _, f := range res.failures {
+				failed++
+				fmt.Fprintf(out, "%s:%d: %s: %s\n", name, f.line, f.text, f.reason)
+			}
+			outs[i], counts[i] = res.out, res.rewritten
+			continue
+		}
+		var edits []edit
 		cites := Scan(docs[i])
 		for k := range cites {
 			cite := &cites[k]
@@ -200,21 +219,23 @@ func check(ctx context.Context, ceph string, m mode, files []string, out io.Writ
 				if err != nil {
 					return fmt.Errorf("%s:%d: %w", name, cite.Line, err)
 				}
-				edits[i] = append(edits[i], edit{start: cite.Start, end: cite.End, text: link})
+				edits = append(edits, edit{start: cite.Start, end: cite.End, text: link})
 			}
+		}
+		if len(edits) > 0 {
+			outs[i], counts[i] = rewrite(docs[i], edits), len(edits)
 		}
 	}
 	for i, name := range files {
-		if len(edits[i]) == 0 {
+		if outs[i] == nil {
 			continue
 		}
 		// The file exists, so WriteFile keeps its mode.
-		if err := os.WriteFile(name, rewrite(docs[i], edits[i]), 0o600); err != nil {
+		if err := os.WriteFile(name, outs[i], 0o600); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
-		rewritten += len(edits[i])
-		slog.InfoContext(ctx, "rewrote code span citations into links", slog.String("file", name),
-			slog.Int("rewritten", len(edits[i])))
+		rewritten += counts[i]
+		slog.InfoContext(ctx, "rewrote citations into links", slog.String("file", name), slog.Int("rewritten", counts[i]))
 	}
 	if m == fix {
 		fmt.Fprintf(out, "citations checked: %d, failed: %d, rewritten: %d\n", checked, failed, rewritten)

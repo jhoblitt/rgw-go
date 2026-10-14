@@ -1,8 +1,9 @@
-// Package citecheck finds the Ceph source citations in markdown files,
-// checks each against a clone of ceph/ceph at the release it names, and
-// rewrites the code spans that cite Ceph into links. hack/citecheck's package
-// doc is the home of the citation form, of what is checked and of what is
-// not.
+// Package citecheck finds the Ceph source citations in markdown files and
+// in Go files' comments, checks each against a clone of ceph/ceph at the
+// release it names, and rewrites the code spans and plain file:line
+// citations that cite Ceph into links. hack/citecheck's package doc is the
+// home of the citation form, of what is checked, of how a plain citation is
+// resolved and of what is not.
 package citecheck
 
 import (

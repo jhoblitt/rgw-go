@@ -127,7 +127,7 @@ var _ = Describe("Run", func() {
 			Expect(err).To(MatchError(ContainSubstring(want)))
 			Expect(stdout.String()).To(BeEmpty())
 		},
-		Entry("no file", "no markdown file given"),
+		Entry("no file", "no file given"),
 		Entry("an unknown flag", "unknown flag: --nope", "--nope", "plan.md"),
 		Entry("an unknown log format", `unknown log format "xml"`, "--log-format", "xml", "plan.md"),
 		Entry("--fix with --form-only", "--fix and --form-only cannot be combined", "--fix", "--form-only", "plan.md"),

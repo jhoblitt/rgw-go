@@ -10,18 +10,22 @@ import (
 	"io/fs"
 	"log/slog"
 	"os/exec"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 // Checker checks citations against a clone of ceph/ceph. It reads the clone
-// only through git rev-parse, git config and git cat-file, and caches every
-// ref it resolves and every file it reads, so that each is asked of git once.
+// only through git rev-parse, git config, git cat-file and git ls-tree, and
+// caches every ref it resolves, every file it reads and every tree it lists,
+// so that each is asked of git once.
 type Checker struct {
 	dir   string
 	refs  map[string]resolved
 	files map[string]object
+	// trees holds each listed commit's file paths by base name.
+	trees map[string]map[string][]string
 }
 
 // resolved is what a citation's ref names: a commit, or why it names none.
@@ -52,7 +56,32 @@ func NewChecker(ctx context.Context, dir string) (*Checker, error) {
 		return nil, fmt.Errorf("%s is a partial clone (%s), which git would fetch the objects it lacks into: "+
 			"check against a full clone", dir, why)
 	}
-	return &Checker{dir: dir, refs: map[string]resolved{}, files: map[string]object{}}, nil
+	return &Checker{dir: dir, refs: map[string]resolved{}, files: map[string]object{}, trees: map[string]map[string][]string{}}, nil
+}
+
+// filesNamed returns the paths at commit of the files that name, a path
+// or a base name, names: name itself, and every path that ends in "/" and
+// name.
+func (c *Checker) filesNamed(ctx context.Context, commit, name string) ([]string, error) {
+	byBase, ok := c.trees[commit]
+	if !ok {
+		out, err := git(ctx, c.dir, nil, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", commit)
+		if err != nil {
+			return nil, err
+		}
+		byBase = map[string][]string{}
+		for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
+			byBase[path.Base(p)] = append(byBase[path.Base(p)], p)
+		}
+		c.trees[commit] = byBase
+	}
+	var paths []string
+	for _, p := range byBase[path.Base(name)] {
+		if p == name || strings.HasSuffix(p, "/"+name) {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
 }
 
 // partialClone returns which setting makes dir a partial clone, or "".
