@@ -23,23 +23,37 @@ type edit struct {
 // error means the link would not read back as the span's citation, which is
 // a bug, not a wrong citation.
 func linkFor(c Citation) (string, error) {
-	lines, anchor := strconv.Itoa(c.From), "L"+strconv.Itoa(c.From)
+	lines := strconv.Itoa(c.From)
 	if c.To != c.From {
 		lines += "-" + strconv.Itoa(c.To)
+	}
+	link := "[" + linkText(path.Base(c.Path)+":"+lines) + "](" + citationURL(c) + ")"
+	if !readsBack(link, c) {
+		return "", fmt.Errorf("the link %s written for %s reads back as another citation", link, c.Text)
+	}
+	return link, nil
+}
+
+// citationURL returns the GitHub URL of a citation's lines at its ref, each
+// segment of its path percent-encoded, as GitHub needs a "%" or a "|" to be.
+func citationURL(c Citation) string {
+	anchor := "L" + strconv.Itoa(c.From)
+	if c.To != c.From {
 		anchor += "-L" + strconv.Itoa(c.To)
 	}
 	segments := strings.Split(c.Path, "/")
 	for i, s := range segments {
 		segments[i] = url.PathEscape(s)
 	}
-	link := "[" + linkText(path.Base(c.Path)+":"+lines) + "](https://github.com/ceph/ceph/blob/" + c.Ref + "/" +
-		strings.Join(segments, "/") + "#" + anchor + ")"
-	back, _ := links(link, c.Line)
-	if len(back) != 1 || back[0].Problem != "" || back[0].Ref != c.Ref || back[0].Path != c.Path ||
-		back[0].From != c.From || back[0].To != c.To {
-		return "", fmt.Errorf("the link %s written for %s reads back as another citation", link, c.Text)
-	}
-	return link, nil
+	return "https://github.com/ceph/ceph/blob/" + c.Ref + "/" + strings.Join(segments, "/") + "#" + anchor
+}
+
+// readsBack reports whether text holds exactly one link, and it to c's
+// lines at c's ref.
+func readsBack(text string, c Citation) bool {
+	back, _ := links(text, c.Line)
+	return len(back) == 1 && back[0].Problem == "" && back[0].Ref == c.Ref && back[0].Path == c.Path &&
+		back[0].From == c.From && back[0].To == c.To
 }
 
 // linkText escapes what markdown would read in a link's text as more than

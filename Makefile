@@ -145,6 +145,19 @@ MARKDOWN = $(shell git ls-files '*.md')
 citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
 	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
+# The Go files under the PKGS directories, at any depth, outside testdata.
+CITECHECK_GO_FILES = $(if $(PKGS),$(shell find $(PKGS) -name '*.go' -not -path '*/testdata/*' | sort))
+
+.PHONY: citecheck-go
+citecheck-go: ## Check the Ceph source citations in the Go comments under the PKGS directories: make citecheck-go PKGS="internal/driver ..."
+	@test -n "$(PKGS)" || { echo "set PKGS to the directories whose Go comments to check" >&2; exit 1; }
+	go run ./hack/citecheck $(CITECHECK_GO_FILES)
+
+.PHONY: citecheck-go-fix
+citecheck-go-fix: ## Rewrite the plain Ceph citations in the Go comments under the PKGS directories into links, in place: make citecheck-go-fix PKGS="internal/driver ..."
+	@test -n "$(PKGS)" || { echo "set PKGS to the directories whose Go comments to rewrite" >&2; exit 1; }
+	go run ./hack/citecheck --fix $(CITECHECK_GO_FILES)
+
 .PHONY: check
 check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check test ## The local gate
 
