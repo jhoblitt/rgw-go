@@ -86,18 +86,28 @@ func gitConfig(ctx context.Context, dir string, args ...string) (out string, fou
 	return strings.TrimSpace(out), err == nil, err
 }
 
-// Check returns why a citation is wrong, or "" when it holds. An error means
-// git could not answer, not that the citation is wrong.
-func (c *Checker) Check(ctx context.Context, cite Citation) (string, error) {
+// formProblem returns why a citation's form is wrong, or "" when it is
+// right: the checks that need no clone, that it is well formed, that its
+// lines run forwards from 1 and that its path is clean.
+func formProblem(cite Citation) string {
 	switch {
 	case cite.Problem != "":
-		return cite.Problem, nil
+		return cite.Problem
 	case cite.From < 1:
-		return "line 0 does not exist: lines count from 1", nil
+		return "line 0 does not exist: lines count from 1"
 	case cite.From > cite.To:
-		return fmt.Sprintf("lines %d-%d run backwards", cite.From, cite.To), nil
+		return fmt.Sprintf("lines %d-%d run backwards", cite.From, cite.To)
 	case !fs.ValidPath(cite.Path) || cite.Path == ".":
-		return fmt.Sprintf("path %s is not a clean path from the repository's root", cite.Path), nil
+		return fmt.Sprintf("path %s is not a clean path from the repository's root", cite.Path)
+	}
+	return ""
+}
+
+// Check returns why a citation is wrong, or "" when it holds, whatever its
+// form. An error means git could not answer, not that the citation is wrong.
+func (c *Checker) Check(ctx context.Context, cite Citation) (string, error) {
+	if problem := formProblem(cite); problem != "" {
+		return problem, nil
 	}
 	ref, err := c.resolve(ctx, cite.Ref)
 	if err != nil {

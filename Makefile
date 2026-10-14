@@ -117,12 +117,22 @@ LEDGERS = $(wildcard test/s3tests/baseline/*.json test/admin/baseline/*.json)
 ledger-check: ## Fail when a parity ledger breaks its schema or the reason rule
 	go run ./hack/parity validate $(LEDGERS)
 
-# hack/citecheck's package doc owns the citation forms and what is checked;
-# CITECHECK_CEPH names a clone other than its default.
+# hack/citecheck's package doc owns the citation form, what is checked and
+# what --fix rewrites; CITECHECK_CEPH names a clone other than its default.
 .PHONY: citecheck
 citecheck: ## Check the Ceph source citations in markdown FILES at the revisions they name: make citecheck FILES="docs/superpowers/plans/x.md ..."
 	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
 	go run ./hack/citecheck $(FILES)
+
+.PHONY: citecheck-fix
+citecheck-fix: ## Rewrite the code span citations in markdown FILES that hold into links, in place: make citecheck-fix FILES="docs/x.md ..."
+	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to rewrite" >&2; exit 1; }
+	go run ./hack/citecheck --fix $(FILES)
+
+.PHONY: citecheck-links
+citecheck-links: ## Check, without a ceph clone, that every citation in markdown FILES is a well-formed link: make citecheck-links FILES="docs/x.md ..."
+	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
+	go run ./hack/citecheck --form-only $(FILES)
 
 .PHONY: check
 check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check test ## The local gate
