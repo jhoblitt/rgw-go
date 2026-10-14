@@ -1003,6 +1003,126 @@ var _ = Describe("MetadataStore", func() {
 			Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(MatchError(op.ErrInvalidArgument))
 		})
 
+		Describe("of an object lock configuration", func() {
+			lockOf := func(days int32) meta.ObjectLock {
+				return meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: meta.DefaultRetention{Mode: "COMPLIANCE", Days: days}}}
+			}
+			openAt := func(ctx context.Context, rel denc.Release) {
+				GinkgoHelper()
+				st, err := driver.Open(ctx, c, conf(map[string]string{"rgw_cache_enabled": "false"}), driver.Options{Release: &rel})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(st.Close)
+				s = st
+			}
+			// lockPlain gives plain object lock with a rule of seven days.
+			lockPlain := func(ctx context.Context) string {
+				GinkgoHelper()
+				rec := *plain
+				rec.Info.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
+				rec.Info.SetObjectLock(lockOf(7))
+				Expect(s.PutBucketInfo(ctx, &rec)).To(Succeed())
+				return "plain:" + plain.Info.Bucket.ID
+			}
+			storedLock := func(ctx context.Context, b meta.BucketID) meta.ObjectLock {
+				GinkgoHelper()
+				got, err := s.GetBucketInstance(ctx, b)
+				Expect(err).NotTo(HaveOccurred())
+				l, err := got.Info.ObjectLock()
+				Expect(err).NotTo(HaveOccurred())
+				return l
+			}
+			// withObjLock is the instance document data with its obj_lock
+			// replaced by raw, or removed when raw is nil.
+			withObjLock := func(data, raw json.RawMessage) json.RawMessage {
+				GinkgoHelper()
+				var doc, info map[string]json.RawMessage
+				Expect(json.Unmarshal(data, &doc)).To(Succeed())
+				Expect(json.Unmarshal(doc["bucket_info"], &info)).To(Succeed())
+				Expect(info).To(HaveKey("obj_lock"))
+				if raw == nil {
+					delete(info, "obj_lock")
+				} else {
+					info["obj_lock"] = raw
+				}
+				var err error
+				doc["bucket_info"], err = json.Marshal(info)
+				Expect(err).NotTo(HaveOccurred())
+				out, err := json.Marshal(doc)
+				Expect(err).NotTo(HaveOccurred())
+				return out
+			}
+			// withoutObjLock is data without obj_lock, as a v19.2.6 or
+			// v20.2.4 gateway dumps an instance document.
+			withoutObjLock := func(data json.RawMessage) json.RawMessage {
+				GinkgoHelper()
+				return withObjLock(data, nil)
+			}
+
+			DescribeTable("stores the rule a document carries over a stored instance's",
+				func(ctx SpecContext, rel denc.Release) {
+					openAt(ctx, rel)
+					key := lockPlain(ctx)
+					data, v := instDoc(ctx, key, func(bi *meta.BucketCompleteInfo) { bi.Info.SetObjectLock(lockOf(30)) })
+					Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: data}, op.PutMetadataOptions{IfVersion: &v})).To(Succeed())
+					Expect(storedLock(ctx, plain.Info.Bucket)).To(Equal(lockOf(30)))
+				},
+				Entry("on Squid", denc.Squid),
+				Entry("on Tentacle, where radosgw's put never reads obj_lock", denc.Tentacle),
+			)
+
+			DescribeTable("stores no rule over a stored instance's from a document whose obj_lock has none",
+				func(ctx SpecContext, rel denc.Release, raw string, want meta.ObjectLock) {
+					openAt(ctx, rel)
+					key := lockPlain(ctx)
+					data, v := instDoc(ctx, key, func(*meta.BucketCompleteInfo) {})
+					Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: withObjLock(data, json.RawMessage(raw))}, op.PutMetadataOptions{IfVersion: &v})).To(Succeed())
+					Expect(storedLock(ctx, plain.Info.Bucket)).To(Equal(want), "obj_lock %s", raw)
+				},
+				Entry("on Squid, from v19.2.7's dump of RGWObjectLock()", denc.Squid, `{"enabled":true,"rule_exist":false}`, meta.ObjectLock{Enabled: true}),
+				Entry("on Squid, from a rule_exist alone", denc.Squid, `{"rule_exist":false}`, meta.ObjectLock{}),
+				Entry("on Squid, from an empty object", denc.Squid, `{}`, meta.ObjectLock{}),
+				Entry("on Tentacle, from v19.2.7's dump of RGWObjectLock()", denc.Tentacle, `{"enabled":true,"rule_exist":false}`, meta.ObjectLock{Enabled: true}),
+				Entry("on Tentacle, from a rule_exist alone", denc.Tentacle, `{"rule_exist":false}`, meta.ObjectLock{}),
+				Entry("on Tentacle, from an empty object", denc.Tentacle, `{}`, meta.ObjectLock{}),
+			)
+
+			DescribeTable("keeps a stored instance's rule through a document without obj_lock",
+				func(ctx SpecContext, rel denc.Release) {
+					openAt(ctx, rel)
+					key := lockPlain(ctx)
+					data, v := instDoc(ctx, key, func(bi *meta.BucketCompleteInfo) { bi.Info.RequesterPays = true })
+					Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: withoutObjLock(data)}, op.PutMetadataOptions{IfVersion: &v})).To(Succeed())
+					got, err := s.GetBucketInstance(ctx, plain.Info.Bucket)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(got.Info.RequesterPays).To(BeTrue(), "the put lands")
+					Expect(storedLock(ctx, plain.Info.Bucket)).To(Equal(lockOf(7)), "the stored rule, which v19.2.7 resets to RGWObjectLock()")
+				},
+				Entry("on Squid", denc.Squid),
+				Entry("on Tentacle", denc.Tentacle),
+			)
+
+			DescribeTable("creates an instance with the rule its document carries, and the default without one",
+				func(ctx SpecContext, rel denc.Release) {
+					openAt(ctx, rel)
+					info := freshInfo("fresh", "z.1.9")
+					info.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
+					info.SetObjectLock(lockOf(30))
+					data, err := json.Marshal(meta.BucketCompleteInfo{Info: info})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.Put(ctx, "bucket.instance", "fresh:z.1.9", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(Succeed())
+					Expect(storedLock(ctx, info.Bucket)).To(Equal(lockOf(30)))
+					bare := freshInfo("bare", "z.1.10")
+					bare.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned
+					data, err = json.Marshal(meta.BucketCompleteInfo{Info: bare})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.Put(ctx, "bucket.instance", "bare:z.1.10", op.MetadataEntry{Data: withoutObjLock(data)}, op.PutMetadataOptions{})).To(Succeed())
+					Expect(storedLock(ctx, bare.Bucket)).To(Equal(meta.ObjectLock{Enabled: true}), "RGWObjectLock()")
+				},
+				Entry("on Squid", denc.Squid),
+				Entry("on Tentacle", denc.Tentacle),
+			)
+		})
+
 		It("refuses a put racing another write of the instance", func(ctx SpecContext) {
 			key := "plain:" + plain.Info.Bucket.ID
 			data, _ := instDoc(ctx, key, func(bi *meta.BucketCompleteInfo) { bi.Info.RequesterPays = true })

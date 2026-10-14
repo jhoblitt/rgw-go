@@ -11795,18 +11795,20 @@ Every new entry adds its row to this table, in document order.
   a document that enables object lock without `obj_lock`, is in v19.2.7,
   in main from v21.0.0 on and on the tentacle branch (checked at
   292995374d9 and ab83d026c29, 2026-10-12).
-- **rgw-go:** does not reproduce it. The bucket instance's document carries
-  the object lock configuration as `obj_lock` in v19.2.7's form, on both
-  releases, and a put's document is read for one while its flags enable
-  object lock (`meta.BucketInfo`'s `MarshalJSON`, `Dump` and
+- **rgw-go:** reproduces neither it nor the residual. The bucket instance's
+  document carries the object lock configuration as `obj_lock` in v19.2.7's
+  form, on both releases, and a put's document is read for one while its
+  flags enable object lock (`meta.BucketInfo`'s `MarshalJSON`, `Dump` and
   `UnmarshalJSON`, `internal/meta/`; `docs/exclusions.md`, "The bucket
-  instance document carries `obj_lock` on Tentacle too"). A put over a
-  stored instance keeps its object lock configuration, and one that would
-  turn object lock off answers 400 InvalidArgument (`keepInstance`,
-  `internal/driver/metadata.go`; `docs/exclusions.md`, "The metadata
-  sections write only what keeps a user or bucket whole"). A new instance a
-  put creates gets the default configuration, as v20.2.4's does, where
-  v19.2.7's stores the document's `obj_lock`.
+  instance document carries `obj_lock` on Tentacle too"). A put stores the
+  document's `obj_lock`, for a new instance and a stored one, on both
+  releases. A put whose document carries none keeps a stored instance's
+  configuration, where v19.2.7 and v20.2.4 reset it to the default, and
+  gives a new instance the default, as both do (`keepInstance` and
+  `newInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`, "The
+  metadata sections write only what keeps a user or bucket whole"). A put
+  that would turn a stored instance's object lock off answers 400
+  InvalidArgument (`keepInstance`).
 - **Upstream:** [#71157](https://tracker.ceph.com/issues/71157)
   (Resolved), "rgw-multisite: object lock rule applied on a bucket doesn't
   sync", reported 2025-04-30, is this defect met through multisite sync.

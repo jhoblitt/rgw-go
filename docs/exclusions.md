@@ -1578,21 +1578,30 @@ review and verified against the tree.
   - A bucket instance put takes the bucket's tenant, name and id from the
     key, where radosgw keeps a stored instance's name from the document.
     A stored instance keeps its marker, its index layout, its explicit
-    placement and placement rule, as radosgw keeps the last two, its
-    object lock configuration, which v20.2.4's JSON does not carry and
-    v19.2.7's carries as `obj_lock` when the flags enable object lock
-    ([rgw_common.cc:2542-2544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2542-L2544)), as rgw-go's does on both
-    releases ("The bucket instance document carries `obj_lock` on Tentacle
-    too"), whatever the document's `obj_lock`, where a v19.2.7 put stores
-    the document's, or the default for a document without one
-    (docs/ceph-upstream-bugs.md, "radosgw's bucket instance metadata put
-    drops the bucket's object lock rule"),
-    and the attrs rgw-go keeps for itself, `user.rgw.rgw-go-rename` and
+    placement and placement rule, as radosgw keeps the last two, and the
+    attrs rgw-go keeps for itself, `user.rgw.rgw-go-rename` and
     `user.rgw.rgw-go-removing`, which a document cannot write; a document
     changing the marker, the shard count, the hash type or the index type,
     or turning object lock off, answers 400 InvalidArgument, where radosgw
-    writes it, re-sharding the
-    index under its entries. An owner other than that of the entry point
+    writes it, re-sharding the index under its entries. A put stores the
+    object lock configuration the document carries as `obj_lock`, which
+    is read while the document's flags enable object lock ("The bucket
+    instance document carries `obj_lock` on Tentacle too"), as a v19.2.7
+    put stores the instance it decodes whole
+    ([rgw_common.cc:2588-2590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2588-L2590),
+    [rgw_bucket.cc:2866-2887](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2887)).
+    rgw-go stores it on Tentacle too, where radosgw's put never reads
+    `obj_lock` and so drops the bucket's rule. For a document without
+    `obj_lock`, a stored instance keeps its configuration and a new one
+    gets the default, enabled with no rule, as on both floors. Keeping the
+    stored one differs from both floors, which reset it to the default:
+    v19.2.7 because a member the document lacks decodes default-constructed
+    ([ceph_json.h:334-346](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346)),
+    and v20.2.4 on every put (docs/ceph-upstream-bugs.md, "radosgw's bucket
+    instance metadata put drops the bucket's object lock rule"). The reset
+    would drop a WORM bucket's default retention whenever a document lacks
+    `obj_lock`, as one a v19.2.6 or v20.2.4 gateway dumped does. An owner
+    other than that of the entry point
     naming the instance answers 400. A new instance's marker must be its
     id (400), and another instance carrying its id as its id or its marker
     answers 409 BucketAlreadyExists, as either would share another bucket's

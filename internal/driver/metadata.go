@@ -451,20 +451,25 @@ const listPage = 1000
 // instance keeps its explicit placement and placement rule, as radosgw's
 // does; then the instance is written with the document's attrs and its
 // index initialized, a shard already there counting as initialized. The
-// lifecycle configuration and topic mappings radosgw updates after the
-// write are not kept by rgw-go yet.
+// object lock configuration a document carries is stored, as v19.2.7's put
+// stores the instance it decodes whole (driver/rados/rgw_bucket.cc:2866-2887
+// at v19.2.7), on Tentacle too, whose decode reads no obj_lock
+// (rgw_common.cc:2606-2647 at v20.2.4). The lifecycle configuration and
+// topic mappings radosgw updates after the write are not kept by rgw-go
+// yet.
 //
 // Each refusal comes before anything is written:
 //   - an attr outside user.rgw. is ErrInvalidArgument (op.RefuseRawAttrs),
 //     and so is a NUL byte in the marker, an explicit placement pool
 //     (refuseNULPlacement) or the owner, which names the owner's bucket
 //     list;
-//   - a stored instance keeps its marker, layout, object lock configuration
-//     and the attrs rgw-go keeps for itself, op.RenameIntentAttr and
-//     op.RemovingAttr; a document changing the marker, the shard count, hash
-//     type or index type, or turning object lock off, is ErrInvalidArgument,
-//     where radosgw writes it, which re-shards the index under its entries
-//     or drops the bucket's object lock;
+//   - a stored instance keeps its marker, layout and the attrs rgw-go keeps
+//     for itself, op.RenameIntentAttr and op.RemovingAttr, and its object
+//     lock configuration when the document carries none; a document
+//     changing the marker, the shard count, hash type or index type, or
+//     turning object lock off, is ErrInvalidArgument, where radosgw writes
+//     it, which re-shards the index under its entries or drops the bucket's
+//     object lock;
 //   - an owner other than that of an entry point naming the instance is
 //     ErrInvalidArgument, a second owner as for putEntryPoint;
 //   - a new instance whose marker is not its id is ErrInvalidArgument, and
@@ -578,7 +583,9 @@ func refuseNULPlacement(b meta.BucketID) error {
 }
 
 // keepInstance is put_check's existing-instance branch and rgw-go's
-// refusals for one: info takes what the stored instance old keeps.
+// refusals for one: info takes what the stored instance old keeps, and old's
+// object lock configuration when the document carries none, where v19.2.7
+// resets it to RGWObjectLock() (common/ceph_json.h:334-346 at v19.2.7).
 func (s *Store) keepInstance(ctx context.Context, info *meta.BucketInfo, attrs map[string][]byte, old *instance) error {
 	if err := s.busyBucket(ctx, old.info, old.attrs); err != nil {
 		return err
@@ -595,7 +602,9 @@ func (s *Store) keepInstance(ctx context.Context, info *meta.BucketInfo, attrs m
 	info.Bucket.ExplicitPlacement = old.info.Bucket.ExplicitPlacement
 	info.PlacementRule = old.info.PlacementRule
 	info.Layout = old.info.Layout
-	info.ObjLock = old.info.ObjLock
+	if info.ObjLock == nil {
+		info.ObjLock = old.info.ObjLock
+	}
 	for _, k := range []string{op.RenameIntentAttr, op.RemovingAttr} {
 		if v, ok := old.attrs[k]; ok {
 			attrs[k] = v
@@ -625,7 +634,6 @@ func (s *Store) newInstance(ctx context.Context, info *meta.BucketInfo) error {
 	if current.Layout.Type == meta.IndexNormal {
 		info.Layout.Logs = []meta.LogLayoutGen{meta.LogLayoutFromIndex(0, *current)}
 	}
-	info.ObjLock = nil
 	return nil
 }
 
