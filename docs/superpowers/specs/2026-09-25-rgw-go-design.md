@@ -54,9 +54,9 @@ cost for the cgo boundary.
   project studies; and radosgw becomes the correctness oracle. The
   unmodified radosgw-admin administers rgw-go's metadata, so no CLI is
   reimplemented.
-- **Ceph floor Squid 19.2.6 or Tentacle 20.2.4, feature level Tentacle
+- **Ceph floor Squid 19.2.7 or Tentacle 20.2.4, feature level Tentacle
   where gateway-side.** Every daemon of a supported cluster, its OSDs and
-  any radosgw sharing the zone included, runs 19.2.6 or later on Squid or
+  any radosgw sharing the zone included, runs 19.2.7 or later on Squid or
   20.2.4 or later on Tentacle. The floor governs which OSD-side class
   behavior may be assumed, and point releases below it get no special
   handling. It constrains running daemons, not data: metadata, index
@@ -514,11 +514,11 @@ the suite's history, records just those tests; any other change to the suite, or
 records every test again as new entries. Tentacle parity runs in CI only on
 demand.
 
-rgw-go supports running only against librados 19.2.6 or later on Squid, or
+rgw-go supports running only against librados 19.2.7 or later on Squid, or
 20.2.4 or later on Tentacle. This is a support policy: technically the
-floor binds only when the key rgw-go presents is AES256KRB5, since those
-are the first releases able to parse that cephx key type, and an older
-librados fails to connect with one. The policy follows from where such keys
+floor binds only when the key rgw-go presents is AES256KRB5, since 19.2.6
+and 20.2.4 are the first releases able to parse that cephx key type, and
+an older librados fails to connect with one. The policy follows from where such keys
 come from. Ceph's mkfs default at those releases allows only AES256KRB5, so
 a freshly created cluster's keys have that type. Rook allows both AES and
 AES256KRB5, but makes AES256KRB5 the preferred type, which new daemon keys,
