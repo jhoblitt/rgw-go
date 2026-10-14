@@ -38,8 +38,10 @@ var (
 	// amzHeaderPrefixes is meta_prefixes (rgw_common.cc:413-420 at v19.2.7,
 	// :426-433 at v20.2.4) as lower-case header names: init_meta_info files
 	// a header under any of them under x-amz- and the rest of its name.
-	// SigV2 signs such a header under that name (amzHeadersV2), and SigV4
-	// refuses one that is not signed (canonicalHeadersV4).
+	// SigV2 signs such a header under that name (amzHeadersV2) and refuses
+	// one naming a directive the handlers read under x-amz- alone
+	// (relabelledDirective), and SigV4 refuses one that is not signed
+	// (canonicalHeadersV4).
 	amzHeaderPrefixes = []string{"x-amz-", "x-goog-", "x-dho-", "x-rgw-", "x-object-", "x-container-", "x-account-"}
 )
 

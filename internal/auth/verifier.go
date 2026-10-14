@@ -45,9 +45,11 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 // RGW_Auth_S3::authorize, the anonymous engine, get_auth_data and the local
 // engine. payloads is the dispatched route's forms: a signed payload in a
 // form outside them is ErrNotImplemented, answered before the access key is
-// looked up, where get_auth_data_v4 throws it. Every result carries
-// ContentLength; a Body is the payload's verifying reader, which reports the
-// payload's verdict on the Read that ends it.
+// looked up, where get_auth_data_v4 throws it. A SigV2 request that has
+// authenticated is then refused if it carries a directive under another meta
+// prefix (relabelledDirective), an rgw-go refusal radosgw does not make. Every
+// result carries ContentLength; a Body is the payload's verifying reader,
+// which reports the payload's verdict on the Read that ends it.
 func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	// Without Keystone and LDAP, rgw_s3_auth_use_rados off leaves radosgw no
 	// backend, and it denies every request, anonymous ones included
@@ -91,6 +93,11 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	id, err := v.identity(ctx, rv, rec, d.accessKey, key, account)
 	if err != nil {
 		return nil, err
+	}
+	if ver == versionV2 {
+		if refused := relabelledDirective(rv); refused != nil {
+			return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
+		}
 	}
 	res := &op.AuthResult{Identity: id, ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Presigned: d.presigned}
 	if d.v4 != nil {

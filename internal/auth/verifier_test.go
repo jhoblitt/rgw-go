@@ -103,6 +103,39 @@ func signedChunkedPut(ctx context.Context, newReq func() *http.Request, id strin
 	return req
 }
 
+// v2Date and v2Expires are a SigV2 request's Date at fixedNow and a
+// presigned URL's Expires after it.
+const (
+	v2Date    = "Sun, 30 Aug 2015 12:36:00 GMT"
+	v2Expires = "1441000000"
+)
+
+// relabelledCopy is a copy source moved off X-Amz-.
+var relabelledCopy = map[string]string{"X-Goog-Copy-Source": "b/src"}
+
+// v2Put is a SigV2 PUT of /b/k carrying hdr, a copy source under some meta
+// prefix, signed for key with secret over the string to sign of a copy of
+// b/src, which names the copy source by its x-amz- name whatever its prefix:
+// on the header route at the Date when, or presigned until the Expires when.
+func v2Put(ctx context.Context, presigned bool, key, secret, when string, hdr map[string]string) *http.Request {
+	h := hmac.New(sha1.New, []byte(secret))
+	h.Write([]byte("PUT\n\n\n" + when + "\nx-amz-copy-source:b/src\n/b/k"))
+	sig := base64.StdEncoding.EncodeToString(h.Sum(nil))
+	target := "http://s3.example.com/b/k"
+	if presigned {
+		target += "?AWSAccessKeyId=" + key + "&Expires=" + when + "&Signature=" + url.QueryEscape(sig)
+	}
+	req := httptest.NewRequestWithContext(ctx, http.MethodPut, target, nil)
+	for k, val := range hdr {
+		req.Header.Set(k, val)
+	}
+	if !presigned {
+		req.Header.Set("Date", when)
+		req.Header.Set("Authorization", "AWS "+key+":"+sig)
+	}
+	return req
+}
+
 var _ = Describe("Verifier", func() {
 	var (
 		store *memstore.Store
@@ -268,6 +301,63 @@ var _ = Describe("Verifier", func() {
 		req.Header.Set("Authorization", "AWS AKIVAN:c2lnbmF0dXJl")
 		_, err := v.Authenticate(ctx, req, anyPayload)
 		Expect(err).To(MatchError(op.ErrInvalidArgument))
+	})
+
+	// rgw-go refuses a SigV2 directive under another meta prefix only once the
+	// request has authenticated, so that a request radosgw refuses earlier
+	// gets radosgw's error.
+	DescribeTable("answers a SigV2 request carrying a directive under another meta prefix with radosgw's error first",
+		func(ctx SpecContext, build func(context.Context) *http.Request, want OmegaMatcher) {
+			_, err := v.Authenticate(ctx, build(ctx), anyPayload)
+			Expect(err).To(want)
+		},
+		Entry("a wrong signature on the header route", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, false, "AKALICE", "not-the-secret", v2Date, relabelledCopy)
+		}, MatchError(op.ErrSignatureDoesNotMatch)),
+		Entry("a wrong signature on a presigned URL", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, true, "AKALICE", "not-the-secret", v2Expires, relabelledCopy)
+		}, MatchError(op.ErrSignatureDoesNotMatch)),
+		Entry("an unknown key on the header route", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, false, "AKNOBODY", "secret-alice", v2Date, relabelledCopy)
+		}, MatchError(op.ErrInvalidAccessKeyID)),
+		Entry("an unknown key on a presigned URL", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, true, "AKNOBODY", "secret-alice", v2Expires, relabelledCopy)
+		}, MatchError(op.ErrInvalidAccessKeyID)),
+		Entry("a skewed date on the header route", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, false, "AKALICE", "secret-alice", "Sun, 30 Aug 2015 10:00:00 GMT", relabelledCopy)
+		}, MatchError(op.ErrRequestTimeTooSkewed)),
+		Entry("an expired presigned URL, which has no skew check", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, true, "AKALICE", "secret-alice", "1440000000", relabelledCopy)
+		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("expired")))),
+		Entry("an Authorization without a colon", func(ctx context.Context) *http.Request {
+			req := v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, relabelledCopy)
+			req.Header.Set("Authorization", "AWS x")
+			return req
+		}, MatchError(op.ErrInvalidArgument)),
+		Entry("a presigned URL with an empty Signature", func(ctx context.Context) *http.Request {
+			req := httptest.NewRequestWithContext(ctx, http.MethodPut,
+				"http://s3.example.com/b/k?AWSAccessKeyId=AKALICE&Expires="+v2Expires+"&Signature=", nil)
+			req.Header.Set("X-Goog-Copy-Source", "b/src")
+			return req
+		}, MatchError(op.ErrInvalidArgument)),
+		Entry("a request that authenticates on the header route", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, relabelledCopy)
+		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-copy-source names x-amz-copy-source")))),
+		Entry("a presigned URL that authenticates", func(ctx context.Context) *http.Request {
+			return v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, relabelledCopy)
+		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-copy-source names x-amz-copy-source")))),
+	)
+
+	It("authenticates the same SigV2 requests with the copy source under X-Amz-, on both routes", func(ctx SpecContext) {
+		amz := map[string]string{"X-Amz-Copy-Source": "b/src"}
+		for _, req := range []*http.Request{
+			v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, amz),
+			v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, amz),
+		} {
+			res, err := v.Authenticate(ctx, req, anyPayload)
+			Expect(err).NotTo(HaveOccurred(), "%s", req.URL)
+			Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
+		}
 	})
 
 	It("authenticates the request go-ceph's admin client sends", func(ctx SpecContext) {
