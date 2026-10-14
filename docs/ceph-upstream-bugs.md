@@ -9277,10 +9277,10 @@ Every new entry adds its row to this table, in document order.
   tentacle branch by 4ab2e9722c7 (first in v20.2.3), and on the squid
   branch by 4b567265365, merged 2026-07-27 (merge cda2ac214b4) and first
   tagged in v19.2.7.
-- **rgw-go:** reproduces it per release: on Squid it answers the re-sent
-  completion 200 with an empty ETag, on Tentacle with the stored one
-  (`Store.Complete`, `internal/driver/mp_complete.go`, and
-  `Store.previouslyCompleted`, `internal/memstore/multipart.go`).
+- **rgw-go:** answers the re-sent completion 200 with the stored ETag on
+  Squid and Tentacle alike, as both floors do (`Store.Complete`,
+  `internal/driver/mp_complete.go`, and `Store.previouslyCompleted`,
+  `internal/memstore/multipart.go`).
 - **Upstream:** [#75999](https://tracker.ceph.com/issues/75999), named by
   the fix commits' `Fixes:` trailer; the fix is
   [ceph/ceph#68364](https://github.com/ceph/ceph/pull/68364) on main, with

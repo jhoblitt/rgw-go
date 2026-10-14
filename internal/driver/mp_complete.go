@@ -12,7 +12,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
-	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -228,11 +227,10 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //     key's head written here would stand beside the bucket's olh;
 //   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
 //     cookie of this completion's own (newLockCookie), whose ENOENT, when
-//     the key already carries the parts' ETag, is radosgw's re-sent
-//     completion, answered without an ETag on Squid and with the
-//     stored one on Tentacle (:6438-6441 and :6533; v20.2.4 :7472); any
-//     other refusal is 500 "This multipart completion is already in
-//     progress";
+//     the key already carries the parts' ETag (checkPreviouslyCompleted), is
+//     radosgw's re-sent completion, answered with that stored ETag
+//     (:6438-6441; v19.2.7 :6584, v20.2.4 :7472); any other refusal is 500
+//     "This multipart completion is already in progress";
 //   - the meta object's attrs and version (readMeta). A completion record
 //     there is an earlier completion's whose meta object outlived its head
 //     write (replayRecorded);
@@ -285,11 +283,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 		if errors.Is(err, radosclient.ErrNotFound) {
 			if st, ok := s.checkPreviouslyCompleted(ctx, rec, key, parts); ok {
 				slog.InfoContext(ctx, "multipart completion already completed", slog.String("upload", up.ID))
-				res := &op.PutResult{Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch}
-				if s.release >= denc.Tentacle {
-					res.ETag = st.ETag
-				}
-				return res, nil
+				return &op.PutResult{ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch}, nil
 			}
 		}
 		return nil, fmt.Errorf("%w: locking upload %s: %w", op.ErrCompletionInProgress, up.ID, err)
