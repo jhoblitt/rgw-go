@@ -42,7 +42,7 @@ The set's files:
 | `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 |
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
 | `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F15 |
-| `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL4 |
+| `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL5 |
 
 The dependencies between the tasks are drawn in [dependencies.md](dependencies.md), one graph per unit.
 
