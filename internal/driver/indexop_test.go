@@ -2,12 +2,15 @@ package driver_test
 
 import (
 	"context"
+	"maps"
 	"strings"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
@@ -54,13 +57,39 @@ func indexShardOID(rec *op.BucketRecord, name string) string {
 	return rec.Info.IndexShardOID(rec.Info.Layout.Current, sh)
 }
 
-// nextGeneration is rec resharded in place: the same instance at index
-// generation 1, its shards seeded and its instance stored.
-func nextGeneration(c *fakerados.Cluster, rec *op.BucketRecord) *op.BucketRecord {
+// resharded is rec resharded in place: the same instance at its next index
+// generation.
+func resharded(rec *op.BucketRecord) *op.BucketRecord {
 	next := testBucket(rec.Info.Bucket.ID, rec.Info.Layout.Current.Layout.Normal.NumShards)
-	next.Info.Layout.Current.Gen = 1
+	next.Info.Layout.Current.Gen = rec.Info.Layout.Current.Gen + 1
+	return next
+}
+
+// nextGeneration is rec resharded in place, its shards seeded and its
+// instance stored.
+func nextGeneration(c *fakerados.Cluster, rec *op.BucketRecord) *op.BucketRecord {
+	next := resharded(rec)
 	seedShards(c, next)
 	seedRecordInstance(c, next)
+	return next
+}
+
+// commitReshardBefore makes a reshard of rec commit just before the next
+// write to rec's shard of name, after its writer found that shard. Before
+// that write the instance moves to the next index generation, whose shards
+// are seeded and whose shard of name takes the old shard's entries, and the
+// old shard is removed, as commit_reshard removes it in a zone that logs no
+// data. It returns the resharded record.
+func commitReshardBefore(c *fakerados.Cluster, rec *op.BucketRecord, name string) *op.BucketRecord {
+	next := resharded(rec)
+	oid, nextOID := indexShardOID(rec, name), indexShardOID(next, name)
+	c.BeforeWrite(rookIndexPool, "", oid, func(old *fakerados.Object) {
+		c.BeforeWrite(rookIndexPool, "", oid, nil)
+		seedShards(c, next)
+		maps.Copy(c.Object(rookIndexPool, "", nextOID).Omap, old.Omap)
+		seedRecordInstance(c, next)
+		c.Remove(rookIndexPool, "", oid)
+	})
 	return next
 }
 
@@ -277,10 +306,33 @@ var _ = Describe("indexOp", func() {
 			"the pool comparison fails (cls_rgw.cc:1082-1083), so the older completion applies, as it does behind radosgw")
 	})
 
-	It("returns a prepare the shard refuses for another reason as it is", func(ctx SpecContext) {
+	It("returns a missing shard's ErrNotFound after one call when the bucket, read again, names the same shard", func(ctx SpecContext) {
 		c.Remove(rookIndexPool, "", oid)
 		err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
 		Expect(err).To(MatchError(radosclient.ErrNotFound), "the shard must exist: assert_exists")
+		Expect(op.FromRADOS(err, op.ScopeObject)).To(MatchError(op.ErrNoSuchKey), "a write that meets it answers 404 NoSuchKey")
+		Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1), "v19.2.7 sends it ten times (rgw_rados.cc:7225-7230); rgw-go stops once the instance names the same shard")
+		Expect(c.Reads(rookMetaPool, rookRoot, rec.Info.Bucket.InstanceOID())).To(Equal(1), "the instance read again")
+	})
+
+	It("returns a call the shard refuses for another reason at once and unchanged, without reading the bucket again", func(ctx SpecContext) {
+		c.FailNextWrite(rookIndexPool, "", oid, syscall.EIO)
+		err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+		Expect(err).To(BeAssignableToTypeOf(&radosclient.Error{}), "the shard's answer, unwrapped")
+		Expect(err).To(HaveField("Errno", BeEquivalentTo(syscall.EIO)))
+		Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1))
+		Expect(c.Reads(rookIndexPool, "", oid)).To(BeZero(), "no reshard wait")
+		Expect(c.Reads(rookMetaPool, rookRoot, rec.Info.Bucket.InstanceOID())).To(BeZero(), "v19.2.7 re-reads after ENOENT alone, rgw_rados.cc:7226")
+	})
+
+	It("answers UnknownError when the bucket, read again after a missing shard, has an index hash type radosgw does not know", func(ctx SpecContext) {
+		unknown := testBucket(bucketID, 11)
+		unknown.Info.Layout.Current.Layout.Normal.HashType = meta.HashMod + 1
+		seedRecordInstance(c, unknown)
+		c.Remove(rookIndexPool, "", oid)
+		err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+		Expect(err).To(MatchError(op.ErrUnknown), "open_bucket_index_shard's ENOTSUP, which init_bs returns, rgw_rados.cc:7218-7222 at v19.2.7")
+		Expect(err).To(MatchError(ContainSubstring("index hash type")))
 		Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1))
 	})
 
@@ -400,6 +452,109 @@ var _ = Describe("indexOp", func() {
 			Expect(ok).To(BeTrue())
 		})
 
+		It("counts a missing shard's retry toward the ten calls that a busy shard's retries count", func(ctx SpecContext) {
+			s.SetReshardWaitForTest(0)
+			next := commitReshardBefore(c, rec, "k")
+			nextOID := indexShardOID(next, "k")
+			// The new shard refuses the guard although its status reads as
+			// finished, so no wait starts the count over.
+			c.BeforeWrite(rookIndexPool, "", nextOID, func(*fakerados.Object) {
+				seedShardHeader(c, rookIndexPool, nextOID, rgwcls.DirHeader{
+					Stats: map[uint8]rgwcls.CategoryStats{}, NewInstance: rgwcls.InstanceEntry{ReshardStatus: rgwcls.ReshardDone},
+				})
+			})
+			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+			Expect(err).To(MatchError(radosclient.ErrBusyResharding))
+			Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1), "the call the missing shard refused")
+			Expect(c.Writes(rookIndexPool, "", nextOID)).To(Equal(9), "the nine calls left of the ten")
+			Expect(c.Reads(rookIndexPool, "", nextOID)).To(Equal(9), "one poll after each")
+		})
+
+		It("gives up with ErrNotFound after ten calls when each re-read names another shard that is gone too", func(ctx SpecContext) {
+			gens := []*op.BucketRecord{rec}
+			for range 10 {
+				gens = append(gens, commitReshardBefore(c, gens[len(gens)-1], "k"))
+			}
+			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+			Expect(err).To(MatchError(radosclient.ErrNotFound), "NUM_RESHARD_RETRIES bounds the ENOENT retries, rgw_rados.cc:7216-7230 at v19.2.7")
+			for i, g := range gens[:10] {
+				Expect(c.Writes(rookIndexPool, "", indexShardOID(g, "k"))).To(Equal(1), "generation %d's shard", i)
+			}
+			Expect(c.Writes(rookIndexPool, "", indexShardOID(gens[10], "k"))).To(BeZero(), "a move after a missing shard does not start the count over")
+		})
+
+		It("returns the tenth missing shard's ErrNotFound without reading the bucket again, since no call is left", func(ctx SpecContext) {
+			gens := []*op.BucketRecord{rec}
+			for range 10 {
+				gens = append(gens, commitReshardBefore(c, gens[len(gens)-1], "k"))
+			}
+			instOID := rec.Info.Bucket.InstanceOID()
+			reads := 0
+			c.BeforeRead(rookMetaPool, rookRoot, instOID, func() {
+				if reads++; reads == 10 {
+					c.FailNextRead(rookMetaPool, rookRoot, instOID, syscall.EIO)
+				}
+			})
+			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+			Expect(err).To(MatchError(radosclient.ErrNotFound), "v19.2.7 leaves its loop on the tenth ENOENT, rgw_rados.cc:7226-7229, :7258-7261")
+			Expect(c.Reads(rookMetaPool, rookRoot, instOID)).To(Equal(9), "one re-read after each of the nine calls that left a call")
+		})
+
+		It("answers NoSuchKey when the bucket is deleted before a missing shard's retry reads it again", func(ctx SpecContext) {
+			c.Remove(rookMetaPool, rookRoot, rec.Info.Bucket.InstanceOID())
+			c.Remove(rookIndexPool, "", oid)
+			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
+			Expect(err).To(MatchError(op.ErrNoSuchKey), "init_bs's -ENOENT, which guard_reshard returns, rgw_rados.cc:7218-7222 at v19.2.7")
+			Expect(err).NotTo(MatchError(op.ErrNoSuchBucket))
+			Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1))
+		})
+
+		// cacheInstance runs s's workers until the spec ends and waits until
+		// its metadata cache serves rec's instance. A reshard the spec then
+		// stores in RADOS alone sends no notify, so the cache keeps the old
+		// instance.
+		cacheInstance := func(ctx SpecContext) {
+			GinkgoHelper()
+			runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+			done := make(chan error, 1)
+			go func() { done <- s.Run(runCtx) }()
+			DeferCleanup(func() {
+				cancel()
+				Eventually(done).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Receive())
+			})
+			instOID := rec.Info.Bucket.InstanceOID()
+			Eventually(func(g Gomega) {
+				_, err := s.GetBucketInstance(ctx, rec.Info.Bucket)
+				g.Expect(err).NotTo(HaveOccurred())
+				n := c.Reads(rookMetaPool, rookRoot, instOID)
+				_, err = s.GetBucketInstance(ctx, rec.Info.Bucket)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(c.Reads(rookMetaPool, rookRoot, instOID)).To(Equal(n), "the second lookup is served from the cache")
+			}).WithTimeout(time.Second).WithPolling(5 * time.Millisecond).Should(Succeed())
+		}
+
+		It("reads the bucket instance again past a metadata cache that the reshard's notify has not reached", func(ctx SpecContext) {
+			cacheInstance(ctx)
+			next := commitReshardBefore(c, rec, "k")
+			Expect(s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+			_, ok := c.Entry(rookIndexPool, "", indexShardOID(next, "k"), "k")
+			Expect(ok).To(BeTrue(), "the prepare landed on the shard the stored instance names")
+		})
+
+		It("reads the bucket instance again past the metadata cache after a reshard wait too", func(ctx SpecContext) {
+			s.SetReshardWaitForTest(0)
+			cacheInstance(ctx)
+			// The reshard has committed, and the old shard refuses the guard
+			// with its status read as finished.
+			next := nextGeneration(c, rec)
+			setReshardStatus(ctx, c, oid, rgwcls.ReshardDone)
+			Expect(s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+			Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1+1), "the staging write and the refused prepare")
+			Expect(c.Reads(rookIndexPool, "", oid)).To(Equal(1), "the poll that read the reshard as finished")
+			_, ok := c.Entry(rookIndexPool, "", indexShardOID(next, "k"), "k")
+			Expect(ok).To(BeTrue(), "the prepare landed on the shard the stored instance names")
+		})
+
 		It("answers UnknownError for a reshard status that does not decode", func(ctx SpecContext) {
 			rgw := fakerados.RGWClass()
 			c.RegisterClass("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
@@ -462,6 +617,32 @@ var _ = Describe("indexOp", func() {
 		})
 	})
 })
+
+var _ = DescribeTable("a PUT whose index shard a reshard removed after the request read the bucket",
+	func(ctx SpecContext, release denc.Release) {
+		c := newPutCluster()
+		s := openPutStore(ctx, c, release, nil, time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC))
+		rec := testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		next := commitReshardBefore(c, rec, "k")
+		oid, nextOID := indexShardOID(rec, "k"), indexShardOID(next, "k")
+
+		res, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "k"}, strings.NewReader("hello"),
+			op.PutParams{Attrs: map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(alice, "Alice"))}, Size: 5})
+		Expect(err).NotTo(HaveOccurred(), "v20.2.4 answers 404 NoSuchKey here (rgw_rados.cc:7888-7891)")
+		settle(s)
+		Expect(c.Writes(rookIndexPool, "", oid)).To(Equal(1), "the prepare the missing shard refused")
+		Expect(c.Writes(rookIndexPool, "", nextOID)).To(Equal(2), "the prepare and the completion")
+		en, ok := c.Entry(rookIndexPool, "", nextOID, "k")
+		Expect(ok).To(BeTrue(), "k's entry on the shard the bucket now names")
+		Expect(en.Exists).To(BeTrue())
+		Expect(en.Meta.ETag).To(Equal(res.ETag))
+		Expect(en.PendingMap).To(BeEmpty())
+	},
+	Entry("on Squid, as v19.2.7", denc.Squid),
+	Entry("on Tentacle, which takes v19.2.7's retry (docs/exclusions.md)", denc.Tentacle),
+)
 
 // hookCluster is a fakerados cluster whose pools call afterWrite with each
 // write op once it has run.

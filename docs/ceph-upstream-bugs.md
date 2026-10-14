@@ -12060,10 +12060,10 @@ Every new entry adds its row to this table, in document order.
     NoSuchKey. A write that prepares while the old shards still exist meets
     the guard instead, waits, re-reads the bucket and succeeds.
   - Met on a disposable v19.2.6 cluster by rgw-go, whose prepare, guard and
-    wait transcribe radosgw's (`test/integration/write_test.go`, "completes
-    every write across a reshard of the bucket"): of 200 sequential 1 KiB
-    PutObjects, each reading the bucket through the cache the reshard's
-    notify invalidates, one failed with ENOENT on
+    wait then transcribed radosgw's (`test/integration/write_test.go`,
+    "completes every write across a reshard of the bucket"): of 200
+    sequential 1 KiB PutObjects, each reading the bucket through the cache
+    the reshard's notify invalidates, one failed with ENOENT on
     `.dir.<bucket id>.5`, a shard of the index the reshard had removed.
   - v19.2.7 carries the fix, 596eaf34725, "rgw/reshard: bucket reshard may
     race with bucket index update": both guards retry an ENOENT within
@@ -12088,10 +12088,15 @@ Every new entry adds its row to this table, in document order.
   on the tentacle branch by 183829b915c, which no tag carries (checked at
   ab83d026c29, 2026-10-12); on main by e34067f8cea, first tagged in
   v21.0.0.
-- **rgw-go:** reproduces it: `indexOp.guardReshard`
-  (`internal/driver/indexop.go`) re-reads the bucket on a busy answer
-  alone, as `guard_reshard` does, so rgw-go answers such a write 404
-  NoSuchKey too.
+- **rgw-go:** no longer reproduces it, on either release:
+  `indexOp.guardReshard` (`internal/driver/indexop.go`) meets a missing
+  shard as v19.2.7 does, reading the bucket instance again and sending the
+  call again within the same ten. It reads the instance from RADOS, past
+  its metadata cache, and sends the call again only when the instance now
+  puts the object on another shard; when it names the same shard, the
+  ENOENT is returned at once and the write answers 404 NoSuchKey. On
+  Tentacle this is a difference from v20.2.4 (`docs/exclusions.md`,
+  "Dynamic resharding worker").
 - **Upstream:** fixed before we met it, by e34067f8cea on main through
   [ceph/ceph#66553](https://github.com/ceph/ceph/pull/66553) (merge
   bc119378344, 2026-02-12), with the backports
