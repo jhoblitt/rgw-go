@@ -41,7 +41,7 @@ The set's files:
 | `B-bucket-config.md` | CORS, website, encryption configuration, ownership controls, public access block, policy status, POST object | BC-2 to BC-34 |
 | `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 |
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
-| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F11 |
+| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F13 |
 
 Task ids are the research reports' (`research/research-*.md` beside this index), so every task traces to its verified research. The research cites v19.2.6, where it was done; the plan's units cite v19.2.7.
 

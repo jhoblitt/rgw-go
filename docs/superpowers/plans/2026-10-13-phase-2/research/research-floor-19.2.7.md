@@ -192,8 +192,9 @@ and (6) the registry and exclusions entries it touches. "The registry" is
    HashedPayload either way (`src/rgw/rgw_auth_s3.h:638-660@v19.2.7#get_v4_exp_payload_hash`, used
    at `src/rgw/rgw_rest_s3.cc:5858@v19.2.7`).
 2. **v20.2.4 does not have either change**: it refuses both (`src/rgw/rgw_auth_s3.cc:774-796@v20.2.4`).
-   Here Squid is ahead of Tentacle. The tentacle branch has the Content-Type fix (7e2e2072822, per
-   the registry). It does not have the x-amz-content-sha256 fix as of ab83d026c29 (2026-10-12).
+   Here Squid is ahead of Tentacle. The tentacle branch has both fixes through ceph/ceph#71364 (merge
+   7e2e2072822: a25fdb5267c and a1dd71be880), in no Tentacle tag yet. (Corrected 2026-10-14; this
+   report first said the x-amz-content-sha256 fix was not on the branch.)
 3. rgw-go refuses both on every release (internal/auth/sigv4.go:305-318). `auth.Config` carries no
    release (internal/auth/config.go:13-38). The vector
    internal/auth/testdata/v4/unsigned-content-type-rejected.json pins the refusal.
@@ -547,8 +548,7 @@ The nine "still carried" entries of section 2 gain v19.2.7 in their Releases lin
 **New entries.** Each one is unreproduced and derived from the source.
 - **radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is unsigned.**
   S3-correctness, fails closed. Fixed in v19.2.7 (1db3ab3b185). Trackers #79803 and #79873. Fixed
-  by ceph/ceph#71292 on main and ceph/ceph#71360 on squid; not on the tentacle branch as of
-  ab83d026c29. rgw-go: per F4.
+  by ceph/ceph#71292 on main and ceph/ceph#71360 on squid; the tentacle branch carries it too, through ceph/ceph#71364 (merge 7e2e2072822, a1dd71be880), in no Tentacle tag yet. rgw-go: per F4.
 - **radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule.** S3-correctness.
   Affects v19.2.6 and v20.2.4; fixed in v19.2.7 (4dac1850993; tentacle 30daa120099). Tracker
   #77564. rgw-go: no header until phase 2; then the current Expiration rule only, on both releases.
@@ -825,8 +825,8 @@ F10. F5 through F9 do not change any outcome F11 records, so they do not block i
 
 ### Q1 (owner): do the v19.2.7 fixes that v20.2.4 lacks apply on Tentacle too?
 
-v19.2.7 fixes four things that v20.2.4 does not. The tentacle branch carries every fix except the
-x-amz-content-sha256 one, but no Tentacle tag does:
+v19.2.7 fixes four things that v20.2.4 does not. The tentacle branch carries every fix, the
+x-amz-content-sha256 one included, but no Tentacle tag does:
 - SigV4 accepting an unsigned Content-Type and x-amz-content-sha256 (F4);
 - the reshard guard's missing-shard retry (F7);
 - `obj_lock` in the bucket instance JSON (F8 and F9);
