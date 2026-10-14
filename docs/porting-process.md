@@ -24,7 +24,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | ID | Settlement | Change |
 |---|---|---|
 | PP-1 | fixed | The owner's global CLAUDE.md rule, "Implementation plans — behaviour and seams, not code". Phase 2's plan is written to it. |
-| PP-2 | fixed | `hack/citecheck` resolves every `path:line@tag#symbol` citation and every ceph/ceph link at its tag. Phase 2's plan passes it before its review, and phase 2's research cites the source at both tags. |
+| PP-2 | fixed | `hack/citecheck` (#280) resolves every `path:line@tag#symbol` citation and every ceph/ceph link at its tag. Phase 2's plan passes it before its review, and phase 2's research cites the source at both tags. The code-span form was never agreed; unit CL replaced it with links (PP-17). |
 | PP-3 | fixed | The design spec's compatibility rule (§8, the owner, 2026-10-13). Compatibility means RADOS state in both directions, not reproducing radosgw's defects. Where the RADOS state stays compatible, rgw-go does the correct thing for the S3 API. It prevents corruption of shared data even where radosgw allows it. Each difference is recorded as an exclusion, and a serious defect is reported upstream once it is reproduced. Each phase 2 unit lists the radosgw defects it meets and its choice for each. |
 | PP-4 | fixed | The design spec and the project CLAUDE.md state the owner's policy of 2026-10-12. A found defect is public by default and goes into the registry. Each possible security defect is also sent to the rgw-bug-reproduction session. The controller does not ask the owner about disclosure. The registry never links that session's private disclosure gists. Registry entries carry a security field and a reproduction status. |
 | PP-5 | fixed | Phase 2's plan sets the file structure. fakerados gives each class method a file of its own, registered from a table, and the first phase 2 task makes that split. Any other file that two tasks touch has one owner task, or the tasks that touch it are ordered. The registries stay single files: tasks only append, and the controller's union rebase merges them. |
@@ -60,6 +60,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-14 | A regression test was hardened as a security boundary | Major | writing-plans; the task-review brief; project CLAUDE.md | fixed |
 | PP-15 | Large shell scripts were written where Go commands were due | Major | global CLAUDE.md; writing-plans | fixed |
 | PP-16 | An instructed action was turned into a question at its trigger | Major | subagent-driven-development; project CLAUDE.md | fixed |
+| PP-17 | Phase 2 planning cited Ceph in a form the owner never agreed | Major | writing-plans; project CLAUDE.md; hack/citecheck | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -242,3 +243,23 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 - **Improvement:** an instruction to act when a condition is met is the go-ahead at that moment. The controller checks the preconditions it can observe itself (agents drained, the other sessions idle, the load average, the processes running) and acts. It asks only for what it cannot observe, and asks before the trigger, not at it.
 - **Fix:** the quiet-run procedure's owner-confirmation step becomes a controller check. A line in the project CLAUDE.md states the rule.
 - **Candidate home:** subagent-driven-development (its "four things stop you" list); the project CLAUDE.md.
+
+## PP-17: Phase 2 planning cited Ceph in a form the owner never agreed
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - On 2026-09-29 the owner set the citation form: references to code line numbers are to be "clickable links to the line or line range in the github repo which that code lives anchored to the correct tag or ref". Phase 1's plans use such links, though five in Z's plan were written inside code spans, which renders them as code. The rule was not written into the project CLAUDE.md.
+  - On 2026-10-13 the controller, fixing PP-2, introduced a second form in #280: `hack/citecheck` was built around a code span, `src/<path>:<lines>@<ref>#<symbol>`, which renders as code, not as a link. It was never agreed with the owner. Phase 2's research and plan were written in it (#281), and the plan's index made it a constraint of the set.
+  - It spread the next day: the floor bump's updates of the registries, `docs/ceph-upstream-bugs.md` and `docs/exclusions.md` (#284, #286), and the plan's tasks F12 and F13 (#285) were written in it. At 89fd1fe the tracked Markdown held 3,013 such spans in 20 files: 1,838 in phase 2's research, 1,077 in its plan, and 98 in the two registries.
+  - On 2026-10-14 the owner objected: "I am unhappy about seeing lines like `` (`src/rgw/rgw_op.cc:6902-6904@v19.2.7#RGWDeleteMultiObj::handle_individual_object`, `` in the docs. I thought we had agreed to use clickable links?" and "What is the citecheck format? That is completely your invention."
+- **Cost:**
+  - Unit CL's first two tasks: citecheck reworked so that a link is the only form and a span is rewritten into one (CL1, #297), and a sweep (CL2) that rewrites those 3,013 spans across the registries, plans and research, in a PR that needs the owner's LGTM.
+  - CL1 was re-scoped mid-task: its first scope added another invented notation, a link title holding the symbol, which was dropped with the span form.
+  - Every branch open during the sweep rewrites its own docs' citations before it merges, and the sweep is regenerated on main just before its own merge.
+  - The owner's intervention.
+- **Improvement:**
+  - A notation that reaches a durable artifact, such as a citation form, is the one the owner stated, or is agreed with the owner before a tool or a plan is built on it.
+  - A rule the owner states is written into the project CLAUDE.md the day it is stated, so that a later planning round reads it instead of inventing its own.
+  - A checker enforces the agreed form; building one does not settle a new form.
+- **Fix:** unit CL (`docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md`). The project CLAUDE.md states the rule (#295). citecheck fails a `path:lines@ref` code span as "not a link" and rewrites one into a link (CL1, #297). CL2 rewrites every `path:lines@ref` code span citation in the Markdown into a link, and `make check` and CI run the clone-free form check over every tracked `.md`. CL3 and CL4 carry the rule, which the owner extended to code on 2026-10-14, into Go comments. CL5 (planned in #301) sweeps the docs-era plain citations in the Markdown, `<basename>:<lines>` with the tag in the prose, which citecheck's grammar does not see.
+- **Candidate home:** writing-plans (a notation in a plan is the owner's agreed one); the project CLAUDE.md (done, #295); `hack/citecheck` (done, CL1).

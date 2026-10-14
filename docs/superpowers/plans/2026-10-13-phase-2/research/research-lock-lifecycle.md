@@ -68,57 +68,57 @@ same blob at both tags, as are the cls_rgw lc methods, their op structs and thei
 - **RGWObjectLock**, the bucket instance's `obj_lock`, is written only while the flags carry
   `BUCKET_OBJ_LOCK_ENABLED`. It is v1: `enabled`, `rule_exist`, then the rule if one exists. The
   rule is `ObjectLockRule` v1, holding `DefaultRetention` v1 {mode, days int, years int}.
-  `src/rgw/rgw_object_lock.h:11-149@v19.2.6`. rgw-go keeps it opaque today
+  [rgw_object_lock.h:11-149](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L11-L149). rgw-go keeps it opaque today
   (`meta.BucketInfo.ObjLock`, a RawStruct).
 - **RGWObjectRetention** v2 holds the mode and the date, then the date again at nanosecond
   precision. **RGWObjectLegalHold** v1 holds the status.
-  `src/rgw/rgw_object_lock.h:151-230@v19.2.6`. rgw-go has both (`internal/meta/objectlock.go`).
+  [rgw_object_lock.h:151-230](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L151-L230). rgw-go has both (`internal/meta/objectlock.go`).
 - **RGWLifecycleConfiguration** v1 is a multimap of id to LCRule.
-  `src/rgw/rgw_lc.h:510-563@v19.2.6#RGWLifecycleConfiguration`.
+  [rgw_lc.h:510-563](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L510-L563).
   - **LCRule** v6, legacy compat: id, prefix, status, expiration, noncur_expiration,
     mp_expiration, dm_expiration, filter, transitions and noncur_transitions, each map keyed by
-    storage class. `src/rgw/rgw_lc.h:316-465@v19.2.6#LCRule`.
+    storage class. [rgw_lc.h:316-465](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L316-L465).
   - **LCExpiration** v4, compat 2: days, date and newer_noncurrent, all strings.
-    `src/rgw/rgw_lc.h:41-105@v19.2.6#LCExpiration`.
+    [rgw_lc.h:41-105](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L41-L105).
   - **LCTransition** v1: days, date and storage_class, all strings.
-    `src/rgw/rgw_lc.h:107-170@v19.2.6#LCTransition`.
+    [rgw_lc.h:107-170](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L107-L170).
   - **LCFilter** v4: prefix, RGWObjTags, flags u32, size_gt and size_lt (strings).
-    `src/rgw/rgw_lc.h:187-314@v19.2.6#LCFilter`. Its decoder is `DECODE_START(3)` at v19.2.6
+    [rgw_lc.h:187-314](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L187-L314). Its decoder is `DECODE_START(3)` at v19.2.6
     and `(4)` at v20.2.4. The compat byte is 1, so both read v4. Encode v4 on both releases.
 - **The lc shards** are `lc.0` to `lc.<n-1>`, where n = min(`rgw_lc_max_objs`, 7877). They
   live in the zone's `lc_pool`, by default the log pool in namespace `lc`.
-  `src/rgw/rgw_lc.cc:233-254@v19.2.6#RGWLC::initialize`; `src/rgw/rgw_zone.cc:582@v19.2.6`.
+  [rgw_lc.cc:233-254](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L233-L254); [rgw_zone.cc:582](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L582).
   - A bucket's shard is `ceph_str_hash_linux(key) % 7877 % n`, keyed by
-    `tenant:name:marker`. `src/rgw/rgw_lc.cc:1966-1992@v19.2.6`.
+    `tenant:name:marker`. [rgw_lc.cc:1966-1992](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1966-L1992).
   - Each shard's omap holds one `cls_rgw_lc_entry` v1 per bucket {bucket key, start_time u64,
     status u32: 0 uninitial, 1 processing, 2 failed, 3 complete}, under the bucket key.
   - Its omap header holds `cls_rgw_lc_obj_head` v2 {start_date, marker, shard_rollover_date},
-    each time 8 bytes. `src/cls/rgw/cls_rgw_types.h:1264-1333@v19.2.6`,
-    `src/cls/rgw/cls_rgw_types.h:1301-1370@v20.2.4`.
+    each time 8 bytes. [cls_rgw_types.h:1264-1333](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1264-L1333),
+    [cls_rgw_types.h:1301-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1301-L1370).
 - **cls_rgw lc methods.** The read methods are `lc_get_entry`, `lc_get_next_entry`,
   `lc_get_head` and `lc_list_entries`. The read-write methods are `lc_set_entry`,
-  `lc_rm_entry` and `lc_put_head`. `src/cls/rgw/cls_rgw.cc:4734-4740@v19.2.6`,
-  `src/cls/rgw/cls_rgw.cc:5153-5159@v20.2.4`. Bodies at `src/cls/rgw/cls_rgw.cc:4175-4359@v19.2.6`, and the same at
-  `src/cls/rgw/cls_rgw.cc:4577-4761@v20.2.4`.
+  `lc_rm_entry` and `lc_put_head`. [cls_rgw.cc:4734-4740](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4734-L4740),
+  [cls_rgw.cc:5153-5159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5153-L5159). Bodies at [cls_rgw.cc:4175-4359](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4175-L4359), and the same at
+  [cls_rgw.cc:4577-4761](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4577-L4761).
   - get_next_entry reads one key after the marker, and an empty shard gives an empty entry.
   - list_entries replies in the request's struct_v, the request being `ENCODE_START(3,1)`. It
     reads legacy `pair<string,int>` values too.
   - get_head of an empty header is a zero head.
   - The ops are v2 for every entry carrier and v1 for the rest
-    (`src/cls/rgw/cls_rgw_ops.h:1183-1456@v19.2.6`).
+    ([cls_rgw_ops.h:1183-1456](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_ops.h#L1183-L1456)).
   - The client runs every call as a standalone synchronous exec
-    (`src/cls/rgw/cls_rgw_client.cc:943-1067@v19.2.6`).
+    ([cls_rgw_client.cc:943-1067](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_client.cc#L943-L1067)).
 
 ### 2.2 Object-lock configuration and per-object ops
 
 All of these load the bucket first, so a missing bucket is NoSuchBucket. Each answers 403 when
 its action is refused. The bodies are read by `read_all_input` up to `rgw_max_put_param_size`
-(`src/rgw/rgw_rest.cc:1479-1497@v19.2.6`). rgw-go's `op.ReadParamBody` already verifies the
+([rgw_rest.cc:1479-1497](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1479-L1497)). rgw-go's `op.ReadParamBody` already verifies the
 signed hash there (registry, "radosgw ignores a payload-hash mismatch...", a security defect
 rgw-go does not reproduce).
 
-- **PutObjectLockConfiguration** (`src/rgw/rgw_op.cc:8230-8293@v19.2.6#RGWPutBucketObjectLock::execute`,
-  `src/rgw/rgw_op.cc:9178-9241@v20.2.4#RGWPutBucketObjectLock::execute`), in order:
+- **PutObjectLockConfiguration** ([rgw_op.cc:8230-8293](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8230-L8293),
+  [rgw_op.cc:9178-9241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9178-L9241)), in order:
   1. Versioning not Enabled: 409 InvalidBucketState, "Object lock cannot be enabled unless
      the bucket has versioning enabled". This comes before the body is read.
   2. The body is read.
@@ -126,30 +126,30 @@ rgw-go does not reproduce).
   4. A missing or invalid `ObjectLockConfiguration` is MalformedXML. Invalid means:
      `ObjectLockEnabled` is not "Enabled"; or the Rule's DefaultRetention has a Mode outside
      GOVERNANCE/COMPLIANCE; or it has neither or both of Days and Years; or a number does not
-     parse as an int (`src/rgw/rgw_object_lock.cc:8-66@v19.2.6`;
-     `src/rgw/rgw_xml.cc:282-377@v19.2.6`).
+     parse as an int ([rgw_object_lock.cc:8-66](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L8-L66);
+     [rgw_xml.cc:282-377](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L282-L377)).
   5. A rule whose period is not exactly one of Days and Years positive is 400
      InvalidRetentionPeriod, "retention period must be a positive integer value"
-     (`src/rgw/rgw_object_lock.h:112-117@v19.2.6#retention_period_valid`).
+     ([rgw_object_lock.h:112-117](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L112-L117)).
   6. The forward to the master, a no-op here.
   7. Under retry_raced_bucket_write: set `BUCKET_OBJ_LOCK_ENABLED` if missing, after checking
      versioning again; replace `obj_lock`; then `put_info`.
   - The response is 200 with no body.
-- **GetObjectLockConfiguration** (`src/rgw/rgw_op.cc:8313-8319@v19.2.6`, `src/rgw/rgw_op.cc:9261-9267@v20.2.4#RGWGetBucketObjectLock::execute`):
+- **GetObjectLockConfiguration** ([rgw_op.cc:8313-8319](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8313-L8319), [rgw_op.cc:9261-9267](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9261-L9267)):
   without lock it is 404 ObjectLockConfigurationNotFoundError. Otherwise it is
   `<ObjectLockConfiguration>` with no xmlns, holding `ObjectLockEnabled` and the Rule if one
   exists. Days is written when positive, otherwise Years
-  (`src/rgw/rgw_rest_s3.cc:4474-4488@v19.2.6`; `src/rgw/rgw_object_lock.cc:29-75@v19.2.6`).
+  ([rgw_rest_s3.cc:4474-4488](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4474-L4488); [rgw_object_lock.cc:29-75](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L29-L75)).
 - **CreateBucket with lock** sets `BUCKET_VERSIONED | BUCKET_OBJ_LOCK_ENABLED` and writes the
-  default `obj_lock`, enabled with no rule. `src/rgw/driver/rados/rgw_rados.cc:2391-2393@v19.2.6`,
-  `src/rgw/driver/rados/rgw_rados.cc:2496-2498@v20.2.4`. Phase 1 already parses the header and answers 501.
+  default `obj_lock`, enabled with no rule. [rgw_rados.cc:2391-2393](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2391-L2393),
+  [rgw_rados.cc:2496-2498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2496-L2498). Phase 1 already parses the header and answers 501.
 - **PutObjectRetention.**
-  - verify_permission (`src/rgw/rgw_op.cc:8321-8338@v19.2.6`, `src/rgw/rgw_op.cc:9269-9286@v20.2.4#RGWPutObjRetention::verify_permission`):
+  - verify_permission ([rgw_op.cc:8321-8338](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8321-L8338), [rgw_op.cc:9269-9286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9269-L9286)):
     s3:PutObjectRetention. get_params then reads the bypass header (url-decoded, "true" in
     any case) and the body. When the header is set, bypass_perm =
     verify_object_permission(s3:BypassGovernanceRetention).
-  - execute (`src/rgw/rgw_op.cc:8345-8422@v19.2.6#RGWPutObjRetention::execute`,
-    `src/rgw/rgw_op.cc:9293-9383@v20.2.4#RGWPutObjRetention::execute`), in order:
+  - execute ([rgw_op.cc:8345-8422](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8345-L8422),
+    [rgw_op.cc:9293-9383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9293-L9383)), in order:
     1. No lock on the bucket: 400 InvalidRequest.
     2. MalformedXML, as for the bucket configuration: a Mode, or a `RetainUntilDate` that
        `from_iso_8601` cannot read.
@@ -165,74 +165,74 @@ rgw-go does not reproduce).
     10. `modify_obj_attrs` writes the retention.
   - Nothing checks whether the old retention has already expired.
   - v20.2.4 adds a bucket-logging record first (phase 3). The response is 200.
-- **modify_obj_attrs** (`src/rgw/driver/rados/rgw_sal_rados.cc:2378-2419@v19.2.6`) resolves
+- **modify_obj_attrs** ([rgw_sal_rados.cc:2378-2419](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2378-L2419)) resolves
   the OLH target and rewrites the whole attr set plus the one attr, moving the mtime on 1 ns.
   rgw-go's `SetObjectAttrs` already does this for unversioned objects.
-- **GetObjectRetention / GetObjectLegalHold** (`src/rgw/rgw_op.cc:8441-8471@v19.2.6`,
-  `:8545-8575`; `src/rgw/rgw_op.cc:9402-9432@v20.2.4#RGWGetObjRetention::execute`, `:9526-9556`):
+- **GetObjectRetention / GetObjectLegalHold** ([rgw_op.cc:8441-8471](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8441-L8471),
+  `:8545-8575`; [rgw_op.cc:9402-9432](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9402-L9432), `:9526-9556`):
   1. No lock: 400 InvalidRequest, "bucket object lock not configured".
   2. The attrs are read; a missing object is 404.
   3. No attr: 404 ObjectLockConfigurationNotFoundError.
   4. An attr that does not decode: 500.
   - Otherwise `<Retention>` or `<LegalHold>`, with no xmlns. The date is
-    `to_iso_8601`'s 9-digit nanoseconds with a Z (`src/common/iso_8601.h:38-43@v19.2.6`).
-- **PutObjectLegalHold** (`src/rgw/rgw_op.cc:8490-8526@v19.2.6`, `src/rgw/rgw_op.cc:9451-9507@v20.2.4#RGWPutObjLegalHold::execute`):
+    `to_iso_8601`'s 9-digit nanoseconds with a Z ([iso_8601.h:38-43](https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.h#L38-L43)).
+- **PutObjectLegalHold** ([rgw_op.cc:8490-8526](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8490-L8526), [rgw_op.cc:9451-9507](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9451-L9507)):
   1. No lock: InvalidRequest.
   2. The body is read and parsed.
   3. A missing LegalHold, or a Status outside ON/OFF, is MalformedXML.
   4. `modify_obj_attrs`. v20.2.4 first reads the attrs for its logging record; v19.2.6's
      `modify_obj_attrs` reads them anyway, so a missing object is 404 on both.
 - **Delete enforcement**: `verify_object_lock`
-  (`src/rgw/rgw_common.cc:1639-1667@v19.2.6#verify_object_lock`,
-  `src/rgw/rgw_common.cc:1702-1730@v20.2.4#verify_object_lock`).
+  ([rgw_common.cc:1639-1667](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1639-L1667),
+  [rgw_common.cc:1702-1730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1702-L1730)).
   - A retention attr that does not decode is EIO.
   - A retain-until second after now is locked, unless the mode is GOVERNANCE and both the
     header and the permission are present.
   - A legal hold that does not decode is EIO. ON is locked.
   - It runs only when the request names a version (`null` included) and the bucket has lock.
     State loading ENOENT, a delete marker, skips it.
-    `src/rgw/rgw_op.cc:5173-5221@v19.2.6#RGWDeleteObj::execute`,
-    `src/rgw/rgw_op.cc:5563-5610@v20.2.4#RGWDeleteObj::execute`.
+    [rgw_op.cc:5173-5221](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5173-L5221),
+    [rgw_op.cc:5563-5610](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5563-L5610).
   - DeleteObject checks the bypass on the object's ARN
-    (`src/rgw/rgw_op.cc:5138-5166@v19.2.6#RGWDeleteObj::verify_permission`).
+    ([rgw_op.cc:5138-5166](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5138-L5166)).
   - DeleteObjects checks it once, on the bucket ARN
-    (`src/rgw/rgw_op.cc:6768-6780@v19.2.6#RGWDeleteMultiObj::verify_permission`,
-    `src/rgw/rgw_op.cc:7707-7719@v20.2.4#RGWDeleteMultiObj::verify_permission`;
-    `src/rgw/rgw_common.cc:1469-1476@v19.2.6`). Each key then checks
-    (`src/rgw/rgw_op.cc:6818-6866@v19.2.6#RGWDeleteMultiObj::handle_individual_object`).
+    ([rgw_op.cc:6768-6780](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6768-L6780),
+    [rgw_op.cc:7707-7719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719);
+    [rgw_common.cc:1469-1476](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1469-L1476)). Each key then checks
+    ([rgw_op.cc:6818-6866](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6818-L6866)).
   - The refusal is 403 AccessDenied, with message "forbidden by object lock" on DeleteObject.
   - `verify_object_lock` has only these two callers at both tags (searched). Admin removals
     and purges never check a lock.
 - **Default retention**: `_do_write_meta` applies it when the bucket has lock and a rule, the
   flags are exactly `PUT_OBJ_CREATE`, and the attrs carry no retention. It writes {rule mode,
-  `get_lock_until_date(set_mtime)`}. `src/rgw/driver/rados/rgw_rados.cc:3179-3189@v19.2.6`,
-  `src/rgw/driver/rados/rgw_rados.cc:3308-3318@v20.2.4`.
+  `get_lock_until_date(set_mtime)`}. [rgw_rados.cc:3179-3189](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3179-L3189),
+  [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318).
   - `get_lock_until_date` is mtime + days × 86400 s, or mtime + `std::chrono::years`
-    (365.2425 days) × years. `src/rgw/rgw_object_lock.cc:87-95@v19.2.6#RGWObjectLock::get_lock_until_date`.
+    (365.2425 days) × years. [rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L87-L95).
     The sum is in u64 nanoseconds and wraps (§6).
   - `PUT_OBJ_CREATE` is set by: the atomic and append processors
-    (`src/rgw/driver/rados/rgw_putobj_processor.cc:384@v19.2.6`, `:745`); `copy_obj_data`
-    (`src/rgw/driver/rados/rgw_rados.cc:4976@v19.2.6`, `src/rgw/driver/rados/rgw_rados.cc:5236@v20.2.4`), which serves the
+    ([rgw_putobj_processor.cc:384](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L384), `:745`); `copy_obj_data`
+    ([rgw_rados.cc:4976](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4976), [rgw_rados.cc:5236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5236)), which serves the
     streaming copy and the transition; and the multipart completion
-    (`src/rgw/driver/rados/rgw_sal_rados.cc:3629@v19.2.6`, `src/rgw/driver/rados/rgw_sal_rados.cc:4477@v20.2.4`).
+    ([rgw_sal_rados.cc:3629](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3629), [rgw_sal_rados.cc:4477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4477)).
   - Not set by part heads or the multipart meta object.
 - **Write headers**: PutObject and CopyObject store the header retention and legal hold
-  (`src/rgw/rgw_op.cc:4542-4551@v19.2.6`, `:5584-5593`). CreateMultipartUpload stores them in
+  ([rgw_op.cc:4542-4551](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4542-L4551), `:5584-5593`). CreateMultipartUpload stores them in
   `multipart_upload_info` (`obj_retention_exist` and the rest), and the completion writes them
-  as attrs (`src/rgw/driver/rados/rgw_sal_rados.cc:3310-3317@v19.2.6`, `:3597-3606`;
-  `src/rgw/driver/rados/rgw_sal_rados.cc:4156-4163@v20.2.4`, `:4445-4454`).
-- **Read headers** (`src/rgw/rgw_op.cc:1007-1010@v19.2.6`; `src/rgw/rgw_rest_s3.cc:595-613@v19.2.6`,
-  `src/rgw/rgw_rest_s3.cc:712-730@v20.2.4`): attrs that do not decode are skipped. v20.2.4 also refuses a system
-  request that lacks either permission (`src/rgw/rgw_op.cc:1148-1164@v20.2.4`), which is
+  as attrs ([rgw_sal_rados.cc:3310-3317](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3310-L3317), `:3597-3606`;
+  [rgw_sal_rados.cc:4156-4163](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4156-L4163), `:4445-4454`).
+- **Read headers** ([rgw_op.cc:1007-1010](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1007-L1010); [rgw_rest_s3.cc:595-613](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L595-L613),
+  [rgw_rest_s3.cc:712-730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730)): attrs that do not decode are skipped. v20.2.4 also refuses a system
+  request that lacks either permission ([rgw_op.cc:1148-1164](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1148-L1164)), which is
   replication and so excluded.
 - **Versioning lock-in**: PutBucketVersioning other than Enabled on a lock bucket is 409
-  InvalidBucketState (`src/rgw/rgw_op.cc:2788-2793@v19.2.6`, `src/rgw/rgw_op.cc:3020-3025@v20.2.4`).
+  InvalidBucketState ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2788-L2793), [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)).
 
 ### 2.3 Lifecycle configuration ops
 
 - **PutBucketLifecycleConfiguration**
-  (`src/rgw/rgw_op.cc:5930-6025@v19.2.6#RGWPutLC::execute`,
-  `src/rgw/rgw_op.cc:6592-6695@v20.2.4#RGWPutLC::execute`), in order:
+  ([rgw_op.cc:5930-6025](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5930-L6025),
+  [rgw_op.cc:6592-6695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6592-L6695)), in order:
   1. **[v20.2.4 only]** An indexless current index is 405 MethodNotAllowed, "Indexless
      buckets do not support lifecycle policy".
   2. A `Content-MD5` that `from_base64` refuses is 400 BadDigest.
@@ -241,71 +241,71 @@ rgw-go does not reproduce).
      decoded to.
   5. An XML parse failure is MalformedXML.
   6. `decode_xml("LifecycleConfiguration")` is not mandatory, so a wrong root is an empty
-     configuration. Grammar errors are MalformedXML (`src/rgw/rgw_lc_s3.cc:42-308@v19.2.6`).
+     configuration. Grammar errors are MalformedXML ([rgw_lc_s3.cc:42-308](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc_s3.cc#L42-L308)).
      - Status is mandatory and Enabled or Disabled.
      - Filter is optional, or else a top-level Prefix is mandatory.
      - At least one action.
      - Expiration takes exactly one of Days, Date or ExpiredObjectDeleteMarker. A Date must
-       be ISO 8601 at exact midnight UTC (`src/rgw/rgw_lc_s3.cc:19-30@v19.2.6#check_date`).
+       be ISO 8601 at exact midnight UTC ([rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc_s3.cc#L19-L30)).
      - NoncurrentDays and DaysAfterInitiation are mandatory. A Transition takes exactly one
        of Days or Date, and a StorageClass. A repeated StorageClass is an error.
      - An `ObjectSizeLessThan` at or below `ObjectSizeGreaterThan` is an error.
      - More rules than `rgw_lc_max_rules` is an error. An empty ID gets 48 random lowercase
        alphanumerics.
-  7. `rebuild` → `check_and_add_rule` (`src/rgw/rgw_lc.cc:173-192@v19.2.6`):
+  7. `rebuild` → `check_and_add_rule` ([rgw_lc.cc:173-192](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L173-L192)):
      - An invalid rule is EINVAL, which is 400 InvalidArgument. Invalid means an ID over 255,
        no action, Days of 0 or less, a negative transition day, or Days and Date mixed across
-       Expiration and the Transitions (`src/rgw/rgw_lc.cc:60-95@v19.2.6#LCRule::valid`).
+       Expiration and the Transitions ([rgw_lc.cc:60-95](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L60-L95)).
      - A duplicate ID is EINVAL.
      - Tags with ExpiredObjectDeleteMarker or AbortIncompleteMultipartUpload is InvalidRequest.
   8. The forward.
-  9. `set_bucket_config` (`src/rgw/rgw_lc.cc:2636-2666@v19.2.6#RGWLC::set_bucket_config`,
-     `src/rgw/rgw_lc.cc:2703-2733@v20.2.4#RGWLC::set_bucket_config`):
+  9. `set_bucket_config` ([rgw_lc.cc:2636-2666](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2636-L2666),
+     [rgw_lc.cc:2703-2733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2703-L2733)):
      - It encodes the config into `user.rgw.lc` with `merge_and_store_attrs`, one attempt
        guarded by the objv. A lost race fails the request.
      - Then `guard_lc_modify` takes the `lc_process` exclusive lock on the bucket's shard,
        for `rgw_lc_lock_max_time` under the RGWLC instance's random 16-character cookie. It
        retries EBUSY and EEXIST every 100 ms up to 500 times, then fails.
      - It sets the entry {key, 0, uninitial} and unlocks
-       (`src/rgw/rgw_lc.cc:2583-2634@v19.2.6#guard_lc_modify`).
+       ([rgw_lc.cc:2583-2634](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2583-L2634)).
   - The attr is stored even when the lock then fails.
   - The response is 200 with an empty document.
 - **GetBucketLifecycleConfiguration**: no attr is 404 NoSuchLifecycleConfiguration; an attr
   that does not decode is 500. Otherwise
   `<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` with the rules in
-  rule_map order (`src/rgw/rgw_rest_s3.cc:3658-3696@v19.2.6`; `src/rgw/rgw_lc_s3.cc:310-369@v19.2.6`).
+  rule_map order ([rgw_rest_s3.cc:3658-3696](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3658-L3696); [rgw_lc_s3.cc:310-369](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc_s3.cc#L310-L369)).
   Phase 1 already serves the 404.
 - **DeleteBucketLifecycle**: `remove_bucket_config(update_attrs=true)` erases the attr with
   `put_info`, then removes the entry under `guard_lc_modify`. The answer is 204 even when
-  there was no configuration (`src/rgw/rgw_op.cc:6027-6044@v19.2.6#RGWDeleteLC::execute`;
-  `src/rgw/rgw_lc.cc:2668-2693@v19.2.6#RGWLC::remove_bucket_config`).
+  there was no configuration ([rgw_op.cc:6027-6044](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6027-L6044);
+  [rgw_lc.cc:2668-2693](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2668-L2693)).
 - **Elsewhere**:
   - Bucket removal drops the entry when the bucket had `user.rgw.lc`, ignoring the result
-    (`src/rgw/driver/rados/rgw_sal_rados.cc:402-407@v19.2.6`, `src/rgw/driver/rados/rgw_sal_rados.cc:419-424@v20.2.4`).
+    ([rgw_sal_rados.cc:402-407](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L407), [rgw_sal_rados.cc:419-424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L419-L424)).
   - A `bucket.instance` metadata put sets the entry when the new attrs carry `user.rgw.lc`.
     Otherwise it drops it: always at v19.2.6, only when the old instance had the attr at
-    v20.2.4 (`src/rgw/driver/rados/rgw_bucket.cc:2900-2928@v19.2.6`, `src/rgw/driver/rados/rgw_bucket.cc:3010-3040@v20.2.4`).
+    v20.2.4 ([rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928), [rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040)).
 - **Headers**:
   - `x-amz-expiration` on GET, HEAD and PutObject: `expiry-date="<RFC 1123 GMT>",
     rule-id="<id>"` from the earliest matching enabled rule
-    (`src/rgw/rgw_lc.cc:2750-2885@v19.2.6#s3_expiration_header`; call sites
-    `src/rgw/rgw_rest_s3.cc:389@v19.2.6`, `:462`, `:2742`; `src/rgw/rgw_rest_s3.cc:400@v20.2.4`, `:498`, `:2903`).
+    ([rgw_lc.cc:2750-2885](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2750-L2885); call sites
+    [rgw_rest_s3.cc:389](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L389), `:462`, `:2742`; [rgw_rest_s3.cc:400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L400), `:498`, `:2903`).
     A rule matches on prefix and tags. Days count from midnight UTC after the mtime.
   - CreateMultipartUpload sends `x-amz-abort-date` and `x-amz-abort-rule-id` from
     AbortIncompleteMultipartUpload, matching on prefix only
-    (`src/rgw/rgw_lc.cc:2887-2951@v19.2.6#s3_multipart_abort_header`;
-    `src/rgw/rgw_rest_s3.cc:4038-4041@v19.2.6`, `src/rgw/rgw_rest_s3.cc:4535-4538@v20.2.4`).
+    ([rgw_lc.cc:2887-2951](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2887-L2951);
+    [rgw_rest_s3.cc:4038-4041](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4038-L4041), [rgw_rest_s3.cc:4535-4538](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4535-L4538)).
 
 ### 2.4 The worker
 
 **Startup.** LC runs when `rgw_enable_lc_threads` is set, true by default
-(`src/rgw/driver/rados/rgw_rados.cc:1326-1330@v19.2.6`; `src/rgw/rgw_appmain.cc:231-233@v19.2.6`).
+([rgw_rados.cc:1326-1330](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1326-L1330); [rgw_appmain.cc:231-233](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L231-L233)).
 `rgw_lc_max_worker` threads start, 3 by default. Each has a workpool of `rgw_lc_max_wp_worker`
-threads with queues of 512 (`src/rgw/rgw_lc.cc:2467-2477@v19.2.6`, `:734-879`). Ceph's option
+threads with queues of 512 ([rgw_lc.cc:2467-2477](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2467-L2477), `:734-879`). Ceph's option
 text says the thread is "required on at least one RGW ... Having the thread enabled on multiple
 RGW processes within the same zone can spread some of the maintenance work between them"
-(`src/common/options/rgw.yaml.in:244-260@v19.2.6`). The other options, at the same defaults on
-both tags (`src/common/options/rgw.yaml.in:374-458@v19.2.6`, `src/common/options/rgw.yaml.in:400-485@v20.2.4`, `:3880-3895`,
+([rgw.yaml.in:244-260](https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L244-L260)). The other options, at the same defaults on
+both tags ([rgw.yaml.in:374-458](https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L374-L458), [rgw.yaml.in:400-485](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L400-L485), `:3880-3895`,
 `:4172-4187`):
 - `rgw_lifecycle_work_time` "00:00-06:00", local time;
 - `rgw_lc_lock_max_time` 90 s;
@@ -316,14 +316,14 @@ both tags (`src/common/options/rgw.yaml.in:374-458@v19.2.6`, `src/common/options
 - `rgwlc_auto_session_clear` true;
 - `rgwlc_skip_bucket_step` false.
 
-**Schedule.** Each worker loops (`src/rgw/rgw_lc.cc:201-231@v19.2.6#RGWLC::LCWorker::entry`).
+**Schedule.** Each worker loops ([rgw_lc.cc:201-231](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L201-L231)).
 When `should_work` holds, it makes one pass over every shard in a fresh random order. It then
 sleeps until the next local window start, or for one debug interval.
-`should_work` (`src/rgw/rgw_lc.cc:2510-2539@v19.2.6`) and the start time (`:2541-2570`) use
+`should_work` ([rgw_lc.cc:2510-2539](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2510-L2539)) and the start time (`:2541-2570`) use
 `localtime_r`, so the gateway's time zone decides both.
 
-**Shard pass** (`src/rgw/rgw_lc.cc:2252-2465@v19.2.6#RGWLC::process`,
-`src/rgw/rgw_lc.cc:2317-2532@v20.2.4#RGWLC::process`):
+**Shard pass** ([rgw_lc.cc:2252-2465](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2252-L2465),
+[rgw_lc.cc:2317-2532](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2317-L2532)):
 1. Lock `lc_process` on `lc.<i>` for `rgw_lc_lock_max_time`, with cookie
    `"lc_thrd: <ix>"`. Retry up to 5 times, backing off from 0 ms in 100 ms steps. A shard
    another worker holds is skipped.
@@ -345,8 +345,8 @@ sleeps until the next local window start, or for one debug interval.
 The lock covers only the bookkeeping, never a bucket's processing. The bucket's claim is the
 entry's status and start time, together with the head's position.
 
-**Bucket pass** (`src/rgw/rgw_lc.cc:1679-1830@v19.2.6#RGWLC::bucket_lc_process`,
-`src/rgw/rgw_lc.cc:1735-1886@v20.2.4#RGWLC::bucket_lc_process`):
+**Bucket pass** ([rgw_lc.cc:1679-1830](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1679-L1830),
+[rgw_lc.cc:1735-1886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1735-L1886)):
 - The key is split into tenant, name and marker, and the bucket is loaded.
 - A marker mismatch is ENOENT, so the entry is dropped. No `user.rgw.lc` is success. A config
   that does not decode is -1, so the entry is marked failed.
@@ -362,10 +362,10 @@ entry's status and start time, together with the head's position.
   whose meta mtime has expired is aborted through the SAL multipart abort, the same path as
   AbortMultipartUpload. Tags and size are not filtered.
 - Expiry (`:272-302#obj_has_expired`): `round_to_day(now) - mtime_secs >= days × 86400`.
-  `round_to_day` is **local** midnight (`src/include/utime.h:218-227@v19.2.6`). In debug mode
+  `round_to_day` is **local** midnight ([utime.h:218-227](https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L218-L227)). In debug mode
   it is `now - mtime >= days × interval`. A Date is due once `now >= date`.
 
-**Per-entry rule order.** `LCOpRule::build` (`src/rgw/rgw_lc.cc:1582-1608@v19.2.6#LCOpRule::build`)
+**Per-entry rule order.** `LCOpRule::build` ([rgw_lc.cc:1582-1608](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1582-L1608))
 adds the actions in this order:
 1. CurrentExpiration, when Days > 0 or a Date is set;
 2. DMExpiration;
@@ -377,8 +377,8 @@ adds the actions in this order:
 only the one whose due time is strictly latest. A transition whose target class equals the
 entry's class is dropped (`should_process`). The tag filter runs last: it reads
 `user.rgw.x-amz-tagging`, and a delete marker passes it (`:1030-1114`). The checks:
-- **CurrentExpiration** (`src/rgw/rgw_lc.cc:1116-1207@v19.2.6#LCOpAction_CurrentExpiration`,
-  `src/rgw/rgw_lc.cc:1136-1227@v20.2.4#LCOpAction_CurrentExpiration`): current entries only.
+- **CurrentExpiration** ([rgw_lc.cc:1116-1207](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1116-L1207),
+  [rgw_lc.cc:1136-1227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1136-L1227)): current entries only.
   - A current delete marker with a following entry of the same name is skipped. Otherwise it
     is due by Days or Date like an object, and is removed.
   - A size filter stats the head.
@@ -392,12 +392,12 @@ entry's class is dropped (`should_process`). The tag filter runs last: it reads
   `num_noncurrent > NewerNoncurrentVersions`, the size filter, and `pass_object_lock_check`
   (`:304-349`). That check reads the head: a retention date after now, a legal hold ON, or an
   attr that does not decode keeps the version. ENOENT passes. The version is then removed.
-- **Transition** (`src/rgw/rgw_lc.cc:1310-1532@v19.2.6#LCOpAction_Transition`,
-  `src/rgw/rgw_lc.cc:1332-1588@v20.2.4#LCOpAction_Transition`): not on a delete marker.
+- **Transition** ([rgw_lc.cc:1310-1532](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1310-L1532),
+  [rgw_lc.cc:1332-1588](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1332-L1588)): not on a delete marker.
   - CloudTiered entries are skipped. The target is the bucket's placement with the class. A
     cloud-s3 tier is excluded; otherwise `valid_placement` must hold, or EINVAL.
-  - Then `RGWRados::transition_obj` (`src/rgw/driver/rados/rgw_rados.cc:5117-5184@v19.2.6#RGWRados::transition_obj`,
-    `src/rgw/driver/rados/rgw_rados.cc:5417-5490@v20.2.4#RGWRados::transition_obj`):
+  - Then `RGWRados::transition_obj` ([rgw_rados.cc:5117-5184](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5117-L5184),
+    [rgw_rados.cc:5417-5490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5490)):
     1. Read the head, attrs and size. An mtime other than the listed one is ECANCELED.
     2. Clear a "null" instance.
     3. Drop `user.rgw.idtag` and `user.rgw.tail_tag`.
@@ -409,8 +409,8 @@ entry's class is dropped (`should_process`). The tag filter runs last: it reads
   - A versioned target goes through `set_olh` (`:3280-3343`). Old tails reach the GC through
     the atomic write.
   - Default retention reapplies when the object had none (`PUT_OBJ_CREATE`).
-- **Removal** (`src/rgw/rgw_lc.cc:601-658@v19.2.6#remove_expired_obj`,
-  `src/rgw/rgw_lc.cc:608-679@v20.2.4#remove_expired_obj`):
+- **Removal** ([rgw_lc.cc:601-658](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L601-L658),
+  [rgw_lc.cc:608-679](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L608-L679)):
   - A delete-marker-making removal clears the instance. A permanent one of an empty instance
     uses "null".
   - The delete runs with the bucket's versioning status, the entry's owner as the object
@@ -419,18 +419,18 @@ entry's class is dropped (`should_process`). The tag filter runs last: it reads
   - It uses `FLAG_LOG_OP` for a delete marker or a multi-type zonegroup. A success publishes
     a notification (phase 3).
   - At v19.2.6 a head that does not exist reads as state with `exists=false` and the delete
-    goes on (`src/rgw/driver/rados/rgw_rados.cc:6153-6167@v19.2.6`). At v20.2.4,
+    goes on ([rgw_rados.cc:6153-6167](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6153-L6167)). At v20.2.4,
     `load_obj_state` ENOENT is tolerated only for delete markers (commit 5c82cbe78be,
     tracker #70853). The net behaviour for delete markers is the same.
 
 **Differences between the tags in the worker**, besides notifications:
 - **Page boundary.** At v19.2.6, `next_key_name` at a page's last entry answers "none" even
-  when the listing is truncated (`src/rgw/rgw_lc.cc:434-443@v19.2.6`). A current delete
+  when the listing is truncated ([rgw_lc.cc:434-443](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L434-L443)). A current delete
   marker at the end of a 1000-entry page is then removed even though older versions follow
-  on the next page. v20.2.4 answers the entry's own name, so it is kept (`src/rgw/rgw_lc.cc:434-451@v20.2.4#next_key_name`;
+  on the next page. v20.2.4 answers the entry's own name, so it is kept ([rgw_lc.cc:434-451](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L434-L451);
   commit 874d2403f5e, tracker #73539; no squid backport through origin/squid). See §6.
 - **Restore expirer.** v20.2.4 runs `process_expired_objects`, the cloud-restore expirer,
-  after each full pass (`src/rgw/rgw_lc.cc:2079-2083@v20.2.4`). It is excluded.
+  after each full pass ([rgw_lc.cc:2079-2083](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2079-L2083)). It is excluded.
 - **Instance put.** The `bucket.instance` put's entry removal condition, above.
 
 **Interactions.**
@@ -534,7 +534,7 @@ Exclusions that phase 2 retires or rewrites in this area:
 ### Can both workers run? Yes, by radosgw's design
 
 Ceph documents multiple LC threads per zone as supported. They spread the work
-(`src/common/options/rgw.yaml.in:244-260@v19.2.6`). The arbitration:
+([rgw.yaml.in:244-260](https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L244-L260)). The arbitration:
 1. **Per shard,** the `lc_process` exclusive lock serializes head and entry bookkeeping.
 2. **Per bucket,** the claim is an entry set to `processing` with a start time, under that
    lock, before the head moves past it. Another worker skips a processing entry until its
@@ -739,16 +739,16 @@ channel once it reproduces (code-conventions `bug-reports.md`).
 
 | # | Defect | Releases | Class | rgw-go's choice |
 |---|---|---|---|---|
-| D1 | A current delete marker at the end of a 1000-entry listing page is removed although older versions follow on the next page. The newest of them becomes current again (`src/rgw/rgw_lc.cc:434-443@v19.2.6`) | v19.2.6. Fixed in v20.2.4 (tracker #73539, commit 874d2403f5e); no squid backport | data corruption | v20.2.4's rule on both releases; exclusion for Squid. Prior art upstream, so nothing to file |
-| D2 | Current expiration on a **versioning-suspended** bucket deletes the current version permanently (`remove_indeed = !versioning_enabled()`). An older version may resurface. S3's expiration in a suspended bucket writes a null delete marker (`src/rgw/rgw_lc.cc:1187-1191@v19.2.6`; same at v20.2.4) | both tags | data corruption | S3's: a delete marker with no instance under Suspended, which is the null delete marker radosgw's own DeleteObject writes there, so RADOS-compatible. Exclusion; filed once reproduced. Open question Q2 |
-| D3 | Current expiration never checks object lock. Where its removal is permanent it deletes a retained or held object. This happens on a bucket whose flags carry lock without `BUCKET_VERSIONED`, a state a `bucket.instance` metadata put can write (registry, "A purging bucket removal refuses..."), and under D2 (`src/rgw/rgw_lc.cc:1116-1207@v19.2.6#LCOpAction_CurrentExpiration`) | both | data corruption | Every permanent LC removal runs the lock check that noncurrent expiration has: retention date after now, legal hold ON, or an attr that does not decode keeps the object. Exclusion |
-| D4 | The lock-until date wraps. `get_lock_until_date` adds the period in u64 nanoseconds, so a default period ending after 2554-07-21 wraps, often to a past date, and the object is unprotected at once. `from_iso_8601` wraps an explicit date past 2554 the same way. Only a wrap into the past is caught, by the "in the future" checks (`src/rgw/rgw_object_lock.cc:87-95@v19.2.6`; registry, "radosgw's date conditions wrap past 2554"). Tracker #56993's 2023 fix (dd87a0ff845) removed an int overflow; the later chrono form wraps again | both, and main | security (fail-open of WORM retention) | Refuse what cannot be represented: a rule whose period from now passes the real_time range is InvalidRetentionPeriod; an explicit date past it is the error its parser gives a bad date; and a default retention computed at write time is saturated at the maximum, fail-closed. Exclusion. Open question Q3 |
-| D5 | DeleteObjects checks s3:BypassGovernanceRetention once, on the **bucket** ARN (`src/rgw/rgw_op.cc:6774-6777@v19.2.6`, `src/rgw/rgw_op.cc:7713-7716@v20.2.4`). A policy Deny scoped to `arn:aws:s3:::b/*` does not bind it, while DeleteObject honours the same Deny on the object ARN, so a principal refused the bypass removes GOVERNANCE-locked versions through DeleteObjects | both | security (authorization bypass) | Evaluate the bypass per key on the object's ARN, as DeleteObject does. Exclusion |
-| D6 | `x-amz-expiration` reports a NoncurrentVersionExpiration rule for a current object, because the OLH-resolved key carries an instance. It reads that rule's date from the current Expiration (`src/rgw/rgw_lc.cc:2846-2861@v19.2.6`) | both. Fixed after both floors (tracker #77564; squid 4dac1850993, tentacle 30daa120099), in no release | S3-correctness | The fixed behaviour on both: the current Expiration rule only, and no header for a request naming a version. Exclusion |
+| D1 | A current delete marker at the end of a 1000-entry listing page is removed although older versions follow on the next page. The newest of them becomes current again ([rgw_lc.cc:434-443](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L434-L443)) | v19.2.6. Fixed in v20.2.4 (tracker #73539, commit 874d2403f5e); no squid backport | data corruption | v20.2.4's rule on both releases; exclusion for Squid. Prior art upstream, so nothing to file |
+| D2 | Current expiration on a **versioning-suspended** bucket deletes the current version permanently (`remove_indeed = !versioning_enabled()`). An older version may resurface. S3's expiration in a suspended bucket writes a null delete marker ([rgw_lc.cc:1187-1191](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1187-L1191); same at v20.2.4) | both tags | data corruption | S3's: a delete marker with no instance under Suspended, which is the null delete marker radosgw's own DeleteObject writes there, so RADOS-compatible. Exclusion; filed once reproduced. Open question Q2 |
+| D3 | Current expiration never checks object lock. Where its removal is permanent it deletes a retained or held object. This happens on a bucket whose flags carry lock without `BUCKET_VERSIONED`, a state a `bucket.instance` metadata put can write (registry, "A purging bucket removal refuses..."), and under D2 ([rgw_lc.cc:1116-1207](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1116-L1207)) | both | data corruption | Every permanent LC removal runs the lock check that noncurrent expiration has: retention date after now, legal hold ON, or an attr that does not decode keeps the object. Exclusion |
+| D4 | The lock-until date wraps. `get_lock_until_date` adds the period in u64 nanoseconds, so a default period ending after 2554-07-21 wraps, often to a past date, and the object is unprotected at once. `from_iso_8601` wraps an explicit date past 2554 the same way. Only a wrap into the past is caught, by the "in the future" checks ([rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L87-L95); registry, "radosgw's date conditions wrap past 2554"). Tracker #56993's 2023 fix (dd87a0ff845) removed an int overflow; the later chrono form wraps again | both, and main | security (fail-open of WORM retention) | Refuse what cannot be represented: a rule whose period from now passes the real_time range is InvalidRetentionPeriod; an explicit date past it is the error its parser gives a bad date; and a default retention computed at write time is saturated at the maximum, fail-closed. Exclusion. Open question Q3 |
+| D5 | DeleteObjects checks s3:BypassGovernanceRetention once, on the **bucket** ARN ([rgw_op.cc:6774-6777](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6774-L6777), [rgw_op.cc:7713-7716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7713-L7716)). A policy Deny scoped to `arn:aws:s3:::b/*` does not bind it, while DeleteObject honours the same Deny on the object ARN, so a principal refused the bypass removes GOVERNANCE-locked versions through DeleteObjects | both | security (authorization bypass) | Evaluate the bypass per key on the object's ARN, as DeleteObject does. Exclusion |
+| D6 | `x-amz-expiration` reports a NoncurrentVersionExpiration rule for a current object, because the OLH-resolved key carries an instance. It reads that rule's date from the current Expiration ([rgw_lc.cc:2846-2861](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2846-L2861)) | both. Fixed after both floors (tracker #77564; squid 4dac1850993, tentacle 30daa120099), in no release | S3-correctness | The fixed behaviour on both: the current Expiration rule only, and no header for a request naming a version. Exclusion |
 | D7 | v19.2.6 stores a lifecycle configuration on an indexless bucket, which the worker cannot list. v20.2.4 answers 405 MethodNotAllowed | v19.2.6 | S3-correctness | v20.2.4's 405 on both. Exclusion for Squid |
-| D8 | PutObjectRetention refuses COMPLIANCE to GOVERNANCE, and a shorter date without the bypass, even after the existing retention has **expired** (`src/rgw/rgw_op.cc:8400-8417@v19.2.6`) | both | S3-correctness (fail-closed) | Open question Q4. Recommended: treat an expired retention as none, which only ever allows a new protection. Exclusion |
-| D9 | PutBucketLifecycle's attr write is one objv-guarded attempt, so a racing bucket write fails the request with 409. The other subresource PUTs retry (`src/rgw/rgw_lc.cc:2649-2653@v19.2.6`) | both | cosmetic | Retry as `op.RetryRacedBucketWrite` does, re-authorized. Exclusion |
-| D10 | PutBucketLifecycle compares 16 bytes of the decoded Content-MD5 whatever its decoded length, reading past a short value (`src/rgw/rgw_op.cc:5969-5977@v19.2.6`) | both | cosmetic: the answer is BadDigest either way | A decoded length other than 16 is BadDigest; no S3 difference, so no exclusion |
+| D8 | PutObjectRetention refuses COMPLIANCE to GOVERNANCE, and a shorter date without the bypass, even after the existing retention has **expired** ([rgw_op.cc:8400-8417](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8400-L8417)) | both | S3-correctness (fail-closed) | Open question Q4. Recommended: treat an expired retention as none, which only ever allows a new protection. Exclusion |
+| D9 | PutBucketLifecycle's attr write is one objv-guarded attempt, so a racing bucket write fails the request with 409. The other subresource PUTs retry ([rgw_lc.cc:2649-2653](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2649-L2653)) | both | cosmetic | Retry as `op.RetryRacedBucketWrite` does, re-authorized. Exclusion |
+| D10 | PutBucketLifecycle compares 16 bytes of the decoded Content-MD5 whatever its decoded length, reading past a short value ([rgw_op.cc:5969-5977](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5969-L5977)) | both | cosmetic: the answer is BadDigest either way | A decoded length other than 16 is BadDigest; no S3 difference, so no exclusion |
 
 Reproduced as radosgw does, with no difference: the attr stored when `guard_lc_modify` then
 fails to lock (S3-correctness, minor); the lc entry left `processing` for two days after a
@@ -788,7 +788,7 @@ and its defects in `docs/ceph-upstream-bugs.md` in the same PR.
 What this area needs from **versioning**, by the interface it must expose:
 - **V1.** PutBucketVersioning refuses any state but Enabled on a lock bucket: 409
   InvalidBucketState, "bucket versioning cannot be disabled on buckets with object lock
-  enabled" (`src/rgw/rgw_op.cc:2788-2793@v19.2.6`, `src/rgw/rgw_op.cc:3020-3025@v20.2.4`). Versioning owns the
+  enabled" ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2788-L2793), [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)). Versioning owns the
   op; L2 supplies the spec case.
 - **V2.** Versioned create writes (PUT, the streaming copy, CompleteMultipartUpload, and the
   rewrite of V6) assemble the head's attrs at one point, given the bucket record and the
@@ -807,10 +807,10 @@ What this area needs from **versioning**, by the interface it must expose:
   and `Category` (to skip CloudTiered entries).
 - **V5.** `StatObject` and `SetObjectAttrs` resolve a plain key on a versioned bucket to the
   current version (OLH follow). A delete marker or a missing version is ENOENT. This is
-  `modify_obj_attrs`'s semantics (`src/rgw/driver/rados/rgw_sal_rados.cc:2401-2419@v19.2.6#RadosObject::modify_obj_attrs`).
+  `modify_obj_attrs`'s semantics ([rgw_sal_rados.cc:2401-2419](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2401-L2419)).
 - **V6.** A head write of an existing instance at an explicit `OLHEpoch` that links it
   without promoting it past a newer version (`set_olh` from `_do_write_meta`,
-  `src/rgw/driver/rados/rgw_rados.cc:3337-3343@v19.2.6`). It serves the transition of a
+  [rgw_rados.cc:3337-3343](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3337-L3343)). It serves the transition of a
   noncurrent version.
 
 From **writepath**:
@@ -818,7 +818,7 @@ From **writepath**:
   which is `valid_placement`;
 - the constraint that the transition's raw rewrite gets no compression or checksum filter,
   because `copy_obj_data` streams the stored bytes and keeps the compression and checksum
-  attrs (`src/rgw/driver/rados/rgw_rados.cc:5034-5115@v19.2.6`).
+  attrs ([rgw_rados.cc:5034-5115](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5034-L5115)).
 
 From **bucketconfig**: nothing beyond the shared handler maps, `PutBucketAttrs` and `xmltext`.
 
@@ -860,14 +860,14 @@ lines.
 `internal/meta/objectlock.go`).
 - `meta.ObjectLock` {Enabled, Rule *DefaultRetention{Mode, Days, Years int32}}: decode and
   encode at v1, parsed from and written to `BucketInfo.ObjLock`, nil meaning the default
-  (`src/rgw/rgw_object_lock.h:11-149@v19.2.6`).
+  ([rgw_object_lock.h:11-149](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L11-L149)).
 - XML: `ObjectLockConfiguration`, `Retention` and `LegalHold`, in and out, with §2.2's errors
-  (`src/rgw/rgw_object_lock.cc:8-141@v19.2.6`).
+  ([rgw_object_lock.cc:8-141](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L8-L141)).
 - `RetentionPeriodValid`.
 - `LockUntil(rule, mtime)`: days × 86400 s, or years × 31556952 s, saturated at the maximum
   real_time (D4).
 - `VerifyDelete(attrs, now, bypassHeader, bypassAllowed)`, which is `verify_object_lock`
-  (`src/rgw/rgw_common.cc:1639-1667@v19.2.6`).
+  ([rgw_common.cc:1639-1667](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1639-L1667)).
 - `RetentionChange(old, new, now, bypass)`: §2.2's matrix, with D8's choice.
 - `iso8601`: `from_iso_8601` with `ws_terminates` to u64 nanoseconds, and `to_iso_8601`
   YMDhmsn. `s3.fromISO8601` calls it.
@@ -882,10 +882,10 @@ saturation and its boundary. Depends on nothing. PR split: (a) `iso8601` and the
 - PutObjectLockConfiguration in §2.2's order: the versioning check before the body; then
   `ReadParamBody`, the parse and the period. Then under `retryBucketWrite`, set the flag and
   `ObjLock` and call `PutBucketInfo`.
-  `src/rgw/rgw_op.cc:8217-8293@v19.2.6`, `src/rgw/rgw_op.cc:9165-9241@v20.2.4`.
+  [rgw_op.cc:8217-8293](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8217-L8293), [rgw_op.cc:9165-9241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9165-L9241).
 - GetObjectLockConfiguration: 404 ObjectLockConfigurationNotFoundError, or the document.
 - CreateBucket with lock sets `BUCKET_VERSIONED|BUCKET_OBJ_LOCK_ENABLED` and the default
-  `obj_lock` (`src/rgw/driver/rados/rgw_rados.cc:2391-2393@v19.2.6`). It retires the 501
+  `obj_lock` ([rgw_rados.cc:2391-2393](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2391-L2393)). It retires the 501
   exclusion.
 
 Specs: each error in order on counterfeiter fakes; the 409 before a malformed body; a
@@ -896,10 +896,10 @@ with lock. About 170 lines.
 **L3. Object retention and legal hold ops** (op + s3: `op/objectlock_object.go`).
 - PutObjectRetention: get_params in verify_permission, the bypass permission only when the
   header is sent, then §2.2's execute order. It writes through `SetObjectAttrs`, which is V5.
-  `src/rgw/rgw_op.cc:8321-8422@v19.2.6`, `src/rgw/rgw_op.cc:9269-9383@v20.2.4`.
+  [rgw_op.cc:8321-8422](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8321-L8422), [rgw_op.cc:9269-9383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9269-L9383).
 - GetObjectRetention, PutObjectLegalHold and GetObjectLegalHold as §2.2 gives them; `versionId`
   is honoured. A missing key follows the phase-1 object-read 404 path, including Tentacle's
-  `x-amz-delete-marker` (`src/rgw/rgw_rest.cc:1936-1946@v20.2.4`).
+  `x-amz-delete-marker` ([rgw_rest.cc:1936-1946](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1946)).
 
 Specs: the transition matrix through the op; InvalidRequest without lock; a past date; a
 retention attr that does not decode is 500; the 1 ns mtime nudge on the attr write (the
@@ -914,7 +914,7 @@ existing registry quirk). Depends on L1, T0b and V5. One PR. About 180 lines.
 - DeleteObject's bypass permission is on the object ARN. DeleteObjects' is per key on each
   object ARN (D5), where radosgw checks once on the bucket.
 - The refusal is 403 AccessDenied, with "forbidden by object lock" on DeleteObject.
-- `src/rgw/rgw_op.cc:5138-5221@v19.2.6`, `:6768-6866`; `src/rgw/rgw_op.cc:5528-5610@v20.2.4`, `:7707-7805`.
+- [rgw_op.cc:5138-5221](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5138-L5221), `:6768-6866`; [rgw_op.cc:5528-5610](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5610), `:7707-7805`.
 
 Specs: the matrix through both ops; a delete marker passes; a delete without versionId is
 never checked; a racing retention change fails the guarded delete. Depends on L1 and V3. One
@@ -923,12 +923,12 @@ PR. About 160 lines.
 **L5. Lock on the write path** (driver + s3: the V2 point, `s3/putobject.go`,
 `s3/multipart.go`, `s3/copyobject.go`).
 - The header retention and legal hold become attrs on PutObject and CopyObject, as
-  `src/rgw/rgw_op.cc:4542-4551@v19.2.6` and `:5584-5593` store them, and fields in
+  [rgw_op.cc:4542-4551](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4542-L4551) and `:5584-5593` store them, and fields in
   `op.UploadParams` for CreateMultipartUpload. `meta.MultipartUploadInfo` and the completion
   already carry them (`internal/meta/multipart.go:197-253`, `driver/mp_complete.go:353-357`).
 - The default retention is added at V2's point exactly when radosgw's `_do_write_meta` adds
   it: a create write, a rule present and no retention attr
-  (`src/rgw/driver/rados/rgw_rados.cc:3179-3189@v19.2.6`, `src/rgw/driver/rados/rgw_rados.cc:3308-3318@v20.2.4`). Its date is
+  ([rgw_rados.cc:3179-3189](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3179-L3189), [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318)). Its date is
   `LockUntil(set_mtime)`.
 - It retires "A multipart upload with a retention or a legal hold ... answers 501" and the
   lock clause of the write refusal.
@@ -951,7 +951,7 @@ retention; (b) the s3 header storage and the retired refusals. About 190 lines.
 - Dump in rule_map order with the xmlns.
 - `prefix_map` building (`_add_rule`): the canonical storage class, the prefix from the
   filter or the rule.
-- `src/rgw/rgw_lc_s3.cc:19-369@v19.2.6`; `src/rgw/rgw_lc.cc:60-199@v19.2.6`.
+- [rgw_lc_s3.cc:19-369](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc_s3.cc#L19-L369); [rgw_lc.cc:60-199](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L60-L199).
 
 Specs: corpus goldens (RGWLifecycleConfiguration, LCRule, LCExpiration, LCFilter); generated
 vectors for LCTransition; XML error and dump tables; Rook's two documents round-tripping as
@@ -960,16 +960,16 @@ validation. About 230 lines.
 
 **C2. Lifecycle evaluation** (pure: `internal/lifecycle`).
 - `Expired(mtime, days, now, debugInterval)` against local midnight
-  (`src/rgw/rgw_lc.cc:272-302@v19.2.6#obj_has_expired`; `src/include/utime.h:218-227@v19.2.6`).
+  ([rgw_lc.cc:272-302](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L272-L302); [utime.h:218-227](https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L218-L227)).
 - The action set and the selection of `LCOpRule::build` and `process`: the latest due wins,
   a same-class transition is dropped, filters run after the actions
-  (`src/rgw/rgw_lc.cc:1582-1677@v19.2.6`).
+  ([rgw_lc.cc:1582-1677](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1582-L1677)).
 - Per-entry decisions for the four actions (§2.4), given the lister's state (next key name
   with v20.2.4's page-boundary rule, D1; `num_noncurrent`; effective mtime) and an injected
   lock predicate, which also guards permanent current removals (D3) and makes the
   suspended-bucket decision D2.
 - The `x-amz-expiration` value in D6's fixed form, and the abort date and rule
-  (`src/rgw/rgw_lc.cc:2750-2951@v19.2.6`).
+  ([rgw_lc.cc:2750-2951](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2750-L2951)).
 
 Specs: table-driven over entry sequences, including a delete marker at a page boundary, a
 suspended bucket, a lock bucket without `BUCKET_VERSIONED`, NewerNoncurrentVersions 0/1/2,
@@ -979,14 +979,14 @@ and L1. One PR. About 210 lines.
 **C3. cls_rgw lc client** (cls: `internal/cls/rgw/ops_lc.go`, `types_lc.go`). The seven
 methods and their op and reply structs, `cls_rgw_lc_entry` and `cls_rgw_lc_obj_head`, at §2.1's
 versions. list_entries is sent at struct_v 3 and decodes the reply's legacy forms. Constants
-live in the file. `src/cls/rgw/cls_rgw_ops.h:1183-1456@v19.2.6`;
-`src/cls/rgw/cls_rgw_client.cc:943-1067@v19.2.6`. Specs: corpus goldens (cls_rgw_lc_entry,
+live in the file. [cls_rgw_ops.h:1183-1456](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_ops.h#L1183-L1456);
+[cls_rgw_client.cc:943-1067](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_client.cc#L943-L1067). Specs: corpus goldens (cls_rgw_lc_entry,
 cls_rgw_lc_get_entry_ret, cls_rgw_lc_set_entry_op, cls_rgw_lc_rm_entry_op); generated vectors
 for the rest; marshalling against a recording Execer. Depends on nothing. One PR. About 150
 lines.
 
 **C4. fakerados lc methods** (emulator: `fakerados/cls_rgw_lc.go`, table entries per T0a).
-§2.1's semantics: `src/cls/rgw/cls_rgw.cc:4175-4359@v19.2.6`. Specs: each method against C3's
+§2.1's semantics: [cls_rgw.cc:4175-4359](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4175-L4359). Specs: each method against C3's
 client; ENOENT on missing shards; get_next_entry ordering; legacy list values. Depends on T0a
 and C3. One PR. About 120 lines.
 
@@ -994,7 +994,7 @@ and C3. One PR. About 120 lines.
 interface, `driver/options.go`).
 - The shard names and the index function; the key `tenant:name:marker`.
 - `guardLCModify`: the RGWLC-cookie lock on the shard, retried 500 times 100 ms apart, then
-  the entry write or removal (`src/rgw/rgw_lc.cc:2583-2634@v19.2.6`).
+  the entry write or removal ([rgw_lc.cc:2583-2634](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2583-L2634)).
 - Head and entry helpers.
 - Options: `rgw_enable_lc_threads`, `rgw_lc_lock_max_time`, `rgw_lc_max_worker`,
   `rgw_lc_max_wp_worker`, `rgw_lc_thread_delay`, `rgw_lc_debug_interval`,
@@ -1015,8 +1015,8 @@ lines.
   rebuild; the attr through `RetryRacedBucketWrite` (D9); then the entry.
 - GET renders the configuration. DELETE erases the attr through `PutBucketInfo`, then the
   entry, and answers 204.
-- `src/rgw/rgw_op.cc:5759-6044@v19.2.6`, `src/rgw/rgw_op.cc:6405-6714@v20.2.4`;
-  `src/rgw/rgw_rest_s3.cc:3658-3716@v19.2.6`. It retires the 501 exclusion.
+- [rgw_op.cc:5759-6044](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5759-L6044), [rgw_op.cc:6405-6714](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6405-L6714);
+  [rgw_rest_s3.cc:3658-3716](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3658-L3716). It retires the 501 exclusion.
 
 Specs: each error in order; Content-MD5 cases including all-'='; wrong root; the entry written
 after the attr; 204 without a configuration. Depends on C1, C5 and T0b. PR split: (a) PUT and
@@ -1025,11 +1025,11 @@ DELETE; (b) GET. About 200 lines.
 **C7. lc entry side effects** (driver: `driver/bucket.go` deletion, `driver/metadata.go`
 instance put).
 - Bucket removal drops the entry when the bucket carried `user.rgw.lc`, ignoring the result
-  (`src/rgw/driver/rados/rgw_sal_rados.cc:402-407@v19.2.6`).
+  ([rgw_sal_rados.cc:402-407](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L407)).
 - An instance put sets it when the new attrs carry the attr, and drops it when only the old
   ones did. That is v20.2.4's condition on both releases; v19.2.6's extra removal of an absent
-  key changes no state (`src/rgw/driver/rados/rgw_bucket.cc:2900-2928@v19.2.6`,
-  `src/rgw/driver/rados/rgw_bucket.cc:3010-3040@v20.2.4`).
+  key changes no state ([rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928),
+  [rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040)).
 - It retires the exclusion's lifecycle clause.
 
 Specs on fakerados. Depends on C5. One PR. About 100 lines.
@@ -1042,7 +1042,7 @@ Specs on fakerados. Depends on C5. One PR. About 100 lines.
 - The call sites are §2.3's. It retires both "No x-amz-expiration" exclusions.
 
 Specs: the s3-tests header cases as unit cases; tags taken from the object's stored tags on
-GET, as `rgw_cond_decode_objtags` takes them (`src/rgw/rgw_op.cc:2198-2212@v19.2.6`). Depends
+GET, as `rgw_cond_decode_objtags` takes them ([rgw_op.cc:2198-2212](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2198-L2212)). Depends
 on C2, after writepath's header task (hot files). One PR. About 140 lines.
 
 **C9. Worker: the shard protocol** (driver: `driver/lc_worker.go`; one `AddWorker` line).
@@ -1053,7 +1053,7 @@ on C2, after writepath's header task (hot files). One PR. About 140 lines.
   cookie `"lc_thrd: <ix>"`; the unlock before bucket work; the post-states; rollover;
   already-run-today; expired sessions; the stop budget (`thread_stop_at`).
 - rgw-go's one addition: re-check its claim under the lock before starting the bucket (§4).
-- `src/rgw/rgw_lc.cc:1994-2570@v19.2.6`, `src/rgw/rgw_lc.cc:2051-2637@v20.2.4`.
+- [rgw_lc.cc:1994-2570](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1994-L2570), [rgw_lc.cc:2051-2637](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2051-L2637).
 - The bucket pass is an interface C10 fills.
 
 Specs on fakerados with a fake clock (§5 "worker protocol" and "two workers"). Depends on C5.
@@ -1062,7 +1062,7 @@ One PR. About 230 lines.
 **C10. Worker: the bucket pass and its actions** (driver: `driver/lc_bucket.go`,
 `lc_actions.go`).
 - The key split, the bucket load and marker check, the config decode
-  (`src/rgw/rgw_lc.cc:1679-1830@v19.2.6`, `src/rgw/rgw_lc.cc:1735-1886@v20.2.4`).
+  ([rgw_lc.cc:1679-1830](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L1679-L1830), [rgw_lc.cc:1735-1886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1735-L1886)).
 - Per rule: the versioned unordered listing (V4) in pages of 1000 with
   `rgw_lc_thread_delay`, and bounded concurrency of `rgw_lc_max_wp_worker`. The bound is a
   semaphore of goroutines; every entry of a rule finishes before the next rule starts.
@@ -1081,8 +1081,8 @@ leaves its parts. Depends on C9, C2, L1, V3, V4 and P's abort. PR split: (a) exp
 delete-marker actions; (b) noncurrent; (c) multipart abort. About 250 lines.
 
 **C11. In-cluster transition** (driver: `driver/lc_transition.go`; uses W's raw-copy path).
-`transition_obj` as §2.4 gives it (`src/rgw/driver/rados/rgw_rados.cc:5117-5184@v19.2.6`,
-`src/rgw/driver/rados/rgw_rados.cc:5417-5490@v20.2.4#RGWRados::transition_obj`):
+`transition_obj` as §2.4 gives it ([rgw_rados.cc:5117-5184](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5117-L5184),
+[rgw_rados.cc:5417-5490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5490)):
 - the target placement exists (`valid_placement`), else the action fails;
 - the mtime check, ECANCELED on mismatch;
 - "null" cleared, the idtag and tail tag dropped, the owner from the ACL;

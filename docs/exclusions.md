@@ -3786,18 +3786,18 @@ rgw-go does the following.
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
   DeleteObject that names a version with 403 AccessDenied unless the
-  request's MFA token verified (`src/rgw/rgw_op.cc:5158-5163@v19.2.7`,
-  `src/rgw/rgw_op.cc:5548-5553@v20.2.4`), and ceph main refuses a
+  request's MFA token verified ([rgw_op.cc:5158-5163](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5158-L5163),
+  [rgw_op.cc:5548-5553](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5548-L5553)), and ceph main refuses a
   DeleteObjects any of whose keys names one likewise. rgw-go refuses each
   of them, whatever the header holds, an admin's included: radosgw checks
   the delete permission first, and when it refuses an admin its override
   lets the delete through without the MFA check
-  (`src/rgw/rgw_process.cc:228-236@v19.2.7`,
-  `src/rgw/rgw_process.cc:228-239@v20.2.4`). On both releases radosgw's
+  ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236),
+  [rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239)). On both releases radosgw's
   DeleteObjects check is inverted: it asks for MFA when a key names no
   version, and lets a request whose every key names a version through
-  without it (`src/rgw/rgw_op.cc:7067-7081@v19.2.7`,
-  `src/rgw/rgw_op.cc:7969-7983@v20.2.4`; `docs/ceph-upstream-bugs.md`,
+  without it ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081),
+  [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983); `docs/ceph-upstream-bugs.md`,
   "[radosgw's DeleteObjects asks for MFA for the keys that need none and
   not for the versions that
   do](ceph-upstream-bugs.md#radosgws-deleteobjects-asks-for-mfa-for-the-keys-that-need-none-and-not-for-the-versions-that-do)").
@@ -4408,17 +4408,17 @@ does the following.
 - **Write conditions are Tentacle's on Squid too.** rgw-go checks a PUT's
   If-Match and If-None-Match as `check_preconditions` does at v19.2.7 and
   v20.2.4
-  (`src/rgw/driver/rados/rgw_rados.cc:6672-6714@v19.2.7#RGWRados::Object::check_preconditions`,
-  `src/rgw/driver/rados/rgw_rados.cc:7286-7328@v20.2.4#RGWRados::Object::check_preconditions`),
+  ([rgw_rados.cc:6672-6714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6672-L6714),
+  [rgw_rados.cc:7286-7328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7286-L7328)),
   on both releases, keeping its comparison of a condition's start over the
   ETag's length. A client of a Squid zone sees one difference from
   v19.2.7: CompleteMultipartUpload honors both headers as v20.2.4 does,
   which takes both
-  (`src/rgw/rgw_rest_s3.cc:4565@v20.2.4#RGWCompleteMultipart_ObjStore_S3::get_params`)
+  ([rgw_rest_s3.cc:4565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4565))
   and hands them to the head's write
-  (`src/rgw/driver/rados/rgw_sal_rados.cc:4481-4482@v20.2.4`), where
+  ([rgw_sal_rados.cc:4481-4482](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4481-L4482)), where
   v19.2.7 still reads neither for it
-  (`src/rgw/rgw_rest_s3.cc:4094-4104@v19.2.7#RGWCompleteMultipart_ObjStore_S3::get_params`)
+  ([rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104))
   and completes over whatever the key holds. A refused completion leaves
   the upload whole, so it can be completed again.
 
@@ -4436,18 +4436,18 @@ does the following.
   `x-amz-if-match-size` and `x-amz-if-match-last-modified-time`, and each
   DeleteObjects `<Object>`'s ETag, Size and LastModifiedTime, as v19.2.7
   and v20.2.4 do, on both releases. Both read the three headers
-  (`src/rgw/rgw_rest_s3.cc:3435-3483@v19.2.7#RGWDeleteObj_ObjStore_S3::get_params`,
-  `src/rgw/rgw_rest_s3.cc:3685-3733@v20.2.4#RGWDeleteObj_ObjStore_S3::get_params`)
+  ([rgw_rest_s3.cc:3435-3483](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3483),
+  [rgw_rest_s3.cc:3685-3733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3733))
   and parse the three elements with the same parser
-  (`src/rgw/rgw_multi_del.cc:17-62@v19.2.7#RGWMultiDelObject::xml_end`,
-  `src/rgw/rgw_multi_del.cc:17-62@v20.2.4#RGWMultiDelObject::xml_end`),
+  ([rgw_multi_del.cc:17-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi_del.cc#L17-L62),
+  [rgw_multi_del.cc:17-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi_del.cc#L17-L62)),
   hand each key's conditions to its delete
-  (`src/rgw/rgw_op.cc:6902-6904@v19.2.7#RGWDeleteMultiObj::handle_individual_object`,
-  `src/rgw/rgw_op.cc:7830-7832@v20.2.4#RGWDeleteMultiObj::handle_individual_object`),
+  ([rgw_op.cc:6902-6904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6902-L6904),
+  [rgw_op.cc:7830-7832](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7830-L7832)),
   and `Delete::delete_obj` compares them with `check_preconditions` and
   puts an `obj_check_mtime` EQ in the removal op
-  (`src/rgw/driver/rados/rgw_rados.cc:6049-6057@v19.2.7`,
-  `src/rgw/driver/rados/rgw_rados.cc:6663-6671@v20.2.4`). Conditional
+  ([rgw_rados.cc:6049-6057](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6049-L6057),
+  [rgw_rados.cc:6663-6671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6663-L6671)). Conditional
   delete came upstream with
   [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348) (tracker
   [#68183](https://tracker.ceph.com/issues/68183)), in v20.2.4 through
@@ -4848,9 +4848,9 @@ does the following.
   head without the request's write conditions on both releases, as
   v19.2.7's `MultipartObjectProcessor::complete` does, which still passes
   none
-  (`src/rgw/driver/rados/rgw_putobj_processor.cc:491-531@v19.2.7#MultipartObjectProcessor::complete`).
+  ([rgw_putobj_processor.cc:491-531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L491-L531)).
   v20.2.4's passes them to the part head's write
-  (`src/rgw/driver/rados/rgw_putobj_processor.cc:563-564@v20.2.4`), where
+  ([rgw_putobj_processor.cc:563-564](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L563-L564)), where
   they are checked against the part head the request has just created:
   If-None-Match: `*`, and If-Match naming an ETag, then fail with 412
   PreconditionFailed for a part in the bucket placement's pool, and any

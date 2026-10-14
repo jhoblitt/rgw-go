@@ -119,23 +119,34 @@ ledger-check: ## Fail when a parity ledger breaks its schema or the reason rule
 
 # hack/citecheck's package doc owns the citation form, what is checked and
 # what --fix rewrites; CITECHECK_CEPH names a clone other than its default.
+# FILES may hold newlines, as FILES="$(git ls-files '*.md')" does; make would
+# run each line of a recipe that held one as a command of its own.
+CITECHECK_FILES = $(strip $(FILES))
+
 .PHONY: citecheck
 citecheck: ## Check the Ceph source citations in markdown FILES at the revisions they name: make citecheck FILES="docs/superpowers/plans/x.md ..."
-	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
-	go run ./hack/citecheck $(FILES)
+	@test -n "$(CITECHECK_FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
+	go run ./hack/citecheck $(CITECHECK_FILES)
 
 .PHONY: citecheck-fix
 citecheck-fix: ## Rewrite the code span citations in markdown FILES that hold into links, in place: make citecheck-fix FILES="docs/x.md ..."
-	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to rewrite" >&2; exit 1; }
-	go run ./hack/citecheck --fix $(FILES)
+	@test -n "$(CITECHECK_FILES)" || { echo "set FILES to the markdown files whose citations to rewrite" >&2; exit 1; }
+	go run ./hack/citecheck --fix $(CITECHECK_FILES)
 
 .PHONY: citecheck-links
 citecheck-links: ## Check, without a ceph clone, that every citation in markdown FILES is a well-formed link: make citecheck-links FILES="docs/x.md ..."
-	@test -n "$(FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
-	go run ./hack/citecheck --form-only $(FILES)
+	@test -n "$(CITECHECK_FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
+	go run ./hack/citecheck --form-only $(CITECHECK_FILES)
+
+# The form check needs no ceph clone, so the gate and CI can run it.
+MARKDOWN = $(shell git ls-files '*.md')
+
+.PHONY: citation-form-check
+citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
+	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is

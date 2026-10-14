@@ -39,42 +39,42 @@ Each verified fact: the claim, its source, the release.
 - v19.2.6 write path: `_do_write_meta` reads state into locals, then
   `prepare_atomic_modification` re-reads it into the Object members and checks If-Match and
   If-None-Match inside `need_guard`:
-  `src/rgw/driver/rados/rgw_rados.cc:3145-3149@v19.2.6`,
-  `src/rgw/driver/rados/rgw_rados.cc:3171@v19.2.6`,
-  `src/rgw/driver/rados/rgw_rados.cc:6489-6544@v19.2.6#prepare_atomic_modification`.
+  [rgw_rados.cc:3145-3149](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3145-L3149),
+  [rgw_rados.cc:3171](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3171),
+  [rgw_rados.cc:6489-6544](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6489-L6544).
 - v19.2.7 write path: members set from the locals, then `get_current_version_state` for a
   versioned instance, `check_preconditions`, and the guard only when `set_attr_id_tag` (no
   versioned instance, not If-None-Match *):
-  `src/rgw/driver/rados/rgw_rados.cc:3185-3205@v19.2.7`. Identical at
-  `src/rgw/driver/rados/rgw_rados.cc:3282-3302@v20.2.4`.
+  [rgw_rados.cc:3185-3205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3185-L3205). Identical at
+  [rgw_rados.cc:3282-3302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3282-L3302).
 - `check_preconditions` and `get_current_version_state` are byte-identical between
-  `src/rgw/driver/rados/rgw_rados.cc:6624-6780@v19.2.7` and
-  `src/rgw/driver/rados/rgw_rados.cc:7238-7394@v20.2.4` (diff of the two ranges is empty).
+  [rgw_rados.cc:6624-6780](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6624-L6780) and
+  [rgw_rados.cc:7238-7394](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7238-L7394) (diff of the two ranges is empty).
   If-Match * on a missing key -> -ENOENT, an ETag on a missing key -> -ENOENT, quoted conditions
-  unquoted, prefix compare kept: `src/rgw/driver/rados/rgw_rados.cc:6673-6712@v19.2.7`.
+  unquoted, prefix compare kept: [rgw_rados.cc:6673-6712](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6673-L6712).
 - f6877f01fe4 (applied after ce98cebb815) replaced ce98cebb815's second `get_state` in
   `_do_write_meta` with member assignment and moved a `get_state` into
-  `complete_atomic_modification`: `src/rgw/driver/rados/rgw_rados.cc:5455-5459@v19.2.7`; same at
-  `src/rgw/driver/rados/rgw_rados.cc:6102-6106@v20.2.4`; absent at
-  `src/rgw/driver/rados/rgw_rados.cc:5382-5385@v19.2.6`. It repairs ce98cebb815's own regression:
+  `complete_atomic_modification`: [rgw_rados.cc:5455-5459](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5455-L5459); same at
+  [rgw_rados.cc:6102-6106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6102-L6106); absent at
+  [rgw_rados.cc:5382-5385](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5382-L5385). It repairs ce98cebb815's own regression:
   the delete path no longer calls `prepare_atomic_modification`, which was what loaded the members
   `complete_atomic_modification` reads. Net between the tags: the overwritten or deleted head's
   tails are still queued from the state read before the op. No RADOS difference from v19.2.6.
 - v19.2.6 delete: `prepare_atomic_modification(removal_op)` appends the idtag cmpxattr ahead of
-  the removal: `src/rgw/driver/rados/rgw_rados.cc:5914@v19.2.6`.
+  the removal: [rgw_rados.cc:5914](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5914).
 - v19.2.7 delete: no `prepare_atomic_modification` call (only callers are
-  `src/rgw/driver/rados/rgw_rados.cc:3203@v19.2.7` and the definition); `check_preconditions` plus
-  `obj_check_mtime` EQ: `src/rgw/driver/rados/rgw_rados.cc:6049-6057@v19.2.7`; versioned
+  [rgw_rados.cc:3203](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3203) and the definition); `check_preconditions` plus
+  `obj_check_mtime` EQ: [rgw_rados.cc:6049-6057](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6049-L6057); versioned
   conditions against the current version or the instance's dirent:
-  `src/rgw/driver/rados/rgw_rados.cc:5882-5897@v19.2.7`,
-  `src/rgw/driver/rados/rgw_rados.cc:5913-5942@v19.2.7`. So 19.2.7 carries the registry's
+  [rgw_rados.cc:5882-5897](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5897),
+  [rgw_rados.cc:5913-5942](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5913-L5942). So 19.2.7 carries the registry's
   "Tentacle's DeleteObject removes the head without checking its write tag".
 - v19.2.7 S3 DeleteObject reads If-Match, x-amz-if-match-last-modified-time, x-amz-if-match-size
   (ce98cebb815's `RGWDeleteObj_ObjStore_S3::get_params` hunk); DeleteObjects parses ETag,
   LastModifiedTime, Size per Object (`src/rgw/rgw_multi_del.cc` hunk).
-- v19.2.7 DeleteObjects MFA check inverted: `src/rgw/rgw_op.cc:7067-7080@v19.2.7` tests
+- v19.2.7 DeleteObjects MFA check inverted: [rgw_op.cc:7067-7080](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7080) tests
   `instance.empty()`; v19.2.6 tests `!i.instance.empty()`:
-  `src/rgw/rgw_op.cc:7055-7068@v19.2.6`; v20.2.4 inverted: `src/rgw/rgw_op.cc:7969-7983@v20.2.4`.
+  [rgw_op.cc:7055-7068](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7055-L7068); v20.2.4 inverted: [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983).
   The rest of `RGWDeleteMultiObj::execute` is unchanged between the tags (range diff).
 - rgw-go: write conditions are v20.2.4's on both releases: internal/driver/headwrite.go:110-145
   (checkPreconditions). guardHead skips the guard for a versioned instance on Tentacle only:
@@ -87,16 +87,16 @@ Each verified fact: the claim, its source, the release.
 ## C10 41984610868 (local error code in handle_individual_object)
 
 - v19.2.6 writes the shared member `op_ret` from concurrent coroutines and reports it per key:
-  `src/rgw/rgw_op.cc:6879@v19.2.6`, `src/rgw/rgw_op.cc:6894@v19.2.6`; v19.2.7 uses a local `r`:
-  `src/rgw/rgw_op.cc:6888@v19.2.7`, `src/rgw/rgw_op.cc:6906@v19.2.7`; v20.2.4 local:
-  `src/rgw/rgw_op.cc:7816@v20.2.4`, `src/rgw/rgw_op.cc:7834@v20.2.4`. Tracker #76960.
+  [rgw_op.cc:6879](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6879), [rgw_op.cc:6894](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6894); v19.2.7 uses a local `r`:
+  [rgw_op.cc:6888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6888), [rgw_op.cc:6906](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6906); v20.2.4 local:
+  [rgw_op.cc:7816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7816), [rgw_op.cc:7834](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7834). Tracker #76960.
 - rgw-go computes each key's result locally: internal/op/deleteobjects.go:229-248. No registry
   entry names it (grep 76960 and op_ret).
 
 ## C14 88c57354a9f (rgw_gc_max_objs startup-only)
 
-- `startup` flag added: `src/common/options/rgw.yaml.in:1713-1714@v19.2.7`; present at
-  `src/common/options/rgw.yaml.in:1795-1796@v20.2.4`. IOManager sized from the stored max_objs.
+- `startup` flag added: [rgw.yaml.in:1713-1714](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1713-L1714); present at
+  [rgw.yaml.in:1795-1796](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1795-L1796). IOManager sized from the stored max_objs.
   Fixes tracker #75958 (crash raising it at runtime) on Squid.
 - rgw-go reads rgw_gc_max_objs once at Open: internal/driver/writer.go:97-103; no runtime reload.
 - Registry names #75958 as related in "radosgw faults on a zero rgw_gc_max_objs ..."
@@ -105,14 +105,14 @@ Each verified fact: the claim, its source, the release.
 ## C2 continued: conditions that 19.2.7 still lacks, and Squid-only rgw-go splits
 
 - 19.2.7 CompleteMultipartUpload reads no If-Match / If-None-Match:
-  `src/rgw/rgw_rest_s3.cc:4094-4104@v19.2.7#RGWCompleteMultipart_ObjStore_S3::get_params`.
+  [rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104).
   So test_multipart_put_object_if_match stays a Squid known difference.
 - `RGWDeleteObj_ObjStore_S3::get_params` is identical between
-  `src/rgw/rgw_rest_s3.cc:3435-3500@v19.2.7` and `src/rgw/rgw_rest_s3.cc:3685-3750@v20.2.4`;
+  [rgw_rest_s3.cc:3435-3500](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3500) and [rgw_rest_s3.cc:3685-3750](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3750);
   `src/rgw/rgw_multi_del.cc` and its header are identical at v19.2.7 and v20.2.4 (git diff empty);
   `Delete::delete_obj` differs only in datalog error handling and the op move
-  (`src/rgw/driver/rados/rgw_rados.cc:5833-6127@v19.2.7` vs
-  `src/rgw/driver/rados/rgw_rados.cc:6445-6745@v20.2.4`).
+  ([rgw_rados.cc:5833-6127](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5833-L6127) vs
+  [rgw_rados.cc:6445-6745](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6445-L6745)).
 - 19.2.7 `MultipartObjectProcessor::complete` is unchanged (rgw_putobj_processor.cc is not in the
   v19.2.6..v19.2.7 diffstat), so UploadPart still passes no conditions on Squid.
 - rgw-go's DeleteObjects refusal split (MalformedXML message on Tentacle,
@@ -133,12 +133,12 @@ Each verified fact: the claim, its source, the release.
 ## C3, C4 1db3ab3b185 and eb63ba5d7de (SigV4 signed headers)
 
 - v19.2.7 no longer requires a present Content-Type to be signed and skips
-  x-amz-content-sha256 in the unsigned x-amz-* scan: `src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`.
-  v19.2.6 required Content-Type: `src/rgw/rgw_auth_s3.cc:798-802@v19.2.6`. v20.2.4 still requires
-  both: `src/rgw/rgw_auth_s3.cc:774-796@v20.2.4`. Squid 19.2.7 is ahead of Tentacle 20.2.4 here.
+  x-amz-content-sha256 in the unsigned x-amz-* scan: [rgw_auth_s3.cc:788-842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L842).
+  v19.2.6 required Content-Type: [rgw_auth_s3.cc:798-802](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L798-L802). v20.2.4 still requires
+  both: [rgw_auth_s3.cc:774-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L774-L796). Squid 19.2.7 is ahead of Tentacle 20.2.4 here.
 - x-amz-content-sha256 enters the canonical request as HashedPayload whether signed or not
-  (`src/rgw/rgw_auth_s3.h:638-660@v19.2.7#get_v4_exp_payload_hash`, used at
-  `src/rgw/rgw_rest_s3.cc:5858@v19.2.7`), so leaving it unsigned cannot change it unseen.
+  ([rgw_auth_s3.h:638-660](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L638-L660), used at
+  [rgw_rest_s3.cc:5858](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5858)), so leaving it unsigned cannot change it unseen.
 - rgw-go requires both on every release: internal/auth/sigv4.go:305-318 (canonicalHeadersV4);
   auth.Config has no release (internal/auth/config.go:13-38). Vector
   internal/auth/testdata/v4/unsigned-content-type-rejected.json pins the refusal.
@@ -167,8 +167,8 @@ Each verified fact: the claim, its source, the release.
 ## C5, C6 148e1d182a0 and 7b8039bb2a8 (outgoing AWSSignerV4)
 
 - radosgw's own signer now always sends x-amz-content-sha256 (UNSIGNED-PAYLOAD, or a forwarded
-  request's value). v20.2.4 has both: `src/rgw/rgw_rest_s3.cc:6212-6227@v20.2.4`. Squid prepare
-  is at `src/rgw/rgw_rest_s3.cc:5664@v19.2.7#AWSSignerV4::prepare`.
+  request's value). v20.2.4 has both: [rgw_rest_s3.cc:6212-6227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6212-L6227). Squid prepare
+  is at [rgw_rest_s3.cc:5664](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5664).
 - rgw-go signs no outgoing request: it neither forwards nor receives forwarded requests
   (docs/exclusions.md:3165-3166, Multisite); cloud transition is outside phase 2 (spec §9 lists
   in-cluster storage-class transition only, docs/superpowers/specs/2026-09-25-rgw-go-design.md:363-371).
@@ -177,20 +177,20 @@ Each verified fact: the claim, its source, the release.
 ## C7 596eaf34725 (guard_reshard retries ENOENT)
 
 - v19.2.7 `UpdateIndex::guard_reshard` retries an ENOENT after `invalidate_bs()`:
-  `src/rgw/driver/rados/rgw_rados.cc:7225-7230@v19.2.7`; `RGWRados::guard_reshard` likewise:
-  `src/rgw/driver/rados/rgw_rados.cc:7929-7933@v19.2.7`. Both within NUM_RESHARD_RETRIES 10
-  (`src/rgw/driver/rados/rgw_rados.cc:7216@v19.2.7`).
+  [rgw_rados.cc:7225-7230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7225-L7230); `RGWRados::guard_reshard` likewise:
+  [rgw_rados.cc:7929-7933](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7929-L7933). Both within NUM_RESHARD_RETRIES 10
+  ([rgw_rados.cc:7216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7216)).
 - The retry re-reads the bucket: `init_bs` passes `&target->bucket_info`
-  (`src/rgw/driver/rados/rgw_rados.h:947-955@v19.2.7`), and that `BucketShard::init` overload
+  ([rgw_rados.h:947-955](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L947-L955)), and that `BucketShard::init` overload
   always calls `get_bucket_instance_info` into it
-  (`src/rgw/driver/rados/rgw_rados.cc:2804-2830@v19.2.7`).
-- Callers: prepare `src/rgw/driver/rados/rgw_rados.cc:7289-7291@v19.2.7`, cancel
-  `src/rgw/driver/rados/rgw_rados.cc:7395-7397@v19.2.7`, the completion retry thread
-  `src/rgw/driver/rados/rgw_rados.cc:905@v19.2.7`, and the OLH ops (link_olh, unlink_instance,
-  trim_olh_log, clear_olh) `src/rgw/driver/rados/rgw_rados.cc:8153@v19.2.7`,
-  `src/rgw/driver/rados/rgw_rados.cc:8207@v19.2.7`, `src/rgw/driver/rados/rgw_rados.cc:8349@v19.2.7`,
-  `src/rgw/driver/rados/rgw_rados.cc:8380@v19.2.7`.
-- v20.2.4 has no ENOENT retry: `src/rgw/driver/rados/rgw_rados.cc:7888-7891@v20.2.4`. Upstream main
+  ([rgw_rados.cc:2804-2830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2804-L2830)).
+- Callers: prepare [rgw_rados.cc:7289-7291](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7289-L7291), cancel
+  [rgw_rados.cc:7395-7397](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7395-L7397), the completion retry thread
+  [rgw_rados.cc:905](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L905), and the OLH ops (link_olh, unlink_instance,
+  trim_olh_log, clear_olh) [rgw_rados.cc:8153](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8153),
+  [rgw_rados.cc:8207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8207), [rgw_rados.cc:8349](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8349),
+  [rgw_rados.cc:8380](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8380).
+- v20.2.4 has no ENOENT retry: [rgw_rados.cc:7888-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7888-L7891). Upstream main
   commit e34067f8cea is first tagged in v21.0.0; squid PR ceph/ceph#70498 (merge fdbef6c8b7f).
 - This fixes, on Squid, the registry's "radosgw fails a write whose bucket was resharded since the
   request read it" (docs/ceph-upstream-bugs.md:11770-11813, index row :257), which says rgw-go
@@ -200,11 +200,11 @@ Each verified fact: the claim, its source, the release.
 ## C9 8001a4d4fd8 (copy_obj_data accounted size)
 
 - v19.2.7 passes the source's accounted size and uses it when the destination is not compressed:
-  `src/rgw/driver/rados/rgw_rados.cc:5145-5146@v19.2.7`; v19.2.6 and v20.2.4 use `ofs`:
-  `src/rgw/driver/rados/rgw_rados.cc:5108@v19.2.6`, `src/rgw/driver/rados/rgw_rados.cc:5378@v20.2.4`.
+  [rgw_rados.cc:5145-5146](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5145-L5146); v19.2.6 and v20.2.4 use `ofs`:
+  [rgw_rados.cc:5108](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5108), [rgw_rados.cc:5378](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5378).
 - On Squid `copy_obj` refuses an encrypted source and always carries the source's compression
-  attr into the copy's attrs: `src/rgw/driver/rados/rgw_rados.cc:4787-4795@v19.2.7`,
-  `src/rgw/driver/rados/rgw_rados.cc:4823-4825@v19.2.7`. So a compressed source reads
+  attr into the copy's attrs: [rgw_rados.cc:4787-4795](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4787-L4795),
+  [rgw_rados.cc:4823-4825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4823-L4825). So a compressed source reads
   `compressed` true, and an uncompressed one has `ofs` equal to its size: no observable change on
   Squid.
 - rgw-go takes the accounted size from the compression info it keeps (internal/driver/copy.go:424-450)
@@ -213,41 +213,41 @@ Each verified fact: the claim, its source, the release.
 ## C13 b9b65194f64, 42fe9817449 (transition of encrypted multipart; cloud-tier resume)
 
 - v19.2.7 `transition_obj` records RGW_ATTR_CRYPT_PARTS for an encrypted source before it rewrites
-  the manifest: `src/rgw/driver/rados/rgw_rados.cc:5155-5182@v19.2.7#fixup_manifest_to_parts_len`,
-  called at `src/rgw/driver/rados/rgw_rados.cc:5211@v19.2.7`; same at
-  `src/rgw/driver/rados/rgw_rados.cc:5388@v20.2.4` and `src/rgw/driver/rados/rgw_rados.cc:5444@v20.2.4`;
-  absent at v19.2.6 (`transition_obj` at `src/rgw/driver/rados/rgw_rados.cc:5117@v19.2.6`).
+  the manifest: [rgw_rados.cc:5155-5182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5155-L5182),
+  called at [rgw_rados.cc:5211](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5211); same at
+  [rgw_rados.cc:5388](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5388) and [rgw_rados.cc:5444](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5444);
+  absent at v19.2.6 (`transition_obj` at [rgw_rados.cc:5117](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5117)).
   Phase 2 storage-class transition input: a transition of an encrypted multipart object must write
   the part lengths (or refuse), on both releases. rgw-go has no transition yet.
 - 42fe9817449 touches only rgw_lc_tier.cc (cloud tier): out of scope.
 
 ## C14b 88c57354a9f's companion: rgw.yaml.in also documents rgw_lc_max_objs as not to be changed
-  after deployment (`src/common/options/rgw.yaml.in:432-433@v19.2.7`), text only.
+  after deployment ([rgw.yaml.in:432-433](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L432-L433)), text only.
 
 ## C11 4dac1850993 (x-amz-expiration for the current version only)
 
 - v19.2.7 returns no header for a versionId request and computes it from the Expiration rule alone:
-  `src/rgw/rgw_lc.cc:2750@v19.2.7#s3_expiration_header`, the rule at
-  `src/rgw/rgw_lc.cc:2850@v19.2.7`; the same commit's REST helper passes the client's key and
+  [rgw_lc.cc:2750](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750), the rule at
+  [rgw_lc.cc:2850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2850); the same commit's REST helper passes the client's key and
   versionId, not the OLH-resolved key (its `get_s3_expiration_header` hunk). v19.2.6 and v20.2.4 pick
   the noncurrent rule for a key with an instance:
-  `src/rgw/rgw_lc.cc:2849@v19.2.6`, `src/rgw/rgw_lc.cc:2916@v20.2.4`. Tracker #77564.
+  [rgw_lc.cc:2849](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L2849), [rgw_lc.cc:2916](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2916). Tracker #77564.
 - rgw-go sends no x-amz-expiration until phase 2 (docs/exclusions.md:4023-4028, :4576-4580).
   Phase 2 lifecycle input; no registry entry names #77564.
 
 ## C12 3f9eb56d5ec (bucket instance JSON carries obj_lock)
 
 - v19.2.7 `RGWBucketInfo::dump` writes `obj_lock` when object lock is enabled and `decode_json`
-  reads it: `src/rgw/rgw_common.cc:2542-2544@v19.2.7`, `src/rgw/rgw_common.cc:2588-2590@v19.2.7`.
-  v20.2.4 has neither (only the binary encode/decode at `src/rgw/rgw_common.cc:2363-2364@v20.2.4`).
+  reads it: [rgw_common.cc:2542-2544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2542-L2544), [rgw_common.cc:2588-2590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2588-L2590).
+  v20.2.4 has neither (only the binary encode/decode at [rgw_common.cc:2363-2364](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2363-L2364)).
 - v19.2.7 changes the RGWObjectLock JSON form: `enabled` only when true, `rule` holding
   `defaultRetention` (was `default_retention`), via encode_json:
-  `src/rgw/rgw_object_lock.cc:26-33@v19.2.7#DefaultRetention::dump`,
-  `src/rgw/rgw_object_lock.cc:56-58@v19.2.7#ObjectLockRule::dump`,
-  `src/rgw/rgw_object_lock.cc:93-101@v19.2.7#RGWObjectLock::dump`; old form at
-  `src/rgw/rgw_object_lock.cc:77@v20.2.4#RGWObjectLock::dump`. Decoders:
-  `src/rgw/rgw_object_lock.cc:8@v19.2.7#DefaultRetention::decode_json`,
-  `src/rgw/rgw_object_lock.cc:65@v19.2.7#RGWObjectLock::decode_json`.
+  [rgw_object_lock.cc:26-33](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L26-L33),
+  [rgw_object_lock.cc:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L56-L58),
+  [rgw_object_lock.cc:93-101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L93-L101); old form at
+  [rgw_object_lock.cc:77](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L77). Decoders:
+  [rgw_object_lock.cc:8](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8),
+  [rgw_object_lock.cc:65](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L65).
 - rgw-go's dump has no obj_lock and says "Squid and Tentacle write it; main adds obj_lock":
   internal/meta/bucket_info.go:326-385. ObjLock is held opaque (internal/meta/bucket_info.go:77-80).
   Its put keeps a stored instance's obj_lock and gives a new one the default:
@@ -263,8 +263,8 @@ Each verified fact: the claim, its source, the release.
 ## Internals with no client- or RADOS-visible change
 
 - Notify service: v19.2.7 starts RGWSI_Notify only with the cache (`have_cache`) instead of
-  `!raw`: `src/rgw/driver/rados/rgw_service.cc:73-75@v19.2.7`; same at
-  `src/rgw/driver/rados/rgw_service.cc:66-68@v20.2.4`. Control object names unchanged.
+  `!raw`: [rgw_service.cc:73-75](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_service.cc#L73-L75); same at
+  [rgw_service.cc:66-68](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_service.cc#L66-L68). Control object names unchanged.
 - 69c327f161c catches a send failure in abort_early (crash fix); 05c4a49d28d stops an admin
   AssumeRole of a missing role crashing (STS, phase 3); beast, shutdown, finisher, http client,
   datalog and neorados commits are process-internal.
@@ -298,5 +298,5 @@ Each verified fact: the claim, its source, the release.
 - Transition of encrypted multipart (fixup_manifest_to_parts_len): absent at v19.2.6, v20.2.0 and
   v20.2.1; present from v20.2.2 and at v19.2.7.
 - `JSONDecoder::decode_json` resets a missing non-mandatory member to `T()`:
-  `src/common/ceph_json.h:334-346@v19.2.7`. So v19.2.7's bucket instance put of a document without
+  [ceph_json.h:334-346](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346). So v19.2.7's bucket instance put of a document without
   `obj_lock` still replaces the rule with RGWObjectLock(), enabled and ruleless.

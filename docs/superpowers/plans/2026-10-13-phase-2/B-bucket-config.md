@@ -124,8 +124,8 @@ and BC-34.
 
 Every op here follows phase 1's bucket-subresource pattern (`internal/op/bucketsubres.go:56-90`):
 Init loads the bucket and its attrs, so a missing one is NoSuchBucket before the permission
-check, as radosgw's `init_permissions` does (`src/rgw/rgw_process.cc:174@v19.2.7`,
-`src/rgw/rgw_process.cc:174@v20.2.4`);
+check, as radosgw's `init_permissions` does ([rgw_process.cc:174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L174),
+[rgw_process.cc:174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L174));
 VerifyPermission authorizes the op's action through `verifyBucketAction`, with bucket tags
 where phase 1's tag rules list the action (`internal/authz/tagrule.go:120-143`); a write goes
 through `retryBucketWrite`. The metadata-master forward is a no-op on one zone, and the code is
@@ -148,46 +148,46 @@ relies on fakerados behaviour beyond what it serves today.
   at both.
   1. **Encoding.** RGWCORSRule is ENCODE_START(1,1): max_age u32, allowed_methods u8, id, the
      allowed-header set, the allowed-origin set, the exposable-header list
-     (`src/rgw/rgw_cors.h:63-82@v19.2.7`, `src/rgw/rgw_cors.h:63-82@v20.2.4`). RGWCORSConfiguration
-     is (1,1) over the rule list (`src/rgw/rgw_cors.h:102-111@v19.2.7`, `src/rgw/rgw_cors.h:102-111@v20.2.4`).
+     ([rgw_cors.h:63-82](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L63-L82), [rgw_cors.h:63-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L63-L82)). RGWCORSConfiguration
+     is (1,1) over the rule list ([rgw_cors.h:102-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L102-L111), [rgw_cors.h:102-111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L102-L111)).
      The sets encode sorted, as `std::set<std::string>` orders them; a rule with no method and
      the invalid max age 0xffffffff round-trip.
   2. **Method flags** GET 0x1, PUT 0x2, HEAD 0x4, POST 0x8, DELETE 0x10, COPY 0x20, and
-     CORS_MAX_AGE_INVALID (`src/rgw/rgw_cors.h:22-35@v19.2.7`, `src/rgw/rgw_cors.h:22-35@v20.2.4`).
+     CORS_MAX_AGE_INVALID ([rgw_cors.h:22-35](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L22-L35), [rgw_cors.h:22-35](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L22-L35)).
      A request's method maps by exact name, never to COPY
-     (`src/rgw/rgw_cors.h:137-147@v19.2.7`, `src/rgw/rgw_cors.h:137-147@v20.2.4`).
+     ([rgw_cors.h:137-147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L137-L147), [rgw_cors.h:137-147](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L137-L147)).
   3. **Parsing.** Each refusal is MalformedXML: an AllowedMethod other than GET, POST, DELETE,
      HEAD, PUT or COPY in any case; an ID over 255 bytes; no AllowedOrigin; an AllowedOrigin or
      AllowedHeader that is empty or holds more than one `*`; a MaxAgeSeconds with trailing
      junk. A MaxAgeSeconds of 2^32 or more is stored invalid, and a rule with no AllowedMethod
-     is accepted (`src/rgw/rgw_cors_s3.cc:76-164@v19.2.7#RGWCORSRule_S3::xml_end`,
-     `src/rgw/rgw_cors_s3.cc:76-164@v20.2.4#RGWCORSRule_S3::xml_end`). A configuration needs one
-     rule (`src/rgw/rgw_cors_s3.cc:177-188@v19.2.7`, `src/rgw/rgw_cors_s3.cc:177-188@v20.2.4`).
+     is accepted ([rgw_cors_s3.cc:76-164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L76-L164),
+     [rgw_cors_s3.cc:76-164](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L76-L164)). A configuration needs one
+     rule ([rgw_cors_s3.cc:177-188](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L177-L188), [rgw_cors_s3.cc:177-188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L177-L188)).
   4. **Rendering.** `CORSConfiguration` in the S3 namespace; per rule the ID when non-empty,
      AllowedMethod in the order GET, PUT, DELETE, HEAD, POST, COPY, the origins and headers
      sorted, MaxAgeSeconds when valid, ExposeHeader in stored order
-     (`src/rgw/rgw_cors_s3.cc:32-74@v19.2.7#RGWCORSRule_S3::to_xml`,
-     `src/rgw/rgw_cors_s3.cc:32-74@v20.2.4#RGWCORSRule_S3::to_xml`,
-     `src/rgw/rgw_cors_s3.cc:166-175@v19.2.7`, `src/rgw/rgw_cors_s3.cc:166-175@v20.2.4`).
+     ([rgw_cors_s3.cc:32-74](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L32-L74),
+     [rgw_cors_s3.cc:32-74](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L32-L74),
+     [rgw_cors_s3.cc:166-175](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L166-L175), [rgw_cors_s3.cc:166-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L166-L175)).
   5. **Matching.** An origin matches when the set holds `*`, the origin itself, or a member
      with one `*` whose prefix and suffix bracket it; origins compare case-sensitively, headers
-     lower-cased (`src/rgw/rgw_cors.cc:109-173@v19.2.7`, `src/rgw/rgw_cors.cc:109-173@v20.2.4`).
+     lower-cased ([rgw_cors.cc:109-173](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L109-L173), [rgw_cors.cc:109-173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L109-L173)).
      Expose headers join with `,`, a newline escaped as `\n`
-     (`src/rgw/rgw_cors.cc:175-184@v19.2.7`, `src/rgw/rgw_cors.cc:175-184@v20.2.4`).
+     ([rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L175-L184), [rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L175-L184)).
   6. **Rule selection (B8).** `Match` is main's: the first rule, in stored order, matching the
      origin, the method and, for a preflight, every requested header
-     (`src/rgw/rgw_cors.cc:242-290@cc1dcecee08#RGWCORSConfiguration::match_rule`). The floors
+     ([rgw_cors.cc:242-290](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L242-L290)). The floors
      take the first rule matching the origin alone and test its method afterwards
-     (`src/rgw/rgw_cors.cc:186-194@v19.2.7#RGWCORSConfiguration::host_name_rule`,
-     `src/rgw/rgw_cors.cc:186-194@v20.2.4#RGWCORSConfiguration::host_name_rule`).
+     ([rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L186-L194),
+     [rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L186-L194)).
   7. **Response headers.** Access-Control-Allow-Origin is `*` when the request is unauthorized
      (no Authorization header) and the rule's origins include `*`, else the Origin as sent;
      Vary: Origin unless that value is `*`; Allow-Methods is the method; Allow-Headers the
      requested headers the rule allows, comma-joined; Expose-Headers; Max-Age when valid
-     (`src/rgw/rgw_op.cc:1541-1600@v19.2.7#RGWOp::generate_cors_headers`,
-     `src/rgw/rgw_op.cc:1778-1837@v20.2.4#RGWOp::generate_cors_headers`;
-     `src/rgw/rgw_rest.cc:526-554@v19.2.7#dump_access_control`,
-     `src/rgw/rgw_rest.cc:531-559@v20.2.4#dump_access_control`).
+     ([rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600),
+     [rgw_op.cc:1778-1837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1778-L1837);
+     [rgw_rest.cc:526-554](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L526-L554),
+     [rgw_rest.cc:531-559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L531-L559)).
 - **Specs:**
   - the ceph-object-corpus RGWCORSRule goldens (18.2.0 and 19.2.0-404-g78ddc7f9027) decode to
     ceph-dencoder's JSON and re-encode byte-identically;
@@ -210,33 +210,33 @@ relies on fakerados behaviour beyond what it serves today.
   the allowed requested headers.
 - **Behaviour:**
   1. **Get.** Action s3:GetBucketCORS, with bucket tags
-     (`src/rgw/rgw_op.cc:6049-6060@v19.2.7#RGWGetCORS::verify_permission`,
-     `src/rgw/rgw_op.cc:6716-6727@v20.2.4#RGWGetCORS::verify_permission`). No attr is
+     ([rgw_op.cc:6049-6060](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6049-L6060),
+     [rgw_op.cc:6716-6727](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6716-L6727)). No attr is
      ErrNoCORSFound; an attr that does not decode is 500, radosgw's EIO
-     (`src/rgw/rgw_op.cc:1483-1512@v19.2.7#RGWOp::read_bucket_cors`,
-     `src/rgw/rgw_op.cc:1720-1749@v20.2.4#RGWOp::read_bucket_cors`;
-     `src/rgw/rgw_op.cc:6062-6073@v19.2.7#RGWGetCORS::execute`,
-     `src/rgw/rgw_op.cc:6729-6740@v20.2.4#RGWGetCORS::execute`).
+     ([rgw_op.cc:1483-1512](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1483-L1512),
+     [rgw_op.cc:1720-1749](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1720-L1749);
+     [rgw_op.cc:6062-6073](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6062-L6073),
+     [rgw_op.cc:6729-6740](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6729-L6740)).
   2. **Put.** Action s3:PutBucketCORS
-     (`src/rgw/rgw_op.cc:6075-6086@v19.2.7#RGWPutCORS::verify_permission`,
-     `src/rgw/rgw_op.cc:6742-6753@v20.2.4#RGWPutCORS::verify_permission`). It writes only
+     ([rgw_op.cc:6075-6086](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6075-L6086),
+     [rgw_op.cc:6742-6753](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6742-L6753)). It writes only
      `user.rgw.cors` on each try (B9), where radosgw merges the attrs the request started with
-     (`src/rgw/rgw_op.cc:6103-6107@v19.2.7#RGWPutCORS::execute`,
-     `src/rgw/rgw_op.cc:6770-6774@v20.2.4#RGWPutCORS::execute`).
+     ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107),
+     [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774)).
   3. **Delete.** Authorized as s3:PutBucketCORS, "No separate delete permission"
-     (`src/rgw/rgw_op.cc:6110-6122@v19.2.7#RGWDeleteCORS::verify_permission`,
-     `src/rgw/rgw_op.cc:6777-6789@v20.2.4#RGWDeleteCORS::verify_permission`). It removes the attr,
+     ([rgw_op.cc:6110-6122](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6110-L6122),
+     [rgw_op.cc:6777-6789](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6777-L6789)). It removes the attr,
      and a bucket without one succeeds too
-     (`src/rgw/rgw_op.cc:6124-6153@v19.2.7#RGWDeleteCORS::execute`,
-     `src/rgw/rgw_op.cc:6791-6820@v20.2.4#RGWDeleteCORS::execute`).
-  4. **Options.** No permission check (`src/rgw/rgw_op.h:1756@v19.2.7`,
-     `src/rgw/rgw_op.h:1912@v20.2.4`). Execute, in order: an undecodable configuration is 500;
+     ([rgw_op.cc:6124-6153](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6124-L6153),
+     [rgw_op.cc:6791-6820](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6791-L6820)).
+  4. **Options.** No permission check ([rgw_op.h:1756](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1756),
+     [rgw_op.h:1912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1912)). Execute, in order: an undecodable configuration is 500;
      no Origin is 400 InvalidArgument; no Access-Control-Request-Method is 400 InvalidArgument;
      no configuration is 403 AccessDenied; no rule from `Match` is 403
-     (`src/rgw/rgw_op.cc:6159-6207@v19.2.7#RGWOptionsCORS::execute`,
-     `src/rgw/rgw_op.cc:6826-6874@v20.2.4#RGWOptionsCORS::execute`). The op types and masks
+     ([rgw_op.cc:6159-6207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6159-L6207),
+     [rgw_op.cc:6826-6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6874)). The op types and masks
      are radosgw's: get and options read, put and delete write
-     (`src/rgw/rgw_op.h:1697-1764@v19.2.7#RGWGetCORS`, `src/rgw/rgw_op.h:1850-1920@v20.2.4#RGWGetCORS`).
+     ([rgw_op.h:1697-1764](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1697-L1764), [rgw_op.h:1850-1920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1850-L1920)).
 - **Specs:**
   - each op's error order with counterfeiter fakes;
   - a PutBucketCors that loses a race to a PutBucketAcl keeps the winner's ACL;
@@ -255,8 +255,8 @@ relies on fakerados behaviour beyond what it serves today.
 - **Consumes:** BC-2's `Decode` and `Match`, BC-3's `AttrCORS`. **Produces:** nothing outside
   the package.
 - **Behaviour** (B8, main's `verify_cors_match`,
-  `src/rgw/rgw_op.cc:2088-2133@292995374d9#RGWOp::verify_cors_match`, called at
-  `src/rgw/rgw_process.cc:295-299@292995374d9`; neither floor has it):
+  [rgw_op.cc:2088-2133](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2088-L2133), called at
+  [rgw_process.cc:295-299](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_process.cc#L295-L299); neither floor has it):
   1. It runs in `Run` after the op mask and before the permission verdict, so an admin's
      override does not lift it.
   2. A request that is not options_cors, carries a non-empty Origin, and has a loaded bucket
@@ -281,14 +281,14 @@ relies on fakerados behaviour beyond what it serves today.
   1. For an OPTIONS request the canonical method is Access-Control-Request-Method. A missing
      one, or one other than exactly GET, POST, PUT, DELETE or HEAD, is 400 InvalidArgument,
      after the credentials and canonical headers are read and before the key is looked up
-     (`src/rgw/rgw_auth_s3.cc:705-732@v19.2.7#get_v4_canonical_method`,
-     `src/rgw/rgw_auth_s3.cc:1749-1776@v20.2.4#get_canonical_method`).
+     ([rgw_auth_s3.cc:705-732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L705-L732),
+     [rgw_auth_s3.cc:1749-1776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776)).
   2. **Differs:** v20.2.4 applies the rule to SigV2 too
-     (`src/rgw/rgw_auth_s3.cc:258@v20.2.4`); v19.2.6 signs a SigV2 OPTIONS over OPTIONS. rgw-go
+     ([rgw_auth_s3.cc:258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258)); v19.2.6 signs a SigV2 OPTIONS over OPTIONS. rgw-go
      applies Tentacle's rule on both releases (B14).
   3. Once the key's user and account load and the key is in the user's record, the signature
-     is not compared (B4; `src/rgw/rgw_rest_s3.cc:6395-6401@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:6925-6931@v20.2.4`). An unknown key stays 403 InvalidAccessKeyId.
+     is not compared (B4; [rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401),
+     [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931)). An unknown key stays 403 InvalidAccessKeyId.
 - **Specs:** a presigned OPTIONS without the header is 400 before an unknown key's 403; a wrong
   signature passes; an unknown key is 403; SigV2 on each release; an unknown method name.
 - **Exclusions and registry:** retires "A signed OPTIONS request is verified over OPTIONS and
@@ -304,20 +304,20 @@ relies on fakerados behaviour beyond what it serves today.
   `writeXML` (`internal/s3/xml.go:33`).
 - **Behaviour:**
   1. **get_cors:** 200 with BC-2's document
-     (`src/rgw/rgw_rest_s3.cc:3749-3770@v19.2.7#RGWGetCORS_ObjStore_S3::send_response`,
-     `src/rgw/rgw_rest_s3.cc:4200-4221@v20.2.4#RGWGetCORS_ObjStore_S3::send_response`).
+     ([rgw_rest_s3.cc:3749-3770](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3749-L3770),
+     [rgw_rest_s3.cc:4200-4221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4200-L4221)).
   2. **put_cors:** the body read up to `rgw_max_put_param_size`; a parse failure or no
      `CORSConfiguration` root is MalformedXML; more rules than `rgw_cors_rules_max_num`
      (default 100, a negative value meaning 100) is 400 InvalidRequest "The number of CORS
      rules should not exceed allowed limit of N rules."; 200 with an empty body
-     (`src/rgw/rgw_rest_s3.cc:3772-3841@v19.2.7#RGWPutCORS_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:4223-4292@v20.2.4#RGWPutCORS_ObjStore_S3::get_params`;
-     `src/common/options/rgw.yaml.in:26-30@v19.2.7`, `src/common/options/rgw.yaml.in:26-30@v20.2.4`).
+     ([rgw_rest_s3.cc:3772-3841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3772-L3841),
+     [rgw_rest_s3.cc:4223-4292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4223-L4292);
+     [rgw.yaml.in:26-30](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L26-L30), [rgw.yaml.in:26-30](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L26-L30)).
   3. **delete_cors:** 204, with or without a configuration
-     (`src/rgw/rgw_rest_s3.cc:3843-3852@v19.2.7`, `src/rgw/rgw_rest_s3.cc:4294-4303@v20.2.4`).
+     ([rgw_rest_s3.cc:3843-3852](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3843-L3852), [rgw_rest_s3.cc:4294-4303](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4294-L4303)).
   4. **options_cors:** 200 with BC-2's preflight headers, else the op's 403 or 400
-     (`src/rgw/rgw_rest_s3.cc:3854-3875@v19.2.7#RGWOptionsCORS_ObjStore_S3::send_response`,
-     `src/rgw/rgw_rest_s3.cc:4305-4326@v20.2.4#RGWOptionsCORS_ObjStore_S3::send_response`).
+     ([rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
+     [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
 - **Specs:** status, headers and body of each route from test_set_cors, test_cors_header_option,
   test_cors_origin_wildcard and the presigned preflight cases.
 - **Exclusions and registry:** none.
@@ -335,8 +335,8 @@ relies on fakerados behaviour beyond what it serves today.
      Access-Control-Request-Method if sent, else the request's method.
   2. That covers every response `SetCommonHeaders` writes, error documents included, which is
      radosgw's `end_header` with the op passed and `abort_early` after the bucket loads
-     (`src/rgw/rgw_rest.cc:589-655@v19.2.7#end_header`, `src/rgw/rgw_rest.cc:594-660@v20.2.4#end_header`;
-     `src/rgw/rgw_rest.cc:676-750@v19.2.7#abort_early`, `src/rgw/rgw_rest.cc:681-750@v20.2.4#abort_early`).
+     ([rgw_rest.cc:589-655](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L589-L655), [rgw_rest.cc:594-660](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L594-L660);
+     [rgw_rest.cc:676-750](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L676-L750), [rgw_rest.cc:681-750](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L681-L750)).
   3. **Differs from radosgw by design:** radosgw omits the headers on the 15 routes whose
      `end_header` gets no op, ListBuckets, CreateBucket, the four CORS ops,
      PutBucketEncryption, DeleteBucketEncryption, PutPublicAccessBlock and the object-lock and
@@ -385,7 +385,7 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   1. **Encoding.** RGWBucketWebsiteConf is ENCODE_START(2,1): index_doc_suffix, error_doc,
      routing_rules, redirect_all, then v2's subdir_marker, listing_css_doc, listing_enabled,
      decoded only when struct_v is 2 or more; the sub-structs are each (1,1)
-     (`src/rgw/rgw_website.h:26-243@v19.2.7`, `src/rgw/rgw_website.h:26-243@v20.2.4`). The
+     ([rgw_website.h:26-243](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.h#L26-L243), [rgw_website.h:26-243](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.h#L26-L243)). The
      derived `is_redirect_all` and `is_set_index_doc` are not encoded.
   2. **Rewrite (B17).** A v1 configuration decodes and is written back as v2 on any instance
      rewrite, as radosgw's encoder does. Phase 0's write-back of the v1 bytes unchanged
@@ -393,9 +393,9 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   3. **JSON (B17).** The bucket instance's `website_conf` is radosgw's lossy form: only
      `redirect_all` when its hostname is set, else index_doc_suffix, error_doc and
      routing_rules; decode reads the same keys
-     (`src/rgw/rgw_website.cc:135-212@v19.2.7`, `src/rgw/rgw_website.cc:135-212@v20.2.4`; the
-     instance's calls at `src/rgw/rgw_common.cc:2529-2531@v19.2.7`, `src/rgw/rgw_common.cc:2569-2571@v19.2.7`,
-     `src/rgw/rgw_common.cc:2591-2593@v20.2.4`, `src/rgw/rgw_common.cc:2628-2630@v20.2.4`).
+     ([rgw_website.cc:135-212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L135-L212), [rgw_website.cc:135-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L135-L212); the
+     instance's calls at [rgw_common.cc:2529-2531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2529-L2531), [rgw_common.cc:2569-2571](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2569-L2571),
+     [rgw_common.cc:2591-2593](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2591-L2593), [rgw_common.cc:2628-2630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2628-L2630)).
   4. The JSON refusal stays for the sync policy only (`internal/meta/bucket_info.go:351-356`,
      `internal/meta/bucket_json.go:98-126`, `internal/meta/dump_bucket.go:46-51`), so the admin
      metadata API stops answering 501 for a bucket with a website (`internal/driver/metadata.go:90`).
@@ -413,32 +413,32 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   `ParseXML(body []byte, maxRules int) (meta.WebsiteConf, error)`, `MarshalS3XML(conf) []byte`,
   `EffectiveKey`, `Redirect` (signatures in Seams).
 - **Behaviour:**
-  1. **Parsing** (`src/rgw/rgw_rest_s3.cc:2279-2345@v19.2.7#RGWSetBucketWebsite_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:2374-2440@v20.2.4#RGWSetBucketWebsite_ObjStore_S3::get_params`):
+  1. **Parsing** ([rgw_rest_s3.cc:2279-2345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2279-L2345),
+     [rgw_rest_s3.cc:2374-2440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2374-L2440)):
      - an unparseable body or no `WebsiteConfiguration` is 400 MalformedXML (B2), where both
        floors answer InvalidArgument;
      - RedirectAllRequestsTo without HostName, neither RedirectAllRequestsTo nor
        IndexDocument, and an empty Suffix are each 400 InvalidArgument with radosgw's message;
      - more routing rules than `maxRules` (`rgw_website_routing_rules_max_num`, default 50, a
        negative value meaning 50) is 400 InvalidRequest with radosgw's message
-       (`src/common/options/rgw.yaml.in:46-50@v19.2.7`, `src/common/options/rgw.yaml.in:46-50@v20.2.4`).
+       ([rgw.yaml.in:46-50](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L46-L50), [rgw.yaml.in:46-50](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L46-L50)).
   2. **Element rules.** A HttpRedirectCode outside 301-399, a HttpErrorCodeReturnedEquals
      outside 400-599, and ReplaceKeyPrefixWith with ReplaceKeyWith are 400 InvalidArgument;
      RedirectAllRequestsTo makes the rest ignored
-     (`src/rgw/rgw_website.cc:214-341@v19.2.7`, `src/rgw/rgw_website.cc:214-341@v20.2.4`).
+     ([rgw_website.cc:214-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L214-L341), [rgw_website.cc:214-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L214-L341)).
   3. **Rendering.** `WebsiteConfiguration` in the S3 namespace: RedirectAllRequestsTo (HostName,
      then Protocol when set), IndexDocument/Suffix, ErrorDocument/Key, RoutingRules, each only
      when set (same lines).
   4. **EffectiveKey** is `get_effective_key`: no suffix is false; an empty key is the suffix; a
      key ending in `/` is key+suffix; a key that is not a file is key+`/`+suffix; else the key
-     (`src/rgw/rgw_website.cc:116-133@v19.2.7#RGWBucketWebsiteConf::get_effective_key`,
-     `src/rgw/rgw_website.cc:116-133@v20.2.4#RGWBucketWebsiteConf::get_effective_key`).
+     ([rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L116-L133),
+     [rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L116-L133)).
   5. **Redirect** is `should_redirect` with `apply_rule`: a redirect-all, or the first routing
      rule whose KeyPrefixEquals prefixes the key and whose error condition matches the status
      (0 matching a rule with none). The Location is protocol (the rule's, else the request's)
      `://` host (the rule's, else the Host header) `/` and the replaced key; the code is the
      rule's HttpRedirectCode, else 301
-     (`src/rgw/rgw_website.cc:34-114@v19.2.7`, `src/rgw/rgw_website.cc:34-114@v20.2.4`).
+     ([rgw_website.cc:34-114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L34-L114), [rgw_website.cc:34-114](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L34-L114)).
 - **Specs:** a table from each cited function; the redirect-code and error-code bounds; the
   routing-rule limit with its message; the unparseable body's MalformedXML.
 - **Exclusions and registry:** new exclusion for the MalformedXML code (B2); new registry
@@ -453,16 +453,16 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Behaviour:**
   1. **Get.** Action s3:GetBucketWebsite with bucket tags; no website is
      ErrNoSuchWebsiteConfiguration
-     (`src/rgw/rgw_op.cc:2862-2885@v19.2.7#RGWGetBucketWebsite::verify_permission`,
-     `src/rgw/rgw_op.cc:3094-3117@v20.2.4#RGWGetBucketWebsite::verify_permission`).
+     ([rgw_op.cc:2862-2885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2862-L2885),
+     [rgw_op.cc:3094-3117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3094-L3117)).
   2. **Set.** Action s3:PutBucketWebsite. It sets `has_website` and the configuration and
      rewrites the instance with `PutBucketInfo` under `RetryRacedBucketWrite`, authorized again
-     on each retry (B9; `src/rgw/rgw_op.cc:2887-2936@v19.2.7#RGWSetBucketWebsite::execute`,
-     `src/rgw/rgw_op.cc:3119-3168@v20.2.4#RGWSetBucketWebsite::execute`).
+     on each retry (B9; [rgw_op.cc:2887-2936](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2887-L2936),
+     [rgw_op.cc:3119-3168](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3119-L3168)).
   3. **Delete.** Action s3:DeleteBucketWebsite; clears both fields and rewrites the instance;
      success with nothing set
-     (`src/rgw/rgw_op.cc:2938-2981@v19.2.7#RGWDeleteBucketWebsite::execute`,
-     `src/rgw/rgw_op.cc:3170-3213@v20.2.4#RGWDeleteBucketWebsite::execute`).
+     ([rgw_op.cc:2938-2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2938-L2981),
+     [rgw_op.cc:3170-3213](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3170-L3213)).
 - **Specs:** each op's error order with fakes; a lost race whose winner changed the bucket
   keeps the winner's change; a retry re-authorized; a stored v1 configuration read by Get and
   written back as v2 by Set.
@@ -477,15 +477,15 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Behaviour:**
   1. With `rgw_enable_static_website` false, its default, the three `?website` routes answer
      405 MethodNotAllowed, as radosgw finds no op for them
-     (`src/common/options/rgw.yaml.in:2436-2443@v19.2.7`, `src/common/options/rgw.yaml.in:2530-2537@v20.2.4`;
-     `src/rgw/rgw_rest_s3.cc:4674-4679@v19.2.7#RGWHandler_REST_Bucket_S3::op_get`,
-     `src/rgw/rgw_rest_s3.cc:5186-5191@v20.2.4#RGWHandler_REST_Bucket_S3::op_get`; the PUT and
-     DELETE gates at `src/rgw/rgw_rest_s3.cc:4732-4737@v19.2.7#RGWHandler_REST_Bucket_S3::op_put`,
-     `src/rgw/rgw_rest_s3.cc:5248-5253@v20.2.4#RGWHandler_REST_Bucket_S3::op_put`,
-     `src/rgw/rgw_rest_s3.cc:4796-4801@v19.2.7#RGWHandler_REST_Bucket_S3::op_delete`,
-     `src/rgw/rgw_rest_s3.cc:5311-5316@v20.2.4#RGWHandler_REST_Bucket_S3::op_delete`).
+     ([rgw.yaml.in:2436-2443](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2436-L2443), [rgw.yaml.in:2530-2537](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2530-L2537);
+     [rgw_rest_s3.cc:4674-4679](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4674-L4679),
+     [rgw_rest_s3.cc:5186-5191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5186-L5191); the PUT and
+     DELETE gates at [rgw_rest_s3.cc:4732-4737](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4732-L4737),
+     [rgw_rest_s3.cc:5248-5253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5248-L5253),
+     [rgw_rest_s3.cc:4796-4801](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4796-L4801),
+     [rgw_rest_s3.cc:5311-5316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5311-L5316)).
   2. Otherwise: PUT 200; DELETE 204; GET the document
-     (`src/rgw/rgw_rest_s3.cc:2347-2383@v19.2.7`, `src/rgw/rgw_rest_s3.cc:2442-2478@v20.2.4`).
+     ([rgw_rest_s3.cc:2347-2383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2347-L2383), [rgw_rest_s3.cc:2442-2478](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2442-L2478)).
 - **Specs:** each route's status, headers and body; the 405 with the option off; the routing
   rule limit read from the option.
 - **Exclusions and registry:** none.
@@ -500,22 +500,22 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   `op.Request.Website bool` and `op.Request.Redirect string`.
 - **Behaviour:**
   1. `s3website` in `rgw_enable_apis` enables the website handler, as it enables S3
-     (`src/rgw/rgw_appmain.cc:301-312@v19.2.7`, `src/rgw/rgw_appmain.cc:310-321@v20.2.4`);
+     ([rgw_appmain.cc:301-312](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_appmain.cc#L301-L312), [rgw_appmain.cc:310-321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L310-L321));
      today it is logged as ignored (`internal/cephconf/apis.go:18-41`).
   2. The s3website hostnames are `rgw_dns_s3website_name` and the zonegroup's
-     `hostnames_s3website`, empty names dropped (`src/rgw/rgw_rest.cc:235-238@v19.2.7`,
-     `src/rgw/rgw_rest.cc:235-238@v20.2.4`). A Host in them, directly or through the CNAME
+     `hostnames_s3website`, empty names dropped ([rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L235-L238),
+     [rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L235-L238)). A Host in them, directly or through the CNAME
      fallback, is a website request whose domain is the s3website one
-     (`src/rgw/rgw_rest.cc:2075-2081@v19.2.7#RGWREST::preprocess`,
-     `src/rgw/rgw_rest.cc:2087-2093@v20.2.4#RGWREST::preprocess`).
+     ([rgw_rest.cc:2075-2081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2075-L2081),
+     [rgw_rest.cc:2087-2093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2087-L2093)).
   3. `s3website` listed before `s3` makes every request with a Host a website request
-     (`src/rgw/rgw_rest.cc:2150-2156@v19.2.7#RGWREST::preprocess`,
-     `src/rgw/rgw_rest.cc:2162-2168@v20.2.4#RGWREST::preprocess`). **Differs:** v20.2.4 also
-     makes a request with no Host one (`src/rgw/rgw_rest.cc:2193-2198@v20.2.4#RGWREST::preprocess`);
+     ([rgw_rest.cc:2150-2156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
+     [rgw_rest.cc:2162-2168](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2162-L2168)). **Differs:** v20.2.4 also
+     makes a request with no Host one ([rgw_rest.cc:2193-2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198));
      rgw-go applies that on both releases (B14).
   4. CompleteMultipartUpload's Location takes the s3website domain when the request came in
      on one, as `compute_domain_uri` reads the domain preprocess set
-     (`src/rgw/rgw_rest.h:805-818@v19.2.7#compute_domain_uri`, `src/rgw/rgw_rest.h:817-830@v20.2.4#compute_domain_uri`).
+     ([rgw_rest.h:805-818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L805-L818), [rgw_rest.h:817-830](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830)).
 - **Specs:** each Host form (a website host, a bucket subdomain of one, a CNAME to one, a plain
   S3 host, no Host) against each `rgw_enable_apis` order, on both releases.
 - **Exclusions and registry:** updates the website halves of "The CNAME fallback resolves no
@@ -532,20 +532,20 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Consumes:** BC-10's `EffectiveKey` and `Redirect`; BC-13's `Request.Website`.
   **Produces:** the retarget hook GetObject calls between its bucket load and its object read.
 - **Behaviour** (`retarget`, run after the bucket loads and before read permissions,
-  `src/rgw/rgw_process.cc:180-190@v19.2.7`, `src/rgw/rgw_process.cc:180-190@v20.2.4`):
+  [rgw_process.cc:180-190](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L180-L190), [rgw_process.cc:180-190](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L180-L190)):
   1. No bucket is NoSuchBucket; no website is NoSuchWebsiteConfiguration; no index suffix is
      400 InvalidArgument "The IndexDocument Suffix is not configurated or not well formed!"
-     (`src/rgw/rgw_rest_s3.cc:5387-5448@v19.2.7#RGWHandler_REST_S3Website::retarget`,
-     `src/rgw/rgw_rest_s3.cc:5913-5974@v20.2.4#RGWHandler_REST_S3Website::retarget`).
+     ([rgw_rest_s3.cc:5387-5448](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5387-L5448),
+     [rgw_rest_s3.cc:5913-5974](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5913-L5974)).
   2. `isFile` is a stat of the key less one trailing `/`
-     (`src/rgw/rgw_rest_s3.cc:5346-5370@v19.2.7#RGWHandler_REST_S3Website::web_dir`,
-     `src/rgw/rgw_rest_s3.cc:5876-5896@v20.2.4#RGWHandler_REST_S3Website::web_dir`; the tags
+     ([rgw_rest_s3.cc:5346-5370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5346-L5370),
+     [rgw_rest_s3.cc:5876-5896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L5896); the tags
      differ only in how the stat loads state).
   3. A redirect is `ErrWebsiteRedirect` with `r.Redirect` and the rule's code; otherwise the
      effective key is read as a GetObject.
   4. An object holding `user.rgw.x-amz-website-redirect-location` is 301 with that Location and
-     no body (`src/rgw/rgw_rest_s3.cc:274-292@v19.2.7#RGWGetObj_ObjStore_S3Website::send_response_data`,
-     `src/rgw/rgw_rest_s3.cc:271-289@v20.2.4#RGWGetObj_ObjStore_S3Website::send_response_data`).
+     no body ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
+     [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)).
 - **Specs:** each effective-key case; a directory object; a redirect-all; a routing rule with
   and without a code; an object with a redirect attr; the original key kept for BC-15.
 - **Exclusions and registry:** none.
@@ -559,19 +559,19 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Behaviour:**
   1. **Dispatch.** A website request has a GET and a HEAD op at every scope, both the website
      GetObject; every other method is 405
-     (`src/rgw/rgw_rest_s3website.h:20-72@v19.2.7`, `src/rgw/rgw_rest_s3website.h:20-72@v20.2.4`;
-     the handler choice `src/rgw/rgw_rest_s3.cc:5285-5307@v19.2.7#RGWRESTMgr_S3::get_handler`,
-     `src/rgw/rgw_rest_s3.cc:5815-5874@v20.2.4#RGWRESTMgr_S3::get_handler`).
+     ([rgw_rest_s3website.h:20-72](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L20-L72), [rgw_rest_s3website.h:20-72](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L20-L72);
+     the handler choice [rgw_rest_s3.cc:5285-5307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5285-L5307),
+     [rgw_rest_s3.cc:5815-5874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5815-L5874)).
   2. **HTML errors.** Every website-mode refusal is rendered as ceph's HTMLFormatter writes it:
      `<html><head><title>STATUS NAME</title></head><body><h1>STATUS NAME</h1><ul>`, one
-     `<li>Name: value</li>` per field (`src/rgw/rgw_rest.cc:1808@v19.2.7`, `src/rgw/rgw_rest.cc:1807@v20.2.4`;
-     `src/common/HTMLFormatter.cc:69-91@v19.2.7#HTMLFormatter::output_header`,
-     `src/common/HTMLFormatter.cc:69-91@v20.2.4#HTMLFormatter::output_header`).
+     `<li>Name: value</li>` per field ([rgw_rest.cc:1808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1808), [rgw_rest.cc:1807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1807);
+     [HTMLFormatter.cc:69-91](https://github.com/ceph/ceph/blob/v19.2.7/src/common/HTMLFormatter.cc#L69-L91),
+     [HTMLFormatter.cc:69-91](https://github.com/ceph/ceph/blob/v20.2.4/src/common/HTMLFormatter.cc#L69-L91)).
   3. **Error handler.** A routing rule matching the original key and the error's HTTP status
      redirects; else the error document, when configured, is served by a nested GetObject with
      its conditionals cleared and the original status; else, or when that fails, the HTML page
-     (`src/rgw/rgw_rest_s3.cc:5460-5585@v19.2.7#RGWHandler_REST_S3Website::serve_errordoc`,
-     `src/rgw/rgw_rest_s3.cc:5986-6111@v20.2.4#RGWHandler_REST_S3Website::serve_errordoc`).
+     ([rgw_rest_s3.cc:5460-5585](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5460-L5585),
+     [rgw_rest_s3.cc:5986-6111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5986-L6111)).
   4. WebsiteRedirect carries Location.
 - **Specs:** status, headers and body for each path; an error document that is itself missing
   falls back to the HTML page; a conditional GET's error document served unconditionally; PUT
@@ -608,11 +608,11 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
   (PublicAccessBlock, error)` and `(PublicAccessBlock).MarshalXML() []byte`.
 - **Behaviour:**
   1. A parse failure or no `PublicAccessBlockConfiguration` root is 400 MalformedXML
-     (`src/rgw/rgw_op.cc:8633-8675@v19.2.7#RGWPutBucketPublicAccessBlock::execute`,
-     `src/rgw/rgw_op.cc:9601-9643@v20.2.4#RGWPutBucketPublicAccessBlock::execute`).
+     ([rgw_op.cc:8633-8675](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8633-L8675),
+     [rgw_op.cc:9601-9643](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9601-L9643)).
   2. Each of the four booleans is optional; the document renders
      `PublicAccessBlockConfiguration` without the S3 namespace, each boolean `true` or `false`
-     (B2; `src/rgw/rgw_public_access.cc:4-20@v19.2.7`, `src/rgw/rgw_public_access.cc:4-20@v20.2.4`).
+     (B2; [rgw_public_access.cc:4-20](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L4-L20), [rgw_public_access.cc:4-20](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L4-L20)).
 - **Specs:** each boolean present and absent; a non-boolean value; the rendered bytes.
 - **Exclusions and registry:** new registry entry for defect 16 (cosmetic, from the source;
   rgw-go keeps radosgw's form under D16), covering BC-21's booleans too.
@@ -626,17 +626,17 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 - **Behaviour:**
   1. **Put.** Action s3:PutBucketPublicAccessBlock with bucket tags; it writes only
      `user.rgw.public-access` on each try (B9), where radosgw merges the attrs the request
-     started with (`src/rgw/rgw_op.cc:8613-8624@v19.2.7#RGWPutBucketPublicAccessBlock::verify_permission`,
-     `src/rgw/rgw_op.cc:9581-9592@v20.2.4#RGWPutBucketPublicAccessBlock::verify_permission`;
-     `src/rgw/rgw_op.cc:8669-8673@v19.2.7#RGWPutBucketPublicAccessBlock::execute`,
-     `src/rgw/rgw_op.cc:9637-9641@v20.2.4#RGWPutBucketPublicAccessBlock::execute`).
+     started with ([rgw_op.cc:8613-8624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8613-L8624),
+     [rgw_op.cc:9581-9592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9581-L9592);
+     [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673),
+     [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)).
   2. **Get.** Action s3:GetBucketPublicAccessBlock; no attr is ErrNoSuchPublicAccessBlock with
      "The public access block configuration was not found"; an undecodable one is 500
-     (`src/rgw/rgw_op.cc:8677-8712@v19.2.7#RGWGetBucketPublicAccessBlock::verify_permission`,
-     `src/rgw/rgw_op.cc:9645-9680@v20.2.4#RGWGetBucketPublicAccessBlock::verify_permission`).
+     ([rgw_op.cc:8677-8712](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8677-L8712),
+     [rgw_op.cc:9645-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9645-L9680)).
   3. **Delete.** Authorized as s3:PutBucketPublicAccessBlock; removes the attr; success when
-     absent (`src/rgw/rgw_op.cc:8715-8755@v19.2.7#RGWDeleteBucketPublicAccessBlock::execute`,
-     `src/rgw/rgw_op.cc:9683-9723@v20.2.4#RGWDeleteBucketPublicAccessBlock::execute`).
+     absent ([rgw_op.cc:8715-8755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8715-L8755),
+     [rgw_op.cc:9683-9723](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9683-L9723)).
   4. A block the op writes reaches every check through the cache-notified bucket record, with
      no change to authz.
 - **Specs:** each op's error order with fakes; a lost race keeps the winner's ACL; a retry
@@ -654,16 +654,16 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 - **Consumes:** BC-17, BC-18.
 - **Behaviour:**
   1. PUT 200 with an empty body; GET the document; DELETE 204
-     (`src/rgw/rgw_rest_s3.cc:4604-4624@v19.2.7#RGWPutBucketPublicAccessBlock_ObjStore_S3::send_response`,
-     `src/rgw/rgw_rest_s3.cc:5115-5135@v20.2.4#RGWPutBucketPublicAccessBlock_ObjStore_S3::send_response`).
+     ([rgw_rest_s3.cc:4604-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4604-L4624),
+     [rgw_rest_s3.cc:5115-5135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5115-L5135)).
   2. **Differs from radosgw by design (B10):** a GET on a bucket without a block sends the 404
      error document alone. radosgw writes the document whatever `op_ret` is, so a default block
      follows the error document past its Content-Length
-     (`src/rgw/rgw_rest_s3.cc:4613-4624@v19.2.7#RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`,
-     `src/rgw/rgw_rest_s3.cc:5124-5135@v20.2.4#RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`;
-     `src/rgw/rgw_rest.cc:620-625@v19.2.7#end_header`, `src/rgw/rgw_rest.cc:625-630@v20.2.4#end_header`),
-     and no IO filter truncates it (`src/rgw/rgw_client_io_filters.h:327-365@v19.2.7`,
-     `src/rgw/rgw_client_io_filters.h:327-365@v20.2.4`).
+     ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624),
+     [rgw_rest_s3.cc:5124-5135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5124-L5135);
+     [rgw_rest.cc:620-625](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L625), [rgw_rest.cc:625-630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L630)),
+     and no IO filter truncates it ([rgw_client_io_filters.h:327-365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L327-L365),
+     [rgw_client_io_filters.h:327-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L327-L365)).
 - **Specs:** each status, header and body; the 404's bytes end at its Content-Length.
 - **Exclusions and registry:** new exclusion for the 404 (defect 6); new registry entry for
   defect 6 (S3-correctness: it can desynchronize a keep-alive connection; unreproduced).
@@ -677,8 +677,8 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 - **Behaviour:**
   1. Action s3:GetBucketPolicyStatus with bucket tags. IsPublic is the bucket policy's
      `IsPublic` or the bucket ACL's, ignoring the block
-     (`src/rgw/rgw_op.cc:8595-8611@v19.2.7#RGWGetBucketPolicyStatus::verify_permission`,
-     `src/rgw/rgw_op.cc:9563-9579@v20.2.4#RGWGetBucketPolicyStatus::verify_permission`).
+     ([rgw_op.cc:8595-8611](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8595-L8611),
+     [rgw_op.cc:9563-9579](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9563-L9579)).
   2. **Differs:** the floors' `is_public` differ from each other and from AWS (defects 13 and
      14); rgw-go uses S3's one judgment on both releases (B3).
   3. A stored policy that does not parse is refused by the authorizer before this op runs.
@@ -693,8 +693,8 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 - **Layer:** handler. **Files:** S2's `internal/s3/policystatus.go`. **Cluster:** no.
 - **Consumes:** BC-20's op.
 - **Behaviour:** 200 with `PolicyStatus` in the S3 namespace and IsPublic as lower-case `true`
-  or `false` (B2; `src/rgw/rgw_rest_s3.cc:4584-4602@v19.2.7#RGWGetBucketPolicyStatus_ObjStore_S3::send_response`,
-  `src/rgw/rgw_rest_s3.cc:5095-5113@v20.2.4#RGWGetBucketPolicyStatus_ObjStore_S3::send_response`).
+  or `false` (B2; [rgw_rest_s3.cc:4584-4602](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4584-L4602),
+  [rgw_rest_s3.cc:5095-5113](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5095-L5113)).
 - **Specs:** both values' bytes; an error document.
 - **Exclusions and registry:** none (BC-17's entry covers the booleans).
 - **Depends on:** S2, BC-20. **PR:** one. **Brief:** about 60 lines.
@@ -731,11 +731,11 @@ byte-identical at the two tags.
   1. **Encoding.** RGWBucketEncryptionConfig (1,1){rule_exist, rule when set};
      ServerSideEncryptionConfiguration (1,1){apply, bucketKeyEnabled};
      ApplyServerSideEncryptionByDefault (1,1){kmsMasterKeyID, sseAlgorithm}
-     (`src/rgw/rgw_bucket_encryption.h:9-141@v19.2.7`, `src/rgw/rgw_bucket_encryption.h:9-141@v20.2.4`).
+     ([rgw_bucket_encryption.h:9-141](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.h#L9-L141), [rgw_bucket_encryption.h:9-141](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.h#L9-L141)).
   2. **XML.** A parse failure or no `ServerSideEncryptionConfiguration` root is 400
      MalformedXML. Rule, SSEAlgorithm and BucketKeyEnabled are optional on input; the document
      renders SSEAlgorithm, KMSMasterKeyID only when non-empty, and BucketKeyEnabled only when
-     true (`src/rgw/rgw_bucket_encryption.cc:8-40@v19.2.7`, `src/rgw/rgw_bucket_encryption.cc:8-40@v20.2.4`).
+     true ([rgw_bucket_encryption.cc:8-40](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.cc#L8-L40), [rgw_bucket_encryption.cc:8-40](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.cc#L8-L40)).
   3. **Validation (B5, D19).** `Validate` refuses, as 400 MalformedXML, an SSEAlgorithm outside
      AWS's list and a KMSMasterKeyID with an algorithm other than `aws:kms` or `aws:kms:dsse`
      (https://docs.aws.amazon.com/AmazonS3/latest/API/API_ServerSideEncryptionByDefault.html).
@@ -758,17 +758,17 @@ byte-identical at the two tags.
 - **Behaviour:**
   1. **Put.** Action s3:PutBucketEncryption with no tag loading; it stores the validated
      configuration in `user.rgw.sse-s3.policy` alone on each try
-     (`src/rgw/rgw_op.cc:8757-8812@v19.2.7#RGWPutBucketEncryption::execute`,
-     `src/rgw/rgw_op.cc:9725-9780@v20.2.4#RGWPutBucketEncryption::execute`).
+     ([rgw_op.cc:8757-8812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8812),
+     [rgw_op.cc:9725-9780](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9780)).
   2. **Get.** Action s3:GetBucketEncryption; no attr is ErrNoSuchBucketEncryption with "The
      server side encryption configuration was not found"; an undecodable one is 500
-     (`src/rgw/rgw_op.cc:8814-8841@v19.2.7#RGWGetBucketEncryption::execute`,
-     `src/rgw/rgw_op.cc:9782-9809@v20.2.4#RGWGetBucketEncryption::execute`). The tags differ
+     ([rgw_op.cc:8814-8841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8814-L8841),
+     [rgw_op.cc:9782-9809](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9782-L9809)). The tags differ
      only in the log level.
   3. **Delete.** Authorized as s3:PutBucketEncryption; it removes `user.rgw.sse-s3.policy` and
      `user.rgw.sse-s3.key-id`, which only a radosgw with an SSE-S3 backend writes; success when
-     absent (`src/rgw/rgw_op.cc:8843-8867@v19.2.7#RGWDeleteBucketEncryption::execute`,
-     `src/rgw/rgw_op.cc:9811-9835@v20.2.4#RGWDeleteBucketEncryption::execute`).
+     absent ([rgw_op.cc:8843-8867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8843-L8867),
+     [rgw_op.cc:9811-9835](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9811-L9835)).
 - **Specs:** each op's error order with fakes; Delete removing both attrs; a retry
   re-authorized.
 - **Exclusions and registry:** extends defect 5's exclusion with the encryption writes.
@@ -779,8 +779,8 @@ byte-identical at the two tags.
 - **Layer:** handler. **Files:** S2's `internal/s3/encryption.go`. **Cluster:** no.
 - **Consumes:** BC-23's XML, BC-24's ops.
 - **Behaviour:** PUT 200 with an empty body; GET the document in the S3 namespace; DELETE 204
-  (`src/rgw/rgw_rest_s3.cc:3877-3915@v19.2.7#RGWPutBucketEncryption_ObjStore_S3::send_response`,
-  `src/rgw/rgw_rest_s3.cc:4328-4366@v20.2.4#RGWPutBucketEncryption_ObjStore_S3::send_response`).
+  ([rgw_rest_s3.cc:3877-3915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3877-L3915),
+  [rgw_rest_s3.cc:4328-4366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4328-L4366)).
 - **Specs:** each status, header and body, from the six configuration s3-tests.
 - **Exclusions and registry:** none.
 - **Depends on:** S2, BC-24. **PR:** one. **Brief:** about 80 lines.
@@ -799,14 +799,14 @@ byte-identical at the two tags.
   (Encryption, error)`, the effective algorithm, key id, bucket-key flag and context;
   `Request.CryptAttrs`, which `cryptKeys` reads in place of the headers when set.
 - **Behaviour:**
-  1. **`get_encryption_defaults`** (`src/rgw/rgw_rest_s3.cc:154-272@v19.2.7#get_encryption_defaults`,
-     `src/rgw/rgw_rest_s3.cc:151-269@v20.2.4#get_encryption_defaults`), called by PutObject,
-     POST object and CreateMultipartUpload (`src/rgw/rgw_rest_s3.cc:2620@v19.2.7#RGWPutObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:2773@v20.2.4#RGWPutObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:2981@v19.2.7#RGWPostObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:3118@v20.2.4#RGWPostObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:4003@v19.2.7#RGWInitMultipart_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:4454@v20.2.4#RGWInitMultipart_ObjStore_S3::get_params`):
+  1. **`get_encryption_defaults`** ([rgw_rest_s3.cc:154-272](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L154-L272),
+     [rgw_rest_s3.cc:151-269](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L151-L269)), called by PutObject,
+     POST object and CreateMultipartUpload ([rgw_rest_s3.cc:2620](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2620),
+     [rgw_rest_s3.cc:2773](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2773),
+     [rgw_rest_s3.cc:2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2981),
+     [rgw_rest_s3.cc:3118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3118),
+     [rgw_rest_s3.cc:4003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4003),
+     [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454)):
      - SSE-C with SSE-KMS or SSE-S3 headers is 400 InvalidArgument, before authorization;
      - SSE-C wins; otherwise the stored algorithm and key id fill what the request names none
        of, KMS attributes without an algorithm mean `aws:kms`, and KMS attributes with another
@@ -816,16 +816,16 @@ byte-identical at the two tags.
      - a stored configuration that does not decode is 400 InvalidArgument "Server side error -
        can't decode bucket_encryption_conf", after authorization (B16), with the policy
        environment built from the request alone.
-  2. **The unconfigured `rgw_s3_prepare_encrypt`** (`src/rgw/rgw_crypt.cc:1030-1301@v19.2.7#rgw_s3_prepare_encrypt`,
-     `src/rgw/rgw_crypt.cc:1045-1315@v20.2.4#rgw_s3_prepare_encrypt`), after authorization:
+  2. **The unconfigured `rgw_s3_prepare_encrypt`** ([rgw_crypt.cc:1030-1301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1030-L1301),
+     [rgw_crypt.cc:1045-1315](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1045-L1315)), after authorization:
      - with `rgw_crypt_require_ssl` (default true) over plain HTTP, 400 InvalidRequest
-       (`src/common/options/rgw.yaml.in:2823-2827@v19.2.7`, `src/common/options/rgw.yaml.in:2955-2959@v20.2.4`);
+       ([rgw.yaml.in:2823-2827](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2823-L2827), [rgw.yaml.in:2955-2959](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2955-L2959));
      - `aws:kms` without a key id, and an algorithm other than `aws:kms` and `AES256`, 400
        InvalidArgument;
      - otherwise the answer BC-27 records from a running radosgw, which source reading puts at
        400 InvalidArgument (the empty Barbican and Vault addresses,
-       `src/rgw/rgw_kms.cc:919-979@v19.2.7`, `src/rgw/rgw_kms.cc:917-977@v20.2.4`,
-       `src/rgw/rgw_kms.cc:255-271@v19.2.7`, `src/rgw/rgw_kms.cc:255-271@v20.2.4`).
+       [rgw_kms.cc:919-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_kms.cc#L919-L979), [rgw_kms.cc:917-977](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_kms.cc#L917-L977),
+       [rgw_kms.cc:255-271](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_kms.cc#L255-L271), [rgw_kms.cc:255-271](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_kms.cc#L255-L271)).
   3. SSE-C keeps phase 1's 501 until phase 4. A configuration naming no algorithm refuses
      nothing (B15).
   4. CopyObject and UploadPart are not among radosgw's callers above. PR (b) first reads how
@@ -868,13 +868,13 @@ byte-identical at the two tags.
 
 **Ownership controls: BC-28a to BC-28f (B7, P4 the owner, 2026-10-13).** Neither floor has the
 feature. Its only traces there are the IAM action names
-(`src/rgw/rgw_iam_policy.cc:84@v19.2.7`, `src/rgw/rgw_iam_policy.cc:117@v19.2.7`,
-`src/rgw/rgw_iam_policy.cc:84@v20.2.4`, `src/rgw/rgw_iam_policy.cc:120@v20.2.4`), which phase 1
+([rgw_iam_policy.cc:84](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L84), [rgw_iam_policy.cc:117](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L117),
+[rgw_iam_policy.cc:84](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L84), [rgw_iam_policy.cc:120](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L120)), which phase 1
 already has (`internal/policy/action.go:39-40`, `:86-87`). `ownershipControls` is no
 sub-resource and no op branch tests it, so a floor radosgw serves the GET as ListObjects, the
 PUT as CreateBucket and the DELETE as DeleteBucket
-(`src/rgw/rgw_common.cc:918-976@v19.2.7#RGWHTTPArgs::append`,
-`src/rgw/rgw_common.cc:931-989@v20.2.4#RGWHTTPArgs::append`). The behaviour is v21.1.2's, the
+([rgw_common.cc:918-976](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L918-L976),
+[rgw_common.cc:931-989](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L931-L989)). The behaviour is v21.1.2's, the
 first release line to carry it (b3733296c8e), cited at that tag.
 
 ### Task BC-28a: Ownership type
@@ -886,12 +886,12 @@ first release line to carry it (b3733296c8e), cited at that tag.
   `OwnershipOf(attrs map[string][]byte) Ownership`.
 - **Behaviour:**
   1. The enum is a u8 inside ENCODE_START(1,1)
-     (`src/rgw/rgw_object_ownership.h:29-33@v21.1.2`, `src/rgw/rgw_object_ownership.cc:77-89@v21.1.2`).
+     ([rgw_object_ownership.h:29-33](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.h#L29-L33), [rgw_object_ownership.cc:77-89](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.cc#L77-L89)).
   2. `OwnershipOf` reads a missing or undecodable attr as ObjectWriter
-     (`src/rgw/rgw_object_ownership.cc:91-106@v21.1.2#get_object_ownership`).
+     ([rgw_object_ownership.cc:91-106](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.cc#L91-L106)).
   3. XML: `OwnershipControls/Rule/ObjectOwnership`, the three names exactly; a missing Rule or
      ObjectOwnership, or another name, is refused with v21's message
-     (`src/rgw/rgw_object_ownership.cc:22-75@v21.1.2`). The document renders in the S3 namespace.
+     ([rgw_object_ownership.cc:22-75](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.cc#L22-L75)). The document renders in the S3 namespace.
 - **Specs:** the three values' bytes; a truncated attr read as ObjectWriter; each XML refusal.
 - **Exclusions and registry:** none.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 90 lines.
@@ -905,8 +905,8 @@ first release line to carry it (b3733296c8e), cited at that tag.
 - **Behaviour:**
   1. A request naming `ownershipControls` dispatches to the three routes in v21's position,
      after the encryption rows and ahead of each method's fall-through
-     (`src/rgw/rgw_rest_s3.h:772-774@v21.1.2`; `src/rgw/rgw_rest_s3.cc:5471-5472@v21.1.2`,
-     `src/rgw/rgw_rest_s3.cc:5531-5532@v21.1.2`, `src/rgw/rgw_rest_s3.cc:5558-5559@v21.1.2`).
+     ([rgw_rest_s3.h:772-774](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.h#L772-L774); [rgw_rest_s3.cc:5471-5472](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5471-L5472),
+     [rgw_rest_s3.cc:5531-5532](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5531-L5532), [rgw_rest_s3.cc:5558-5559](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5558-L5559)).
      It is matched as a query argument, not a signing sub-resource, as v21 tests it.
   2. The PUT accepts a signed payload as the other configuration PUTs do.
   3. Until BC-28d binds them the routes answer 501 after authentication, phase 1's rule for an
@@ -926,9 +926,9 @@ first release line to carry it (b3733296c8e), cited at that tag.
 - **Consumes:** BC-28a. **Produces:** `GetBucketOwnershipControls{Ownership}`,
   `PutBucketOwnershipControls{Params}`, `DeleteBucketOwnershipControls`; the errors
   AccessControlListNotSupported (400), InvalidBucketAclWithObjectOwnership (400) and
-  OwnershipControlsNotFoundError (404) (`src/rgw/rgw_common.cc:142-144@v21.1.2`);
+  OwnershipControlsNotFoundError (404) ([rgw_common.cc:142-144](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L142-L144));
   `CreateBucket.ObjectOwnership *acl.Ownership`.
-- **Behaviour** (`src/rgw/rgw_op.cc:10247-10358@v21.1.2`):
+- **Behaviour** ([rgw_op.cc:10247-10358](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10247-L10358)):
   1. **Put.** Action s3:PutBucketOwnershipControls. BucketOwnerEnforced on a bucket whose ACL
      is not the default private one is 400 InvalidBucketAclWithObjectOwnership, "The bucket's
      ACL must be made private before setting BucketOwnerEnforced."; an ACL that does not decode
@@ -939,10 +939,10 @@ first release line to carry it (b3733296c8e), cited at that tag.
      absent.
   4. **ACL writes.** PutBucketAcl and PutObjectAcl under BucketOwnerEnforced are 400
      AccessControlListNotSupported, "Cannot set ACLs when ObjectOwnership is
-     BucketOwnerEnforced." (`src/rgw/rgw_op.cc:6866-6871@v21.1.2#RGWPutACLs::execute`).
+     BucketOwnerEnforced." ([rgw_op.cc:6866-6871](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6866-L6871)).
   5. **CreateBucket.** An ownership value needs s3:PutBucketOwnershipControls besides
-     s3:CreateBucket, else 403 (`src/rgw/rgw_op.cc:3754-3759@v21.1.2`), and is stored in the new
-     bucket's attrs (`src/rgw/rgw_op.cc:4233-4237@v21.1.2`).
+     s3:CreateBucket, else 403 ([rgw_op.cc:3754-3759](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L3754-L3759)), and is stored in the new
+     bucket's attrs ([rgw_op.cc:4233-4237](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4233-L4237)).
 - **Specs:** each op's error order with fakes; the private-ACL comparison against a
   radosgw-shaped default ACL; the ACL refusals on both ACL ops; CreateBucket with and without
   the permission.
@@ -957,12 +957,12 @@ first release line to carry it (b3733296c8e), cited at that tag.
 - **Layer:** handler. **Files:** S2's `internal/s3/ownership.go`; modify the CreateBucket
   handler in `internal/s3/bucket.go` (one header read). **Cluster:** no.
 - **Consumes:** BC-28a's XML, BC-28c's ops and `CreateBucket.ObjectOwnership`.
-- **Behaviour** (`src/rgw/rgw_rest_s3.cc:4553-4618@v21.1.2`):
+- **Behaviour** ([rgw_rest_s3.cc:4553-4618](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4553-L4618)):
   1. PUT reads the body up to `rgw_max_put_param_size`; a parse failure, no `OwnershipControls`
      or a refused rule is 400 MalformedXML; 200 with an empty body.
   2. GET 200 with the document; DELETE 204.
   3. CreateBucket's `x-amz-object-ownership` header becomes the op's value; a value v21 does not
-     parse is 400 InvalidArgument with its message (`src/rgw/rgw_rest_s3.cc:2809-2816@v21.1.2`).
+     parse is 400 InvalidArgument with its message ([rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816)).
 - **Specs:** each route's status, headers and body, from the eight `object_ownership` s3-tests.
 - **Exclusions and registry:** none.
 - **Depends on:** S2, BC-28b, BC-28c. **PR:** one, after L2's PR (b) on `internal/s3/bucket.go`.
@@ -978,16 +978,16 @@ first release line to carry it (b3733296c8e), cited at that tag.
   own acl.Ownership, canned string) (acl.Policy, error)`.
 - **Behaviour:**
   1. **Evaluation.** Under BucketOwnerEnforced an object ACL grants nothing
-     (`src/rgw/rgw_common.cc:1630-1638@v21.1.2#verify_object_permission_no_policy`), read from
-     the bucket's attrs as v21 loads it (`src/rgw/rgw_op.cc:682@v21.1.2`).
+     ([rgw_common.cc:1630-1638](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L1630-L1638)), read from
+     the bucket's attrs as v21 loads it ([rgw_op.cc:682](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L682)).
   2. **Canned ACLs on writes.** Under BucketOwnerEnforced only `bucket-owner-full-control` or no
      canned ACL is accepted, else 400 AccessControlListNotSupported, and the bucket owner owns
      the object; under BucketOwnerPreferred the bucket owner owns it for
      `bucket-owner-full-control`; under ObjectWriter the writer does
-     (`src/rgw/rgw_acl_s3.cc:678-706@v21.1.2#create_canned_acl`). PutObject, CopyObject,
+     ([rgw_acl_s3.cc:678-706](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_acl_s3.cc#L678-L706)). PutObject, CopyObject,
      CreateMultipartUpload and POST object all take it.
   3. **AWS where v21 stops short.** v21 ignores only object ACLs, and builds a grant-header ACL
-     without looking at the ownership (`src/rgw/rgw_rest_s3.cc:2629-2644@v21.1.2#create_s3_policy`).
+     without looking at the ownership ([rgw_rest_s3.cc:2629-2644](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2629-L2644)).
      The task quotes AWS's "Controlling ownership of objects and disabling ACLs" page, with its
      URL, in its notes. Where that page says ACLs no longer affect permissions or are refused,
      the bucket ACL and grant headers follow it, each difference from v21 an exclusion.
@@ -1017,11 +1017,11 @@ first release line to carry it (b3733296c8e), cited at that tag.
 
 **POST object: BC-29 to BC-34.** POST object has no Authorization header, so radosgw makes it
 anonymous and its suspended-user check passes it
-(`src/rgw/rgw_process.cc:372-376@v19.2.7`, `src/rgw/rgw_process.cc:374-378@v20.2.4`). The form
+([rgw_process.cc:372-376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L372-L376), [rgw_process.cc:374-378](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L374-L378)). The form
 is read and its credentials authenticated in `init_processing`, after the bucket loads and
 before the op mask and the permission check
-(`src/rgw/rgw_op.cc:4576-4590@v19.2.7#RGWPostObj::init_processing`,
-`src/rgw/rgw_op.cc:4869-4883@v20.2.4#RGWPostObj::init_processing`). Review Focus 5 lands in
+([rgw_op.cc:4576-4590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4576-L4590),
+[rgw_op.cc:4869-4883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4869-L4883)). Review Focus 5 lands in
 BC-29's and BC-32's specs.
 
 ### Task BC-29: Form reader
@@ -1032,37 +1032,37 @@ BC-29's and BC-32's specs.
   part and the file part, which carries its filename and reads its data; `(*formReader).Drain()
   error` for the parts after it.
 - **Behaviour** (radosgw's reader is identical at both tags,
-  `src/rgw/rgw_rest.cc:1112-1476@v19.2.7`, `src/rgw/rgw_rest.cc:1112-1476@v20.2.4`):
+  [rgw_rest.cc:1112-1476](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1112-L1476), [rgw_rest.cc:1112-1476](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1112-L1476)):
   1. The Content-Type must be exactly `multipart/form-data`, else 400 InvalidArgument "Request
      Content-Type is not multipart/form-data"; a missing `boundary` is "Missing multipart
-     boundary specification" (`src/rgw/rgw_rest.cc:1431-1473@v19.2.7#RGWPostObj_ObjStore::get_params`,
-     `src/rgw/rgw_rest.cc:1431-1473@v20.2.4#RGWPostObj_ObjStore::get_params`;
-     `src/rgw/rgw_rest.cc:1112-1145@v19.2.7#RGWPostObj_ObjStore::parse_boundary_params`,
-     `src/rgw/rgw_rest.cc:1112-1145@v20.2.4#RGWPostObj_ObjStore::parse_boundary_params`).
+     boundary specification" ([rgw_rest.cc:1431-1473](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1431-L1473),
+     [rgw_rest.cc:1431-1473](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1431-L1473);
+     [rgw_rest.cc:1112-1145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1112-L1145),
+     [rgw_rest.cc:1112-1145](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1112-L1145)).
   2. Part header lines are trimmed and bounded by `maxLine` (`rgw_max_chunk_size`), and the
      Content-Disposition `name` names the part
-     (`src/rgw/rgw_rest.cc:1311-1370@v19.2.7#RGWPostObj_ObjStore::read_form_part_header`,
-     `src/rgw/rgw_rest.cc:1311-1370@v20.2.4#RGWPostObj_ObjStore::read_form_part_header`). Names
-     compare case-insensitively (`src/rgw/rgw_rest.h:247-249@v19.2.7`, `src/rgw/rgw_rest.h:247-249@v20.2.4`).
+     ([rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1311-L1370),
+     [rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1311-L1370)). Names
+     compare case-insensitively ([rgw_rest.h:247-249](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L247-L249), [rgw_rest.h:247-249](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L247-L249)).
      A field keeps its raw value for the policy environment and gives a trimmed one for
-     parameters (`src/rgw/rgw_rest.cc:1372-1385@v19.2.7#RGWPostObj_ObjStore::part_str`,
-     `src/rgw/rgw_rest.cc:1372-1385@v20.2.4#RGWPostObj_ObjStore::part_str`).
+     parameters ([rgw_rest.cc:1372-1385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1372-L1385),
+     [rgw_rest.cc:1372-1385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1372-L1385)).
   3. Parts are read up to the one named `file`, case-insensitively, keeping its Content-Disposition
      `filename`. The end of the form before it is 400 "Malformed request"; a field whose data has
      no delimiter within `maxLine` bytes is 400 "Couldn't find boundary"
-     (`src/rgw/rgw_rest_s3.cc:2914-2971@v19.2.7#RGWPostObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:3040-3097@v20.2.4#RGWPostObj_ObjStore_S3::get_params`).
+     ([rgw_rest_s3.cc:2914-2971](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2914-L2971),
+     [rgw_rest_s3.cc:3040-3097](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3040-L3097)).
   4. The file part streams: it is never buffered whole, and memory stays bounded by a few
      reads whatever its size.
   5. **Delimiter (B11).** A part ends only at a delimiter line, CRLF `--` boundary at a line
      start followed by CRLF or `--`, as RFC 2046 §5.1.1 defines it for `multipart/form-data`
      (RFC 7578). **Differs from radosgw by design:** radosgw's search matches `--` boundary
-     anywhere in the data (`src/rgw/rgw_rest.cc:1173-1220@v19.2.7#index_of`,
-     `src/rgw/rgw_rest.cc:1173-1220@v20.2.4#index_of`), so file data holding the string mid-line
+     anywhere in the data ([rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1173-L1220),
+     [rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1173-L1220)), so file data holding the string mid-line
      is cut there (defect 18).
   6. `Drain` reads the parts after the file and stores nothing
-     (`src/rgw/rgw_rest_s3.cc:3256-3278@v19.2.7#RGWPostObj_ObjStore_S3::complete_get_params`,
-     `src/rgw/rgw_rest_s3.cc:3392-3414@v20.2.4#RGWPostObj_ObjStore_S3::complete_get_params`).
+     ([rgw_rest_s3.cc:3256-3278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3256-L3278),
+     [rgw_rest_s3.cc:3392-3414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3392-L3414)).
 - **Specs:**
   - the framing cases: CRLF line ends, a delimiter split across two reads, the final `--`,
     parts after the file, a missing boundary, the end before the file;
@@ -1084,27 +1084,27 @@ BC-29's and BC-32's specs.
 - **Consumes:** WP-1's `cksum.ParseName`. **Produces:** `Parse(doc []byte) (*Policy, error)`;
   `Env`, case-insensitive with a checked mark per variable; `(*Policy).Check(env *Env, now
   time.Time) error`; `MinLength` and `MaxLength`.
-- **Behaviour** (`src/rgw/rgw_policy_s3.cc:16-305@v19.2.7`, `src/rgw/rgw_policy_s3.cc:20-314@v20.2.4`):
+- **Behaviour** ([rgw_policy_s3.cc:16-305](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L16-L305), [rgw_policy_s3.cc:20-314](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L20-L314)):
   1. **Parse.** Each refusal is 400 with radosgw's message: malformed JSON, no `expiration`, an
      expiration `parse_iso8601` refuses, no `conditions`, an array condition without exactly
      three elements, an operator other than `eq`, `starts-with` or `content-length-range`, a
      bad length; an object condition checks its first member only
-     (`src/rgw/rgw_policy_s3.cc:238-305@v19.2.7#RGWPolicy::from_json`,
-     `src/rgw/rgw_policy_s3.cc:247-314@v20.2.4#RGWPolicy::from_json`;
-     `src/rgw/rgw_policy_s3.cc:132-187@v19.2.7#RGWPolicy::add_condition`,
-     `src/rgw/rgw_policy_s3.cc:141-196@v20.2.4#RGWPolicy::add_condition`). The JSON is read with
+     ([rgw_policy_s3.cc:238-305](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L238-L305),
+     [rgw_policy_s3.cc:247-314](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L247-L314);
+     [rgw_policy_s3.cc:132-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L132-L187),
+     [rgw_policy_s3.cc:141-196](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L141-L196)). The JSON is read with
      Go's decoder, and ceph's JSONParser's handling of duplicate keys and number text is pinned
      by specs.
   2. **Conditions.** `eq` is exact, `starts-with` a prefix, `content-length-range` tightens the
      bounds; `$name` reads a variable case-insensitively and marks it checked
-     (`src/rgw/rgw_policy_s3.cc:53-102@v19.2.7`, `src/rgw/rgw_policy_s3.cc:57-106@v20.2.4`).
+     ([rgw_policy_s3.cc:53-102](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L53-L102), [rgw_policy_s3.cc:57-106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L57-L106)).
   3. **Check**, each 403 with radosgw's message: expired (expiry at or before now); a simple
      check whose field is missing or differs; a failed condition; a field no condition checked,
-     `x-ignore-*` excepted (`src/rgw/rgw_policy_s3.cc:189-235@v19.2.7#RGWPolicy::check`,
-     `src/rgw/rgw_policy_s3.cc:198-244@v20.2.4#RGWPolicy::check`;
-     `src/rgw/rgw_policy_s3.cc:105-121@v19.2.7#RGWPolicyEnv::match_policy_vars`).
+     `x-ignore-*` excepted ([rgw_policy_s3.cc:189-235](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L189-L235),
+     [rgw_policy_s3.cc:198-244](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L198-L244);
+     [rgw_policy_s3.cc:105-121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L105-L121)).
   4. **Differs:** v20.2.4 also excepts checksum fields
-     (`src/rgw/rgw_policy_s3.cc:108-130@v20.2.4#RGWPolicyEnv::match_policy_vars`); rgw-go
+     ([rgw_policy_s3.cc:108-130](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L108-L130)); rgw-go
      excepts them on both releases (B13), naming them by `cksum.ParseName`.
 - **Specs:** every s3-test policy shape; every message; the expiry boundary; a duplicate key
   and an exponent number as ceph's parser reads them; a checksum field on each release.
@@ -1121,13 +1121,13 @@ BC-29's and BC-32's specs.
   1. **SigV2** signs the base64 policy with HMAC-SHA1 of the secret. **SigV4** takes the key id
      from `x-amz-credential` up to its first `/`, the rest as the scope, and signs the base64
      policy with that scope's signing key. Neither checks the date or the region
-     (`src/rgw/rgw_rest_s3.cc:6158-6212@v19.2.7`, `src/rgw/rgw_rest_s3.cc:6688-6742@v20.2.4`).
+     ([rgw_rest_s3.cc:6158-6212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6158-L6212), [rgw_rest_s3.cc:6688-6742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6688-L6742)).
      An empty key or signature is refused. Signatures compare in constant time.
   2. The key's lookup and the identity are the header path's
      (`internal/auth/verifier.go:147-181`, `internal/auth/identity.go:30`): the identity, its
      user record and its identity policies replace the anonymous ones, as radosgw's strategy
-     does (`src/rgw/rgw_auth.cc:489-555@v19.2.7#rgw::auth::Strategy::apply`,
-     `src/rgw/rgw_auth.cc:504-570@v20.2.4#rgw::auth::Strategy::apply`).
+     does ([rgw_auth.cc:489-555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L489-L555),
+     [rgw_auth.cc:504-570](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L504-L570)).
   3. A session token is treated as the header path treats one.
   4. A failed authentication is 403, as radosgw's -EACCES from `get_policy`.
 - **Specs:** SigV2 vectors; AWS's published SigV4 POST policy example; a bad key, a bad
@@ -1142,22 +1142,22 @@ BC-29's and BC-32's specs.
   `VersionForWrite` once it lands (Seams). **Produces:** `PostObject` with two hooks the handler
   sets: `Form` (BC-29's fields and file) and `Authenticate` (BC-31).
 - **Behaviour.** Init runs `RGWPostObj_ObjStore_S3::get_params`'s order
-  (`src/rgw/rgw_rest_s3.cc:2914-3078@v19.2.7#RGWPostObj_ObjStore_S3::get_params`,
-  `src/rgw/rgw_rest_s3.cc:3040-3214@v20.2.4#RGWPostObj_ObjStore_S3::get_params`):
+  ([rgw_rest_s3.cc:2914-3078](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2914-L3078),
+  [rgw_rest_s3.cc:3040-3214](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3040-L3214)):
   1. The bucket loads (NoSuchBucket first), then `Form`.
   2. The `x-amz-server-side-encryption*` fields go to `EncryptionDefaults` as the asked
      encryption. Every field enters the policy environment with its raw value, then `bucket`.
   3. `key` is required (400 "Key not specified"); its first `${filename}` is replaced
-     (`src/rgw/rgw_rest_s3.cc:2889-2902@v19.2.7#RGWPostObj_ObjStore_S3::rebuild_key`,
-     `src/rgw/rgw_rest_s3.cc:3015-3028@v20.2.4#RGWPostObj_ObjStore_S3::rebuild_key`); an empty
+     ([rgw_rest_s3.cc:2889-2902](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2889-L2902),
+     [rgw_rest_s3.cc:3015-3028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3015-L3028)); an empty
      result is 400 "Empty object name". Then `key` enters the environment as B12 rules; radosgw
-     enters the replaced key (`src/rgw/rgw_rest_s3.cc:2999-3006@v19.2.7#RGWPostObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:3137-3144@v20.2.4#RGWPostObj_ObjStore_S3::get_params`).
+     enters the replaced key ([rgw_rest_s3.cc:2999-3006](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2999-L3006),
+     [rgw_rest_s3.cc:3137-3144](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3137-L3144)).
   4. `Content-Type` enters the environment when set; `x-amz-storage-class` must be a valid
      placement ("The storage class you specified is not valid"); `x-amz-meta-*` and
      `x-amz-website-redirect-location` become NUL-terminated attrs.
-  5. Credentials (`src/rgw/rgw_rest_s3.cc:3120-3254@v19.2.7#RGWPostObj_ObjStore_S3::get_policy`,
-     `src/rgw/rgw_rest_s3.cc:3256-3390@v20.2.4#RGWPostObj_ObjStore_S3::get_policy`): with a
+  5. Credentials ([rgw_rest_s3.cc:3120-3254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3120-L3254),
+     [rgw_rest_s3.cc:3256-3390](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3256-L3390)): with a
      `policy` field, `x-amz-algorithm` AWS4-HMAC-SHA256 selects SigV4, which needs
      `x-amz-credential`, `x-amz-signature` and `x-amz-date`; otherwise SigV2 needs
      `AWSAccessKeyId` and `signature`; each missing field is 400 with radosgw's message; an
@@ -1167,17 +1167,17 @@ BC-29's and BC-32's specs.
   7. The policy decodes (400 "Could not decode policy") and BC-30's `Check` runs, the
      signature fields marked checked as radosgw marks them. The `acl` field is a canned ACL
      built by `acl.Canned` ("Bad canned ACLs"), and `tagging` a Tagging document
-     (`src/rgw/rgw_rest_s3.cc:3080-3118@v19.2.7#RGWPostObj_ObjStore_S3::get_tags`,
-     `src/rgw/rgw_rest_s3.cc:3216-3254@v20.2.4#RGWPostObj_ObjStore_S3::get_tags`).
+     ([rgw_rest_s3.cc:3080-3118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3080-L3118),
+     [rgw_rest_s3.cc:3216-3254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3216-L3254)).
   8. No Content-Length is 411 MissingContentLength, and one over `rgw_max_put_size` is 400
-     EntityTooLarge (`src/rgw/rgw_rest.cc:1413-1429@v19.2.7#RGWPostObj_ObjStore::verify_params`,
-     `src/rgw/rgw_rest.cc:1413-1429@v20.2.4#RGWPostObj_ObjStore::verify_params`).
+     EntityTooLarge ([rgw_rest.cc:1413-1429](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1413-L1429),
+     [rgw_rest.cc:1413-1429](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1413-L1429)).
 
   VerifyPermission is s3:PutObject on the key's ARN, with the effective encryption in the
-  environment (`src/rgw/rgw_op.cc:4592-4605@v19.2.7#RGWPostObj::verify_permission`,
-  `src/rgw/rgw_op.cc:4885-4898@v20.2.4#RGWPostObj::verify_permission`). Execute follows
-  `src/rgw/rgw_op.cc:4612-4796@v19.2.7#RGWPostObj::execute` and
-  `src/rgw/rgw_op.cc:4905-5139@v20.2.4#RGWPostObj::execute`:
+  environment ([rgw_op.cc:4592-4605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4592-L4605),
+  [rgw_op.cc:4885-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4885-L4898)). Execute follows
+  [rgw_op.cc:4612-4796](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4612-L4796) and
+  [rgw_op.cc:4905-5139](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4905-L5139):
   9. **A public canned ACL under BlockPublicAcls is 403 AccessDenied**, as rgw-go's PutObject
      refuses one (`internal/op/putobject.go:198-211`; B11, defect 9).
   10. The quota check; Content-MD5 (400 InvalidDigest or BadDigest); the versioned write
@@ -1186,8 +1186,8 @@ BC-29's and BC-32's specs.
      with the policy's bounds (400 EntityTooLarge over the maximum, EntityTooSmall under the
      minimum); the attrs ETag, ACL, Content-Type (NUL-terminated), metas, the redirect and tags.
      Default retention comes from the head write, as for PutObject
-     (`src/rgw/driver/rados/rgw_rados.cc:3211-3215@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:3308-3312@v20.2.4`). **Differs:** v20.2.4 adds the
+     ([rgw_rados.cc:3211-3215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3215),
+     [rgw_rados.cc:3308-3312](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3312)). **Differs:** v20.2.4 adds the
      streaming checksum and `user.rgw.cksum`; rgw-go serves it on both releases (D22).
 - **Specs:**
   - the error order across Init, VerifyPermission and Execute, with counterfeiter fakes;
@@ -1219,10 +1219,10 @@ BC-29's and BC-32's specs.
 - **Behaviour:**
   1. The handler binds BC-32's hooks to the request. `newFormReader` runs inside the `Form`
      hook, so its Content-Type refusals and the 100 Continue come after the bucket loads, where
-     radosgw's `get_params` has them (`src/rgw/rgw_rest.cc:1431-1439@v19.2.7#RGWPostObj_ObjStore::get_params`,
-     `src/rgw/rgw_rest.cc:1431-1439@v20.2.4#RGWPostObj_ObjStore::get_params`).
-  2. The response (`src/rgw/rgw_rest_s3.cc:3305-3420@v19.2.7#RGWPostObj_ObjStore_S3::send_response`,
-     `src/rgw/rgw_rest_s3.cc:3441-3556@v20.2.4#RGWPostObj_ObjStore_S3::send_response`):
+     radosgw's `get_params` has them ([rgw_rest.cc:1431-1439](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1431-L1439),
+     [rgw_rest.cc:1431-1439](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1431-L1439)).
+  2. The response ([rgw_rest_s3.cc:3305-3420](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3305-L3420),
+     [rgw_rest_s3.cc:3441-3556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3441-L3556)):
      `success_action_redirect` is 303 with Location `<redirect>?bucket=…&key=…&etag=…`
      url-encoded, the tenant first when set; `success_action_status` 200 is 200, 201 is 201
      with a `PostResponse` of Location, Bucket, Key and ETag, anything else 204; the default is
@@ -1230,7 +1230,7 @@ BC-29's and BC-32's specs.
   3. The 201's Location takes its domain as rgw-go's CompleteMultipartUpload does
      (`internal/s3/multipart.go:341-360`; defect 17).
   4. **Differs from both floors by design (B11):** the usage log counts the body, as main does
-     (`src/rgw/rgw_rest.cc:1236-1238@7d2484c45b4#RGWPostObj_ObjStore::read_with_boundary`); the
+     ([rgw_rest.cc:1236-1238](https://github.com/ceph/ceph/blob/7d2484c45b4/src/rgw/rgw_rest.cc#L1236-L1238)); the
      byte counter, today PutObject's alone (`internal/s3/handler.go:473-486`), covers post_obj.
 - **Specs:** each status and header; `${filename}` end to end; a tenant's redirect; the usage
   entry's bytes received.
@@ -1286,11 +1286,11 @@ task budgets the cluster reproduction.
 | # | Defect | Class | Status | Upstream | rgw-go's choice (task) |
 |---|---|---|---|---|---|
 | 1 | A non-preflight request with an Origin no CORS rule allows is served; `generate_cors_headers` only omits the headers | S3-correctness | unreproduced; s3-tests expect the refusal | fixed on main by 4e056f98e78, 8d652cd24c1, 7f147f02058; in no tag | refuse with 403, as main (BC-4) |
-| 2 | The rule chosen is the first whose origin matches, so a later rule that allows the request is never used (`src/rgw/rgw_cors.cc:186-194@v19.2.7#RGWCORSConfiguration::host_name_rule`) | S3-correctness | unreproduced | fixed on main by cc1dcecee08 (PR #69190) | main's selection (BC-2) |
+| 2 | The rule chosen is the first whose origin matches, so a later rule that allows the request is never used ([rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L186-L194)) | S3-correctness | unreproduced | fixed on main by cc1dcecee08 (PR #69190) | main's selection (BC-2) |
 | 3 | A signed preflight's signature is never compared | quirk, as AWS checks none; its rate-limit charge is security | unreproduced | reported to security@ceph.io 2026-10-05 | take the skip; phase 3 must not charge OPTIONS CORS to the key's user (BC-5, B4) |
-| 4 | PutBucketCors and PutPublicAccessBlock retries write back the attrs the request started with (`src/rgw/rgw_op.cc:6103-6107@v19.2.7#RGWPutCORS::execute`, `src/rgw/rgw_op.cc:8669-8673@v19.2.7#RGWPutBucketPublicAccessBlock::execute`) | data corruption (a lost update of shared bucket state) | unreproduced | none found; the registry's PutBucketPolicy entry | set only the op's own attr (BC-3, BC-18) |
+| 4 | PutBucketCors and PutPublicAccessBlock retries write back the attrs the request started with ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107), [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673)) | data corruption (a lost update of shared bucket state) | unreproduced | none found; the registry's PutBucketPolicy entry | set only the op's own attr (BC-3, BC-18) |
 | 5 | Retried bucket writes are not authorized again (registry) | security | unreproduced | registry | re-authorize each retry (BC-3, BC-11, BC-18, BC-24, BC-28c) |
-| 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length (`src/rgw/rgw_rest_s3.cc:4613-4624@v19.2.7#RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection) | unreproduced; BC-22 captures the bytes | none found | the error document alone (BC-19) |
+| 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624)) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection) | unreproduced; BC-22 captures the bytes | none found | the error document alone (BC-19) |
 | 7 | A public-access block that does not decode is ignored (registry) | security, low | unreproduced | registry | phase 1 fails closed; Get answers 500 (BC-18) |
 | 8 | POST object is never checked for a suspended user: the check precedes the form's authentication | security (fail-open) | unreproduced | none found; prior-art search pending | 403 UserSuspended; reported upstream once reproduced (BC-32) |
 | 9 | POST object stores a public canned `acl` under BlockPublicAcls | security (an owner's block bypassed) | unreproduced | extends the registry's PutObject, CopyObject and CreateMultipartUpload entry | 403 AccessDenied (BC-32) |
@@ -1302,7 +1302,7 @@ task budgets the cluster reproduction.
 | 15 | PutBucketWebsite answers an unparseable body 400 InvalidArgument, where AWS answers MalformedXML | S3-correctness, minor | unreproduced | none | MalformedXML (BC-10, B2) |
 | 16 | The block document lacks the S3 namespace; PolicyStatus and block booleans are lower-case | cosmetic (SDKs accept both) | from the source | none | keep radosgw's (BC-17, BC-21, B2) |
 | 17 | POST's 201 Location under a configured domain has no scheme (registry's CompleteMultipartUpload entry, the same `compute_domain_uri`) | cosmetic | unreproduced | registry | as rgw-go's CompleteMultipartUpload decided (BC-33) |
-| 18 | A POST form's part ends wherever `--` boundary appears, mid-line included, so file data holding it is cut there: stored truncated when the rest parses as parts, else refused (`src/rgw/rgw_rest.cc:1173-1220@v19.2.7#index_of`, `src/rgw/rgw_rest.cc:1173-1220@v20.2.4#index_of`) | S3-correctness (an upload stored other than sent) | unreproduced, from the source; found while drafting this unit | none searched | RFC 2046's delimiter (BC-29, B11) |
+| 18 | A POST form's part ends wherever `--` boundary appears, mid-line included, so file data holding it is cut there: stored truncated when the rest parses as parts, else refused ([rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1173-L1220), [rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1173-L1220)) | S3-correctness (an upload stored other than sent) | unreproduced, from the source; found while drafting this unit | none searched | RFC 2046's delimiter (BC-29, B11) |
 
 Not defects, recorded so no task re-derives them: the head write applies a default retention
 to POST objects as it does for PutObject; `should_redirect`'s write of 301 into the

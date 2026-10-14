@@ -14,8 +14,8 @@ departs from the report, the drafting notes says why.
 ## Scope
 
 The owner approved on 2026-10-13 moving the Squid floor of spec §3 ("Ceph floor Squid 19.2.6 or
-Tentacle 20.2.4") from v19.2.6 to v19.2.7 (`CMakeLists.txt:3-4@v19.2.7`, the version commit
-9ec952b9f96, tagged 2026-10-08). Tentacle stays at v20.2.4 (`CMakeLists.txt:3-4@v20.2.4`).
+Tentacle 20.2.4") from v19.2.6 to v19.2.7 ([CMakeLists.txt:3-4](https://github.com/ceph/ceph/blob/v19.2.7/CMakeLists.txt#L3-L4), the version commit
+9ec952b9f96, tagged 2026-10-08). Tentacle stays at v20.2.4 ([CMakeLists.txt:3-4](https://github.com/ceph/ceph/blob/v20.2.4/CMakeLists.txt#L3-L4)).
 v19.2.6 is an ancestor of v19.2.7, so the move adds only what the squid branch gained.
 Compatibility is spec §8's rule: RADOS state in both directions, not radosgw's defects.
 
@@ -107,7 +107,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
   (:501-512); docs/cgo-limitations.md:553-554.
 - **Behaviour:**
   1. §3's floor reads "Squid 19.2.7 or Tentacle 20.2.4", and "runs 19.2.7 or later on Squid"
-     (`CMakeLists.txt:3-4@v19.2.7`).
+     ([CMakeLists.txt:3-4](https://github.com/ceph/ceph/blob/v19.2.7/CMakeLists.txt#L3-L4)).
   2. §12's support policy reads "librados 19.2.7 or later on Squid". It keeps the technical
      fact that does not move: AES256KRB5 keys parse from librados 19.2.6 and 20.2.4. "The cluster
      floor in section 3 is the same releases" stays true.
@@ -143,19 +143,19 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
      - "radosgw's bucket instance metadata put drops the bucket's object lock rule" (:11384): it
        already says fixed in v19.2.7. Add the residual: v19.2.7 still resets the rule for a
        document without `obj_lock`, since a missing member decodes as `T()`
-       (`src/common/ceph_json.h:334-346@v19.2.7`).
+       ([ceph_json.h:334-346](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346)).
      - "radosgw faults on a zero rgw_gc_max_objs ..." (:550): the runtime-change crash is kept
        from happening by the `startup` flag at both floors
-       (`src/common/options/rgw.yaml.in:1713-1714@v19.2.7`,
-       `src/common/options/rgw.yaml.in:1795-1796@v20.2.4`). #75958 is not asserted closed.
+       ([rgw.yaml.in:1713-1714](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1713-L1714),
+       [rgw.yaml.in:1795-1796](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1795-L1796)). #75958 is not asserted closed.
   2. **Carried by v19.2.7 too**, retitled away from "Tentacle's", with their index rows and the
      anchors `docs/exclusions.md` and the known-differences comments use:
      - "Tentacle's DeleteObject removes the head without checking its write tag" (:7067):
        Releases v19.2.7, v20.2.4 and main
-       (`src/rgw/driver/rados/rgw_rados.cc:6049-6057@v19.2.7`).
+       ([rgw_rados.cc:6049-6057](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6049-L6057)).
      - "Tentacle's DeleteObjects asks for MFA for the keys that need none ..." (:8557, index
-       :192): Releases v19.2.7 and v20.2.1 to v20.2.4 (`src/rgw/rgw_op.cc:7067-7081@v19.2.7`,
-       `src/rgw/rgw_op.cc:7969-7983@v20.2.4`); drop "No v19.2.x tag contains ce98cebb815".
+       :192): Releases v19.2.7 and v20.2.1 to v20.2.4 ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081),
+       [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983)); drop "No v19.2.x tag contains ce98cebb815".
      - "Tentacle fails an UploadPart that sends If-None-Match: * ..." (:7231): Releases v20.2.4;
        v19.2.7 still ignores the conditions.
   3. **The nine entries v19.2.7 still carries** gain v19.2.7 in their Releases lines (report §2,
@@ -163,17 +163,17 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
   4. **New entries**, each unreproduced and derived from the source:
      - "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is
        unsigned": S3-correctness, fails closed; fixed in v19.2.7 by 1db3ab3b185
-       (`src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`, `src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`);
+       ([rgw_auth_s3.cc:788-842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L842), [rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797));
        trackers #79803 and #79873; ceph/ceph#71292 (main) and ceph/ceph#71360 (squid);
        the tentacle branch carries it too, through ceph/ceph#71364 (merge 7e2e2072822, a1dd71be880), in no Tentacle tag yet.
      - "radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule": S3-correctness;
-       v19.2.6 and v20.2.4 (`src/rgw/rgw_lc.cc:2913-2928@v20.2.4`); fixed in v19.2.7 by
-       4dac1850993 (`src/rgw/rgw_lc.cc:2750-2888@v19.2.7#s3_expiration_header`); tentacle
+       v19.2.6 and v20.2.4 ([rgw_lc.cc:2913-2928](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2913-L2928)); fixed in v19.2.7 by
+       4dac1850993 ([rgw_lc.cc:2750-2888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888)); tentacle
        30daa120099; tracker #77564.
      - "Squid's lifecycle transition of an encrypted multipart object drops its part lengths":
        data corruption, the object cannot be decrypted; v19.2.6, v20.2.0 and v20.2.1; fixed in
        v19.2.7 by b9b65194f64
-       (`src/rgw/driver/rados/rgw_rados.cc:5155-5182@v19.2.7#fixup_manifest_to_parts_len`) and
+       ([rgw_rados.cc:5155-5182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5155-L5182)) and
        in v20.2.2; tracker #23264.
      - The fourth, "Squid's DeleteObjects reports another key's result" (41984610868, tracker
        #76960), waits for F11 and is added only if the re-record shows a flip it explains.
@@ -193,14 +193,14 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
   1. "Write conditions are Tentacle's on Squid too" (:4225-4256) shrinks to its
      CompleteMultipartUpload bullet, a Squid difference against v19.2.7, which still reads
      neither condition
-     (`src/rgw/rgw_rest_s3.cc:4094-4104@v19.2.7#RGWCompleteMultipart_ObjStore_S3::get_params`;
-     Tentacle's takes both, `src/rgw/rgw_rest_s3.cc:4565@v20.2.4#RGWCompleteMultipart_ObjStore_S3::get_params`).
+     ([rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104);
+     Tentacle's takes both, [rgw_rest_s3.cc:4565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4565)).
      Its "merged after v19.2.6" becomes "first tagged in v19.2.7". The heading stays, since
      `known-differences-squid.txt` names it, or both change together.
   2. "Delete conditions are Tentacle's, and a delete is guarded, on both releases"
      (:4257-4296) loses its two Squid-zone bullets: v19.2.7 checks the conditions as v20.2.4
-     does (`src/rgw/rgw_rest_s3.cc:3435-3483@v19.2.7#RGWDeleteObj_ObjStore_S3::get_params`,
-     `src/rgw/rgw_rest_s3.cc:3685-3733@v20.2.4#RGWDeleteObj_ObjStore_S3::get_params`). Its
+     does ([rgw_rest_s3.cc:3435-3483](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3483),
+     [rgw_rest_s3.cc:3685-3733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3733)). Its
      guard bullet covers both releases: both remove a replaced head unguarded.
   3. "Deletes that need MFA are refused" (:3610-3627): the inverted DeleteObjects check is on
      Squid 19.2.7 zones too.
@@ -208,7 +208,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
      still passes none.
   5. "The metadata sections write only what keeps a user or bucket whole" (:1548-1559): "which
      neither release's JSON carries" becomes v19.2.7's form, with `obj_lock` in the document
-     (`src/rgw/rgw_common.cc:2542-2544@v19.2.7`). F8 and F9 then edit the same bullet for
+     ([rgw_common.cc:2542-2544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2542-L2544)). F8 and F9 then edit the same bullet for
      rgw-go's side.
   6. The anchors follow F2's retitles.
 - **Specs:** none; a grep that every heading `known-differences-*.txt` names still exists.
@@ -233,25 +233,25 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
        guidelines when verifying SigV4 signatures" (squid d8ba9d0cb06), and its companion
        3138362dbca, which adds `rgw_sigv4_insecure`, both merged into tentacle by 5978c866d4a
        from the advisory branch ceph-ghsa-rmjq-ffrm-j6vj. The check they add is
-       `src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`. State the attack that requiring a signed
+       [rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797). State the attack that requiring a signed
        Content-Type and a signed x-amz-content-sha256 closes, citing the commit and the code.
        Upstream's own reading is that the escalation comes from unsigned `x-amz-*` headers,
-       which v19.2.7 still refuses (`src/rgw/rgw_auth_s3.cc:816-817@v19.2.7`); the task
+       which v19.2.7 still refuses ([rgw_auth_s3.cc:816-817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L816-L817)); the task
        verifies that reading against the advisory and the commits, and does not assume it.
      - (b) **rgw-go stays safe without the two requirements.** Show from rgw-go's code that
        whatever (a) found the CVE needs still holds. At least: the payload hash the body is held
        to is the one the signature covers, since `authDataV4` takes it once from
        `expectedPayloadHash` and uses it both as the canonical request's HashedPayload and for
        the body check (internal/auth/sigv4.go:423-429, internal/auth/payload.go:56), as radosgw
-       does (`src/rgw/rgw_auth_s3.h:638-660@v19.2.7#get_v4_exp_payload_hash`,
-       `src/rgw/rgw_auth_s3.h:641-664@v20.2.4#get_v4_exp_payload_hash`, used at
-       `src/rgw/rgw_rest_s3.cc:5858@v19.2.7`); and every other `x-amz-*` header is still
+       does ([rgw_auth_s3.h:638-660](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L638-L660),
+       [rgw_auth_s3.h:641-664](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L641-L664), used at
+       [rgw_rest_s3.cc:5858](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5858)); and every other `x-amz-*` header is still
        refused unsigned.
      - (c) **AWS's rule.** Read and quote, from AWS's documentation and not from memory, its
        SigV4 rule on which headers must be signed, with the URL. Both upstream commits name the
        page, `https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html`
-       (`src/rgw/rgw_auth_s3.cc:789@v19.2.7`), and v19.2.7's comment records that the page
-       contradicts itself on Content-Type (`src/rgw/rgw_auth_s3.cc:797-815@v19.2.7`), so the
+       ([rgw_auth_s3.cc:789](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L789)), and v19.2.7's comment records that the page
+       contradicts itself on Content-Type ([rgw_auth_s3.cc:797-815](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L797-L815)), so the
        quotation gives every passage on Content-Type, `x-amz-*` headers and
        x-amz-content-sha256. Where the passages disagree, the record adds behavioural
        evidence: whether the AWS SDKs' own signers (botocore's and the Go SDK's, each cited at a
@@ -263,11 +263,11 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
        FD-4's release seam, or keeps the stricter check too is part of what the owner sees. The
        owner sees that outcome before the merge.
   2. **The rule, on both releases** (P5): v19.2.7's `get_v4_canonical_headers`
-     (`src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`). Unless `rgw_sigv4_insecure`, `host` and every
+     ([rgw_auth_s3.cc:788-842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L842)). Unless `rgw_sigv4_insecure`, `host` and every
      `x-amz-*` header the request carries must be signed, except `x-amz-content-sha256`; a
      present Content-Type need not be. Every refusal is still AccessDenied.
   3. **Tentacle differs:** v20.2.4 also refuses an unsigned Content-Type and an unsigned
-     x-amz-content-sha256 (`src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`). rgw-go accepts them on
+     x-amz-content-sha256 ([rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797)). rgw-go accepts them on
      Tentacle too, as an exclusion (P5). The tentacle branch carries both fixes
      through ceph/ceph#71364 (merge 7e2e2072822: a25fdb5267c and a1dd71be880), in no Tentacle tag yet.
   4. Both the header route and the presigned route take the rule, and so does the boto2
@@ -280,7 +280,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
     a header value that differs from the payload hash the signature covers is refused, which
     pins (b);
   - an unsigned Content-Type beside an unsigned `x-amz-acl` is refused (upstream's invariant,
-    `src/test/rgw/test_rgw_auth_sigv4.cc:219@v19.2.7`), and any other unsigned `x-amz-*`
+    [test_rgw_auth_sigv4.cc:219](https://github.com/ceph/ceph/blob/v19.2.7/src/test/rgw/test_rgw_auth_sigv4.cc#L219)), and any other unsigned `x-amz-*`
     header is refused;
   - the vector `unsigned-content-type-rejected` becomes `unsigned-content-type-accepted`, with
     its canonical request; a presigned request with an unsigned Content-Type is accepted;
@@ -308,7 +308,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
   s3-test on the `rgw-go-s3tests` branch (FD-9).
 - **Behaviour:**
   1. `check_previously_completed` sets `etag = oetag` at both floors
-     (`src/rgw/rgw_op.cc:6584@v19.2.7`, `src/rgw/rgw_op.cc:7472@v20.2.4`), so a retried
+     ([rgw_op.cc:6584](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584), [rgw_op.cc:7472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472)), so a retried
      completion of a finished upload answers the object's ETag. The release split goes.
   2. Size, mtime, the epoch and the unknown-id path are unchanged.
 - **Specs:** the spec at mp_complete_test.go:461 expects the stored ETag on Squid and Tentacle
@@ -342,26 +342,26 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
 - **Consumes:** phase 1's `refreshIndexOp`. **Produces:** the retry, for every index call.
 - **Behaviour:**
   1. **v19.2.7's guards** retry an `-ENOENT` within NUM_RESHARD_RETRIES, ten
-     (`src/rgw/driver/rados/rgw_rados.cc:7225-7230@v19.2.7`, the bound at
-     `src/rgw/driver/rados/rgw_rados.cc:7216@v19.2.7`; `RGWRados::guard_reshard` at
-     `src/rgw/driver/rados/rgw_rados.cc:7929-7933@v19.2.7`). The retry re-reads the bucket:
+     ([rgw_rados.cc:7225-7230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7225-L7230), the bound at
+     [rgw_rados.cc:7216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7216); `RGWRados::guard_reshard` at
+     [rgw_rados.cc:7929-7933](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7929-L7933)). The retry re-reads the bucket:
      `init_bs` passes the target's bucket info
-     (`src/rgw/driver/rados/rgw_rados.h:947-955@v19.2.7`), and that `BucketShard::init`
+     ([rgw_rados.h:947-955](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L947-L955)), and that `BucketShard::init`
      overload reads the instance into it
-     (`src/rgw/driver/rados/rgw_rados.cc:2804-2830@v19.2.7`). **v20.2.4 differs:** its guard
+     ([rgw_rados.cc:2804-2830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2804-L2830)). **v20.2.4 differs:** its guard
      breaks on any answer but busy-resharding
-     (`src/rgw/driver/rados/rgw_rados.cc:7888-7891@v20.2.4`).
+     ([rgw_rados.cc:7888-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7888-L7891)).
   2. **rgw-go:** an index call answering ErrNotFound calls `refreshIndexOp`, which reads the
      instance from RADOS (FD-6). When the re-read instance puts the key on another shard object,
      the call is retried on it, within the same ten calls that busy-resharding retries count.
      When it names the same shard object, the ErrNotFound is returned at once: a write that
      meets it answers 404 NoSuchKey, as now.
   3. A bucket removed meanwhile answers 404 NoSuchKey, as `refreshIndexOp` already maps it.
-  4. **Who takes it:** the prepare (`src/rgw/driver/rados/rgw_rados.cc:7289-7291@v19.2.7`), the
-     cancel (`src/rgw/driver/rados/rgw_rados.cc:7395-7397@v19.2.7`) and the completion
-     manager's retry (`src/rgw/driver/rados/rgw_rados.cc:905@v19.2.7`), and phase 2's OLH ops
-     (`src/rgw/driver/rados/rgw_rados.cc:8153@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:8207@v19.2.7`), which V5 puts on `guardReshard`.
+  4. **Who takes it:** the prepare ([rgw_rados.cc:7289-7291](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7289-L7291)), the
+     cancel ([rgw_rados.cc:7395-7397](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7395-L7397)) and the completion
+     manager's retry ([rgw_rados.cc:905](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L905)), and phase 2's OLH ops
+     ([rgw_rados.cc:8153](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8153),
+     [rgw_rados.cc:8207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8207)), which V5 puts on `guardReshard`.
   5. **On Tentacle too** (P5), as an exclusion against v20.2.4's 404.
 - **Specs** (fakerados; a BeforeWrite hook on the old shard commits a reshard):
   - a prepare whose shard a committed reshard removed lands on the new shard, and the write
@@ -388,33 +388,33 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
 - **Behaviour:**
   1. **The encoding:** RGWObjectLock is `ENCODE_START(1, 1)` of `enabled`, `rule_exist` and,
      when the rule exists, ObjectLockRule wrapping DefaultRetention (`mode`, `days`, `years`),
-     each `ENCODE_START(1, 1)` (`src/rgw/rgw_object_lock.h:34-40@v19.2.7`,
-     `src/rgw/rgw_object_lock.h:127-135@v19.2.7`; the same at
-     `src/rgw/rgw_object_lock.h:33-39@v20.2.4`, `src/rgw/rgw_object_lock.h:123-131@v20.2.4`).
+     each `ENCODE_START(1, 1)` ([rgw_object_lock.h:34-40](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L34-L40),
+     [rgw_object_lock.h:127-135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L127-L135); the same at
+     [rgw_object_lock.h:33-39](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L33-L39), [rgw_object_lock.h:123-131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L123-L131)).
   2. **`ObjectLock()`** decodes `ObjLock` when the flags carry BUCKET_OBJ_LOCK_ENABLED: nil is
      RGWObjectLock's default, enabled with no rule; without the flag it is the disabled zero
      value. **`SetObjectLock`** encodes into `ObjLock` and leaves the flags to the caller. An
      `ObjLock` nobody sets keeps its bytes, so a stored rule re-encodes exactly.
   3. **The dump:** with the flag, `obj_lock` follows `sync_policy`
-     (`src/rgw/rgw_common.cc:2538-2544@v19.2.7#RGWBucketInfo::dump`), in v19.2.7's form:
+     ([rgw_common.cc:2538-2544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2538-L2544)), in v19.2.7's form:
      `enabled` only when true, then `rule_exist`, then `rule` when it exists, holding
      `defaultRetention` with `mode` and `days` when positive, else `years`
-     (`src/rgw/rgw_object_lock.cc:93-101@v19.2.7#RGWObjectLock::dump`,
-     `src/rgw/rgw_object_lock.cc:56-58@v19.2.7#ObjectLockRule::dump`,
-     `src/rgw/rgw_object_lock.cc:26-33@v19.2.7#DefaultRetention::dump`). An `ObjLock` that
+     ([rgw_object_lock.cc:93-101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L93-L101),
+     [rgw_object_lock.cc:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L56-L58),
+     [rgw_object_lock.cc:26-33](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L26-L33)). An `ObjLock` that
      does not decode fails `MarshalJSON` with its error.
   4. **The decode:** `obj_lock` is read only under the document's flag
-     (`src/rgw/rgw_common.cc:2588-2590@v19.2.7`), by v19.2.7's decoders
-     (`src/rgw/rgw_object_lock.cc:65-71@v19.2.7#RGWObjectLock::decode_json`,
-     `src/rgw/rgw_object_lock.cc:44-46@v19.2.7#ObjectLockRule::decode_json`,
-     `src/rgw/rgw_object_lock.cc:8-12@v19.2.7#DefaultRetention::decode_json`): `rule` only when
+     ([rgw_common.cc:2588-2590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2588-L2590)), by v19.2.7's decoders
+     ([rgw_object_lock.cc:65-71](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L65-L71),
+     [rgw_object_lock.cc:44-46](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L44-L46),
+     [rgw_object_lock.cc:8-12](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8-L12)): `rule` only when
      `rule_exist`, and a missing member reads as its zero value, as `T()`
-     (`src/common/ceph_json.h:334-346@v19.2.7`). A present `obj_lock` sets `ObjLock` to its
+     ([ceph_json.h:334-346](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346)). A present `obj_lock` sets `ObjLock` to its
      encoding, the default included; an absent one leaves it nil, which F9 reads.
   5. **v20.2.4 differs:** its dump and decode carry no `obj_lock`
-     (`src/rgw/rgw_common.cc:2577-2604@v20.2.4#RGWBucketInfo::dump`,
-     `src/rgw/rgw_common.cc:2606-2647@v20.2.4#RGWBucketInfo::decode_json`), and its
-     RGWObjectLock dump keeps the old form (`src/rgw/rgw_object_lock.cc:77@v20.2.4#RGWObjectLock::dump`).
+     ([rgw_common.cc:2577-2604](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2577-L2604),
+     [rgw_common.cc:2606-2647](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647)), and its
+     RGWObjectLock dump keeps the old form ([rgw_object_lock.cc:77](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L77)).
      rgw-go writes and reads v19.2.7's form on Tentacle too (P5): a v20.2.4 radosgw ignores
      the key.
   6. Nothing changes a put yet: `keepInstance` and `newInstance` still overwrite `ObjLock`
@@ -442,11 +442,11 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
 - **Behaviour:**
   1. With BUCKET_OBJ_LOCK_ENABLED set and an `obj_lock` in the document, the document's
      configuration is stored, for a new instance and an existing one, as v19.2.7's decode
-     yields it (`src/rgw/rgw_common.cc:2588-2590@v19.2.7`) and its put stores the decoded
+     yields it ([rgw_common.cc:2588-2590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2588-L2590)) and its put stores the decoded
      instance whole
-     (`src/rgw/driver/rados/rgw_bucket.cc:2866-2887@v19.2.7#RGWMetadataHandlerPut_BucketInstance::put_checked`).
+     ([rgw_bucket.cc:2866-2887](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2887)).
   2. With no `obj_lock`, an existing instance keeps its stored configuration, where v19.2.7
-     resets it to RGWObjectLock() (`src/common/ceph_json.h:334-346@v19.2.7`) (FD-8). A new
+     resets it to RGWObjectLock() ([ceph_json.h:334-346](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346)) (FD-8). A new
      instance gets the default, as now.
   3. The refusal to turn object lock off stays.
   4. **v20.2.4 differs:** it never reads `obj_lock`, so its put always drops the rule (the
@@ -524,7 +524,7 @@ Found by F3's task review (Important 1), and numbered here before F3 merged (PP-
 - **Behaviour:**
   1. radosgw sets the head write's id-tag guard only for a key with no instance and a request
      without `If-None-Match: *`, the same at both tags
-     (`src/rgw/driver/rados/rgw_rados.cc:3202@v19.2.7`, `src/rgw/driver/rados/rgw_rados.cc:3299@v20.2.4`).
+     ([rgw_rados.cc:3202](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3202), [rgw_rados.cc:3299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3299)).
   2. rgw-go keeps v19.2.6's Squid guard for a versioned instance: `guardHead` exempts an
      instance only when the release is Tentacle. F12 drops that release test, so an instance's
      head write takes no id-tag cmpxattr on either release.
@@ -544,10 +544,10 @@ Found in F4's work, and numbered here before F4 merged (PP-12).
   docs/ceph-upstream-bugs.md (the entry's "rgw-go:" line).
 - **Behaviour:**
   1. radosgw's CVE-2026-54330 check refuses an unsigned header only under `HTTP_X_AMZ_`
-     (`src/rgw/rgw_auth_s3.cc:819-841@v19.2.7`, `src/rgw/rgw_auth_s3.cc:780-796@v20.2.4`).
+     ([rgw_auth_s3.cc:819-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841), [rgw_auth_s3.cc:780-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796)).
      `init_meta_info` then renames six more prefixes onto `x-amz-*` names, into `x_meta_map` and
-     `crypt_attribute_map` (`src/rgw/rgw_common.cc:413-464@v19.2.7`,
-     `src/rgw/rgw_common.cc:426-477@v20.2.4`). So an unsigned `X-Goog-Meta-*` is stored as user
+     `crypt_attribute_map` ([rgw_common.cc:413-464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464),
+     [rgw_common.cc:426-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477)). So an unsigned `X-Goog-Meta-*` is stored as user
      metadata, and an unsigned `X-Goog-Server-Side-Encryption-*` reaches the SSE attributes.
   2. rgw-go maps the same prefixes, and has the same gap. Unless insecure, it refuses an unsigned header
      under any prefix that init_meta_info renames, exactly as it refuses an unsigned `x-amz-*`, on both
@@ -556,7 +556,7 @@ Found in F4's work, and numbered here before F4 merged (PP-12).
   3. The check's prefix set is init_meta_info's. A spec pins it to the tables rgw-go already keeps,
      so the three cannot drift.
   4. SigV2 is unchanged: its string to sign already covers `x_meta_map`
-     (`src/rgw/rgw_auth_s3.cc:248@v20.2.4`).
+     ([rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)).
 - **Specs:** each of the six prefixes, unsigned, is refused, on the header route and the presigned route;
   each one signed is accepted; an unsigned `x-amz-*` is still refused, and x-amz-content-sha256 still
   passes; insecure accepts all of them.
