@@ -41,7 +41,7 @@ The set's files:
 | `B-bucket-config.md` | CORS, website, encryption configuration, ownership controls, public access block, policy status, POST object | BC-2 to BC-34 |
 | `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 |
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
-| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F13 |
+| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F14 |
 
 Task ids are the research reports' (`research/research-*.md` beside this index), so every task traces to its verified research. The research cites v19.2.6, where it was done; the plan's units cite v19.2.7.
 
@@ -99,7 +99,7 @@ The controller's rulings on the research's open questions, under the owner's rul
 |---|---|---|
 | D1 | A conditional write to a versioned bucket commits only if its condition held when its link landed. Each attempt evaluates the condition on the OLH head it reads and guards its init on the `olh.info` it read. While other writers' pending attrs remain, it also waits on them, up to a bound, then proceeds without that wait. After the link, the writer voids its write (unlinks it and answers 412) if another version or marker took an epoch between the one it read and its own, or if the version its If-Match matched is no longer listed (V5c). That post-link check carries the guarantee; two racing conditional writers may both answer 412. | radosgw's check-then-act loses updates under concurrency (research-versioning Q1); the guard keeps the RADOS form. A pending attr that no writer will remove, such as the one radosgw's own noncurrent-version transition leaves, delays conditional writes by the bound and never refuses them (review N2). |
 | D2 | GET and HEAD of a delete marker's own version id answer 405 with `x-amz-delete-marker: true`. | S3's behaviour; it costs one bi_get on that path only (Q2). |
-| D3 | `versionId` on PutObject and on CopyObject's destination is ignored. | S3 has no such parameter (Q3). |
+| D3 | `versionId` on PutObject, on CopyObject's destination and on CompleteMultipartUpload is ignored. | S3 has no such parameter (Q3). |
 | D4 | CopyObject sends `x-amz-version-id` and `x-amz-copy-source-version-id`; `x-amz-version-id: null` is sent on versioned buckets where radosgw omits it. | S3's headers (Q4, Q5). |
 | D5 | Versioned writes await the bucket index ADD completion in phase 2. | Correctness first; the extra round trip is measured before any per-shard queue (Q6). |
 | D6 | `x-amz-delete-marker` on the 404 of a current delete marker on Squid too. | Tentacle feature level (Q7). |
