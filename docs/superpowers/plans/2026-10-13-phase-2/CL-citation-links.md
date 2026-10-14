@@ -67,9 +67,31 @@ stay as v19.2.6 citations".
 - **Layer:** every package. **Cluster:** no.
 - **Behaviour:** `make citecheck-go-fix`, one PR per package group, with the unresolved residue fixed
   by hand; then CI runs `make citecheck-go` over every `.go` file.
+  CI's check must fail a plain Ceph citation whose ref cannot be found, not pass it, since
+  CL3's `--form-only` skips those (found by CL3's review, Minor 6). It gets the file list the
+  same way CL5 does.
 - **Window:** after unit F's last code task merges and before the post-unit-F benchmark run, since
   it touches most packages and would conflict with every open branch.
 - **PR:** one per package group. **Depends on:** CL3; unit F's code tasks merged.
+
+### Task CL5: hack/citecheck, plain Ceph citations in Markdown
+
+Found in CL2's work (its report's concern 2), and numbered here before CL2 merged (PP-12).
+
+- **Layer:** hack, docs. **Cluster:** no.
+- **Behaviour:**
+  1. Tracked Markdown still holds the docs-era plain form: a code span naming a basename and lines,
+     `rgw_op.cc:727-758`, whose ref the surrounding prose gives, and bare `:757-788` continuations.
+     There are about 2,350 and 3,700 of them (docs/ceph-upstream-bugs.md 1,394, docs/exclusions.md
+     465). citecheck's grammar does not see them, so CL2's sweep and form check leave them plain.
+  2. citecheck applies CL3's resolver to Markdown code spans, with the same path, ref, continuation
+     and content rules (CL-D3: each keeps the ref it was written against), rewriting each resolved
+     span into a CL-D1 link and listing the rest by reason. rgw-go's own files stay plain (CL-D4).
+  3. The sweep runs `--fix` over every tracked `.md` and fixes the residue by hand. Then a plain Ceph
+     citation in Markdown fails "not a link". Telling a Ceph basename from rgw-go's needs the file
+     list at the ref, so the task states how CI gets it (a ceph clone step, or a checked-in list of
+     ceph paths at each pinned ref) and pins that choice with a spec.
+- **PR:** the tool, then the sweep with the owner's LGTM, as CL2's. **Depends on:** CL2, CL3.
 
 ## Order
 
@@ -77,4 +99,4 @@ stay as v19.2.6 citations".
 |---|---|---|
 | 1 | CL1 | nothing |
 | 2, in parallel | CL2, CL3 | CL1 |
-| 3 | CL4 | CL3, and unit F's code tasks |
+| 3, in parallel | CL4, CL5 | CL3; CL4 also unit F's code tasks, CL5 also CL2 |
