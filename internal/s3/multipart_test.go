@@ -886,8 +886,8 @@ var _ = Describe("multipart handlers", func() {
 		Expect(w.stat(ctx, "k").Exists).To(BeFalse())
 	})
 
-	DescribeTable("answers a completion retried after it succeeded 200, as check_previously_completed does",
-		func(ctx SpecContext, rel denc.Release, wantETag string) {
+	DescribeTable("answers a completion retried after it succeeded 200 with the stored ETag, as check_previously_completed does",
+		func(ctx SpecContext, rel denc.Release) {
 			w = newWriteWorld(ctx, rel)
 			id := w.initUpload(w.alice, "/plain/k")
 			Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x").Code).To(Equal(200))
@@ -898,18 +898,15 @@ var _ = Describe("multipart handlers", func() {
 
 			again := w.send(w.alice, http.MethodPost, "/plain/k?uploadId="+id, completion(md5Hex("x")))
 			Expect(again.Code).To(Equal(200), again.Body.String())
-			if wantETag == "stored" {
-				wantETag = stored
-			}
-			Expect(again.Body.String()).To(ContainSubstring("<Key>k</Key><ETag>&quot;" + wantETag + "&quot;</ETag>"))
+			Expect(again.Body.String()).To(ContainSubstring("<Key>k</Key><ETag>&quot;" + stored + "&quot;</ETag>"))
 			Expect(w.stat(ctx, "k").ETag).To(Equal(stored), "the object is untouched")
 
 			other := w.send(w.alice, http.MethodPost, "/plain/k?uploadId="+id, completion(md5Hex("y")))
 			expectError(other, 500, "InternalError")
 			Expect(other.Body.String()).To(ContainSubstring("<Message>This multipart completion is already in progress</Message>"))
 		},
-		Entry("on Squid, whose check sets no ETag (v19.2.6 rgw_op.cc:6543-6580)", denc.Squid, ""),
-		Entry("on Tentacle, whose check sets the stored ETag (v20.2.4 rgw_op.cc:7472)", denc.Tentacle, "stored"),
+		Entry("on Squid (v19.2.7 rgw_op.cc:6584)", denc.Squid),
+		Entry("on Tentacle (v20.2.4 rgw_op.cc:7472)", denc.Tentacle),
 	)
 
 	Describe("CompleteMultipartUpload's Location, compute_domain_uri's", func() {

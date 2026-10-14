@@ -10,7 +10,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -242,12 +241,11 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 }
 
 // previouslyCompleted is RGWCompleteMultipart::check_previously_completed
-// and the answer to its success (rgw_op.cc:6438-6441 and :6543-6580 at
-// v19.2.6; :7252-7255 and :7433-7504 at v20.2.4): the key's current object
+// and the answer to its success (rgw_op.cc:6441-6444 and :6546-6586 at
+// v19.2.7; :7252-7255 and :7433-7504 at v20.2.4): the key's current object
 // carries the ETag the parts make, and the retried completion is a 200 for
-// that object, with the stored ETag on Tentacle and none on Squid, where
-// only Tentacle's check sets the ETag the response sends (:7472). The
-// caller holds s.mu.
+// that object with its stored ETag, which the check sets (:6584 at v19.2.7,
+// :7472 at v20.2.4). The caller holds s.mu.
 func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op.PutResult, bool) {
 	if up.Bucket == nil {
 		return nil, false
@@ -264,11 +262,7 @@ func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op
 	if err != nil || o.state.ETag != want {
 		return nil, false
 	}
-	res := putResult(o)
-	if s.cfg.Release < denc.Tentacle {
-		res.ETag = ""
-	}
-	return res, true
+	return putResult(o), true
 }
 
 // Abort implements op.MultipartStore.
