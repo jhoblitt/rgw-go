@@ -53,7 +53,7 @@ their default.
 | D9 | No upstream u64-mode cmpxattr request now; the C API's missing mode is a `docs/cgo-limitations.md` entry. | VD-1's guard is correct and compatible. | V4 |
 | P2 | (the owner, 2026-10-13) The admin object removal and the purges ignore object lock, as radosgw does, with an exclusion. | Rook's bucket deletion relies on the purge; refusing strands lock buckets. | V8b, V12b |
 | P3 | (the owner, 2026-10-13) V5b gets a Fable review after its task review, and V5c, split from it for size and carrying D1's races, shares that review; the other OLH tasks get the standard Opus review. | A wrong OLH step corrupts state both gateways share, and V5b and V5c hold the races. | V5b, V5c |
-| VD-1 | `apply_olh_log`'s head op is guarded by `cmpxattr(olh.ver, EQ, <bytes read>)` in string mode, not radosgw's numeric GTE. An apply that fails it re-reads the head and the log and applies again, up to a bound; past the bound ECANCELED is success by the protocol, with the pending attrs left for the next reader, the writer's own included (V5b B2). | The librados C API compares xattrs in string mode only (`src/librados/librados_c.cc:3667-3683@v19.2.7`); a string GTE puts "9" above "10". The state written is identical (§2.9), and the retry keeps the progress GTE keeps (review F5). | V4, V5b |
+| VD-1 | `apply_olh_log`'s head op is guarded by `cmpxattr(olh.ver, EQ, <bytes read>)` in string mode, not radosgw's numeric GTE. An apply that fails it re-reads the head and the log and applies again, up to a bound; past the bound ECANCELED is success by the protocol, with the pending attrs left for the next reader, the writer's own included (V5b B2). | The librados C API compares xattrs in string mode only ([librados_c.cc:3667-3683](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L3667-L3683)); a string GTE puts "9" above "10". The state written is identical (§2.9), and the retry keeps the progress GTE keeps (review F5). | V4, V5b |
 | VD-2 | Tentacle's condition evaluation, against the current version followed through the OLH, on both releases, for versioned writes and deletes. | Owner decision 1 and PP-3; v19.2.7 already evaluates this way (ce98cebb815), so only v19.2.6, below the floor, differed (defect 3). | V7a, V8a |
 | VD-3 | A conditional write whose link-time evaluation fails answers 412 and removes the instance it wrote, through the unversioned delete on the instance key. | Otherwise the instance entry and head stay as an invisible version holding quota. | V5c, V7a |
 | VD-4 | A conditional attempt that meets other writers' pending attrs runs `updateOLH` and backs off with jitter, up to a bound the task names as a constant; past it the attempt proceeds without the pending-attr check (D1). Every attempt, conditional or not, keeps radosgw's 100 tries and EIO. | D1's pending-attr guard waits on every in-flight writer, which radosgw's tight loop would exhaust in milliseconds. A pending attr with no log entry, left by a writer that died between its init and its link or by radosgw's own link at an old epoch (review N2), stays until `rgw_olh_pending_timeout_sec` expires it, so the wait must end on its own. | V5c |
@@ -138,8 +138,8 @@ their default.
     `prval`, ErrOperationIncomplete before completion.
 - **Behaviour:**
   1. librados hands an exec's out buffer to its completion whatever the method returned
-     (`C_out_buffer::finish` ignores `r`, `src/librados/librados_c.cc:4291-4323@v19.2.7`,
-     `src/librados/librados_c.cc:4291-4323@v20.2.4`). The fork's step drops it on a negative
+     (`C_out_buffer::finish` ignores `r`, [librados_c.cc:4291-4323](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L4291-L4323),
+     [librados_c.cc:4291-4323](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L4291-L4323)). The fork's step drops it on a negative
      `prval` (`canReadOutput = err == nil`); the new accessor does not. The bytes are copied
      before the C buffer is freed, as `Bytes()` copies them.
   2. goceph's read-exec finisher fills `ExecResult` with the output and the negative rval.
@@ -147,7 +147,7 @@ their default.
      longer overwrites it; steps after the failing one stay without output.
   4. The case this exists for: `bucket_list` encodes its reply, with `marker` set, before
      answering `RGWBIAdvanceAndRetryError` (-EFBIG) when it is truncated with nothing listed
-     (`src/cls/rgw/cls_rgw.cc:680-691@v19.2.7`, `src/cls/rgw/cls_rgw.cc:730-741@v20.2.4`).
+     ([cls_rgw.cc:680-691](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L691), [cls_rgw.cc:730-741](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L730-L741)).
 - **Specs:**
   - in the fork (PR a): a read-op exec of a class method that encodes output and returns a
     negative value yields both through the new accessor, while `Bytes()` still refuses; the
@@ -188,25 +188,25 @@ their default.
   `DecodeListIndexKey`.
 - **Behaviour:**
   1. The five request structs at their versions and field order: link v5 compat 1, unlink v3,
-     read-log v1 with its v1 reply, trim v1, clear v1 (`src/cls/rgw/cls_rgw_ops.h:167-380@v19.2.7`,
-     `src/cls/rgw/cls_rgw_ops.h:165-378@v20.2.4`, unchanged between the tags). Link's `olh_tag` is
+     read-log v1 with its v1 reply, trim v1, clear v1 ([cls_rgw_ops.h:167-380](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_ops.h#L167-L380),
+     [cls_rgw_ops.h:165-378](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_ops.h#L165-L378), unchanged between the tags). Link's `olh_tag` is
      the xattr's bytes as a string; its `unmod_since` goes twice, as `u64 time_t` then `real_time`
-     (`src/cls/rgw/cls_rgw_client.cc:513-624@v19.2.7`,
-     `src/cls/rgw/cls_rgw_client.cc:363-487@v20.2.4`).
+     ([cls_rgw_client.cc:513-624](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L513-L624),
+     [cls_rgw_client.cc:363-487](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_client.cc#L363-L487)).
   2. `rgw_bucket_olh_log_entry` v1 and `rgw_bucket_olh_entry` v1, `OLHLogOp` UNKNOWN 0, LINK_OLH 1,
-     UNLINK_OLH 2, REMOVE_INSTANCE 3 (`src/cls/rgw/cls_rgw_types.h:513-593@v19.2.7`; the v20.2.4
-     types end at `src/cls/rgw/cls_rgw_types.h:592@v20.2.4`, unchanged).
+     UNLINK_OLH 2, REMOVE_INSTANCE 3 ([cls_rgw_types.h:513-593](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L513-L593); the v20.2.4
+     types end at [cls_rgw_types.h:592](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L592), unchanged).
   3. `bi_get` with `BIIndexType` Plain 1, Instance 2 and OLH 3
-     (`src/cls/rgw/cls_rgw_types.h:471-476@v19.2.7`, `src/cls/rgw/cls_rgw_types.h:471-477@v20.2.4`).
+     ([cls_rgw_types.h:471-476](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L471-L476), [cls_rgw_types.h:471-477](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L471-L477)).
      The class reads Plain's name verbatim, Instance through `encode_obj_index_key`, which is the
      plain key for an empty instance, and OLH as the OLH data key. The reply's entry carries the
      stored bytes, which `BIGetResult` decodes with phase 1's dir-entry decoder or `OLHEntry`'s,
      each of which must read every version the class may have stored
-     (`src/rgw/driver/rados/rgw_rados.cc:9443-9485@v19.2.7`; callers at
-     `src/rgw/driver/rados/rgw_rados.cc:10192@v20.2.4` and
-     `src/rgw/driver/rados/rgw_rados.cc:10214@v20.2.4`). ENOENT is the result's error.
-  4. Keys (`src/cls/rgw/cls_rgw.cc:272-353@v19.2.7`, `src/cls/rgw/cls_rgw.cc:417-462@v19.2.7`;
-     v20.2.4 from `src/cls/rgw/cls_rgw.cc:322@v20.2.4` to `src/cls/rgw/cls_rgw.cc:467@v20.2.4`):
+     ([rgw_rados.cc:9443-9485](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9443-L9485); callers at
+     [rgw_rados.cc:10192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10192) and
+     [rgw_rados.cc:10214](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10214)). ENOENT is the result's error.
+  4. Keys ([cls_rgw.cc:272-353](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L272-L353), [cls_rgw.cc:417-462](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L417-L462);
+     v20.2.4 from [cls_rgw.cc:322](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L322) to [cls_rgw.cc:467](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L467)):
      instance `0x80 "1000_" name "\0i" instance`, plus `"\0d"` for a null-instance delete
      marker; OLH data `0x80 "1001_" name`; list `name "\0v" decreasing_str(epoch) "\0i"
      instance`; after-versions `name "\1"`; the decoder splits on NUL.
@@ -230,21 +230,21 @@ their default.
   `(*BucketInfo).Versioned()`, `VersioningEnabled()`, `MFAEnabled()`; `NewInstance() string`;
   `NewOLHOpTag(now time.Time) string`; `NewOLHTag() string`.
 - **Behaviour:**
-  1. `user.rgw.olh.pending.` (`src/rgw/rgw_common.h:131-136@v19.2.7`,
-     `src/rgw/rgw_common.h:150-155@v20.2.4`).
+  1. `user.rgw.olh.pending.` ([rgw_common.h:131-136](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L131-L136),
+     [rgw_common.h:150-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L150-L155)).
   2. `RGWOLHInfo` v1 (`rgw_obj target`, `bool removed`) and `RGWOLHPendingInfo` v1
-     (`real_time`) (`src/rgw/driver/rados/rgw_rados.h:94-138@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.h:96-140@v20.2.4`).
+     (`real_time`) ([rgw_rados.h:94-138](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L94-L138),
+     [rgw_rados.h:96-140](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.h#L96-L140)).
   3. `versioned()` is `BUCKET_VERSIONED`; `versioning_enabled()` is versioned and not
-     suspended; `mfa_enabled()` is `BUCKET_MFA_ENABLED` (`src/rgw/rgw_common.h:1074-1079@v19.2.7`,
-     `src/rgw/rgw_common.h:1116-1121@v20.2.4`). `driver.versioningEnabled`
+     suspended; `mfa_enabled()` is `BUCKET_MFA_ENABLED` ([rgw_common.h:1074-1079](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1074-L1079),
+     [rgw_common.h:1116-1121](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1116-L1121)). `driver.versioningEnabled`
      (`internal/driver/copy.go:247-250`) is replaced by the meta helper.
   4. The instance: 32 random alphanumerics without `_`
-     (`src/rgw/driver/rados/rgw_rados.cc:8868-8877@v19.2.7#gen_rand_obj_instance_name`,
-     `src/rgw/driver/rados/rgw_rados.cc:9614-9623@v20.2.4`). The op tag: `%016llx` of the
+     ([rgw_rados.cc:8868-8877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8868-L8877),
+     [rgw_rados.cc:9614-9623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9614-L9623)). The op tag: `%016llx` of the
      second, then random lower alphanumerics to 32 bytes, so pending names sort by time; the
      OLH tag and the fresh `idtag`: 32 lower alphanumerics
-     (`src/rgw/driver/rados/rgw_rados.cc:7842-7887@v19.2.7`).
+     ([rgw_rados.cc:7842-7887](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7842-L7887)).
 - **Specs:** goldens for both types; the formats (16 hex then 16 lower alnum; 32 alnum without
   `_`); pending names from two seconds sort in time order; the flag table for the three helpers.
 - **Exclusions:** none.
@@ -258,22 +258,22 @@ their default.
   instance, list and OLH-data entries of a shard.
 - **Behaviour** (Squid's class, VD-9):
   1. prepare, complete and suggest accept an instance key: the entry lives at the instance key
-     (`encode_obj_index_key`, `src/cls/rgw/cls_rgw.cc:339-346@v19.2.7`). The EOPNOTSUPP
+     (`encode_obj_index_key`, [cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346)). The EOPNOTSUPP
      refusals go (`internal/testutil/fakerados/cls_rgw.go:440-441`,
      `internal/testutil/fakerados/cls_rgw.go:480-481`,
      `internal/testutil/fakerados/cls_rgw.go:998-1003`).
   2. complete resets the entry's flags to `FLAG_VER` and writes only the key it resolved: an
      instance key writes the instance entry, never a list entry
-     (`src/cls/rgw/cls_rgw.cc:1061-1064@v19.2.7`, `src/cls/rgw/cls_rgw.cc:1168-1197@v19.2.7`).
+     ([cls_rgw.cc:1061-1064](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1061-L1064), [cls_rgw.cc:1168-1197](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1197)).
   3. `bucket_list` skips `FLAG_VER_MARKER` entries; without `list_versions` it skips a
      non-visible entry, or one named like the start key, to `cls_rgw_after_versions(name)`
-     (`src/cls/rgw/cls_rgw.cc:604-623@v19.2.7`, `src/cls/rgw/cls_rgw.cc:654-673@v20.2.4`).
+     ([cls_rgw.cc:604-623](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L623), [cls_rgw.cc:654-673](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L654-L673)).
   4. The start marker resolves through `encode_list_index_key`: no instance, the name; `null`,
      the empty instance; an instance whose instance entry exists, its exact list key; one that
-     does not, `name "\x01"` (`src/cls/rgw/cls_rgw.cc:358-390@v19.2.7`). The refusal at
+     does not, `name "\x01"` ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390)). The refusal at
      `internal/testutil/fakerados/cls_rgw.go:1164-1165` goes.
   5. Advance-and-retry after eight omap reads that listed nothing, with the reply encoded
-     (`src/cls/rgw/cls_rgw.cc:492@v19.2.7`, `src/cls/rgw/cls_rgw.cc:680-691@v19.2.7`).
+     ([cls_rgw.cc:492](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L492), [cls_rgw.cc:680-691](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L691)).
 - **Specs:** each branch, citing its class lines; list with versions on and off over instance, list
   and marker entries; the four marker cases; eight reads of non-visible entries yield -EFBIG with
   the marker (through V0's `Reply`); a complete on an instance key leaves no list entry.
@@ -288,34 +288,34 @@ their default.
 - **Consumes:** S1, V1. **Produces:** table rows: `bucket_link_olh` RD|WR,
   `bucket_unlink_instance` RD|WR, `bucket_read_olh_log` RD, `bucket_trim_olh_log` RD|WR,
   `bucket_clear_olh` RD|WR, `bi_get` RD, `obj_check_attrs_prefix` RD
-  (`src/cls/rgw/cls_rgw.cc:4699-4707@v19.2.7`, `src/cls/rgw/cls_rgw.cc:5116-5120@v20.2.4`).
+  ([cls_rgw.cc:4699-4707](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4699-L4707), [cls_rgw.cc:5116-5120](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5116-L5120)).
 - **Behaviour** (Squid's class, no class-side reshard guard, VD-9):
-  1. Link (`src/cls/rgw/cls_rgw.cc:1652-1865@v19.2.7`): the instance entry, ENOENT allowed only
+  1. Link ([cls_rgw.cc:1652-1865](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1652-L1865)): the instance entry, ENOENT allowed only
      for a delete marker, which the class creates with tag `delete-marker`; `unmod_since` returns
      0 unchanged; the null data and null marker pair; epoch 0 becomes the next epoch, starting at
      2; a nonzero epoch below the entry's writes the instance non-current and returns
-     (`src/cls/rgw/cls_rgw.cc:1503-1517@v19.2.7`, `src/cls/rgw/cls_rgw.cc:1751-1760@v19.2.7`);
+     ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517), [cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760));
      promote on a newer epoch, or an equal epoch and a greater-or-equal instance
-     (`src/cls/rgw/cls_rgw.cc:1764-1766@v19.2.7`); ECANCELED on a tag mismatch unless
-     `pending_removal` (`src/cls/rgw/cls_rgw.cc:1768-1777@v19.2.7`); demote; convert a plain
-     entry when no OLH entry exists (`src/cls/rgw/cls_rgw.cc:1587-1634@v19.2.7`); log LINK_OLH and
+     ([cls_rgw.cc:1764-1766](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1764-L1766)); ECANCELED on a tag mismatch unless
+     `pending_removal` ([cls_rgw.cc:1768-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1777)); demote; convert a plain
+     entry when no OLH entry exists ([cls_rgw.cc:1587-1634](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1587-L1634)); log LINK_OLH and
      REMOVE_INSTANCE; write the OLH entry, then the instance and list entries.
-  2. Unlink (`src/cls/rgw/cls_rgw.cc:1867-2018@v19.2.7`): ENOENT for a missing instance entry;
+  2. Unlink ([cls_rgw.cc:1867-2018](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1867-L2018)): ENOENT for a missing instance entry;
      plain conversion; old epoch unlinks the list entry and logs REMOVE_INSTANCE (a marker
      logs nothing); the current head promotes `find_next_key`'s next version or logs UNLINK_OLH
      with `exists=false, pending_removal=true`; a marker's instance entry is removed by the
      class, a data instance's removal is logged; no tag check.
-  3. Read-log (`src/cls/rgw/cls_rgw.cc:2020-2072@v19.2.7`): EINVAL on an instance; ECANCELED
+  3. Read-log ([cls_rgw.cc:2020-2072](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2020-L2072)): EINVAL on an instance; ECANCELED
      on a tag mismatch, a missing entry's tag being ""; entries above the marker, at most 1000,
-     with `is_truncated`. Trim (`src/cls/rgw/cls_rgw.cc:2074-2124@v19.2.7`) erases epochs at or
-     below `ver`. Clear (`src/cls/rgw/cls_rgw.cc:2126-2190@v19.2.7`) removes the OLH entry, then
+     with `is_truncated`. Trim ([cls_rgw.cc:2074-2124](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2074-L2124)) erases epochs at or
+     below `ver`. Clear ([cls_rgw.cc:2126-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2126-L2190)) removes the OLH entry, then
      the plain entry only when it is a `FLAG_VER_MARKER`.
   4. `obj_check_attrs_prefix`: EINVAL on an empty prefix; ECANCELED when "an xattr has the prefix"
-     equals `fail_if_exist` (`src/cls/rgw/cls_rgw.cc:2509-2551@v19.2.7#rgw_obj_check_attrs_prefix`,
-     `src/cls/rgw/cls_rgw.cc:2677-2719@v20.2.4#rgw_obj_check_attrs_prefix`).
+     equals `fail_if_exist` ([cls_rgw.cc:2509-2551](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2509-L2551),
+     [cls_rgw.cc:2677-2719](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2677-L2719)).
   5. `bi_get` exactly as the class resolves its key
-     (`src/cls/rgw/cls_rgw.cc:2617-2664@v19.2.7#rgw_bi_get_op`,
-     `src/cls/rgw/cls_rgw.cc:2785-2832@v20.2.4#rgw_bi_get_op`): Plain reads the name verbatim;
+     ([cls_rgw.cc:2617-2664](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2617-L2664),
+     [cls_rgw.cc:2785-2832](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2785-L2832)): Plain reads the name verbatim;
      Instance goes through `encode_obj_index_key`, so an empty instance reads the plain key, which
      is the version marker once the key is converted; OLH reads the OLH data key; ENOENT when
      absent.
@@ -352,8 +352,8 @@ their default.
   `Expect`); `applyOLHLog` passes it for the REMOVE_INSTANCE entries carrying
   the replaying writer's own op tag, and nil otherwise.
 - **Behaviour** (v19.2.7 ranges; each function's v20.2.4 first line in N13 of the notes):
-  1. `olhInitModification` (`src/rgw/driver/rados/rgw_rados.cc:7799-7910@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:8462@v20.2.4#RGWRados::olh_init_modification_impl`): one
+  1. `olhInitModification` ([rgw_rados.cc:7799-7910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7799-L7910),
+     [rgw_rados.cc:8462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8462)): one
      write op on the OLH head, the key without an instance. A missing head is `create(exclusive)`;
      an existing one `assert_exists` and `mtime2` of the state's mtime, which the OLH ops keep.
      With an OLH tag, `cmpxattr(olh.idtag, EQ, tag)`. Existing without one (a plain object
@@ -367,38 +367,38 @@ their default.
      serializes rgw-go's conditional writers; a writer that checks only `olh.idtag` passes it, and
      V5c's post-link check covers that writer (D1, review F1). Past VD-4's bound the caller drops
      the `obj_check_attrs_prefix` half and keeps the `olh.info` half (review N2).
-  3. `olhCancelModification` (`src/rgw/driver/rados/rgw_rados.cc:7754-7797@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:8417@v20.2.4#RGWRados::olh_cancel_modification`): remove
+  3. `olhCancelModification` ([rgw_rados.cc:7754-7797](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7754-L7797),
+     [rgw_rados.cc:8417](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8417)): remove
      the pending attr under the tag guard; when the head has no `olh.info`, remove the head under
      `cmpxattr(olh.info, EQ, "")` and `obj_check_attrs_prefix(olh.pending., fail if exists)`.
-  4. Pending expiry (`src/rgw/driver/rados/rgw_rados.cc:8904-8967@v19.2.7`): attrs older than
+  4. Pending expiry ([rgw_rados.cc:8904-8967](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8967)): attrs older than
      `rgw_olh_pending_timeout_sec` from `Env.Conf` (default 1 h,
-     `src/common/options/rgw.yaml.in:2389-2399@v19.2.7`,
-     `src/common/options/rgw.yaml.in:2483@v20.2.4`), stopping at the first unexpired (names sort by
+     [rgw.yaml.in:2389-2399](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2389-L2399),
+     [rgw.yaml.in:2483](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2483)), stopping at the first unexpired (names sort by
      time); removed under the tag guard in batches of 1000, ENOENT and ECANCELED being success.
-  5. `followOLH` (`src/rgw/driver/rados/rgw_rados.cc:8969-9021@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9715@v20.2.4#RGWRados::follow_olh`): expire; any pending
+  5. `followOLH` ([rgw_rados.cc:8969-9021](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8969-L9021),
+     [rgw_rados.cc:9715](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9715)): expire; any pending
      attr left runs the injected update (V5b's `updateOLH`), whose ECANCELED is ENOENT; no
      `olh.ver` is EINVAL; no `olh.info` ENOENT; `removed` ENOENT with the delete-marker flag set,
-     as v20.2.4 sets `is_dm` (`src/rgw/driver/rados/rgw_rados.cc:9760-9764@v20.2.4`); else the
+     as v20.2.4 sets `is_dm` ([rgw_rados.cc:9760-9764](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9760-L9764)); else the
      target key.
-  6. `applyOLHLog` (`src/rgw/driver/rados/rgw_rados.cc:8409-8566@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9155@v20.2.4#RGWRados::apply_olh_log`): one head op guarded
+  6. `applyOLHLog` ([rgw_rados.cc:8409-8566](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8409-L8566),
+     [rgw_rados.cc:9155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9155)): one head op guarded
      by `cmpxattr(olh.idtag, EQ, tag)` and VD-1's `cmpxattr(olh.ver, EQ, <bytes read>)`, setting
      `olh.ver` to the last epoch in decimal and the kept mtime. Replay in epoch order: LINK_OLH
      applies when its epoch is above the head's, the head has no target instance, or the entry's
-     instance sorts above the current one (`src/rgw/driver/rados/rgw_rados.cc:8482-8496@v19.2.7`);
+     instance sorts above the current one ([rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496));
      UNLINK_OLH marks removal; REMOVE_INSTANCE collects keys; every entry's pending attr is
      removed; `olh.info` is set when a link won. The collected instances go through
-     `removeInstance` before the head op (`src/rgw/driver/rados/rgw_rados.cc:8530-8541@v19.2.7`).
+     `removeInstance` before the head op ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541)).
      Then `clearOLHHead` when removal is marked, else `trimLog(last)`; ECANCELED tolerated. A head
      op that fails VD-1's guard writes nothing and returns ECANCELED to `updateOLH`, which retries
      from a fresh read (V5b).
-  7. `clearOLHHead` (`src/rgw/driver/rados/rgw_rados.cc:8583-8634@v19.2.7`): expire pending
+  7. `clearOLHHead` ([rgw_rados.cc:8583-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8583-L8634)): expire pending
      attrs; remove the head under `olh.idtag EQ`, `olh.ver EQ to_string(ver)` (the same bytes in
      both modes) and no pending attrs; then the index `clear`.
-  8. `repairOLH` (`src/rgw/driver/rados/rgw_rados.cc:8275-8324@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9021@v20.2.4#RGWRados::repair_olh`): rewrite `olh.idtag`
+  8. `repairOLH` ([rgw_rados.cc:8275-8324](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8275-L8324),
+     [rgw_rados.cc:9021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9021)): rewrite `olh.idtag`
      and `olh.info` from the index's OLH entry under the old tag's guard.
 - **Specs:** each op with its guard failing (tag mismatch, exclusive create lost → ECANCELED); D1's
   guard failing on a changed `olh.info` and on another writer's pending attr, and passing on its
@@ -428,30 +428,30 @@ their default.
   1. Link, unlink, trim and clear each run `assert_exists`, the reshard guard
      (`-ERR_BUSY_RESHARDING`) and the class call in one write op inside `guardReshard`, which
      re-finds the shard from the bucket each try and, from F7, also retries a shard that is gone
-     (ENOENT), as v19.2.7's guard does (`src/rgw/driver/rados/rgw_rados.cc:7929-7933@v19.2.7`)
+     (ENOENT), as v19.2.7's guard does ([rgw_rados.cc:7929-7933](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7929-L7933))
      and v20.2.4's does not (F7's Tentacle exclusion) (link
-     `src/rgw/driver/rados/rgw_rados.cc:8153-8165@v19.2.7`, unlink
-     `src/rgw/driver/rados/rgw_rados.cc:8207-8216@v19.2.7`, trim
-     `src/rgw/driver/rados/rgw_rados.cc:8349-8356@v19.2.7`, clear
-     `src/rgw/driver/rados/rgw_rados.cc:8380-8388@v19.2.7`; v20.2.4
-     `src/rgw/driver/rados/rgw_rados.cc:8876-9141@v20.2.4`, the same shape; `guard_reshard`
-     `src/rgw/driver/rados/rgw_rados.cc:7912-7966@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:8575@v20.2.4#RGWRados::guard_reshard`). The shard is
+     [rgw_rados.cc:8153-8165](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8153-L8165), unlink
+     [rgw_rados.cc:8207-8216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8207-L8216), trim
+     [rgw_rados.cc:8349-8356](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8349-L8356), clear
+     [rgw_rados.cc:8380-8388](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8380-L8388); v20.2.4
+     [rgw_rados.cc:8876-9141](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8876-L9141), the same shape; `guard_reshard`
+     [rgw_rados.cc:7912-7966](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7912-L7966),
+     [rgw_rados.cc:8575](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8575)). The shard is
      the key's hash shard by index name; the instance is in the key but not in the hash.
   2. The read-log and `bi_get` are unguarded reads on the current shard, the log read with the
-     empty-instance key and the head's tag (`src/rgw/driver/rados/rgw_rados.cc:8225-8269@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:8971@v20.2.4#RGWRados::bucket_index_read_olh_log`).
+     empty-instance key and the head's tag ([rgw_rados.cc:8225-8269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8225-L8269),
+     [rgw_rados.cc:8971](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8971)).
   3. Request fields: `olh_tag` is the head's `olh.idtag` bytes; epoch 0 unless the caller gives
      one; `log_op` is phase 1's `logOp()`, false in a single zone; `zones_trace` is phase 1's
      `zonesTrace()`; unlink's bilog flags are VERSIONED_OP, plus NULL_VERSION for a request that
-     named `null` (`src/rgw/driver/rados/rgw_rados.cc:8814-8818@v19.2.7`).
+     named `null` ([rgw_rados.cc:8814-8818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8814-L8818)).
   4. `completeSync` (D5) sends phase 1's ADD completion through the same guarded path the
      completion manager uses and returns its answer instead of retrying in the background.
   5. `getInstanceEntry` resolves a version's entry as the class's `read_key_entry` does
-     (`src/cls/rgw/cls_rgw.cc:946-978@v19.2.7#read_key_entry`,
-     `src/cls/rgw/cls_rgw.cc:1076-1108@v20.2.4#read_key_entry`), because `bi_get` of an empty
-     instance reads the plain key (`src/cls/rgw/cls_rgw.cc:2617-2664@v19.2.7#rgw_bi_get_op`,
-     `src/cls/rgw/cls_rgw.cc:2785-2832@v20.2.4#rgw_bi_get_op`; review F4). A named instance is one
+     ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+     [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)), because `bi_get` of an empty
+     instance reads the plain key ([cls_rgw.cc:2617-2664](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2617-L2664),
+     [cls_rgw.cc:2785-2832](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2785-L2832); review F4). A named instance is one
      `bi_get` Instance. The empty instance is `bi_get` Instance of the plain key; when that entry is
      `FLAG_VER_MARKER`, `bi_get` Plain of the null delete marker's raw key (V1's
      `InstanceIndexKey` with the marker suffix), and when that is absent, of the null data key.
@@ -488,16 +488,16 @@ their default.
   `SkipUpdate` and an optional `ExpectTag`. A removal refused by its `ExpectTag` is returned,
   after the protocol completes, as `errRemovalRefused` naming the key (V8c re-links it).
 - **Behaviour:**
-  1. `setOLH` (`src/rgw/driver/rados/rgw_rados.cc:8669-8762@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9415@v20.2.4#RGWRados::set_olh`), each attempt: read the
+  1. `setOLH` ([rgw_rados.cc:8669-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8669-L8762),
+     [rgw_rados.cc:9415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9415)), each attempt: read the
      OLH head without following, afresh after an ECANCELED; init; link; on a link failure cancel,
      then ECANCELED → `repairOLH` and retry, any other error → a best-effort `updateOLH` unless
      skipped, and return. After the link, `updateOLH` unless skipped; ECANCELED there is success
-     (`src/rgw/driver/rados/rgw_rados.cc:8752-8755@v19.2.7`). 100 attempts, then EIO. A condition
+     ([rgw_rados.cc:8752-8755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8755)). 100 attempts, then EIO. A condition
      or an `ExpectTag` adds V5c's rules to each attempt.
   2. A link at an epoch below the OLH entry's (C11's transition, V8c's re-link) writes the
-     instance non-current and logs nothing (`src/cls/rgw/cls_rgw.cc:1751-1760@v19.2.7`,
-     `src/cls/rgw/cls_rgw.cc:1892-1901@v20.2.4`), so no replay removes its pending attr. The link's
+     instance non-current and logs nothing ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+     [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)), so no replay removes its pending attr. The link's
      reply carries no epoch, so the trigger is the replay (review N3): after its own replay,
      `setOLH` removes its own pending attr under the tag guard, as `olhCancelModification` does,
      only when the log that replay read carried no entry with its op tag. An old-epoch link wrote
@@ -506,20 +506,20 @@ their default.
      exhausted) keeps its attr, which makes the next `followOLH` apply it. With `SkipUpdate` there
      is no replay, and the attr stays for the next update. radosgw's own `set_olh` never removes
      it, since `apply_olh_log` returns at once on an empty log
-     (`src/rgw/driver/rados/rgw_rados.cc:8423-8425@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9169-9171@v20.2.4`): its old-epoch links, such as its
+     ([rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425),
+     [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171)): its old-epoch links, such as its
      NoncurrentVersionTransition, leave their pending attr until it expires (VD-4).
-  3. `unlinkObjInstance` (`src/rgw/driver/rados/rgw_rados.cc:8764-8866@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9510@v20.2.4#RGWRados::unlink_obj_instance`): the same
+  3. `unlinkObjInstance` ([rgw_rados.cc:8764-8866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8764-L8866),
+     [rgw_rados.cc:9510](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9510)): the same
      loop around the unlink; the class's ENOENT is the caller's NoSuchKey.
-  4. `updateOLH` (`src/rgw/driver/rados/rgw_rados.cc:8639-8667@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9385@v20.2.4#RGWRados::update_olh`): read the log from
+  4. `updateOLH` ([rgw_rados.cc:8639-8667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8639-L8667),
+     [rgw_rados.cc:9385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9385)): read the log from
      the head's `olh.ver` and apply it, while truncated. An apply that fails its guards with
      ECANCELED is retried from a fresh head read (`olh.ver` and the log read again, then applied),
      up to a bound the task names as a constant; only past the bound is ECANCELED success by the
      protocol, with the pending attrs left for the next reader. This restores the progress
-     radosgw's numeric GTE keeps (`src/rgw/driver/rados/rgw_rados.cc:8435@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:9181@v20.2.4`) under VD-1's EQ guard (review F5).
+     radosgw's numeric GTE keeps ([rgw_rados.cc:8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8435),
+     [rgw_rados.cc:9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9181)) under VD-1's EQ guard (review F5).
   5. `removeInstance` (V4's call): phase 1's unversioned removal on the instance key: read the
      instance head, guard on its write tag, or on `expectTag` when given, then `removeHead`
      (prepare DEL, obj_remove keeping `user.rgw.olh.`, complete_del, tails to the GC); ENOENT is
@@ -586,7 +586,7 @@ their default.
      (`olh.info`'s target, or none, or a delete marker counting as none), evaluates the
      condition, and passes the `olh.info` bytes to V4's init guard. It keeps `V0`, the `olh.ver`
      it read, or 1 when the head had none: epoch 1 is the class's converted plain entry
-     (`src/cls/rgw/cls_rgw.cc:1503-1517@v19.2.7`, `src/cls/rgw/cls_rgw.cc:1630-1644@v20.2.4`),
+     ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517), [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)),
      which the condition already saw. A failed condition answers 412 and removes the instance
      (VD-3). An init that fails the guard because pending attrs remain runs `updateOLH`, backs
      off and retries; past VD-4's bound the attempt drops the `obj_check_attrs_prefix` half of
@@ -596,7 +596,7 @@ their default.
      radosgw's 100 attempts, then EIO, bound the whole loop.
   2. The post-link check (review F1). The init guard serializes rgw-go's conditional writers
      only: an unconditional rgw-go writer or a radosgw writer checks just `olh.idtag`
-     (`src/rgw/driver/rados/rgw_rados.cc:7799-7910@v19.2.7`), so it can init and link between a
+     ([rgw_rados.cc:7799-7910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7799-L7910)), so it can init and link between a
      conditional write's init and its link. After its link and before its own replay, the
      conditional writer lists the key's versions on its shard (`bucket_list` with versions, the
      name as prefix and start, that name's entries only), newest first, down to the first entry
@@ -644,28 +644,28 @@ their default.
   key, so `Key.Instance` is the version id (the report's `ObjectState.Instance`, N20).
 - **Behaviour:**
   1. `StatObject` and `PrefetchObject` are `get_obj_state_impl`
-     (`src/rgw/driver/rados/rgw_rados.cc:6260-6437@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:6874@v20.2.4#RGWRados::get_obj_state_impl`): the head's
+     ([rgw_rados.cc:6260-6437](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6260-L6437),
+     [rgw_rados.cc:6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6874)): the head's
      `olh.idtag` is kept as the OLH tag; a head with `olh.ver` and no instance named follows to
-     the target and returns its state (`src/rgw/driver/rados/rgw_rados.cc:6238-6258@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:6852@v20.2.4#RGWRados::get_olh_target_state`). The
+     the target and returns its state ([rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258),
+     [rgw_rados.cc:6852](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852)). The
      refusal at `internal/driver/stat.go:148-152` goes.
   2. A current delete marker: `Exists` false, `DeleteMarker` true. `versionId=null` on an OLH
-     head without a manifest: not found (`src/rgw/driver/rados/rgw_rados.cc:6429-6433@v19.2.7`).
+     head without a manifest: not found ([rgw_rados.cc:6429-6433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6429-L6433)).
      A named instance reads `_:<instance>_<name>` without following.
   3. D2's lookup: a named version whose head is missing, `null` included, is looked up through
      `getInstanceEntry`, so a null delete marker is found behind the version marker (review F4);
      a delete marker's entry sets `DeleteMarker`. Only this path pays for it.
   4. `SetObjectAttrs` on the resolved version is `set_attrs`
-     (`src/rgw/driver/rados/rgw_rados.cc:6779-6943@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:7393@v20.2.4#RGWRados::set_attrs`): `null` cleared, a
+     ([rgw_rados.cc:6779-6943](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6779-L6943),
+     [rgw_rados.cc:7393](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7393)): `null` cleared, a
      null version without a manifest not found, the version head's write-tag guard, a fresh tag,
      prepare and complete ADD on the instance key with the state's size and the attrs' ETag,
      content type and storage class, the mtime kept. The class's complete resets the instance
      entry to `FLAG_VER` while the list entry keeps CURRENT, which is radosgw's state too. The
      resolution follows the OLH as `modify_obj_attrs` does
-     (`src/rgw/driver/rados/rgw_sal_rados.cc:2402-2420@v19.2.7`,
-     `src/rgw/driver/rados/rgw_sal_rados.cc:2994@v20.2.4`).
+     ([rgw_sal_rados.cc:2402-2420](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2402-L2420),
+     [rgw_sal_rados.cc:2994](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994)).
 - **Specs** (on the emulator, V3a and V3b): follow to the current version; a current marker; a named
   marker (D2) and a named missing version; null present and absent; a pending log entry a stopped
   writer left is applied by `StatObject`; attrs on a noncurrent version leave the current untouched;
@@ -688,37 +688,37 @@ their default.
 - **Behaviour:**
   1. The key carries the instance the op chose (V11): non-empty on an enabled bucket, empty
      otherwise.
-  2. `versioned_op` (`src/rgw/driver/rados/rgw_rados.cc:3312-3319@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:3433-3439@v20.2.4`): versioning enabled, the head at the
+  2. `versioned_op` ([rgw_rados.cc:3312-3319](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3312-L3319),
+     [rgw_rados.cc:3433-3439](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3433-L3439)): versioning enabled, the head at the
      key's oid an OLH, an instance, or a nonzero epoch. A versioned op sets VERSIONED_OP on the
      index op.
   3. Conditions (VD-2): on a versioned op `If-Match` and `If-None-Match` are evaluated against the
      current version, followed through the OLH, a current delete marker counting as no object
-     (`src/rgw/driver/rados/rgw_rados.cc:7238-7258@v20.2.4`,
-     `src/rgw/driver/rados/rgw_rados.cc:7260-7329@v20.2.4`, called at
-     `src/rgw/driver/rados/rgw_rados.cc:3282-3297@v20.2.4`), on both releases. The id-tag guard
-     applies only to an instance-less write (`src/rgw/driver/rados/rgw_rados.cc:3298-3300@v20.2.4`),
+     ([rgw_rados.cc:7238-7258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7238-L7258),
+     [rgw_rados.cc:7260-7329](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7260-L7329), called at
+     [rgw_rados.cc:3282-3297](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3282-L3297)), on both releases. The id-tag guard
+     applies only to an instance-less write ([rgw_rados.cc:3298-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300)),
      which phase 1's `guardHead` already carries (`internal/driver/headwrite.go:315-349`), now given
      the current version's state. v19.2.7 evaluates and guards the same way
-     (`src/rgw/driver/rados/rgw_rados.cc:3185-3205@v19.2.7`, through
-     `src/rgw/driver/rados/rgw_rados.cc:6624-6644@v19.2.7#RGWRados::Object::get_current_version_state`
+     ([rgw_rados.cc:3185-3205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3185-L3205), through
+     [rgw_rados.cc:6624-6644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6624-L6644)
      and
-     `src/rgw/driver/rados/rgw_rados.cc:6646-6715@v19.2.7#RGWRados::Object::check_preconditions`);
+     [rgw_rados.cc:6646-6715](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6646-L6715));
      only v19.2.6, below the floor, evaluated against the new instance (defect 3, fixed by
      ce98cebb815).
   4. Prepare ADD on the instance key; the head at the instance oid. On an OLH head the write sets
-     `olh.idtag` again (`src/rgw/driver/rados/rgw_rados.cc:3223-3225@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:3321@v20.2.4`); the reset keeps `user.rgw.olh.*`
+     `olh.idtag` again ([rgw_rados.cc:3223-3225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3223-L3225),
+     [rgw_rados.cc:3321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3321)); the reset keeps `user.rgw.olh.*`
      (`internal/driver/headwrite.go:206-216`).
   5. `completeSync` (D5), then `setOLH` with no marker, no meta, the epoch, and the write's
      condition when it has one, under V5c's rules, the post-link check included (D1)
-     (`src/rgw/driver/rados/rgw_rados.cc:3369-3375@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:3492@v20.2.4`). Every S3 write sends epoch 0
-     (`src/rgw/rgw_op.h:2117-2143@v19.2.7`).
+     ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375),
+     [rgw_rados.cc:3492](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3492)). Every S3 write sends epoch 0
+     ([rgw_op.h:2117-2143](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2117-L2143)).
   6. A suspended bucket's key with an OLH becomes the null version: instance empty, the link's
      key the null instance, the head the OLH head. One without an OLH is a plain write with no
      link. A failed head write cancels the index op as in phase 1
-     (`src/rgw/driver/rados/rgw_rados.cc:3401-3448@v19.2.7`).
+     ([rgw_rados.cc:3401-3448](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3448)).
   7. The driver serves every bucket; object-lock buckets stay refused at the op (VD-6).
 - **Specs** (on the emulator, V3a and V3b):
   - a new key on an enabled bucket: instance, list and OLH-data entries, the OLH head's xattrs,
@@ -759,18 +759,18 @@ their default.
 - **Consumes:** V7a's versioned head write and its V5c condition rules, V6's resolved source state.
 - **Behaviour:**
   1. CopyObject's destination takes V7a's path with the instance the op chose, for the shared-tail
-     and the streamed copy alike (`src/rgw/rgw_op.cc:5658-5679@v19.2.7`;
-     `src/rgw/driver/rados/rgw_sal_rados.cc:2687-2717@v19.2.7` sets the epoch on the write;
-     the destination instance at `src/rgw/rgw_op.cc:6142@v20.2.4`). The source is the state the op
+     and the streamed copy alike ([rgw_op.cc:5658-5679](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5658-L5679);
+     [rgw_sal_rados.cc:2687-2717](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2687-L2717) sets the epoch on the write;
+     the destination instance at [rgw_op.cc:6142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6142)). The source is the state the op
      read through V6, a named version or the current one. The OLH xattrs stay stripped from a copy
      into a bucket that is not versioning-enabled (`internal/driver/copy.go:149-152`).
   2. CompleteMultipartUpload's assembled head takes V7a's path
-     (`src/rgw/driver/rados/rgw_sal_rados.cc:3636@v19.2.7`; the instance at
-     `src/rgw/rgw_op.cc:6462-6469@v19.2.7`, `src/rgw/rgw_op.cc:7288@v20.2.4`), with its
+     ([rgw_sal_rados.cc:3636](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3636); the instance at
+     [rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469), [rgw_op.cc:7288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7288)), with its
      condition under D1. `attrMPCompletionInstance` carries the instance
      (`internal/driver/mp_complete.go:351`, `internal/driver/mp_complete.go:397`). The
      versioning refusal at `internal/driver/mp_complete.go:269-271` goes. Parts are never
-     versioned (`src/rgw/driver/rados/rgw_putobj_processor.cc:372@v19.2.7`).
+     versioned ([rgw_putobj_processor.cc:372](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L372)).
 - **Specs** (on the emulator): a copy with a source version id; a copy into an enabled bucket makes
   a new version; a copy whose source's current is a delete marker is NoSuchKey; a shared-tail copy
   of a version takes references under the new instance's tag; a completion on an enabled bucket
@@ -792,36 +792,36 @@ their default.
   is V8c's).
 - **Behaviour:**
   1. The versioned branch runs when the bucket is versioned, enabled or suspended
-     (`src/rgw/driver/rados/rgw_rados.cc:5833-5968@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:6445-6577@v20.2.4`). A never-versioned bucket keeps
+     ([rgw_rados.cc:5833-5968](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5833-L5968),
+     [rgw_rados.cc:6445-6577](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6445-L6577)). A never-versioned bucket keeps
      phase 1's path. The refusals at the top of `DeleteObject` go.
   2. The branch is chosen on the request's instance as it arrived, before any clearing, as radosgw
-     tests the original key (`src/rgw/driver/rados/rgw_rados.cc:5841@v19.2.7`, tested at
-     `src/rgw/driver/rados/rgw_rados.cc:5853@v19.2.7`;
-     `src/rgw/driver/rados/rgw_rados.cc:6453@v20.2.4`,
-     `src/rgw/driver/rados/rgw_rados.cc:6465@v20.2.4`). A request without a `versionId` writes a
+     tests the original key ([rgw_rados.cc:5841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5841), tested at
+     [rgw_rados.cc:5853](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5853);
+     [rgw_rados.cc:6453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6453),
+     [rgw_rados.cc:6465](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6465)). A request without a `versionId` writes a
      delete marker. A request with one, `null` included, removes that version and never writes a
      marker; `null` becomes the empty instance only for the index ops and the head read that follow
-     (`src/rgw/driver/rados/rgw_rados.cc:5844-5846@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:6456-6458@v20.2.4`).
+     ([rgw_rados.cc:5844-5846](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5844-L5846),
+     [rgw_rados.cc:6456-6458](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6456-L6458)).
   3. Without a `versionId`: the marker's instance is random unless the bucket is suspended, where
-     it is the null marker (`src/rgw/driver/rados/rgw_rados.cc:5853-5869@v19.2.7`); the result is
+     it is the null marker ([rgw_rados.cc:5853-5869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5853-L5869)); the result is
      the instance or `null` with `DeleteMarker` true; the marker's meta carries `MarkerOwner` and
-     the delete time (`src/rgw/driver/rados/rgw_rados.cc:5871-5880@v19.2.7`). The conditions are
-     checked against the current version (`src/rgw/driver/rados/rgw_rados.cc:6494-6509@v20.2.4`,
+     the delete time ([rgw_rados.cc:5871-5880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5871-L5880)). The conditions are
+     checked against the current version ([rgw_rados.cc:6494-6509](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6509),
      VD-2) and go into `setOLH` as its condition, so V5c's rules, the post-link check included,
      make a conditional marker atomic; then `setOLH` as a marker with `UnmodifiedSince`
-     (`src/rgw/driver/rados/rgw_rados.cc:5899-5901@v19.2.7`). A marker on a marker is allowed.
+     ([rgw_rados.cc:5899-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5899-L5901)). A marker on a marker is allowed.
   4. With a `versionId`: the version's entry through `getInstanceEntry`
-     (`src/rgw/driver/rados/rgw_rados.cc:5908@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:10192@v20.2.4#RGWRados::bi_get_instance`): one `bi_get` for
+     ([rgw_rados.cc:5908](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5908),
+     [rgw_rados.cc:10192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10192)): one `bi_get` for
      a named instance, and for `null` V5a's three reads in `read_key_entry`'s order, so a
      converted key yields its null version, data or marker, never the plain version-marker entry
      (review F4). ENOENT is NoSuchKey. The conditions are checked against that entry's meta
-     (`src/rgw/driver/rados/rgw_rados.cc:5913-5942@v19.2.7`,
-     `src/rgw/driver/rados/rgw_rados.cc:6520-6554@v20.2.4`). The result is the version id, `null`
+     ([rgw_rados.cc:5913-5942](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5913-L5942),
+     [rgw_rados.cc:6520-6554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6520-L6554)). The result is the version id, `null`
      for the null version, with `DeleteMarker` the entry's. Then `unlinkObjInstance`
-     (`src/rgw/driver/rados/rgw_rados.cc:5945-5952@v19.2.7`), whose replay removes a data head.
+     ([rgw_rados.cc:5945-5952](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5945-L5952)), whose replay removes a data head.
      radosgw reads `null` through one `bi_get` of the plain key, so on a converted key it compares
      the conditions with the version marker's empty meta and reports `DeleteMarker` false for a
      null delete marker (defect 16).
@@ -862,16 +862,16 @@ their default.
      replay removes the head only under them.
   3. Without a `versionId` on a suspended bucket, `Expect` names the null version the null marker
      replaces. Its data is colocated with the OLH head (§2.1), and the class unlinks its list entry
-     and logs its removal when the null marker links (`src/cls/rgw/cls_rgw.cc:1705-1734@v19.2.7`,
-     `src/cls/rgw/cls_rgw.cc:1808-1810@v19.2.7`; `src/cls/rgw/cls_rgw.cc:1846-1875@v20.2.4`,
-     `src/cls/rgw/cls_rgw.cc:1949-1951@v20.2.4`). `Expect`'s bytes go in as `setOLH`'s `ExpectTag`
+     and logs its removal when the null marker links ([cls_rgw.cc:1705-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734),
+     [cls_rgw.cc:1808-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1808-L1810); [cls_rgw.cc:1846-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1846-L1875),
+     [cls_rgw.cc:1949-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1949-L1951)). `Expect`'s bytes go in as `setOLH`'s `ExpectTag`
      (V5c): each attempt checks the head it read, and the attempt's init op, the head op of the
      marker's write that carries its pending attr, compares them too. A null write that landed first
      is refused, not retried over.
   4. A refused removal (review F3). The own replay's guarded removal finds the head rewritten (a
      retention, an ACL, a new null write) after the unlink or the marker's link. The class has
      then removed the version's list entry, while its instance entry and head stay
-     (`src/cls/rgw/cls_rgw.cc:1867-2018@v19.2.7`, `src/cls/rgw/cls_rgw.cc:2002-2159@v20.2.4`;
+     ([cls_rgw.cc:1867-2018](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1867-L2018), [cls_rgw.cc:2002-2159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2002-L2159);
      V5b's `errRemovalRefused`). Left so, the version is readable and deletable by its id but
      absent from ListObjectVersions and from lifecycle's listings. V8c re-links it with
      `setOLH`, not a marker:
@@ -883,12 +883,12 @@ their default.
        falls back to the version's own epoch, non-current, behind that writer's version, after
        first resetting the version's instance record (review N1). The unlink left that record
        flagged CURRENT, and the old-epoch link's `write(epoch, false)` adds `FLAG_VER` without
-       clearing anything (`src/cls/rgw/cls_rgw.cc:1410-1427@v19.2.7`,
-       `src/cls/rgw/cls_rgw.cc:1537-1554@v20.2.4`), so it would write a second list entry of the
+       clearing anything ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+       [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)), so it would write a second list entry of the
        name flagged current. The reset is the index ADD V6's `SetObjectAttrs` performs on an
        instance key, prepare then complete with the entry's own meta as `getInstanceEntry`
        re-reads it: the class's complete keeps only `FLAG_VER` and writes the instance key alone
-       (`src/cls/rgw/cls_rgw.cc:1062-1064@v19.2.7`, `src/cls/rgw/cls_rgw.cc:1197-1199@v20.2.4`).
+       ([cls_rgw.cc:1062-1064](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1062-L1064), [cls_rgw.cc:1197-1199](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1197-L1199)).
        The invariant either way: exactly one entry of the name is flagged current.
      - on the null-marker path, the null data entry re-links the same way, the reset included,
        since the marker's link left the null data record flagged current too, and the class's
@@ -948,13 +948,13 @@ their default.
 - **Behaviour:**
   1. The object removal deletes the plain key with the bucket's versioning status, so a versioned
      bucket gets a delete marker, with an empty owner: `RadosObject::delete_object` sets none
-     (`src/rgw/driver/rados/rgw_bucket.cc:148-161@v19.2.7#rgw_remove_object`,
-     `src/rgw/driver/rados/rgw_bucket.cc:149-162@v20.2.4#rgw_remove_object`;
-     `src/rgw/driver/rados/rgw_sal_rados.cc:2928-2949@v19.2.7#RadosObject::delete_object`,
-     `src/rgw/driver/rados/rgw_sal_rados.cc:3766-3787@v20.2.4#RadosObject::delete_object`).
+     ([rgw_bucket.cc:148-161](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L148-L161),
+     [rgw_bucket.cc:149-162](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L149-L162);
+     [rgw_sal_rados.cc:2928-2949](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949),
+     [rgw_sal_rados.cc:3766-3787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787)).
   2. The purges list with versions, unordered, and remove each entry by its exact version
-     (`src/rgw/driver/rados/rgw_sal_rados.cc:362-364@v19.2.7`,
-     `src/rgw/driver/rados/rgw_sal_rados.cc:379-381@v20.2.4`): a version or a marker by its
+     ([rgw_sal_rados.cc:362-364](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L362-L364),
+     [rgw_sal_rados.cc:379-381](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L381)): a version or a marker by its
      instance, and the empty instance of a versioned entry as `null`, so a purge never writes a
      marker and ends with an empty index. The task reads how radosgw's listing reports a null
      version's instance and records any difference as an exclusion.
@@ -975,23 +975,23 @@ their default.
 - **Behaviour:**
   1. The marker's name and instance reach the class's start key on the ordered and the
      unordered listing; `null` is the empty instance. The class resolves it
-     (`src/cls/rgw/cls_rgw.cc:358-390@v19.2.7`, `src/cls/rgw/cls_rgw.cc:408@v20.2.4`): a key
+     ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390), [cls_rgw.cc:408](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408)): a key
      marker without a version lists that key's versions again, as S3 does; a stale version id
      skips the rest of its key.
   2. The next marker is the last entry visited, name and instance
-     (`src/rgw/driver/rados/rgw_rados.cc:2011-2014@v19.2.7`); the unordered listing's likewise
-     (`src/rgw/driver/rados/rgw_rados.cc:2194@v19.2.7#RGWRados::Bucket::List::list_objects_unordered`,
-     `src/rgw/driver/rados/rgw_rados.cc:2284@v20.2.4#RGWRados::Bucket::List::list_objects_unordered`).
+     ([rgw_rados.cc:2011-2014](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2011-L2014)); the unordered listing's likewise
+     ([rgw_rados.cc:2194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2194),
+     [rgw_rados.cc:2284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2284)).
   3. Advance-and-retry: on -EFBIG the shard is listed again from the marker in V0's reply
-     (`src/cls/rgw/cls_rgw_client.cc:99-110@v19.2.7`,
-     `src/cls/rgw/cls_rgw_client.cc:161-166@v19.2.7`;
-     `src/rgw/services/svc_bi_rados.cc:948-965@v20.2.4`).
+     ([cls_rgw_client.cc:99-110](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L99-L110),
+     [cls_rgw_client.cc:161-166](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L161-L166);
+     [svc_bi_rados.cc:948-965](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L948-L965)).
   4. `IsLatest`, `DeleteMarker` and `Key.Instance` are filled already
      (`internal/driver/list.go:241-262`); `VersionedEpoch` and `Category` are copied from the
      entry for lifecycle.
   5. A marker instance of `null` whose null version is a delete marker: the class resolves
      `null` to the null data key only and, finding none, starts past every version of the key
-     (`src/cls/rgw/cls_rgw.cc:358-390@v19.2.7`, `src/cls/rgw/cls_rgw.cc:408@v20.2.4`), so radosgw
+     ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390), [cls_rgw.cc:408](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408)), so radosgw
      resumes a page that ended on a null marker after the key (defect 17). rgw-go asks
      `getInstanceEntry` whether `null` is a marker; if it is, it lists from the key without an
      instance and skips the entries up to and including that marker.
@@ -1018,33 +1018,33 @@ their default.
   `PutBucketInfo`. **Produces:** the object-lock refusal L2 relies on.
 - **Behaviour:**
   1. Permission: bucket tags into the environment when a policy asks, then
-     `s3:PutBucketVersioning` (`src/rgw/rgw_op.cc:2759-2770@v19.2.7`,
-     `src/rgw/rgw_op.cc:2991@v20.2.4`).
+     `s3:PutBucketVersioning` ([rgw_op.cc:2759-2770](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2759-L2770),
+     [rgw_op.cc:2991](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2991)).
   2. The document: the body up to `rgw_max_put_param_size`. An unparsable body, or one without
      `VersioningConfiguration`, is 400 MalformedXML, AWS's answer under D16 (global: where the
      status or error code a client sees differs, rgw-go follows AWS). radosgw answers -EINVAL,
-     400 InvalidArgument, on both paths (`src/rgw/rgw_rest_s3.cc:2228-2239@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:2324-2335@v20.2.4`). `Status` must be Enabled or Suspended and
+     400 InvalidArgument, on both paths ([rgw_rest_s3.cc:2228-2239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2228-L2239),
+     [rgw_rest_s3.cc:2324-2335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2324-L2335)). `Status` must be Enabled or Suspended and
      `MfaDelete` Enabled or Disabled; radosgw answers InvalidArgument for any other value
-     (`src/rgw/rgw_rest_s3.cc:2179-2269@v19.2.7`, `src/rgw/rgw_rest_s3.cc:2307@v20.2.4`). The
+     ([rgw_rest_s3.cc:2179-2269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2179-L2269), [rgw_rest_s3.cc:2307](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2307)). The
      implementer confirms AWS's code for an invalid value from AWS's PutBucketVersioning
      documentation and follows it under D16, quoting it in the task notes (PP-2).
-  3. Execute (`src/rgw/rgw_op.cc:2777-2860@v19.2.7`, `src/rgw/rgw_op.cc:3009@v20.2.4`):
+  3. Execute ([rgw_op.cc:2777-2860](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2777-L2860), [rgw_op.cc:3009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3009)):
      NoSuchBucket; on an object-lock bucket any status but Enabled is 409 InvalidBucketState,
      "bucket versioning cannot be disabled on buckets with object lock enabled"
-     (`src/rgw/rgw_op.cc:2788-2793@v19.2.7`, `src/rgw/rgw_op.cc:3020-3025@v20.2.4`). MFA
-     (`src/rgw/rgw_op.cc:2795-2817@v19.2.7`, `src/rgw/rgw_op.cc:3032-3046@v20.2.4`): an
+     ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2793), [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)). MFA
+     ([rgw_op.cc:2795-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2795-L2817), [rgw_op.cc:3032-3046](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3032-L3046)): an
      `MfaDelete` equal to the bucket's flag is dropped; changing it needs `MFAVerified`; with MFA
      on, flipping Enabled and Suspended needs it too; the refusal is 403 AccessDenied
-     (`-ERR_MFA_REQUIRED`, `src/rgw/rgw_common.cc:96@v19.2.7`).
+     (`-ERR_MFA_REQUIRED`, [rgw_common.cc:96](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L96)).
   4. Under `RetryRacedBucketWrite`: the MFA flag set or cleared; Enabled sets `BUCKET_VERSIONED`
      and clears `BUCKET_VERSIONS_SUSPENDED`; Suspended sets both; `PutBucketInfo` writes the
-     instance with its cache notify (`src/rgw/rgw_op.cc:2828-2849@v19.2.7`). No index entry
+     instance with its cache notify ([rgw_op.cc:2828-2849](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2828-L2849)). No index entry
      changes.
-  5. GetBucketVersioning (`src/rgw/rgw_op.cc:2729-2757@v19.2.7`, `src/rgw/rgw_op.cc:2979@v20.2.4`):
+  5. GetBucketVersioning ([rgw_op.cc:2729-2757](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2729-L2757), [rgw_op.cc:2979](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2979)):
      `s3:GetBucketVersioning`; NoSuchBucket; `Status` and `MfaDelete` only when the bucket was
      ever versioned, else an empty `VersioningConfiguration`
-     (`src/rgw/rgw_rest_s3.cc:2160-2177@v19.2.7`, `src/rgw/rgw_rest_s3.cc:2255@v20.2.4`).
+     ([rgw_rest_s3.cc:2160-2177](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2160-L2177), [rgw_rest_s3.cc:2255](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2255)).
   6. Routes: the existing `get_bucket_versioning` and `set_bucket_versioning` rows
      (`internal/s3/dispatch.go:131`, `internal/s3/dispatch.go:161`, the signed-payload form at
      `internal/s3/dispatch.go:319`).
@@ -1055,8 +1055,8 @@ their default.
   policy evaluator.
 - **Exclusions:** retires "PutBucketVersioning answers 501 until a later phase"; a new one,
   "PutBucketVersioning answers MalformedXML for a document that does not parse": radosgw answers 400
-  InvalidArgument from `get_params`' -EINVAL (`src/rgw/rgw_rest_s3.cc:2228-2239@v19.2.7`,
-  `src/rgw/rgw_rest_s3.cc:2324-2335@v20.2.4`), and rgw-go answers AWS's 400 MalformedXML (D16). The
+  InvalidArgument from `get_params`' -EINVAL ([rgw_rest_s3.cc:2228-2239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2228-L2239),
+  [rgw_rest_s3.cc:2324-2335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2324-L2335)), and rgw-go answers AWS's 400 MalformedXML (D16). The
   same entry covers invalid `Status` and `MfaDelete` values if AWS's code for them differs.
 - **Depends on:** S2, V2. **PR split:** (1) op and s3; (2) the recording: the `enable_versioning`
   line out of `hack/admin/deselect-phase2.txt`, both admin ledgers re-recorded with
@@ -1073,20 +1073,20 @@ their default.
   1. `VersionForWrite`: a new instance when the bucket's versioning is enabled, else empty; the
      request's `versionId` is ignored on PutObject, on CopyObject's destination and on
      CompleteMultipartUpload (D3)
-     (`src/rgw/rgw_op.cc:4278-4285@v19.2.7`, `src/rgw/rgw_op.cc:4495@v20.2.4`; copy
-     `src/rgw/rgw_op.cc:5576-5580@v19.2.7`, `src/rgw/rgw_op.cc:6142@v20.2.4`; completion
-     `src/rgw/rgw_op.cc:6462-6469@v19.2.7`, `src/rgw/rgw_op.cc:7288@v20.2.4`). POST object calls
+     ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285), [rgw_op.cc:4495](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4495); copy
+     [rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580), [rgw_op.cc:6142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6142); completion
+     [rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469), [rgw_op.cc:7288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7288)). POST object calls
      it (BC-32).
   2. An append to a bucket that was ever versioned is 409 InvalidBucketState
-     (`src/rgw/rgw_op.cc:4268-4272@v19.2.7`, `src/rgw/rgw_op.cc:4481-4485@v20.2.4`).
+     ([rgw_op.cc:4268-4272](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4268-L4272), [rgw_op.cc:4481-4485](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4481-L4485)).
   3. Headers (D4): PutObject and CompleteMultipartUpload send `x-amz-version-id`, `null` when the
      bucket was ever versioned and the instance is empty, nothing on a never-versioned bucket;
-     radosgw sends only a non-empty id (`src/rgw/rgw_rest_s3.cc:2756-2762@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:4111@v19.2.7`; `src/rgw/rgw_rest_s3.cc:2912-2920@v20.2.4`,
-     `src/rgw/rgw_rest_s3.cc:4609@v20.2.4`). CopyObject sends `x-amz-version-id` for the
+     radosgw sends only a non-empty id ([rgw_rest_s3.cc:2756-2762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756-L2762),
+     [rgw_rest_s3.cc:4111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111); [rgw_rest_s3.cc:2912-2920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912-L2920),
+     [rgw_rest_s3.cc:4609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609)). CopyObject sends `x-amz-version-id` for the
      destination and `x-amz-copy-source-version-id` for the source read, by the same `null`
-     rule; radosgw sends neither (`src/rgw/rgw_rest_s3.cc:3596-3633@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:3873@v20.2.4`).
+     rule; radosgw sends neither ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633),
+     [rgw_rest_s3.cc:3873](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3873)).
   4. The 501 gates (N21) narrow to object lock (VD-6) on these ops; this task adds the narrowed
      gate, and later op tasks switch their own call sites to it. Whichever of V11 and BC-32 lands
      second switches `internal/op/postobject.go` to it.
@@ -1110,30 +1110,30 @@ their default.
 - **Security boundary:** the MFA checks are authorization; adversarial review applies (PP-14).
 - **Consumes:** V8a, V10's `Request.MFAVerified`, V13d (which sets it), V11's narrowed gate.
 - **Behaviour:**
-  1. DeleteObject's permission (`src/rgw/rgw_op.cc:5138-5166@v19.2.7`,
-     `src/rgw/rgw_op.cc:5528-5556@v20.2.4`): `s3:DeleteObjectVersion` when an instance is named
-     (`src/rgw/rgw_op.cc:5144-5151@v19.2.7`); on an MFA bucket a named instance without
-     `MFAVerified` is 403 AccessDenied (`src/rgw/rgw_op.cc:5158-5163@v19.2.7`,
-     `src/rgw/rgw_op.cc:5548-5553@v20.2.4`), replacing the unconditional refusal
+  1. DeleteObject's permission ([rgw_op.cc:5138-5166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5166),
+     [rgw_op.cc:5528-5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556)): `s3:DeleteObjectVersion` when an instance is named
+     ([rgw_op.cc:5144-5151](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5144-L5151)); on an MFA bucket a named instance without
+     `MFAVerified` is 403 AccessDenied ([rgw_op.cc:5158-5163](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5158-L5163),
+     [rgw_op.cc:5548-5553](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5548-L5553)), replacing the unconditional refusal
      (`internal/op/deleteobject.go:106-116`).
-  2. Execute (`src/rgw/rgw_op.cc:5173-5330@v19.2.7`, `src/rgw/rgw_op.cc:5563@v20.2.4`): the state
+  2. Execute ([rgw_op.cc:5173-5330](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5173-L5330), [rgw_op.cc:5563](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5563)): the state
      read follows the OLH; `MarkerOwner` is the requester; a lost race is 204
-     (`src/rgw/rgw_op.cc:5305-5307@v19.2.7`). L4 later adds its lock check between the read and the
+     ([rgw_op.cc:5305-5307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5305-L5307)). L4 later adds its lock check between the read and the
      delete; until then a lock bucket is 501 (VD-6).
-  3. The response (`src/rgw/rgw_rest_s3.cc:3485-3500@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:3745@v20.2.4`): NoSuchKey is 204; `x-amz-version-id` when the result
+  3. The response ([rgw_rest_s3.cc:3485-3500](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3485-L3500),
+     [rgw_rest_s3.cc:3745](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3745)): NoSuchKey is 204; `x-amz-version-id` when the result
      has one; `x-amz-delete-marker: true` when it is a marker.
-  4. DeleteObjects (`src/rgw/rgw_op.cc:7019-7119@v19.2.7`, `src/rgw/rgw_op.cc:7921@v20.2.4`): on
+  4. DeleteObjects ([rgw_op.cc:7019-7119](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7019-L7119), [rgw_op.cc:7921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7921)): on
      an MFA bucket, any key naming a version without `MFAVerified` refuses the whole request,
      main's test, which v19.2.6 had, on both releases; both floors invert it
-     (`src/rgw/rgw_op.cc:7067-7081@v19.2.7`, from ce98cebb815, and
-     `src/rgw/rgw_op.cc:7969-7983@v20.2.4`; defect 1); keys grouped by name, `SkipOLHUpdate` on
-     all but the last of each (VD-8, `src/rgw/rgw_op.cc:6924-6977@v19.2.7`, chosen by
-     `bucket->versioned()` at `src/rgw/rgw_op.cc:7008-7017@v19.2.7`); each key as
-     `handle_individual_object` (`src/rgw/rgw_op.cc:6824-6922@v19.2.7`,
-     `src/rgw/rgw_op.cc:7743@v20.2.4`); `Deleted` with `VersionId` when named and `DeleteMarker`
-     with `DeleteMarkerVersionId` when one was made (`src/rgw/rgw_rest_s3.cc:4303-4331@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:4821@v20.2.4`), which phase 1 renders already.
+     ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081), from ce98cebb815, and
+     [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983); defect 1); keys grouped by name, `SkipOLHUpdate` on
+     all but the last of each (VD-8, [rgw_op.cc:6924-6977](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6977), chosen by
+     `bucket->versioned()` at [rgw_op.cc:7008-7017](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7008-L7017)); each key as
+     `handle_individual_object` ([rgw_op.cc:6824-6922](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6824-L6922),
+     [rgw_op.cc:7743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743)); `Deleted` with `VersionId` when named and `DeleteMarker`
+     with `DeleteMarkerVersionId` when one was made ([rgw_rest_s3.cc:4303-4331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4303-L4331),
+     [rgw_rest_s3.cc:4821](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821)), which phase 1 renders already.
 - **Specs:** the action per request; the MFA tables for both ops; the grouping's skip flags, and
   its final state equal to one update per key; headers for a marker (enabled and suspended), a
   version, a marker's instance, a null delete marker's removal (`x-amz-delete-marker: true`) and a
@@ -1150,8 +1150,8 @@ their default.
 - **Behaviour:** `DELETE /admin/bucket?object`, `DELETE /admin/bucket` with `purge-objects` or
   `bypass-gc` and `DELETE /admin/user` with `purge-data` reach V8b's driver halves on every bucket;
   the versioned and object-lock refusals go; no lock is checked (P2, the owner, 2026-10-13;
-  `src/rgw/driver/rados/rgw_bucket.cc:274-289@v19.2.7`,
-  `src/rgw/driver/rados/rgw_bucket.cc:275-290@v20.2.4`).
+  [rgw_bucket.cc:274-289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L274-L289),
+  [rgw_bucket.cc:275-290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290)).
 - **Specs:** each route on enabled, suspended and lock buckets through op fakes; the purge's error
   when a removal fails part way.
 - **Exclusions:** retires "A purging bucket removal refuses a bucket whose versioning was ever
@@ -1175,11 +1175,11 @@ their default.
   1. `otp_check` (RD|WR) in a write op with `cls_otp_check_otp_op` v1 `{id, val, token}`, where the
      token is 16 random alphanumerics; Squid sends it through `IoCtx::exec` and Tentacle through a
      write op, the only cls_otp change between the tags
-     (`src/cls/otp/cls_otp_client.cc:60-96@v19.2.7`,
-     `src/cls/otp/cls_otp_client.cc:60@v20.2.4#OTP::check`).
+     ([cls_otp_client.cc:60-96](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L96),
+     [cls_otp_client.cc:60](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60)).
   2. `otp_get_result` (RD) with the same check-op buffer, not a `cls_otp_get_result_op`: the
-     client passes `in` (`src/cls/otp/cls_otp_client.cc:78-83@v19.2.7`) and the class decodes a
-     check op (`src/cls/otp/cls_otp.cc:483-511@v19.2.7`, `src/cls/otp/cls_otp.cc:483@v20.2.4`).
+     client passes `in` ([cls_otp_client.cc:78-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L78-L83)) and the class decodes a
+     check op ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511), [cls_otp.cc:483](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483)).
      The reply is `cls_otp_get_result_reply{otp_check_t{token, timestamp, result}}`.
 - **Specs:** goldens from `ceph-dencoder` for `cls_otp_check_otp_op` and
   `cls_otp_get_result_reply`; `GetResult` sends the check op's bytes; each result value decodes.
@@ -1194,13 +1194,13 @@ their default.
 - **Security boundary:** MFA (PP-14); the emulator pins what the verifier trusts.
 - **Consumes:** WP-17's device store with `last_checks` and `last_success`; V13a.
 - **Behaviour:**
-  1. `otp_check` RD|WR (`src/cls/otp/cls_otp.cc:447-481@v19.2.7`,
-     `src/cls/otp/cls_otp.cc:447@v20.2.4`): load the device by id, record the attempt with the TOTP
+  1. `otp_check` RD|WR ([cls_otp.cc:447-481](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L447-L481),
+     [cls_otp.cc:447](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L447)): load the device by id, record the attempt with the TOTP
      result unless five attempts already fell in the current step window (`ATTEMPTS_PER_WINDOW`,
-     `src/cls/otp/cls_otp.cc:43@v19.2.7`; `src/cls/otp/cls_otp.cc:108-127@v19.2.7`,
-     `src/cls/otp/cls_otp.cc:108@v20.2.4`), and write the device back.
-  2. The validation (`src/cls/otp/cls_otp.cc:129-153@v19.2.7`,
-     `src/cls/otp/cls_otp.cc:129@v20.2.4`): RFC 6238 TOTP over the stored seed, step, time offset
+     [cls_otp.cc:43](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L43); [cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L127),
+     [cls_otp.cc:108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L108)), and write the device back.
+  2. The validation ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+     [cls_otp.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129)): RFC 6238 TOTP over the stored seed, step, time offset
      and window, at the cluster clock; a success stores its window index as `last_success`, so the
      same code fails afterwards. The class validates through liboath; the implementer reads
      liboath's `oath_totp_validate2` for the digit count and the window walk and quotes it in the
@@ -1221,12 +1221,12 @@ their default.
 - **Consumes:** V13a, V13b, WP-16's `OTPObject`, `meta.UserInfo.MFAIDs`, `ZoneParams.OTPPool`.
   **Produces:** `(*Store).VerifyMFA`, satisfying S2's `op.MFAVerifier`.
 - **Behaviour:**
-  1. `verify_mfa` (`src/rgw/driver/rados/rgw_sal_rados.cc:284-312@v19.2.7`,
-     `src/rgw/driver/rados/rgw_sal_rados.cc:301@v20.2.4`): a serial not in the user's `mfa_ids`
+  1. `verify_mfa` ([rgw_sal_rados.cc:284-312](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L284-L312),
+     [rgw_sal_rados.cc:301](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L301)): a serial not in the user's `mfa_ids`
      is not verified; then `check_mfa`.
-  2. `check_mfa` (`src/rgw/services/svc_cls.cc:46-63@v19.2.7`,
-     `src/rgw/services/svc_cls.cc:46@v20.2.4`): the object `user:<uid>` in the zone's `otp_pool`
-     (`src/rgw/services/svc_cls.h:56-58@v19.2.7`), V13a's two calls with one fresh token, verified
+  2. `check_mfa` ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
+     [svc_cls.cc:46](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46)): the object `user:<uid>` in the zone's `otp_pool`
+     ([svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.h#L56-L58)), V13a's two calls with one fresh token, verified
      only on `OTP_CHECK_SUCCESS`.
   3. Any other result, or a missing device, is `(false, nil)`; a RADOS failure is `(false, err)`.
 - **Specs** (on the emulator, V13b): an unknown serial; a good code; a wrong one; a reused one; a
@@ -1242,12 +1242,12 @@ their default.
 - **Consumes:** S2's `Env.MFA`, V13c, V10's `Request.MFAVerified`.
 - **Behaviour** (VD-7):
   1. `PostAuthInit` reads `x-amz-mfa` after the tenant, bucket and object-name checks
-     (`src/rgw/rgw_rest_s3.cc:5026-5031@v19.2.7`, `src/rgw/rgw_rest_s3.cc:5556@v20.2.4`), where
+     ([rgw_rest_s3.cc:5026-5031](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5031), [rgw_rest_s3.cc:5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556)), where
      phase 1 notes the gap (`internal/s3/request.go:163-179`).
   2. The value splits on single spaces into exactly two fields, serial and pin; anything else is
      not verified. A verified pair sets `Request.MFAVerified`.
   3. Nothing about MFA fails the request here; an op that needs MFA refuses it with 403
-     AccessDenied (`-ERR_MFA_REQUIRED` 2044, `src/rgw/rgw_common.cc:96@v19.2.7`).
+     AccessDenied (`-ERR_MFA_REQUIRED` 2044, [rgw_common.cc:96](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L96)).
 - **Specs:** absent, malformed (one field, three, double space), unknown serial, good and bad
   codes through a fake verifier; a verifier error logged and the request carried on unverified.
 - **Exclusions:** none; V12a retires "Deletes that need MFA are refused".
@@ -1263,15 +1263,15 @@ their default.
 - **Behaviour:**
   1. GET and HEAD send `x-amz-version-id` from the resolved key, `null` for an empty instance on
      a bucket that was ever versioned (D4); radosgw sends only a non-empty id
-     (`src/rgw/rgw_rest_s3.cc:469@v19.2.7`, `src/rgw/rgw_rest_s3.cc:497@v20.2.4`).
+     ([rgw_rest_s3.cc:469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469), [rgw_rest_s3.cc:497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L497)).
      GetObjectAttributes sends it on both releases, at Tentacle's feature level
-     (`src/rgw/rgw_rest_s3.cc:4010@v20.2.4`; Squid sends none).
-  2. The permission check comes first (`src/rgw/rgw_op.cc:423-447@v19.2.7`,
-     `src/rgw/rgw_op.cc:453-477@v20.2.4`): a missing object, which includes a current delete
+     ([rgw_rest_s3.cc:4010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4010); Squid sends none).
+  2. The permission check comes first ([rgw_op.cc:423-447](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L423-L447),
+     [rgw_op.cc:453-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L453-L477)): a missing object, which includes a current delete
      marker, is 404 to an admin or a requester allowed `s3:ListBucket`, else 403.
   3. D6: that 404, when the current version is a delete marker, carries
-     `x-amz-delete-marker: true` on both releases (`src/rgw/rgw_rest.cc:1936-1944@v20.2.4`; none
-     at `src/rgw/rgw_rest.cc:1898-1938@v19.2.7`). `deletemarker.go` reads
+     `x-amz-delete-marker: true` on both releases ([rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944); none
+     at [rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938)). `deletemarker.go` reads
      `ObjectState.DeleteMarker`; phase 1's Tentacle-only `false` stays for other misses.
   4. D2: a GET or HEAD naming a delete marker's own version answers 405 MethodNotAllowed with
      `x-amz-delete-marker: true`, where radosgw answers 404 NoSuchKey (defect 6).
@@ -1297,14 +1297,14 @@ their default.
   `internal/s3/listobjects.go` and specs; edit `docs/exclusions.md`. **Cluster:** no.
 - **Consumes:** V9.
 - **Behaviour:**
-  1. The parameters (`src/rgw/rgw_rest_s3.cc:1718-1762@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:1852@v20.2.4`): `versions` selects the listing; `key-marker` and
+  1. The parameters ([rgw_rest_s3.cc:1718-1762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1718-L1762),
+     [rgw_rest_s3.cc:1852](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1852)): `versions` selects the listing; `key-marker` and
      `version-id-marker` become `Marker` and `MarkerInstance`, `null` the empty instance; the rest
      are the v1 listing's; `s3:ListBucketVersions`. The refusal at
      `internal/op/listobjects.go:121-123` goes.
-  2. The document (`src/rgw/rgw_rest_s3.cc:1807-1877@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:1910@v20.2.4`): `NextKeyMarker` and `NextVersionIdMarker` from V9's
-     next marker, `null` for an empty instance (`src/rgw/rgw_rest_s3.cc:1817-1825@v19.2.7`); the
+  2. The document ([rgw_rest_s3.cc:1807-1877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1807-L1877),
+     [rgw_rest_s3.cc:1910](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1910)): `NextKeyMarker` and `NextVersionIdMarker` from V9's
+     next marker, `null` for an empty instance ([rgw_rest_s3.cc:1817-1825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1817-L1825)); the
      fixed `null` at `internal/s3/listobjects.go:400` goes. Entries render as phase 1 renders them.
   3. The `list-type=2&versions` form is unchanged (D7).
 - **Specs:** paging a key with three versions and a marker at `max-keys` 1 and 2; a null version's
@@ -1348,13 +1348,13 @@ their default.
     lost, both gateways list the same versions in the same order, the OLH targets the newest,
     every version reads back, `bucket check` is clean, and the two DELETEs answer 204 each.
   - D, interrupted writers. On radosgw, set with `ceph config set`: `rgw_debug_inject_set_olh_err`
-    (`src/common/options/rgw.yaml.in:2754@v19.2.7`, `src/common/options/rgw.yaml.in:2886@v20.2.4`)
+    ([rgw.yaml.in:2754](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2754), [rgw.yaml.in:2886](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2886))
     fails its link after its init and completion
-    (`src/rgw/driver/rados/rgw_rados.cc:8707-8714@v19.2.7`,
-    `src/rgw/driver/rados/rgw_rados.cc:9453-9455@v20.2.4`), leaving an unlinked instance; with
+    ([rgw_rados.cc:8707-8714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8707-L8714),
+    [rgw_rados.cc:9453-9455](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9453-L9455)), leaving an unlinked instance; with
     `rgw_debug_inject_olh_cancel_modification_err` too, its pending attr stays
-    (`src/rgw/driver/rados/rgw_rados.cc:7758-7761@v19.2.7`,
-    `src/rgw/driver/rados/rgw_rados.cc:8421@v20.2.4`). rgw-go's reads and listings still show the
+    ([rgw_rados.cc:7758-7761](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7758-L7761),
+    [rgw_rados.cc:8421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8421)). rgw-go's reads and listings still show the
     previous current version, its next unconditional write links normally, and `bucket check`
     reports the orphan as radosgw's own run does. The pending attr's expiry is the emulator's spec
     (V5b), not the cluster's. On rgw-go, the fault point stops a writer after its link; radosgw's
@@ -1423,21 +1423,21 @@ running release shows the defect (PP-11); "registry" marks an entry already in
 |---|---|---|---|---|---|---|
 | 1 | DeleteObjects asks for MFA for keys without a version and not for versions (registry, tracker #77869) | v19.2.7, v20.2.1 to v20.2.4 | security (MFA bypass) | unreproduced | main's test on both releases; the exclusion exists | V12a; V15b reproduces |
 | 2 | `complete_op` writes a stale epoch back on cancel (registry, #80894); instance entries too | both | data corruption (index meta) | reproduced | radosgw's cancel version; class-side, no client workaround | V5a |
-| 3 | v19.2.6 evaluates a versioned PUT's conditions against the new, nonexistent instance; fixed in v19.2.7 by ce98cebb815, which reads the current version first (`src/rgw/driver/rados/rgw_rados.cc:3185-3205@v19.2.7`), as `src/rgw/driver/rados/rgw_rados.cc:7238-7258@v20.2.4` does | v19.2.6 only, below the floor | S3-correctness | unreproduced; not met at either floor | both floors' evaluation (VD-2); no exclusion or known difference at v19.2.7 | V7a |
-| 4 | Conditional writes on versioned buckets are check-then-act (`src/rgw/driver/rados/rgw_rados.cc:3282-3300@v20.2.4`) | both | S3-correctness (race) | unreproduced | not reproduced: D1 | V5c, V7a |
-| 5 | CopyObject sends neither version header (`src/rgw/rgw_rest_s3.cc:3596-3633@v19.2.7`, `src/rgw/rgw_rest_s3.cc:3873@v20.2.4`) | both | S3-correctness | unreproduced | send both (D4); exclusion | V11 |
+| 3 | v19.2.6 evaluates a versioned PUT's conditions against the new, nonexistent instance; fixed in v19.2.7 by ce98cebb815, which reads the current version first ([rgw_rados.cc:3185-3205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3185-L3205)), as [rgw_rados.cc:7238-7258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7238-L7258) does | v19.2.6 only, below the floor | S3-correctness | unreproduced; not met at either floor | both floors' evaluation (VD-2); no exclusion or known difference at v19.2.7 | V7a |
+| 4 | Conditional writes on versioned buckets are check-then-act ([rgw_rados.cc:3282-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3282-L3300)) | both | S3-correctness (race) | unreproduced | not reproduced: D1 | V5c, V7a |
+| 5 | CopyObject sends neither version header ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633), [rgw_rest_s3.cc:3873](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3873)) | both | S3-correctness | unreproduced | send both (D4); exclusion | V11 |
 | 6 | GET or HEAD naming a delete marker's version answers 404 (Tentacle with `x-amz-delete-marker: false`); S3 answers 405 with `true` | both | S3-correctness | unreproduced | 405 and `true` (D2); exclusion | V6, V14a |
-| 7 | The 404 of a current delete marker lacks `x-amz-delete-marker` (`src/rgw/rgw_rest.cc:1898-1938@v19.2.7`; Tentacle sends it, `src/rgw/rgw_rest.cc:1936-1944@v20.2.4`) | v19.2.6 | S3-correctness | unreproduced | send it on both (D6); exclusion on Squid | V14a |
-| 8 | `x-amz-version-id` omitted when the id is `null` (`src/rgw/rgw_rest_s3.cc:469@v19.2.7`, `src/rgw/rgw_rest_s3.cc:2756@v19.2.7`, `src/rgw/rgw_rest_s3.cc:4111@v19.2.7`) | both | S3-correctness (minor) | unreproduced | send `null` on ever-versioned buckets (D4); exclusion | V11, V14a |
+| 7 | The 404 of a current delete marker lacks `x-amz-delete-marker` ([rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938); Tentacle sends it, [rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944)) | v19.2.6 | S3-correctness | unreproduced | send it on both (D6); exclusion on Squid | V14a |
+| 8 | `x-amz-version-id` omitted when the id is `null` ([rgw_rest_s3.cc:469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469), [rgw_rest_s3.cc:2756](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756), [rgw_rest_s3.cc:4111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111)) | both | S3-correctness (minor) | unreproduced | send `null` on ever-versioned buckets (D4); exclusion | V11, V14a |
 | 9 | `versionId` on PutObject, CopyObject's destination and CompleteMultipartUpload honoured as the instance on a bucket not versioning-enabled (registry) | both | S3-correctness | unreproduced | ignored (D3); exclusion; the registry's rgw-go line updated | V11 |
 | 10 | `cls_otp` divides by a stored `step_size` of 0 (registry, #80948) | both | denial of service, privileged | liboath reproducer only | this unit writes no otp entry; WP's admin otp refuses 0; the emulator answers EIO | V13b |
 | 11 | `cls_otp`'s replay index from the unsigned window distance (registry, #80949) | both | S3-correctness (TOTP replay window) | liboath reproducer | class-side; rgw-go calls the class as radosgw does, and the emulator reproduces it | V13b |
-| 12 | `cls_otp_client` sends the check-op buffer to `otp_get_result`; `cls_otp_get_result_op` is dead (`src/cls/otp/cls_otp_client.cc:78-83@v19.2.7`, `src/cls/otp/cls_otp.cc:487@v19.2.7`) | both | cosmetic (consistent by accident) | n/a | send the check op, as radosgw does; a registry note | V13a |
-| 13 | `RGWRados::get_olh` decodes `olh.ver` as `RGWOLHInfo` (`src/rgw/driver/rados/rgw_rados.cc:8896-8901@v19.2.7`; Tentacle reads `olh.info`, `src/rgw/driver/rados/rgw_rados.cc:9640@v20.2.4`); only `radosgw-admin olh get` calls it | v19.2.6 | cosmetic (admin tool) | unreproduced | not met; read into the gate's `olh get` on Squid | V15b |
+| 12 | `cls_otp_client` sends the check-op buffer to `otp_get_result`; `cls_otp_get_result_op` is dead ([cls_otp_client.cc:78-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L78-L83), [cls_otp.cc:487](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L487)) | both | cosmetic (consistent by accident) | n/a | send the check op, as radosgw does; a registry note | V13a |
+| 13 | `RGWRados::get_olh` decodes `olh.ver` as `RGWOLHInfo` ([rgw_rados.cc:8896-8901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8896-L8901); Tentacle reads `olh.info`, [rgw_rados.cc:9640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9640)); only `radosgw-admin olh get` calls it | v19.2.6 | cosmetic (admin tool) | unreproduced | not met; read into the gate's `olh get` on Squid | V15b |
 | 14 | Tentacle removes a head without checking its write tag (registry, #80898 and #80906), reached by `apply_olh_log`'s instance removal | v20.2.4 | data corruption (tail leak) | unreproduced | phase 1's guard kept; the exclusion exists | V5b |
 | 15 | Squid before 19.2.3 refused a marker on a marker (registry) | below the floor | n/a | n/a | unaffected | none |
-| 16 | The versioned delete of `versionId=null` reads the null version with one `bi_get` of the plain key, which on a converted key is the version marker: its conditions meet the marker's empty meta (a spurious 412 for any If-Match) and `x-amz-delete-marker` is false for a null delete marker (`src/rgw/driver/rados/rgw_rados.cc:5906-5944@v19.2.7`, `src/rgw/driver/rados/rgw_rados.cc:6518-6556@v20.2.4`; `src/cls/rgw/cls_rgw.cc:2617-2664@v19.2.7#rgw_bi_get_op`; review F4) | both | S3-correctness | unreproduced | resolve `null` in `read_key_entry`'s order, up to three `bi_get` reads (D8); exclusion | V5a, V8a |
-| 17 | A `version-id-marker` of `null` whose null version is a delete marker resumes past the key's remaining versions (`src/cls/rgw/cls_rgw.cc:358-390@v19.2.7`, `src/cls/rgw/cls_rgw.cc:408@v20.2.4`) | both | S3-correctness | unreproduced | resolved in the driver, skipping through the marker; exclusion | V9 |
+| 16 | The versioned delete of `versionId=null` reads the null version with one `bi_get` of the plain key, which on a converted key is the version marker: its conditions meet the marker's empty meta (a spurious 412 for any If-Match) and `x-amz-delete-marker` is false for a null delete marker ([rgw_rados.cc:5906-5944](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5906-L5944), [rgw_rados.cc:6518-6556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6518-L6556); [cls_rgw.cc:2617-2664](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2617-L2664); review F4) | both | S3-correctness | unreproduced | resolve `null` in `read_key_entry`'s order, up to three `bi_get` reads (D8); exclusion | V5a, V8a |
+| 17 | A `version-id-marker` of `null` whose null version is a delete marker resumes past the key's remaining versions ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390), [cls_rgw.cc:408](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408)) | both | S3-correctness | unreproduced | resolved in the driver, skipping through the marker; exclusion | V9 |
 
 Not a radosgw defect, but made reachable by this unit: the seam dropped a failed class call's
 output, which made `RGWBIAdvanceAndRetryError` fatal (phase 1's exclusion "A shard that answers

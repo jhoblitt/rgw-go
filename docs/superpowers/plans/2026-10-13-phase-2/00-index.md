@@ -176,8 +176,8 @@ The controller's rulings on the research's open questions, under the owner's rul
   1. A policy is public exactly when AWS's definition says so: the S3 User Guide's "The meaning of 'public'", which lists the condition keys and values that make a wildcard-principal grant non-public.
      - The implementer reads that page and quotes the rules in the task's notes, citing the page. They are not written from memory (PP-2).
      - Each listed key and value becomes a spec row.
-  2. This replaces the evaluation in radosgw's fixed three-key environment (`src/rgw/rgw_iam_policy.cc:1894-1898@v19.2.7`).
-  3. It also replaces Squid's counting of Allow statements without a wildcard principal (`src/rgw/rgw_iam_policy.cc:1900-1922@v19.2.7#rgw::IAM::is_public`, `src/rgw/rgw_iam_policy.cc:1935-1953@v20.2.4#rgw::IAM::is_public`).
+  2. This replaces the evaluation in radosgw's fixed three-key environment ([rgw_iam_policy.cc:1894-1898](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1894-L1898)).
+  3. It also replaces Squid's counting of Allow statements without a wildcard principal ([rgw_iam_policy.cc:1900-1922](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1900-L1922), [rgw_iam_policy.cc:1935-1953](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1935-L1953)).
   4. The registry entries for both defects record the choice, and an exclusion states the difference.
 - **Specs:**
   - a table over AWS's documented public and non-public policy examples, each answered the same under both releases' `Semantics`;

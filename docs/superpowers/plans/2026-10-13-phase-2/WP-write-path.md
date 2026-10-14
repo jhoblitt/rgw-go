@@ -64,25 +64,25 @@ from radosgw below is an exclusion, written by the task named in the last column
 
 | Id | Decision | Reason | Tasks |
 |---|---|---|---|
-| D21 | Writes accept CRC32, CRC32C, CRC64NVME, SHA1, SHA256 and SHA512 under AWS's names. They refuse MD5, XXHASH64 and XXHASH128 (no Tentacle type id; main's 9 to 11), BLAKE3 and XXHASH3 with 400 InvalidArgument, before the body. XXHASH3 carries an exclusion: phase 2 takes no XXH3 dependency. Any stored type 0 to 8 is read and rendered, since rendering computes nothing. An UploadPart or a completion of an upload whose stored type rgw-go cannot compute answers 501. | The AWS set where the stored form stays one a v20.2.4 radosgw reads: it indexes its nine-entry table with the stored type (`src/rgw/rgw_cksum.h:88-99@v20.2.4`, `src/rgw/rgw_cksum.h:147-149@v20.2.4`). Review Focus 4. | WP-1, WP-6, WP-8 |
-| D22 | Squid serves single-object checksums (PutObject, POST object) and verifies and stores a part's own supplied value on its part head. CreateMultipartUpload's algorithm is ignored on Squid, as Squid's radosgw ignores it, so no upload type, part-record checksum or combined checksum is stored. | The upload's type and the part record's checksum are struct fields Squid's radosgw re-encodes without (`src/rgw/rgw_common.h:1508-1538@v19.2.7`); `user.rgw.cksum` is a separate attr (spec §8). | WP-6, WP-8, WP-9, WP-12 |
-| D23 | A streamed copy of an uncompressed source into a compressing placement is compressed, on both releases. A compressed source's copy stays raw (owner decision 4). | Tentacle's `RGWCopyObjDPF` compresses it (`src/rgw/rgw_op.cc:5825-5884@v20.2.4`); either gateway reads both forms. The exclusion text of the earlier copy decision is rewritten. | WP-11 |
+| D21 | Writes accept CRC32, CRC32C, CRC64NVME, SHA1, SHA256 and SHA512 under AWS's names. They refuse MD5, XXHASH64 and XXHASH128 (no Tentacle type id; main's 9 to 11), BLAKE3 and XXHASH3 with 400 InvalidArgument, before the body. XXHASH3 carries an exclusion: phase 2 takes no XXH3 dependency. Any stored type 0 to 8 is read and rendered, since rendering computes nothing. An UploadPart or a completion of an upload whose stored type rgw-go cannot compute answers 501. | The AWS set where the stored form stays one a v20.2.4 radosgw reads: it indexes its nine-entry table with the stored type ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99), [rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149)). Review Focus 4. | WP-1, WP-6, WP-8 |
+| D22 | Squid serves single-object checksums (PutObject, POST object) and verifies and stores a part's own supplied value on its part head. CreateMultipartUpload's algorithm is ignored on Squid, as Squid's radosgw ignores it, so no upload type, part-record checksum or combined checksum is stored. | The upload's type and the part record's checksum are struct fields Squid's radosgw re-encodes without ([rgw_common.h:1508-1538](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1538)); `user.rgw.cksum` is a separate attr (spec §8). | WP-6, WP-8, WP-9, WP-12 |
+| D23 | A streamed copy of an uncompressed source into a compressing placement is compressed, on both releases. A compressed source's copy stays raw (owner decision 4). | Tentacle's `RGWCopyObjDPF` compresses it ([rgw_op.cc:5825-5884](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5825-L5884)); either gateway reads both forms. The exclusion text of the earlier copy decision is rewritten. | WP-11 |
 | D24 | Tentacle's CreateBucketConfiguration `BucketIndex` stays 501, with its exclusion. | It sits in no phase (spec §9). | none |
 | D25 | `?layout` is the object op RGWGetObjLayout, for a user with the `admin=read` cap. | It exists only as the object op at both tags (§2.4). | WP-20, WP-21 |
 | WD-1 | Every combined CRC is stored `V2\|COMBINED\|FULL_OBJECT`. A CRC upload created COMPOSITE gets the composite: the CRC of the concatenated big-endian part CRCs, flags `V2\|COMBINED\|COMPOSITE`. | Defects 2 and 3: radosgw stores a single-part CRC as a composite and ignores a COMPOSITE request. Both records are ones a Tentacle radosgw decodes and renders consistently. | WP-2, WP-9 |
 | WD-2 | A checksum value without an algorithm header names its algorithm: the lone `x-amz-checksum-<alg>` header, or the checksum `x-amz-trailer` names. It is verified. Two value headers, or a value or trailer naming another algorithm than the algorithm header, is 400 InvalidRequest. | Defect 6: radosgw stores such a value unverified; AWS verifies it. | WP-6 |
-| WD-3 | An UploadPart naming another algorithm than its upload's is 400 InvalidRequest at the part. | radosgw fails it only at completion (`src/rgw/rgw_op.cc:7121-7131@v20.2.4`); failing early stores no part completion must refuse. | WP-6 |
+| WD-3 | An UploadPart naming another algorithm than its upload's is 400 InvalidRequest at the part. | radosgw fails it only at completion ([rgw_op.cc:7121-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7121-L7131)); failing early stores no part completion must refuse. | WP-6 |
 | WD-4 | Completion combines exactly the parts the request names, in its order. Its supplied value is any `x-amz-checksum-<alg>` header, CRC64NVME included, and must equal the armored value, or a composite's value without `-N`; anything else is 400 BadDigest. | Defects 1, 4 and 7. The `-N` leniency is radosgw's documented minio case. | WP-6, WP-9 |
-| WD-5 | A `partNumber` GET or HEAD with checksum mode renders the part's value bare, COMPOSITE only when its flags say so, as main does. | Defect 5; s3-tests' five `test_multipart_use_cksum_helper_*` expect it (`src/rgw/rgw_rest_s3.cc:569-608@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`). | WP-12 |
+| WD-5 | A `partNumber` GET or HEAD with checksum mode renders the part's value bare, COMPOSITE only when its flags say so, as main does. | Defect 5; s3-tests' five `test_multipart_use_cksum_helper_*` expect it ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L608)). | WP-12 |
 | WD-6 | A composite checksum on an object without parts is not shown. A streamed copy drops a composite checksum rather than carry it to a destination without parts. | Squid's radosgw COPY carries the attr to a streamed copy of a multipart source (§4); read back as FULL_OBJECT it would be wrong. | WP-11, WP-12 |
 | WD-7 | ListParts reports `ChecksumAlgorithm` and `ChecksumType` from the upload's `multipart_upload_info`. | Defect 8: radosgw reads an attr nothing writes, so never reports them. | WP-12, WP-13 |
-| WD-8 | rgw-go names a type as AWS and main do where AWS has it: SHA512 as `x-amz-checksum-sha512` and `ChecksumSHA512`, a stored type 3 as XXHASH3. BLAKE3 keeps Tentacle's `x-rgw-checksum-blake3`. | D21's "AWS's names"; main's table makes sha512 and xxhash3 AWS types (`src/rgw/rgw_cksum.h:93-107@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`). A v20.2.4 radosgw renders `x-rgw-checksum-sha512`. | WP-1, WP-7, WP-13 |
+| WD-8 | rgw-go names a type as AWS and main do where AWS has it: SHA512 as `x-amz-checksum-sha512` and `ChecksumSHA512`, a stored type 3 as XXHASH3. BLAKE3 keeps Tentacle's `x-rgw-checksum-blake3`. | D21's "AWS's names"; main's table makes sha512 and xxhash3 AWS types ([rgw_cksum.h:93-107](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L93-L107)). A v20.2.4 radosgw renders `x-rgw-checksum-sha512`. | WP-1, WP-7, WP-13 |
 | WD-9 | Compressed blocks are never longer than `rgw_max_chunk_size` of plaintext. zlib's `compressor_message` states the window rgw-go used: -15 for raw deflate, 15 for the zlib wrapper, 31 for gzip, never a narrower one. | A larger block exposes a coexisting radosgw to its ranged-GET loop ("A ranged GET of a compressed object does not spin"); Go's deflate always uses a 32 KiB window, which a narrower one cannot inflate (§4). | WP-4, WP-10 |
-| WD-10 | `random` and a codec rgw-go cannot load store the object uncompressed and log once. | radosgw's missing plugin does the same (`src/rgw/rgw_op.cc:4563-4587@v20.2.4`); `random` is a teuthology setting. | WP-10 |
-| WD-11 | Lifecycle's transition copies raw: `copyData` takes a raw flag that skips every compression and checksum filter and keeps the stored attrs. | `transition_obj` streams with no data-processor factory on both tags (`src/rgw/driver/rados/rgw_rados.cc:5417-5487@v20.2.4#RGWRados::transition_obj`). | WP-11 |
+| WD-10 | `random` and a codec rgw-go cannot load store the object uncompressed and log once. | radosgw's missing plugin does the same ([rgw_op.cc:4563-4587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4563-L4587)); `random` is a teuthology setting. | WP-10 |
+| WD-11 | Lifecycle's transition copies raw: `copyData` takes a raw flag that skips every compression and checksum filter and keeps the stored attrs. | `transition_obj` streams with no data-processor factory on both tags ([rgw_rados.cc:5417-5487](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5487)). | WP-11 |
 | WD-12 | `?layout` answers `dump_obj_layout`'s error as an error, not a truncated 200. | Defect 10. | WP-21 |
-| WD-13 | An otp put is refused with 400 InvalidArgument before any write for a `step_size` of 0, a type other than TOTP, a seed type other than hex or base32, or a NUL in the key. | Defect 11 takes the class's divide out of reach; the type and seed rules are `radosgw-admin mfa create`'s (`src/rgw/rgw_admin.cc:10810-10817@v19.2.7`). | WP-19 |
-| WD-14 | The otp section applies `update-type` as rgw-go's other sections do. Its put answers Squid's 204 with `RGWX_UPDATE_STATUS: applied` and Tentacle's 200 without it, and `RGWX_UPDATE_VERSION: ver:0,tag:` on both. | radosgw applies every otp put whatever `update-type` says (`src/rgw/driver/rados/rgw_otp.cc:120-140@v19.2.7`, `src/rgw/driver/rados/rgw_otp.cc:70-82@v20.2.4`); the status and version headers are its bytes (`src/rgw/rgw_rest_metadata.cc:234-284@v20.2.4`). | WP-18, WP-19 |
+| WD-13 | An otp put is refused with 400 InvalidArgument before any write for a `step_size` of 0, a type other than TOTP, a seed type other than hex or base32, or a NUL in the key. | Defect 11 takes the class's divide out of reach; the type and seed rules are `radosgw-admin mfa create`'s ([rgw_admin.cc:10810-10817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10810-L10817)). | WP-19 |
+| WD-14 | The otp section applies `update-type` as rgw-go's other sections do. Its put answers Squid's 204 with `RGWX_UPDATE_STATUS: applied` and Tentacle's 200 without it, and `RGWX_UPDATE_VERSION: ver:0,tag:` on both. | radosgw applies every otp put whatever `update-type` says ([rgw_otp.cc:120-140](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L140), [rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82)); the status and version headers are its bytes ([rgw_rest_metadata.cc:234-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L234-L284)). | WP-18, WP-19 |
 
 ## Seams
 
@@ -178,38 +178,38 @@ client's `otp_check`.
     `FlagComposite`, `FlagFullObject`, `FlagCombined`.
 - **Behaviour:**
   1. **Types.** none 0, crc32 1, crc32c 2, xxh3 3, sha1 4, sha256 5, sha512 6, blake3 7,
-     crc64nvme 8, with digest sizes 4, 4, 8, 20, 32, 64, 32, 8 (`src/rgw/rgw_cksum.h:41-52@v20.2.4`,
-     `src/rgw/rgw_cksum.h:88-99@v20.2.4`). crc32, crc32c and crc64nvme are CRCs.
+     crc64nvme 8, with digest sizes 4, 4, 8, 20, 32, 64, 32, 8 ([rgw_cksum.h:41-52](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L41-L52),
+     [rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99)). crc32, crc32c and crc64nvme are CRCs.
   2. **Names.** `ParseName` matches case-insensitively, as `parse_cksum_type` does
-     (`src/rgw/rgw_cksum.h:293-300@v20.2.4`), over Tentacle's names and main's `xxhash3` for
-     type 3 (`src/rgw/rgw_cksum.h:41-56@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`).
+     ([rgw_cksum.h:293-300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L293-L300)), over Tentacle's names and main's `xxhash3` for
+     type 3 ([rgw_cksum.h:41-56](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L41-L56)).
      `ForeignName` is true for main's `md5`, `xxhash64` and `xxhash128`, which have no Tentacle
      id.
   3. **Header and element names** follow WD-8:
      - an AWS type's header is `x-amz-checksum-<name>`, any other's `x-rgw-checksum-<name>`, and
-       the element `Checksum<NAME>` (`src/rgw/rgw_cksum.h:177-192@v20.2.4`);
+       the element `Checksum<NAME>` ([rgw_cksum.h:177-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L177-L192));
      - rgw-go's AWS set is v20.2.4's (crc32, crc32c, sha1, sha256, crc64nvme) plus main's sha512
-       and xxhash3 (`src/rgw/rgw_cksum.h:93-107@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`);
+       and xxhash3 ([rgw_cksum.h:93-107](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L93-L107));
      - blake3 stays `x-rgw-checksum-blake3`.
-  4. **The armor** is the base64 of the raw digest (`src/rgw/rgw_cksum.h:199-207@v20.2.4`). A CRC
-     digest is big-endian (`src/rgw/rgw_crc_digest.h:41-121@v20.2.4`).
+  4. **The armor** is the base64 of the raw digest ([rgw_cksum.h:199-207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L199-L207)). A CRC
+     digest is big-endian ([rgw_crc_digest.h:41-121](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crc_digest.h#L41-L121)).
   5. **The record** is `Cksum::encode`: ENCODE_START(2, 1), u16 type, u16 digest size, the
      digest, u16 flags. A v1 record decodes with flags 0
-     (`src/rgw/rgw_cksum.h:258-281@v20.2.4#rgw::cksum::Cksum::encode`).
+     ([rgw_cksum.h:258-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L258-L281)).
   6. **Refusals (defect 9).** A decode fails for a type above 8 and for a digest size other than
      the type's, so a reader turns either into "no checksum". `Encode` is reached only with a
      `Cksum` that `Finish` (WP-2) or `DecodeCksum` built, neither of which yields one; a
      `Valid() error` method lets the driver (WP-8) check before it sets the attr.
   7. **Flags.** V2 0x1, COMPOSITE 0x2, FULL_OBJECT 0x4, COMBINED 0x8. `Composite` means both
-     COMPOSITE and COMBINED (`src/rgw/rgw_cksum.h:104-113@v20.2.4`,
-     `src/rgw/rgw_cksum.h:163-175@v20.2.4`).
+     COMPOSITE and COMBINED ([rgw_cksum.h:104-113](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L104-L113),
+     [rgw_cksum.h:163-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L163-L175)).
   8. **`ObjectType`** is `get_checksum_type`: FULL_OBJECT for a non-multipart object; for a
      multipart one FULL_OBJECT only when V2 is set and the record is not composite, else
-     COMPOSITE (`src/rgw/rgw_cksum.h:382-399@v20.2.4`). **`PartType`** is main's
+     COMPOSITE ([rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)). **`PartType`** is main's
      `get_part_checksum_type`: COMPOSITE only when the flags say so (WD-5).
   9. **`FlagsOf`** is `cksum_flags_of`: FULL_OBJECT for a CRC, 0 for none, COMPOSITE otherwise.
      **`Permitted`** is `permitted_cksum_algo_and_type`: none passes; COMPOSITE passes unless
-     crc64nvme; FULL_OBJECT or 0 passes only for a CRC (`src/rgw/rgw_cksum.h:340-356@v20.2.4`).
+     crc64nvme; FULL_OBJECT or 0 passes only for a CRC ([rgw_cksum.h:340-356](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L340-L356)).
 - **Specs:**
   - the type, name, size and flag tables as `DescribeTable` rows, `xxhash3` and `XXH3` both
     type 3, `MD5` foreign, `FOO` neither;
@@ -238,9 +238,9 @@ client's `otp_check`.
      `hash/crc64` with the reflected NVMe polynomial, init and xorout all ones as `hash/crc64`
      applies them. Go's `Sum` appends big-endian, which is the stored order.
   2. **The digests** are `crypto/sha1`, `crypto/sha256` and `crypto/sha512`.
-  3. **The combiner** follows `src/rgw/rgw_cksum.cc:96-155@v20.2.4`:
+  3. **The combiner** follows [rgw_cksum.cc:96-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L96-L155):
      - a CRC upload combines `crc(a||b)` from `crc(a)`, `crc(b)` and `len(b)`
-       (`src/rgw/rgw_cksum.cc:31-89@v20.2.4#rgw::cksum::combine_crc_cksum`), and ORs
+       ([rgw_cksum.cc:31-89](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L31-L89)), and ORs
        FULL_OBJECT|COMBINED into the flags;
      - any other type digests the concatenated raw part digests and ORs COMPOSITE|COMBINED.
   4. **WD-1's two corrections.** A CRC upload whose flags say COMPOSITE gets the composite: the
@@ -252,8 +252,8 @@ client's `otp_check`.
   6. `Append` refuses a part of another type.
 - **Specs:**
   - radosgw's vectors: CRC32 `mLLFvQ==`, CRC32C `ldwuSw==`
-    (`src/test/rgw/test_rgw_cksum.cc:106-143@v20.2.4`), and the awscli CRC64NVME values
-    `wiBA+PSv41M=` and `oa2U66pdPLk=` (`src/test/rgw/test_rgw_cksum.cc:440-467@v20.2.4`);
+    ([test_rgw_cksum.cc:106-143](https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/test_rgw_cksum.cc#L106-L143)), and the awscli CRC64NVME values
+    `wiBA+PSv41M=` and `oa2U66pdPLk=` ([test_rgw_cksum.cc:440-467](https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/test_rgw_cksum.cc#L440-L467));
   - the s3-tests values: 1024 × `A` gives SHA256 `arcu6553sHVAiX4MjW0j7I7vD4w6R+Gz9Ok0Q9lTa+0=` and
     CRC64NVME `Qeh8oXvGiSo=`; the 5 MiB A, B and C parts combine to CRC32 `WgDhBQ==`, CRC32C
     `xU+Krw==`, CRC64NVME `i+6LR0y3eFo=`, SHA1 `sizjvY4eud3MrcHdZM3cQ/ol39o=-3` and SHA256
@@ -274,7 +274,7 @@ client's `otp_check`.
   EOF.
 - **Behaviour:**
   1. radosgw puts each trailer `x-amz-trailer` names into the request's environment as it
-     completes the body (`src/rgw/rgw_auth_s3.cc:1459-1488@v20.2.4`).
+     completes the body ([rgw_auth_s3.cc:1459-1488](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1488)).
   2. rgw-go parses the trailer section as lines, under phase 1's bound and rules ("aws-chunked
      trailer sections are read line by line", `docs/exclusions.md:1861`), for the signed-trailer
      and the unsigned-trailer payloads alike. Today it parses only the signed one
@@ -302,14 +302,14 @@ client's `otp_check`.
   - `Encoder interface{ Encode(dst, src []byte) (block []byte, message *int32, err error) }`.
 - **Behaviour:** each codec's Ceph framing, so either gateway decodes the block (§2.2):
   1. **zlib:** one byte 0, then a deflate stream at the level
-     (`src/compressor/zlib/ZlibCompressor.cc:94-154@v20.2.4#ZlibCompressor::zlib_compress`; the
-     options `src/common/options/global.yaml.in:768-781@v20.2.4`). WD-9's message: -15 for a
+     ([ZlibCompressor.cc:94-154](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L94-L154); the
+     options [global.yaml.in:768-781](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L768-L781)). WD-9's message: -15 for a
      negative winsize (raw deflate), 15 for a winsize of 8 to 15 (the zlib wrapper), 31 above 15
      (gzip). Never a narrower window than the 32 KiB Go's deflate uses.
   2. **zstd:** a le32 decompressed length, then one frame at the level klauspost maps from
-     `compressor_zstd_level` (`src/compressor/zstd/ZstdCompressor.h:29-60@v20.2.4`).
+     `compressor_zstd_level` ([ZstdCompressor.h:29-60](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L29-L60)).
   3. **lz4:** a u32 count of 1, then one (u32 origin_len, u32 compressed_len) pair, then the
-     block (`src/compressor/lz4/LZ4Compressor.cc:36-80@v20.2.4#LZ4Compressor::compress`).
+     block ([LZ4Compressor.cc:36-80](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/lz4/LZ4Compressor.cc#L36-L80)).
   4. **snappy:** a raw snappy block.
 - **Specs:** each codec round-trips through phase 1's `NewDecoder`; the framing bytes (zlib's
   leading 0, zstd's length, lz4's count and pair); the message per winsize, including 8, which
@@ -356,14 +356,14 @@ client's `otp_check`.
 - **Behaviour:**
   1. **The algorithm** of a PutObject or UploadPart, first match wins:
      1. `x-amz-checksum-algorithm`, else `x-amz-sdk-checksum-algorithm`, radosgw's order
-        (`src/rgw/rgw_cksum_pipe.h:65-82@v20.2.4`);
+        ([rgw_cksum_pipe.h:65-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L65-L82));
      2. else the one `x-amz-checksum-<alg>` header present (WD-2);
      3. else the checksum `x-amz-trailer` names (WD-2);
-     4. else, for a part, its upload's type and flags (`src/rgw/rgw_op.cc:4471-4472@v20.2.4`);
+     4. else, for a part, its upload's type and flags ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472));
      5. else none: nothing is computed.
   2. **Names** go through `cksum.ParseName`. Each refusal is 400 InvalidArgument, radosgw's
-     EINVAL (`src/rgw/rgw_cksum_pipe.cc:40-73@v20.2.4#rgw::putobj::RGWPutObj_Cksum::Factory`,
-     `src/rgw/rgw_op.cc:4601-4611@v20.2.4`):
+     EINVAL ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73),
+     [rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611)):
      - an algorithm header with no value, or naming no algorithm;
      - a `ForeignName` (MD5, XXHASH64, XXHASH128): Review Focus 4;
      - a Tentacle type that is not `Writable` (XXHASH3 or XXH3, BLAKE3), D21.
@@ -377,23 +377,23 @@ client's `otp_check`.
      - A part, or a completion, of an upload whose stored type rgw-go cannot compute is 501
        NotImplemented with nothing written (D21): xxh3, blake3, or a type above 8 that a newer
        radosgw stored.
-  6. **CreateMultipartUpload** (`src/rgw/rgw_rest_s3.cc:4507-4521@v20.2.4`):
+  6. **CreateMultipartUpload** ([rgw_rest_s3.cc:4507-4521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4507-L4521)):
      - the same two algorithm headers. A name that is no algorithm is none, without an error,
        as radosgw takes it. An algorithm D21 refuses is 400 InvalidArgument, as on PutObject
        (the notes say why);
      - `x-amz-checksum-type`: `full_object` gives FULL_OBJECT and `composite` COMPOSITE,
        case-insensitively; any other value gives 0; absent, `FlagsOf`
-       (`src/rgw/rgw_cksum_pipe.h:138-154@v20.2.4`);
-     - a pair `Permitted` refuses is 400 InvalidRequest (`src/rgw/rgw_cksum.h:340-356@v20.2.4`).
+       ([rgw_cksum_pipe.h:138-154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L138-L154));
+     - a pair `Permitted` refuses is 400 InvalidRequest ([rgw_cksum.h:340-356](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L340-L356)).
   7. **CompleteMultipartUpload.** The supplied value is the `x-amz-checksum-<alg>` header naming
      the upload's type, CRC64NVME included (WD-4; radosgw's scan stops before it,
-     `src/rgw/rgw_cksum_pipe.h:120-136@v20.2.4`). A value header naming another type is the
+     [rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136)). A value header naming another type is the
      comparison's 400 BadDigest. It travels in `Upload.SuppliedChecksum`.
   8. **Squid (D22).** CreateMultipartUpload's algorithm and type are ignored, with no error. A
      part takes no upload type. A part's own value follows rules 1 to 4. Completion's supplied
      value is ignored.
   9. **Where in the flow.** Every refusal comes where radosgw's Factory runs: after
-     authorization, before the body is read (`src/rgw/rgw_op.cc:4563-4616@v20.2.4`).
+     authorization, before the body is read ([rgw_op.cc:4563-4616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4563-L4616)).
 - **Specs** (counterfeiter fakes and memstore):
   - a table from header sets to `ChecksumRequest` or error, per op and release, for each rule;
   - **Review Focus 4: an algorithm a v20.2.4 radosgw cannot read is refused at write.** Rows: MD5,
@@ -425,12 +425,12 @@ client's `otp_check`.
   1. The handler hands WP-6 a `Field` lookup over the request's headers and the request's
      `AuthResult.Trailers`.
   2. PutObject, UploadPart and UploadPartCopy answer `x-amz-checksum-type: FULL_OBJECT` and the
-     value header for an AWS type (`src/rgw/rgw_rest_s3.cc:2891-2925@v20.2.4#RGWPutObj_ObjStore_S3::send_response`),
+     value header for an AWS type ([rgw_rest_s3.cc:2891-2925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2891-L2925)),
      with WD-8's names.
   3. CreateMultipartUpload answers `x-amz-checksum-algorithm` upper-cased and no
-     `x-amz-checksum-type` (`src/rgw/rgw_rest_s3.cc:4540-4542@v20.2.4`); nothing on Squid.
+     `x-amz-checksum-type` ([rgw_rest_s3.cc:4540-4542](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4540-L4542)); nothing on Squid.
   4. CompleteMultipartUpload answers `Checksum<ALG>`, with `-N` for a composite, and
-     `ChecksumType` (`src/rgw/rgw_rest_s3.cc:4635-4640@v20.2.4`); nothing on Squid.
+     `ChecksumType` ([rgw_rest_s3.cc:4635-4640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4640)); nothing on Squid.
 - **Specs:** each response per release, bodies byte-compared with xmltext; a request with no
   checksum sends neither header; SHA512's `x-amz-checksum-sha512`.
 - **Exclusions and registry:** WD-8's naming, which differs from a v20.2.4 radosgw's
@@ -446,19 +446,19 @@ client's `otp_check`.
   heads and part heads, the part record's checksum, and `ObjectState.Checksum`.
 - **Behaviour:**
   1. A plaintext sink, WP-10 (a)'s stage, hashes the body beside the MD5 with `cksum.NewHash`.
-  2. After the body, radosgw's order (`src/rgw/rgw_op.cc:4757-4790@v20.2.4`): the length check,
+  2. After the body, radosgw's order ([rgw_op.cc:4757-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790)): the length check,
      aws4 completion, the second quota check, Content-MD5 (400 BadDigest), the supplied ETag
      (422), then the checksum.
      - The checksum compares the expected value with the computed armor as strings
-       (`src/rgw/rgw_cksum_pipe.h:193-211@v20.2.4`).
+       ([rgw_cksum_pipe.h:193-211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L211)).
      - A mismatch is 400 BadDigest before the head write, with the tails written so far
        discarded as phase 1 discards them on a Content-MD5 mismatch.
   3. `user.rgw.cksum` goes into the same guarded head write, with radosgw's flags: 0 on an
      object and the upload's flags on a part. `finalize()` leaves V2 clear on every stored
-     checksum (`src/rgw/rgw_cksum_pipe.h:187-191@v20.2.4`).
+     checksum ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191)).
   4. A part head carries the part's `user.rgw.cksum` on both releases. The part record carries it
      as `RGWUploadPartInfo.cksum` at version 6 on Tentacle only
-     (`src/rgw/driver/rados/rgw_putobj_processor.cc:525-584@v20.2.4#MultipartObjectProcessor::complete`).
+     ([rgw_putobj_processor.cc:525-584](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L525-L584)).
   5. `CopyPart` hashes the decoded source with its upload's type through the same stage.
   6. `StatObject` decodes the attr into `ObjectState.Checksum`; a record WP-1 refuses gives nil.
   7. **The store's own guard.** A `ChecksumRequest` whose type is not `Writable` is refused with
@@ -486,23 +486,23 @@ client's `otp_check`.
   part checksums, and the combined checksum.
 - **Behaviour:**
   1. **CreateUpload** writes the type and flags into `multipart_upload_info` at v4 on Tentacle,
-     and at v2 without them on Squid (`src/rgw/rgw_common.h:1552-1592@v20.2.4`,
-     `src/rgw/rgw_common.h:1508-1538@v19.2.7`), as radosgw's init does
-     (`src/rgw/rgw_op.cc:7003-7010@v20.2.4`, `src/rgw/driver/rados/rgw_sal_rados.cc:4150-4154@v20.2.4`).
+     and at v2 without them on Squid ([rgw_common.h:1552-1592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1552-L1592),
+     [rgw_common.h:1508-1538](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1538)), as radosgw's init does
+     ([rgw_op.cc:7003-7010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7003-L7010), [rgw_sal_rados.cc:4150-4154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4150-L4154)).
   2. **GetUpload** decodes them into `Upload.Checksum`. **ListParts** returns each part's
      checksum from its record.
-  3. **Complete**, on Tentacle, for an upload with a type (`src/rgw/rgw_op.cc:7211-7341@v20.2.4`):
+  3. **Complete**, on Tentacle, for an upload with a type ([rgw_op.cc:7211-7341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7211-L7341)):
      1. Under the completion lock, it combines exactly the parts the request names, in its order,
         from the part records the assembly already reads, through WP-2's combiner (WD-4,
         defect 1). The combination is one function in `mp_cksum.go`, called once from the
         assembly loop.
      2. A named part without a checksum, or of another type, is 400 InvalidRequest
-        (`src/rgw/rgw_op.cc:7105-7131@v20.2.4`).
+        ([rgw_op.cc:7105-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7105-L7131)).
      3. The armored value carries `-<parts named>` when the result is composite.
      4. The supplied value (WD-4) is compared before the head write; a mismatch is 400
         BadDigest.
      5. The combined record goes into the head's attrs.
-     6. A retried completion answers from the stored checksum (`src/rgw/rgw_op.cc:7474-7501@v20.2.4`).
+     6. A retried completion answers from the stored checksum ([rgw_op.cc:7474-7501](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7474-L7501)).
   4. **Squid** writes v2 info and combines nothing (D22).
 - **Specs** (fakerados):
   - two- and three-part uploads, composite and full-object, each CRC and digest type;
@@ -534,19 +534,19 @@ client's `otp_check`.
   1. **PR (a) changes no behaviour.** Tails keep `SetAllocHint(0, 0, 0)`
      (`internal/driver/stripe.go:308`, `internal/driver/stripe.go:540`); the head keeps no hint.
   2. **Choosing a compressor.** The destination placement's class `compression_type`, "none"
-     when unset (`src/rgw/driver/rados/rgw_zone.cc:356-365@v19.2.7#RGWZoneParams::get_compression_type`,
-     `src/rgw/driver/rados/rgw_zone.cc:356-365@v20.2.4#RGWZoneParams::get_compression_type`),
+     when unset ([rgw_zone.cc:356-365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_zone.cc#L356-L365),
+     [rgw_zone.cc:356-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.cc#L356-L365)),
      which phase 1 resolves into `op.Placement.Compression`. `random` and a codec rgw-go cannot
      load store the object uncompressed and log once (WD-10; radosgw's `random` is
-     `src/rgw/rgw_op.cc:4088-4108@v19.2.7#get_compressor_plugin`,
-     `src/rgw/rgw_op.cc:4297-4317@v20.2.4#get_compressor_plugin`).
+     [rgw_op.cc:4088-4108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4088-L4108),
+     [rgw_op.cc:4297-4317](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4297-L4317)).
   3. **Encrypted writes.** radosgw skips the compressor for an encrypted write unless the
-     zonegroup has `compress-encrypted` (`src/rgw/rgw_op.cc:4341-4371@v19.2.7`,
-     `src/rgw/rgw_op.cc:4563-4587@v20.2.4`). No phase 2 write is encrypted, so the rule has no
+     zonegroup has `compress-encrypted` ([rgw_op.cc:4341-4371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4341-L4371),
+     [rgw_op.cc:4563-4587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4563-L4587)). No phase 2 write is encrypted, so the rule has no
      case until phase 4; the stage takes the flag so phase 4 sets it.
   4. **Blocks.** The plaintext is cut into `rgw_max_chunk_size` blocks, the last shorter, each
-     one encoder call (WD-9; `src/rgw/rgw_compression.cc:44-88@v20.2.4#RGWPutObj_Compress::process`,
-     `src/rgw/rgw_rest.cc:1073-1106@v20.2.4#RGWPutObj_ObjStore::get_data`):
+     one encoder call (WD-9; [rgw_compression.cc:44-88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_compression.cc#L44-L88),
+     [rgw_rest.cc:1073-1106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1073-L1106)):
      - each block records `{old_ofs = plaintext offset, new_ofs = end of the previous block, len}`;
      - a first block that fails stores the whole object raw; a later failure is 500, radosgw's
        EIO.
@@ -555,19 +555,19 @@ client's `otp_check`.
   6. **What stays on the plaintext:** the MD5, the declared length, `rgw_max_put_size`, both
      quota checks and WP-8's checksum.
   7. **The attr.** `user.rgw.compression` is `RGWCompressionInfo` v2 {type, orig_size = the
-     plaintext size, compressor_message, blocks} (`src/rgw/rgw_op.cc:4454-4463@v19.2.7`,
-     `src/rgw/rgw_op.cc:4686-4695@v20.2.4`, `src/rgw/rgw_compression_types.h:18-73@v20.2.4`).
+     plaintext size, compressor_message, blocks} ([rgw_op.cc:4454-4463](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4454-L4463),
+     [rgw_op.cc:4686-4695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4686-L4695), [rgw_compression_types.h:18-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_compression_types.h#L18-L73)).
      The index entry's accounted size is the plaintext size, which phase 1's `origSize` already
      takes from the attr (`internal/driver/put.go:152`).
   8. **Hints.** INCOMPRESSIBLE (512) on every tail write and on the head's `write_full` of a
-     compressed object (`src/rgw/driver/rados/rgw_putobj_processor.cc:146-155@v20.2.4#RadosWriter::add_write_hint`,
-     `src/rgw/driver/rados/rgw_rados.cc:3326-3335@v20.2.4`, `src/include/rados/librados.h:157@v20.2.4`).
+     compressed object ([rgw_putobj_processor.cc:146-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L146-L155),
+     [rgw_rados.cc:3326-3335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3326-L3335), [librados.h:157](https://github.com/ceph/ceph/blob/v20.2.4/src/include/rados/librados.h#L157)).
   9. **Parts.** Each part compresses on its own, and its record carries its `cs_info`
-     (`src/rgw/driver/rados/rgw_putobj_processor.cc:586-591@v20.2.4`), today type none
+     ([rgw_putobj_processor.cc:586-591](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L586-L591)), today type none
      (`internal/driver/mp_part.go:183`). UploadPartCopy gets the same through `PutPart`
      (`internal/driver/mp_part.go:291-296`).
   10. **Completion** keeps phase 1's merge, which refuses mixed parts and concatenates the block
-      maps (`src/rgw/driver/rados/rgw_sal_rados.cc:4379-4414@v20.2.4`;
+      maps ([rgw_sal_rados.cc:4379-4414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4379-L4414);
       `internal/driver/mp_complete.go:39-60`). POST object compresses through `PutObject`, with
       nothing for BC-32 to add.
 - **Specs** (fakerados):
@@ -595,14 +595,14 @@ client's `otp_check`.
 - **Behaviour:**
   1. **A streamed copy of an uncompressed source** into a placement with a compression type
      compresses through WP-10's stage, on both releases (D23; Tentacle's `RGWCopyObjDPF`,
-     `src/rgw/rgw_op.cc:5825-5884@v20.2.4`). Squid's radosgw stores it raw.
+     [rgw_op.cc:5825-5884](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5825-L5884)). Squid's radosgw stores it raw.
   2. **A compressed source** stays a raw copy with its codec and attr, whatever the
      destination names (owner decision 4). Tentacle's radosgw re-encodes it.
   3. **The raw flag.** `copyData` (`internal/driver/copy.go:431`) takes a raw flag. True skips
      every filter and keeps the stored compression and checksum attrs, `transition_obj`'s nil
      data-processor factory (WD-11). C11 passes true; a client's CopyObject passes false.
   4. **The checksum attr** follows `set_copy_attrs`: kept under COPY, dropped under REPLACE
-     (`src/rgw/driver/rados/rgw_rados.cc:3858-3885@v20.2.4#set_copy_attrs`). A composite
+     ([rgw_rados.cc:3858-3885](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3858-L3885)). A composite
      checksum is also dropped when the copy streams (WD-6). CopyObject computes and checks no
      checksum, as radosgw's does not (§2.1).
   5. A copy that shares tails (`internal/driver/copy.go:89-103` decides) is unchanged.
@@ -622,21 +622,21 @@ client's `otp_check`.
   **Produces:** the checksum each read reports, for WP-13 to render.
 - **Behaviour:**
   1. **Whether to show one.** GET and HEAD show it when `x-amz-checksum-mode` equals `enabled`
-     case-insensitively and there is no Range (`src/rgw/rgw_rest_s3.cc:314-318@v20.2.4`,
-     `src/rgw/rgw_rest_s3.cc:548-586@v20.2.4`). A record that does not decode shows nothing.
+     case-insensitively and there is no Range ([rgw_rest_s3.cc:314-318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L314-L318),
+     [rgw_rest_s3.cc:548-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586)). A record that does not decode shows nothing.
   2. **The whole object** takes `ObjectType` with the parts count; a composite shows
      `<armor>-<parts>`, with `x-amz-checksum-type` beside it.
-  3. **A `partNumber` read** takes the part head's record (`src/rgw/driver/rados/rgw_rados.cc:7727-7783@v20.2.4`)
+  3. **A `partNumber` read** takes the part head's record ([rgw_rados.cc:7727-7783](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7727-L7783))
      through `PartType`, bare (WD-5).
   4. **A composite on an object without parts** shows nothing (WD-6).
   5. **GetObjectAttributes**' `Checksum` follows rules 2 and 4. Each part's checksum comes from
      the part head it already stats, never from another part's
-     (`src/rgw/rgw_rest_s3.cc:4029-4057@v20.2.4`, `src/rgw/rgw_rest_s3.cc:4083-4096@v20.2.4`,
-     `src/rgw/driver/rados/rgw_sal_rados.cc:2908-2925@v20.2.4`). The registry's "radosgw's
+     ([rgw_rest_s3.cc:4029-4057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057), [rgw_rest_s3.cc:4083-4096](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4083-L4096),
+     [rgw_sal_rados.cc:2908-2925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2908-L2925)). The registry's "radosgw's
      ObjectParts gives a part without a checksum the checksum of the part before it" is not
      reproduced.
   6. **ListParts** takes `ChecksumAlgorithm` and `ChecksumType` from the upload (WD-7;
-     radosgw's `src/rgw/rgw_rest_s3.cc:4695-4698@v20.2.4`), and each part's checksum.
+     radosgw's [rgw_rest_s3.cc:4695-4698](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698)), and each part's checksum.
   7. **Squid** shows what it stores, as phase 1 serves GetObjectAttributes on Squid too.
 - **Specs** (fakes): each rule; a Range suppressing the headers; an undecodable record; a CRC
   upload's part read bare with FULL_OBJECT; a composite on a copy without parts; a part without
@@ -657,10 +657,10 @@ client's `otp_check`.
   1. GET and HEAD send `x-amz-checksum-<alg>` or `x-rgw-checksum-<alg>` with WD-8's names, and
      `x-amz-checksum-type`.
   2. GetObjectAttributes' `<Checksum>` holds `Checksum<ALG>` and `ChecksumType`, and each part
-     its element (`src/rgw/rgw_rest_s3.cc:4029-4057@v20.2.4`, `src/rgw/rgw_rest_s3.cc:4083-4096@v20.2.4`).
+     its element ([rgw_rest_s3.cc:4029-4057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057), [rgw_rest_s3.cc:4083-4096](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4083-L4096)).
      Phase 1's empty `<Checksum></Checksum>` (`internal/s3/getobjattrs.go:75-87`) becomes what
      radosgw renders for an absent or undecodable record.
-  3. ListParts' elements (`src/rgw/rgw_rest_s3.cc:4695-4713@v20.2.4`), with WD-7's two.
+  3. ListParts' elements ([rgw_rest_s3.cc:4695-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4713)), with WD-7's two.
 - **Specs:** bodies byte-compared with xmltext; each header set, per release.
 - **Exclusions and registry:** none beyond WP-12's.
 - **Depends on:** WP-12, WP-7; V14a by the hot-file order. **PR:** one. **Brief:** about 120
@@ -748,18 +748,18 @@ client's `otp_check`.
   - `Remove(op radosclient.Execer, ids []string, r denc.Release)`;
   - `GetCurrentTime(op *radosclient.ReadOp, r denc.Release) *TimeResult`.
 - **Behaviour:**
-  1. **The wire types,** all v1 (`src/cls/otp/cls_otp_types.h:31-77@v19.2.7`,
-     `src/cls/otp/cls_otp_ops.h:11-167@v19.2.7`): `otp_info_t` is u8 type (TOTP 2), id, seed, u8
+  1. **The wire types,** all v1 ([cls_otp_types.h:31-77](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L31-L77),
+     [cls_otp_ops.h:11-167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_ops.h#L11-L167)): `otp_info_t` is u8 type (TOTP 2), id, seed, u8
      seed type (hex 1, base32 2), bufferlist `seed_bin`, i32 `time_ofs`, u32 `step_size`
      (default 30), u32 `window` (default 2). The set, get, reply and remove ops sit beside it.
-  2. **The calls** are `src/cls/otp/cls_otp_client.cc:33-188@v19.2.7`, identical at v20.2.4 but for
+  2. **The calls** are [cls_otp_client.cc:33-188](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L33-L188), identical at v20.2.4 but for
      `otp_check`, which V13a owns. Method flags: `otp_set` RD|WR, `otp_get` RD, `otp_remove`
-     RD|WR, `get_current_time` RD (`src/cls/otp/cls_otp.cc:558-575@v19.2.7`).
+     RD|WR, `get_current_time` RD ([cls_otp.cc:558-575](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L558-L575)).
   3. **The JSON** is `dump` and `decode_json`: type as an int, id, seed, `seed_type` as `hex`,
      `base32` or `unknown`, `time_ofs`, `step_size`, `window`. `seed_bin` is never shown
-     (`src/cls/otp/cls_otp_types.cc:30-71@v19.2.7`).
+     ([cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L30-L71)).
   4. **The object** is `"user:" + uid.String()` in the zone's `otp_pool`
-     (`src/rgw/services/svc_cls.h:56-58@v19.2.7`, `src/rgw/services/svc_cls.h:56-58@v20.2.4`).
+     ([svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.h#L56-L58), [svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.h#L56-L58)).
 - **Specs:** request bytes for each call, from corpus goldens where `ceph-object-corpus` has
   the type and hand-built from the encoders otherwise; reply decoding; the JSON round trip,
   `seed_bin` never shown; `OTPObject` for a plain and a tenant user.
@@ -779,16 +779,16 @@ client's `otp_check`.
      panics at assembly; an unknown method is EOPNOTSUPP.
   2. **Storage** is the class's: omap `header` holds `otp_header{set<id>}` v1, and `otp/<id>`
      holds `otp_instance{otp_info_t, list<otp_check_t> last_checks, u64 last_success}` v1
-     (`src/cls/otp/cls_otp.cc:45-90@v19.2.7`). The instance type keeps `last_checks` and
+     ([cls_otp.cc:45-90](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L45-L90)). The instance type keeps `last_checks` and
      `last_success` for V13b's methods.
   3. **`otp_set`** reads each id's existing instance, so its replay state survives, replaces
      its `otp_info_t`, parses the seed by its type, writes the instance and records the id in
-     `header` (`src/cls/otp/cls_otp.cc:268-348@v19.2.7`).
+     `header` ([cls_otp.cc:268-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L268-L348)).
   4. **`otp_get`** with `get_all` takes the ids from `header` and returns the entries found
-     (`src/cls/otp/cls_otp.cc:396-445@v19.2.7`). **`otp_remove`** and **`get_current_time`**
+     ([cls_otp.cc:396-445](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L396-L445)). **`otp_remove`** and **`get_current_time`**
      follow the same file.
   5. **Errors:** EINVAL for a request that does not decode and for a seed that does not parse;
-     a missing object answers as the class does (`src/cls/otp/cls_otp.cc:268-445@v19.2.7`).
+     a missing object answers as the class does ([cls_otp.cc:268-445](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L268-L445)).
 - **Specs:** each method; a set that preserves a device's replay state; `get_all` against named
   ids; each EINVAL; the write list; a duplicate name panicking.
 - **Exclusions and registry:** none.
@@ -826,14 +826,14 @@ client's `otp_check`.
   section.
 - **Behaviour** (§2.5):
   1. **Keys.** The section's key is the object name `user:<uid>`, with no prefix
-     (`src/rgw/services/svc_otp.cc:15-47@v19.2.7`); its metadata key is `otp:user:<uid>`
-     (`src/rgw/services/svc_meta_be_otp.cc:20-23@v19.2.7`, `src/rgw/driver/rados/rgw_otp.cc:145-148@v20.2.4`).
+     ([svc_otp.cc:15-47](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_otp.cc#L15-L47)); its metadata key is `otp:user:<uid>`
+     ([svc_meta_be_otp.cc:20-23](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.cc#L20-L23), [rgw_otp.cc:145-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L145-L148)).
   2. **get** is one read op: stat for the mtime, a cls_version read, and `otp_get` with `get_all`
-     (`src/rgw/services/svc_cls.cc:218-245@v19.2.7`). It answers `{"devices": [...]}`
-     (`src/rgw/driver/rados/rgw_otp.cc:47-49@v19.2.7`, `src/rgw/driver/rados/rgw_otp.cc:24-26@v20.2.4`).
+     ([svc_cls.cc:218-245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L218-L245)). It answers `{"devices": [...]}`
+     ([rgw_otp.cc:47-49](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L47-L49), [rgw_otp.cc:24-26](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L24-L26)).
      A missing object is ErrNoSuchKey.
-  3. **put** is one write op (`src/rgw/services/svc_cls.cc:65-87@v19.2.7`,
-     `src/rgw/services/svc_cls.cc:188-216@v19.2.7`):
+  3. **put** is one write op ([svc_cls.cc:65-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L65-L87),
+     [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216)):
      - remove with FAILOK, then create(false);
      - the version set: the document's `ver` when its tag is non-empty, else a fresh random tag at
        version 1;
@@ -844,13 +844,13 @@ client's `otp_check`.
   4. **Refusals** before any write, 400 InvalidArgument: WD-13's four.
   5. **update-type and the status** follow WD-14; `RGWX_UPDATE_VERSION` reports `ver:0,tag:`
      through WP-18 (b)'s rule.
-  6. **remove** reads, then removes under the version read (`src/rgw/rgw_metadata.cc:554-573@v19.2.7`,
-     `src/rgw/driver/rados/rgw_otp.cc:84-92@v20.2.4`).
+  6. **remove** reads, then removes under the version read ([rgw_metadata.cc:554-573](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L554-L573),
+     [rgw_otp.cc:84-92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L84-L92)).
   7. **list** lists every object of `OTPPool`, each key its object name
-     (`src/rgw/driver/rados/rgw_otp.cc:110-138@v20.2.4`).
+     ([rgw_otp.cc:110-138](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L110-L138)).
   8. **No cache notify**, as radosgw sends none for otp (§2.6). A put changes no user record: MFA
      through the metadata API also needs the user's `mfa_ids`, which the user section already
-     carries (`src/rgw/rgw_admin.cc:10791-10856@v19.2.7`).
+     carries ([rgw_admin.cc:10791-10856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10791-L10856)).
 - **Specs** (fakerados with WP-17): each verb; each refusal, with nothing written; the release
   split of the put status and headers; `update-type` honoured; a list across pages; a put
   resetting a device's replay state; the document round trip.
@@ -873,10 +873,10 @@ client's `otp_check`.
   the implementation of S2's `LayoutStore.ObjectLayout(ctx context.Context, st *ObjectState) (json.RawMessage, error)`,
   kept off `ObjectStore` so the hot interface is not touched.
 - **Behaviour:** the `result` document of `RadosObject::dump_obj_layout`
-  (`src/rgw/driver/rados/rgw_sal_rados.cc:2780-2826@v19.2.7#RadosObject::dump_obj_layout`,
-  `src/rgw/driver/rados/rgw_sal_rados.cc:3615-3661@v20.2.4#RadosObject::dump_obj_layout`):
+  ([rgw_sal_rados.cc:2780-2826](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2780-L2826),
+  [rgw_sal_rados.cc:3615-3661](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3615-L3661)):
   1. `head`, an `rgw_raw_obj` of `{pool, oid, loc}` from the head ref
-     (`src/rgw/rgw_common.cc:3137-3142@v19.2.7`, `src/rgw/rgw_common.cc:3193-3198@v20.2.4`);
+     ([rgw_common.cc:3137-3142](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L3137-L3142), [rgw_common.cc:3193-3198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3193-L3198));
   2. `manifest`, `RGWObjManifest::dump`. **The tags differ:** `tier_config` prints for
      `cloud-s3` only at v19.2.6, and for every supported tier type at v20.2.4
      (`git diff v19.2.6 v20.2.4 -- src/rgw/driver/rados/rgw_obj_manifest.cc`). Phase 1's
@@ -897,7 +897,7 @@ client's `otp_check`.
 - **Consumes:** WP-20, S2, V6. **Produces:** RGWGetObjLayout (D25).
 - **Behaviour:**
   1. **Dispatch.** An object GET `?layout`, after `acl` and `uploadId` and before `tagging`
-     (`src/rgw/rgw_rest_s3.cc:4835-4843@v19.2.7`, `src/rgw/rgw_rest_s3.cc:5360-5367@v20.2.4`).
+     ([rgw_rest_s3.cc:4835-4843](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4835-L4843), [rgw_rest_s3.cc:5360-5367](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5360-L5367)).
      Phase 1's dispatch row exists (`internal/s3/dispatch.go:207`). HEAD has no such branch, so
      HEAD `?layout` stays a HEAD object.
   2. **The object** is read first, as for every object op: a missing object follows the existing
@@ -905,11 +905,11 @@ client's `otp_check`.
      `versionId` names.
   3. **Permission.** Name `get_obj_layout`, op mask READ. VerifyPermission is
      `CheckCaps(r, "admin", read)` alone, with no ACL or policy evaluated
-     (`src/rgw/rgw_op.h:2537-2554@v20.2.4#RGWGetObjLayout`, `src/rgw/rgw_op.cc:7904-7911@v19.2.7`,
-     `src/rgw/rgw_op.cc:8809-8816@v20.2.4`). The bucket owner without the cap is refused.
+     ([rgw_op.h:2537-2554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2537-L2554), [rgw_op.cc:7904-7911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7904-L7911),
+     [rgw_op.cc:8809-8816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8809-L8816)). The bucket owner without the cap is refused.
   4. **The response.** 200 `application/json`, `{"result": <WP-20's document>}`, with a
-     Content-Length of the body and no Accept-Ranges (`src/rgw/rgw_rest_s3.cc:4368-4385@v19.2.7`,
-     `src/rgw/rgw_rest_s3.cc:4879-4896@v20.2.4`, `src/rgw/rgw_client_io_filters.h:208-236@v20.2.4`).
+     Content-Length of the body and no Accept-Ranges ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+     [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896), [rgw_client_io_filters.h:208-236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L208-L236)).
   5. **A layout error** is answered as an error (WD-12).
 - **Specs:** the cap refusal, the bucket owner included; a missing object before the cap check;
   the body of each shape; a versioned key's current version and a `versionId`; HEAD `?layout`;
@@ -976,26 +976,26 @@ search before any filing.
 
 | # | Defect | Class | Status | rgw-go's choice | Tasks |
 |---|---|---|---|---|---|
-| 1 | CompleteMultipartUpload combines the wrong parts: `try_sum_part_cksums` pages `list_parts` by the request's part count and keeps only the last page (`src/rgw/rgw_op.cc:7068-7092@v20.2.4`, `src/rgw/driver/rados/rgw_sal_rados.cc:4193@v20.2.4`), then combines every part of it. A FULL_OBJECT CRC that SDKs validate on GET then fails the download. | S3-correctness (integrity metadata wrong; data intact) | unreproduced | WD-4: exactly the named parts | WP-9, WP-14 |
-| 2 | `CombinerFactory` ignores the upload's flags (`src/rgw/rgw_cksum.cc:145-155@v20.2.4`), so a CRC upload created COMPOSITE gets a full-object CRC. Also on main at the pin (`src/rgw/rgw_cksum.cc:147-157@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`). | S3-correctness | unreproduced | WD-1: the composite | WP-2, WP-9, WP-14 |
-| 3 | A single-part CRC upload is reported COMPOSITE: its combined record keeps the part's flags without V2 (`src/rgw/rgw_cksum_pipe.h:187-191@v20.2.4`, `src/rgw/rgw_cksum.cc:129-142@v20.2.4`). | S3-correctness | unreproduced | WD-1: `V2\|COMBINED\|FULL_OBJECT` | WP-2, WP-14 |
-| 4 | Two CRC64NVME checks are skipped: completion's supplied value is never compared (`src/rgw/rgw_cksum_pipe.h:120-136@v20.2.4`), nor a part's value sent without an algorithm header (`src/rgw/rgw_cksum_pipe.h:33-63@v20.2.4`). main adds no case (to verify in WP-14). | S3-correctness (integrity check skipped) | unreproduced | compare for every type (WD-4, rule 7 of WP-6) | WP-6, WP-9, WP-14 |
-| 5 | A `partNumber` GET with checksum mode renders the part's checksum as `<armor>-<parts>` with COMPOSITE (`src/rgw/rgw_rest_s3.cc:548-586@v20.2.4`). main renders it bare (`src/rgw/rgw_rest_s3.cc:569-608@f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3`), and s3-tests expect that. | S3-correctness | unreproduced | WD-5: main's rule; known differences | WP-12, WP-13, WP-14 |
-| 6 | A checksum value without an algorithm header is stored without any checksum and never verified (`src/rgw/rgw_cksum_pipe.cc:46-72@v20.2.4`). | S3-correctness (integrity check skipped) | unreproduced | WD-2: infer and verify | WP-6, WP-14 |
-| 7 | Completion accepts a supplied checksum that only starts with the computed one (`src/rgw/rgw_op.cc:7317-7334@v20.2.4`). | S3-correctness, minor | unreproduced | WD-4: exact, or a composite without `-N` | WP-9, WP-14 |
-| 8 | ListParts never reports `ChecksumAlgorithm`: it reads the meta object's `user.rgw.cksum`, which nothing writes (`src/rgw/rgw_rest_s3.cc:4695-4698@v20.2.4`, `src/rgw/rgw_op.cc:7617-7630@v20.2.4`). | S3-correctness, minor | unreproduced | WD-7: from `multipart_upload_info` | WP-12, WP-13, WP-14 |
-| 9 | `Cksum::decode` copies a stored digest size of up to 65535 bytes into a 64-byte array (`src/rgw/rgw_cksum.h:268-281@v20.2.4`), and a v20.2.4 gateway indexes its nine-entry table with any stored type (`src/rgw/rgw_cksum.h:147-149@v20.2.4`), which main's types 9 to 11 overrun in a mixed v20 and v21 zone. | security (memory safety), privileged: a RADOS writer of the attr, or a newer radosgw | unreproduced | refuse both on read, never write either (D21, Review Focus 4); no exclusion; sent to the rgw-bug-reproduction session | WP-1, WP-6, WP-8 |
-| 10 | `?layout` ignores `dump_obj_layout`'s error and answers 200 with a truncated `{"result":{...}}` (`src/rgw/rgw_rest_s3.cc:4879-4896@v20.2.4`, `src/rgw/rgw_rest_s3.cc:4368-4385@v19.2.7`). Both tags. | cosmetic | unreproduced | WD-12: answer the error | WP-21, WP-24 |
+| 1 | CompleteMultipartUpload combines the wrong parts: `try_sum_part_cksums` pages `list_parts` by the request's part count and keeps only the last page ([rgw_op.cc:7068-7092](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7068-L7092), [rgw_sal_rados.cc:4193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4193)), then combines every part of it. A FULL_OBJECT CRC that SDKs validate on GET then fails the download. | S3-correctness (integrity metadata wrong; data intact) | unreproduced | WD-4: exactly the named parts | WP-9, WP-14 |
+| 2 | `CombinerFactory` ignores the upload's flags ([rgw_cksum.cc:145-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L145-L155)), so a CRC upload created COMPOSITE gets a full-object CRC. Also on main at the pin ([rgw_cksum.cc:147-157](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.cc#L147-L157)). | S3-correctness | unreproduced | WD-1: the composite | WP-2, WP-9, WP-14 |
+| 3 | A single-part CRC upload is reported COMPOSITE: its combined record keeps the part's flags without V2 ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191), [rgw_cksum.cc:129-142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L129-L142)). | S3-correctness | unreproduced | WD-1: `V2\|COMBINED\|FULL_OBJECT` | WP-2, WP-14 |
+| 4 | Two CRC64NVME checks are skipped: completion's supplied value is never compared ([rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136)), nor a part's value sent without an algorithm header ([rgw_cksum_pipe.h:33-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L33-L63)). main adds no case (to verify in WP-14). | S3-correctness (integrity check skipped) | unreproduced | compare for every type (WD-4, rule 7 of WP-6) | WP-6, WP-9, WP-14 |
+| 5 | A `partNumber` GET with checksum mode renders the part's checksum as `<armor>-<parts>` with COMPOSITE ([rgw_rest_s3.cc:548-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586)). main renders it bare ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L608)), and s3-tests expect that. | S3-correctness | unreproduced | WD-5: main's rule; known differences | WP-12, WP-13, WP-14 |
+| 6 | A checksum value without an algorithm header is stored without any checksum and never verified ([rgw_cksum_pipe.cc:46-72](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L46-L72)). | S3-correctness (integrity check skipped) | unreproduced | WD-2: infer and verify | WP-6, WP-14 |
+| 7 | Completion accepts a supplied checksum that only starts with the computed one ([rgw_op.cc:7317-7334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317-L7334)). | S3-correctness, minor | unreproduced | WD-4: exact, or a composite without `-N` | WP-9, WP-14 |
+| 8 | ListParts never reports `ChecksumAlgorithm`: it reads the meta object's `user.rgw.cksum`, which nothing writes ([rgw_rest_s3.cc:4695-4698](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698), [rgw_op.cc:7617-7630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7630)). | S3-correctness, minor | unreproduced | WD-7: from `multipart_upload_info` | WP-12, WP-13, WP-14 |
+| 9 | `Cksum::decode` copies a stored digest size of up to 65535 bytes into a 64-byte array ([rgw_cksum.h:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L268-L281)), and a v20.2.4 gateway indexes its nine-entry table with any stored type ([rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149)), which main's types 9 to 11 overrun in a mixed v20 and v21 zone. | security (memory safety), privileged: a RADOS writer of the attr, or a newer radosgw | unreproduced | refuse both on read, never write either (D21, Review Focus 4); no exclusion; sent to the rgw-bug-reproduction session | WP-1, WP-6, WP-8 |
+| 10 | `?layout` ignores `dump_obj_layout`'s error and answers 200 with a truncated `{"result":{...}}` ([rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896), [rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385)). Both tags. | cosmetic | unreproduced | WD-12: answer the error | WP-21, WP-24 |
 | 11 | An otp put with `step_size` 0 makes every later check fault the OSD on a divide (registry, "cls_otp divides by a stored step_size that is never validated", #80948). Both tags. | security (DoS, admin-only) | reproduced in userspace only (registry) | WD-13: refuse it; update the registry's rgw-go line | WP-19 |
-| 12 | An otp put removes and recreates the object (`src/rgw/services/svc_cls.cc:188-216@v19.2.7`), so every device's replay state restarts and a TOTP just used can be used again within its window. Both tags. | security, low (admin-triggered); intended by multisite's design | unreproduced | keep it: the op and the stored form are radosgw's; registry entry as intended behaviour that surprises | WP-19, WP-24 |
+| 12 | An otp put removes and recreates the object ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216)), so every device's replay state restarts and a TOTP just used can be used again within its window. Both tags. | security, low (admin-triggered); intended by multisite's design | unreproduced | keep it: the op and the stored form are radosgw's; registry entry as intended behaviour that surprises | WP-19, WP-24 |
 
 Not defects, recorded so no task re-derives them:
 - `?layout` checks only the `admin` cap, by design.
 - An otp put changes no user record; `radosgw-admin mfa create` writes both the device and the
-  user's `mfa_ids` (`src/rgw/rgw_admin.cc:10791-10856@v19.2.7`).
+  user's `mfa_ids` ([rgw_admin.cc:10791-10856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10791-L10856)).
 - An algorithm header with no value header and no trailer stores the computed checksum
   unverified, as the AWS SDKs' flow expects.
-- RGWEnv's map compares keys case-insensitively (`src/rgw/rgw_common.h:494@v20.2.4`), so a
+- RGWEnv's map compares keys case-insensitively ([rgw_common.h:494](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L494)), so a
   lower-case algorithm value still finds its value header.
 
 Existing registry entries this unit meets:
