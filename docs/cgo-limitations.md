@@ -551,7 +551,8 @@ benchmark was re-run.
   Rook, which allows both AES and AES256KRB5, makes AES256KRB5 the
   preferred type that new daemon keys, the RGW's included, take unless
   `cephx.daemon.keyType` overrides it. rgw-go therefore supports only
-  librados 19.2.6 or later on Squid, or 20.2.4 or later on Tentacle. That is
+  librados 19.2.7 or later on Squid, the spec's cluster floor, or 20.2.4 or
+  later on Tentacle. That is
   a support policy; technically the floor binds only when the key presented
   is AES256KRB5. It is a client floor, not a cluster floor: upgraded
   clusters keep their AES keys working. Under Rook the derived image is
