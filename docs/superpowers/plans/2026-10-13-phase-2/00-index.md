@@ -44,6 +44,8 @@ The set's files:
 | `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F14 |
 | `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL4 |
 
+The dependencies between the tasks are drawn in [dependencies.md](dependencies.md), one graph per unit.
+
 Task ids are the research reports' (`research/research-*.md` beside this index), so every task traces to its verified research. The research cites v19.2.6, where it was done; the plan's units cite v19.2.7.
 
 ## Global Constraints
