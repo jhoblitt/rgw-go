@@ -218,12 +218,19 @@ func (x *indexOp) cancel() {
 	x.s.w.completions.submit(x, x.completion(rgw.OpCancel, rgw.EntryVer{Pool: -1, Epoch: 0}, rgw.DirEntryMeta{Category: rgw.CategoryNone}))
 }
 
-// guardReshard is UpdateIndex::guard_reshard (:7024-7077): call on the
-// current shard, and on a busy-resharding answer wait the reshard out with
-// blockWhileResharding and call again, at most ten times. The count starts
-// over when the wait ended with the instance moving the object to another
-// shard; a shard that keeps refusing the guard while its status reads as
-// finished uses up the ten calls and answers ErrBusyResharding.
+// guardReshard is UpdateIndex::guard_reshard (:7024-7077; v19.2.7
+// :7210-7269): call on the current shard, at most ten times. On a
+// busy-resharding answer it waits the reshard out with blockWhileResharding
+// and calls again. The count starts over when the wait ended with the
+// instance moving the object to another shard; a shard that keeps refusing
+// the guard while its status reads as finished uses up the ten calls and
+// answers ErrBusyResharding. An ErrNotFound means that a reshard committed
+// since the shard was found may have removed it: it reads the instance
+// again, as v19.2.7 does (v19.2.7 :7225-7230) and v20.2.4 does not, and
+// calls again within the same ten only when the instance now puts the object
+// on another shard. A re-read that names the same shard returns the
+// ErrNotFound at once, where v19.2.7 sends the call ten times
+// (docs/exclusions.md, "Dynamic resharding worker").
 func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) error) error {
 	var err error
 	for i := 0; i < reshardRetries; i++ {
@@ -232,6 +239,27 @@ func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) err
 			return serr
 		}
 		err = call(sh)
+		if errors.Is(err, radosclient.ErrNotFound) {
+			// No call is left to use a re-read, so a failed one cannot
+			// replace this answer; v19.2.7 leaves its loop here too
+			// (v19.2.7 :7226-7229, :7258-7261).
+			if i == reshardRetries-1 {
+				return err
+			}
+			if rerr := x.s.refreshIndexOp(ctx, x); rerr != nil {
+				return rerr
+			}
+			next, nerr := x.currentShard(ctx)
+			switch {
+			case nerr != nil:
+				return nerr
+			case next.oid == sh.oid:
+				return err
+			}
+			slog.DebugContext(ctx, "bucket index shard is gone; retrying on the shard the bucket now names",
+				slog.String("bucket", x.obj.Bucket.Name), slog.String("shard", sh.oid), slog.String("next", next.oid))
+			continue
+		}
 		if !errors.Is(err, radosclient.ErrBusyResharding) {
 			return err
 		}
@@ -300,21 +328,28 @@ func (s *Store) blockWhileResharding(ctx context.Context, x *indexOp, sh indexSh
 	return radosclient.ErrBusyResharding
 }
 
-// refreshIndexOp is block_while_resharding's fetch_new_bucket_info: the
-// bucket instance read again, since a reshard keeps the instance and moves
-// only its index generation, and the shard found from it next. A bucket
-// deleted while the write waited answers 404 NoSuchKey, as radosgw does:
-// its re-read fails with -ENOENT, which reaches the request unchanged
-// (:7822-7844, :7054-7058, :7100-7101, :3293-3294; v20.2.4 :8764-8786,
-// :7903-7907, :7951-7953, :3446-3447) and rgw_common.cc:97 (v20.2.4 :98)
-// names NoSuchKey.
+// refreshIndexOp reads the bucket instance again into x and drops its shard,
+// so that the next call finds the shard from the instance's current index
+// generation, the one part of the instance a reshard changes. It is
+// block_while_resharding's fetch_new_bucket_info after a wait, and after a
+// missing shard v19.2.7's init_bs, which reads the instance into the
+// target's bucket info (v19.2.7 rgw_rados.h:947-955, rgw_rados.cc:2804-2830).
+// The read skips the metadata cache that radosgw's reads go through, since
+// the reshard's notify may not have reached it (docs/exclusions.md, "Dynamic
+// resharding worker"). A bucket deleted meanwhile answers 404 NoSuchKey, as
+// radosgw does: its re-read fails with -ENOENT, which reaches the request
+// unchanged (:7822-7844, :7054-7058, :7100-7101, :3293-3294; v20.2.4
+// :8764-8786, :7903-7907, :7951-7953, :3446-3447; after a missing shard
+// v19.2.7 :7218-7222) and rgw_common.cc:97 (v20.2.4 :98) names NoSuchKey.
 func (s *Store) refreshIndexOp(ctx context.Context, x *indexOp) error {
+	o := s.instanceObj(x.rec.Info.Bucket)
+	s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))
 	rec, err := s.GetBucketInstance(ctx, x.rec.Info.Bucket)
 	switch {
 	case errors.Is(err, op.ErrNoSuchBucket):
-		return fmt.Errorf("%w: bucket %s is gone after its reshard", op.ErrNoSuchKey, x.obj.Bucket.Name)
+		return fmt.Errorf("%w: bucket %s is gone", op.ErrNoSuchKey, x.obj.Bucket.Name)
 	case err != nil:
-		return fmt.Errorf("reading bucket %s again after its reshard: %w", x.obj.Bucket.Name, err)
+		return fmt.Errorf("reading bucket %s again for its index shard: %w", x.obj.Bucket.Name, err)
 	}
 	x.rec, x.shard = rec, nil
 	return nil

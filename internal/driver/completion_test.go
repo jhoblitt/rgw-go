@@ -146,6 +146,25 @@ var _ = Describe("the completion manager", func() {
 		Expect(ops[1]).To(Equal(retried), "process() leaves cls_rgw_bucket_complete_op's locator at its default, rgw_rados.cc:918-919 at v19.2.6")
 	})
 
+	It("retries a queued completion whose shard a reshard removed on the shard the bucket now names", func(ctx SpecContext) {
+		x := s.NewIndexOpForTest(rec, key, "tag")
+		Expect(x.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+		setReshardStatus(ctx, c, oid, rgwcls.ReshardInProgress)
+		x.Complete(rgwcls.EntryVer{Pool: 7, Epoch: 1}, rgwcls.DirEntryMeta{Category: rgwcls.CategoryMain})
+		Eventually(func() []rgwcls.CompleteOp { return sent.all() }).Should(HaveLen(1))
+
+		// The worker reads the instance, which still names the old shard, and
+		// the reshard commits before its completion reaches that shard.
+		next := commitReshardBefore(c, rec, "k")
+		nextOID := indexShardOID(next, "k")
+		stop := run(ctx)
+		Eventually(exists(nextOID, "k")).WithTimeout(5 * time.Second).Should(BeTrue())
+		Eventually(s.PendingCompletionsForTest).Should(BeZero())
+		Expect(stop()).To(Succeed())
+		Expect(sent.all()).To(HaveLen(3), "the refused first attempt, the retry the missing shard refused, and the retry that landed")
+		Expect(c.Reads(rookIndexPool, "", oid)).To(BeZero(), "the guard re-read the bucket without waiting: rgw_rados.cc:905, :7929-7933 at v19.2.7")
+	})
+
 	It("drops a complete the class refuses for any other reason, and logs it", func(ctx SpecContext) {
 		var buf syncBuffer
 		DeferCleanup(driver.CaptureLog(&buf))
@@ -188,7 +207,7 @@ var _ = Describe("the completion manager", func() {
 		stop := run(ctx)
 		Eventually(s.PendingCompletionsForTest).WithTimeout(5 * time.Second).Should(BeZero())
 		Expect(buf.String()).To(ContainSubstring("bucket index completion failed after a reshard"))
-		Expect(sent.all()).To(HaveLen(2), "the retry was sent once and refused: process() logs and moves on, rgw_rados.cc:925-929 at v19.2.6")
+		Expect(sent.all()).To(HaveLen(2), "the retry was sent once: the bucket read again names the same missing shard, and process() logs and moves on, rgw_rados.cc:925-929 at v19.2.6")
 		Expect(stop()).To(Succeed())
 	})
 

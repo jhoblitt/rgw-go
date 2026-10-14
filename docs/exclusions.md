@@ -309,6 +309,36 @@ count over after each such wait and re-sends with no bound
 (`docs/ceph-upstream-bugs.md`, "Squid's cls_rgw reshard guard and Squid's
 radosgw reshard wait disagree, so guard_reshard spins without waiting").
 
+An index call that finds its shard gone, because a reshard committed after
+the shard was found and removed the old index, is retried on both releases.
+rgw-go reads the bucket instance again and, when the instance now puts the
+object on another shard, sends the call there within the same ten calls,
+without starting the count over. A v19.2.7 radosgw retries that ENOENT too,
+but sends the call again whatever shard the instance names, up to ten times
+([rgw_rados.cc:7225-7230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7225-L7230),
+[rgw_rados.cc:7929-7933](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7929-L7933), the bound at
+[rgw_rados.cc:7216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7216)); rgw-go answers the
+ENOENT at once when the instance names the same shard, so such a write
+answers 404 NoSuchKey after one call where v19.2.7's answers it after ten.
+A v20.2.4 radosgw does not retry, and the write answers 404 NoSuchKey
+([rgw_rados.cc:7888-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7888-L7891);
+`docs/ceph-upstream-bugs.md`, "radosgw fails a write whose bucket was
+resharded since the request read it"); on Tentacle rgw-go takes v19.2.7's
+fix all the same (decided 2026-10-13). The retry covers the prepare and the
+completion worker's re-send of a completion or cancel that a reshard
+refused, as v19.2.7's does. The first send of a completion or cancel, which
+the write does not wait for, is dropped when it meets a missing shard, as
+radosgw of either release drops it
+([rgw_rados.cc:1011-1017](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1017),
+[rgw_rados.cc:1052-1058](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1058)), and its pending
+entry is left for listing to reconcile. rgw-go reads the instance again
+from RADOS, past its metadata cache, after a missing shard and after a
+reshard wait alike, where radosgw answers the read from its bucket info
+cache when that holds the instance
+([svc_bucket_sobj.cc:281-299](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L281-L299),
+[svc_bucket_sobj.cc:232-250](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L232-L250)), which the
+reshard's notify may not have reached.
+
 After a reshard wait rgw-go reads the bucket instance again by its id, where
 radosgw reads the bucket again by tenant and name. A bucket removed while the
 write waits is 404 NoSuchKey from both. When a bucket of the same name is

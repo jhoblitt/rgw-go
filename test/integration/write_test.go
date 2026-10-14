@@ -352,7 +352,6 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			oldShard := ".dir." + rec.Info.Bucket.ID + "."
 			started, blocked, resharded := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			done := make(chan error, 1)
-			var stale []string
 			// The reshard blocks the old index's writes only while it copies
 			// the entries, a few milliseconds for these: the writes past the
 			// twentieth wait to see it block them, and then follow one
@@ -399,18 +398,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 						close(started)
 						<-blocked
 					}
-					err := put(i)
-					// A write that read the bucket before the reshard committed
-					// and prepares once the old index is gone fails with
-					// ENOENT, as radosgw's does (docs/ceph-upstream-bugs.md,
-					// "radosgw fails a write whose bucket was resharded since
-					// the request read it"). The write left nothing, and is
-					// sent again, as its client would.
-					if errors.Is(err, op.ErrNoSuchKey) && strings.Contains(err.Error(), oldShard) {
-						stale = append(stale, err.Error())
-						err = put(i)
-					}
-					if err != nil {
+					if err := put(i); err != nil {
 						done <- fmt.Errorf("write %d: %w", i, err)
 						return
 					}
@@ -422,9 +410,8 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			close(resharded)
 			var werr error
 			Eventually(done).WithTimeout(5 * time.Minute).WithPolling(100 * time.Millisecond).Should(Receive(&werr))
-			Expect(werr).NotTo(HaveOccurred())
-			AddReportEntry("writes that met the removed index", stale)
-			Expect(len(stale)).To(BeNumerically("<=", 1), "only the write in flight at the commit meets the removed index: %v", stale)
+			Expect(werr).NotTo(HaveOccurred(), "a write that read the bucket before the commit and meets the removed index retries on the new one")
+			AddReportEntry("writes that met the removed index and retried", strings.Count(logs.String(), "bucket index shard is gone; retrying"))
 			Expect(freshBucket(ctx, rec).Info.Layout.Current.Layout.Normal.NumShards).To(BeEquivalentTo(23), "the bucket's shards")
 
 			expectBucketCheckClean(ctx, name)
