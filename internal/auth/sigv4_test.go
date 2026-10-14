@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -143,6 +144,158 @@ var _ = Describe("SigV4 header authentication", func() {
 	It("takes a scope field without a following slash as the rest of the scope, as parse_cred_scope does", func() {
 		Expect(signingKeyV4(testSecret, "20150830/us-east-1")).To(Equal(signingKeyV4(testSecret, "20150830/us-east-1/us-east-1/aws4_request")),
 			"npos + 1 wraps to 0, so the service is the region again")
+	})
+})
+
+// attackHeaders are the x-amz-* headers upstream's CVE-2026-54330 guard
+// refuses unsigned (test_rgw_auth_sigv4.cc:141-184 at v19.2.7), each a way
+// for the holder of a signature to act with authority its signer never gave,
+// and a name that only starts with the one header the rule exempts.
+var attackHeaders = []string{
+	"X-Amz-Acl", "X-Amz-Copy-Source", "X-Amz-Grant-Full-Control", "X-Amz-Grant-Read", "X-Amz-Grant-Write",
+	"X-Amz-Grant-Read-Acp", "X-Amz-Grant-Write-Acp", "X-Amz-Meta-Injected", "X-Amz-Metadata-Directive",
+	"X-Amz-Security-Token", "X-Amz-Bypass-Governance-Retention", "X-Amz-Object-Lock-Mode",
+	"X-Amz-Object-Lock-Retain-Until-Date", "X-Amz-Object-Lock-Legal-Hold", "X-Amz-Server-Side-Encryption",
+	"X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id", "X-Amz-Server-Side-Encryption-Customer-Algorithm",
+	"X-Amz-Server-Side-Encryption-Customer-Key", "X-Amz-Server-Side-Encryption-Customer-Key-Md5",
+	"X-Amz-Decoded-Content-Length", "X-Amz-Trailer", "X-Amz-Website-Redirect-Location", "X-Amz-Tagging",
+	"X-Amz-Tagging-Directive", "X-Amz-Storage-Class", "X-Amz-Checksum-Crc32c", "X-Amz-Content-Sha256-Extra",
+}
+
+func attackHeaderEntries() []TableEntry {
+	entries := make([]TableEntry, 0, len(attackHeaders))
+	for _, h := range attackHeaders {
+		entries = append(entries, Entry(h, h))
+	}
+	return entries
+}
+
+// helloHash is sha256("hello").
+const helloHash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+// signOverHash signs req with SigV4 header auth over the payload hash hash
+// while req carries no x-amz-content-sha256 header, which leaves the header
+// out of SignedHeaders, as the signer of s3-tests'
+// test_sigv4_without_signed_content_sha256 does. It then sends each of sent
+// as one x-amz-content-sha256 value, in order.
+func signOverHash(ctx context.Context, req *http.Request, creds aws.Credentials, t time.Time, hash string, sent ...string) *http.Request {
+	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
+	Expect(signer.SignHTTP(ctx, creds, req, hash, "s3", "us-east-1", t)).To(Succeed())
+	Expect(req.Header.Get("Authorization")).NotTo(ContainSubstring(payloadHashHeader))
+	for _, v := range sent {
+		req.Header.Add("X-Amz-Content-Sha256", v)
+	}
+	return req
+}
+
+var _ = Describe("the signed-header rule", func() {
+	var cfg Config
+
+	BeforeEach(func() {
+		cfg = DefaultConfig()
+	})
+
+	// A repeated header is read by its last value alone, for the signature
+	// and the completer alike, so a value prepended to a captured request
+	// neither skips nor reframes the body check.
+	DescribeTable("takes an unsigned x-amz-content-sha256 as the payload hash, which the signature covers",
+		func(ctx SpecContext, sent []string, verifies bool, kind payloadKind) {
+			req := httptest.NewRequestWithContext(ctx, http.MethodPut, "http://s3.example.com/bucket/key", strings.NewReader("hello"))
+			req.Header.Set("Content-Length", "5")
+			signOverHash(ctx, req, testCredentials(), signingTime, helloHash, sent...)
+			d, err := authDataV4(newRequestView(req), false, &cfg, signingTime)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.canonicalRequest).NotTo(ContainSubstring(payloadHashHeader+":"), "the header is not a canonical header")
+			Expect(d.canonicalRequest).To(HaveSuffix("\n" + d.payloadHash))
+			Expect(d.payload.kind).To(Equal(kind), "the completer the payload hash picks")
+			Expect(d.verify(testSecret)).To(Equal(verifies))
+		},
+		Entry("the hash it was signed over", []string{helloHash}, true, payloadSingle),
+		Entry("UNSIGNED-PAYLOAD, which would skip the body check", []string{unsignedPayload}, false, payloadNone),
+		Entry("another body's hash", []string{sha256Hex("jello")}, false, payloadSingle),
+		Entry("an aws-chunked trailer form, which would reframe the body", []string{streamingUnsignedTrailer}, false, payloadChunked),
+		Entry("none, which is UNSIGNED-PAYLOAD", nil, false, payloadNone),
+		Entry("UNSIGNED-PAYLOAD prepended to the signed hash", []string{unsignedPayload, helloHash}, true, payloadSingle),
+		Entry("UNSIGNED-PAYLOAD appended to the signed hash", []string{helloHash, unsignedPayload}, false, payloadNone),
+	)
+
+	DescribeTable("holds a presigned request's unsigned x-amz-content-sha256 to the UNSIGNED-PAYLOAD its URL signs",
+		func(ctx SpecContext, sent []string, verifies bool, kind payloadKind) {
+			req := sdkPresign(ctx, httptest.NewRequestWithContext(ctx, http.MethodPut, "http://s3.example.com/bucket/key", nil))
+			req.Body, req.ContentLength = io.NopCloser(strings.NewReader("hello")), 5
+			for _, v := range sent {
+				req.Header.Add("X-Amz-Content-Sha256", v)
+			}
+			d, err := authDataV4(newRequestView(req), true, &cfg, signingTime)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.payloadHash).To(Equal(sent[len(sent)-1]))
+			Expect(d.payload.kind).To(Equal(kind), "the completer the payload hash picks")
+			Expect(d.verify(testSecret)).To(Equal(verifies))
+		},
+		Entry("UNSIGNED-PAYLOAD", []string{unsignedPayload}, true, payloadNone),
+		Entry("a body hash, which would hold the body to another value", []string{helloHash}, false, payloadSingle),
+		Entry("an aws-chunked trailer form, which would reframe the body", []string{streamingUnsignedTrailer}, false, payloadChunked),
+		Entry("an aws-chunked trailer form prepended to UNSIGNED-PAYLOAD", []string{streamingUnsignedTrailer, unsignedPayload}, true, payloadNone),
+		Entry("an aws-chunked trailer form appended to UNSIGNED-PAYLOAD", []string{unsignedPayload, streamingUnsignedTrailer}, false, payloadChunked),
+	)
+
+	It("accepts an unsigned Content-Type and holds a signed one to its value", func(ctx SpecContext) {
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://s3.example.com/bucket/key", nil)
+		sdkSign(ctx, req, unsignedPayload)
+		req.Header.Set("Content-Type", "application/octet-stream")
+		d, err := authDataV4(newRequestView(req), false, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.canonicalRequest).NotTo(ContainSubstring("content-type"))
+		Expect(d.verify(testSecret)).To(BeTrue())
+
+		pre := presignedGet(ctx, "http://s3.example.com/bucket/key")
+		pre.Header.Set("Content-Type", "application/octet-stream")
+		d, err = authDataV4(newRequestView(pre), true, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.verify(testSecret)).To(BeTrue(), "a presigned URL signs host alone")
+
+		signed := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://s3.example.com/bucket/key", nil)
+		signed.Header.Set("Content-Type", "application/octet-stream")
+		sdkSign(ctx, signed, unsignedPayload)
+		signed.Header.Set("Content-Type", "text/html")
+		d, err = authDataV4(newRequestView(signed), false, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.canonicalRequest).To(ContainSubstring("\ncontent-type:text/html\n"))
+		Expect(d.verify(testSecret)).To(BeFalse(), "a signed Content-Type changed after signing")
+	})
+
+	DescribeTable("refuses any other unsigned x-amz header on both routes, beside an unsigned Content-Type or not",
+		func(ctx SpecContext, name string) {
+			for _, ct := range []string{"", "application/json"} {
+				hdr := httptest.NewRequestWithContext(ctx, http.MethodPut, "http://s3.example.com/bucket/key", nil)
+				sdkSign(ctx, hdr, unsignedPayload)
+				pre := presignedGet(ctx, "http://s3.example.com/bucket/key")
+				for _, req := range []*http.Request{hdr, pre} {
+					req.Header.Set(name, "attacker-supplied")
+					if ct != "" {
+						req.Header.Set("Content-Type", ct)
+					}
+				}
+				_, err := authDataV4(newRequestView(hdr), false, &cfg, signingTime)
+				Expect(err).To(MatchError(op.ErrAccessDenied), "header route, Content-Type %q", ct)
+				_, err = authDataV4(newRequestView(pre), true, &cfg, signingTime)
+				Expect(err).To(MatchError(op.ErrAccessDenied), "presigned route, Content-Type %q", ct)
+			}
+		},
+		attackHeaderEntries(),
+	)
+
+	It("is the boto2 fallback's rule too", func(ctx SpecContext) {
+		signed := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://example.com:8080/bucket/key", nil)
+		signed.Host = "example.com:8080"
+		req := sdkPresign(ctx, signed)
+		req.Host = "example.com"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
+		d, err := authDataV4(newRequestView(withLocalPort(req, 8080, false)), true, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.altSign).NotTo(BeNil(), "the second canonicalization accepts what the first did")
+		Expect(d.verify(testSecret)).To(BeTrue(), "through the host:8080 attempt")
 	})
 })
 

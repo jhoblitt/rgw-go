@@ -1,5 +1,5 @@
 {
-  "name": "unsigned-content-type-rejected",
+  "name": "unsigned-content-type-and-x-amz-acl-rejected",
   "method": "PUT",
   "target": "/b/k",
   "host": "example.amazonaws.com",
@@ -8,7 +8,10 @@
       "20150830T123600Z"
     ],
     "Content-Type": [
-      "text/plain"
+      "application/json"
+    ],
+    "X-Amz-Acl": [
+      "public-read"
     ]
   },
   "body": "hello",

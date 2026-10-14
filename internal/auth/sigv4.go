@@ -25,6 +25,8 @@ const (
 	// unsignedPayload is AWS4_UNSIGNED_PAYLOAD_HASH (rgw_auth_s3.h:527 at
 	// v19.2.6, :530 at v20.2.4).
 	unsignedPayload = "UNSIGNED-PAYLOAD"
+	// payloadHashHeader carries the payload hash expectedPayloadHash reads.
+	payloadHashHeader = "x-amz-content-sha256"
 	// maxPresignExpires is the longest X-Amz-Expires, seven days in seconds
 	// (rgw_auth_s3.cc:309 at v19.2.6, :312 at v20.2.4).
 	maxPresignExpires = 7 * 24 * 60 * 60
@@ -275,14 +277,21 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 	return b.String()
 }
 
-// canonicalHeadersV4 is get_v4_canonical_headers (rgw_auth_s3.cc:734-834 at
-// v19.2.6, :711-811 at v20.2.4). A signed header the request lacks is
+// canonicalHeadersV4 is get_v4_canonical_headers (rgw_auth_s3.cc:734-856 at
+// v19.2.7, :711-811 at v20.2.4). A signed header the request lacks is
 // skipped, and each one present is keyed by its token as sent. A non-empty
 // hostPort is appended to the host token's value, as the boto2 fallback
-// does. Unless insecure (rgw_sigv4_insecure), host, a Content-Type the
-// request carries and every x-amz-* header it carries must be signed
-// (CVE-2026-54330, :788-820 at v19.2.6, :765-797 at v20.2.4). Every refusal
-// is EPERM.
+// does. Unless insecure (rgw_sigv4_insecure), host and every x-amz-* header
+// the request carries must be signed (CVE-2026-54330, :788-842 at v19.2.7),
+// but for payloadHashHeader: the canonical request ends with its value as
+// the payload hash, which the body is then held to, so the signature fixes
+// it whether it is signed or not. That holds only while rgw-go routes no op
+// that takes its payload hash from elsewhere, as radosgw's STS, IAM and
+// topic ops take it from the PayloadHash parameter (rgw_rest_s3.cc:5854 at
+// v19.2.7) while the exemption still applies to them (its TODO,
+// rgw_auth_s3.cc:832). A Content-Type need not be signed. v20.2.4 also
+// refuses both unsigned (rgw_auth_s3.cc:765-797); rgw-go takes v19.2.7's
+// rule on Tentacle too (docs/exclusions.md). Every refusal is EPERM.
 func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, hostPort string) (string, error) {
 	m := map[string]string{}
 	for tok := range strings.SplitSeq(signedHeaders, ";") {
@@ -306,12 +315,9 @@ func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, ho
 		if _, ok := m["host"]; !ok {
 			return "", fmt.Errorf("%w: host is not signed", op.ErrAccessDenied)
 		}
-		if _, ok := m["content-type"]; rv.hasHeader("content-type") && !ok {
-			return "", fmt.Errorf("%w: content-type is not signed", op.ErrAccessDenied)
-		}
 		for _, name := range slices.Sorted(maps.Keys(rv.req.Header)) {
 			lower := asciiLower(name)
-			if _, ok := m[lower]; strings.HasPrefix(lower, "x-amz-") && !ok {
+			if _, ok := m[lower]; strings.HasPrefix(lower, "x-amz-") && lower != payloadHashHeader && !ok {
 				return "", fmt.Errorf("%w: %s is not signed", op.ErrAccessDenied, lower)
 			}
 		}
@@ -389,7 +395,7 @@ func signatureV4(key []byte, stringToSign string) string {
 // v19.2.6, :641-664 at v20.2.4): x-amz-content-sha256, or UNSIGNED-PAYLOAD
 // when it is absent, as go-ceph's admin client relies on.
 func expectedPayloadHash(rv *requestView) string {
-	if h, ok := rv.header("x-amz-content-sha256"); ok {
+	if h, ok := rv.header(payloadHashHeader); ok {
 		return h
 	}
 	return unsignedPayload
