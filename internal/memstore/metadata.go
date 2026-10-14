@@ -145,9 +145,10 @@ func (s *Store) getInstance(key string) (op.MetadataEntry, error) {
 
 // Put implements op.MetadataStore with the RADOS driver's sections and
 // refusals: the same documents, a put guarded by the version stored, a
-// stored instance's layout, marker, placement, object lock and rgw-go
-// attrs kept. The memstore's lists follow its buckets' instance owners, so
-// an entry point's linked flag changes no list, as for UnlinkBucketOwner.
+// stored instance's layout, marker, placement and rgw-go attrs kept, and
+// its object lock unless the document carries one. The memstore's lists
+// follow its buckets' instance owners, so an entry point's linked flag
+// changes no list, as for UnlinkBucketOwner.
 func (s *Store) Put(ctx context.Context, section, key string, e op.MetadataEntry, opts op.PutMetadataOptions) error {
 	if err := op.RefuseNULKey(key); err != nil {
 		return err
@@ -332,7 +333,9 @@ func keepInstance(info *meta.BucketInfo, attrs map[string][]byte, old *bucket) e
 	info.Bucket.ExplicitPlacement = keep.Bucket.ExplicitPlacement
 	info.PlacementRule = keep.PlacementRule
 	info.Layout = keep.Layout
-	info.ObjLock = keep.ObjLock
+	if info.ObjLock == nil {
+		info.ObjLock = keep.ObjLock
+	}
 	for _, k := range []string{op.RenameIntentAttr, op.RemovingAttr} {
 		if v, ok := old.rec.Attrs[k]; ok {
 			attrs[k] = v
@@ -359,7 +362,6 @@ func (s *Store) newInstance(info *meta.BucketInfo) error {
 	if current.Layout.Type == meta.IndexNormal {
 		info.Layout.Logs = []meta.LogLayoutGen{meta.LogLayoutFromIndex(0, *current)}
 	}
-	info.ObjLock = nil
 	return nil
 }
 
