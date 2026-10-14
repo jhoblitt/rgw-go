@@ -164,8 +164,8 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
      - "radosgw 19.2.6 and 20.2.4 reject a SigV4 request whose x-amz-content-sha256 is
        unsigned": S3-correctness, fails closed; fixed in v19.2.7 by 1db3ab3b185
        (`src/rgw/rgw_auth_s3.cc:788-842@v19.2.7`, `src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`);
-       trackers #79803 and #79873; ceph/ceph#71292 (main) and ceph/ceph#71360 (squid); not on
-       the tentacle branch as of ab83d026c29.
+       trackers #79803 and #79873; ceph/ceph#71292 (main) and ceph/ceph#71360 (squid);
+       the tentacle branch carries it too, through ceph/ceph#71364 (merge 7e2e2072822, a1dd71be880), in no Tentacle tag yet.
      - "radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule": S3-correctness;
        v19.2.6 and v20.2.4 (`src/rgw/rgw_lc.cc:2913-2928@v20.2.4`); fixed in v19.2.7 by
        4dac1850993 (`src/rgw/rgw_lc.cc:2750-2888@v19.2.7#s3_expiration_header`); tentacle
@@ -268,8 +268,8 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
      present Content-Type need not be. Every refusal is still AccessDenied.
   3. **Tentacle differs:** v20.2.4 also refuses an unsigned Content-Type and an unsigned
      x-amz-content-sha256 (`src/rgw/rgw_auth_s3.cc:765-797@v20.2.4`). rgw-go accepts them on
-     Tentacle too, as an exclusion (P5). The tentacle branch carries the Content-Type fix
-     (7e2e2072822) but not the x-amz-content-sha256 one.
+     Tentacle too, as an exclusion (P5). The tentacle branch carries both fixes
+     through ceph/ceph#71364 (merge 7e2e2072822: a25fdb5267c and a1dd71be880), in no Tentacle tag yet.
   4. Both the header route and the presigned route take the rule, and so does the boto2
      fallback's second canonicalization.
 - **Specs:**
@@ -515,13 +515,33 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
   README and the fixture; (2) the two ledgers and known-differences-squid.txt. **Brief:** about
   150 lines.
 
+### Task F12: driver, guardHead's instance exemption on both releases
+
+Found by F3's task review (Important 1), and numbered here before F3 merged (PP-12).
+
+- **Layer:** driver. **Cluster:** no.
+- **Files:** modify internal/driver/headwrite.go (`guardHead`, its release test) and its specs.
+- **Behaviour:**
+  1. radosgw sets the head write's id-tag guard only for a key with no instance and a request
+     without `If-None-Match: *`, the same at both tags
+     (`src/rgw/driver/rados/rgw_rados.cc:3202@v19.2.7`, `src/rgw/driver/rados/rgw_rados.cc:3299@v20.2.4`).
+  2. rgw-go keeps v19.2.6's Squid guard for a versioned instance: `guardHead` exempts an
+     instance only when the release is Tentacle. F12 drops that release test, so an instance's
+     head write takes no id-tag cmpxattr on either release.
+  3. Today the branch is unreachable, since versioned writes answer 501 until V11. F12 lands
+     before V7a, which writes versioned instances.
+- **Specs:** the guard table on both releases. A key with no instance is guarded; an instance is
+  not; `If-None-Match: *` is not.
+- **Exclusions and registry:** none. The split was an unrecorded difference, and F12 removes it.
+- **Depends on:** F3. **PR:** its own. **Brief:** about 40 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8 | F2 and F3 (F5 and F6 only F2) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12 | F2 and F3 (F5 and F6 only F2) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
