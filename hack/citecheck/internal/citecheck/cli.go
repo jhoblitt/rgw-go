@@ -51,7 +51,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	v := viper.New()
 	cmd := &cobra.Command{
-		Use:           "citecheck [--ceph DIR] FILE...",
+		Use:           "citecheck [--ceph DIR] [--fix | --form-only] FILE...",
 		Short:         "Check the Ceph source citations in markdown files against a ceph/ceph clone",
 		Version:       version.String(),
 		SilenceUsage:  true,
@@ -65,8 +65,21 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			return configure(cmd, v, stderr)
 		},
+		PreRunE: func(*cobra.Command, []string) error {
+			if v.GetBool("fix") && v.GetBool("form-only") {
+				return errors.New("--fix and --form-only cannot be combined: --fix checks every citation against the clone")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, files []string) error {
-			return check(cmd.Context(), v.GetString("ceph"), files, cmd.OutOrStdout())
+			m := checkAll
+			switch {
+			case v.GetBool("fix"):
+				m = fix
+			case v.GetBool("form-only"):
+				m = formOnly
+			}
+			return check(cmd.Context(), v.GetString("ceph"), m, files, cmd.OutOrStdout())
 		},
 	}
 	cmd.SetIn(stdin)
@@ -77,7 +90,10 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (CITECHECK_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (CITECHECK_LOG_FORMAT)")
-	cmd.Flags().String("ceph", defaultCeph, "the clone of ceph/ceph to check against (CITECHECK_CEPH)")
+	f := cmd.Flags()
+	f.String("ceph", defaultCeph, "the clone of ceph/ceph to check against (CITECHECK_CEPH)")
+	f.Bool("fix", false, "rewrite each code span citation that holds into a link, in place (CITECHECK_FIX)")
+	f.Bool("form-only", false, "check only the citations' form, without a clone (CITECHECK_FORM_ONLY)")
 	return cmd
 }
 
@@ -91,8 +107,10 @@ func configure(cmd *cobra.Command, v *viper.Viper, stderr io.Writer) error {
 	if err := v.BindPFlags(cmd.Root().PersistentFlags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
-	if err := v.BindPFlag("ceph", cmd.Flags().Lookup("ceph")); err != nil {
-		return fmt.Errorf("binding --ceph: %w", err)
+	for _, name := range []string{"ceph", "fix", "form-only"} {
+		if err := v.BindPFlag(name, cmd.Flags().Lookup(name)); err != nil {
+			return fmt.Errorf("binding --%s: %w", name, err)
+		}
 	}
 	if cfg := v.GetString("config"); cfg != "" {
 		v.SetConfigFile(cfg)
@@ -122,10 +140,30 @@ func setupLogging(v *viper.Viper, w io.Writer) error {
 	return nil
 }
 
+// mode is what a run does with the citations it finds.
+type mode int
+
+const (
+	// checkAll checks every link against the clone, and fails every code
+	// span citation as not a link.
+	checkAll mode = iota
+	// formOnly checks what needs no clone, and fails every code span
+	// citation as not a link.
+	formOnly
+	// fix checks every citation against the clone, and rewrites each code
+	// span citation that holds into a link.
+	fix
+)
+
+// notALink is why a code span citation fails, unless --fix rewrites it.
+const notALink = "not a link"
+
 // check reads every file before it checks any, so that a file that cannot
 // be read refuses the run before anything is printed, then prints each
 // citation that does not hold and the count of those checked and failed.
-func check(ctx context.Context, ceph string, files []string, out io.Writer) error {
+// Under fix it then writes back each file it rewrote a code span citation
+// in, and counts the citations rewritten.
+func check(ctx context.Context, ceph string, m mode, files []string, out io.Writer) error {
 	docs := make([][]byte, len(files))
 	for i, name := range files {
 		data, err := os.ReadFile(name) //nolint:gosec // reading the files named is the command's work
@@ -134,14 +172,20 @@ func check(ctx context.Context, ceph string, files []string, out io.Writer) erro
 		}
 		docs[i] = data
 	}
-	c, err := NewChecker(ctx, ceph)
-	if err != nil {
-		return err
+	var c *Checker
+	if m != formOnly {
+		var err error
+		if c, err = NewChecker(ctx, ceph); err != nil {
+			return err
+		}
 	}
-	checked, failed := 0, 0
+	checked, failed, rewritten := 0, 0, 0
+	edits := make([][]edit, len(files))
 	for i, name := range files {
-		for _, cite := range Scan(docs[i]) {
-			reason, err := c.Check(ctx, cite)
+		cites := Scan(docs[i])
+		for k := range cites {
+			cite := &cites[k]
+			reason, err := judge(ctx, c, m, cite)
 			if err != nil {
 				return fmt.Errorf("%s:%d: %s: %w", name, cite.Line, cite.Text, err)
 			}
@@ -149,12 +193,53 @@ func check(ctx context.Context, ceph string, files []string, out io.Writer) erro
 			if reason != "" {
 				failed++
 				fmt.Fprintf(out, "%s:%d: %s: %s\n", name, cite.Line, cite.Text, reason)
+				continue
+			}
+			if m == fix && cite.Form == CodeSpan {
+				link, err := linkFor(*cite)
+				if err != nil {
+					return fmt.Errorf("%s:%d: %w", name, cite.Line, err)
+				}
+				edits[i] = append(edits[i], edit{start: cite.Start, end: cite.End, text: link})
 			}
 		}
 	}
-	fmt.Fprintf(out, "citations checked: %d, failed: %d\n", checked, failed)
+	for i, name := range files {
+		if len(edits[i]) == 0 {
+			continue
+		}
+		// The file exists, so WriteFile keeps its mode.
+		if err := os.WriteFile(name, rewrite(docs[i], edits[i]), 0o600); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
+		rewritten += len(edits[i])
+		slog.InfoContext(ctx, "rewrote code span citations into links", slog.String("file", name),
+			slog.Int("rewritten", len(edits[i])))
+	}
+	if m == fix {
+		fmt.Fprintf(out, "citations checked: %d, failed: %d, rewritten: %d\n", checked, failed, rewritten)
+	} else {
+		fmt.Fprintf(out, "citations checked: %d, failed: %d\n", checked, failed)
+	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d %w", failed, checked, errFailed)
 	}
 	return nil
+}
+
+// judge returns why a citation fails in mode m, or "" when it holds. Under
+// fix, a code span citation that holds fails still when it cannot be
+// rewritten where it stands.
+func judge(ctx context.Context, c *Checker, m mode, cite *Citation) (string, error) {
+	switch {
+	case cite.Form == CodeSpan && m != fix:
+		return notALink, nil
+	case m == formOnly:
+		return formProblem(*cite), nil
+	}
+	reason, err := c.Check(ctx, *cite)
+	if err != nil || reason != "" || cite.Form != CodeSpan {
+		return reason, err
+	}
+	return cite.NoFix, nil
 }
