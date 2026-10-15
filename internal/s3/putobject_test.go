@@ -270,8 +270,11 @@ var _ = Describe("put_obj", func() {
 		})
 	})
 	// get_params reads partNumber on every put_obj request, a part or not
-	// (rgw_rest_s3.cc:2682-2694 at v19.2.7, :2835-2847 at v20.2.4), through
-	// strict_strtol (strtol.cc:42-78 at v19.2.7 and v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2682-L2694 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2835-L2847 at v20.2.4),
+	// through strict_strtol
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/strtol.cc#L42-L78 at v19.2.7
+	// and v20.2.4).
 	Describe("partNumber", func() {
 		DescribeTable("without an upload id, refuses one strict_strtol refuses as InvalidArgument and stores nothing",
 			func(ctx SpecContext, query string) {
@@ -461,8 +464,10 @@ func sseEntries(target string) []TableEntry {
 }
 
 // otherPrefixes are the meta prefixes beside X-Amz- that radosgw's
-// init_meta_info files under x-amz- names (rgw_common.cc:413-420 at v19.2.7,
-// :426-433 at v20.2.4) and rgw-go reads as ordinary headers.
+// init_meta_info files under x-amz- names
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L420 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L433 at v20.2.4)
+// and rgw-go reads as ordinary headers.
 var otherPrefixes = []string{"X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"}
 
 func otherPrefixEntries() []TableEntry {

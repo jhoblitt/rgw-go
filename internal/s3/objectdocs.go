@@ -9,8 +9,9 @@ import (
 )
 
 // getObjectTags serves get_obj_tags (RGWGetObjTags_ObjStore_S3::send_response_data,
-// rgw_rest_s3.cc:746-773 at v19.2.6, :829-856 at v20.2.4): the tag set, an
-// empty TagSet for none.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L746-L773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L829-L856 at v20.2.4):
+// the tag set, an empty TagSet for none.
 func getObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetObjectTagging{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -21,8 +22,9 @@ func getObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // getObjectACL is the object half of get_acls (RGWGetACLs_ObjStore_S3::send_response,
-// rgw_rest_s3.cc:3605-3614 at v19.2.6, :3888-3897 at v20.2.4): the object's
-// ACL.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3605-L3614 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3888-L3897 at v20.2.4):
+// the object's ACL.
 func getObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetObjectACL{}
 	if err := op.Run(ctx, o, r); err != nil {

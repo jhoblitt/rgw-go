@@ -32,7 +32,7 @@ import (
 // flushed. LastModified is rgw_to_iso8601's milliseconds on Squid and whole
 // seconds on Tentacle (dump_time_exact_seconds, [T] :3879). A local copy
 // sends no Progress element: only fetch_remote_obj reports progress
-// (driver/rados/rgw_rados.cc:4726-4736 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4726-L4736 at v19.2.6).
 func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	v, _ := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
 	tenant, bucket, key, ok := parseCopySource(v, r.Identity.Tenant)
@@ -110,7 +110,9 @@ func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error 
 // copyObjectChecks is, once the destination and the source allow the
 // request, the refusal of a retention or a legal hold on a bucket without
 // object lock (objectLock), which radosgw's copy does not make, then
-// init_dest_policy's ACL (rgw_op.cc:5492 at v19.2.6, :6058 at v20.2.4),
+// init_dest_policy's ACL
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5492 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6058 at v20.2.4),
 // create_s3_policy's for the requester, whose grantees are looked up.
 func copyObjectChecks(ctx context.Context, r *op.Request, o *op.CopyObject) error {
 	if err := objectLock(r); err != nil {
@@ -124,14 +126,18 @@ func copyObjectChecks(ctx context.Context, r *op.Request, o *op.CopyObject) erro
 	return nil
 }
 
-// parseCopySource is RGWCopyObj::parse_copy_location (rgw_op.cc:5329-5374 at
-// v19.2.6, :5895-5940 at v20.2.4) and postauth_init's rgw_parse_url_bucket
-// of its bucket (rgw_rest_s3.cc:4985-4994, [T] :5545-5554; rgw_bucket.cc
-// :112-132 at v19.2.6): "[/]bucket/key" up to the first "?", url-decoded,
-// the bucket "tenant:name" split at its first colon or in defaultTenant, and
-// versionId from what follows the "?" as RGWHTTPArgs reads it. It is false
-// for an empty value, one with no "/" or no key, and a bucket with nothing
-// after its colon.
+// parseCopySource is RGWCopyObj::parse_copy_location
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5329-L5374 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5895-L5940 at v20.2.4)
+// and postauth_init's rgw_parse_url_bucket of its bucket
+// (rgw_rest_s3.cc:4985-4994,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5545-L5554;
+// rgw_bucket.cc
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_bucket.cc#L112-L132 at v19.2.6):
+// "[/]bucket/key" up to the first "?", url-decoded, the bucket "tenant:name"
+// split at its first colon or in defaultTenant, and versionId from what
+// follows the "?" as RGWHTTPArgs reads it. It is false for an empty value,
+// one with no "/" or no key, and a bucket with nothing after its colon.
 func parseCopySource(v, defaultTenant string) (tenant, bucket string, key meta.ObjKey, ok bool) {
 	name, params, _ := strings.Cut(v, "?")
 	if name == "" {

@@ -46,16 +46,20 @@ func bucketHandlers() map[string]HandlerFunc {
 // rgw_rest_s3.cc.
 
 // defaultMaxPutParamSize is rgw_max_put_param_size's default, 1 MiB
-// (common/options/rgw.yaml.in:138-145 at v19.2.6, :144-151 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L138-L145 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151 at v20.2.4).
 const defaultMaxPutParamSize = 1 << 20
 
 // defaultMaxDynamicShards is rgw_max_dynamic_shards' default
-// (common/options/rgw.yaml.in:3470-3483 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3470-L3483 at v20.2.4).
 const defaultMaxDynamicShards = 1999
 
 // createBucket is RGWCreateBucket_ObjStore_S3: get_params runs inside the
 // op's Execute, and a success, a bucket that existed for its owner too, is
-// 200 with no body (send_response, :2544-2555; v20.2.4 :2705-2716).
+// 200 with no body (send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2544-L2555;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2705-L2716).
 func createBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CreateBucket{
 		Params: func(ctx context.Context, o *op.CreateBucket) error { return createBucketParams(ctx, r, o) },
@@ -69,7 +73,9 @@ func createBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 
 // writeEmpty answers status with no body and the Content-Length: 0 radosgw's
 // frontend completes such a response with, without Accept-Ranges and without
-// a type (end_header, rgw_rest.cc:611-619 at v19.2.6, :616-624 at v20.2.4).
+// a type (end_header,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L611-L619 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L616-L624 at v20.2.4).
 // net/http sends no length with a 204.
 func writeEmpty(w http.ResponseWriter, r *op.Request, status int) {
 	SetCommonHeaders(w, r)
@@ -77,13 +83,16 @@ func writeEmpty(w http.ResponseWriter, r *op.Request, status int) {
 	w.WriteHeader(status)
 }
 
-// createBucketParams is RGWCreateBucket_ObjStore_S3::get_params (:2473-2542;
-// v20.2.4 :2593-2703): the name checked unless the request is a system
-// user's, the ACL built from the headers, the body read and parsed, a
-// "zonegroup:placement" constraint split, x-amz-storage-class taken as the
-// placement's class, and the object-lock header carried for the op to
-// check. Each header is read by its last value, as RGWEnv::set keeps the
-// last of a repeated header (rgw_env.cc:22-25 at both tags).
+// createBucketParams is RGWCreateBucket_ObjStore_S3::get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2473-L2542;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2593-L2703):
+// the name checked unless the request is a system user's, the ACL built from
+// the headers, the body read and parsed, a "zonegroup:placement" constraint
+// split, x-amz-storage-class taken as the placement's class, and the
+// object-lock header carried for the op to check. Each header is read by its
+// last value, as RGWEnv::set keeps the last of a repeated header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at both tags).
 func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) error {
 	if !r.Identity.System {
 		if err := ValidBucketName(r.Bucket, confBool(r, "rgw_relaxed_s3_bucket_names")); err != nil {
@@ -117,10 +126,13 @@ func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) 
 	return nil
 }
 
-// readParamBody is RGWOp::read_all_input (rgw_op.h:215-227 at v19.2.6,
-// :229-241 at v20.2.4), which calls rgw_rest_read_all_input with chunked
-// input allowed whatever its caller asks (rgw_rest.cc:1537-1578 at v19.2.6,
-// :1542-1583 at v20.2.4):
+// readParamBody is RGWOp::read_all_input
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L215-L227 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241 at v20.2.4),
+// which calls rgw_rest_read_all_input with chunked input allowed whatever
+// its caller asks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1537-L1578 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1542-L1583 at v20.2.4):
 //   - a Content-Length over rgw_max_put_param_size is tooLarge of that limit,
 //     unread, and any other is read to its length;
 //   - a chunked body, which has none, is read whole, and is tooLarge once it
@@ -173,7 +185,8 @@ func readBodyUpTo(r *op.Request, n int64) ([]byte, error) {
 }
 
 // The buffers read_all_chunked_input reads a chunked body into
-// (rgw_rest.cc:1501-1535 at v19.2.6, :1506-1540 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1501-L1535 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1506-L1540 at v20.2.4).
 const (
 	chunkedFirstRead = 4096
 	chunkedMaxRead   = 128 << 10
@@ -251,9 +264,10 @@ func parseCreateBucketConfiguration(r *op.Request, body []byte) (lc string, inde
 }
 
 // checkBucketIndex is Tentacle's BucketIndex checks (v20.2.4
-// rgw_rest_s3.cc:2651-2684), each refusal InvalidArgument with radosgw's
-// message: a Type, Normal or Indexless in any case; a NumShards only for a
-// Normal index, an unsigned 32-bit number from 1 to rgw_max_dynamic_shards.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2651-L2684),
+// each refusal InvalidArgument with radosgw's message: a Type, Normal or
+// Indexless in any case; a NumShards only for a Normal index, an unsigned
+// 32-bit number from 1 to rgw_max_dynamic_shards.
 func checkBucketIndex(r *op.Request, index *xmltext.Element) error {
 	typ := index.FindFirst("Type")
 	if typ == nil {
@@ -312,10 +326,11 @@ func createS3Policy(ctx context.Context, r *op.Request) (acl.Policy, error) {
 	return p, nil
 }
 
-// aclOwner is get_aclowner (rgw_auth.cc:1019-1030 at v19.2.6, :1039-1050 at
-// v20.2.4): an account's user's buckets belong to its account, named by the
-// account's name, and any other user's to the user, named by its display
-// name.
+// aclOwner is get_aclowner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1019-L1030 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1039-L1050 at v20.2.4):
+// an account's user's buckets belong to its account, named by the account's
+// name, and any other user's to the user, named by its display name.
 func aclOwner(id op.Identity) acl.Owner {
 	if id.Account != nil {
 		return acl.Owner{ID: id.Account.ID, DisplayName: id.Account.Name}
@@ -327,7 +342,9 @@ func aclOwner(id op.Identity) acl.Owner {
 }
 
 // deleteBucket is RGWDeleteBucket_ObjStore_S3: 204 with no body
-// (send_response, :2547-2556 at v19.2.6, :2731-2740 at v20.2.4).
+// (send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2547-L2556 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2731-L2740 at v20.2.4).
 func deleteBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	if err := op.Run(ctx, &op.DeleteBucket{}, r); err != nil {
 		return err
@@ -339,10 +356,12 @@ func deleteBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 // statBucket is RGWStatBucket_ObjStore_S3, the bucket HEAD: 200 with the
 // bucket's counts and, for its owner, the quotas, as headers. Squid always
 // reads and sends the counts, and sends the requesting user's quota and
-// bucket limit and the bucket's quota to the owner (:2377-2406). Tentacle
-// reads and sends the counts only with read-stats, and sends the owner the
-// bucket limit, the user quota only when it is enabled and the bucket quota
-// only when it is (v20.2.4 :2480-2522).
+// bucket limit and the bucket's quota to the owner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2377-L2406).
+// Tentacle reads and sends the counts only with read-stats, and sends the
+// owner the bucket limit, the user quota only when it is enabled and the
+// bucket quota only when it is (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2480-L2522).
 func statBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	tentacle := r.Env.Zone.Release() >= denc.Tentacle
 	o := &op.StatBucket{ReadStats: !tentacle || r.Query.Has("read-stats")}
@@ -371,12 +390,15 @@ func statBucket(ctx context.Context, w http.ResponseWriter, r *op.Request) error
 }
 
 // getBucketLocation is RGWGetBucketLocation_ObjStore_S3::send_response
-// (:2129-2150; v20.2.4 :2230-2253): the XML declaration and a
-// LocationConstraint in the S3 namespace holding the api name, escaped as
-// XMLFormatter escapes it. Its length is the one the frontend adds, without
-// Accept-Ranges. Squid sends no Content-Type, its end_header running before
-// the formatter holds anything; Tentacle sends application/xml and the
-// bucket's placement name in x-rgw-bucket-placement-target.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2129-L2150;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2230-L2253):
+// the XML declaration and a LocationConstraint in the S3 namespace holding
+// the api name, escaped as XMLFormatter escapes it. Its length is the one
+// the frontend adds, without Accept-Ranges. Squid sends no Content-Type,
+// its end_header running before the formatter holds anything; Tentacle
+// sends application/xml and the bucket's placement name in
+// x-rgw-bucket-placement-target.
 func getBucketLocation(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetBucketLocation{}
 	if err := op.Run(ctx, o, r); err != nil {

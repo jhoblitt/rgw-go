@@ -56,7 +56,9 @@ var _ = Describe("Error", func() {
 		Expect(op.Errors()).To(HaveLen(86 - 4 + 2))
 	})
 	It("shares a code and status only where radosgw's own table has duplicate rows, and never an errno", func() {
-		// rgw_http_s3_errors at v19.2.6 (rgw_common.cc:51-144; v20.2.4 :52-146 adds one
+		// rgw_http_s3_errors at v19.2.6
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L51-L144; v20.2.4
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L52-L146 adds one
 		// row) carries the same {status, code} under several ret values: InvalidRequest/400
 		// for ERR_INVALID_REQUEST (:62), ERR_INVALID_CORS_RULES_ERROR (:82),
 		// ERR_INVALID_WEBSITE_ROUTING_RULES_ERROR (:83) and ERR_ZERO_IN_URL (:136, folded

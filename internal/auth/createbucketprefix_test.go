@@ -17,8 +17,10 @@ import (
 )
 
 // radosgw's CreateBucket reads its object lock from x_meta_map, under any of
-// the meta prefixes init_meta_info renames to x-amz- (rgw_rest_s3.cc:2542 at
-// v19.2.7, :2695 at v20.2.4); rgw-go's reads X-Amz- alone.
+// the meta prefixes init_meta_info renames to x-amz-
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695 at v20.2.4);
+// rgw-go's reads X-Amz- alone.
 var _ = Describe("CreateBucket's object lock under another meta prefix", func() {
 	var (
 		store *memstore.Store

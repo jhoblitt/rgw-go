@@ -16,18 +16,24 @@ import (
 
 // restrictSemantics judges whether a bucket policy is public for
 // RestrictPublicBuckets, which rgw-go enforces on both releases as v20.2.4
-// does (rgw_common.cc:1374-1380 and :1541-1547 at v20.2.4). Squid's is_public
-// counts nearly every Allow statement, so its rule would turn the block into
-// a refusal of almost every grant.
+// does
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1374-L1380
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1541-L1547 at v20.2.4).
+// Squid's is_public counts nearly every Allow statement, so its rule would
+// turn the block into a refusal of almost every grant.
 var restrictSemantics = policy.SemanticsFor(denc.Tentacle)
 
 // Evaluator implements op.Authorizer: radosgw's verify_user_permission,
 // verify_bucket_permission and verify_object_permission through the request
-// state (rgw_common.cc:1250-1637 at v19.2.6, :1263-1699 at v20.2.4), preceded
-// by the refusals radosgw makes before verify_permission, which it marks with
-// op.BeforeVerify. The policy language follows the configured release; the
-// checks outside it, the admin bypasses, x-amz-expected-bucket-owner and
-// RestrictPublicBuckets, are v20.2.4's on both releases (docs/exclusions.md).
+// state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1250-L1637 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1263-L1699 at v20.2.4),
+// preceded by the refusals radosgw makes before verify_permission, which it
+// marks with op.BeforeVerify. The policy language follows the configured
+// release; the checks outside it, the admin bypasses,
+// x-amz-expected-bucket-owner and RestrictPublicBuckets, are v20.2.4's on
+// both releases (docs/exclusions.md).
 type Evaluator struct {
 	cfg         Config
 	sem         policy.Semantics
@@ -43,12 +49,13 @@ func New(cfg Config) *Evaluator {
 
 // deniedAsGroupMember refuses an identity that belongs to an IAM group.
 // radosgw loads each group's inline and managed policies with the user's
-// own at authentication (load_account_and_policies, rgw_auth.cc:170-184 at
-// v19.2.6 and v20.2.4) and evaluates them on every request, so a group's
-// Deny refuses what the user's policies and the ACLs allow. With no group
-// store to read them from, evaluating the rest could grant what radosgw
-// denies; an admin identity still passes through op.Run's override, as it
-// does after any policy denial (rgw_process.cc:228-239 at v20.2.4).
+// own at authentication (load_account_and_policies,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L170-L184 at v19.2.6
+// and v20.2.4) and evaluates them on every request, so a group's Deny
+// refuses what the user's policies and the ACLs allow. With no group store
+// to read them from, evaluating the rest could grant what radosgw denies;
+// an admin identity still passes through op.Run's override, as it does
+// after any policy denial (rgw_process.cc:228-239 at v20.2.4).
 func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) error {
 	if id.User == nil || len(id.User.GroupIDs) == 0 {
 		return nil
@@ -62,10 +69,13 @@ func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) er
 }
 
 // VerifyUser is verify_user_permission for an action on no bucket:
-// ListAllMyBuckets (RGWListBuckets::verify_permission, rgw_op.cc:2489-2500 at
-// v19.2.6, :2721-2732 at v20.2.4) and CreateBucket
-// (RGWCreateBucket::verify_permission, :3215-3245 at v19.2.6, :3443-3472 at
-// v20.2.4, whose max-buckets check is the op's).
+// ListAllMyBuckets (RGWListBuckets::verify_permission,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2489-L2500 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2721-L2732 at v20.2.4)
+// and CreateBucket (RGWCreateBucket::verify_permission,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3215-L3245 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4,
+// whose max-buckets check is the op's).
 func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Action) error {
 	ids, err := e.identityPolicies(r)
 	if err != nil {
@@ -89,7 +99,9 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 		return e.decided(ctx, a, rule, op.ErrAccessDenied)
 	case policy.Pass:
 		// verify_user_permission makes a policy mandatory for an account
-		// user (rgw_common.cc:1305-1308 at v19.2.6, :1318-1321 at v20.2.4);
+		// user
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1305-L1308 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1318-L1321 at v20.2.4);
 		// verify_user_permission_no_policy refuses a role and finds no user
 		// ACL for S3, which allows (:1281-1297, :1294-1310).
 		switch {
@@ -106,9 +118,11 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 	return e.decided(ctx, a, rule, nil)
 }
 
-// VerifyBucket is verify_bucket_permission(s, op) (rgw_common.cc:1461-1477 at
-// v19.2.6, :1498-1514 at v20.2.4) against r.BucketRec for the key r names,
-// after the refusals init_permissions makes on the request's bucket.
+// VerifyBucket is verify_bucket_permission(s, op)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1461-L1477 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1498-L1514 at v20.2.4)
+// against r.BucketRec for the key r names, after the refusals
+// init_permissions makes on the request's bucket.
 func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
 	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
@@ -120,11 +134,14 @@ func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 	return e.verifyBucket(ctx, r, a, perm, b, b.block, r.Object, ids, formBucket)
 }
 
-// VerifyObject is verify_object_permission(s, op) (rgw_common.cc:1625-1637 at
-// v19.2.6, :1688-1699 at v20.2.4) against r.ObjState, after the refusals
-// init_permissions and read_permissions make: those on the request's bucket,
-// an object ACL that does not decode, and read_obj_policy's rule for a
-// missing object (rgw_op.cc:385-447 at v19.2.6, :415-477 at v20.2.4).
+// VerifyObject is verify_object_permission(s, op)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1625-L1637 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1688-L1699 at v20.2.4)
+// against r.ObjState, after the refusals init_permissions and
+// read_permissions make: those on the request's bucket, an object ACL that
+// does not decode, and read_obj_policy's rule for a missing object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L385-L447 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L415-L477 at v20.2.4).
 func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
 	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
@@ -150,11 +167,13 @@ func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Ac
 
 // VerifyBucketIn is VerifyBucket against an explicit bucket and the key its
 // ARN carries, Name "" for the bucket ARN: CopyObject's source
-// (RGWCopyObj::verify_permission, rgw_op.cc:5407-5460 at v19.2.6, :5973-6026
-// at v20.2.4) and DeleteObjects' per-key check (:6818-6838 at v19.2.6,
-// :7743-7775 at v20.2.4). The resource's inputs are bucket's: its ACL and
-// owner, its policy parsed with its own tenant, and its public-access block,
-// which applies with the request's bucket's. The request's bucket supplies
+// (RGWCopyObj::verify_permission,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5407-L5460 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5973-L6026 at v20.2.4)
+// and DeleteObjects' per-key check (:6818-6838 at v19.2.6, :7743-7775 at
+// v20.2.4). The resource's inputs are bucket's: its ACL and owner, its
+// policy parsed with its own tenant, and its public-access block, which
+// applies with the request's bucket's. The request's bucket supplies
 // requester pays and the x-amz-expected-bucket-owner comparison. A copy
 // source's suspended bucket and undecodable ACL or block are refused
 // unmarked, as radosgw reads a source inside verify_permission; a source
@@ -172,10 +191,11 @@ func (e *Evaluator) VerifyBucketIn(ctx context.Context, r *op.Request, a policy.
 
 // VerifyObjectIn is VerifyObject against an explicit object in an explicit
 // bucket, UploadPartCopy's source (RGWPutObj::verify_permission,
-// rgw_op.cc:3920-3963 at v19.2.6, :4129-4172 at v20.2.4), with
-// VerifyBucketIn's inputs; an object without an ACL of its own gets a default
-// one owned by bucket's owner. A missing object takes read_obj_policy's rule
-// on bucket, unmarked.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3920-L3963 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4129-L4172 at v20.2.4),
+// with VerifyBucketIn's inputs; an object without an ACL of its own gets a
+// default one owned by bucket's owner. A missing object takes
+// read_obj_policy's rule on bucket, unmarked.
 func (e *Evaluator) VerifyObjectIn(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, bucket *op.BucketRecord, obj *op.ObjectState) error {
 	ids, b, reqBlock, rule, err := e.explicitPrelude(ctx, r, bucket)
 	if err != nil {
@@ -208,11 +228,12 @@ func (e *Evaluator) decided(ctx context.Context, a policy.Action, rule string, e
 
 // identityPolicies are the identity's policies, refused as authentication
 // refuses them, before any check: radosgw loads the user's account and its
-// policies at authentication (load_account_and_policies, rgw_auth.cc:135-187
-// at v19.2.6 and v20.2.4) and fails it with -EPERM when one does not decode
-// (:548-554 at v19.2.6, :563-569 at v20.2.4). A user of an account that is
-// not loaded is refused too, rather than judged by the ACLs as a user
-// outside any account would be.
+// policies at authentication (load_account_and_policies,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L135-L187 at v19.2.6
+// and v20.2.4) and fails it with -EPERM when one does not decode (:548-554
+// at v19.2.6, :563-569 at v20.2.4). A user of an account that is not loaded
+// is refused too, rather than judged by the ACLs as a user outside any
+// account would be.
 func (e *Evaluator) identityPolicies(r *op.Request) ([]*policy.Policy, error) {
 	if u := r.Identity.User; u != nil && u.AccountID != "" && r.Identity.Account == nil {
 		return nil, op.BeforeVerify(fmt.Errorf("%w: account %s of %s is not loaded", op.ErrAccessDenied, u.AccountID, u.UserID))
@@ -278,14 +299,18 @@ type bucketInputs struct {
 func suspended(rec *op.BucketRecord) bool { return rec.Info.Flags&meta.BucketSuspended != 0 }
 
 // requestBucket reads r.BucketRec as rgw_build_bucket_policies does in
-// init_permissions (rgw_op.cc:494-623 at v19.2.6, :524-653 at v20.2.4),
+// init_permissions
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L494-L623 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L524-L653 at v20.2.4),
 // marking each refusal. A policy that does not parse refuses all but an
 // admin, and replaces a suspended bucket's or an undecodable ACL's refusal,
-// as the policy's -EACCES overwrites read_bucket_policy's result
-// (:598-615 at v19.2.6, :628-645 at v20.2.4); a public-access block that does
-// not decode is refused the same way (docs/exclusions.md). For an admin the
-// failed policy or block is none. A suspended bucket refuses all but an admin
-// (read_bucket_policy, :366-370 at v19.2.6, :396-400 at v20.2.4).
+// as the policy's -EACCES overwrites read_bucket_policy's result (:598-615 at
+// v19.2.6, :628-645 at v20.2.4); a public-access block that does not decode
+// is refused the same way (docs/exclusions.md). For an admin the failed
+// policy or block is none. A suspended bucket refuses all but an admin
+// (read_bucket_policy,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L366-L370 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L396-L400 at v20.2.4).
 func (e *Evaluator) requestBucket(ctx context.Context, r *op.Request) (bucketInputs, error) {
 	rec := r.BucketRec
 	admin := r.Identity.Admin
@@ -311,13 +336,15 @@ func (e *Evaluator) requestBucket(ctx context.Context, r *op.Request) (bucketInp
 }
 
 // explicitBucket reads a copy source's bucket as read_obj_policy does inside
-// verify_permission (rgw_op.cc:385-419 at v19.2.6, :415-449 at v20.2.4): a
-// suspended bucket refuses all but an admin, unmarked. Its policy is parsed
-// there with no handler, and radosgw's process terminates when it does not
-// parse (docs/ceph-upstream-bugs.md, "radosgw terminates on a copy source or
-// system request whose bucket policy does not parse"); rgw-go refuses the
-// request for every requester instead, marked. An ACL or block that does not
-// decode is refused unmarked.
+// verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L385-L419 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L415-L449 at v20.2.4):
+// a suspended bucket refuses all but an admin, unmarked. Its policy is
+// parsed there with no handler, and radosgw's process terminates when it
+// does not parse (docs/ceph-upstream-bugs.md, "radosgw terminates on a copy
+// source or system request whose bucket policy does not parse"); rgw-go
+// refuses the request for every requester instead, marked. An ACL or block
+// that does not decode is refused unmarked.
 func (e *Evaluator) explicitBucket(ctx context.Context, r *op.Request, rec *op.BucketRecord) (bucketInputs, error) {
 	if suspended(rec) && !r.Identity.Admin {
 		return bucketInputs{}, fmt.Errorf("%w: bucket %s", op.ErrUserSuspended, rec.Info.Bucket.Name)
@@ -405,12 +432,14 @@ func denial(ok bool) error {
 }
 
 // missingObject is read_obj_policy's rule for an object that does not exist
-// (rgw_op.cc:421-447 at v19.2.6, :451-477 at v20.2.4): NoSuchKey to an admin,
-// and otherwise NoSuchKey only when the requester may list the bucket under
-// the key as s3:prefix, evaluated in rgw_build_iam_environment's keys and that
-// one, so that a requester who may not list cannot learn whether the key
-// exists. An IAM group member is refused before the evaluation, which its
-// groups' policies would join. mark marks each outcome.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L421-L447 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L451-L477 at v20.2.4):
+// NoSuchKey to an admin, and otherwise NoSuchKey only when the requester may
+// list the bucket under the key as s3:prefix, evaluated in
+// rgw_build_iam_environment's keys and that one, so that a requester who may
+// not list cannot learn whether the key exists. An IAM group member is refused
+// before the evaluation, which its groups' policies would join. mark marks
+// each outcome.
 func (e *Evaluator) missingObject(ctx context.Context, r *op.Request, a policy.Action, b bucketInputs,
 	reqBlock *acl.PublicAccessBlock, key string, ids []*policy.Policy, mark func(error) error,
 ) error {
@@ -450,13 +479,19 @@ type check struct {
 }
 
 // permit is verify_bucket_permission and verify_object_permission through
-// the request state (rgw_common.cc:1374-1410 and :1518-1558 at v19.2.6;
-// :1396-1440 and :1564-1612 at v20.2.4), and the rule that decided.
-// x-amz-expected-bucket-owner must name the request's bucket's owner. An
-// account's identity is checked across accounts against the owner of the
-// object's ACL, or the bucket's, needing an Allow from its identity policies
-// and, separately, an Allow or a grant from the resource; within its account
-// a policy must allow, and the ACLs are not consulted.
+// the request state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1374-L1410
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1518-L1558 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1396-L1440
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1564-L1612 at v20.2.4),
+// and the rule that decided. x-amz-expected-bucket-owner must name the
+// request's bucket's owner. An account's identity is checked across accounts
+// against the owner of the object's ACL, or the bucket's, needing an Allow
+// from its identity policies and, separately, an Allow or a grant from the
+// resource; within its account a policy must allow, and the ACLs are not
+// consulted.
 func (e *Evaluator) permit(r *op.Request, c *check) (ok bool, rule string) {
 	id := identity{id: &r.Identity}
 	if v, present := op.HeaderValue(r.Header, "X-Amz-Expected-Bucket-Owner"); present {
@@ -482,8 +517,9 @@ func (e *Evaluator) permit(r *op.Request, c *check) (ok bool, rule string) {
 	return ok, "cross-account resource: " + rule
 }
 
-// expectedOwner is to_expected_bucket_owner (rgw_common.cc:232-240 at
-// v20.2.4): an account's id, or a user's id without its tenant.
+// expectedOwner is to_expected_bucket_owner
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L232-L240 at v20.2.4):
+// an account's id, or a user's id without its tenant.
 func expectedOwner(o meta.Owner) string {
 	if o.User != nil {
 		return o.User.ID
@@ -492,10 +528,15 @@ func expectedOwner(o meta.Owner) string {
 }
 
 // permitOne is the inner verify_bucket_permission or
-// verify_object_permission (rgw_common.cc:1342-1372 and :1490-1516 at
-// v19.2.6, :1355-1394 and :1528-1562 at v20.2.4): requester pays,
-// RestrictPublicBuckets when a resource policy is given, the policies, and
-// when they pass and withACL, the ACLs.
+// verify_object_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1342-L1372
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1490-L1516 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1355-L1394
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1528-L1562 at v20.2.4):
+// requester pays, RestrictPublicBuckets when a resource policy is given,
+// the policies, and when they pass and withACL, the ACLs.
 func (e *Evaluator) permitOne(r *op.Request, id identity, c *check, accountRoot, withACL bool,
 	resource *policy.Policy, ids []*policy.Policy,
 ) (ok bool, rule string) {
@@ -521,11 +562,12 @@ func (e *Evaluator) permitOne(r *op.Request, id identity, c *check, accountRoot,
 	return bucketACL(r, id, c)
 }
 
-// evaluate is evaluate_iam_policies (rgw_common.cc:1170-1248 at v19.2.6,
-// :1183-1261 at v20.2.4) without session policies, and the rule that
-// decided. Identity policies are evaluated with no identity, as
-// eval_identity_or_session_policies does (:1146-1168, :1159-1181), so their
-// Principal elements are ignored.
+// evaluate is evaluate_iam_policies
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1170-L1248 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1183-L1261 at v20.2.4)
+// without session policies, and the rule that decided. Identity policies
+// are evaluated with no identity, as eval_identity_or_session_policies does
+// (:1146-1168, :1159-1181), so their Principal elements are ignored.
 func (e *Evaluator) evaluate(env policy.Env, id identity, accountRoot bool, a policy.Action, arn policy.ARN,
 	resource *policy.Policy, ids []*policy.Policy,
 ) (effect policy.Effect, rule string) {
@@ -555,11 +597,12 @@ func (e *Evaluator) evaluate(env policy.Env, id identity, accountRoot bool, a po
 	return policy.Pass, ""
 }
 
-// requesterPays is verify_requester_payer_permission (rgw_common.cc:1322-1340
-// at v19.2.6, :1335-1353 at v20.2.4) on the request's bucket: the owner pays,
-// an anonymous requester never, and anyone else only by sending
-// x-amz-request-payer, as a header or else as a query parameter, equal to
-// "requester" in any ASCII case.
+// requesterPays is verify_requester_payer_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1322-L1340 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1335-L1353 at v20.2.4)
+// on the request's bucket: the owner pays, an anonymous requester never, and
+// anyone else only by sending x-amz-request-payer, as a header or else as a
+// query parameter, equal to "requester" in any ASCII case.
 func requesterPays(r *op.Request, id identity) bool {
 	rec := r.BucketRec
 	if rec == nil || !rec.Info.RequesterPays || id.IsOwnerOfOwner(rec.Info.Owner) {
@@ -578,9 +621,12 @@ func requesterPays(r *op.Request, id identity) bool {
 	return lowerASCII(v) == "requester"
 }
 
-// restricted is RestrictPublicBuckets (rgw_common.cc:1374-1380 and
-// :1541-1547 at v20.2.4): a public policy refuses everyone outside the
-// bucket owner's account, each block judged against its own bucket's owner.
+// restricted is RestrictPublicBuckets
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1374-L1380
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1541-L1547 at v20.2.4):
+// a public policy refuses everyone outside the bucket owner's account, each
+// block judged against its own bucket's owner.
 func restricted(r *op.Request, id identity, c *check, resource *policy.Policy) bool {
 	if !resource.IsPublic(restrictSemantics) {
 		return false
@@ -609,9 +655,11 @@ func referer(r *op.Request) string {
 	return v
 }
 
-// bucketACL is verify_bucket_permission_no_policy (rgw_common.cc:1412-1432
-// at v19.2.6, :1442-1469 at v20.2.4): within the permission mask, a grant of
-// the bucket's ACL. S3 has no user ACL, so it never grants.
+// bucketACL is verify_bucket_permission_no_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1412-L1432 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1442-L1469 at v20.2.4):
+// within the permission mask, a grant of the bucket's ACL. S3 has no user
+// ACL, so it never grants.
 func bucketACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 	if c.perm&id.PermMask() != c.perm {
 		return false, "permission mask"
@@ -622,11 +670,13 @@ func bucketACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 	return false, "bucket acl"
 }
 
-// objectACL is verify_object_permission_no_policy (rgw_common.cc:1560-1608
-// at v19.2.6, :1614-1671 at v20.2.4): a grant of the object's ACL within the
-// permission mask, matched with no referer, or with rgw_enforce_swift_acls
-// the Swift container flags of the bucket's ACL, which only a Swift client
-// writes. Deferring to the bucket's ACLs is Swift's alone.
+// objectACL is verify_object_permission_no_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1560-L1608 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1614-L1671 at v20.2.4):
+// a grant of the object's ACL within the permission mask, matched with no
+// referer, or with rgw_enforce_swift_acls the Swift container flags of the
+// bucket's ACL, which only a Swift client writes. Deferring to the bucket's
+// ACLs is Swift's alone.
 func (e *Evaluator) objectACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 	mask := id.PermMask()
 	if c.object.Verify(id, mask, c.perm, "", c.ignorePublicACLs()) {

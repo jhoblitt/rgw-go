@@ -12,7 +12,8 @@ import (
 )
 
 // InitMultipart is RGWInitMultipart, CreateMultipartUpload
-// (rgw_op.cc:6271-6343 at v19.2.6, :6941-7019 at v20.2.4;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6271-L6343 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L7019 at v20.2.4;
 // rgw_rest_s3.cc:3969-4062 at v19.2.6). The handler fills the inputs;
 // Execute creates the upload through MultipartStore.CreateUpload.
 type InitMultipart struct {
@@ -27,10 +28,11 @@ type InitMultipart struct {
 	StorageClass string
 	// Params, when set, is the protocol's get_params, which
 	// RGWInitMultipart::execute runs once the requester is authorized
-	// (rgw_op.cc:6299 at v19.2.6, :6968 at v20.2.4): Execute calls it once a
-	// bucket's default encryption is refused and the placement checked, ahead
-	// of the block of public ACLs. It fills the inputs it reads, the ACL among
-	// them.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6299 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968 at v20.2.4):
+	// Execute calls it once a bucket's default encryption is refused and the
+	// placement checked, ahead of the block of public ACLs. It fills the
+	// inputs it reads, the ACL among them.
 	Params func(ctx context.Context, o *InitMultipart) error
 
 	UploadID string
@@ -56,27 +58,29 @@ func (o *InitMultipart) OpMask() uint32 { return OpTypeWrite }
 // docs/exclusions.md).
 func (o *InitMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
-// VerifyPermission is RGWInitMultipart::verify_permission (rgw_op.cc:6271-6286
-// at v19.2.6, :6941-6956 at v20.2.4).
+// VerifyPermission is RGWInitMultipart::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6271-L6286 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956 at v20.2.4).
 func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 }
 
-// Execute is RGWInitMultipart::execute (rgw_op.cc:6293-6343 at v19.2.6,
-// :6963-7019 at v20.2.4): the destination placement, the bucket's rule with
-// the request's storage class, must be one the zone has (rgw_op.cc:576-583
-// at v19.2.6, :606-613 at v20.2.4), which radosgw checks before
-// verify_permission and so before anything get_params reads; a bucket with
-// a default encryption is refused, as get_encryption_defaults comes first in
-// get_params; Params runs, and a public ACL
-// under the bucket's block of public ACLs is refused, as PutObject refuses
-// one, where radosgw checks no block for CreateMultipartUpload, whose ACL
-// the completed object takes (docs/exclusions.md). The upload's attrs are
-// the request's with the policy and, when the request tags the object with
-// any tag, the tag set, and the upload is created for the requester on the
-// destination placement. radosgw ends a request without a key there with
-// success and no upload, where no S3 route reaches it; rgw-go answers
-// InvalidArgument.
+// Execute is RGWInitMultipart::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6293-L6343 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6963-L7019 at v20.2.4):
+// the destination placement, the bucket's rule with the request's storage
+// class, must be one the zone has (rgw_op.cc:576-583 at v19.2.6, :606-613 at
+// v20.2.4), which radosgw checks before verify_permission and so before
+// anything get_params reads; a bucket with a default encryption is refused,
+// as get_encryption_defaults comes first in get_params; Params runs, and a
+// public ACL under the bucket's block of public ACLs is refused, as
+// PutObject refuses one, where radosgw checks no block for
+// CreateMultipartUpload, whose ACL the completed object takes
+// (docs/exclusions.md). The upload's attrs are the request's with the policy
+// and, when the request tags the object with any tag, the tag set, and the
+// upload is created for the requester on the destination placement. radosgw
+// ends a request without a key there with success and no upload, where no S3
+// route reaches it; rgw-go answers InvalidArgument.
 func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err

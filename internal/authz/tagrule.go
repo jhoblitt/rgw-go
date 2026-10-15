@@ -148,7 +148,9 @@ var bucketTagActions = map[policy.Action]bool{
 // policy and the identity's). An object's tags come from obj when given and
 // the op loaded it for the key r names, and otherwise from a stat of the key,
 // made only when needed, as radosgw reads the object's attrs then
-// (rgw_iam_add_objtags, rgw_op.cc:727-745 at v19.2.6, :757-775 at v20.2.4).
+// (rgw_iam_add_objtags,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L727-L745 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L757-L775 at v20.2.4).
 // A missing object adds no keys. When a policy needs the tags, a failed read
 // or a tag set that does not decode is an error: radosgw ignores either and
 // evaluates without the tags, which skips a tag-conditioned Deny

@@ -31,8 +31,9 @@ type Verifier struct {
 }
 
 // New builds a verifier. accounts may be nil: an account user is then denied,
-// as radosgw denies one whose account does not load (rgw_rest_s3.cc:6343-6345
-// at v19.2.6, :6914-6916 at v20.2.4).
+// as radosgw denies one whose account does not load
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6343-L6345 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6914-L6916 at v20.2.4).
 func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier {
 	now := cfg.Now
 	if now == nil {
@@ -58,21 +59,24 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	// Without Keystone and LDAP, rgw_s3_auth_use_rados off leaves radosgw no
 	// backend, and it denies every request, anonymous ones included
-	// (rgw_rest_s3.cc:5119-5125 at v19.2.6, :5679-5685 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5119-L5125 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5679-L5685 at v20.2.4).
 	if !v.cfg.UseRados {
 		return nil, fmt.Errorf("%w: no authentication backend enabled", op.ErrAccessDenied)
 	}
 	rv := newRequestView(req)
 	ver, rt := discoverFlavour(rv)
-	// S3AnonymousEngine::is_applicable (rgw_rest_s3.cc:6614-6628 at v19.2.6,
-	// :7222-7236 at v20.2.4).
+	// S3AnonymousEngine::is_applicable
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6614-L6628 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7222-L7236 at v20.2.4).
 	if ver == versionUnknown && (rt == routeQuery || req.Method == http.MethodOptions) {
 		return &op.AuthResult{
 			Identity: op.Anonymous(), ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Route: op.RouteAnonymous,
 		}, nil
 	}
 	// get_auth_data refuses every signed request before it reads one, and
-	// Strategy::apply gives the refusal its message (rgw_rest_s3.cc:5607-5610
+	// Strategy::apply gives the refusal its message
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5607-L5610
 	// and rgw_auth.cc:505-509 at v19.2.6, :6163-6166 and :520-524 at v20.2.4).
 	if v.cfg.DisablePresignedURLs {
 		return nil, op.ErrAccessDenied.WithMessage("Presigned URLs are disabled by admin")
@@ -81,8 +85,9 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	if err != nil {
 		return nil, err
 	}
-	// AWSEngine::authenticate (rgw_rest_s3.cc:6179-6180 at v19.2.6,
-	// :6750-6751 at v20.2.4).
+	// AWSEngine::authenticate
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6179-L6180 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6750-L6751 at v20.2.4).
 	if d.accessKey == "" || d.signature == "" {
 		return nil, fmt.Errorf("%w: missing access key or signature", op.ErrInvalidArgument)
 	}
@@ -132,8 +137,10 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	if d.v4 != nil {
 		res.PayloadSHA256 = d.payloadHash
 		// The completer's modify_request_state runs once the strategy has
-		// granted (rgw_auth.cc:526-528 at v19.2.6, :541-543 at v20.2.4), so a
-		// missing x-amz-decoded-content-length is reported after the
+		// granted
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L526-L528 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L541-L543 at v20.2.4),
+		// so a missing x-amz-decoded-content-length is reported after the
 		// signature has verified.
 		if res.Body, res.ContentLength, err = d.completer(rv, key.Secret); err != nil {
 			return nil, err
@@ -157,10 +164,11 @@ func authRoute(ver version, presigned bool) op.AuthRoute {
 }
 
 // parseAuthData is get_auth_data's choice of abstractor
-// (rgw_rest_s3.cc:5612-5619 at v19.2.6, :6168-6175 at v20.2.4), an
-// Authorization header of another scheme being EINVAL, and get_auth_data_v4's
-// last step, the refusal of a payload form the op does not take. A SigV2
-// request has no payload form.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5612-L5619 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6168-L6175 at v20.2.4),
+// an Authorization header of another scheme being EINVAL, and
+// get_auth_data_v4's last step, the refusal of a payload form the op does not
+// take. A SigV2 request has no payload form.
 func (v *Verifier) parseAuthData(rv *requestView, ver version, rt route, payloads op.PayloadForms) (*authData, error) {
 	var (
 		d   *authData
@@ -228,8 +236,10 @@ var errNoAccountStore = errors.New("no account store")
 
 // loadAccount loads account id. A failure, a missing account store
 // included, is the caller's to log and to answer with ErrAccessDenied
-// (load_account_and_policies, rgw_auth.cc:143-155 at v19.2.6 and v20.2.4),
-// as only the caller knows whether id is the request's rgwx-uid.
+// (load_account_and_policies,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L143-L155 at v19.2.6
+// and v20.2.4), as only the caller knows whether id is the request's
+// rgwx-uid.
 func (v *Verifier) loadAccount(ctx context.Context, id string) (*meta.AccountInfo, error) {
 	if v.accounts == nil {
 		return nil, errNoAccountStore

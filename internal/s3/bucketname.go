@@ -7,15 +7,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
-// ValidBucketName is valid_s3_bucket_name (rgw_rest_s3.h:838-907 at
-// v19.2.6, :868-937 at v20.2.4), which CreateBucket applies to a name it
-// creates: 3 to 63 bytes, or 255 under rgw_relaxed_s3_bucket_names; strictly
-// lowercase letters, digits, dashes and dots, starting and ending with a
-// letter or digit, no dot beside a dot or a dash; relaxed, letters of either
-// case, digits, '_', '-' and '.', starting with any of them; never an IP
-// address. Letters and digits are ASCII, as C's ctype is in the C locale.
-// The character scan stops at a NUL, as radosgw walks the name as a C
-// string; the length and the last-character checks see the whole name.
+// ValidBucketName is valid_s3_bucket_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L838-L907 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L868-L937 at v20.2.4),
+// which CreateBucket applies to a name it creates: 3 to 63 bytes, or 255
+// under rgw_relaxed_s3_bucket_names; strictly lowercase letters, digits,
+// dashes and dots, starting and ending with a letter or digit, no dot beside
+// a dot or a dash; relaxed, letters of either case, digits, '_', '-' and
+// '.', starting with any of them; never an IP address. Letters and digits
+// are ASCII, as C's ctype is in the C locale. The character scan stops at a
+// NUL, as radosgw walks the name as a C string; the length and the
+// last-character checks see the whole name.
 func ValidBucketName(name string, relaxed bool) error {
 	maxLen := 63
 	if relaxed {

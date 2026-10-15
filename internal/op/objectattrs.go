@@ -12,11 +12,12 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
-// PutObjectACL is RGWPutACLs at object scope (rgw_op.cc:5738-5928 at
-// v19.2.6, :6316-6590 at v20.2.4). Build is the handler's closure over the
-// authorizer's policy builder: it receives the object's stored policy once
-// Init has read the head, and returns the new policy, or its refusal already
-// mapped to an S3 error.
+// PutObjectACL is RGWPutACLs at object scope
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5738-L5928 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6316-L6590 at v20.2.4).
+// Build is the handler's closure over the authorizer's policy builder: it
+// receives the object's stored policy once Init has read the head, and
+// returns the new policy, or its refusal already mapped to an S3 error.
 type PutObjectACL struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -42,7 +43,8 @@ func (o *PutObjectACL) Action() policy.Action {
 func (o *PutObjectACL) OpMask() uint32 { return OpTypeWrite }
 
 // Init loads the bucket and the object's head, which read_permissions reads
-// for an object update op (rgw_rest.cc:1910-1913 at v19.2.6).
+// for an object update op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1910-L1913 at v19.2.6).
 func (o *PutObjectACL) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	return statHead(ctx, r)
@@ -54,12 +56,15 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
 }
 
-// Execute is RGWPutACLs::execute for an object (rgw_op.cc:5821-5928 at
-// v19.2.6, :6467-6590 at v20.2.4): Build from s->object_acl, the head's
-// policy or its owner's default (ObjectACLFor); the refusal of a public
-// policy under a block of public ACLs; and modify_obj_attrs, which writes the
-// object's attrs back whole with the ACL replaced
-// (driver/rados/rgw_sal_rados.cc:2401-2419 at v19.2.6, :2994 at v20.2.4).
+// Execute is RGWPutACLs::execute for an object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5821-L5928 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6467-L6590 at v20.2.4):
+// Build from s->object_acl, the head's policy or its owner's default
+// (ObjectACLFor); the refusal of a public policy under a block of public
+// ACLs; and modify_obj_attrs, which writes the object's attrs back whole with
+// the ACL replaced
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2401-L2419 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994 at v20.2.4).
 // radosgw answers a lost race with success and leaves the ACL unwritten
 // (:5925-5927 at v19.2.6, :6587-6589 at v20.2.4; docs/ceph-upstream-bugs.md,
 // "radosgw's PutBucketAcl answers success when its write loses a race").
@@ -122,9 +127,11 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 // read. A refusal ends the write with it, as Run would answer it: an admin
 // is let through an access denial that is not marked BeforeVerify, as Run
 // lets one through. radosgw authorizes a request once, before any retry
-// (retry_raced_bucket_write, rgw_op.h:183-196 at v19.2.6, :197-210 at
-// v20.2.4), so a retry can write for a requester whom the change it lost to
-// refused; rgw-go writes nothing for them (docs/exclusions.md).
+// (retry_raced_bucket_write,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L183-L196 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210 at v20.2.4),
+// so a retry can write for a requester whom the change it lost to refused;
+// rgw-go writes nothing for them (docs/exclusions.md).
 func RetryRacedWriteReauthorized(ctx context.Context, r *Request, reread, verify, f func() error) error {
 	retry := false
 	return RetryRacedBucketWrite(ctx, r, func() error {
@@ -146,8 +153,10 @@ func RetryRacedWriteReauthorized(ctx context.Context, r *Request, reread, verify
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *PutObjectACL) Complete(context.Context, *Request) {}
 
-// PutObjectTagging is RGWPutObjTags (rgw_op.cc:1076-1109 at v19.2.6,
-// :1275-1327 at v20.2.4) with the tag set the handler parsed.
+// PutObjectTagging is RGWPutObjTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1076-L1109 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1275-L1327 at v20.2.4)
+// with the tag set the handler parsed.
 type PutObjectTagging struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -155,8 +164,9 @@ type PutObjectTagging struct {
 	Set       tags.Set
 	// Params, when set, is the protocol's get_params, which reads and parses
 	// the body into Set: Execute calls it first, once the requester is
-	// authorized, as RGWPutObjTags::execute calls get_params (rgw_op.cc:1095
-	// at v19.2.6, :1294 at v20.2.4).
+	// authorized, as RGWPutObjTags::execute calls get_params
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1095 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1294 at v20.2.4).
 	Params func(ctx context.Context, o *PutObjectTagging) error
 }
 
@@ -191,7 +201,9 @@ func (o *PutObjectTagging) VerifyPermission(ctx context.Context, r *Request) err
 
 // Execute is RGWPutObjTags::execute: Params, then modify_obj_attrs with the
 // tag set as get_params encodes it, empty or not, where a lost race is 409
-// OperationAborted (rgw_op.cc:1104-1108 at v19.2.6, :1322-1326 at v20.2.4).
+// OperationAborted
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1104-L1108 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1322-L1326 at v20.2.4).
 // A version rgw-go does not serve and a missing object, which radosgw
 // refuses while it reads the object before authorizing, are refused before
 // Params reads the body.
@@ -217,8 +229,9 @@ func (o *PutObjectTagging) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *PutObjectTagging) Complete(context.Context, *Request) {}
 
-// DeleteObjectTagging is RGWDeleteObjTags (rgw_op.cc:1117-1139 at v19.2.6,
-// :1335-1376 at v20.2.4).
+// DeleteObjectTagging is RGWDeleteObjTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1117-L1139 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1335-L1376 at v20.2.4).
 type DeleteObjectTagging struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -242,7 +255,8 @@ func (o *DeleteObjectTagging) Action() policy.Action {
 func (o *DeleteObjectTagging) OpMask() uint32 { return OpTypeDelete }
 
 // Init loads the bucket and the object's head, which read_permissions reads
-// for a DELETE of ?tagging (rgw_rest.cc:1920-1923 at v19.2.6).
+// for a DELETE of ?tagging
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1920-L1923 at v19.2.6).
 func (o *DeleteObjectTagging) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	return statHead(ctx, r)
@@ -256,10 +270,12 @@ func (o *DeleteObjectTagging) VerifyPermission(ctx context.Context, r *Request) 
 
 // Execute is RGWDeleteObjTags::execute as v20.2.4 runs it, on both releases:
 // the object's attrs loaded, then delete_obj_attrs, so that the store
-// advances the mtime it read (rgw_op.cc:1351-1376 at v20.2.4). v19.2.6 skips
-// the load and stamps the object with the epoch plus a nanosecond
-// (docs/ceph-upstream-bugs.md, "Squid's DeleteObjectTagging stamps the
-// object with the epoch plus one nanosecond"; docs/exclusions.md).
+// advances the mtime it read
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1351-L1376 at v20.2.4).
+// v19.2.6 skips the load and stamps the object with the epoch plus a
+// nanosecond (docs/ceph-upstream-bugs.md, "Squid's DeleteObjectTagging
+// stamps the object with the epoch plus one nanosecond";
+// docs/exclusions.md).
 func (o *DeleteObjectTagging) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err

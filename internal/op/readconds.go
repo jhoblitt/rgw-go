@@ -11,15 +11,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
-// ParseRange is RGWGetObj::parse_range (rgw_op.cc:160-224 at v19.2.6,
-// :203-267 at v20.2.4) on a Range header value. It returns ofs and end as
-// radosgw holds them: end is -1 for an open range, and ofs is negative for a
-// suffix range. partial reports that a range was found, which radosgw answers
-// with 206. A value whose unit is not bytes is no range, the whole object
-// with partial false; one radosgw refuses is ErrInvalidRange. Like radosgw it
-// takes "bytes=" anywhere in the value, reads each bound with atoll, so a
-// second range is dropped and a non-number reads as 0, and compares the unit
-// from the value's first byte however much whitespace precedes the unit
+// ParseRange is RGWGetObj::parse_range
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L160-L224 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L203-L267 at v20.2.4)
+// on a Range header value. It returns ofs and end as radosgw holds them: end
+// is -1 for an open range, and ofs is negative for a suffix range. partial
+// reports that a range was found, which radosgw answers with 206. A value
+// whose unit is not bytes is no range, the whole object with partial false;
+// one radosgw refuses is ErrInvalidRange. Like radosgw it takes "bytes="
+// anywhere in the value, reads each bound with atoll, so a second range is
+// dropped and a non-number reads as 0, and compares the unit from the value's
+// first byte however much whitespace precedes the unit
 // (docs/ceph-upstream-bugs.md).
 func ParseRange(value string) (ofs, end int64, partial bool, err error) {
 	rs := rgwtext.CString(value)
@@ -70,8 +72,9 @@ func ParseRange(value string) (ofs, end int64, partial bool, err error) {
 }
 
 // RangeToOfs is RGWRados::Object::Read::range_to_ofs
-// (driver/rados/rgw_rados.cc:7002-7022 at v19.2.6, :7851-7871 at v20.2.4): it
-// resolves a parsed range against an object of size bytes to its first and
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7002-L7022 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7851-L7871 at v20.2.4):
+// it resolves a parsed range against an object of size bytes to its first and
 // last byte, and refuses with ErrInvalidRange a range that starts at or past
 // the end of a non-empty object. An empty object has no last byte, where
 // radosgw leaves end at -1 and sends nothing; RangeToOfs returns its offset
@@ -96,11 +99,13 @@ func RangeToOfs(size uint64, ofs, end int64) (first, last uint64, err error) {
 	return uint64(ofs), uint64(end), nil //nolint:gosec // 0 <= ofs <= end here
 }
 
-// ParseHTTPTime is parse_time (rgw_common.cc:702-715 at v19.2.6, :715-728 at
-// v20.2.4), which reads If-Modified-Since and If-Unmodified-Since: glibc
-// strptime with RFC 850's, asctime's and RFC 1123's formats, the last with a
-// GMT or UTC zone or a numeric offset, then ISO 8601 as parse_iso8601 takes
-// it. Anything else is ErrInvalidArgument. It keeps radosgw's arithmetic: a
+// ParseHTTPTime is parse_time
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L702-L715 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L715-L728 at v20.2.4),
+// which reads If-Modified-Since and If-Unmodified-Since: glibc strptime with
+// RFC 850's, asctime's and RFC 1123's formats, the last with a GMT or UTC
+// zone or a numeric offset, then ISO 8601 as parse_iso8601 takes it.
+// Anything else is ErrInvalidArgument. It keeps radosgw's arithmetic: a
 // numeric offset is parsed but not applied, as internal_timegm ignores it,
 // and the seconds pass through utime_t's 32 bits, so a date before 1970 or
 // after 2106-02-07T06:28:15Z wraps (docs/ceph-upstream-bugs.md).
@@ -119,8 +124,9 @@ func ParseHTTPTime(s string) (time.Time, error) {
 }
 
 // CheckReadConditions is RGWRados::Object::Read::prepare's conditional block
-// (driver/rados/rgw_rados.cc:6945-6990 at v19.2.6, :7793-7839 at v20.2.4) as
-// a copy applies it to its source state st, with the dates as
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6945-L6990 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7793-L7839 at v20.2.4)
+// as a copy applies it to its source state st, with the dates as
 // RGWCopyObj::init_common parses them through parse_time, ErrInvalidArgument
 // when one does not parse. Each condition is nil when its header is absent;
 // one present with an empty value is a condition, an empty date failing to
@@ -189,9 +195,11 @@ func (c readConds) check(st *ObjectState) error {
 	return nil
 }
 
-// Unquote is rgw_string_unquote (rgw_common.cc:518-533 at v19.2.6, :531-546
-// at v20.2.4): a value that opens with a double quote and, past any trailing
-// spaces, closes with one loses both quotes and those spaces.
+// Unquote is rgw_string_unquote
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L518-L533 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L531-L546 at v20.2.4):
+// a value that opens with a double quote and, past any trailing spaces,
+// closes with one loses both quotes and those spaces.
 func Unquote(s string) string {
 	if len(s) < 2 || s[0] != '"' {
 		return s
@@ -206,12 +214,13 @@ func Unquote(s string) string {
 	return s[1 : n-1]
 }
 
-// fromBase64 is rgw::from_base64 (rgw_b64.h:61-80 at v19.2.6 and v20.2.4),
-// which decodes the SSE-C key headers: the trailing '=' are dropped, and
-// boost's decoder skips whitespace, reads any other '=' as a zero and drops
-// the bits that do not fill a byte. ok is false where boost throws: on a byte
-// outside the alphabet, and on input that ends in whitespace or one character
-// into a group of four.
+// fromBase64 is rgw::from_base64
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_b64.h#L61-L80 at v19.2.6
+// and v20.2.4), which decodes the SSE-C key headers: the trailing '=' are
+// dropped, and boost's decoder skips whitespace, reads any other '=' as a
+// zero and drops the bits that do not fill a byte. ok is false where boost
+// throws: on a byte outside the alphabet, and on input that ends in
+// whitespace or one character into a group of four.
 func fromBase64(s string) (out []byte, ok bool) {
 	s = strings.TrimRight(s, "=")
 	if s == "" {
@@ -268,9 +277,11 @@ func base64Value(c byte) (byte, bool) {
 	}
 }
 
-// parseRFC2616 is parse_rfc2616 (rgw_common.cc:566-597 at v19.2.6, :579-610
-// at v20.2.4): RFC 850, asctime, RFC 1123 with a GMT or UTC zone, then RFC
-// 1123 with a numeric offset, each from a zeroed struct tm.
+// parseRFC2616 is parse_rfc2616
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L566-L597 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L579-L610 at v20.2.4):
+// RFC 850, asctime, RFC 1123 with a GMT or UTC zone, then RFC 1123 with a
+// numeric offset, each from a zeroed struct tm.
 func parseRFC2616(s string) (strptime.Tm, bool) {
 	if tm, rest, ok := strptime.Parse(strptime.Tm{}, s, "%A, %d-%b-%y %H:%M:%S "); ok && checkGMTEnd(rest) {
 		return tm, true
@@ -304,12 +315,14 @@ func checkStrEnd(rest string) bool { return strings.TrimLeft(rest, cSpaces) == "
 // fraction of n digits into nanoseconds.
 var isoNanoScale = [...]uint64{0, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1}
 
-// parseISO8601 is parse_iso8601 in its extended format (rgw_common.cc:599-659
-// at v19.2.6, :612-672 at v20.2.4): a date, "T" or whitespace, a time, and
-// then, whitespace aside, nothing, "Z", or "." and a fraction that stringtoul
-// takes followed by "Z". The fraction keeps radosgw's arithmetic: its value
-// cut to 32 bits times the scale for its first nine bytes, cut to 32 bits.
-// Its formats' %T is glibc's "%H:%M:%S", spelled out for strptime.Parse.
+// parseISO8601 is parse_iso8601 in its extended format
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L599-L659 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672 at v20.2.4):
+// a date, "T" or whitespace, a time, and then, whitespace aside, nothing,
+// "Z", or "." and a fraction that stringtoul takes followed by "Z". The
+// fraction keeps radosgw's arithmetic: its value cut to 32 bits times the
+// scale for its first nine bytes, cut to 32 bits. Its formats' %T is glibc's
+// "%H:%M:%S", spelled out for strptime.Parse.
 func parseISO8601(s string) (strptime.Tm, uint32, bool) {
 	tm, rest, ok := strptime.Parse(strptime.Tm{}, s, "%Y-%m-%dT%H:%M:%S")
 	if !ok {

@@ -17,11 +17,14 @@ import (
 // ACL beside a body, a new owner, too many grants and a public policy under a
 // block of public ACLs; its errors are mapped through authz.ErrorFor. The
 // body is read only once the requester is authorized, as RGWPutACLs::execute
-// calls get_params (rgw_op.cc:5828 at v19.2.6, :6474 at v20.2.4), through
-// what authentication left in r.Body to its final Read; a body longer than
-// rgw_max_put_param_size is MalformedXML naming the limit (rgw_op.cc
-// :5830-5837 at v19.2.6, :6476-6483 at v20.2.4). The 200 carries no body
-// (writeEmptyXML).
+// calls get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5828 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6474 at v20.2.4),
+// through what authentication left in r.Body to its final Read; a body longer
+// than rgw_max_put_param_size is MalformedXML naming the limit (rgw_op.cc
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5830-L5837 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6476-L6483 at v20.2.4).
+// The 200 carries no body (writeEmptyXML).
 func putObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.PutObjectACL{Build: func(existing acl.Policy) (acl.Policy, error) {
 		e, err := evaluator(r)

@@ -148,9 +148,11 @@ var _ = Describe("SigV4 header authentication", func() {
 })
 
 // attackHeaders are the x-amz-* headers upstream's CVE-2026-54330 guard
-// refuses unsigned (test_rgw_auth_sigv4.cc:141-184 at v19.2.7), each a way
-// for the holder of a signature to act with authority its signer never gave,
-// and a name that only starts with the one header the rule exempts.
+// refuses unsigned
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/test/rgw/test_rgw_auth_sigv4.cc#L141-L184 at v19.2.7),
+// each a way for the holder of a signature to act with authority its signer
+// never gave, and a name that only starts with the one header the rule
+// exempts.
 var attackHeaders = []string{
 	"X-Amz-Acl", "X-Amz-Copy-Source", "X-Amz-Grant-Full-Control", "X-Amz-Grant-Read", "X-Amz-Grant-Write",
 	"X-Amz-Grant-Read-Acp", "X-Amz-Grant-Write-Acp", "X-Amz-Meta-Injected", "X-Amz-Metadata-Directive",
@@ -171,7 +173,8 @@ func attackHeaderEntries() []TableEntry {
 }
 
 // renamedPrefixes are the meta prefixes beside X-Amz- that radosgw's
-// init_meta_info files under x-amz- names (rgw_common.cc:413-464 at v19.2.7)
+// init_meta_info files under x-amz- names
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7)
 // and rgw-go reads as ordinary headers.
 var renamedPrefixes = []string{"X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"}
 

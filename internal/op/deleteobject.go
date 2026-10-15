@@ -14,11 +14,13 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
-// DeleteObject is RGWDeleteObj (rgw_op.cc:5129-5327 at v19.2.6, :5519-5726
-// at v20.2.4; rgw_rest_s3.cc:3427-3470 at v19.2.6, :3685-3750 at v20.2.4).
-// The handler fills the headers' values, url-decoded where radosgw decodes
-// them, and nil for a header that is absent. A header present with an empty
-// value is a condition radosgw checks, and fails.
+// DeleteObject is RGWDeleteObj
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5129-L5327 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5519-L5726 at v20.2.4;
+// rgw_rest_s3.cc:3427-3470 at v19.2.6, :3685-3750 at v20.2.4). The handler
+// fills the headers' values, url-decoded where radosgw decodes them, and
+// nil for a header that is absent. A header present with an empty value is
+// a condition radosgw checks, and fails.
 type DeleteObject struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -59,7 +61,8 @@ func (o *DeleteObject) OpMask() uint32 { return OpTypeDelete }
 // Init loads the bucket, as init_permissions does, and then parses the
 // conditions as RGWDeleteObj_ObjStore_S3::get_params does during
 // init_processing, before verify_permission, the same at both releases
-// (rgw_rest_s3.cc:3435-3483 at v19.2.7, :3685-3733 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3483 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3733 at v20.2.4):
 // x-amz-delete-if-unmodified-since by utime_t::parse_date,
 // x-amz-if-match-last-modified-time by parse_time and x-amz-if-match-size by
 // strict_strtoll, each that does not parse, an empty one included,
@@ -94,14 +97,15 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// VerifyPermission is RGWDeleteObj::verify_permission (rgw_op.cc:5138-5166 at
-// v19.2.6, :5528-5556 at v20.2.4): the bucket permission, then MFA for a
-// delete of a version in a bucket with MFA delete, which radosgw lets through
-// only when the request's x-amz-mfa verified. rgw-go verifies none, so it
-// refuses every such delete, an admin's included: radosgw returns the
-// permission's refusal first, which its admin override then passes without
-// the MFA check (docs/exclusions.md). ERR_MFA_REQUIRED is no access denial
-// op.Run overrides.
+// VerifyPermission is RGWDeleteObj::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5138-L5166 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556 at v20.2.4):
+// the bucket permission, then MFA for a delete of a version in a bucket with
+// MFA delete, which radosgw lets through only when the request's x-amz-mfa
+// verified. rgw-go verifies none, so it refuses every such delete, an admin's
+// included: radosgw returns the permission's refusal first, which its admin
+// override then passes without the MFA check (docs/exclusions.md).
+// ERR_MFA_REQUIRED is no access denial op.Run overrides.
 func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
@@ -114,11 +118,16 @@ func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 	return err
 }
 
-// Execute is RGWDeleteObj::execute's unversioned path (rgw_op.cc:5173-5327 at
-// v19.2.6, :5563-5726 at v20.2.4): the delete, where a missing key is the
-// 204 RGWDeleteObj_ObjStore_S3::send_response turns -ENOENT into
-// (rgw_rest_s3.cc:3457-3461 at v19.2.6, :3737-3741 at v20.2.4), and a lost
-// race is success (rgw_op.cc:5302-5304 at v19.2.6, :5701-5703 at v20.2.4).
+// Execute is RGWDeleteObj::execute's unversioned path
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5173-L5327 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5563-L5726 at v20.2.4):
+// the delete, where a missing key is the 204
+// RGWDeleteObj_ObjStore_S3::send_response turns -ENOENT into
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3457-L3461 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3737-L3741 at v20.2.4),
+// and a lost race is success
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304 at v19.2.6,
+// :5701-5703 at v20.2.4).
 func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
@@ -136,15 +145,17 @@ func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *DeleteObject) Complete(context.Context, *Request) {}
 
-// mfaEnabled is RGWBucketInfo::mfa_enabled (rgw_common.h:1077 at v19.2.6,
-// :1119 at v20.2.4).
+// mfaEnabled is RGWBucketInfo::mfa_enabled
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1077 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1119 at v20.2.4).
 func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEnabled != 0 }
 
-// parseDate is utime_t::parse_date (include/utime.h:397-502 at v19.2.6 and
-// v20.2.4) turned into the utime_t its caller builds: a date strptime takes
-// as "%Y-%m-%d", alone, with anything but a space or "T" after it ignored,
-// or followed by a space or "T" and a time; otherwise "%d.%d", seconds and
-// microseconds since the epoch, as sscanf reads them.
+// parseDate is utime_t::parse_date
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L397-L502 at v19.2.6
+// and v20.2.4) turned into the utime_t its caller builds: a date strptime
+// takes as "%Y-%m-%d", alone, with anything but a space or "T" after it
+// ignored, or followed by a space or "T" and a time; otherwise "%d.%d",
+// seconds and microseconds since the epoch, as sscanf reads them.
 func parseDate(date string) (time.Time, bool) {
 	date = rgwtext.CString(date)
 	tm, rest, ok := strptime.Parse(strptime.Tm{}, date, "%Y-%m-%d")

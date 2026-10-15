@@ -23,15 +23,16 @@ func HostID(instanceID uint64, zone, zonegroup string) string {
 	return fmt.Sprintf("%d-%s-%s", instanceID, zone, zonegroup)
 }
 
-// URLEncode is radosgw's url_encode(src, encode_slash) (rgw_common.cc:1775-1785
-// at v19.2.6, :1838 at v20.2.4) over char_needs_url_encoding (:1743-1773;
-// :1806): a byte <= 0x20 or >= 0x7F, or one of " # % & + , / : ; < = > ? @ [ \ ]
-// ^ ` { }, is %XX; everything else — alphanumerics and ! $ ' ( ) * - . _ | ~ —
-// passes through. With encodeSlash false '/' passes too, dump_urlsafe's form for
-// listing prefixes and delimiters (rgw_rest.h:712, encode_slash defaults true).
-// It serves the transaction-id suffix (encodeSlash true) and the object and
-// multipart-upload listings' encoding-type=url; nothing else in rgw-go
-// URL-encodes by hand.
+// URLEncode is radosgw's url_encode(src, encode_slash)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1775-L1785 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1838 at v20.2.4)
+// over char_needs_url_encoding (:1743-1773; :1806): a byte <= 0x20 or >= 0x7F,
+// or one of " # % & + , / : ; < = > ? @ [ \ ] ^ ` { }, is %XX; everything else —
+// alphanumerics and ! $ ' ( ) * - . _ | ~ — passes through. With encodeSlash
+// false '/' passes too, dump_urlsafe's form for listing prefixes and delimiters
+// (rgw_rest.h:712, encode_slash defaults true). It serves the transaction-id
+// suffix (encodeSlash true) and the object and multipart-upload listings'
+// encoding-type=url; nothing else in rgw-go URL-encodes by hand.
 func URLEncode(s string, encodeSlash bool) string {
 	var b strings.Builder
 	for i := range len(s) {

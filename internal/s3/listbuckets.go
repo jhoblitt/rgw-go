@@ -17,15 +17,17 @@ func serviceHandlers() map[string]HandlerFunc {
 }
 
 // listOwner is dump_owner's section; DisplayName is written only when set
-// (rgw_rest.cc:506-517 at v19.2.6, :511-522 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L506-L517 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L511-L522 at v20.2.4).
 type listOwner struct {
 	XMLName     xml.Name     `xml:"Owner"`
 	ID          xmltext.Text `xml:"ID"`
 	DisplayName xmltext.Text `xml:"DisplayName,omitempty"`
 }
 
-// listBucket is dump_bucket's section (rgw_rest_s3.cc:91-97 at v19.2.6,
-// :96-102 at v20.2.4).
+// listBucket is dump_bucket's section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L91-L97 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L96-L102 at v20.2.4).
 type listBucket struct {
 	XMLName      xml.Name     `xml:"Bucket"`
 	Name         xmltext.Text `xml:"Name"`
@@ -33,14 +35,17 @@ type listBucket struct {
 }
 
 // listBuckets is RGWListBuckets_ObjStore_S3. Its get_params sets only
-// limit = -1 (rgw_rest_s3.h:133-136 at v19.2.6): max-buckets and
-// continuation-token are never read, and no ContinuationToken is written.
-// The document streams in radosgw's order (rgw_rest_s3.cc:1511-1547 at
-// v19.2.6, :1622-1658 at v20.2.4): send_response_begin sends the headers
-// and the declaration, then opens the result, the owner and Buckets once the
-// first page is read; send_response_data adds each page and flushes it;
-// send_response_end closes the two sections and flushes, after a failed
-// later page too. The owner is the requesting user, never its account.
+// limit = -1
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L133-L136 at v19.2.6):
+// max-buckets and continuation-token are never read, and no
+// ContinuationToken is written. The document streams in radosgw's order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1511-L1547 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1622-L1658 at v20.2.4):
+// send_response_begin sends the headers and the declaration, then opens the
+// result, the owner and Buckets once the first page is read;
+// send_response_data adds each page and flushes it; send_response_end closes
+// the two sections and flushes, after a failed later page too. The owner is
+// the requesting user, never its account.
 func listBuckets(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	var cx *chunkedXML
 	o := &op.ListBuckets{Limit: -1}

@@ -14,7 +14,9 @@ import (
 )
 
 // The x-amz-content-sha256 values radosgw tells apart besides
-// UNSIGNED-PAYLOAD (rgw_auth_s3.h:524-537 at v19.2.6, :527-540 at v20.2.4).
+// UNSIGNED-PAYLOAD
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L524-L537 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L527-L540 at v20.2.4).
 const (
 	emptyPayloadHash         = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	streamingPayload         = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
@@ -47,9 +49,10 @@ type payloadClass struct {
 }
 
 // classifyPayload is get_auth_data_v4's choice of completer
-// (rgw_rest_s3.cc:5855-6000 at v19.2.6, :6422-6571 at v20.2.4) over the
-// predicates of rgw_auth_s3.h:663-702 at v19.2.6, :666-705 at v20.2.4. A
-// request has no body when its Content-Length is 0 and it has no
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5855-L6000 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6422-L6571 at v20.2.4)
+// over the predicates of rgw_auth_s3.h:663-702 at v19.2.6, :666-705 at
+// v20.2.4. A request has no body when its Content-Length is 0 and it has no
 // Transfer-Encoding. The ops that take no body never complete the payload, so
 // radosgw refuses here a request without a body whose hash is neither an
 // unsigned form nor the empty string's, with XAmzContentSHA256Mismatch.
@@ -79,9 +82,11 @@ func classifyPayload(rv *requestView, payloadHash string) (payloadClass, error) 
 // acceptedBy refuses a payload form the op does not take, as radosgw's
 // abstractor does once the empty-payload rule has passed and before the
 // access key is looked up: a single chunk only for the op types its switch
-// lists (rgw_rest_s3.cc:5903-5944 at v19.2.6, :6470-6515 at v20.2.4), an
-// aws-chunked payload only for RGW_OP_PUT_OBJ (:5962-5969, :6533-6540). The
-// refusal is ERR_NOT_IMPLEMENTED.
+// lists
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5903-L5944 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6470-L6515 at v20.2.4),
+// an aws-chunked payload only for RGW_OP_PUT_OBJ (:5962-5969, :6533-6540).
+// The refusal is ERR_NOT_IMPLEMENTED.
 func (pc payloadClass) acceptedBy(forms op.PayloadForms) error {
 	switch {
 	case pc.kind == payloadSingle && forms&op.PayloadSigned == 0:
@@ -92,17 +97,20 @@ func (pc payloadClass) acceptedBy(forms op.PayloadForms) error {
 	return nil
 }
 
-// hashReader is AWSv4ComplSingle (rgw_auth_s3.cc:1722-1770 at v19.2.6,
-// :1699-1747 at v20.2.4): it hashes the body as it passes and compares the
-// hex digest with x-amz-content-sha256 byte for byte, so upper-case hex never
-// matches. radosgw compares when the op calls complete() after reading the
-// body and reports a mismatch as XAmzContentSHA256Mismatch
-// (do_aws4_auth_completion, rgw_op.cc:1360-1381 at v19.2.6, :1597-1618 at
-// v20.2.4); here the Read that reaches the end of the body compares and
-// returns that error in place of io.EOF, then and on every later Read. Any
-// other error the body returns, a truncation's among them, is kept the same
-// way: net/http answers the Read after a truncation with io.EOF, which would
-// otherwise give a verdict over a body shorter than the one sent.
+// hashReader is AWSv4ComplSingle
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1722-L1770 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1699-L1747 at v20.2.4):
+// it hashes the body as it passes and compares the hex digest with
+// x-amz-content-sha256 byte for byte, so upper-case hex never matches.
+// radosgw compares when the op calls complete() after reading the body and
+// reports a mismatch as XAmzContentSHA256Mismatch (do_aws4_auth_completion,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1360-L1381 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1597-L1618 at v20.2.4);
+// here the Read that reaches the end of the body compares and returns that
+// error in place of io.EOF, then and on every later Read. Any other error the
+// body returns, a truncation's among them, is kept the same way: net/http
+// answers the Read after a truncation with io.EOF, which would otherwise give
+// a verdict over a body shorter than the one sent.
 type hashReader struct {
 	src      io.Reader
 	h        hash.Hash
@@ -138,8 +146,9 @@ func (r *hashReader) Read(p []byte) (int, error) {
 // chunk signatures with secret, and its length is
 // x-amz-decoded-content-length, which radosgw requires and refuses with
 // EINVAL when it is missing or parse_content_length makes it negative
-// (AWSv4ComplMulti::modify_request_state, rgw_auth_s3.cc:1532-1548 at
-// v19.2.6, :1509-1525 at v20.2.4).
+// (AWSv4ComplMulti::modify_request_state,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1532-L1548 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1509-L1525 at v20.2.4).
 func (d *authData) completer(rv *requestView, secret string) (body io.Reader, contentLength int64, err error) {
 	switch d.payload.kind {
 	case payloadSingle:
@@ -167,11 +176,13 @@ func (d *authData) completer(rv *requestView, secret string) (body io.Reader, co
 	}
 }
 
-// parseContentLength is parse_content_length (rgw_rest.h:788-803 at v19.2.6,
-// :800-815 at v20.2.4): an empty value is 0, and any other is strict_strtoll
-// in base 10 (common/strtol.cc:42-59 at both tags), which takes leading
-// whitespace and a sign but requires digits that run to the end and fit an
-// int64. A value it refuses is -1.
+// parseContentLength is parse_content_length
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L788-L803 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L800-L815 at v20.2.4):
+// an empty value is 0, and any other is strict_strtoll in base 10
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/strtol.cc#L42-L59 at both tags),
+// which takes leading whitespace and a sign but requires digits that run to
+// the end and fit an int64. A value it refuses is -1.
 func parseContentLength(s string) int64 {
 	if s == "" {
 		return 0

@@ -10,10 +10,12 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
-// ListParts is RGWListMultipart, ListParts (rgw_op.cc:6652-6694 at v19.2.6,
-// :7576-7633 at v20.2.4; rgw_rest.cc:1597-1622 at v19.2.6, :1602-1627 at
-// v20.2.4). The handler fills the inputs; Execute lists a page of the
-// upload's parts through MultipartStore.ListParts.
+// ListParts is RGWListMultipart, ListParts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6652-L6694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7576-L7633 at v20.2.4;
+// rgw_rest.cc:1597-1622 at v19.2.6, :1602-1627 at v20.2.4). The handler
+// fills the inputs; Execute lists a page of the upload's parts through
+// MultipartStore.ListParts.
 type ListParts struct {
 	UploadID string
 	// Marker is part-number-marker, 0 when absent.
@@ -48,16 +50,18 @@ func (o *ListParts) OpMask() uint32 { return OpTypeRead }
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket,
 // then read_permissions' read of the object policy, which for a request
 // naming an upload is the upload's meta object's (read_obj_policy,
-// rgw_op.cc:398-418 at v19.2.6, :428-448 at v20.2.4). r.ObjState becomes the
-// meta object, in the multipart namespace, with the upload's attrs; a missing
-// upload leaves it a missing object, whose answer the authorizer gives as
-// read_obj_policy's rule does (:421-447 at v19.2.6), so a missing upload is
-// never NoSuchUpload there. Without an upload id the policy is the object's
-// own, as radosgw reads it. A read that fails otherwise is answered only
-// once the requester is authorized, the state standing for an object whose
-// policy is the bucket owner's default, so that a refused requester gets 403
-// whatever the store holds, where radosgw answers the failure
-// (docs/exclusions.md).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L398-L418 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L428-L448 at v20.2.4).
+// r.ObjState becomes the meta object, in the multipart namespace, with the
+// upload's attrs; a missing upload leaves it a missing object, whose answer
+// the authorizer gives as read_obj_policy's rule does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L421-L447 at v19.2.6),
+// so a missing upload is never NoSuchUpload there. Without an upload id the
+// policy is the object's own, as radosgw reads it. A read that fails
+// otherwise is answered only once the requester is authorized, the state
+// standing for an object whose policy is the bucket owner's default, so that
+// a refused requester gets 403 whatever the store holds, where radosgw
+// answers the failure (docs/exclusions.md).
 func (o *ListParts) Init(ctx context.Context, r *Request) error {
 	err := loadBucket(ctx, r)
 	if err != nil {
@@ -94,16 +98,19 @@ func (o *ListParts) Init(ctx context.Context, r *Request) error {
 }
 
 // VerifyPermission is RGWListMultipart::verify_permission
-// (rgw_op.cc:6652-6662 at v19.2.6, :7576-7586 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6652-L6662 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7576-L7586 at v20.2.4).
 func (o *ListParts) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyObjectPermission(ctx, r, policy.S3ListMultipartUploadParts, acl.PermFor(policy.S3ListMultipartUploadParts))
 }
 
-// Execute is RGWListMultipart::execute (rgw_op.cc:6669-6694 at v19.2.6,
-// :7593-7633 at v20.2.4): get_info's NoSuchUpload, for an empty upload id
-// too, whose meta object "<key>..meta" no upload has; the meta object's ACL,
-// whose owner the result names and which is -EIO when it does not decode;
-// the upload's storage class; then the page.
+// Execute is RGWListMultipart::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6669-L6694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7593-L7633 at v20.2.4):
+// get_info's NoSuchUpload, for an empty upload id too, whose meta object
+// "<key>..meta" no upload has; the meta object's ACL, whose owner the result
+// names and which is -EIO when it does not decode; the upload's storage
+// class; then the page.
 func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 	if o.loadErr != nil {
 		return o.loadErr

@@ -38,7 +38,8 @@ func multipartHandlers(env *op.Env) map[string]HandlerFunc {
 }
 
 // initiateMultipartUploadResult is RGWInitMultipart_ObjStore_S3's document
-// (:4045-4052, [T] :4546-4553).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4045-L4052,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4546-L4553).
 type initiateMultipartUploadResult struct {
 	XMLName  xml.Name     `xml:"InitiateMultipartUploadResult"`
 	Xmlns    string       `xml:"xmlns,attr"`
@@ -52,10 +53,13 @@ type initiateMultipartUploadResult struct {
 // is x-amz-storage-class, which the op checks against the zone once the
 // requester is authorized; the rest of get_params runs through
 // initMultipartParams then too, as RGWInitMultipart::execute calls it
-// (rgw_op.cc:6299 at v19.2.6, :6968 at v20.2.4). The success is
-// send_response's (:4029-4055, [T] :4526-4556): 200 and the document, whose
-// length radosgw's frontend adds, without x-amz-abort-date while lifecycle
-// is not served.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6299 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968 at v20.2.4).
+// The success is send_response's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4029-L4055,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4556):
+// 200 and the document, whose length radosgw's frontend adds, without
+// x-amz-abort-date while lifecycle is not served.
 func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.InitMultipart{StorageClass: header(r, "X-Amz-Storage-Class")}
 	o.Params = func(ctx context.Context, o *op.InitMultipart) error { return wr.initMultipartParams(ctx, r, o) }
@@ -70,9 +74,12 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 }
 
 // initMultipartParams is RGWInitMultipart_ObjStore_S3::get_params
-// (:3969-4027, [T] :4450-4524) and the reads RGWInitMultipart::execute makes
-// after it (rgw_op.cc:6293-6343 at v19.2.6, :6963-7019 at v20.2.4), in their
-// order, once the op has refused a bucket's default encryption, as
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3969-L4027,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4450-L4524)
+// and the reads RGWInitMultipart::execute makes after it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6293-L6343 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6963-L7019 at v20.2.4),
+// in their order, once the op has refused a bucket's default encryption, as
 // get_encryption_defaults comes first: the ACL, create_s3_policy's for the
 // requester, its bucket-owner grants naming the bucket's ACL owner;
 // x-amz-tagging, any refusal InvalidArgument; the object-lock headers
@@ -107,7 +114,9 @@ func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, 
 }
 
 // copyPartResult is send_response's document for a part copied from a
-// source (:2761-2770, [T] :2931-2940).
+// source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2761-L2770,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2931-L2940).
 type copyPartResult struct {
 	XMLName      xml.Name     `xml:"CopyPartResult"`
 	Xmlns        string       `xml:"xmlns,attr"`
@@ -127,9 +136,11 @@ type copyPartResult struct {
 // uploadPartChecks once the requester is authorized, so that a refused
 // requester learns nothing the store holds (docs/exclusions.md).
 //
-// The success is send_response's (:2730-2782, [T] :2891-2952), whose status
-// rgw_s3_success_create_obj_status names for both forms: for a part with a
-// body the ETag, the Content-Length of 0 with Accept-Ranges that
+// The success is send_response's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2891-L2952),
+// whose status rgw_s3_success_create_obj_status names for both forms: for a
+// part with a body the ETag, the Content-Length of 0 with Accept-Ranges that
 // dump_content_length sends, and Rgwx-Mtime for a system request; for a
 // copied part CopyPartResult, its LastModified the mtime's whole seconds with
 // a literal .000Z, as strftime's "%Y-%m-%dT%T.000Z" writes it, and its
@@ -180,13 +191,16 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 }
 
 // uploadPartParams is the part of RGWPutObj_ObjStore_S3::get_params for a
-// part (:2597-2704, [T] :2758-2865) that reads the request alone, in its
-// order, with the refusal putObjectParams makes beside it: a body without a
-// Content-Length that is not chunked is MissingContentLength; a request that
-// asks for encryption, by a header or by the query, is refused;
-// x-amz-tagging, any refusal InvalidArgument, whose tags it returns; the
-// object-lock headers' values (objectLockHeaders); and partNumber
-// (partNumberArg), which refuses an empty or absent one beside an upload id.
+// part
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2597-L2704,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2758-L2865)
+// that reads the request alone, in its order, with the refusal
+// putObjectParams makes beside it: a body without a Content-Length that is
+// not chunked is MissingContentLength; a request that asks for encryption,
+// by a header or by the query, is refused; x-amz-tagging, any refusal
+// InvalidArgument, whose tags it returns; the object-lock headers' values
+// (objectLockHeaders); and partNumber (partNumberArg), which refuses an
+// empty or absent one beside an upload id.
 func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return nil, op.ErrMissingContentLength
@@ -214,18 +228,19 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 }
 
 // uploadPartChecks is the rest of get_params and what RGWPutObj::execute
-// makes of a part's request (rgw_op.cc:4142-4531 at v19.2.6, :4351-4799 at
-// v20.2.4), once the requester is authorized: the ACL, create_s3_policy's,
-// whose grantees are looked up; a retention or a legal hold, refused for
-// what the bucket holds (multipartObjectLock); a Content-MD5 that
-// ceph_unarmor does not decode to 16 bytes, InvalidDigest (:4184-4198,
-// :4393-4407); then the attrs, requestAttrs' with the query's x-amz-meta-*
-// included where the route reads them (op.AuthRoute.ReadsQueryMeta), as
-// map_qs_metadata adds them for put_obj on every route, and the tag set, as
-// encode_obj_tags_attr stores it on the part's head (:4531, :4799). radosgw
-// builds the ACL and checks the object lock in get_params, before
-// verify_permission, and the attrs once the part is stored
-// (docs/exclusions.md).
+// makes of a part's request
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4531 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4799 at v20.2.4),
+// once the requester is authorized: the ACL, create_s3_policy's, whose
+// grantees are looked up; a retention or a legal hold, refused for what the
+// bucket holds (multipartObjectLock); a Content-MD5 that ceph_unarmor does
+// not decode to 16 bytes, InvalidDigest (:4184-4198, :4393-4407); then the
+// attrs, requestAttrs' with the query's x-amz-meta-* included where the
+// route reads them (op.AuthRoute.ReadsQueryMeta), as map_qs_metadata adds
+// them for put_obj on every route, and the tag set, as encode_obj_tags_attr
+// stores it on the part's head (:4531, :4799). radosgw builds the ACL and
+// checks the object lock in get_params, before verify_permission, and the
+// attrs once the part is stored (docs/exclusions.md).
 func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *op.UploadPart, set *tags.Set) error {
 	p, aclErr := newObjectACL(ctx, r)
 	if aclErr != nil {
@@ -256,7 +271,9 @@ func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *
 }
 
 // partCopySource is RGWPutObj::init_processing's read of a non-empty
-// x-amz-copy-source (rgw_op.cc:3807-3851 at v19.2.6, :4016-4060 at v20.2.4),
+// x-amz-copy-source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3807-L3851 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4016-L4060 at v20.2.4),
 // which differs from parse_copy_location's: the whole value is url-decoded
 // first, less one leading "/", then split at its first "/", and the key is
 // cut at its first "?versionId=", whatever follows being the version; a "?"
@@ -285,12 +302,18 @@ func partCopySource(v, defaultTenant string) (tenant, bucket string, key meta.Ob
 
 // multipartObjectLock is a multipart write's refusal of a retention or a
 // legal hold for what the bucket holds: on a bucket without object lock
-// InvalidRequest, as get_params answers (:2669-2673 and :4021-4024, [T]
-// :2830-2834 and :4502-4505); on one with it NotImplemented, as radosgw
-// keeps them on the upload and the parts' heads and rgw-go serves no object
-// lock until versioning is served (docs/exclusions.md). The callers make it
-// once the requester is authorized, so that a refused requester learns
-// nothing of the bucket's configuration.
+// InvalidRequest, as get_params answers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2669-L2673
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4021-L4024,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2830-L2834
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4502-L4505);
+// on one with it NotImplemented, as radosgw keeps them on the upload and
+// the parts' heads and rgw-go serves no object lock until versioning is
+// served (docs/exclusions.md). The callers make it once the requester is
+// authorized, so that a refused requester learns nothing of the bucket's
+// configuration.
 func multipartObjectLock(r *op.Request) error {
 	switch {
 	case !namesObjectLock(r):
@@ -302,8 +325,11 @@ func multipartObjectLock(r *op.Request) error {
 }
 
 // completeMultipartUploadResult is RGWCompleteMultipart_ObjStore_S3's
-// document (:4084-4106, [T] :4614-4642): Location first, as dump_format
-// writes it, then the tenant of a tenanted bucket.
+// document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4084-L4106,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4614-L4642):
+// Location first, as dump_format writes it, then the tenant of a
+// tenanted bucket.
 type completeMultipartUploadResult struct {
 	XMLName  xml.Name     `xml:"CompleteMultipartUploadResult"`
 	Xmlns    string       `xml:"xmlns,attr"`
@@ -318,9 +344,11 @@ type completeMultipartUploadResult struct {
 // reads uploadId and, once the requester is authorized, the body; If-Match
 // and If-None-Match are their headers' last values, nil when absent, which
 // v20.2.4 reads (:4572-4573) and rgw-go applies on both releases
-// (docs/exclusions.md). The success is send_response's (:4076-4108, [T]
-// :4604-4644): 200 and the document, whose length radosgw's frontend adds,
-// the ETag in the quotes dump_format adds.
+// (docs/exclusions.md). The success is send_response's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
+// 200 and the document, whose length radosgw's frontend adds, the ETag in
+// the quotes dump_format adds.
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
@@ -336,19 +364,26 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 }
 
 // completeLocation is RGWCompleteMultipart_ObjStore_S3::send_response's
-// Location (rgw_rest_s3.cc:4086-4101, [T] :4616-4631) over
-// compute_domain_uri (rgw_rest.h:805-818 at v19.2.6, :817-830 at v20.2.4).
+// Location
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4086-L4101,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4616-L4631)
+// over compute_domain_uri
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L805-L818 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830 at v20.2.4).
 // Its base is s->info.domain when that is not empty, with no scheme:
 // RGWREST::preprocess sets it to the configured name the Host matched, as
 // cut from the Host, and otherwise to rgw_dns_name as configured, a list of
-// names included (rgw_rest.cc:2163-2165 and :2178-2180 at v19.2.6,
-// :2180-2182 and :2200-2202 at v20.2.4). Otherwise it is the scheme
-// rgw_transport_is_secure names and HTTP_HOST, beast setting no
-// SERVER_NAME, or "<HTTP_HOST>" for a request that sent no Host
-// (docs/ceph-upstream-bugs.md, "radosgw's CompleteMultipartUpload Location
-// has no scheme under a configured domain"). Then "/<bucket>/<key>", or
-// "/<tenant>:<bucket>/<key>" for a tenanted bucket, each name up to its
-// first NUL as "%s" reads it and the key not url-encoded.
+// names included (rgw_rest.cc:2163-2165 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2178-L2180 at v19.2.6,
+// :2180-2182 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2200-L2202 at v20.2.4).
+// Otherwise it is the scheme rgw_transport_is_secure names and HTTP_HOST,
+// beast setting no SERVER_NAME, or "<HTTP_HOST>" for a request that sent no
+// Host (docs/ceph-upstream-bugs.md, "radosgw's CompleteMultipartUpload
+// Location has no scheme under a configured domain"). Then
+// "/<bucket>/<key>", or "/<tenant>:<bucket>/<key>" for a tenanted bucket,
+// each name up to its first NUL as "%s" reads it and the key not
+// url-encoded.
 func completeLocation(r *op.Request) string {
 	base := r.Domain
 	if base == "" && r.Env.Conf != nil {
@@ -372,7 +407,9 @@ func completeLocation(r *op.Request) string {
 }
 
 // abortMultipart is abort_multipart, AbortMultipartUpload: 204 with no body
-// (RGWAbortMultipart_ObjStore_S3::send_response, :4110-4119, [T] :4646-4655).
+// (RGWAbortMultipart_ObjStore_S3::send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4110-L4119,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4646-L4655).
 func abortMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	if err := op.Run(ctx, &op.AbortMultipart{UploadID: r.Query.Get("uploadId")}, r); err != nil {
 		return err
@@ -381,8 +418,10 @@ func abortMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) e
 	return nil
 }
 
-// multipartOwner is dump_owner's section (rgw_rest.cc:506-517 at v19.2.6,
-// :511-522 at v20.2.4): the ID, and the display name when it is not empty.
+// multipartOwner is dump_owner's section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L506-L517 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L511-L522 at v20.2.4):
+// the ID, and the display name when it is not empty.
 type multipartOwner struct {
 	ID          xmltext.Text `xml:"ID"`
 	DisplayName xmltext.Text `xml:"DisplayName,omitempty"`
@@ -396,8 +435,10 @@ type listPartsPart struct {
 	Size         uint64       `xml:"Size"`
 }
 
-// listPartsResult is RGWListMultipart_ObjStore_S3's document (:4130-4168, [T]
-// :4666-4716), without the Initiator radosgw never writes.
+// listPartsResult is RGWListMultipart_ObjStore_S3's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4130-L4168,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4666-L4716),
+// without the Initiator radosgw never writes.
 type listPartsResult struct {
 	XMLName              xml.Name        `xml:"ListPartsResult"`
 	Xmlns                string          `xml:"xmlns,attr"`
@@ -415,16 +456,21 @@ type listPartsResult struct {
 }
 
 // listParts is list_multipart, ListParts, GET and HEAD alike. Its parameters
-// are RGWListMultipart_ObjStore::get_params' (rgw_rest.cc:1597-1622 at
-// v19.2.6, :1602-1627 at v20.2.4), which RGWListMultipart::execute reads
-// once the requester is authorized: part-number-marker through strict_strtol,
-// a refusal InvalidArgument and a negative number taken; max-parts through
-// parse_value_and_bound under rgw_max_listing_results, 1000 when empty. The
-// document is framed as send_response frames it (:4121-4171, [T]
-// :4657-4719), chunked after end_header with the whole document in its one
-// closing flush. NextPartNumberMarker is the highest part number listed, 0
-// when none is; LastModified is rgw_to_iso8601's milliseconds on Squid and
-// whole seconds on Tentacle (dump_time_exact_seconds, [T] :4704).
+// are RGWListMultipart_ObjStore::get_params'
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1597-L1622 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1602-L1627 at v20.2.4),
+// which RGWListMultipart::execute reads once the requester is authorized:
+// part-number-marker through strict_strtol, a refusal InvalidArgument and a
+// negative number taken; max-parts through parse_value_and_bound under
+// rgw_max_listing_results, 1000 when empty. The document is framed as
+// send_response frames it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4121-L4171,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4657-L4719),
+// chunked after end_header with the whole document in its one closing flush.
+// NextPartNumberMarker is the highest part number listed, 0 when none is;
+// LastModified is rgw_to_iso8601's milliseconds on Squid and whole seconds on
+// Tentacle (dump_time_exact_seconds,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4704).
 func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.ListParts{UploadID: r.Query.Get("uploadId")}
 	var perr error
@@ -462,9 +508,12 @@ func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error 
 }
 
 // defaultMaxParts is RGWListMultipart's max_parts before get_params reads
-// max-parts (rgw_op.h:1924 at v19.2.6, :2103 at v20.2.4), and
-// defaultMaxUploads RGWListBucketMultiparts_ObjStore_S3's default_max
-// (rgw_rest_s3.h:505 at v19.2.6, :529 at v20.2.4).
+// max-parts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L1924 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2103 at v20.2.4),
+// and defaultMaxUploads RGWListBucketMultiparts_ObjStore_S3's default_max
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L505 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L529 at v20.2.4).
 const (
 	defaultMaxParts   = 1000
 	defaultMaxUploads = 1000
@@ -483,14 +532,18 @@ type multipartUpload struct {
 }
 
 // multipartPrefixes is the one CommonPrefixes section that holds every
-// prefix (:4219-4225, [T] :4767-4773).
+// prefix
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4219-L4225,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4767-L4773).
 type multipartPrefixes struct {
 	Prefix []xmltext.Text `xml:"Prefix"`
 }
 
 // listMultipartUploadsResult is RGWListBucketMultiparts_ObjStore_S3's
-// document (:4186-4227, [T] :4734-4775): the markers, Prefix and Delimiter
-// only when not empty, each as sent.
+// document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4186-L4227,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4734-L4775):
+// the markers, Prefix and Delimiter only when not empty, each as sent.
 type listMultipartUploadsResult struct {
 	XMLName            xml.Name           `xml:"ListMultipartUploadsResult"`
 	Xmlns              string             `xml:"xmlns,attr"`
@@ -510,16 +563,19 @@ type listMultipartUploadsResult struct {
 
 // listMultipartUploads is list_bucket_multiparts, ListMultipartUploads, GET
 // and HEAD alike. Its parameters are RGWListBucketMultiparts_ObjStore::get_params'
-// (rgw_rest.cc:1624-1660 at v19.2.6, :1629-1665 at v20.2.4), which
-// RGWListBucketMultiparts::execute reads once the requester is authorized:
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1624-L1660 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1629-L1665 at v20.2.4),
+// which RGWListBucketMultiparts::execute reads once the requester is authorized:
 // delimiter and prefix; max-uploads through parse_value_and_bound under
-// rgw_max_listing_results, 1000 when empty; encoding-type, present and not
-// "url" in any case InvalidArgument with radosgw's message; and the markers,
-// the upload id marker kept only beside a key marker, as RGWMPObj takes the
-// two. The document is framed as send_response frames it (:4173-4229, [T]
-// :4721-4777); under encoding-type=url each upload's key and each common
-// prefix is url_encode'd keeping the slash, and no other element is.
-// Initiated is rgw_to_iso8601's milliseconds on both releases.
+// rgw_max_listing_results, 1000 when empty; encoding-type, present and not "url"
+// in any case InvalidArgument with radosgw's message; and the markers, the upload
+// id marker kept only beside a key marker, as RGWMPObj takes the two. The document
+// is framed as send_response frames it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4173-L4229,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4721-L4777);
+// under encoding-type=url each upload's key and each common prefix is url_encode'd
+// keeping the slash, and no other element is. Initiated is rgw_to_iso8601's
+// milliseconds on both releases.
 func listMultipartUploads(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	q := r.Query
 	o := &op.ListMultipartUploads{Prefix: q.Get("prefix"), Delimiter: q.Get("delimiter")}
@@ -571,5 +627,9 @@ func listMultipartUploads(ctx context.Context, w http.ResponseWriter, r *op.Requ
 
 // urlEncodeKey is op.URLEncode(s, false): url_encode(val, encode_slash=false),
 // dump_urlsafe's form for ListMultipartUploads' Key and its common prefixes
-// (:4210 and :4222, [T] :4758 and :4770, pass encode_slash=false).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4210 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4222,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4758 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4770, pass
+// encode_slash=false).
 func urlEncodeKey(s string) string { return op.URLEncode(s, false) }

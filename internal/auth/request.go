@@ -12,13 +12,15 @@ import (
 // aws4Algorithm is AWS4_HMAC_SHA256_STR.
 const aws4Algorithm = "AWS4-HMAC-SHA256"
 
-// sysParamPrefix is RGW_SYS_PARAM_PREFIX (rgw_common.h:78 at v19.2.6).
+// sysParamPrefix is RGW_SYS_PARAM_PREFIX
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L78 at v19.2.6).
 const sysParamPrefix = "rgwx-"
 
 var (
 	// subResources are the names RGWHTTPArgs::append files under
-	// sub_resources with their value (rgw_common.cc:927-961 at v19.2.6,
-	// :940-974 at v20.2.4).
+	// sub_resources with their value
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L927-L961 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L940-L974 at v20.2.4).
 	subResources = map[string]bool{
 		"acl": true, "cors": true, "notification": true, "location": true, "logging": true, "usage": true,
 		"lifecycle": true, "delete": true, "uploads": true, "partNumber": true, "uploadId": true, "versionId": true,
@@ -29,8 +31,9 @@ var (
 		"response-cache-control": true, "response-content-disposition": true, "response-content-encoding": true,
 	}
 	// adminSubResources are the names of which only the first a query
-	// carries is filed, with an empty value (rgw_common.cc:962-975 at
-	// v19.2.6, :975-988 at v20.2.4).
+	// carries is filed, with an empty value
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L962-L975 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L975-L988 at v20.2.4).
 	adminSubResources = map[string]bool{
 		"subuser": true, "key": true, "caps": true, "index": true, "policy": true, "quota": true,
 		"list": true, "object": true, "sync": true,
@@ -62,11 +65,12 @@ func newRequestView(req *http.Request) *requestView {
 	return rv
 }
 
-// parseQuery is RGWHTTPArgs::parse and append (rgw_common.cc:848-975 at
-// v19.2.6, :861-988 at v20.2.4). Each '&'-separated piece is url-decoded as
-// query text before it is split at its first '=', so an escaped '=' splits
-// too. A name containing "X-Amz-" is lower-cased; the last of a repeated
-// name wins.
+// parseQuery is RGWHTTPArgs::parse and append
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L848-L975 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L861-L988 at v20.2.4).
+// Each '&'-separated piece is url-decoded as query text before it is split
+// at its first '=', so an escaped '=' splits too. A name containing
+// "X-Amz-" is lower-cased; the last of a repeated name wins.
 func (rv *requestView) parseQuery() {
 	if rv.rawQuery == "" {
 		return
@@ -101,14 +105,14 @@ func (rv *requestView) param(name string) (string, bool) {
 // header is RGWEnv::get for a signed-header token. Beast files a header as
 // HTTP_ and its name upper-cased with '-' and '_' swapped, and radosgw maps a
 // token the same way into a map that ignores case (rgw_asio_client.cc:36-66;
-// rgw_auth_s3.cc:749-755, rgw_env.cc:46-53 at v19.2.6), so a token finds the
-// header whose name equals it but for case, and the last of a repeated
-// header. net/http keeps the Host header in req.Host and a chunked
-// Transfer-Encoding in req.TransferEncoding; for an absolute-form target it
-// puts the target's authority in req.Host and drops the Host header, which
-// beast keeps. HTTP/1.1 requires a Host header, so an empty req.Host there
-// is one sent empty, which beast files as an empty HTTP_HOST; under
-// HTTP/1.0 net/http leaves an empty header and none alike.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L749-L755,
+// rgw_env.cc:46-53 at v19.2.6), so a token finds the header whose name equals
+// it but for case, and the last of a repeated header. net/http keeps the Host
+// header in req.Host and a chunked Transfer-Encoding in req.TransferEncoding;
+// for an absolute-form target it puts the target's authority in req.Host and
+// drops the Host header, which beast keeps. HTTP/1.1 requires a Host header,
+// so an empty req.Host there is one sent empty, which beast files as an empty
+// HTTP_HOST; under HTTP/1.0 net/http leaves an empty header and none alike.
 func (rv *requestView) header(name string) (string, bool) {
 	switch asciiLower(name) {
 	case "host":
@@ -166,10 +170,11 @@ const (
 )
 
 // discoverFlavour is radosgw's choice of signature version and route
-// (rgw_rest_s3.cc:5071-5105 at v19.2.6, :5631-5665 at v20.2.4): a non-empty
-// Authorization header is the header route, v4 or v2 by its prefix;
-// otherwise the query decides, by an exact x-amz-algorithm or a non-empty
-// AWSAccessKeyId.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5071-L5105 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5631-L5665 at v20.2.4):
+// a non-empty Authorization header is the header route, v4 or v2 by its
+// prefix; otherwise the query decides, by an exact x-amz-algorithm or a
+// non-empty AWSAccessKeyId.
 func discoverFlavour(rv *requestView) (version, route) {
 	if a, _ := rv.header("authorization"); a != "" {
 		switch {

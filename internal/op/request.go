@@ -54,9 +54,10 @@ type Request struct {
 	// ContentLength is the declared length, -1 when unknown.
 	ContentLength int64
 	// RemoteAddr is the client's address as net/http gives it, host and port.
-	// radosgw's REMOTE_ADDR is the address alone (rgw_asio_client.cc:92 at
-	// v19.2.6 and v20.2.4), so consumers take the address through one shared
-	// helper that strips the port, never from this string directly.
+	// radosgw's REMOTE_ADDR is the address alone
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L92 at v19.2.6
+	// and v20.2.4), so consumers take the address through one shared helper
+	// that strips the port, never from this string directly.
 	RemoteAddr string
 	Referer    string
 	TLS        bool
@@ -109,8 +110,9 @@ type ListConditions struct {
 
 // HeaderValue is a request header as radosgw's RGWEnv holds it: beast sets
 // one variable per header field in arrival order, so the last of a repeated
-// header is the one radosgw sees (rgw_asio_client.cc:36-65, rgw_env.cc:22-25
-// at v19.2.6 and v20.2.4). A header present with an empty value is present.
+// header is the one radosgw sees (rgw_asio_client.cc:36-65,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
+// and v20.2.4). A header present with an empty value is present.
 func HeaderValue(h http.Header, name string) (string, bool) {
 	vs := h.Values(name)
 	if len(vs) == 0 {

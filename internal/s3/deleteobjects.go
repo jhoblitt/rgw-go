@@ -130,15 +130,18 @@ func deleteResultElement(res op.DeleteResult, quiet bool) string {
 }
 
 // parseDelete is RGWMultiDelXMLParser (rgw_multi_del.cc) as
-// RGWDeleteMultiObj::execute reads its result (rgw_op.cc:7025-7039 at
-// v19.2.6, v20.2.4 :7929-7946): the entries of the root Delete's Object
-// children and its Quiet, true when its text is "true" in any case. Every
-// Object element in the document, wherever it sits, must hold a non-empty
-// Key, and its ETag, LastModifiedTime and Size must read as v20.2.4 reads
-// them (deleteEntry); rgw-go reads them on both releases, as it checks them
-// on both (docs/exclusions.md). A document that fails is InvalidArgument on
-// Squid, -EINVAL, and MalformedXML with radosgw's message on Tentacle; so is
-// a root other than Delete.
+// RGWDeleteMultiObj::execute reads its result
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7025-L7039 at v19.2.6,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7929-L7946):
+// the entries of the root Delete's Object children and its Quiet, true when
+// its text is "true" in any case. Every Object element in the document,
+// wherever it sits, must hold a non-empty Key, and its ETag,
+// LastModifiedTime and Size must read as v20.2.4 reads them (deleteEntry);
+// rgw-go reads them on both releases, as it checks them on both
+// (docs/exclusions.md). A document that fails is InvalidArgument on Squid,
+// -EINVAL, and MalformedXML with radosgw's message on Tentacle; so is a root
+// other than Delete.
 func parseDelete(body []byte, rel denc.Release) (entries []op.DeleteObjectsEntry, quiet bool, err error) {
 	refused := func(msg string) error {
 		if rel >= denc.Tentacle {

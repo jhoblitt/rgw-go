@@ -20,9 +20,10 @@ import (
 // Env.Metadata serving each section's handler.
 
 // errTopLevel is the top-level handler's -ENOTSUP for a get, put or remove
-// that names no section (RGWMetadataTopHandler, rgw_metadata.cc:328-340 at
-// v19.2.6, :126-138 at v20.2.4), which set_req_state_err finds no row for
-// and answers UnknownError.
+// that names no section (RGWMetadataTopHandler,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L328-L340 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L126-L138 at v20.2.4),
+// which set_req_state_err finds no row for and answers UnknownError.
 var errTopLevel = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.ENOTSUP)}
 
 // metadataSections are the sections Env.Metadata serves, in std::set order,
@@ -161,9 +162,11 @@ func (o *ListMetadata) Execute(ctx context.Context, r *Request) error {
 // maxListInt bounds a page so it converts to int on any platform.
 const maxListInt = 1<<31 - 1
 
-// listSections is RGWMetadataTopHandler's listing (rgw_metadata.cc:352-388
-// at v19.2.6, :150-186 at v20.2.4): the sections from the first not below
-// marker, and as the next marker the first section not returned.
+// listSections is RGWMetadataTopHandler's listing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L352-L388 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L150-L186 at v20.2.4):
+// the sections from the first not below marker, and as the next marker the
+// first section not returned.
 func listSections(_ context.Context, _, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	i, _ := slices.BinarySearch(metadataSections, marker)
 	end := min(i+max(maxEntries, 0), len(metadataSections))
@@ -176,10 +179,13 @@ func listSections(_ context.Context, _, marker string, maxEntries int) (keys []s
 
 // PutMetadata is RGWOp_Metadata_Put::execute past its body read
 // (rgw_rest_metadata.cc:234-274), RGWMetadataManager::put
-// (rgw_metadata.cc:501-552 at v19.2.6, :296-347 at v20.2.4) and Squid's
-// RGWMetadataHandlerPut_SObj::put_pre (rgw_metadata.cc:255-278 at v19.2.6)
-// with check_versions (driver/rados/rgw_metadata.h:196-218 at v19.2.6). The
-// entry written is the one Section and Key name: the body's "key" is
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L501-L552 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L296-L347 at v20.2.4)
+// and Squid's RGWMetadataHandlerPut_SObj::put_pre
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L255-L278 at v19.2.6)
+// with check_versions
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_metadata.h#L196-L218 at v19.2.6).
+// The entry written is the one Section and Key name: the body's "key" is
 // decoded after the manager has found the handler and entry, so it changes
 // neither. Cap metadata=write (rgw_rest_metadata.h:61-62).
 //
@@ -210,9 +216,10 @@ func (o *PutMetadata) VerifyPermission(_ context.Context, r *Request) error {
 // STATUS_NO_APPLY, "applied" for STATUS_APPLIED, and "" for an applied
 // bucket entry point, whose handler answers 0 rather than STATUS_APPLIED
 // at both releases (RGWMetadataHandlerPut_Bucket::put_post,
-// driver/rados/rgw_bucket.cc:2289-2317 at v19.2.6;
-// RGWBucketMetadataHandler::put, :2355-2401 at v20.2.4), so radosgw answers
-// it 200 without the header.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2289-L2317 at v19.2.6;
+// RGWBucketMetadataHandler::put,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2355-L2401 at v20.2.4),
+// so radosgw answers it 200 without the header.
 func (o *PutMetadata) UpdateStatus() string {
 	switch {
 	case !o.Applied:
@@ -227,9 +234,10 @@ func (o *PutMetadata) UpdateStatus() string {
 // document under the version read when check_versions lets it.
 func (o *PutMetadata) Execute(ctx context.Context, r *Request) error {
 	o.Applied, o.OnDisk = false, meta.ObjVersion{}
-	// find_handler runs before the body is parsed (rgw_metadata.cc:511-514
-	// at v19.2.6, :306-309 at v20.2.4): a section without a handler is
-	// ENOENT whatever the body holds.
+	// find_handler runs before the body is parsed
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L511-L514 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L306-L309 at v20.2.4):
+	// a section without a handler is ENOENT whatever the body holds.
 	if o.Section != "" && !slices.Contains(metadataSections, o.Section) {
 		return fmt.Errorf("metadata section %q: %w", o.Section, ErrNoSuchKey)
 	}
@@ -314,9 +322,11 @@ func decodeMetadataPut(body []byte) (meta.ObjVersion, time.Time, json.RawMessage
 	return ver, mtime, data.Raw, nil
 }
 
-// decodeObjVersion is decode_json_obj(obj_version&) (rgw_metadata.cc:49-53
-// at v19.2.6, :45-49 at v20.2.4): "tag" a string, "ver" an unsigned 64-bit
-// number read as strtoull reads it.
+// decodeObjVersion is decode_json_obj(obj_version&)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L49-L53 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L45-L49 at v20.2.4):
+// "tag" a string, "ver" an unsigned 64-bit number read as strtoull reads
+// it.
 func decodeObjVersion(raw json.RawMessage) (meta.ObjVersion, error) {
 	bad := fmt.Errorf("%w: the metadata document's ver", ErrInvalidArgument)
 	if jsonKind(raw) != '{' {
@@ -377,8 +387,10 @@ func jsonKind(raw json.RawMessage) byte {
 }
 
 // RemoveMetadata is RGWOp_Metadata_Delete (rgw_rest_metadata.cc:290-300)
-// and RGWMetadataManager::remove (rgw_metadata.cc:554-574 at v19.2.6,
-// :349-369 at v20.2.4). Cap metadata=write (rgw_rest_metadata.h:75-76).
+// and RGWMetadataManager::remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L554-L574 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L349-L369 at v20.2.4).
+// Cap metadata=write (rgw_rest_metadata.h:75-76).
 type RemoveMetadata struct {
 	AdminOp
 	Section, Key string

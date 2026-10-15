@@ -747,8 +747,12 @@ var _ = Describe("admin bucket ops", func() {
 		// radosgw decides on the bucket's versioning before the unversioned
 		// path's head read, whose ENOENT the name check stands in for, and its
 		// versioned path answers no ENOENT for a missing object
-		// (driver/rados/rgw_rados.cc:5774 and :5853 at v19.2.6, :6462 and :6592
-		// at v20.2.4).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774
+		// and
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5853 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462
+		// and
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6592 at v20.2.4).
 		DescribeTable("answers NotImplemented for a bucket whose versioning is or was enabled or that has object lock, before the name check and without asking the object store",
 			func(ctx context.Context, flags uint32) {
 				rec, err := store.GetBucket(ctx, "", "test")

@@ -20,10 +20,12 @@ import (
 const usageShowPage = 1000
 
 // errAccountUsage is RadosBucket::read_usage's and trim_usage's -ENOTSUP
-// for a bucket an account owns (driver/rados/rgw_sal_rados.cc:785-806 at
-// v19.2.6, :803-824 at v20.2.4), which set_req_state_err finds no row for
-// and answers UnknownError (rgw_common.cc:346-353 at v19.2.6, :359-366 at
-// v20.2.4).
+// for a bucket an account owns
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L785-L806 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L803-L824 at v20.2.4),
+// which set_req_state_err finds no row for and answers UnknownError
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L346-L353 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L359-L366 at v20.2.4).
 var errAccountUsage = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.ENOTSUP)}
 
 // UsageUser is one user section of the usage document's entries: the
@@ -142,7 +144,8 @@ func (o *ShowUsage) Execute(ctx context.Context, r *Request) error {
 }
 
 // aggregate is rgw_usage_log_entry::aggregate with a category filter
-// (cls/rgw/cls_rgw_types.h:1005-1023 at v19.2.6, :1044-1062 at v20.2.4),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1005-L1023 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1044-L1062 at v20.2.4),
 // with sum's total over the categories it kept (:1025-1033, :1064-1072).
 func (s *UsageSummary) aggregate(rec *UsageRecord, filter map[string]bool) {
 	for cat, d := range rec.Categories {

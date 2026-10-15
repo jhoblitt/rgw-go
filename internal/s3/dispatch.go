@@ -109,13 +109,14 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 //
 // The bucket op_get, op_put and op_delete open by returning nullptr for an
 // "encryption" subresource, which never exists because RGWHTTPArgs::append
-// does not list the key (rgw_common.cc:918-976 at v19.2.6), so ?encryption
-// reaches its own branch. is_notification_op is false unless rgw_enable_apis
-// names notifications or pubsub, as its default does; the table routes
-// ?notification regardless (docs/exclusions.md). The website branches (both
-// releases) and the mdsearch ones (v20.2.4 only) return nullptr when
-// rgw_enable_static_website or rgw_enable_mdsearch is off, and PUT
-// ?replication when the bucket's sync policy is legacy; those routes'
+// does not list the key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L918-L976 at v19.2.6),
+// so ?encryption reaches its own branch. is_notification_op is false unless
+// rgw_enable_apis names notifications or pubsub, as its default does; the
+// table routes ?notification regardless (docs/exclusions.md). The website
+// branches (both releases) and the mdsearch ones (v20.2.4 only) return
+// nullptr when rgw_enable_static_website or rgw_enable_mdsearch is off, and
+// PUT ?replication when the bucket's sync policy is legacy; those routes'
 // handlers apply the options.
 var table = map[methodKey]method{
 	{op.ScopeService, http.MethodGet}: {
@@ -250,7 +251,7 @@ var table = map[methodKey]method{
 }
 
 // hasObjectSubresource is RGWHTTPArgs::exist_obj_excl_sub_resource
-// (rgw_common.h:408-415 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L408-L415 at v19.2.6).
 func hasObjectSubresource(q url.Values) bool {
 	for _, key := range [...]string{"append", "torrent", "uploadId", "partNumber", "versionId"} {
 		if q.Has(key) {
@@ -283,8 +284,9 @@ func listType(q url.Values) int {
 // source parse_copy_location cannot parse stays with copy_obj here, though
 // radosgw never dispatches one: RGWHandler_REST_S3::init answers it with 400
 // before get_op and authentication, for every method and scope
-// (rgw_rest_s3.cc:5026-5041 at v19.2.6, :5586-5601 at v20.2.4), so that
-// check belongs in the handler lifecycle, not in copy_obj's handler.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5041 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5601 at v20.2.4),
+// so that check belongs in the handler lifecycle, not in copy_obj's handler.
 func copiesObject(r *op.Request) bool {
 	v, ok := copySource(r)
 	if !ok {
@@ -303,8 +305,10 @@ type payloadRow struct {
 
 // payloadTable is radosgw's per-op completer whitelist, keyed by route name
 // through each route's RGWOp::get_type(): get_auth_data_v4's single-chunk
-// switch (rgw_rest_s3.cc:5899-5944 at v19.2.6, :6466-6515 at v20.2.4) and
-// its streamed switch, RGW_OP_PUT_OBJ alone (:5957-5969, :6528-6540). A
+// switch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5944 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6515 at v20.2.4)
+// and its streamed switch, RGW_OP_PUT_OBJ alone (:5957-5969, :6528-6540). A
 // route missing from it takes neither form.
 var payloadTable = map[string]payloadRow{
 	"put_obj":                           {op.PayloadSigned | op.PayloadChunked, 0},
@@ -319,7 +323,7 @@ var payloadTable = map[string]payloadRow{
 	"set_bucket_versioning":             {op.PayloadSigned, 0},
 	"multi_object_delete":               {op.PayloadSigned, 0},
 	"set_bucket_website":                {op.PayloadSigned, 0},
-	"delete_bucket_website":             {op.PayloadSigned, 0}, // typed RGW_OP_SET_BUCKET_WEBSITE (rgw_op.h:1090 at v19.2.6)
+	"delete_bucket_website":             {op.PayloadSigned, 0}, // typed RGW_OP_SET_BUCKET_WEBSITE (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L1090 at v19.2.6)
 	"put_bucket_policy":                 {op.PayloadSigned, 0},
 	"put_obj_tags":                      {op.PayloadSigned, 0},
 	"put_bucket_tags":                   {op.PayloadSigned, 0},

@@ -8,8 +8,9 @@ import (
 )
 
 // AbortMultipart is RGWAbortMultipart, AbortMultipartUpload
-// (rgw_op.cc:6595-6650 at v19.2.6, :7519-7574 at v20.2.4). Execute aborts the
-// upload through MultipartStore.Abort.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6595-L6650 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7519-L7574 at v20.2.4).
+// Execute aborts the upload through MultipartStore.Abort.
 type AbortMultipart struct{ UploadID string }
 
 var _ Op = (*AbortMultipart)(nil)
@@ -27,14 +28,16 @@ func (o *AbortMultipart) OpMask() uint32 { return OpTypeDelete }
 func (o *AbortMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWAbortMultipart::verify_permission
-// (rgw_op.cc:6595-6607 at v19.2.6, :7519-7531 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6595-L6607 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7519-L7531 at v20.2.4).
 func (o *AbortMultipart) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, policy.S3AbortMultipartUpload, acl.PermFor(policy.S3AbortMultipartUpload))
 }
 
-// Execute is RGWAbortMultipart::execute (rgw_op.cc:6614-6650 at v19.2.6,
-// :7538-7574 at v20.2.4): an empty upload id or key is -EINVAL, then the
-// abort.
+// Execute is RGWAbortMultipart::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6614-L6650 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7538-L7574 at v20.2.4):
+// an empty upload id or key is -EINVAL, then the abort.
 func (o *AbortMultipart) Execute(ctx context.Context, r *Request) error {
 	if o.UploadID == "" || r.Object.Name == "" {
 		return ErrInvalidArgument

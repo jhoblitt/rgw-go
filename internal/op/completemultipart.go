@@ -15,17 +15,18 @@ import (
 const defaultPartUploadLimit = 10000
 
 // CompleteMultipart is RGWCompleteMultipart, CompleteMultipartUpload
-// (rgw_op.cc:6345-6541 at v19.2.6, :7021-7431 at v20.2.4; rgw_rest.cc:1580-1595
-// at v19.2.6; rgw_rest_s3.cc:4064-4108 at v19.2.6, :4565-4644 at v20.2.4).
-// Execute reads the completion document from r.Body, through the
-// authenticator's verifying reader to its final Read, before it parses it,
-// and completes the upload through MultipartStore.Complete.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6345-L6541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7431 at v20.2.4;
+// rgw_rest.cc:1580-1595 at v19.2.6; rgw_rest_s3.cc:4064-4108 at v19.2.6,
+// :4565-4644 at v20.2.4). Execute reads the completion document from r.Body,
+// through the authenticator's verifying reader to its final Read, before it
+// parses it, and completes the upload through MultipartStore.Complete.
 type CompleteMultipart struct {
 	UploadID string
 	// IfMatch and IfNoneMatch are the headers' values, nil when absent: a
 	// header present with an empty value is a condition, as v20.2.4 takes it
-	// (rgw_rest_s3.cc:4572-4573 at v20.2.4). rgw-go applies them on both
-	// releases (Upload.IfMatch).
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573 at v20.2.4).
+	// rgw-go applies them on both releases (Upload.IfMatch).
 	IfMatch, IfNoneMatch *string
 
 	// Parts is the document's parts as ParseCompleteMultipart reads them.
@@ -50,7 +51,8 @@ func (o *CompleteMultipart) OpMask() uint32 { return OpTypeWrite }
 func (o *CompleteMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWCompleteMultipart::verify_permission
-// (rgw_op.cc:6345-6360 at v19.2.6, :7021-7036 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6345-L6360 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7036 at v20.2.4).
 func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 }
@@ -59,18 +61,21 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // does, a bucket whose versioning or object lock rgw-go does not serve and a
 // completion naming a version, the null one included
 // (newHeadVersioningUnserved): radosgw keeps the URL's instance for the head
-// unless the bucket's versioning is enabled (rgw_op.cc:6462-6469 at v19.2.7,
-// :7284-7291 at v20.2.4), so on a bucket never versioned it would file the
-// head in the index under that instance and then link the key to an OLH as
-// a versioned object (rgw_rados.cc:3369-3375 at v19.2.7). Then it is
-// RGWCompleteMultipart::execute in its order (rgw_op.cc:6367-6416 at
-// v19.2.6, :7163-7211 at v20.2.4): get_params, whose empty upload id is
-// -ENOTSUP, 500 UnknownError, and whose body is read as ReadParamBody reads
-// it under rgw_max_put_param_size; an empty body, a document that does not
-// parse or holds no part, MalformedXML; more parts than
-// rgw_multipart_part_upload_limit once repeats collapse, InvalidRange
-// (-ERANGE); then the completion, whose head takes the request id as its
-// tag.
+// unless the bucket's versioning is enabled
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291 at v20.2.4),
+// so on a bucket never versioned it would file the head in the index under
+// that instance and then link the key to an OLH as a versioned object
+// (rgw_rados.cc:3369-3375 at v19.2.7). Then it is
+// RGWCompleteMultipart::execute in its order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6416 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7211 at v20.2.4):
+// get_params, whose empty upload id is -ENOTSUP, 500 UnknownError, and whose
+// body is read as ReadParamBody reads it under rgw_max_put_param_size; an
+// empty body, a document that does not parse or holds no part, MalformedXML;
+// more parts than rgw_multipart_part_upload_limit once repeats collapse,
+// InvalidRange (-ERANGE); then the completion, whose head takes the request
+// id as its tag.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err

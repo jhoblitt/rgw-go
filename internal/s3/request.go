@@ -40,8 +40,9 @@ type Parsed struct {
 	ExplicitTenant bool
 }
 
-// maxObjectNameLen is RGWHandler_REST's MAX_OBJ_NAME_LEN (rgw_rest.h:556 at
-// v19.2.6, :568 at v20.2.4).
+// maxObjectNameLen is RGWHandler_REST's MAX_OBJ_NAME_LEN
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L556 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L568 at v20.2.4).
 const maxObjectNameLen = 1024
 
 // ParseRequest parses Host, path and query once, in RGWREST::preprocess and
@@ -114,13 +115,18 @@ func httpHost(req *http.Request) *string {
 
 // DecodedURI is decoded_uri, the path radosgw picks a request's API and
 // bucket by: url_decode of request_uri as preprocess leaves it, the target's
-// path with a bucket the Host names in front (rgw_rest.cc:2154-2161 and
-// :2182 at v19.2.6, :2171-2178 and :2204 at v20.2.4). The path is the one
-// SigV2 and SigV4 sign, so a request is routed on the path it is
-// authenticated for. It is not net/http's URL path for an absolute-form
-// target: get_abs_path takes the path from the first '/' after the
-// authority, in the query if that is where it lies, and keeps a target of
-// another scheme whole, which names no bucket.
+// path with a bucket the Host names in front
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2182 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2204 at v20.2.4).
+// The path is the one SigV2 and SigV4 sign, so a request is routed on the
+// path it is authenticated for. It is not net/http's URL path for an
+// absolute-form target: get_abs_path takes the path from the first '/' after
+// the authority, in the query if that is where it lies, and keeps a target
+// of another scheme whole, which names no bucket.
 func DecodedURI(req *http.Request, cfg Config) string {
 	return rgwtext.URLDecode(requestURI(req, cfg), false)
 }
@@ -162,11 +168,14 @@ func withHostBucket(b, uri string) string {
 
 // PostAuthInit finishes parsing once the request is authenticated, as
 // RGWHandler_REST_S3::postauth_init does, which radosgw runs after get_op's
-// MethodNotAllowed and verify_requester (rgw_process.cc:325-365 at v19.2.6,
-// :327-367 at v20.2.4). authTenant is the authenticated identity's
-// op.Identity.Tenant; PostAuthInit gives it to p.Req.Tenant unless the URL
-// named a tenant. It returns postauth_init's errors in that function's order
-// (rgw_rest_s3.cc:4961-5002 at v19.2.6, :5521-5562 at v20.2.4):
+// MethodNotAllowed and verify_requester
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L325-L365 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L367 at v20.2.4).
+// authTenant is the authenticated identity's op.Identity.Tenant;
+// PostAuthInit gives it to p.Req.Tenant unless the URL named a tenant. It
+// returns postauth_init's errors in that function's order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4961-L5002 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5521-L5562 at v20.2.4):
 // InvalidBucketName for a bucket token with nothing after its first colon,
 // InvalidTenantName for a tenant of anything but letters, digits and
 // underscores, InvalidObjectName for an object name over 1024 bytes or not
@@ -213,8 +222,10 @@ func PostAuthInit(p Parsed, authTenant string) error {
 }
 
 // validObjectName is RGWHandler_REST::validate_object_name (rgw_rest.cc
-// :1846-1859 at v19.2.6, :1850-1863 at v20.2.4): at most 1024 bytes, of
-// UTF-8 as check_utf8 accepts it, which is what utf8.ValidString accepts.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1846-L1859 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1850-L1863 at v20.2.4):
+// at most 1024 bytes, of UTF-8 as check_utf8 accepts it, which is what
+// utf8.ValidString accepts.
 func validObjectName(name string) bool {
 	return len(name) <= maxObjectNameLen && utf8.ValidString(name)
 }
@@ -222,7 +233,8 @@ func validObjectName(name string) bool {
 // copySource is the x-amz-copy-source value RGWHandler_REST_S3::init parses
 // into init_state.src_bucket: the last such header, as RGWEnv::set keeps the
 // last, when neither x-amz-copy-source-range nor uploadId is present
-// (rgw_rest_s3.cc:5026-5041 at v19.2.6, :5586-5601 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5041 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5601 at v20.2.4).
 func copySource(r *op.Request) (string, bool) {
 	v, ok := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
 	if _, ranged := op.HeaderValue(r.Header, "X-Amz-Copy-Source-Range"); !ok || ranged || r.Query.Has("uploadId") {
@@ -232,11 +244,13 @@ func copySource(r *op.Request) (string, bool) {
 }
 
 // copySourceBucket is the bucket RGWCopyObj::parse_copy_location reads from
-// an x-amz-copy-source value (rgw_op.cc:5329-5374 at v19.2.6, :5895-5940 at
-// v20.2.4): the value up to its first "?", less one leading "/", decoded,
-// then split at its first "/". It is false where parse_copy_location fails,
-// an empty value or a missing or empty key, which init answers with 400
-// before authentication.
+// an x-amz-copy-source value
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5329-L5374 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5895-L5940 at v20.2.4):
+// the value up to its first "?", less one leading "/", decoded, then split
+// at its first "/". It is false where parse_copy_location fails, an empty
+// value or a missing or empty key, which init answers with 400 before
+// authentication.
 func copySourceBucket(v string) (string, bool) {
 	name, _, _ := strings.Cut(v, "?")
 	if name == "" {

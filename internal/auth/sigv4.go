@@ -20,20 +20,25 @@ const (
 	// the scope's fourth field says, and which a credential must contain
 	// somewhere.
 	aws4Request = "aws4_request"
-	// authGrace is RGW_AUTH_GRACE (rgw_auth_s3.h:30 at v19.2.6 and v20.2.4).
+	// authGrace is RGW_AUTH_GRACE
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L30 at v19.2.6
+	// and v20.2.4).
 	authGrace = 15 * time.Minute
-	// unsignedPayload is AWS4_UNSIGNED_PAYLOAD_HASH (rgw_auth_s3.h:527 at
-	// v19.2.6, :530 at v20.2.4).
+	// unsignedPayload is AWS4_UNSIGNED_PAYLOAD_HASH
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L527 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L530 at v20.2.4).
 	unsignedPayload = "UNSIGNED-PAYLOAD"
 	// payloadHashHeader carries the payload hash expectedPayloadHash reads.
 	payloadHashHeader = "x-amz-content-sha256"
 	// maxPresignExpires is the longest X-Amz-Expires, seven days in seconds
-	// (rgw_auth_s3.cc:309 at v19.2.6, :312 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L309 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L312 at v20.2.4).
 	maxPresignExpires = 7 * 24 * 60 * 60
 )
 
-// v4Credentials is what parse_v4_credentials yields (rgw_auth_s3.cc:538-584
-// at v19.2.6, :544-590 at v20.2.4).
+// v4Credentials is what parse_v4_credentials yields
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L538-L584 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L544-L590 at v20.2.4).
 type v4Credentials struct {
 	accessKey string // before the credential's first '/'
 	scope     string // after it: "YYYYMMDD/region/service/aws4_request", as sent
@@ -67,8 +72,10 @@ type authData struct {
 
 // verify reports whether the client's signature is the server's for secret,
 // or else the fallback's. radosgw compares the strings byte for byte, so
-// upper-case hex never matches (rgw_rest_s3.cc:6362-6375 at v19.2.6,
-// :6933-6946 at v20.2.4); here the comparison runs in constant time.
+// upper-case hex never matches
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6362-L6375 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6933-L6946 at v20.2.4);
+// here the comparison runs in constant time.
 func (d *authData) verify(secret string) (bool, error) {
 	got, err := d.sign(secret)
 	if err != nil {
@@ -87,17 +94,23 @@ func (d *authData) verify(secret string) (bool, error) {
 	return subtle.ConstantTimeCompare([]byte(alt), []byte(d.signature)) == 1, nil
 }
 
-// timeSkewOK is is_time_skew_ok (rgw_auth_s3.cc:265-278 at v19.2.6, :268-281
-// at v20.2.4): t within authGrace of now either way, the bound included.
+// timeSkewOK is is_time_skew_ok
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L265-L278 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L268-L281 at v20.2.4):
+// t within authGrace of now either way, the bound included.
 func timeSkewOK(now, t time.Time) bool { return now.Sub(t).Abs() <= authGrace }
 
-// parseV4Header is parse_v4_auth_header (rgw_auth_s3.cc:390-467 at v19.2.6,
-// :393-470 at v20.2.4) and the credential split of parse_v4_credentials. The
-// algorithm name and the byte after it are skipped unread, since the prefix
-// chose this route. Each ','-separated token splits at its first '=' with
-// both sides trimmed (parse_key_value, rgw_common.cc:681-694 at v19.2.6,
-// :694-707 at v20.2.4); a repeated key keeps its last value. The date is
-// checked, and its skew, before the credential's shape.
+// parseV4Header is parse_v4_auth_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L390-L467 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L393-L470 at v20.2.4)
+// and the credential split of parse_v4_credentials. The algorithm name and
+// the byte after it are skipped unread, since the prefix chose this route.
+// Each ','-separated token splits at its first '=' with both sides trimmed
+// (parse_key_value,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L681-L694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L694-L707 at v20.2.4);
+// a repeated key keeps its last value. The date is checked, and its skew,
+// before the credential's shape.
 func parseV4Header(rv *requestView, now time.Time) (*v4Credentials, error) {
 	a, _ := rv.header("authorization")
 	if len(a) < len(aws4Algorithm)+1 {
@@ -143,8 +156,10 @@ func parseV4Header(rv *requestView, now time.Time) (*v4Credentials, error) {
 }
 
 // splitCredential is parse_v4_credentials' check and split
-// (rgw_auth_s3.cc:565-581 at v19.2.6, :571-587 at v20.2.4): exactly four
-// '/' and "aws4_request" anywhere, not necessarily at the end.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L565-L581 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L571-L587 at v20.2.4):
+// exactly four '/' and "aws4_request" anywhere, not necessarily at the
+// end.
 func (c *v4Credentials) splitCredential(cred string) error {
 	if strings.Count(cred, "/") != 4 || !strings.Contains(cred, aws4Request) {
 		return fmt.Errorf("%w: malformed credential", op.ErrInvalidArgument)
@@ -153,16 +168,19 @@ func (c *v4Credentials) splitCredential(cred string) error {
 	return nil
 }
 
-// parseV4Query is parse_v4_query_string (rgw_auth_s3.cc:280-339 at v19.2.6,
-// :283-342 at v20.2.4) and the credential split of parse_v4_credentials. A
-// missing or empty parameter, a malformed date (EACCES on the header route)
-// and an X-Amz-Expires that atoll reads outside [1, 604800] are all EPERM,
-// as is an X-Amz-Security-Token present but empty. There is no skew check,
-// so a URL dated in the future is valid from now. radosgw adds the date and
-// the expiry in uint64_t, so a date more than the expiry before 1970 wraps
-// past every clock and never expires. An expired URL is refused with the
-// message Strategy::apply gives ERR_PRESIGNED_URL_EXPIRED (rgw_auth.cc:500-504
-// at v19.2.6, :515-519 at v20.2.4).
+// parseV4Query is parse_v4_query_string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L280-L339 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L283-L342 at v20.2.4)
+// and the credential split of parse_v4_credentials. A missing or empty
+// parameter, a malformed date (EACCES on the header route) and an
+// X-Amz-Expires that atoll reads outside [1, 604800] are all EPERM, as is an
+// X-Amz-Security-Token present but empty. There is no skew check, so a URL
+// dated in the future is valid from now. radosgw adds the date and the expiry
+// in uint64_t, so a date more than the expiry before 1970 wraps past every
+// clock and never expires. An expired URL is refused with the message
+// Strategy::apply gives ERR_PRESIGNED_URL_EXPIRED
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L500-L504 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L515-L519 at v20.2.4).
 func parseV4Query(rv *requestView, now time.Time) (*v4Credentials, error) {
 	denied := func(what string) error { return fmt.Errorf("%w: presigned url %s", op.ErrAccessDenied, what) }
 	cred, _ := rv.param("x-amz-credential")
@@ -207,18 +225,21 @@ func parseV4Query(rv *requestView, now time.Time) (*v4Credentials, error) {
 
 // presignClock is now as parse_v4_query_string reads ceph_clock_now() into a
 // uint64_t: through utime_t, which keeps 32 bits of seconds, and its operator
-// double (include/utime.h:51, :230-232 at v19.2.6 and v20.2.4), so the
-// nanoseconds are added in a double before the truncation to seconds, and a
-// time a fraction of a microsecond short of the next second rounds up to it.
+// double (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L51,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L230-L232 at v19.2.6
+// and v20.2.4), so the nanoseconds are added in a double before the
+// truncation to seconds, and a time a fraction of a microsecond short of the
+// next second rounds up to it.
 func presignClock(now time.Time) uint64 {
 	sec := uint32(now.Unix()) //nolint:gosec // utime_t keeps 32 bits of seconds
 	return uint64(float64(sec) + float64(now.Nanosecond())/1e9)
 }
 
 // boto2HostPort is the port the boto2 engine appends to a signed host
-// (rgw_auth_s3.cc:770-783 at v19.2.6, :747-760 at v20.2.4): on a TLS listener
-// SERVER_PORT_SECURE unless it is 443, otherwise SERVER_PORT unless it is 80;
-// "" when nothing is appended.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L770-L783 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L747-L760 at v20.2.4):
+// on a TLS listener SERVER_PORT_SECURE unless it is 443, otherwise
+// SERVER_PORT unless it is 80; "" when nothing is appended.
 func boto2HostPort(rv *requestView) string {
 	port, secure := rv.localPort()
 	if port == "" || secure && port == "443" || !secure && port == "80" {
@@ -227,11 +248,15 @@ func boto2HostPort(rv *requestView) string {
 	return port
 }
 
-// canonicalURIV4 is get_v4_canonical_uri (rgw_auth_s3.h:598-612 at v19.2.6,
-// :601-615 at v20.2.4) over request_uri_aws4, the path as sent before a
-// virtual-hosted bucket is prepended (rgw_rest.cc:2024 at v19.2.6, :2041 at
-// v20.2.4). Its '+' to "%20" pass is not transcribed: aws4_uri_encode has
-// already turned every '+' into "%2B".
+// canonicalURIV4 is get_v4_canonical_uri
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L598-L612 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L601-L615 at v20.2.4)
+// over request_uri_aws4, the path as sent before a virtual-hosted bucket is
+// prepended
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2024 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2041 at v20.2.4).
+// Its '+' to "%20" pass is not transcribed: aws4_uri_encode has already
+// turned every '+' into "%2B".
 func canonicalURIV4(rawPath string) string {
 	if u := aws4Recode(rawPath, false); u != "" {
 		return u
@@ -239,12 +264,14 @@ func canonicalURIV4(rawPath string) string {
 	return "/"
 }
 
-// canonicalQueryV4 is get_v4_canonical_qs (rgw_auth_s3.cc:604-660 at
-// v19.2.6, :610-666 at v20.2.4). Every '+' is a space before the split. A
-// token without '=' is a key, untrimmed, with an empty value. A presigned
-// query drops its X-Amz-Signature, matched as boost::iequals matches it,
-// ignoring ASCII case only. Pairs are ordered by their encoded key alone, as
-// a std::multimap orders them, so equal keys keep their order in the query.
+// canonicalQueryV4 is get_v4_canonical_qs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L604-L660 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L610-L666 at v20.2.4).
+// Every '+' is a space before the split. A token without '=' is a key,
+// untrimmed, with an empty value. A presigned query drops its
+// X-Amz-Signature, matched as boost::iequals matches it, ignoring ASCII case
+// only. Pairs are ordered by their encoded key alone, as a std::multimap
+// orders them, so equal keys keep their order in the query.
 func canonicalQueryV4(rawQuery string, presigned bool) string {
 	if rawQuery == "" {
 		return ""
@@ -277,24 +304,29 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 	return b.String()
 }
 
-// canonicalHeadersV4 is get_v4_canonical_headers (rgw_auth_s3.cc:734-856 at
-// v19.2.7, :711-811 at v20.2.4). A signed header the request lacks is
-// skipped, and each one present is keyed by its token as sent. A non-empty
-// hostPort is appended to the host token's value, as the boto2 fallback
-// does. Unless insecure (rgw_sigv4_insecure), host and every x-amz-* header
-// the request carries must be signed, radosgw's CVE-2026-54330 check
-// (:819-841 at v19.2.7, :780-796 at v20.2.4). No other header need be: one
-// under the six other meta prefixes init_meta_info renames to x-amz- is
-// never read (docs/exclusions.md). payloadHashHeader is exempt: the
-// canonical request ends with its value as the payload hash, which the body
-// is then held to, so the signature fixes it whether it is signed or not.
-// That holds only while rgw-go routes no op that takes its payload hash from
-// elsewhere, as radosgw's STS, IAM and topic ops take it from the
-// PayloadHash parameter (rgw_rest_s3.cc:5854 at v19.2.7) while the exemption
-// still applies to them (its TODO, rgw_auth_s3.cc:832). A Content-Type need
-// not be signed. v20.2.4 also refuses an unsigned Content-Type or
-// payloadHashHeader (rgw_auth_s3.cc:765-797); rgw-go takes v19.2.7's rule on
-// Tentacle too (docs/exclusions.md). Every refusal is EPERM.
+// canonicalHeadersV4 is get_v4_canonical_headers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L734-L856 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L711-L811 at v20.2.4).
+// A signed header the request lacks is skipped, and each one present is
+// keyed by its token as sent. A non-empty hostPort is appended to the host
+// token's value, as the boto2 fallback does. Unless insecure
+// (rgw_sigv4_insecure), host and every x-amz-* header the request carries
+// must be signed, radosgw's CVE-2026-54330 check
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796 at v20.2.4).
+// No other header need be: one under the six other meta prefixes
+// init_meta_info renames to x-amz- is never read (docs/exclusions.md).
+// payloadHashHeader is exempt: the canonical request ends with its value as
+// the payload hash, which the body is then held to, so the signature fixes
+// it whether it is signed or not. That holds only while rgw-go routes no op
+// that takes its payload hash from elsewhere, as radosgw's STS, IAM and
+// topic ops take it from the PayloadHash parameter
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5854 at v19.2.7)
+// while the exemption still applies to them (its TODO, rgw_auth_s3.cc:832).
+// A Content-Type need not be signed. v20.2.4 also refuses an unsigned
+// Content-Type or payloadHashHeader (rgw_auth_s3.cc:765-797); rgw-go takes
+// v19.2.7's rule on Tentacle too (docs/exclusions.md). Every refusal is
+// EPERM.
 func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, hostPort string) (string, error) {
 	m := map[string]string{}
 	for tok := range strings.SplitSeq(signedHeaders, ";") {
@@ -336,7 +368,8 @@ func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, ho
 }
 
 // canonicalRequestV4 is the text get_v4_canon_req_hash hashes
-// (rgw_auth_s3.cc:902-930 at v19.2.6, :879-907 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L902-L930 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L879-L907 at v20.2.4).
 func canonicalRequestV4(method, uri, qs, hdrs, signedHeaders, payloadHash string) string {
 	return strings.Join([]string{method, uri, qs, hdrs, signedHeaders, payloadHash}, "\n")
 }
@@ -352,16 +385,19 @@ func hmacSHA256(key, msg []byte) []byte {
 	return h.Sum(nil)
 }
 
-// stringToSignV4 is get_v4_string_to_sign (rgw_auth_s3.cc:937-959 at v19.2.6,
-// :914-936 at v20.2.4).
+// stringToSignV4 is get_v4_string_to_sign
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L937-L959 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L914-L936 at v20.2.4).
 func stringToSignV4(date, scope, canonicalRequest string) string {
 	return strings.Join([]string{aws4Algorithm, date, scope, sha256Hex(canonicalRequest)}, "\n")
 }
 
-// parseCredScope is parse_cred_scope (rgw_auth_s3.cc:962-982 at v19.2.6,
-// :939-959 at v20.2.4): date, region and service, whatever region or service
-// the client named. A field with no '/' after it leaves the rest whole for
-// the next, since substr(npos + 1) is substr(0).
+// parseCredScope is parse_cred_scope
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L962-L982 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L939-L959 at v20.2.4):
+// date, region and service, whatever region or service the client named. A
+// field with no '/' after it leaves the rest whole for the next, since
+// substr(npos + 1) is substr(0).
 func parseCredScope(scope string) (date, region, service string) {
 	next := func(s string) (field, rest string) {
 		if f, r, ok := strings.Cut(s, "/"); ok {
@@ -375,11 +411,12 @@ func parseCredScope(scope string) (date, region, service string) {
 	return date, region, service
 }
 
-// signingKeyV4 is get_v4_signing_key (rgw_auth_s3.cc:1009-1033 at v19.2.6,
-// :986-1010 at v20.2.4). transform_secret_key re-encodes each secret byte as
-// a UTF-8 code point, which leaves ASCII as it is and is undefined above 0x7f;
-// the secret's own bytes key the HMAC here, as AWS clients key it
-// (docs/exclusions.md).
+// signingKeyV4 is get_v4_signing_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1009-L1033 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L986-L1010 at v20.2.4).
+// transform_secret_key re-encodes each secret byte as a UTF-8 code point,
+// which leaves ASCII as it is and is undefined above 0x7f; the secret's own
+// bytes key the HMAC here, as AWS clients key it (docs/exclusions.md).
 func signingKeyV4(secret, scope string) []byte {
 	date, region, service := parseCredScope(scope)
 	k := hmacSHA256([]byte("AWS4"+secret), []byte(date))
@@ -389,7 +426,8 @@ func signingKeyV4(secret, scope string) []byte {
 }
 
 // signatureV4 is get_v4_signature's digest in lower-case hex
-// (rgw_auth_s3.cc:1044-1066 at v19.2.6, :1021-1043 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1044-L1066 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1021-L1043 at v20.2.4).
 func signatureV4(key []byte, stringToSign string) string {
 	return hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
 }
@@ -404,14 +442,15 @@ func expectedPayloadHash(rv *requestView) string {
 	return unsignedPayload
 }
 
-// authDataV4 is get_auth_data_v4 (rgw_rest_s3.cc:5771-6000 at v19.2.6,
-// :6338-6571 at v20.2.4) but for its per-op payload whitelist, which needs
-// the route and is acceptedBy, and for its non-S3 ops (is_non_s3_op: the STS,
-// IAM, OIDC and topic ops), whose payload hash radosgw takes from the
-// PayloadHash query parameter and never completes (:5807-5818 and :5882,
-// :6374-6385 and :6449); rgw-go does not route those ops. The method is the
-// request's: radosgw signs an OPTIONS CORS request over its
-// Access-Control-Request-Method instead.
+// authDataV4 is get_auth_data_v4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5771-L6000 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6338-L6571 at v20.2.4)
+// but for its per-op payload whitelist, which needs the route and is
+// acceptedBy, and for its non-S3 ops (is_non_s3_op: the STS, IAM, OIDC and
+// topic ops), whose payload hash radosgw takes from the PayloadHash query
+// parameter and never completes (:5807-5818 and :5882, :6374-6385 and :6449);
+// rgw-go does not route those ops. The method is the request's: radosgw signs
+// an OPTIONS CORS request over its Access-Control-Request-Method instead.
 func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*authData, error) {
 	var (
 		c   *v4Credentials
@@ -445,17 +484,26 @@ func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*a
 	// When the first engine of radosgw's S3 strategy denies a request, it
 	// tries a boto2 engine whose only difference is that a presigned
 	// request's signed host has the listener's port appended
-	// (rgw_auth_registry.h:28-49 at v19.2.6 and v20.2.4; rgw_rest_s3.cc:6022-6030
-	// at v19.2.6, :6593-6601 at v20.2.4). The local engine denies a signature
-	// mismatch (rgw_rest_s3.cc:6374 at v19.2.6, :6945 at v20.2.4). A rejection
-	// ends the strategy instead (rgw_auth.cc:367-369 at v19.2.6, :382-384 at
-	// v20.2.4), and the STS engine rejects a request carrying a session token
-	// whose signature does not match (rgw_rest_s3.cc:6530 at v19.2.6, :7138 at
-	// v20.2.4), so such a request never reaches the fallback. verify tries
-	// altSign for every caller, so an STS engine must not inherit it. When
-	// the boto2 engine is denied too, radosgw reports the first engine's
-	// result (rgw_auth.cc:396-397 at v19.2.6, :411-412 at v20.2.4), which a
-	// refusal here leaves standing.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_registry.h#L28-L49 at v19.2.6
+	// and v20.2.4;
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6022-L6030 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6593-L6601 at v20.2.4).
+	// The local engine denies a signature mismatch
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6374 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6945 at v20.2.4).
+	// A rejection ends the strategy instead
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L367-L369 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L382-L384 at v20.2.4),
+	// and the STS engine rejects a request carrying a session token whose
+	// signature does not match
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6530 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7138 at v20.2.4),
+	// so such a request never reaches the fallback. verify tries altSign for
+	// every caller, so an STS engine must not inherit it. When the boto2 engine
+	// is denied too, radosgw reports the first engine's result
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L396-L397 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L411-L412 at v20.2.4),
+	// which a refusal here leaves standing.
 	if port := boto2HostPort(rv); presigned && port != "" && slices.Contains(strings.Split(c.signedHeaders, ";"), "host") {
 		if altHdrs, err := canonicalHeadersV4(rv, c.signedHeaders, cfg.Insecure, port); err == nil {
 			altSts := stringToSignV4(c.date, c.scope, canonicalRequestV4(rv.req.Method, uri, qs, altHdrs, c.signedHeaders, payloadHash))

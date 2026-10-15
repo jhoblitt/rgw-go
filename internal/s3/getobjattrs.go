@@ -12,9 +12,10 @@ import (
 )
 
 // getObjectAttrs serves get_obj_attrs ([T] RGWGetObjAttrs_ObjStore_S3,
-// rgw_rest_s3.cc:3941-4137), on both releases. It reads get_params' headers,
-// whose refusals the op answers where radosgw's execute does, and the SSE
-// inputs rgw_s3_prepare_decrypt reads; it reads none of GetObject's others.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3941-L4137),
+// on both releases. It reads get_params' headers, whose refusals the op
+// answers where radosgw's execute does, and the SSE inputs
+// rgw_s3_prepare_decrypt reads; it reads none of GetObject's others.
 func getObjectAttrs(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	_, sse := op.HeaderValue(r.Header, "x-amz-server-side-encryption")
 	o := &op.GetObjectAttributes{

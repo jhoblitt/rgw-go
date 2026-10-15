@@ -24,35 +24,42 @@ import (
 // write makes is a no-op on a single zone, which is its own master. A bare
 // line number is v19.2.6's rgw_op.cc.
 
-// AttrIAMPolicy is RGW_ATTR_IAM_POLICY (rgw_common.h:154 at v19.2.6, :173 at
-// v20.2.4), the bucket attr holding its policy's text.
+// AttrIAMPolicy is RGW_ATTR_IAM_POLICY
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L154 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L173 at v20.2.4),
+// the bucket attr holding its policy's text.
 const AttrIAMPolicy = meta.AttrPrefix + "iam-policy"
 
-// AttrLC is RGW_ATTR_LC (rgw_common.h:82 at v19.2.6, :87 at v20.2.4), the
-// bucket attr holding its lifecycle configuration.
+// AttrLC is RGW_ATTR_LC
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L82 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L87 at v20.2.4),
+// the bucket attr holding its lifecycle configuration.
 const AttrLC = meta.AttrPrefix + "lc"
 
 // attrIAMPolicyRemoveSelfAccess is Tentacle's
-// RGW_ATTR_IAM_POLICY_REMOVE_SELF_ACCESS (rgw_common.h:177 at v20.2.4).
+// RGW_ATTR_IAM_POLICY_REMOVE_SELF_ACCESS
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L177 at v20.2.4).
 const attrIAMPolicyRemoveSelfAccess = meta.AttrPrefix + "iam-policy-remove-self-access"
 
 // racedWriteRetries is the number of times retry_raced_bucket_write reads the
 // bucket again after a lost race.
 const racedWriteRetries = 15
 
-// RetryRacedBucketWrite is retry_raced_bucket_write (rgw_op.h:183-196 at
-// v19.2.6, :197-210 at v20.2.4): f, and while it returns
-// ErrConcurrentModification, up to fifteen times, the bucket read again by
-// name into r.BucketRec, as try_refresh_info reads it
-// (driver/rados/rgw_rados.cc:9011-9026 at v19.2.6, :9956-9971 at v20.2.4),
-// then f again. A read that fails ends it with the read's error, a bucket
-// gone since being the -ENOENT radosgw answers as NoSuchKey
-// (rgw_common.cc:97 at v19.2.6, :98 at v20.2.4). A read that finds the name
-// naming another instance, a bucket deleted and created again since the
-// request was authorized, ends it with ErrConcurrentModification and nothing
-// written, where radosgw writes into that bucket
-// (docs/ceph-upstream-bugs.md, "radosgw's retried bucket write can land in a
-// bucket re-created under the same name").
+// RetryRacedBucketWrite is retry_raced_bucket_write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L183-L196 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210 at v20.2.4):
+// f, and while it returns ErrConcurrentModification, up to fifteen times,
+// the bucket read again by name into r.BucketRec, as try_refresh_info reads
+// it (driver/rados/rgw_rados.cc:9011-9026 at v19.2.6, :9956-9971 at
+// v20.2.4), then f again. A read that fails ends it with the read's error, a
+// bucket gone since being the -ENOENT radosgw answers as NoSuchKey
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98 at v20.2.4).
+// A read that finds the name naming another instance, a bucket deleted and
+// created again since the request was authorized, ends it with
+// ErrConcurrentModification and nothing written, where radosgw writes into
+// that bucket (docs/ceph-upstream-bugs.md, "radosgw's retried bucket write
+// can land in a bucket re-created under the same name").
 func RetryRacedBucketWrite(ctx context.Context, r *Request, f func() error) error {
 	err := f()
 	for i := 0; i < racedWriteRetries && errors.Is(err, ErrConcurrentModification); i++ {
@@ -89,8 +96,10 @@ func retryBucketWrite(ctx context.Context, r *Request, o Op, f func() error) err
 	return RetryRacedWriteReauthorized(ctx, r, nil, func() error { return o.VerifyPermission(ctx, r) }, f)
 }
 
-// GetBucketACL is RGWGetACLs at bucket scope (rgw_op.cc:5695-5734 at v19.2.6,
-// :6275-6314 at v20.2.4): s->bucket_acl, as BucketACLFor reads it.
+// GetBucketACL is RGWGetACLs at bucket scope
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5695-L5734 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6275-L6314 at v20.2.4):
+// s->bucket_acl, as BucketACLFor reads it.
 type GetBucketACL struct {
 	// Policy is the bucket's ACL.
 	Policy acl.Policy
@@ -108,7 +117,8 @@ func (*GetBucketACL) Action() policy.Action { return policy.S3GetBucketAcl }
 func (*GetBucketACL) OpMask() uint32 { return OpTypeRead }
 
 // Init loads the bucket; verify_permission answers a missing one with
-// ERR_NO_SUCH_BUCKET before it authorizes (:5707-5709).
+// ERR_NO_SUCH_BUCKET before it authorizes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5707-L5709).
 func (*GetBucketACL) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWGetACLs::verify_permission for a bucket.
@@ -129,11 +139,12 @@ func (o *GetBucketACL) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*GetBucketACL) Complete(context.Context, *Request) {}
 
-// PutBucketACL is RGWPutACLs at bucket scope (rgw_op.cc:5821-5928 at v19.2.6,
-// :6467-6590 at v20.2.4). Build is the handler's get_params and policy
-// derivation: it receives s->bucket_acl, the stored ACL, once the requester
-// is authorized, and returns the new policy, or its refusal already mapped to
-// an S3 error.
+// PutBucketACL is RGWPutACLs at bucket scope
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5821-L5928 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6467-L6590 at v20.2.4).
+// Build is the handler's get_params and policy derivation: it receives
+// s->bucket_acl, the stored ACL, once the requester is authorized, and
+// returns the new policy, or its refusal already mapped to an S3 error.
 type PutBucketACL struct {
 	Build func(existing acl.Policy) (acl.Policy, error)
 }
@@ -159,15 +170,17 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 
 // Execute is RGWPutACLs::execute for a bucket: Build from the stored ACL,
 // then the ACL written over the bucket's attrs. A new owner is refused with
-// -EPERM, "Cannot modify ACL Owner" (:5859-5864), and a public policy under a
-// block of public ACLs, or a block that does not decode (:5905-5910;
-// docs/exclusions.md). radosgw answers a lost race with success and leaves
-// the ACL unwritten (:5925-5927; docs/ceph-upstream-bugs.md, "radosgw's
-// PutBucketAcl answers success when its write loses a race"); rgw-go
-// retries it through retryBucketWrite and makes both checks again against
-// the bucket as each try reads it, so a retry never puts back an owner a
-// concurrent change replaced; a retry that passes them and finds the
-// requested ACL in place writes nothing and succeeds (docs/exclusions.md).
+// -EPERM, "Cannot modify ACL Owner"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5859-L5864),
+// and a public policy under a block of public ACLs, or a block that does not
+// decode (:5905-5910; docs/exclusions.md). radosgw answers a lost race with
+// success and leaves the ACL unwritten (:5925-5927;
+// docs/ceph-upstream-bugs.md, "radosgw's PutBucketAcl answers success when
+// its write loses a race"); rgw-go retries it through retryBucketWrite and
+// makes both checks again against the bucket as each try reads it, so a retry
+// never puts back an owner a concurrent change replaced; a retry that passes
+// them and finds the requested ACL in place writes nothing and succeeds
+// (docs/exclusions.md).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 	existing, err := BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
@@ -200,8 +213,10 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 
 // aclInPlace is whether a retry of an ACL write finds the requested ACL, want,
 // already stored in attrs as current, its decoded form: radosgw answers the
-// lost race 200 (rgw_op.cc:5925-5927 at v19.2.6, :6587-6589 at v20.2.4), and
-// the client's intent already holds. An ACL that holds only as the default
+// lost race 200
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5925-L5927 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6587-L6589 at v20.2.4),
+// and the client's intent already holds. An ACL that holds only as the default
 // generated for a missing attr is not in place.
 func aclInPlace(attrs map[string][]byte, current, want acl.Policy) bool {
 	_, stored := attrs[meta.AttrACL]
@@ -211,9 +226,10 @@ func aclInPlace(attrs map[string][]byte, current, want acl.Policy) bool {
 // sameACL is whether a and b are one policy: the same owner and display name,
 // the same grants in any order, the same user and group maps, and the same
 // referer list in order, as get_referer_perm lets the last match win
-// (rgw_acl.cc:137-158 at v19.2.6 and v20.2.4). Each grant compares as its
-// key and its encoding, which keeps only the fields of its grantee type and
-// the to_string form of a canonical user's id.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L137-L158 at v19.2.6
+// and v20.2.4). Each grant compares as its key and its encoding, which keeps
+// only the fields of its grantee type and the to_string form of a canonical
+// user's id.
 func sameACL(a, b acl.Policy) bool {
 	return meta.ParseOwner(a.Owner.ID).String() == meta.ParseOwner(b.Owner.ID).String() &&
 		a.Owner.DisplayName == b.Owner.DisplayName &&
@@ -240,8 +256,9 @@ func grantForms(l acl.List) []string {
 func (*PutBucketACL) Complete(context.Context, *Request) {}
 
 // aclOwnerChanged is RGWPutACLs::execute's owner check: an existing owner
-// that is not ACLOwner::empty (rgw_acl.cc:249-255 at v19.2.6 and v20.2.4)
-// and differs from the new one, both compared as rgw_owner.
+// that is not ACLOwner::empty
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L249-L255 at v19.2.6
+// and v20.2.4) and differs from the new one, both compared as rgw_owner.
 func aclOwnerChanged(existing, next string) bool {
 	o := meta.ParseOwner(existing)
 	if o.User != nil && o.User.ID == "" || o.User == nil && o.Account == "" {
@@ -250,8 +267,10 @@ func aclOwnerChanged(existing, next string) bool {
 	return o.String() != meta.ParseOwner(next).String()
 }
 
-// GetBucketPolicy is RGWGetBucketPolicy (rgw_op.cc:8123-8167 at v19.2.6,
-// :9054-9106 at v20.2.4): the bucket's policy text as stored.
+// GetBucketPolicy is RGWGetBucketPolicy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8123-L8167 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9054-L9106 at v20.2.4):
+// the bucket's policy text as stored.
 type GetBucketPolicy struct {
 	// JSON is the stored text.
 	JSON []byte
@@ -292,10 +311,12 @@ func (o *GetBucketPolicy) Execute(_ context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*GetBucketPolicy) Complete(context.Context, *Request) {}
 
-// PutBucketPolicy is RGWPutBucketPolicy (rgw_op.cc:8060-8121 at v19.2.6,
-// :8978-9052 at v20.2.4). Params, when set, is the handler's get_params and
-// parse, which fill Policy once the requester is authorized; a refusal comes
-// back already mapped to an S3 error.
+// PutBucketPolicy is RGWPutBucketPolicy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8060-L8121 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8978-L9052 at v20.2.4).
+// Params, when set, is the handler's get_params and parse, which fill Policy
+// once the requester is authorized; a refusal comes back already mapped to
+// an S3 error.
 type PutBucketPolicy struct {
 	Params func(ctx context.Context, o *PutBucketPolicy) error
 	// Policy is the parsed policy, whose Text is stored.
@@ -365,8 +386,9 @@ func blocksPublicPolicy(rec *BucketRecord) bool {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*PutBucketPolicy) Complete(context.Context, *Request) {}
 
-// DeleteBucketPolicy is RGWDeleteBucketPolicy (rgw_op.cc:8169-8210 at
-// v19.2.6, :9108-9158 at v20.2.4).
+// DeleteBucketPolicy is RGWDeleteBucketPolicy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8169-L8210 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9108-L9158 at v20.2.4).
 type DeleteBucketPolicy struct{}
 
 var _ Op = (*DeleteBucketPolicy)(nil)
@@ -405,10 +427,13 @@ func (o *DeleteBucketPolicy) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*DeleteBucketPolicy) Complete(context.Context, *Request) {}
 
-// GetBucketTagging is RGWGetBucketTags (rgw_op.cc:1141-1169 at v19.2.6,
-// :1378-1406 at v20.2.4) with the decode
-// RGWGetBucketTags_ObjStore_S3::send_response_data makes
-// (rgw_rest_s3.cc:839-866 at v19.2.6, :921-948 at v20.2.4).
+// GetBucketTagging is RGWGetBucketTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1141-L1169 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1378-L1406 at v20.2.4)
+// with the decode RGWGetBucketTags_ObjStore_S3::send_response_data
+// makes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L839-L866 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L921-L948 at v20.2.4).
 type GetBucketTagging struct {
 	// Set is the bucket's tag set.
 	Set tags.Set
@@ -454,10 +479,12 @@ func (o *GetBucketTagging) Execute(_ context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*GetBucketTagging) Complete(context.Context, *Request) {}
 
-// PutBucketTagging is RGWPutBucketTags (rgw_op.cc:1171-1203 at v19.2.6,
-// :1408-1440 at v20.2.4). Params, when set, is the handler's get_params,
-// which fills Set once the requester is authorized; a refusal comes back
-// already mapped to an S3 error.
+// PutBucketTagging is RGWPutBucketTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1171-L1203 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1408-L1440 at v20.2.4).
+// Params, when set, is the handler's get_params, which fills Set once
+// the requester is authorized; a refusal comes back already mapped to an
+// S3 error.
 type PutBucketTagging struct {
 	Params func(ctx context.Context, o *PutBucketTagging) error
 	// Set is the tag set to store, empty or not.
@@ -500,8 +527,9 @@ func (o *PutBucketTagging) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*PutBucketTagging) Complete(context.Context, *Request) {}
 
-// DeleteBucketTagging is RGWDeleteBucketTags (rgw_op.cc:1205-1243 at v19.2.6,
-// :1442-1480 at v20.2.4).
+// DeleteBucketTagging is RGWDeleteBucketTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1205-L1243 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1442-L1480 at v20.2.4).
 type DeleteBucketTagging struct{}
 
 var _ Op = (*DeleteBucketTagging)(nil)
@@ -533,10 +561,14 @@ func (o *DeleteBucketTagging) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*DeleteBucketTagging) Complete(context.Context, *Request) {}
 
-// GetBucketLifecycle is RGWGetLC (rgw_op.h:1631-1646 at v19.2.6, :1785-1801
-// at v20.2.4) with RGWGetLC_ObjStore_S3::execute (rgw_rest_s3.cc:3658-3676 at
-// v19.2.6, :4139-4157 at v20.2.4). rgw-go renders no lifecycle configuration
-// yet, so it serves only a bucket without one.
+// GetBucketLifecycle is RGWGetLC
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L1631-L1646 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1785-L1801 at v20.2.4)
+// with RGWGetLC_ObjStore_S3::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3658-L3676 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4157 at v20.2.4).
+// rgw-go renders no lifecycle configuration yet, so it serves only a bucket
+// without one.
 type GetBucketLifecycle struct{}
 
 var _ Op = (*GetBucketLifecycle)(nil)
@@ -553,8 +585,10 @@ func (*GetBucketLifecycle) OpMask() uint32 { return OpTypeRead }
 // Init loads the bucket.
 func (*GetBucketLifecycle) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
-// VerifyPermission is RGWGetLC::verify_permission (:5759-5770; v20.2.4
-// :6405-6416).
+// VerifyPermission is RGWGetLC::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5759-L5770;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6405-L6416).
 func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) error {
 	return verifyBucketAction(ctx, r, o)
 }
@@ -562,9 +596,10 @@ func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) e
 // Execute is RGWGetLC_ObjStore_S3::execute up to the decode: a bucket without
 // the lifecycle attr is -ENOENT, which send_response answers as
 // ERR_NO_SUCH_LC, 404 NoSuchLifecycleConfiguration with no message
-// (rgw_rest_s3.cc:3678-3696 at v19.2.6, :4159-4177 at v20.2.4). radosgw tests
-// the attr's presence, so an empty one counts as a configuration; any
-// configuration is NotImplemented (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3678-L3696 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4159-L4177 at v20.2.4).
+// radosgw tests the attr's presence, so an empty one counts as a
+// configuration; any configuration is NotImplemented (docs/exclusions.md).
 func (*GetBucketLifecycle) Execute(_ context.Context, r *Request) error {
 	if _, ok := r.BucketRec.Attrs[AttrLC]; !ok {
 		return ErrNoSuchLifecycleConfiguration

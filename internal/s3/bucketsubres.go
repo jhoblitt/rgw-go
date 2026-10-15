@@ -21,9 +21,10 @@ import (
 func invalidRange(uint64) error { return op.ErrInvalidRange }
 
 // getBucketPolicy is get_bucket_policy (RGWGetBucketPolicy::send_response,
-// rgw_op.cc:8123-8131 at v19.2.6, :9054-9062 at v20.2.4): the stored text as
-// application/json, with the length radosgw's frontend adds and no
-// Accept-Ranges.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8123-L8131 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9054-L9062 at v20.2.4):
+// the stored text as application/json, with the length radosgw's frontend
+// adds and no Accept-Ranges.
 func getBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetBucketPolicy{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -40,10 +41,11 @@ func getBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) 
 }
 
 // putBucketPolicy is put_bucket_policy: RGWPutBucketPolicy::get_params
-// (rgw_op.cc:8073-8082 at v19.2.6, :8999-9008 at v20.2.4), then the parse
-// and the refusal of a public policy under a block of public policies,
-// which the evaluator makes and whose errors are mapped through
-// authz.ErrorFor; 204 with no body (:8047-8058, :8965-8976).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8073-L8082 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8999-L9008 at v20.2.4),
+// then the parse and the refusal of a public policy under a block of
+// public policies, which the evaluator makes and whose errors are mapped
+// through authz.ErrorFor; 204 with no body (:8047-8058, :8965-8976).
 func putBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.PutBucketPolicy{Params: func(_ context.Context, o *op.PutBucketPolicy) error {
 		e, err := evaluator(r)
@@ -69,8 +71,9 @@ func putBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) 
 }
 
 // deleteBucketPolicy is delete_bucket_policy: 204 with no body
-// (RGWDeleteBucketPolicy::send_response, rgw_op.cc:8169-8180 at v19.2.6,
-// :9108-9119 at v20.2.4).
+// (RGWDeleteBucketPolicy::send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8169-L8180 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9108-L9119 at v20.2.4).
 func deleteBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	if err := op.Run(ctx, &op.DeleteBucketPolicy{}, r); err != nil {
 		return err
@@ -80,9 +83,10 @@ func deleteBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Reques
 }
 
 // getBucketTags is get_bucket_tags
-// (RGWGetBucketTags_ObjStore_S3::send_response_data, rgw_rest_s3.cc:839-866
-// at v19.2.6, :921-948 at v20.2.4): the tag set, an empty TagSet for an
-// empty one.
+// (RGWGetBucketTags_ObjStore_S3::send_response_data,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L839-L866 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L921-L948 at v20.2.4):
+// the tag set, an empty TagSet for an empty one.
 func getBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetBucketTagging{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -93,9 +97,10 @@ func getBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // putBucketTags is put_bucket_tags: RGWPutBucketTags_ObjStore_S3::get_params
-// (rgw_rest_s3.cc:868-913 at v19.2.6, :950-995 at v20.2.4), the body parsed
-// into at most fifty tags, its errors mapped through authz.ErrorFor; 200 with
-// no body (writeEmptyXML).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L868-L913 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L950-L995 at v20.2.4),
+// the body parsed into at most fifty tags, its errors mapped through
+// authz.ErrorFor; 200 with no body (writeEmptyXML).
 func putBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.PutBucketTagging{Params: func(_ context.Context, o *op.PutBucketTagging) error {
 		body, err := readParamBody(r, invalidRange)
@@ -117,8 +122,10 @@ func putBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // deleteBucketTags is delete_bucket_tags: 204 with no body
-// (RGWDeleteBucketTags_ObjStore_S3::send_response, rgw_rest_s3.cc:924-935 at
-// v19.2.6, :1006-1017 at v20.2.4), under writeEmptyXML's type.
+// (RGWDeleteBucketTags_ObjStore_S3::send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L924-L935 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1006-L1017 at v20.2.4),
+// under writeEmptyXML's type.
 func deleteBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	if err := op.Run(ctx, &op.DeleteBucketTagging{}, r); err != nil {
 		return err
@@ -129,8 +136,10 @@ func deleteBucketTags(ctx context.Context, w http.ResponseWriter, r *op.Request)
 
 // getLifecycle is get_lifecycle, RGWGetLC_ObjStore_S3. The op answers every
 // request it serves with an error, which send_response renders through
-// end_header's error document (rgw_rest_s3.cc:3678-3696 at v19.2.6,
-// :4159-4177 at v20.2.4), so nothing is written here.
+// end_header's error document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3678-L3696 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4159-L4177 at v20.2.4),
+// so nothing is written here.
 func getLifecycle(ctx context.Context, _ http.ResponseWriter, r *op.Request) error {
 	return op.Run(ctx, &op.GetBucketLifecycle{}, r)
 }
@@ -139,8 +148,9 @@ func getLifecycle(ctx context.Context, _ http.ResponseWriter, r *op.Request) err
 // send_response that hands end_header to_mime_type's type and calls
 // dump_start after it. end_header flushes the formatter while it is still
 // empty, and nothing flushes the XML declaration dump_start then puts in it,
-// so radosgw sends the type and no body (rgw_rest.cc:589-655 at v19.2.6,
-// :594-660 at v20.2.4).
+// so radosgw sends the type and no body
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L655 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L594-L660 at v20.2.4).
 func writeEmptyXML(w http.ResponseWriter, r *op.Request, status int) {
 	w.Header().Set("Content-Type", "application/xml")
 	writeEmpty(w, r, status)

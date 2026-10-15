@@ -11,12 +11,15 @@ import (
 )
 
 // The index check is RGWOp_Check_Bucket_Index (rgw_rest_bucket.cc:94-126)
-// over RGWBucketAdminOp::check_index (driver/rados/rgw_bucket.cc:1241-1280
-// at v19.2.6, :1392-1442 at v20.2.4) and the RGWBucket checks it runs.
+// over RGWBucketAdminOp::check_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1241-L1280 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1392-L1442 at v20.2.4)
+// and the RGWBucket checks it runs.
 
-// indexCheckPage is listing_max_entries (rgw_bucket.cc:46 at v20.2.4, the
-// same at v19.2.6): the page the checks list in and the batch the multipart
-// check removes in.
+// indexCheckPage is listing_max_entries
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L46 at v20.2.4,
+// the same at v19.2.6): the page the checks list in and the batch the
+// multipart check removes in.
 const indexCheckPage = 1000
 
 // CheckBucketIndex is RGWOp_Check_Bucket_Index and
@@ -45,7 +48,8 @@ func NewCheckBucketIndex() *CheckBucketIndex { return &CheckBucketIndex{} }
 func (o *CheckBucketIndex) Name() string { return "check_bucket_index" }
 
 // VerifyPermission is RGWOp_Check_Bucket_Index::check_caps, buckets=write
-// (rgw_rest_bucket.cc:99-101 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L99-L101 at v19.2.6
+// and v20.2.4).
 func (o *CheckBucketIndex) VerifyPermission(_ context.Context, r *Request) error {
 	return bucketsCap(r, meta.CapWrite)
 }
@@ -175,13 +179,13 @@ func badMultipartSquid(keys []meta.ObjKey) []meta.ObjKey {
 }
 
 // badMultipartByShard is Tentacle's check (rgw_bucket.cc:343-482 and
-// :497-557 at v20.2.4), which reads each shard's multipart entries in index
-// order, the REST op's max_aio of 0 giving one coroutine that takes the
-// shards in turn. The listing's order is index order, and each entry
-// belongs to the shard of its object
-// (RGWMPObj::from_meta's key); on a shard, a run of part entries sharing the
-// prefix before their last '.' is reported unless the next entry is that
-// prefix's meta entry, and an entry without a '.' is skipped.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L497-L557 at v20.2.4),
+// which reads each shard's multipart entries in index order, the REST op's
+// max_aio of 0 giving one coroutine that takes the shards in turn. The
+// listing's order is index order, and each entry belongs to the shard of its
+// object (RGWMPObj::from_meta's key); on a shard, a run of part entries
+// sharing the prefix before their last '.' is reported unless the next entry
+// is that prefix's meta entry, and an entry without a '.' is skipped.
 func badMultipartByShard(keys []meta.ObjKey, numShards uint32) []meta.ObjKey {
 	shards := map[uint32][]meta.ObjKey{}
 	for _, k := range keys {
@@ -267,16 +271,19 @@ func removeOrphanParts(ctx context.Context, env *Env, rec *BucketRecord, invalid
 	return env.BucketAdmin.RemoveIndexEntries(ctx, rec, batch)
 }
 
-// listObjectNames is check_object_index's listing (rgw_bucket.cc:422-468 at
-// v19.2.6, :559-605 at v20.2.4): the plain namespace without versions, a
-// page at a time, each entry's name. A listing radosgw meets as -ENOENT ends
-// it. radosgw lists with a filter that reads the head of every entry and
-// repairs the index from it, which no rgw-go listing does
-// (docs/exclusions.md, "The admin index check does not re-read every
-// object's head"). After any other listing failure radosgw lists the same
-// page again, its marker and truncated flag left as they were
-// (rgw_sal_rados.cc:897-901 at v19.2.6, :917-918 at v20.2.4), so a failure
-// that persists holds the request for good; rgw-go answers the failure.
+// listObjectNames is check_object_index's listing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L422-L468 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L559-L605 at v20.2.4):
+// the plain namespace without versions, a page at a time, each entry's name.
+// A listing radosgw meets as -ENOENT ends it. radosgw lists with a filter
+// that reads the head of every entry and repairs the index from it, which no
+// rgw-go listing does (docs/exclusions.md, "The admin index check does not
+// re-read every object's head"). After any other listing failure radosgw
+// lists the same page again, its marker and truncated flag left as they were
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L897-L901 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L917-L918 at v20.2.4),
+// so a failure that persists holds the request for good; rgw-go answers the
+// failure.
 func listObjectNames(ctx context.Context, env *Env, rec *BucketRecord) ([]string, error) {
 	names := []string{}
 	err := eachPage(ctx, env, rec, "", false, func(ents []ObjectEntry) {

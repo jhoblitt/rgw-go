@@ -7,18 +7,21 @@ import (
 	"net/http"
 )
 
-// The read sizes of read_all_chunked_input (rgw_rest.cc:1501-1535 at
-// v19.2.6, :1506-1540 at v20.2.4).
+// The read sizes of read_all_chunked_input
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1501-L1535 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1506-L1540 at v20.2.4).
 const (
 	readChunk    = 4096
 	maxReadChunk = 128 << 10
 )
 
-// ReadParamBody is rgw_rest_read_all_input (rgw_rest.cc:1537-1578 at
-// v19.2.6, :1542-1583 at v20.2.4) as RGWOp::read_all_input calls it, which
-// allows a chunked body whatever its caller asks (rgw_op.h:215-227 at
-// v19.2.6, :229-241 at v20.2.4; docs/ceph-upstream-bugs.md,
-// "RGWOp::read_all_input ignores its allow_chunked argument"). A request
+// ReadParamBody is rgw_rest_read_all_input
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1537-L1578 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1542-L1583 at v20.2.4) as
+// RGWOp::read_all_input calls it, which allows a chunked body whatever its caller asks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L215-L227 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241 at v20.2.4;
+// docs/ceph-upstream-bugs.md, "RGWOp::read_all_input ignores its allow_chunked argument"). A request
 // without a Content-Length that is not chunked is MissingContentLength. A
 // Content-Length over maxLen is InvalidRange unread; otherwise that many
 // bytes are read. A chunked body is read as read_all_chunked_input reads

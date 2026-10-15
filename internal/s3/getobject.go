@@ -29,8 +29,10 @@ import (
 // RGWGetObjAttrs_ObjStore_S3. A bare line number is v19.2.6's
 // rgw_rest_s3.cc; [T] marks v20.2.4's.
 
-// responseAttrParams is resp_attr_params (:128-141; [T] :139-152): each
-// response-* query parameter and the header it overrides.
+// responseAttrParams is resp_attr_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L128-L141;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L139-L152):
+// each response-* query parameter and the header it overrides.
 var responseAttrParams = [...]struct{ param, header string }{
 	{"response-content-type", "Content-Type"},
 	{"response-content-language", "Content-Language"},
@@ -40,8 +42,9 @@ var responseAttrParams = [...]struct{ param, header string }{
 	{"response-content-encoding", "Content-Encoding"},
 }
 
-// attrHeaders is base_rgw_to_http_attrs (rgw_rest.cc:98-112 at v19.2.6 and
-// v20.2.4): the attrs a GET or HEAD renders as headers of their own.
+// attrHeaders is base_rgw_to_http_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L98-L112 at v19.2.6
+// and v20.2.4): the attrs a GET or HEAD renders as headers of their own.
 var attrHeaders = map[string]string{
 	meta.AttrContentLang:     "Content-Language",
 	meta.AttrExpires:         "Expires",
@@ -54,13 +57,15 @@ var attrHeaders = map[string]string{
 	meta.AttrWebsiteRedirect: "x-amz-website-redirect-location",
 }
 
-// attrSLOIndicator is RGW_ATTR_SLO_UINDICATOR (rgw_common.h:103 at v19.2.6),
+// attrSLOIndicator is RGW_ATTR_SLO_UINDICATOR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L103 at v19.2.6),
 // which sits among the user metadata.
 const attrSLOIndicator = meta.AttrMetaPrefix + "static-large-object"
 
 // objectReads serves the object read routes with what radosgw reads once at
 // startup: rgw_to_http_attrs, which rgw_rest_init builds from
-// rgw_extended_http_attrs (rgw_rest.cc:185-209 at v19.2.6).
+// rgw_extended_http_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L185-L209 at v19.2.6).
 type objectReads struct {
 	attrHeaders map[string]string
 }
@@ -100,12 +105,15 @@ func (g *objectReads) getObject(ctx context.Context, w http.ResponseWriter, r *o
 	return decodeFailure(err)
 }
 
-// getObjectInput is RGWGetObj_ObjStore_S3::get_params (:291-322; [T]
-// :296-333) and RGWGetObj_ObjStore::get_params (rgw_rest.cc:836-852 at
-// v19.2.6) over r, with the response-* parameters send_response_data reads
-// and the SSE inputs rgw_s3_prepare_decrypt reads. Each header is read by its
-// last value, as RGWEnv keeps it. A partNumber strict_strtol refuses is
-// returned with the op, for the op to answer where radosgw's execute does.
+// getObjectInput is RGWGetObj_ObjStore_S3::get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L291-L322;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L296-L333)
+// and RGWGetObj_ObjStore::get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L836-L852 at v19.2.6)
+// over r, with the response-* parameters send_response_data reads and the SSE
+// inputs rgw_s3_prepare_decrypt reads. Each header is read by its last value,
+// as RGWEnv keeps it. A partNumber strict_strtol refuses is returned with the
+// op, for the op to answer where radosgw's execute does.
 func getObjectInput(r *op.Request) (*op.GetObject, error) {
 	_, sse := op.HeaderValue(r.Header, "x-amz-server-side-encryption")
 	o := &op.GetObject{
@@ -147,10 +155,11 @@ func header(r *op.Request, name string) string {
 	return v
 }
 
-// secure is rgw_transport_is_secure (rgw_common.cc:1071-1093 at v19.2.6,
-// :1084-1106 at v20.2.4): a TLS connection or, under
-// rgw_trust_forwarded_https, a Forwarded header naming proto=https or an
-// X-Forwarded-Proto of exactly https.
+// secure is rgw_transport_is_secure
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1071-L1093 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1084-L1106 at v20.2.4):
+// a TLS connection or, under rgw_trust_forwarded_https, a Forwarded
+// header naming proto=https or an X-Forwarded-Proto of exactly https.
 func secure(r *op.Request) bool {
 	if r.TLS {
 		return true
@@ -167,8 +176,10 @@ func secure(r *op.Request) bool {
 
 // deferredParams runs an op whose own parameters failed to parse. radosgw
 // parses them in get_params, which RGWGetObj::execute calls first
-// (rgw_op.cc:2239 at v19.2.6, :2475 at v20.2.4), so the bucket and object
-// loads and the permission check refuse a request before its parameters do.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2239 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2475 at v20.2.4),
+// so the bucket and object loads and the permission check refuse a request
+// before its parameters do.
 type deferredParams struct {
 	op.Op
 	err error
@@ -184,7 +195,8 @@ func (d deferredParams) Execute(ctx context.Context, r *op.Request) error {
 // decodeFailure answers a compressed block its codec refuses before any byte
 // went out as radosgw's send_response_data does: the decompress return taken
 // for an errno, -1 (EPERM) AccessDenied and -2 (ENOENT) NoSuchKey
-// (rgw_common.cc:89 and :97 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L89 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97 at v19.2.6).
 func decodeFailure(err error) error {
 	de, ok := errors.AsType[*compression.DecodeError](err)
 	if !ok {
@@ -199,9 +211,11 @@ func decodeFailure(err error) error {
 	return fmt.Errorf("%w: %w", op.ErrUnknown, err)
 }
 
-// setNotModifiedHeaders is send_response_data's 304 branch (:623-638; [T]
-// :740-755): Last-Modified, the ETag, and the stored Cache-Control and
-// Expires, with no body and no type.
+// setNotModifiedHeaders is send_response_data's 304 branch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L623-L638;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L740-L755):
+// Last-Modified, the ETag, and the stored Cache-Control and Expires, with
+// no body and no type.
 func setNotModifiedHeaders(h http.Header, st *op.ObjectState) {
 	if st == nil {
 		return
@@ -231,8 +245,9 @@ type getObjectSink struct {
 }
 
 // endHeaderNames are the headers end_header sends after
-// send_response_data's own (rgw_rest.cc:589-642 at v19.2.6), which the
-// handler has already set on the writer.
+// send_response_data's own
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L642 at v19.2.6),
+// which the handler has already set on the writer.
 var endHeaderNames = [...]string{"x-amz-request-id", "x-amz-request-charged", "Server"}
 
 // WriteHeader is the op's headers-only path: a HEAD or nothing to read. A
@@ -260,16 +275,18 @@ func (s *getObjectSink) Write(p []byte) (int, error) {
 
 func (s *getObjectSink) Flush() error { return s.w.Flush() }
 
-// headers renders send_response_data's success headers (:406-644; [T]
-// :417-760) for the op's results, adding them in the order radosgw dumps
-// them: the range, the length, the dates and version, the object type,
-// replication, the parts count, the ETag, Tentacle's restore state, the user
-// metadata and tagging count, then response_attrs, the response-* overrides
-// and the mapped attrs in its std::map's order, and last end_header's
-// content type. net/http writes the lines sorted by name ("Header lines go
-// out sorted by name", docs/exclusions.md), so only the values under one
-// name keep radosgw's order. A mapped attr never sets the response's framing
-// headers (docs/exclusions.md).
+// headers renders send_response_data's success headers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L406-L644;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L417-L760)
+// for the op's results, adding them in the order radosgw dumps them: the
+// range, the length, the dates and version, the object type, replication,
+// the parts count, the ETag, Tentacle's restore state, the user metadata and
+// tagging count, then response_attrs, the response-* overrides and the
+// mapped attrs in its std::map's order, and last end_header's content type.
+// net/http writes the lines sorted by name ("Header lines go out sorted by
+// name", docs/exclusions.md), so only the values under one name keep
+// radosgw's order. A mapped attr never sets the response's framing headers
+// (docs/exclusions.md).
 func (s *getObjectSink) headers() http.Header {
 	o, r, st := s.o, s.r, s.o.State
 	h := http.Header{}
@@ -352,11 +369,13 @@ var framingHeaders = map[string]bool{
 	"Keep-Alive": true, "Upgrade": true, "Te": true, "Proxy-Connection": true,
 }
 
-// setRestoreHeader is Tentacle's x-amz-restore ([T] :588-628): a restore in
-// progress, or a temporary copy's expiry, for which the object reports the
-// cloud tier's storage class. It returns attrs with that class in place.
-// radosgw decodes the three attrs with nothing to catch a failure, which ends
-// the gateway (docs/ceph-upstream-bugs.md); rgw-go omits the header instead.
+// setRestoreHeader is Tentacle's x-amz-restore
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L588-L628):
+// a restore in progress, or a temporary copy's expiry, for which the object
+// reports the cloud tier's storage class. It returns attrs with that class in
+// place. radosgw decodes the three attrs with nothing to catch a failure,
+// which ends the gateway (docs/ceph-upstream-bugs.md); rgw-go omits the
+// header instead.
 func (s *getObjectSink) setRestoreHeader(h http.Header, attrs map[string][]byte) map[string][]byte {
 	status, ok := attrs[meta.AttrRestoreStatus]
 	if !ok {
@@ -400,15 +419,17 @@ func (s *getObjectSink) setRestoreHeader(h http.Header, attrs map[string][]byte)
 	return attrs
 }
 
-// restoreTemporary is rgw::sal::RGWRestoreType::Temporary ([T] rgw_sal.h:178-182).
+// restoreTemporary is rgw::sal::RGWRestoreType::Temporary
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.h#L178-L182).
 const restoreTemporary = 1
 
 func (s *getObjectSink) restoreUndecodable(attr string) {
 	s.undecodable = append(s.undecodable, attr)
 }
 
-// contentRange is dump_range (rgw_rest.cc:757-778 at v19.2.6): the bytes
-// served of the size the range resolved against.
+// contentRange is dump_range
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L757-L778 at v19.2.6):
+// the bytes served of the size the range resolved against.
 func contentRange(o *op.GetObject) string {
 	if o.ObjSize == 0 {
 		return "bytes */0"
@@ -416,8 +437,10 @@ func contentRange(o *op.GetObject) string {
 	return fmt.Sprintf("bytes %d-%d/%d", o.Offset, o.Offset+o.Length-1, o.ObjSize)
 }
 
-// httpDate is dump_time_header_impl (rgw_rest.cc:445-459 at v19.2.6): whole
-// seconds under gmtime. The zero time is radosgw's unset real_time, the epoch.
+// httpDate is dump_time_header_impl
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L445-L459 at v19.2.6):
+// whole seconds under gmtime. The zero time is radosgw's unset real_time, the
+// epoch.
 func httpDate(t time.Time) string {
 	if t.IsZero() {
 		t = time.Unix(0, 0)
@@ -425,7 +448,8 @@ func httpDate(t time.Time) string {
 	return t.UTC().Format(http.TimeFormat)
 }
 
-// setETag is dump_etag over the ETag attr (rgw_rest.cc:413-426 at v19.2.6):
+// setETag is dump_etag over the ETag attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L413-L426 at v19.2.6):
 // quoted, up to its first NUL as dump_header_quoted's snprintf copies it, and
 // absent for an empty attr.
 func setETag(h http.Header, attrs map[string][]byte) {
@@ -436,16 +460,19 @@ func setETag(h http.Header, attrs map[string][]byte) {
 	addHeader(h, "ETag", `"`+rgwtext.CString(string(v))+`"`)
 }
 
-// sanitizedHdrval is rgw_sanitized_hdrval (rgw_rest.h:29-47 at v19.2.6), what
-// dump_header sends for an attr: its bytes less one trailing NUL.
+// sanitizedHdrval is rgw_sanitized_hdrval
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L29-L47 at v19.2.6),
+// what dump_header sends for an attr: its bytes less one trailing NUL.
 func sanitizedHdrval(v []byte) string {
 	return string(bytes.TrimSuffix(v, []byte{0}))
 }
 
-// withoutAWSChunked is content_encoding_without_aws_chunked (:361-378; [T]
-// :372-389): the parts other than aws-chunked, joined with ", ". ceph::split
-// takes ", " as a set of delimiters and skips empty parts
-// (common/split.h:32-38 at v19.2.6 and v20.2.4).
+// withoutAWSChunked is content_encoding_without_aws_chunked
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L361-L378;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L372-L389):
+// the parts other than aws-chunked, joined with ", ". ceph::split takes ", "
+// as a set of delimiters and skips empty parts (common/split.h:32-38 at
+// v19.2.6 and v20.2.4).
 func withoutAWSChunked(v string) string {
 	var kept []string
 	for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
@@ -456,9 +483,11 @@ func withoutAWSChunked(v string) string {
 	return strings.Join(kept, ", ")
 }
 
-// setReplicationHeaders is send_response_data's replication block (:470-493;
-// [T] :505-528): the status as stored, each zone of a trace that decodes, and
-// the replication time when it decodes.
+// setReplicationHeaders is send_response_data's replication block
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L470-L493;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L505-L528):
+// the status as stored, each zone of a trace that decodes, and the
+// replication time when it decodes.
 func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 	if v, ok := attrs[meta.AttrReplicationStatus]; ok {
 		addHeader(h, "x-amz-replication-status", sanitizedHdrval(v))
@@ -483,10 +512,12 @@ func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 	}
 }
 
-// taggingCount is the x-amz-tagging-count send_response_data writes (:586-594;
-// [T] :703-711): RGWObjTags::count after decode, whose failure it ignores.
-// When the binary form fails, decode reads the attr as the text older objects
-// store and keeps every tag it added before the text failed (rgw_tag.h:32-62,
+// taggingCount is the x-amz-tagging-count send_response_data writes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L586-L594;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L703-L711):
+// RGWObjTags::count after decode, whose failure it ignores. When the binary
+// form fails, decode reads the attr as the text older objects store and keeps
+// every tag it added before the text failed (rgw_tag.h:32-62,
 // rgw_tag.cc:36-57).
 func taggingCount(b []byte) int {
 	d := denc.NewDecoder(b)
@@ -512,9 +543,10 @@ func taggingCount(b []byte) int {
 }
 
 // attrHeadersFor is rgw_to_http_attrs as rgw_rest_init builds it
-// (rgw_rest.cc:185-209 at v19.2.6): attrHeaders, plus each name
-// rgw_extended_http_attrs lists, its attr lowercased with dashes as
-// underscores and its header camel-cased with underscores as dashes.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L185-L209 at v19.2.6):
+// attrHeaders, plus each name rgw_extended_http_attrs lists, its
+// attr lowercased with dashes as underscores and its header
+// camel-cased with underscores as dashes.
 func attrHeadersFor(conf *cephconf.Options) map[string]string {
 	if conf == nil {
 		return attrHeaders
@@ -530,8 +562,8 @@ func attrHeadersFor(conf *cephconf.Options) map[string]string {
 	return m
 }
 
-// lowercaseUnderscore is lowercase_underscore_http_attr (rgw_rest.cc:141-157
-// at v19.2.6).
+// lowercaseUnderscore is lowercase_underscore_http_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L141-L157 at v19.2.6).
 func lowercaseUnderscore(s string) string {
 	b := []byte(s)
 	for i, c := range b {
@@ -545,8 +577,8 @@ func lowercaseUnderscore(s string) string {
 }
 
 // camelcaseDash is camelcase_dash_http_attr with convert2dash
-// (rgw_common.cc:2226-2251 at v19.2.6): each separator a dash, and each word
-// capitalized.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2226-L2251 at v19.2.6):
+// each separator a dash, and each word capitalized.
 func camelcaseDash(s string) string {
 	b := []byte(s)
 	sep := true
@@ -570,9 +602,10 @@ func upperASCII(c byte) byte {
 	return c
 }
 
-// parseInt is strict_strtol (src/common/strtol.cc:42-73 at v19.2.6 and
-// v20.2.4) in base 10 with radosgw's messages: strict_strtoll's checks, a
-// conversion that stops short of the end before an ERANGE, then the int
+// parseInt is strict_strtol
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/strtol.cc#L42-L73 at v19.2.6
+// and v20.2.4) in base 10 with radosgw's messages: strict_strtoll's checks,
+// a conversion that stops short of the end before an ERANGE, then the int
 // range. rgwtext.StrictStrtoll makes the same checks but does not say which
 // failed, which the messages need.
 func parseInt(s string) (int, error) {

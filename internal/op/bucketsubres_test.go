@@ -23,7 +23,7 @@ import (
 const allowAll = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::plain/*"}]}`
 
 // removeSelfAccess is Tentacle's RGW_ATTR_IAM_POLICY_REMOVE_SELF_ACCESS
-// (rgw_common.h:177 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L177 at v20.2.4).
 const removeSelfAccess = meta.AttrPrefix + "iam-policy-remove-self-access"
 
 var _ = Describe("bucket subresource ops", func() {

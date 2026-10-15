@@ -10,15 +10,16 @@ import (
 // radosgw runs in.
 const cSpace = " \t\n\v\f\r"
 
-// ParseValueAndBound is radosgw's parse_value_and_bound (rgw_op.h:2633-2662
-// at v19.2.6, :2820-2849 at v20.2.4), which parses the max-keys, max-parts and
-// max-uploads list limits. An empty input is def. Any other input is read as
-// the C code reads it: only up to its first NUL, by strtol in base 10, which
-// skips leading white space and saturates at the long limits. The value is
-// clamped to upper, then to lower. Every value the result takes is held in a
-// C int, which keeps the low 32 bits, so 2147483648 turns negative before the
-// clamp. Input with no digits, or with anything but white space after them,
-// is ErrInvalidArgument.
+// ParseValueAndBound is radosgw's parse_value_and_bound
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2633-L2662 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2820-L2849 at v20.2.4),
+// which parses the max-keys, max-parts and max-uploads list limits. An empty
+// input is def. Any other input is read as the C code reads it: only up to its
+// first NUL, by strtol in base 10, which skips leading white space and
+// saturates at the long limits. The value is clamped to upper, then to lower.
+// Every value the result takes is held in a C int, which keeps the low 32
+// bits, so 2147483648 turns negative before the clamp. Input with no digits,
+// or with anything but white space after them, is ErrInvalidArgument.
 func ParseValueAndBound(input string, lower, upper, def int64) (int, error) {
 	if input == "" {
 		return int(cInt(def)), nil

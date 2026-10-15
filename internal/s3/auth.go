@@ -15,8 +15,9 @@ type Authenticator interface {
 	// ErrInvalidAccessKeyID or ErrSignatureDoesNotMatch. payloads is the
 	// dispatched route's Payloads: radosgw answers a signed payload in any
 	// other form with ErrNotImplemented from inside authentication, before
-	// the key is looked up (get_auth_data_v4, rgw_rest_s3.cc:5899-5969 at
-	// v19.2.6, :6466-6540 at v20.2.4).
+	// the key is looked up (get_auth_data_v4,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540 at v20.2.4).
 	Authenticate(ctx context.Context, r *http.Request, payloads op.PayloadForms) (*op.AuthResult, error)
 }
 

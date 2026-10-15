@@ -352,7 +352,8 @@ var _ = Describe("chunkedReader, signed chunks", func() {
 })
 
 // The payload's length is x-amz-decoded-content-length, as
-// RGWPutObj_ObjStore::get_data takes it (rgw_rest.cc:1068-1101 at v19.2.6).
+// RGWPutObj_ObjStore::get_data takes it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1068-L1101 at v19.2.6).
 var _ = Describe("chunkedReader, framing that disagrees with x-amz-decoded-content-length", func() {
 	Context("chunks that carry more data", func() {
 		It("delivers the decoded length and checks the chunk it ends in, as radosgw's complete() does", func(ctx SpecContext) {
@@ -364,7 +365,8 @@ var _ = Describe("chunkedReader, framing that disagrees with x-amz-decoded-conte
 
 		// radosgw's complete() accepts a payload without a trailer signature
 		// whose decoded length is followed by more data, or by the end of the
-		// body (rgw_auth_s3.cc:1555-1694 at v19.2.6).
+		// body
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1555-L1694 at v19.2.6).
 		helloWorldIn5 := func(ctx context.Context) []byte {
 			stream, _ := signedChunks(ctx, []byte("hello world"), 5, streamSeed)
 			return stream
@@ -455,7 +457,9 @@ var _ = Describe("chunkedReader, framing that disagrees with x-amz-decoded-conte
 		// When the op reads on, radosgw answers a final chunk before the
 		// decoded length with SignatureDoesNotMatch when its signature is
 		// wrong, else InvalidArgument (recv_chunk and create_next,
-		// rgw_auth_s3.cc:1284-1336 and :1111-1208 at v19.2.6).
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1284-L1336
+		// and
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1111-L1208 at v19.2.6).
 		DescribeTable("refuse the final chunk with InvalidArgument once its signature verifies",
 			func(ctx SpecContext, data string, decoded uint64) {
 				stream, _ := signedChunks(ctx, []byte(data), 5, streamSeed)
@@ -495,8 +499,9 @@ var _ = Describe("chunkedReader, the trailer bound", func() {
 	// streamWithSection returns a signed one-chunk stream of "hello" whose
 	// trailer count is total: from the CRLF that ends the data through the
 	// closing CRLF, the span radosgw's 256-byte trailer buffer holds
-	// (rgw_auth_s3.cc:1583-1606 at v19.2.6). The section is one unannounced
-	// header line, which no trailer map takes and no trailer signature covers.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1583-L1606 at v19.2.6).
+	// The section is one unannounced header line, which no trailer map takes
+	// and no trailer signature covers.
 	streamWithSection := func(ctx context.Context, total int) []byte {
 		stream, _ := signedChunks(ctx, []byte("hello"), 5, streamSeed)
 		dataEnd := bytes.Index(stream, []byte("hello")) + len("hello")

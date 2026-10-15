@@ -13,11 +13,14 @@ import (
 
 // identity is LocalApplier wrapped in SysReqApplier: what op.Identity carries
 // for the user record rec and its key that signed, which radosgw records under
-// the id it looked up, accessKey (rgw_auth.cc:1019-1051 at v19.2.6,
-// :1039-1071 at v20.2.4). An account user owns as the account but keeps the
-// user's tenant (get_tenant, rgw_auth.h:740-742 at v19.2.6, :750-752 at
-// v20.2.4), and radosgw's permission override takes an admin and a system
-// user alike (is_admin_of, is_admin at v20.2.4).
+// the id it looked up, accessKey
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1019-L1051 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1039-L1071 at v20.2.4).
+// An account user owns as the account but keeps the user's tenant (get_tenant,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.h#L740-L742 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.h#L750-L752 at v20.2.4),
+// and radosgw's permission override takes an admin and a system user alike
+// (is_admin_of, is_admin at v20.2.4).
 //
 // A system user's non-empty rgwx-uid names the effective owner, a user or an
 // account, which must load or the request is EACCES; the tenant becomes the

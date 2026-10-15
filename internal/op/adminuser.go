@@ -33,10 +33,13 @@ func ParseKeyType(s string) KeyType {
 }
 
 // UserKeyParams is the key part of RGWUserAdminOpState
-// (driver/rados/rgw_user.h:212-230 and :340-356 at v19.2.6). GenerateKey is
-// set_generate_key, which generates whichever of AccessKey and SecretKey is
-// empty. An undefined Type is Swift when a subuser is named and S3
-// otherwise (RGWAccessKeyPool::check_op, driver/rados/rgw_user.cc:474-483).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L212-L230
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L340-L356 at v19.2.6).
+// GenerateKey is set_generate_key, which generates whichever of AccessKey
+// and SecretKey is empty. An undefined Type is Swift when a subuser is
+// named and S3 otherwise (RGWAccessKeyPool::check_op,
+// driver/rados/rgw_user.cc:474-483).
 type UserKeyParams struct {
 	AccessKey, SecretKey string
 	Type                 KeyType
@@ -87,13 +90,14 @@ type userLookup struct {
 	foundByUID, foundByEmail, foundByKey bool
 }
 
-// lookupUser is RGWUser::init's search (driver/rados/rgw_user.cc:1389-1440
-// at v19.2.6): by uid unless it is the anonymous user; then, when none was
-// found, by email if rgw_user_unique_email is set; then by access key. A
-// Swift key is looked up through no index here: init's get_user_by_swift
-// finds the key's user for the subuser and key ops, which keep Swift keys.
-// radosgw treats every failed read as "not found"; a failure other than a
-// missing user fails the lookup here, as its S3 error alone (storeErr).
+// lookupUser is RGWUser::init's search
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1389-L1440 at v19.2.6):
+// by uid unless it is the anonymous user; then, when none was found, by
+// email if rgw_user_unique_email is set; then by access key. A Swift key
+// is looked up through no index here: init's get_user_by_swift finds the
+// key's user for the subuser and key ops, which keep Swift keys. radosgw
+// treats every failed read as "not found"; a failure other than a missing
+// user fails the lookup here, as its S3 error alone (storeErr).
 func lookupUser(ctx context.Context, env *Env, uid meta.UserID, email, accessKey string, swift bool) (userLookup, error) {
 	var l userLookup
 	if uid.ID != "" && uid != anonymousUser {
@@ -165,9 +169,10 @@ func DefaultMaxBuckets(env *Env) int32 {
 }
 
 // defaultQuota is rgw_apply_default_bucket_quota and
-// rgw_apply_default_user_quota (rgw_quota.cc:998-1020 at v19.2.6): the
-// rgw_<kind>_default_quota_max_objects and _max_size options, each set and
-// enabling the quota when it is not negative.
+// rgw_apply_default_user_quota
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L998-L1020 at v19.2.6):
+// the rgw_<kind>_default_quota_max_objects and _max_size options, each set
+// and enabling the quota when it is not negative.
 func defaultQuota(env *Env, kind string) meta.Quota {
 	q := meta.Quota{MaxSize: -1, MaxObjects: -1}
 	if v := confInt(env, "rgw_"+kind+"_default_quota_max_objects", -1); v >= 0 {
@@ -185,7 +190,8 @@ func listChunk(env *Env) int {
 	return int(max(confInt(env, "rgw_list_buckets_max_chunk", 1000), 1))
 }
 
-// validTenant is rgw_validate_tenant_name (rgw_user.cc:91-101 at v19.2.6):
+// validTenant is rgw_validate_tenant_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_user.cc#L91-L101 at v19.2.6):
 // every byte alphanumeric in the C locale, or '_'.
 func validTenant(t string) bool {
 	for _, c := range []byte(t) {
@@ -198,12 +204,14 @@ func validTenant(t string) bool {
 
 func isAlnum(c byte) bool { return isCAlpha(c) || isCDigit(c) }
 
-// maxIAMUserName is MAX_USER_NAME_LEN (rgw_rest_iam.cc:170 at v19.2.6, :173
-// at v20.2.4).
+// maxIAMUserName is MAX_USER_NAME_LEN
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_iam.cc#L170 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_iam.cc#L173 at v20.2.4).
 const maxIAMUserName = 64
 
-// validIAMUserName is validate_iam_user_name (rgw_rest_iam.cc:172-188 at
-// v19.2.6): non-empty, at most 64 bytes, and matching [\w+=,.@-]+, where
+// validIAMUserName is validate_iam_user_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_iam.cc#L172-L188 at v19.2.6):
+// non-empty, at most 64 bytes, and matching [\w+=,.@-]+, where
 // std::regex's \w is [A-Za-z0-9_].
 func validIAMUserName(name string) bool {
 	if name == "" || len(name) > maxIAMUserName {
@@ -228,7 +236,8 @@ func requesterIsSystem(r *Request) bool {
 
 // checkPlacement is driver->valid_placement over the default-placement
 // argument: a rule the zone has no placement or storage class for is
-// EINVAL (rgw_rest_user.cc:253-261 at v19.2.6).
+// EINVAL
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L253-L261 at v19.2.6).
 func checkPlacement(env *Env, rule *meta.PlacementRule) error {
 	if rule == nil {
 		return nil
@@ -240,8 +249,9 @@ func checkPlacement(env *Env, rule *meta.PlacementRule) error {
 }
 
 // accountLink is users_entry, what decides whether a write links or
-// unlinks the user in its account's users index (svc_user_rados.cc:157-171
-// at v19.2.6): the account, the path and the display name.
+// unlinks the user in its account's users index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L157-L171 at v19.2.6):
+// the account, the path and the display name.
 type accountLink struct{ account, path, name string }
 
 func linkOf(info *meta.UserInfo) accountLink {
@@ -252,9 +262,10 @@ func linkOf(info *meta.UserInfo) accountLink {
 }
 
 // accountNameTaken is PutOperation::prepare's check before a user is
-// linked under a display name (svc_user_rados.cc:272-290 at v19.2.6): some
-// other user of the account holds the name, compared as cls_user keys it,
-// lowercased. The AccountStore names no user by display name, so the
+// linked under a display name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L272-L290 at v19.2.6):
+// some other user of the account holds the name, compared as cls_user keys
+// it, lowercased. The AccountStore names no user by display name, so the
 // account's users are read one by one.
 func accountNameTaken(ctx context.Context, env *Env, info *meta.UserInfo) (bool, error) {
 	marker := ""
@@ -300,12 +311,14 @@ func foldEqual(a, b string) bool {
 }
 
 // writeUser stores rec.Info over old as RGWUser::update's store_user does,
-// non-exclusively whether it creates or modifies (driver/rados/rgw_user.cc:1500
-// at v19.2.6, :1505 at v20.2.4), so the uid object and every index object
-// are overwritten as radosgw overwrites them, and a modify is checked
-// against the version it read. A display name another user of the account
-// holds refuses the write with exists, radosgw's EEXIST as the op
-// translates it (svc_user_rados.cc:272-290 at v19.2.6).
+// non-exclusively whether it creates or modifies
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1500 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1505 at v20.2.4),
+// so the uid object and every index object are overwritten as radosgw
+// overwrites them, and a modify is checked against the version it read. A
+// display name another user of the account holds refuses the write with exists,
+// radosgw's EEXIST as the op translates it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L272-L290 at v19.2.6).
 //
 // The account users index is written around the user, in an order a write
 // that stops anywhere leaves safe and a later write completes: the user's
@@ -315,8 +328,10 @@ func foldEqual(a, b string) bool {
 // an entry, which holds off the account's removal, and a retry, or any
 // later write of the user, adds a missing one. radosgw links the user
 // after storing it and only when the link changed (:295 and :360-375;
-// :274 and :340-355 at v20.2.4), so
-// a write that stops between leaves a member without an entry for good
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L274
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L340-L355 at v20.2.4),
+// so a write that stops between leaves a member without an entry for good
 // (docs/ceph-upstream-bugs.md, "radosgw's user write can leave an account
 // member out of the account's users index"). A stop between the user's
 // store and the old entry's removal leaves that entry naming the user
@@ -360,8 +375,10 @@ func writeUserWith(ctx context.Context, env *Env, rec *UserRecord, old *meta.Use
 }
 
 // CreateUser is RGWOp_User_Create and RGWUserAdminOp_User::create
-// (driver/rados/rgw_rest_user.cc:133-285, driver/rados/rgw_user.cc:1744-1918
-// and :2410-2442 at v19.2.6). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L133-L285,
+// driver/rados/rgw_user.cc:1744-1918 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2410-L2442 at v19.2.6).
+// Cap users=write.
 type CreateUser struct {
 	AdminOp
 	// UID carries the tenant argument already, as the handler applies it.
@@ -502,7 +519,8 @@ func (o *CreateUser) Execute(ctx context.Context, r *Request) error {
 
 // joinAccount is execute_add's and execute_modify's account step: a valid
 // id (rgw::account::validate_id) of an account in the user's tenant
-// (validate_account_tenant, driver/rados/rgw_user.cc:1658-1679 at v19.2.6).
+// (validate_account_tenant,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1658-L1679 at v19.2.6).
 // A missing account is radosgw's -ENOENT, which create answers as the
 // NoSuchKey row and modify maps to NoSuchUser; missing is that answer.
 func joinAccount(ctx context.Context, env *Env, info *meta.UserInfo, accountID string, missing *Error) error {
@@ -524,8 +542,10 @@ func joinAccount(ctx context.Context, env *Env, info *meta.UserInfo, accountID s
 }
 
 // ModifyUser is RGWOp_User_Modify and RGWUserAdminOp_User::modify
-// (driver/rados/rgw_rest_user.cc:287-438, driver/rados/rgw_user.cc:2017-2228
-// and :2444-2475 at v19.2.6). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L287-L438,
+// driver/rados/rgw_user.cc:2017-2228 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2444-L2475 at v19.2.6).
+// Cap users=write.
 type ModifyUser struct {
 	AdminOp
 	UID         meta.UserID
@@ -682,11 +702,11 @@ func (o *ModifyUser) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// checkFound is RGWUser::check_op past what init found (driver/rados/rgw_user.cc:1515-1546
-// at v19.2.6): the op state's uid, which init replaced with the user it
-// found, must not be the anonymous user and must be the uid asked for, so
-// a user found only through another user's email or access key is EINVAL;
-// its tenant must be a valid tenant name.
+// checkFound is RGWUser::check_op past what init found
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1515-L1546 at v19.2.6):
+// the op state's uid, which init replaced with the user it found, must not be the
+// anonymous user and must be the uid asked for, so a user found only through another
+// user's email or access key is EINVAL; its tenant must be a valid tenant name.
 func checkFound(uid meta.UserID, l userLookup) error {
 	opUID := uid
 	if l.rec != nil {
@@ -732,10 +752,11 @@ func eachUserBucket(ctx context.Context, env *Env, uid meta.UserID, fn func([]me
 }
 
 // suspendBuckets is the suspension step of execute_modify over
-// RGWRados::set_buckets_enabled (driver/rados/rgw_rados.cc:5332-5368 at
-// v19.2.6): every bucket of the page gets BUCKET_SUSPENDED set or cleared,
-// a bucket that fails is logged and skipped, and a page with a failure
-// ends the listing with the last failure.
+// RGWRados::set_buckets_enabled
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5332-L5368 at v19.2.6):
+// every bucket of the page gets BUCKET_SUSPENDED set or cleared, a bucket
+// that fails is logged and skipped, and a page with a failure ends the
+// listing with the last failure.
 func suspendBuckets(ctx context.Context, env *Env, uid meta.UserID, suspended bool) error {
 	return eachUserBucket(ctx, env, uid, func(ents []meta.BucketEnt) error {
 		var last error
@@ -760,14 +781,16 @@ func suspendBuckets(ctx context.Context, env *Env, uid meta.UserID, suspended bo
 	})
 }
 
-// adoptBuckets is adopt_user_buckets (driver/rados/rgw_user.cc:1714-1742 at
-// v19.2.6, :1720-1748 at v20.2.4): every bucket of uid's own list chowned to
-// the account, each loaded as adopt_user_bucket loads the entry's bucket
-// (:1681-1712, :1687-1718; loadListedBucket), and skipped when it is gone or
-// another owner holds it. ChownBucket retries a lost race as
-// adopt_user_bucket does, and refuses, so this skips, a round that finds the
-// name loading another instance or the instance under another owner: a
-// stale entry never hands the account another owner's bucket.
+// adoptBuckets is adopt_user_buckets
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1714-L1742 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1720-L1748 at v20.2.4):
+// every bucket of uid's own list chowned to the account, each loaded as
+// adopt_user_bucket loads the entry's bucket (:1681-1712, :1687-1718;
+// loadListedBucket), and skipped when it is gone or another owner holds it.
+// ChownBucket retries a lost race as adopt_user_bucket does, and refuses, so
+// this skips, a round that finds the name loading another instance or the
+// instance under another owner: a stale entry never hands the account
+// another owner's bucket.
 func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID string) error {
 	acct, err := env.Accounts.GetAccount(ctx, accountID)
 	if err != nil {
@@ -797,9 +820,11 @@ func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID stri
 }
 
 // loadListedBucket is RadosBucket::load_bucket over an entry of uid's bucket
-// list (driver/rados/rgw_sal_rados.cc:610-637 at v19.2.6, :631-655 at
-// v20.2.4): the instance the entry names by its id, or, for an entry that
-// carries no id, the bucket its name loads. A bucket uid does not hold is
+// list
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L610-L637 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L631-L655 at v20.2.4):
+// the instance the entry names by its id, or, for an entry that carries no
+// id, the bucket its name loads. A bucket uid does not hold is
 // ErrNoSuchBucket, where radosgw takes whatever it loads: a link whose
 // removal of the old owner's entry failed, which radosgw logs and goes past
 // (rgw_bucket.cc:1118 and :3424-3432 at v19.2.6, :1269 and :3510-3518 at
@@ -825,8 +850,9 @@ func loadListedBucket(ctx context.Context, env *Env, uid meta.UserID, b meta.Buc
 }
 
 // GetUserInfo is RGWOp_User_Info and RGWUserAdminOp_User::info
-// (driver/rados/rgw_rest_user.cc:72-131, driver/rados/rgw_user.cc:2347-2408
-// at v19.2.6). Cap user-info-without-keys=read or users=read.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L72-L131,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2347-L2408 at v19.2.6).
+// Cap user-info-without-keys=read or users=read.
 type GetUserInfo struct {
 	AdminOp
 	// UID or AccessKey names the user.
@@ -839,8 +865,9 @@ type GetUserInfo struct {
 	Stats *Stats
 	// DumpKeys says the document may show the user's keys: the requester
 	// holds users=read, or is a system request or an admin
-	// (rgw_rest_user.cc:121-128 at v19.2.6; Squid's is_admin_of is
-	// admin || system, rgw_auth.cc:1048-1051, Tentacle's is_admin the same).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L121-L128 at v19.2.6;
+	// Squid's is_admin_of is admin || system, rgw_auth.cc:1048-1051,
+	// Tentacle's is_admin the same).
 	DumpKeys bool
 }
 
@@ -874,7 +901,10 @@ func (o *GetUserInfo) Execute(ctx context.Context, r *Request) error {
 	case l.rec == nil && uid == anonymousUser:
 		// init_members' keys.init refuses the anonymous op uid with EINVAL
 		// before info asks whether a user was found (rgw_user.cc:246-264
-		// and :1454-1456 at v19.2.6, :252-270 and :1458-1460 at v20.2.4).
+		// and
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1454-L1456 at v19.2.6,
+		// :252-270 and
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1458-L1460 at v20.2.4).
 		return ErrInvalidArgument
 	case l.rec == nil:
 		return ErrNoSuchUser
@@ -902,8 +932,10 @@ func (o *GetUserInfo) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveUser is RGWOp_User_Remove and RGWUserAdminOp_User::remove
-// (driver/rados/rgw_rest_user.cc:440-479, driver/rados/rgw_user.cc:1940-2015
-// and :2477-2492 at v19.2.6). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L440-L479,
+// driver/rados/rgw_user.cc:1940-2015 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2477-L2492 at v19.2.6).
+// Cap users=write.
 type RemoveUser struct {
 	AdminOp
 	UID       meta.UserID
@@ -927,10 +959,13 @@ func (o *RemoveUser) VerifyPermission(_ context.Context, r *Request) error {
 // its objects first. A bucket the list names that another owner now holds
 // is left alone. Then the user goes, and after it the user's entry in the
 // account users index, an entry already gone taken as removed. radosgw
-// unlinks the entry first (svc_user_rados.cc:601-610 before :624 at
-// v19.2.6, :575-584 before :598 at v20.2.4), so a removal that stops
-// between leaves a user its account's removal no longer sees; here a stop
-// leaves only an entry naming a gone user, which every reader skips.
+// unlinks the entry first (svc_user_rados.cc:601-610 before
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L624 at v19.2.6,
+// :575-584 before
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L598 at v20.2.4),
+// so a removal that stops between leaves a user its account's removal no
+// longer sees; here a stop leaves only an entry naming a gone user, which
+// every reader skips.
 func (o *RemoveUser) Execute(ctx context.Context, r *Request) error {
 	env := r.Env
 	uid := opUserID(o.UID)
@@ -963,8 +998,10 @@ func (o *RemoveUser) Execute(ctx context.Context, r *Request) error {
 // removeBuckets is execute_remove's handling of one page of uid's buckets.
 // A listed bucket that is gone is radosgw's ENOENT from load_bucket or
 // remove, which RGWUserAdminOp_User::remove answers as NoSuchUser
-// (driver/rados/rgw_user.cc:1968-1981 and :2488-2492 at v19.2.6); nothing
-// of the user is removed yet, so a retry, listing again, goes on.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1968-L1981
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2488-L2492 at v19.2.6);
+// nothing of the user is removed yet, so a retry, listing again, goes on.
 func (o *RemoveUser) removeBuckets(ctx context.Context, env *Env, uid meta.UserID) func([]meta.BucketEnt) error {
 	return func(ents []meta.BucketEnt) error {
 		if !o.PurgeData {
@@ -998,9 +1035,9 @@ func (o *RemoveUser) removeBuckets(ctx context.Context, env *Env, uid meta.UserI
 const maxListUsers = 1000
 
 // ListUsers is RGWOp_User_List and RGWUser::list
-// (driver/rados/rgw_rest_user.cc:44-70, driver/rados/rgw_user.cc:2276-2329
-// at v19.2.6): the keys of the "user" metadata section from Marker. Cap
-// users=read.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L44-L70,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2276-L2329 at v19.2.6):
+// the keys of the "user" metadata section from Marker. Cap users=read.
 type ListUsers struct {
 	AdminOp
 	Marker string

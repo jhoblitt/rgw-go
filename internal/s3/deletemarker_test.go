@@ -29,8 +29,10 @@ func (o olhHeads) StatObject(ctx context.Context, rec *op.BucketRecord, key meta
 
 // Tentacle's read_permissions adds x-amz-delete-marker to a GET or HEAD whose
 // object policies were refused with -ENOENT, naming whether the key's current
-// version is a delete marker (rgw_rest.cc:1936-1945 at v20.2.4); Squid's adds
-// nothing (:1893-1933 at v19.2.6).
+// version is a delete marker
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1945 at v20.2.4);
+// Squid's adds nothing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1893-L1933 at v19.2.6).
 var _ = Describe("x-amz-delete-marker on a missing object", func() {
 	Context("on Tentacle", func() {
 		var w *subresWorld

@@ -16,9 +16,10 @@ import (
 // number is rgw_account.cc's at v19.2.6; each fact cited holds at v20.2.4,
 // whose differences are named.
 
-// AccountParams is rgw::account::AdminOpState (rgw_account.h:47-62 at
-// v20.2.4): each pointer is nil when the request does not name it. The quota
-// fields exist on Squid too, but nothing sets them there.
+// AccountParams is rgw::account::AdminOpState
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_account.h#L47-L62 at v20.2.4):
+// each pointer is nil when the request does not name it. The quota fields
+// exist on Squid too, but nothing sets them there.
 type AccountParams struct {
 	ID, Tenant, Name, Email                                  string
 	MaxUsers, MaxRoles, MaxGroups, MaxAccessKeys, MaxBuckets *int32
@@ -30,20 +31,25 @@ type AccountParams struct {
 }
 
 // The account id's form, rgw::account::generate_id and validate_id
-// (:34-71): "RGW" and 17 decimal digits.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L34-L71):
+// "RGW" and 17 decimal digits.
 const (
 	accountIDPrefix = "RGW"
 	accountIDLen    = 20
 	decimalDigits   = "0123456789"
 )
 
-// generateAccountID is generate_id (:38-45): gen_rand_numeric's crypto
-// random digits with "RGW" over the first three.
+// generateAccountID is generate_id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L38-L45):
+// gen_rand_numeric's crypto random digits with "RGW" over the first
+// three.
 func generateAccountID() string {
 	return accountIDPrefix + randomFrom(decimalDigits, accountIDLen-len(accountIDPrefix))
 }
 
-// validateAccountID is validate_id (:47-71) with its messages.
+// validateAccountID is validate_id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L47-L71)
+// with its messages.
 func validateAccountID(id string) error {
 	switch {
 	case len(id) != accountIDLen:
@@ -56,9 +62,10 @@ func validateAccountID(id string) error {
 	return nil
 }
 
-// validateAccountName is validate_name (:73-103) with its messages:
-// check_utf8 accepts the well-formed sequences of Unicode's Table 3-7, as
-// utf8.ValidString does.
+// validateAccountName is validate_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L73-L103)
+// with its messages: check_utf8 accepts the well-formed sequences of
+// Unicode's Table 3-7, as utf8.ValidString does.
 func validateAccountName(name string) error {
 	switch {
 	case name == "":
@@ -91,10 +98,11 @@ func (p AccountParams) applyLimits(info *meta.AccountInfo) {
 	}
 }
 
-// loadAccount is the lookup info, modify and remove share (:190-206): by id,
-// else by name in the tenant, else by email. A missing account is radosgw's
-// raw ENOENT, which the REST layer answers as the NoSuchKey row. A store's
-// failure is its S3 error alone (storeErr): the store names an email
+// loadAccount is the lookup info, modify and remove share
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L190-L206):
+// by id, else by name in the tenant, else by email. A missing account is
+// radosgw's raw ENOENT, which the REST layer answers as the NoSuchKey row. A
+// store's failure is its S3 error alone (storeErr): the store names an email
 // redirect by the email.
 func loadAccount(ctx context.Context, env *Env, p AccountParams) (*AccountRecord, error) {
 	var (
@@ -122,9 +130,14 @@ func loadAccount(ctx context.Context, env *Env, p AccountParams) (*AccountRecord
 
 // accountCapType is the cap type the account get and delete check: Squid
 // checks "account", a type no caps command can grant, so only an admin or
-// system identity passes there (rgw_rest_account.cc:173-174 and :195-196
-// at v19.2.6); Tentacle checks "accounts" (:173-174 and :195-196 at
-// v20.2.4).
+// system identity passes there
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L173-L174
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L195-L196 at v19.2.6);
+// Tentacle checks "accounts"
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L173-L174
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L195-L196 at v20.2.4).
 func accountCapType(r *Request) string {
 	if r.Env != nil && r.Env.Zone != nil && r.Env.Zone.Release() < denc.Tentacle {
 		return "account"
@@ -207,8 +220,9 @@ func (o *GetAccountInfo) Execute(ctx context.Context, r *Request) error {
 }
 
 // ModifyAccount is RGWOp_Account_Modify (rgw_rest_account.cc:104-168) and,
-// on Tentacle, RGWOp_Account_Quota_Set (v20.2.4 :223-299), over modify
-// (:179-272). Cap accounts=write.
+// on Tentacle, RGWOp_Account_Quota_Set (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L223-L299),
+// over modify (:179-272). Cap accounts=write.
 type ModifyAccount struct {
 	AdminOp
 	Params AccountParams
@@ -284,7 +298,8 @@ func (o *ModifyAccount) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// accountListChunk is remove's max_items (:306).
+// accountListChunk is remove's max_items
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L306).
 const accountListChunk = 100
 
 // RemoveAccount is RGWOp_Account_Delete (rgw_rest_account.cc:193-221) and
@@ -342,12 +357,14 @@ func (o *RemoveAccount) Execute(ctx context.Context, r *Request) error {
 }
 
 // accountHasUser is list_account_users as remove pages it
-// (rgw_sal_rados.cc:1399-1437 at v19.2.6, :1938-1976 at v20.2.4): each id
-// the users index lists is loaded as a user of the account's tenant, and an
-// id whose user is gone is skipped, so an entry a removal left behind holds
-// nothing off. A user that does not name the account counts, as there: a
-// join adds the user's entry before it stores the user (writeUser), and
-// that entry holds the removal off while the join is in flight.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L1399-L1437 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L1938-L1976 at v20.2.4):
+// each id the users index lists is loaded as a user of the account's
+// tenant, and an id whose user is gone is skipped, so an entry a removal
+// left behind holds nothing off. A user that does not name the account
+// counts, as there: a join adds the user's entry before it stores the user
+// (writeUser), and that entry holds the removal off while the join is in
+// flight.
 func accountHasUser(ctx context.Context, env *Env, info meta.AccountInfo) (bool, error) {
 	marker := ""
 	for {

@@ -353,8 +353,13 @@ var _ = Describe("Verifier", func() {
 
 	// The key is unknown in every entry: a refused form is answered before
 	// the lookup, as get_auth_data_v4 throws before LocalEngine runs
-	// (rgw_rest_s3.cc:5899-5969 and :6325-6329 at v19.2.6, :6466-6540 and
-	// :6896-6900 at v20.2.4); an accepted one reaches it.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6325-L6329 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6896-L6900 at v20.2.4);
+	// an accepted one reaches it.
 	DescribeTable("refuses a payload form the dispatched op does not take, before the access key is looked up",
 		func(ctx SpecContext, hash, body string, forms op.PayloadForms, want error) {
 			req := withPayloadHash(newBodyRequest(ctx, http.MethodPut, "http://s3.example.com/plain/k", body), hash)

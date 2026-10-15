@@ -11,8 +11,9 @@ import (
 )
 
 // aclGrantsMaxNum is ACL_GRANTS_MAX_NUM, which RGWPutACLs::execute uses for a
-// negative rgw_acl_grants_max_num (rgw_op.cc:5867-5871 at v19.2.6,
-// :6513-6517 at v20.2.4).
+// negative rgw_acl_grants_max_num
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5867-L5871 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6513-L6517 at v20.2.4).
 const aclGrantsMaxNum = 100
 
 // Config is what the authorizer reads from Ceph configuration.

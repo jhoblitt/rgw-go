@@ -8,9 +8,11 @@ import (
 )
 
 // ListMultipartUploads is RGWListBucketMultiparts, ListMultipartUploads
-// (rgw_op.cc:6696-6745 at v19.2.6, :7635-7684 at v20.2.4; rgw_rest.cc:1624-1658
-// at v19.2.6, :1629-1663 at v20.2.4). The handler fills the inputs; Execute
-// lists a page of the bucket's uploads through MultipartStore.ListUploads.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6696-L6745 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7635-L7684 at v20.2.4;
+// rgw_rest.cc:1624-1658 at v19.2.6, :1629-1663 at v20.2.4). The handler fills
+// the inputs; Execute lists a page of the bucket's uploads through
+// MultipartStore.ListUploads.
 type ListMultipartUploads struct {
 	Prefix, Delimiter         string
 	KeyMarker, UploadIDMarker string
@@ -39,13 +41,15 @@ func (o *ListMultipartUploads) Init(ctx context.Context, r *Request) error {
 }
 
 // VerifyPermission is RGWListBucketMultiparts::verify_permission
-// (rgw_op.cc:6696-6708 at v19.2.6, :7635-7647 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6696-L6708 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7635-L7647 at v20.2.4).
 func (o *ListMultipartUploads) VerifyPermission(ctx context.Context, r *Request) error {
 	return VerifyBucketPermission(ctx, r, policy.S3ListBucketMultipartUploads, acl.PermFor(policy.S3ListBucketMultipartUploads))
 }
 
-// Execute is RGWListBucketMultiparts::execute's listing (rgw_op.cc:6734-6744
-// at v19.2.6, :7673-7683 at v20.2.4).
+// Execute is RGWListBucketMultiparts::execute's listing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6734-L6744 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7673-L7683 at v20.2.4).
 func (o *ListMultipartUploads) Execute(ctx context.Context, r *Request) error {
 	res, err := r.Env.Multipart.ListUploads(ctx, r.BucketRec, ListUploadsParams{
 		Prefix: o.Prefix, Delimiter: o.Delimiter, KeyMarker: o.KeyMarker, UploadIDMarker: o.UploadIDMarker, MaxUploads: o.MaxUploads,

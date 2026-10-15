@@ -11,8 +11,10 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
-// errorDocument is radosgw's rgw_err dump (rgw_common.cc:381-404 at v19.2.6,
-// :394-417 at v20.2.4); every field is dump_string text.
+// errorDocument is radosgw's rgw_err dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L381-L404 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L394-L417 at v20.2.4);
+// every field is dump_string text.
 type errorDocument struct {
 	XMLName    xml.Name     `xml:"Error"`
 	Code       xmltext.Text `xml:"Code,omitempty"`
@@ -25,12 +27,14 @@ type errorDocument struct {
 // WriteError renders err as radosgw's S3 error document with the common
 // headers; it is what every HandlerFunc calls on failure and what other
 // protocol layers (admin) reuse. It is end_header's error branch
-// (rgw_rest.cc:620-624 at v19.2.6, :625-629 at v20.2.4), so the length goes
-// out through SetContentLength, with Accept-Ranges. The document names
-// r.Bucket, which radosgw knows only once postauth_init has run. A status
-// rgw_err::is_err does not count as an error, 200-399 (rgw_common.cc:203-207
-// at v19.2.6 and v20.2.4), gets no document, as end_header then dumps none.
-// An InternalError or UnknownError is logged under ctx with its code and its
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L620-L624 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629 at v20.2.4),
+// so the length goes out through SetContentLength, with Accept-Ranges. The
+// document names r.Bucket, which radosgw knows only once postauth_init has
+// run. A status rgw_err::is_err does not count as an error, 200-399
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L203-L207 at v19.2.6
+// and v20.2.4), gets no document, as end_header then dumps none. An
+// InternalError or UnknownError is logged under ctx with its code and its
 // cause, so err must carry no request header value: it is an error the
 // handler or its ops built, never an authenticator's, which refuseAuth
 // answers instead.

@@ -103,8 +103,13 @@ func encodePublicAccess(b acl.PublicAccessBlock) []byte {
 // expectEmptyXML checks rec is status with Content-Type: application/xml and
 // no body: radosgw's end_header names the type and flushes the formatter
 // before dump_start puts the declaration in it, which nothing flushes after
-// (rgw_rest_s3.cc:3649-3656 and :915-935 at v19.2.6, :3932-3939 and
-// :997-1017 at v20.2.4; rgw_rest.cc:589-655 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3649-L3656
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L915-L935 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3932-L3939
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L997-L1017 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L655 at v19.2.6).
 func expectEmptyXML(rec *httptest.ResponseRecorder, status int) {
 	GinkgoHelper()
 	Expect(rec.Code).To(Equal(status), rec.Body.String())

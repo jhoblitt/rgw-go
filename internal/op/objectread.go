@@ -17,10 +17,13 @@ import (
 
 // statHead loads the bucket and the object's head without its data, as
 // rgw_build_bucket_policies and rgw_build_object_policies do before
-// verify_permission for an op that prefetches nothing (rgw_op.cc:494 and
-// :631-649 at v19.2.6, :524 and :661-679 at v20.2.4). A missing bucket is
-// NoSuchBucket before any object is read, as is one of another zonegroup
-// PermanentRedirect (loadBucket).
+// verify_permission for an op that prefetches nothing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L494 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L631-L649 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L524 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L661-L679 at v20.2.4).
+// A missing bucket is NoSuchBucket before any object is read, as is one
+// of another zonegroup PermanentRedirect (loadBucket).
 func statHead(ctx context.Context, r *Request) error {
 	if err := loadBucket(ctx, r); err != nil {
 		return err
@@ -33,8 +36,10 @@ func statHead(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// GetObjectTagging is RGWGetObjTags (rgw_op.cc:1037-1074 at v19.2.6,
-// :1236-1273 at v20.2.4): the object's tag set from the head Init read.
+// GetObjectTagging is RGWGetObjTags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1037-L1074 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1236-L1273 at v20.2.4):
+// the object's tag set from the head Init read.
 type GetObjectTagging struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -75,9 +80,11 @@ func (o *GetObjectTagging) VerifyPermission(ctx context.Context, r *Request) err
 
 // Execute is RGWGetObjTags::execute, whose get_obj_attrs answers a missing
 // object with -ENOENT, and the decode RGWGetObjTags_ObjStore_S3's
-// send_response_data makes (rgw_rest_s3.cc:746-773 at v19.2.6, :829-856 at
-// v20.2.4), where a tag set that decodes neither as RGWObjTags nor as the text
-// older objects store is -EIO, which rgw-go answers as UnknownError
+// send_response_data makes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L746-L773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L829-L856 at v20.2.4),
+// where a tag set that decodes neither as RGWObjTags nor as the text older
+// objects store is -EIO, which rgw-go answers as UnknownError
 // (docs/exclusions.md).
 func (o *GetObjectTagging) Execute(_ context.Context, r *Request) error {
 	st := r.ObjState
@@ -100,12 +107,17 @@ func (o *GetObjectTagging) Execute(_ context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *GetObjectTagging) Complete(context.Context, *Request) {}
 
-// GetObjectACL is RGWGetACLs at object scope (rgw_op.cc:5695-5734 at v19.2.6,
-// :6275-6314 at v20.2.4). It renders s->object_acl, which
-// rgw_build_object_policies read with get_obj_policy_from_attr (:288-325 at
-// v19.2.6, :331-368 at v20.2.4): the head's user.rgw.acl or, when the head has
-// none, a default policy for s->bucket_owner, the owner the bucket's ACL names
-// (:552 at v19.2.6, :582 at v20.2.4).
+// GetObjectACL is RGWGetACLs at object scope
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5695-L5734 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6275-L6314 at v20.2.4).
+// It renders s->object_acl, which rgw_build_object_policies read with
+// get_obj_policy_from_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L288-L325 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L331-L368 at v20.2.4):
+// the head's user.rgw.acl or, when the head has none, a default policy for
+// s->bucket_owner, the owner the bucket's ACL names
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L552 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L582 at v20.2.4).
 type GetObjectACL struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -157,13 +169,15 @@ func (o *GetObjectACL) Execute(ctx context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *GetObjectACL) Complete(context.Context, *Request) {}
 
-// BucketACLFor is rgw_op_get_bucket_policy_from_attr (rgw_op.cc:267-286 at
-// v19.2.6, :310-329 at v20.2.4): the bucket's ACL as
-// rgw_build_bucket_policies reads it into s->bucket_acl for every request
-// that names a bucket. That is the bucket's user.rgw.acl, or, for a bucket
-// without one, a policy giving the bucket's owner FULL_CONTROL under an empty
-// display name. An ACL that does not decode is decode_policy's -EIO, which
-// fails the request, and BucketACLFor returns it as an UnknownError.
+// BucketACLFor is rgw_op_get_bucket_policy_from_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L267-L286 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L310-L329 at v20.2.4):
+// the bucket's ACL as rgw_build_bucket_policies reads it into s->bucket_acl
+// for every request that names a bucket. That is the bucket's user.rgw.acl,
+// or, for a bucket without one, a policy giving the bucket's owner
+// FULL_CONTROL under an empty display name. An ACL that does not decode is
+// decode_policy's -EIO, which fails the request, and BucketACLFor returns it
+// as an UnknownError.
 //
 // The policy's Owner is radosgw's s->bucket_owner, which names the owner of
 // any default policy radosgw builds for an object without an ACL of its own.
@@ -177,15 +191,19 @@ func BucketACLFor(ctx context.Context, rec *BucketRecord) (acl.Policy, error) {
 	return decodeACL(b, "bucket "+rec.Info.Bucket.Name)
 }
 
-// ObjectACLFor is get_obj_policy_from_attr (rgw_op.cc:288-326 at v19.2.6,
-// :331-369 at v20.2.4): the ACL of the object st, in bucket, as
-// rgw_build_object_policies reads it into s->object_acl. That is the head's
-// user.rgw.acl or, for a head without one, a policy giving FULL_CONTROL to
-// the owner bucket's ACL names, under its display name (s->bucket_owner,
-// :552 at v19.2.6, :582 at v20.2.4); only then is the bucket's ACL read. An
-// ACL that does not decode is decode_policy's -EIO, an UnknownError, and a
-// missing object is the head read's -ENOENT, NoSuchKey. The warning about a
-// head without an ACL is logged once per state, so once per request.
+// ObjectACLFor is get_obj_policy_from_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L288-L326 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L331-L369 at v20.2.4):
+// the ACL of the object st, in bucket, as rgw_build_object_policies reads
+// it into s->object_acl. That is the head's user.rgw.acl or, for a head
+// without one, a policy giving FULL_CONTROL to the owner bucket's ACL
+// names, under its display name (s->bucket_owner,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L552 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L582 at v20.2.4);
+// only then is the bucket's ACL read. An ACL that does not decode is
+// decode_policy's -EIO, an UnknownError, and a missing object is the head
+// read's -ENOENT, NoSuchKey. The warning about a head without an ACL is
+// logged once per state, so once per request.
 func ObjectACLFor(ctx context.Context, st *ObjectState, bucket *BucketRecord) (acl.Policy, error) {
 	if st == nil || !st.Exists {
 		var key string
@@ -209,9 +227,11 @@ func ObjectACLFor(ctx context.Context, st *ObjectState, bucket *BucketRecord) (a
 	return acl.DefaultPolicy(meta.ParseOwner(bucketACL.Owner.ID), bucketACL.Owner.DisplayName), nil
 }
 
-// decodeACL is decode_policy (rgw_op.cc:227-245 at v19.2.6, :270-288 at
-// v20.2.4), which reads an RGWAccessControlPolicy and leaves any bytes after
-// it unread.
+// decodeACL is decode_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L227-L245 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L270-L288 at v20.2.4),
+// which reads an RGWAccessControlPolicy and leaves any bytes after it
+// unread.
 func decodeACL(b []byte, of string) (acl.Policy, error) {
 	d := denc.NewDecoder(b)
 	p := acl.DecodePolicy(d)
@@ -222,7 +242,8 @@ func decodeACL(b []byte, of string) (acl.Policy, error) {
 }
 
 // ObjectAttrs is RGWGetObjAttrs' requested attributes, a ReqAttributes flag
-// each, as as_flag numbers them ([T] rgw_op.h:1755-1766).
+// each, as as_flag numbers them
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1755-L1766).
 type ObjectAttrs uint16
 
 // The attributes x-amz-object-attributes names.
@@ -246,7 +267,8 @@ var objectAttrNames = []struct {
 	{"storageclass", AttrStorageClass},
 }
 
-// ParseObjectAttrs is RGWGetObjAttrs::recognize_attrs ([T] rgw_op.cc:6337-6359)
+// ParseObjectAttrs is RGWGetObjAttrs::recognize_attrs
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6337-L6359)
 // over x-amz-object-attributes: the header split at its commas, each name
 // compared whole, untrimmed, with ASCII case folded as boost::iequals folds it
 // in radosgw's C locale. A name it does not know is ignored.
@@ -263,17 +285,20 @@ func ParseObjectAttrs(header string) ObjectAttrs {
 }
 
 // ObjectPart is one Part of GetObjectAttributes' ObjectParts
-// ([T] rgw_rest_s3.cc:4087-4096). Its checksum is not implemented yet.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4087-L4096).
+// Its checksum is not implemented yet.
 type ObjectPart struct {
 	Number int
 	Size   uint64
 }
 
 // MaxObjectParts is the max-parts list_parts takes without x-amz-max-parts,
-// and the most the header may ask for ([T] rgw_rest_s3.cc:3961, :4084).
+// and the most the header may ask for ([T] rgw_rest_s3.cc:3961,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4084).
 const MaxObjectParts = 1000
 
-// GetObjectAttributes is RGWGetObjAttrs ([T] rgw_op.cc:6337-6403,
+// GetObjectAttributes is RGWGetObjAttrs ([T]
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6337-L6403,
 // rgw_rest_s3.cc:3941-4137), which rgw-go serves on both releases although a
 // Squid radosgw answers ?attributes as GetObject. It is a GetObject that reads
 // no data: Init, the check order, the SSE checks and the cloud-tier rule are
@@ -312,8 +337,10 @@ func (o *GetObjectAttributes) Action() policy.Action {
 
 // Init is GetObject's Init for a request with no data, so no prefetch, and
 // none of the inputs RGWGetObjAttrs_ObjStore_S3::get_params, which replaces
-// GetObject's, never reads ([T] rgw_rest_s3.cc:3941-3983): no Range, no
-// conditionals, no partNumber, no torrent and no response-* overrides.
+// GetObject's, never reads
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3941-L3983):
+// no Range, no conditionals, no partNumber, no torrent and no response-*
+// overrides.
 func (o *GetObjectAttributes) Init(ctx context.Context, r *Request) error {
 	g := &o.GetObject
 	g.GetData, g.Torrent, g.PartNumber, g.ResponseOverrides = false, false, nil, nil
@@ -322,12 +349,13 @@ func (o *GetObjectAttributes) Init(ctx context.Context, r *Request) error {
 }
 
 // VerifyPermission is RGWGetObjAttrs::verify_permission
-// ([T] rgw_op.cc:6361-6393): s3:GetObject, or failing it
-// s3:GetObjectAttributes, each for the version when one is named. A refusal
-// radosgw makes before verify_permission, such as a missing object's, and an
-// error that is no access denial come from the first check alone. A Squid
-// radosgw has no such op, so there the first check decides: Squid knows no
-// s3:GetObjectAttributes, and no Deny a Squid policy states could refuse it.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6361-L6393):
+// s3:GetObject, or failing it s3:GetObjectAttributes, each for the version
+// when one is named. A refusal radosgw makes before verify_permission, such
+// as a missing object's, and an error that is no access denial come from the
+// first check alone. A Squid radosgw has no such op, so there the first
+// check decides: Squid knows no s3:GetObjectAttributes, and no Deny a Squid
+// policy states could refuse it.
 func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
@@ -343,9 +371,11 @@ func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) 
 
 // Execute is RGWGetObjAttrs::execute, which is RGWGetObj::execute without
 // data, then the part listing RGWGetObjAttrs_ObjStore_S3::send_response makes
-// for ObjectParts ([T] rgw_rest_s3.cc:4059-4119). The parts count is
-// Tentacle's Read::prepare count of a multipart manifest, which rgw-go's
-// GetObject reports only on Tentacle, so it is taken here on Squid.
+// for ObjectParts
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4059-L4119).
+// The parts count is Tentacle's Read::prepare count of a multipart manifest,
+// which rgw-go's GetObject reports only on Tentacle, so it is taken here on
+// Squid.
 func (o *GetObjectAttributes) Execute(ctx context.Context, r *Request) error {
 	o.Sink = discardSink{}
 	if err := o.GetObject.Execute(ctx, r); err != nil {
@@ -366,15 +396,17 @@ func (o *GetObjectAttributes) Execute(ctx context.Context, r *Request) error {
 	return o.listParts(ctx, r)
 }
 
-// listParts is RadosObject::list_parts ([T]
-// driver/rados/rgw_sal_rados.cc:2834-2933). From the part after the marker,
-// which must exist, it lists up to max-parts parts in manifest order, each
-// with a stat of its head through get_part_obj_state ([T]
-// driver/rados/rgw_rados.cc:7595-7684), and truncates where a part is left
-// over. The next marker counts the parts listed on from the marker. A part
-// head that cannot be read ends the list without an error, as list_parts'
-// failure only reaches radosgw's log. One walk of the manifest serves every
-// part, where get_part_obj_state walks it again from the start for each.
+// listParts is RadosObject::list_parts
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2834-L2933).
+// From the part after the marker, which must exist, it lists up to
+// max-parts parts in manifest order, each with a stat of its head through
+// get_part_obj_state
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7595-L7684),
+// and truncates where a part is left over. The next marker counts the parts
+// listed on from the marker. A part head that cannot be read ends the list
+// without an error, as list_parts' failure only reaches radosgw's log. One
+// walk of the manifest serves every part, where get_part_obj_state walks it
+// again from the start for each.
 func (o *GetObjectAttributes) listParts(ctx context.Context, r *Request) error {
 	limit, marker := MaxObjectParts, 0
 	if o.MaxParts != nil {

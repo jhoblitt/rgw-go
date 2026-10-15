@@ -18,9 +18,11 @@ import (
 type envPair struct{ key, value string }
 
 // BuildEnv is the IAM environment radosgw evaluates action a with:
-// rgw_build_iam_environment's keys (rgw_op.cc:848-910 at v19.2.6, :884-946 at
-// v20.2.4), then the keys the op for a adds in its verify_permission. Tag keys
-// are not among them; the evaluator adds those where the op does.
+// rgw_build_iam_environment's keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L848-L910 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L946 at v20.2.4),
+// then the keys the op for a adds in its verify_permission. Tag keys are not
+// among them; the evaluator adds those where the op does.
 //
 // radosgw's environment is an unordered_multimap, and on Tentacle which of a
 // key's values a typed condition reads depends on how many pairs the
@@ -51,7 +53,9 @@ func buildEnv(cfg Config, r *op.Request, a policy.Action, addTags func(*policy.E
 
 // baseEnv is rgw_build_iam_environment's keys alone, the environment
 // read_obj_policy extends with s3:prefix for a missing object's ListBucket
-// check (rgw_op.cc:438 at v19.2.6, :468 at v20.2.4).
+// check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L438 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L468 at v20.2.4).
 func baseEnv(cfg Config, r *op.Request) policy.Env {
 	var env policy.Env
 	for _, p := range baseKeys(cfg, r) {
@@ -95,8 +99,9 @@ func baseKeys(cfg Config, r *op.Request) []envPair {
 	return append(ps, envPair{"sts:authentication", sts})
 }
 
-// secureTransport is rgw_transport_is_secure (rgw_common.cc:1071-1094 at
-// v19.2.6, :1084-1107 at v20.2.4).
+// secureTransport is rgw_transport_is_secure
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1071-L1094 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1084-L1107 at v20.2.4).
 func secureTransport(cfg Config, r *op.Request) bool {
 	if r.TLS {
 		return true
@@ -113,11 +118,12 @@ func secureTransport(cfg Config, r *op.Request) bool {
 
 // sourceIP is aws:SourceIp: the CGI variable rgw_remote_addr_param names,
 // REMOTE_ADDR when it is empty, cut at its first comma only when the
-// parameter is exactly HTTP_X_FORWARDED_FOR (rgw_op.cc:869-886 at v19.2.6,
-// :905-922 at v20.2.4). A parameter in other capitals finds the header but
-// keeps the whole proxy chain, as radosgw's does (docs/ceph-upstream-bugs.md,
-// "radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in
-// capitals").
+// parameter is exactly HTTP_X_FORWARDED_FOR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L869-L886 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L905-L922 at v20.2.4).
+// A parameter in other capitals finds the header but keeps the whole proxy
+// chain, as radosgw's does (docs/ceph-upstream-bugs.md, "radosgw cuts
+// X-Forwarded-For only for an rgw_remote_addr_param written in capitals").
 func sourceIP(cfg Config, r *op.Request) (string, bool) {
 	name := cfg.RemoteAddrParam
 	if name == "" {
@@ -132,14 +138,14 @@ func sourceIP(cfg Config, r *op.Request) (string, bool) {
 
 // cgiVar is the CGI variable name in radosgw's RGWEnv, whose names compare
 // without regard to case: REMOTE_ADDR, the client's address alone
-// (rgw_asio_client.cc:92 at v19.2.6 and v20.2.4), CONTENT_LENGTH and
-// CONTENT_TYPE, and HTTP_ followed by any other header's name in capitals
-// with '-' and '_' swapped (:40-65). rgw-go holds neither the other variables
-// beast sets, the request line's among them, nor the headers net/http takes
-// out of a server request: Host and Transfer-Encoding always, and Trailer and
-// Content-Length from a chunked one (net/http/server.go:1087,
-// net/http/transfer.go:644, :727, :790 in Go 1.27). For those it reports
-// none.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L92 at v19.2.6
+// and v20.2.4), CONTENT_LENGTH and CONTENT_TYPE, and HTTP_ followed by any
+// other header's name in capitals with '-' and '_' swapped (:40-65). rgw-go
+// holds neither the other variables beast sets, the request line's among
+// them, nor the headers net/http takes out of a server request: Host and
+// Transfer-Encoding always, and Trailer and Content-Length from a chunked one
+// (net/http/server.go:1087, net/http/transfer.go:644, :727, :790 in Go 1.27).
+// For those it reports none.
 func cgiVar(r *op.Request, name string) (string, bool) {
 	switch upper := strings.ToUpper(name); upper {
 	case "REMOTE_ADDR":
@@ -252,8 +258,10 @@ func listKeys(cfg Config, r *op.Request) []envPair {
 
 // isCopyObject reports whether a PUT is routed to RGWCopyObj: it names a
 // copy source, and neither a source range nor an upload id
-// (RGWHandler_REST_S3::init, rgw_rest_s3.cc:5026-5029 at v19.2.6, :5586-5589
-// at v20.2.4). Any other PUT that checks s3:PutObject is RGWPutObj.
+// (RGWHandler_REST_S3::init,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5029 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5589 at v20.2.4).
+// Any other PUT that checks s3:PutObject is RGWPutObj.
 func isCopyObject(r *op.Request) bool {
 	_, src := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
 	_, ranged := op.HeaderValue(r.Header, "X-Amz-Copy-Source-Range")
@@ -295,7 +303,9 @@ func cannedACL(r *op.Request) string {
 }
 
 // grantHeaders are rgw_add_grant_to_iam_environment's headers and keys, in
-// its order (rgw_op.cc:827-846 at v19.2.6, :863-882 at v20.2.4).
+// its order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L827-L846 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L863-L882 at v20.2.4).
 var grantHeaders = []struct{ header, key string }{
 	{"X-Amz-Grant-Read", "s3:x-amz-grant-read"},
 	{"X-Amz-Grant-Write", "s3:x-amz-grant-write"},
@@ -305,8 +315,9 @@ var grantHeaders = []struct{ header, key string }{
 }
 
 // grantKeys are the grant headers present, when the request has any header
-// starting with x-amz-grant (has_acl_header, rgw_rest_s3.cc:5024 at v19.2.6,
-// :5584 at v20.2.4).
+// starting with x-amz-grant (has_acl_header,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5024 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5584 at v20.2.4).
 func grantKeys(r *op.Request) []envPair {
 	if !hasACLHeader(r.Header) {
 		return nil
@@ -329,13 +340,20 @@ func hasACLHeader(h http.Header) bool {
 	return false
 }
 
-// cryptKeys are rgw_iam_add_crypt_attrs' keys (rgw_op.cc:760-774 at v19.2.6,
-// :790-810 at v20.2.4, which adds the SSE-C algorithm), from the request's
-// crypt attributes as they stand at verify_permission: the headers, and for
-// RGWPutObj, whose get_params has run, the query string after them
-// (map_qs_metadata, rgw_rest_s3.cc:2581-2595 and :2611 at v19.2.6, :2742-2756
-// and :2772 at v20.2.4). get_params also fills in the bucket's default
-// encryption, which rgw-go does not apply (docs/exclusions.md).
+// cryptKeys are rgw_iam_add_crypt_attrs' keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L760-L774 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L790-L810 at v20.2.4,
+// which adds the SSE-C algorithm), from the request's crypt attributes as
+// they stand at verify_permission: the headers, and for RGWPutObj, whose
+// get_params has run, the query string after them (map_qs_metadata,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2581-L2595
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2611 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772 at v20.2.4).
+// get_params also fills in the bucket's default encryption, which rgw-go does
+// not apply (docs/exclusions.md).
 func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 	names := []string{"server-side-encryption"}
 	if cfg.Release >= denc.Tentacle {
@@ -354,9 +372,11 @@ func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 // cryptAttr is the crypt attribute "x-amz-"+name: the X-Amz- header, then,
 // when withQuery, a query parameter of that name in any case, the last in
 // name order winning. radosgw's crypt attributes also take the header under
-// six other meta prefixes (rgw_common.cc:413-464 at v19.2.7, :426-477 at
-// v20.2.4), which rgw-go's S3 API does not read (docs/exclusions.md). The
-// query's overwrites the header's on every route in radosgw
+// six other meta prefixes
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4),
+// which rgw-go's S3 API does not read (docs/exclusions.md). The query's
+// overwrites the header's on every route in radosgw
 // (rgw_rest_s3.cc:2599-2601 at v19.2.7, :2752-2754 at v20.2.4); rgw-go
 // takes no query encryption parameter on either SigV2 route, neither of
 // which signs it, nor on a route a result does not name

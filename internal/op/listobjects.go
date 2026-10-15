@@ -9,8 +9,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
-// defaultMaxKeys is the S3 listings' default_max (rgw_rest_s3.h:160 at
-// v19.2.6, :161 at v20.2.4).
+// defaultMaxKeys is the S3 listings' default_max
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L160 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L161 at v20.2.4).
 const defaultMaxKeys = 1000
 
 // MaxListingResults is rgw_max_listing_results, the bound on max-keys,
@@ -32,8 +33,10 @@ func MaxListingResults(r *Request) int64 {
 }
 
 // ListObjects is RGWListBucket, the S3 bucket listing in both versions and
-// the versions listing (rgw_op.cc:3033-3121 at v19.2.6, :3267-3365 at
-// v20.2.4). The protocol layer fills the inputs from the query as
+// the versions listing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3033-L3121 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3267-L3365 at v20.2.4).
+// The protocol layer fills the inputs from the query as
 // RGWListBucket_ObjStore_S3's get_params reads it; VerifyPermission bounds
 // MaxKeys into Max, and Execute fills Result.
 type ListObjects struct {
@@ -65,9 +68,11 @@ type ListObjects struct {
 
 var _ Op = (*ListObjects)(nil)
 
-// Name is RGWListBucket::name() (rgw_op.h:970 at v19.2.6, :1042 at
-// v20.2.4), which the v2 handler inherits, so the usage log files both
-// versions as list_bucket.
+// Name is RGWListBucket::name()
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L970 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1042 at v20.2.4),
+// which the v2 handler inherits, so the usage log files both versions
+// as list_bucket.
 func (*ListObjects) Name() string { return "list_bucket" }
 
 // Action is the action RGWListBucket::verify_permission authorizes.
@@ -83,8 +88,9 @@ func (*ListObjects) OpMask() uint32 { return OpTypeRead }
 
 // Init loads the bucket. A missing bucket is NoSuchBucket here, before the
 // parameters are read, as rgw_build_bucket_policies fails init_permissions
-// (rgw_op.cc:523-541 at v19.2.6, :553-571 at v20.2.4), or a bucket of another
-// zonegroup PermanentRedirect (loadBucket).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L523-L541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L553-L571 at v20.2.4),
+// or a bucket of another zonegroup PermanentRedirect (loadBucket).
 func (*ListObjects) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWListBucket::verify_permission, which runs

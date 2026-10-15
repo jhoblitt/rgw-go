@@ -25,7 +25,8 @@ type StatsStore interface {
 	CheckQuota(ctx context.Context, rec *BucketRecord, owner meta.Owner, addBytes, addObjs int64) error
 	// AdjustStats is RGWQuotaHandler::update_stats after a write or delete:
 	// objs objects and addBytes bytes join rec's and owner's cached totals
-	// and removedBytes leave them (rgw_rados.cc:3358-3366 at v19.2.6,
-	// :3511-3519 at v20.2.4).
+	// and removedBytes leave them
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3358-L3366 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3511-L3519 at v20.2.4).
 	AdjustStats(ctx context.Context, rec *BucketRecord, owner meta.Owner, objs, addBytes, removedBytes int64) error
 }
