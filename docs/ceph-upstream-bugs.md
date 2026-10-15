@@ -281,6 +281,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's x-amz-expiration reports a NoncurrentVersionExpiration rule](#radosgws-x-amz-expiration-reports-a-noncurrentversionexpiration-rule) | [#77564](https://tracker.ceph.com/issues/77564) | [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642), [ceph/ceph#70493](https://github.com/ceph/ceph/pull/70493), [ceph/ceph#70494](https://github.com/ceph/ceph/pull/70494) |  |
 | [radosgw's lifecycle transition of an encrypted multipart object drops its part lengths](#radosgws-lifecycle-transition-of-an-encrypted-multipart-object-drops-its-part-lengths) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807), [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826) |  |
 | [s3-tests' TargetObjectKeyFormat probe always answers True](#s3-tests-targetobjectkeyformat-probe-always-answers-true) | pending | pending | ✓ |
+| [radosgw logs an upload id without a part number as a part number without an upload id](#radosgw-logs-an-upload-id-without-a-part-number-as-a-part-number-without-an-upload-id) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -13873,3 +13874,31 @@ Every new entry adds its row to this table, in document order.
 - **Found:** review of phase 2 Task F5, the Squid floor's move to v19.2.7,
   2026-10-14, from the SyntaxWarning in its report's py_compile output;
   reproduced off-cluster in Task T-5 the same day.
+
+## radosgw logs an upload id without a part number as a part number without an upload id
+
+- **Kind:** defect, cosmetic: a debug log line names the opposite of the
+  case it reports. Not security-relevant. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWPutObj_ObjStore_S3::get_params` parses a partNumber that is not
+    empty, and otherwise refuses a request whose uploadId is not empty with
+    -EINVAL, logging "part number with no multipart upload id" at level 10
+    ([rgw_rest_s3.cc:2691-2693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2691-L2693),
+    [rgw_rest_s3.cc:2844-2846](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2844-L2846)).
+  - That branch is reached only with an upload id and no part number, so
+    the message names the case backwards. The refusal itself is right.
+- **Impact:** an operator reading radosgw's log at debug level 10 or above
+  for a refused UploadPart sent without a partNumber is told the request
+  had a part number and no upload id. The client's 400 InvalidArgument is
+  unaffected.
+- **Releases:** since 6907e85d9d3, "rgw: read multipart params in
+  RGWPutObj_ObjStore_S3::get_params" (2018-10-16), first tagged in
+  v14.1.0. Checked at v19.2.7, v20.2.4 and main d8552606423 (2026-10-14,
+  [rgw_rest_s3.cc:2979-2981](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_rest_s3.cc#L2979-L2981)).
+- **rgw-go:** unaffected. `partNumberArg` (`internal/s3/putobject.go`)
+  answers the same 400 InvalidArgument, and `WriteError`
+  (`internal/s3/errors.go`) logs no client error.
+- **Upstream:** not filed; a cosmetic log message.
+- **Found:** phase 2 Task F20, 2026-10-14, reading get_params' partNumber
+  parse; derived from the source, not reproduced.

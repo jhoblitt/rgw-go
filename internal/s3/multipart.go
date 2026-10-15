@@ -185,8 +185,8 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 // Content-Length that is not chunked is MissingContentLength; a request that
 // asks for encryption, by a header or by the query, is refused;
 // x-amz-tagging, any refusal InvalidArgument, whose tags it returns; the
-// object-lock headers' values (objectLockHeaders); and partNumber, absent
-// InvalidArgument and otherwise strict_strtol's.
+// object-lock headers' values (objectLockHeaders); and partNumber
+// (partNumberArg), which refuses an empty or absent one beside an upload id.
 func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return nil, op.ErrMissingContentLength
@@ -205,13 +205,9 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 	if err := objectLockHeaders(r, false); err != nil {
 		return nil, err
 	}
-	v := r.Query.Get("partNumber")
-	if v == "" {
-		return nil, fmt.Errorf("%w: an upload id without a part number", op.ErrInvalidArgument)
-	}
-	n, err := parseInt(rgwtext.CString(v))
+	n, err := partNumberArg(r)
 	if err != nil {
-		return nil, fmt.Errorf("%w: part number %q: %w", op.ErrInvalidArgument, v, err)
+		return nil, err
 	}
 	o.PartNumber = n
 	return set, nil
