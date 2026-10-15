@@ -160,108 +160,27 @@ func writeCanonAmz(b *strings.Builder, m map[string]string) {
 }
 
 // amzHeadersV2 is the x_meta_map req_info::init_meta_info builds
-// (rgw_common.cc:422-464 at v19.2.6, :435-477 at v20.2.4) from beast's HTTP_
-// names, each header's name upper-cased with '-' and '_' swapped
-// (rgw_asio_client.cc:36-66 at v19.2.6 and v20.2.4). A name with a meta prefix
-// is filed under x-amz- and the rest of the name, lower-cased with the swap
-// undone, so x-goog-meta-q files as x-amz-meta-q. The value is the header's
-// last, the one RGWEnv::set keeps. Names filed under one key join as
-// rgw_add_amz_meta_header joins, in the order RGWEnv's strcasecmp gives their
-// HTTP_ names; they differ only in their prefixes, whose first differing
-// bytes are letters, so their lower-cased names sort the same. x-amz-date is
-// among them, which is how it reaches the string to sign.
+// (rgw_common.cc:422-464 at v19.2.7, :435-477 at v20.2.4) from the headers
+// whose name begins x-amz- in any case, each under its name lower-cased, as
+// beast's HTTP_ name, upper-cased with '-' and '_' swapped, comes back from it
+// (rgw_asio_client.cc:36-66 at v19.2.6 and v20.2.4). init_meta_info files a
+// header under six other meta prefixes there too, under its x-amz- name;
+// rgw-go's S3 API reads none of them, so none is signed (docs/exclusions.md).
+// The value is the header's last, the one RGWEnv::set keeps. beast files
+// spellings of one name under one HTTP_ name, where the last set wins; of
+// spellings the header map keeps apart, which net/http's server does not as
+// it canonicalizes each name, the last in byte order wins, as internal/s3's
+// requestEnv keeps one, so the line signed is the value stored. x-amz-date
+// is among them, which is how it reaches the string to sign.
 func amzHeadersV2(rv *requestView) map[string]string {
-	type entry struct{ lower, key, val string }
-	var entries []entry
-	for name, vals := range rv.req.Header {
-		lower := asciiLower(name)
-		for _, prefix := range amzHeaderPrefixes {
-			if rest, ok := strings.CutPrefix(lower, prefix); ok && len(vals) > 0 {
-				entries = append(entries, entry{lower, "x-amz-" + rest, vals[len(vals)-1]})
-				break
-			}
-		}
-	}
-	slices.SortFunc(entries, func(a, b entry) int { return strings.Compare(a.lower, b.lower) })
 	m := map[string]string{}
-	for _, e := range entries {
-		addAmzMeta(m, e.key, e.val)
+	for _, name := range slices.Sorted(maps.Keys(rv.req.Header)) {
+		vals := rv.req.Header[name]
+		if lower := asciiLower(name); strings.HasPrefix(lower, "x-amz-") && len(vals) > 0 {
+			m[lower] = vals[len(vals)-1]
+		}
 	}
 	return m
-}
-
-// rawAmzDirectives are the x-amz- names whose directives rgw-go's handlers
-// read from the X-Amz- header alone, as radosgw reads each from its
-// HTTP_X_AMZ_ variable, RGWHandler_REST_S3::init's canned ACL, grants, copy
-// source and storage class among them (rgw_rest_s3.cc:5050-5073 at v19.2.7,
-// :5580-5603 at v20.2.4). An entry stands for every name it begins:
-// x-amz-grant is has_acl_header's prefix, and x-amz-copy-source and
-// x-amz-server-side-encryption begin the names read beside them. A spec
-// (rawdirectives_test.go) pins the list to the source of every package under
-// internal/ and cmd/. No entry begins a meta name, which headerMeta reads
-// under every prefix.
-var rawAmzDirectives = []string{
-	"x-amz-acl",
-	"x-amz-bucket-object-lock-enabled",
-	"x-amz-copy-source",
-	"x-amz-delete-if-unmodified-since",
-	"x-amz-expected-bucket-owner",
-	"x-amz-grant",
-	"x-amz-if-match-last-modified-time",
-	"x-amz-if-match-size",
-	"x-amz-max-parts",
-	"x-amz-metadata-directive",
-	"x-amz-object-attributes",
-	"x-amz-object-lock-legal-hold",
-	"x-amz-object-lock-mode",
-	"x-amz-object-lock-retain-until-date",
-	"x-amz-part-number-marker",
-	"x-amz-request-payer",
-	"x-amz-security-token",
-	"x-amz-server-side-encryption",
-	"x-amz-storage-class",
-	"x-amz-tagging",
-}
-
-// relabelledDirective refuses a SigV2 request carrying a header under one of
-// amzHeaderPrefixes other than x-amz- whose x-amz- name begins with one of
-// rawAmzDirectives, on both releases (docs/exclusions.md). Verifier.Authenticate
-// asks it once the request has authenticated, so that a request radosgw
-// refuses for its credentials, signature or date gets radosgw's error, and
-// before any handler reads a directive. amzHeadersV2 signs
-// such a header under its x-amz- name, as radosgw does, on the query route
-// too, while the handlers read the directive from the X-Amz- header alone, so
-// the signature holds with the header moved between X-Amz- and another
-// prefix. Moved off X-Amz-, a signed directive would be dropped, and the
-// moved request is refused. Moved onto it, a header the signer sent under
-// another prefix would become a directive: the resent request is the one a
-// signer of the X-Amz- header sends, and cannot be told from it, but the
-// signer's own is refused, beside an X-Amz- one or not, so no request rgw-go
-// accepts reads a signed x-amz- line as anything but the X-Amz- directive
-// (docs/ceph-upstream-bugs.md).
-func relabelledDirective(rv *requestView) error {
-	for _, name := range slices.Sorted(maps.Keys(rv.req.Header)) {
-		if len(rv.req.Header[name]) == 0 {
-			continue
-		}
-		lower := asciiLower(name)
-		for _, prefix := range amzHeaderPrefixes {
-			rest, ok := strings.CutPrefix(lower, prefix)
-			if !ok || prefix == "x-amz-" {
-				continue
-			}
-			if amz := "x-amz-" + rest; isRawDirective(amz) {
-				return fmt.Errorf("%s names %s, which the handlers read from x-amz- alone", lower, amz)
-			}
-		}
-	}
-	return nil
-}
-
-// isRawDirective reports whether amz, a lower-case x-amz- name, begins with
-// one of rawAmzDirectives.
-func isRawDirective(amz string) bool {
-	return slices.ContainsFunc(rawAmzDirectives, func(d string) bool { return strings.HasPrefix(amz, d) })
 }
 
 // qsMetaV2 is get_v2_qs_map (rgw_auth_s3.cc:175-187 at v19.2.6, :176-188 at

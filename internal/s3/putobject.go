@@ -169,15 +169,13 @@ func newObjectACL(ctx context.Context, r *op.Request) (acl.Policy, error) {
 }
 
 // refuseEncryption answers NotImplemented for a write that asks for
-// encryption: one carrying a header that init_meta_info files in
-// crypt_attribute_map once it has rewritten radosgw's meta prefixes to
-// x-amz- (rgw_common.cc:413-464 at v19.2.6, :426-477 at v20.2.4), so
-// X-Goog-Server-Side-Encryption-Customer-Key as well as
-// X-Amz-Server-Side-Encryption; one naming a copy source's SSE-C key under
-// any prefix; and, when query is set, a query parameter map_qs_metadata
-// files there for a PutObject (rgw_rest_s3.cc:2591-2593 at v19.2.6,
-// :2752-2754 at v20.2.4). radosgw encrypts SSE-C and fails SSE-S3 and
-// SSE-KMS without a key server; rgw-go encrypts nothing in phase 1, and
+// encryption: one carrying an X-Amz- header that init_meta_info files in
+// crypt_attribute_map (rgw_common.cc:413-464 at v19.2.7, :426-477 at
+// v20.2.4), X-Amz-Server-Side-Encryption among them; one naming a copy
+// source's SSE-C key; and, when query is set, a query parameter
+// map_qs_metadata files there for a PutObject (rgw_rest_s3.cc:2591-2593 at
+// v19.2.6, :2752-2754 at v20.2.4). radosgw encrypts SSE-C and fails SSE-S3
+// and SSE-KMS without a key server; rgw-go encrypts nothing in phase 1, and
 // must not store in the clear what a client asked to have encrypted
 // (docs/exclusions.md). A bucket's default encryption is the op's to
 // refuse, once the requester is authorized.

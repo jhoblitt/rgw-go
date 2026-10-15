@@ -351,6 +351,30 @@ var _ = Describe("put_obj", func() {
 			Entry("SSE in the query string in another case", "/plain/k?X-Amz-Server-Side-Encryption-Customer-Key=a2V5"),
 		),
 	)
+	DescribeTable("stores a write naming encryption under another meta prefix, an ordinary header, and stores no attr of it",
+		func(ctx SpecContext, target string, hdr ...string) {
+			rec := w.send(w.alice, http.MethodPut, target, "x", hdr...)
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			st := w.stat(ctx, "k")
+			Expect(st.Exists).To(BeTrue())
+			Expect(st.Attrs).NotTo(HaveKey(HavePrefix(meta.AttrPrefix + "x-amz-")))
+		},
+		otherPrefixSSEEntries("/plain/k"),
+	)
+	DescribeTable("stores no meta, ACL or tags from headers under another meta prefix, which are ordinary headers",
+		func(ctx SpecContext, prefix string) {
+			rec := w.send(w.alice, http.MethodPut, "/plain/k", "hello",
+				prefix+"Meta-Foo", "bar", prefix+"Acl", "public-read", prefix+"Tagging", "a=b")
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			st := w.stat(ctx, "k")
+			Expect(st.Attrs).NotTo(HaveKey(HavePrefix(meta.AttrPrefix+"x-amz-")), "no x_meta_map name is stored")
+			Expect(st.Attrs).NotTo(HaveKey(tags.Attr))
+			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrACL, encodeACL(acl.DefaultPolicy(meta.UserOwner(w.alice.Info.UserID), "Alice"))))
+			head := w.send(w.alice, http.MethodHead, "/plain/k", "")
+			Expect(head.Header()).NotTo(haveHeaderAnyCase("x-amz-meta-foo"))
+		},
+		otherPrefixEntries(),
+	)
 	It("refuses a write to a bucket with a default encryption with NotImplemented once the requester is authorized", func(ctx SpecContext) {
 		w.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
 		expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x"), 501, "NotImplemented")
@@ -424,23 +448,42 @@ var _ = Describe("put_obj", func() {
 	})
 })
 
-// ssePrefixes is init_meta_info's meta prefixes as a client spells them,
-// each rewritten to x-amz- (rgw_common.cc:413-420 at v19.2.6, :426-433 at
-// v20.2.4).
-var ssePrefixes = []string{"X-Amz-", "X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"}
-
-// sseEntries is one entry per meta prefix for SSE-S3, SSE-KMS, SSE-C and a
-// copy source's SSE-C key, each a request to target.
+// sseEntries is one entry each for SSE-S3, SSE-KMS, SSE-C and a copy
+// source's SSE-C key, each a request to target.
 func sseEntries(target string) []TableEntry {
+	return []TableEntry{
+		Entry("SSE-S3", target, "X-Amz-Server-Side-Encryption", "AES256"),
+		Entry("SSE-KMS", target, "X-Amz-Server-Side-Encryption", "aws:kms", "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id", "key"),
+		Entry("SSE-C", target, "X-Amz-Server-Side-Encryption-Customer-Algorithm", "AES256",
+			"X-Amz-Server-Side-Encryption-Customer-Key", "a2V5", "X-Amz-Server-Side-Encryption-Customer-Key-Md5", "bWQ1"),
+		Entry("a copy source's SSE-C key", target, "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key", "a2V5"),
+	}
+}
+
+// otherPrefixes are the meta prefixes beside X-Amz- that radosgw's
+// init_meta_info files under x-amz- names (rgw_common.cc:413-420 at v19.2.7,
+// :426-433 at v20.2.4) and rgw-go reads as ordinary headers.
+var otherPrefixes = []string{"X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"}
+
+func otherPrefixEntries() []TableEntry {
+	entries := make([]TableEntry, 0, len(otherPrefixes))
+	for _, p := range otherPrefixes {
+		entries = append(entries, Entry(p, p))
+	}
+	return entries
+}
+
+// otherPrefixSSEEntries is one entry per prefix of otherPrefixes, a request
+// to target carrying under it the headers of SSE-S3, SSE-KMS, SSE-C and a
+// copy source's SSE-C key.
+func otherPrefixSSEEntries(target string) []TableEntry {
 	var entries []TableEntry
-	for _, p := range ssePrefixes {
-		entries = append(entries,
-			Entry("SSE-S3 under "+p, target, p+"Server-Side-Encryption", "AES256"),
-			Entry("SSE-KMS under "+p, target, p+"Server-Side-Encryption", "aws:kms", p+"Server-Side-Encryption-Aws-Kms-Key-Id", "key"),
-			Entry("SSE-C under "+p, target, p+"Server-Side-Encryption-Customer-Algorithm", "AES256",
-				p+"Server-Side-Encryption-Customer-Key", "a2V5", p+"Server-Side-Encryption-Customer-Key-Md5", "bWQ1"),
-			Entry("a copy source's SSE-C key under "+p, target, p+"Copy-Source-Server-Side-Encryption-Customer-Key", "a2V5"),
-		)
+	for _, p := range otherPrefixes {
+		entries = append(entries, Entry("under "+p, target,
+			p+"Server-Side-Encryption", "aws:kms", p+"Server-Side-Encryption-Aws-Kms-Key-Id", "key",
+			p+"Server-Side-Encryption-Customer-Algorithm", "AES256",
+			p+"Server-Side-Encryption-Customer-Key", "a2V5", p+"Server-Side-Encryption-Customer-Key-Md5", "bWQ1",
+			p+"Copy-Source-Server-Side-Encryption-Customer-Key", "a2V5"))
 	}
 	return entries
 }

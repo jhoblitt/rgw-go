@@ -106,6 +106,17 @@ var _ = Describe("copy_obj", func() {
 		},
 		sseEntries("/plain/dst"),
 	)
+	DescribeTable("copies a request naming encryption under another meta prefix, an ordinary header, and stores no attr of it",
+		func(ctx SpecContext, target string, hdr ...string) {
+			rec := w.send(w.alice, http.MethodPut, target, "", copyFrom("/plain/src", append(hdr, "X-Amz-Metadata-Directive", "REPLACE")...)...)
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			st := w.stat(ctx, "dst")
+			Expect(st.Exists).To(BeTrue())
+			Expect(st.Attrs).NotTo(HaveKey(HavePrefix(meta.AttrPrefix+"x-amz-server-side-")), "the request's attrs under REPLACE")
+			Expect(st.Attrs).NotTo(HaveKey(HavePrefix(meta.AttrPrefix + "x-amz-copy-source-server-side-")))
+		},
+		otherPrefixSSEEntries("/plain/dst"),
+	)
 	It("refuses a copy into a bucket with a default encryption with NotImplemented once the requester is authorized", func(ctx SpecContext) {
 		w.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
 		expectError(w.send(w.alice, http.MethodPut, "/plain/dst", "", copyFrom("/plain/src")...), 501, "NotImplemented")

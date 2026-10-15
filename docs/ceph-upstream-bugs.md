@@ -1083,8 +1083,10 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, security-relevant, found by us: a gap in the
   CVE-2026-54330 fix (GHSA-rmjq-ffrm-j6vj), which refuses an unsigned
   `x-amz-*` header but not one that radosgw renames to an `x-amz-*` name and
-  then treats as one. Unfixed at v19.2.7, v20.2.4 and main. Unreproduced:
-  derived from the source.
+  then treats as one. Unfixed at v19.2.7, v20.2.4 and main. Reproduced for
+  an unsigned `X-Goog-Meta-Foo` on a presigned PUT on running radosgw at
+  v19.2.7 and v20.2.4, 2026-10-14 (s3-tests, below); the rest is derived
+  from the source.
 - **Evidence:**
   - Unless `rgw_sigv4_insecure` is set, `get_v4_canonical_headers` refuses
     an unsigned header only when its environment name starts `HTTP_X_AMZ_`
@@ -1130,7 +1132,7 @@ Every new entry adds its row to this table, in document order.
     signed headers
     ([nginx-default.conf:13-56](https://github.com/ceph/ceph/blob/v19.2.7/examples/rgw/rgw-cache/nginx-default.conf#L13-L56),
     and nginx-noprefetch.conf and nginx-slicing.conf alike), unless it lets
-    that one name go unsigned on a read, as rgw-go does.
+    that one name go unsigned on a read.
 - **Impact:** the holder of a SigV4 signature, the user of a presigned PUT
   URL among them, can add such headers unsigned, and through them alter
   headers the signer did sign. An `X-Goog-Meta-*` header stores metadata
@@ -1142,38 +1144,28 @@ Every new entry adds its row to this table, in document order.
   readers of `x_meta_map` do with a renamed name was not traced.
 - **Releases:** every release with the CVE-2026-54330 check: v19.2.6,
   v19.2.7 and v20.2.4, and main at d8552606423.
-- **rgw-go:** closes the gap, on both releases (`docs/exclusions.md`,
-  "SigV4 refuses an unsigned header that radosgw renames to `x-amz-*`").
-  Unless `rgw_sigv4_insecure` is set, `canonicalHeadersV4`
-  (`internal/auth/sigv4.go`) refuses with 403 AccessDenied a header under
-  any of the seven prefixes that SignedHeaders does not list, header-signed
-  or presigned. Two names may still go unsigned (`mayGoUnsigned`):
-  `x-amz-content-sha256`, and rgw-cache's `x-rgw-auth` on a GET or HEAD
-  alone, never on a write, which would store it. Its prefix set is
-  `amzHeaderPrefixes` (`internal/auth/request.go`), which a spec
-  (`internal/auth/metaprefixes_test.go`) pins to the tables `headerMeta`
+- **rgw-go:** does not reproduce it, on both releases: its S3 API reads,
+  signs and stores `X-Amz-` headers alone, so a header under the six other
+  prefixes is an ordinary header, which stores nothing, sets no encryption
+  and need not be signed (`docs/exclusions.md`, "The S3 API reads X-Amz-
+  headers only"). `canonicalHeadersV4` (`internal/auth/sigv4.go`) keeps
+  radosgw's rule: unless `rgw_sigv4_insecure` is set, every `x-amz-*`
+  header but `x-amz-content-sha256` must be signed. `headerMeta`
   (`internal/s3/requestattrs.go`) and `cryptAttr` (`internal/authz/env.go`)
-  rename by, in the same order as radosgw. s3-tests'
-  `test_sigv4_presigned_put_xgoog_meta_unsigned`, in
-  [jhoblitt/ceph#4](https://github.com/jhoblitt/ceph/pull/4) for
-  jhoblitt/ceph's `rgw-go-s3tests` branch, sends a presigned PUT with an
-  unsigned `X-Goog-Meta-Foo`, which rgw-go refuses and radosgw stores. A
-  header that passes, signed or exempt or under `rgw_sigv4_insecure`, is
-  renamed as radosgw renames it:
-  - PutObject refuses a write that asks for encryption, a renamed SSE
-    header included, with 501 NotImplemented before it authorizes
-    (`refuseEncryption`, internal/s3/putobject.go:87).
-  - CreateMultipartUpload reads its parameters only once authorized
-    (internal/s3/multipart.go:54-61), so there a renamed SSE header feeds
-    the `s3:x-amz-server-side-encryption*` condition keys (`cryptKeys`,
-    internal/authz/env.go:205-212) before the 501. Nothing is stored.
-  - The meta form is stored, and a renamed meta value is comma-appended to
-    a signed one of the same name, as in radosgw (`headerMeta`'s join,
-    which internal/s3/requestattrs_test.go:71-80 pins for `X-Amz-Meta-Foo`
-    and `X-Goog-Meta-Foo`).
+  read `X-Amz-` alone, and rgw-cache's `x-rgw-auth` goes unsigned on any
+  method, as nothing reads it. s3-tests'
+  `test_sigv4_presigned_put_xgoog_meta_unsigned`, added by
+  [jhoblitt/ceph#4](https://github.com/jhoblitt/ceph/pull/4) and revised by
+  [jhoblitt/ceph#8](https://github.com/jhoblitt/ceph/pull/8), the PR into
+  `rgw-go-s3tests`, sends a presigned PUT with an unsigned
+  `X-Goog-Meta-Foo` and passes when no metadata is stored from it. Run against the clusters of both releases on
+  2026-10-14, rgw-go stored the PUT with no metadata, and radosgw stored the
+  unsigned header's value as `x-amz-meta-foo`.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit F, task F4, 2026-10-14, in the threat analysis of
-  the SigV4 relaxation; derived from the source, not reproduced.
+  the SigV4 relaxation; derived from the source, and the meta case
+  reproduced on running radosgw v19.2.7 and v20.2.4 on 2026-10-14 (task
+  F18).
 
 ## radosgw's SigV2 signature survives moving a signed x-amz directive under another meta prefix
 
@@ -1329,69 +1321,25 @@ Every new entry adds its row to this table, in document order.
     `private` for the first and `public-read` for the second.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and, for the copy
   source, on running clusters; earlier releases were not checked.
-- **rgw-go:** closes the gap, on both releases (`docs/exclusions.md`,
-  "SigV2 refuses a directive under another meta prefix"). `amzHeadersV2`
-  (`internal/auth/sigv2.go`) still signs a renamed header under its
-  `x-amz-` name, as radosgw does, but `relabelledDirective` refuses with
-  403 AccessDenied a SigV2 request, header-signed or presigned, carrying
-  under one of the six other prefixes a header whose `x-amz-` name begins
-  with an entry of `rawAmzDirectives`, the names the handlers read from
-  `X-Amz-` alone:
-  - the copy source, its range and its conditionals, in the PUT routing,
-    the copy and UploadPartCopy (internal/s3/putobject.go:44,
-    internal/s3/request.go:227-228 and :274, internal/s3/copyobject.go:37
-    and :45-48, internal/s3/multipart.go:142-150) and in the authorizer
-    (internal/authz/env.go:258-259 and :266);
-  - the canned ACL and the grants, these by `has_acl_header`'s prefix
-    `x-amz-grant` (internal/s3/putobject.go:51,
-    internal/s3/multipart.go:140, internal/authz/write.go:118, :175,
-    :200-204 and :211, internal/authz/env.go:293, :300-304 and :325);
-  - the storage class (internal/s3/putobject.go:51,
-    internal/s3/copyobject.go:44, internal/s3/multipart.go:60 and :140,
-    internal/s3/bucket.go:108);
-  - the tagging (internal/s3/putobject.go:90, internal/s3/multipart.go:88
-    and :198, internal/authz/env.go:280) and the object lock
-    (internal/s3/putobject.go:193 and :204-206);
-  - a copy's metadata directive (internal/s3/copyobject.go:91,
-    internal/authz/env.go:268);
-  - a read's `x-amz-server-side-encryption` and SSE-C key
-    (internal/s3/getobject.go:110 and :121-123,
-    internal/s3/getobjattrs.go:19 and :23-25), so by prefix every
-    server-side-encryption name, which the writes read under every prefix
-    and refuse;
-  - GetObjectAttributes' parameters (internal/s3/getobjattrs.go:53, :60
-    and :67) and a delete's conditions (internal/s3/deleteobject.go:21,
-    :23 and :24);
-  - CreateBucket's object lock (internal/s3/bucket.go:116), which radosgw
-    reads from `x_meta_map` instead, so rgw-go ignores the renamed form
-    under SigV4, where radosgw honours it;
-  - the expected bucket owner and the request payer
-    (internal/authz/evaluator.go:462 and :571), and the session token
-    behind `sts:authentication` (internal/authz/env.go:92).
-
-  rgw-go reads none of the other names above from `X-Amz-` alone: it acts
-  on neither `x-amz-cache` nor `x-amz-confirm-remove-self-bucket-access`,
-  nor checks or returns a checksum, and stores an `x_meta_map` name among
-  them, or leaves it out, alike under any prefix. A spec
-  (`internal/auth/rawdirectives_test.go`) parses every package under
-  internal/ and cmd/ and fails on an `x-amz-` header name, the value of a
-  constant or the constant start of a concatenation among them, that a
-  request read or any other use but a header write takes, unless an entry
-  begins it or the spec lists that use, by package, declaration and kind,
-  as no raw read. The refusal looks at the header's name alone, whatever
-  else the request carries, and comes once the request has authenticated,
-  so a request radosgw refuses for its credentials, signature or date gets
-  radosgw's error. Moved off `X-Amz-`, the request is refused. Moved onto
-  it, the resent request is the one a signer of the `X-Amz-` header sends,
-  over the same string to sign, and cannot be told from it, but the
-  signer's own request is refused, beside an `X-Amz-` one or not, which
-  also refuses both requests of the `X-Account-` swap. Meta under any
-  prefix still passes, as does a name no handler reads raw. s3-tests'
+- **rgw-go:** does not reproduce it, on both releases: SigV2's string to
+  sign names the `x-amz-` headers alone (`amzHeadersV2`,
+  `internal/auth/sigv2.go`), and nothing reads a header under the six
+  other prefixes (`docs/exclusions.md`, "The S3 API reads X-Amz- headers
+  only"). A signed header moved between `X-Amz-` and another prefix, either
+  way, changes the string to sign and fails with 403 SignatureDoesNotMatch,
+  and so does each request of the `X-Account-` swap; CreateBucket's object
+  lock reads `X-Amz-` alone, where radosgw honours the renamed form too.
+  Specs in `internal/auth/sigv2_test.go` move twelve names the handlers
+  read, the copy source, the ACL, the tagging, the object lock and meta
+  among them, both ways under each of the six prefixes, `internal/auth/verifier_test.go` moves the
+  copy source, and `internal/auth/createbucketprefix_test.go` sends
+  CreateBucket's object lock under each of them, on both schemes. s3-tests'
   `test_sigv2_signed_copy_source_moved_to_xgoog`
   ([jhoblitt/ceph#5](https://github.com/jhoblitt/ceph/pull/5)) resends a
   signed SigV2 CopyObject's `X-Amz-Copy-Source` as `X-Goog-Copy-Source`.
-  Run on 2026-10-14 against the clusters of both releases, rgw-go refused
-  it, and radosgw answered 200 and logged the request as `op=put_obj` at
+  Run against the clusters of both releases on 2026-10-14, rgw-go answered
+  it 403 SignatureDoesNotMatch and wrote no object, and radosgw answered
+  200, as in task F15's run, which radosgw logged as `op=put_obj` at
   v20.2.4.
 - **Upstream:** pending: rgw-bug-reproduction confirmed it in triage on
   2026-10-14.
@@ -12783,12 +12731,14 @@ Every new entry adds its row to this table, in document order.
   object attrs" is the case where a stored header is a credential.
 - **Releases:** v19.2.6 and v20.2.4, with the shorter blocklist at
   v19.2.6.
-- **rgw-go:** reproduces it with v20.2.4's blocklist on both releases, and
-  leaves out `x-amz-security-token` too (`requestAttrs`,
-  `internal/s3/requestattrs.go`; `docs/exclusions.md`, "Request headers
-  stored as attrs follow Tentacle's blocklist, and the session token is
-  never stored"), so on a Squid zone rgw-go's heads lack the
-  `x-amz-content-sha256` and `x-amz-date` attrs radosgw's carry.
+- **rgw-go:** reproduces it for the `X-Amz-` headers, with v20.2.4's
+  blocklist on both releases, and leaves out `x-amz-security-token` too
+  (`requestAttrs`, `internal/s3/requestattrs.go`; `docs/exclusions.md`,
+  "Request headers stored as attrs follow Tentacle's blocklist, and the
+  session token is never stored"), so on a Squid zone rgw-go's heads lack
+  the `x-amz-content-sha256` and `x-amz-date` attrs radosgw's carry. It
+  stores no header under the six other meta prefixes (`docs/exclusions.md`,
+  "The S3 API reads X-Amz- headers only").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit W, Task 11, writing `requestAttrs`; registered and
   reproduced in unit W, Task 12, 2026-10-08.

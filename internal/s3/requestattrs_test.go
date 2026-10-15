@@ -23,7 +23,7 @@ var _ = Describe("requestAttrs", func() {
 		return &op.Request{Header: h, Query: q, Env: &op.Env{Conf: cephconf.NewOptions(conf)}}
 	}
 
-	It("maps the generic headers and every header under a meta prefix, NUL-terminated", func() {
+	It("maps the generic headers and every X-Amz- header, NUL-terminated, and no header under another meta prefix", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{
 			"Content-Type": {"text/plain"}, "Content-Language": {"en"}, "Expires": {"Thu, 01 Jan 2026 00:00:00 GMT"},
 			"Cache-Control": {"no-cache"}, "Content-Disposition": {"inline"}, "Content-Encoding": {"gzip"}, "X-Robots-Tag": {"noindex"},
@@ -37,10 +37,7 @@ var _ = Describe("requestAttrs", func() {
 			meta.AttrExpires: []byte("Thu, 01 Jan 2026 00:00:00 GMT\x00"), meta.AttrCacheControl: []byte("no-cache\x00"),
 			meta.AttrContentDisp: []byte("inline\x00"), meta.AttrContentEnc: []byte("gzip\x00"), meta.AttrXRobotsTag: []byte("noindex\x00"),
 			"user.rgw.x-amz-meta-foo": []byte("bar\x00"), "user.rgw.x-amz-acl": []byte("private\x00"),
-			"user.rgw.x-amz-meta-baz": []byte("q\x00"), "user.rgw.x-amz-thing": []byte("r\x00"),
-			"user.rgw.x-amz-meta-o": []byte("o\x00"), "user.rgw.x-amz-meta-c": []byte("c\x00"), "user.rgw.x-amz-meta-a": []byte("a\x00"),
-			"user.rgw.x-amz-d": []byte("d\x00"),
-		}), "rgw_common.cc:413-464 and rgw_op.h:2171-2233 at v19.2.6: each prefix becomes x-amz-")
+		}), "rgw_op.h:2171-2233 at v19.2.6; radosgw also stores the six other meta prefixes under x-amz-, rgw_common.cc:413-464 at v19.2.7")
 	})
 	It("stores none of the credentials, digests, dates and storage class v20.2.4 lists, nor the session token, on either release", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{
@@ -54,11 +51,11 @@ var _ = Describe("requestAttrs", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(BeEmpty(), "rgw_op.h:2344-2357 at v20.2.4; v19.2.6 lists only the first three and the storage class")
 	})
-	It("stores no name that asks for encryption, under any meta prefix", func() {
+	It("stores no name that asks for encryption", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{
-			"X-Rgw-Server-Side-Encryption": {"AES256"}, "X-Goog-Server-Side-Encryption-Customer-Key": {"k"},
-			"X-Amz-Server-Side-Encryption-Bucket-Key-Enabled": {"true"}, "X-Object-Server-Side-Encryptionx": {"v"},
-			"X-Account-Copy-Source-Server-Side-Encryption-Customer-Key": {"k"},
+			"X-Amz-Server-Side-Encryption": {"AES256"}, "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id": {"k"},
+			"X-Amz-Server-Side-Encryption-Bucket-Key-Enabled": {"true"}, "X-Amz-Server-Side-Enx": {"v"},
+			"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm": {"AES256"},
 		}, nil), true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(BeEmpty())
@@ -68,15 +65,22 @@ var _ = Describe("requestAttrs", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(Equal(map[string][]byte{"user.rgw.x-amz-meta-a": []byte("2\x00")}))
 	})
+	// internal/auth's sigv2_test.go signs "2" for the same map, so the value
+	// stored is the line signed.
+	It("keeps one value of spellings of one name that the header map keeps apart, the last in byte order", func() {
+		attrs, err := s3.RequestAttrsForTest(req(http.Header{"x-amz-meta-q": {"2"}, "X-Amz-Meta-Q": {"0", "1 "}}, nil), true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(attrs).To(Equal(map[string][]byte{"user.rgw.x-amz-meta-q": []byte("2\x00")}))
+	})
 	It("joins the values of names that meet, header before query, trimming the earlier value's trailing white space", func() {
 		attrs, err := s3.RequestAttrsForTest(req(
-			http.Header{"X-Amz-Meta-Foo": {"a "}, "X-Goog-Meta-Foo": {"b\t"}},
+			http.Header{"X-Amz-Meta-Foo": {"a "}, "X-Goog-Meta-Foo": {"b\t"}, "X-Account-Meta-Foo": {"z"}},
 			url.Values{"x-amz-meta-foo": {"c"}, "X-AMZ-META-Q": {"v"}, "other": {"x"}},
 		), true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(Equal(map[string][]byte{
-			"user.rgw.x-amz-meta-foo": []byte("a,b,c\x00"), "user.rgw.x-amz-meta-q": []byte("v\x00"),
-		}), "init_meta_info's join in the environment's order, then map_qs_metadata, rgw_rest_s3.cc:2581-2595")
+			"user.rgw.x-amz-meta-foo": []byte("a,c\x00"), "user.rgw.x-amz-meta-q": []byte("v\x00"),
+		}), "map_qs_metadata's join, rgw_rest_s3.cc:2581-2595, with no other meta prefix's value, which radosgw joins first")
 	})
 	It("leaves the query string out for a copy, which reads no map_qs_metadata", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{}, url.Values{"x-amz-meta-q": {"v"}}), false)

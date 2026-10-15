@@ -256,9 +256,8 @@ var _ = Describe("A presigned SigV2 request's signed meta and session token, whe
 		})
 	})
 
-	// The refusal comes once the request has authenticated, as
-	// relabelledDirective's does, so a request radosgw refuses earlier gets
-	// radosgw's error.
+	// The refusal comes once the request has authenticated, so a request
+	// radosgw refuses earlier gets radosgw's error.
 	DescribeTable("refuses meta the headers and the query do not make one set of, with radosgw's error first",
 		func(ctx SpecContext, build func(context.Context) *http.Request, want OmegaMatcher) {
 			_, err := v.Authenticate(ctx, build(ctx), anyPayload)

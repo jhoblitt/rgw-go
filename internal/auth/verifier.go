@@ -46,9 +46,8 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 // engine. payloads is the dispatched route's forms: a signed payload in a
 // form outside them is ErrNotImplemented, answered before the access key is
 // looked up, where get_auth_data_v4 throws it. A SigV2 request that has
-// authenticated is then refused if it carries a directive under another meta
-// prefix (relabelledDirective) or a sub-resource value that spells a later
-// one (packedSubresourceV2), and a presigned one if its Expires holds a line
+// authenticated is then refused if a sub-resource value spells a later one
+// (packedSubresourceV2), and a presigned one if its Expires holds a line
 // break (expiresLineBreak) or its signed meta does not make one set across
 // its headers and its query (queryMetaV2), rgw-go refusals radosgw does not
 // make; the query's part of that set is the result's QueryMeta. Every result
@@ -100,9 +99,6 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	}
 	var queryMeta map[string]string
 	if ver == versionV2 {
-		if refused := relabelledDirective(rv); refused != nil {
-			return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
-		}
 		if refused := packedSubresourceV2(rv); refused != nil {
 			return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
 		}

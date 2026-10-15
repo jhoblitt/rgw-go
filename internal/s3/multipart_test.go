@@ -420,8 +420,16 @@ var _ = Describe("multipart handlers", func() {
 				Expect(w.uploads(ctx)).To(BeEmpty())
 			},
 			append(sseEntries("/plain/k?uploads"),
-				Entry("a name init_meta_info files under its 20-byte crypt prefix", "/plain/k?uploads", "X-Rgw-Server-Side-Enx", "1"),
+				Entry("a name init_meta_info files under its 20-byte crypt prefix", "/plain/k?uploads", "X-Amz-Server-Side-Enx", "1"),
 			),
+		)
+		DescribeTable("creates an upload whose request names encryption under another meta prefix, an ordinary header",
+			func(ctx SpecContext, target string, hdr ...string) {
+				rec := w.send(w.alice, http.MethodPost, target, "", hdr...)
+				Expect(rec.Code).To(Equal(200), rec.Body.String())
+				Expect(w.uploads(ctx)).To(HaveLen(1))
+			},
+			otherPrefixSSEEntries("/plain/k?uploads"),
 		)
 		It("does not read SSE from a CreateMultipartUpload's query, which no map_qs_metadata reads", func(ctx SpecContext) {
 			Expect(w.send(w.alice, http.MethodPost, "/plain/k?uploads&x-amz-server-side-encryption=AES256", "").Code).To(Equal(200))
@@ -434,9 +442,24 @@ var _ = Describe("multipart handlers", func() {
 				Expect(w.parts(ctx, "k", id)).To(BeEmpty())
 			},
 			append(sseEntries("/plain/k?uploadId=ID&partNumber=1"),
-				Entry("a name init_meta_info files under its 20-byte crypt prefix", "/plain/k?uploadId=ID&partNumber=1", "X-Rgw-Server-Side-Enx", "1"),
+				Entry("a name init_meta_info files under its 20-byte crypt prefix", "/plain/k?uploadId=ID&partNumber=1", "X-Amz-Server-Side-Enx", "1"),
 				Entry("SSE in the query string, which map_qs_metadata reads", "/plain/k?uploadId=ID&partNumber=1&x-amz-server-side-encryption=AES256"),
 			),
+		)
+		DescribeTable("stores a part, uploaded or copied, whose request names encryption under another meta prefix, an ordinary header",
+			func(ctx SpecContext, target string, hdr ...string) {
+				for _, copied := range []bool{false, true} {
+					id := w.initUpload(w.alice, "/plain/k")
+					body, all := "x", hdr
+					if copied {
+						body, all = "", append([]string{"Content-Length", "0", "X-Amz-Copy-Source", "/plain/src"}, hdr...)
+					}
+					rec := w.send(w.alice, http.MethodPut, strings.ReplaceAll(target, "ID", id), body, all...)
+					Expect(rec.Code).To(Equal(200), "copied %t: %s", copied, rec.Body.String())
+					Expect(w.parts(ctx, "k", id)).To(HaveLen(1), "copied %t", copied)
+				}
+			},
+			otherPrefixSSEEntries("/plain/k?uploadId=ID&partNumber=1"),
 		)
 		DescribeTable("refuses an UploadPartCopy that asks for encryption or names its source's key with NotImplemented",
 			func(ctx SpecContext, hdr ...string) {
@@ -447,7 +470,7 @@ var _ = Describe("multipart handlers", func() {
 			},
 			Entry("SSE-C", "X-Amz-Server-Side-Encryption-Customer-Key", "a2V5"),
 			Entry("the source's SSE-C key", "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key", "a2V5"),
-			Entry("the source's SSE-C key under another prefix", "X-Goog-Copy-Source-Server-Side-Encryption-Customer-Algorithm", "AES256"),
+			Entry("the source's SSE-C algorithm", "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm", "AES256"),
 		)
 		It("refuses CreateMultipartUpload and UploadPart into a bucket with a default encryption once the requester is authorized", func(ctx SpecContext) {
 			id := w.initUpload(w.alice, "/plain/k")

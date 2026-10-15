@@ -110,13 +110,9 @@ const (
 	v2Expires = "1441000000"
 )
 
-// relabelledCopy is a copy source moved off X-Amz-.
-var relabelledCopy = map[string]string{"X-Goog-Copy-Source": "b/src"}
-
-// v2Put is a SigV2 PUT of /b/k carrying hdr, a copy source under some meta
-// prefix, signed for key with secret over the string to sign of a copy of
-// b/src, which names the copy source by its x-amz- name whatever its prefix:
-// on the header route at the Date when, or presigned until the Expires when.
+// v2Put is a SigV2 PUT of /b/k carrying hdr, signed for key with secret over
+// the string to sign of a copy of b/src that X-Amz-Copy-Source names: on the
+// header route at the Date when, or presigned until the Expires when.
 func v2Put(ctx context.Context, presigned bool, key, secret, when string, hdr map[string]string) *http.Request {
 	h := hmac.New(sha1.New, []byte(secret))
 	h.Write([]byte("PUT\n\n\n" + when + "\nx-amz-copy-source:b/src\n/b/k"))
@@ -201,14 +197,15 @@ var _ = Describe("Verifier", func() {
 		Entry("unsigned x-amz header", func(r *http.Request) { r.Header.Set("X-Amz-Meta-Late", "x") }, op.ErrAccessDenied),
 	)
 
-	It("refuses an unsigned header radosgw renames to x-amz, naming it", func(ctx SpecContext) {
+	It("authenticates a SigV4 request carrying an unsigned header under another meta prefix, which is an ordinary header", func(ctx SpecContext) {
 		req := signedAs(ctx, newGet(ctx, "http://s3.example.com/"), "alice")
 		req.Header.Set("X-Goog-Meta-Late", "x")
-		_, err := v.Authenticate(ctx, req, anyPayload)
-		Expect(err).To(SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-meta-late is not signed"))))
+		res, err := v.Authenticate(ctx, req, anyPayload)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
 	})
 
-	It("authenticates rgw-cache's authentication subrequest, an unsigned X-Rgw-Auth on a GET, as its signer", func(ctx SpecContext) {
+	It("authenticates rgw-cache's authentication subrequest, an unsigned X-Rgw-Auth, as its signer, and a write carrying one", func(ctx SpecContext) {
 		req := signedAs(ctx, newGet(ctx, "http://s3.example.com/b/k"), "alice")
 		req.Header.Set("X-Rgw-Auth", "yes")
 		res, err := v.Authenticate(ctx, req, anyPayload)
@@ -217,8 +214,9 @@ var _ = Describe("Verifier", func() {
 
 		put := signedAs(ctx, newBodyRequest(ctx, http.MethodPut, "http://s3.example.com/b/k", ""), "alice")
 		put.Header.Set("X-Rgw-Auth", "yes")
-		_, err = v.Authenticate(ctx, put, anyPayload)
-		Expect(err).To(SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-rgw-auth is not signed"))), "on a PUT")
+		res, err = v.Authenticate(ctx, put, anyPayload)
+		Expect(err).NotTo(HaveOccurred(), "on a PUT")
+		Expect(res.Identity.AccessKey).To(Equal("AKALICE"), "on a PUT")
 	})
 
 	It("denies everything without a backend, and every signed request when presigned URLs are disabled", func(ctx SpecContext) {
@@ -303,60 +301,40 @@ var _ = Describe("Verifier", func() {
 		Expect(err).To(MatchError(op.ErrInvalidArgument))
 	})
 
-	// rgw-go refuses a SigV2 directive under another meta prefix only once the
-	// request has authenticated, so that a request radosgw refuses earlier
-	// gets radosgw's error.
-	DescribeTable("answers a SigV2 request carrying a directive under another meta prefix with radosgw's error first",
-		func(ctx SpecContext, build func(context.Context) *http.Request, want OmegaMatcher) {
-			_, err := v.Authenticate(ctx, build(ctx), anyPayload)
-			Expect(err).To(want)
+	// radosgw signs a header under another meta prefix under its x-amz- name,
+	// so a copy's signature survives its copy source's move there.
+	DescribeTable("answers SignatureDoesNotMatch to a SigV2 copy whose signed copy source is resent under another meta prefix, on both routes",
+		func(ctx SpecContext, prefix string) {
+			moved := map[string]string{prefix + "Copy-Source": "b/src"}
+			for _, req := range []*http.Request{
+				v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, moved),
+				v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, moved),
+			} {
+				_, err := v.Authenticate(ctx, req, anyPayload)
+				Expect(err).To(MatchError(op.ErrSignatureDoesNotMatch), "%s", req.URL)
+			}
 		},
-		Entry("a wrong signature on the header route", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, false, "AKALICE", "not-the-secret", v2Date, relabelledCopy)
-		}, MatchError(op.ErrSignatureDoesNotMatch)),
-		Entry("a wrong signature on a presigned URL", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, true, "AKALICE", "not-the-secret", v2Expires, relabelledCopy)
-		}, MatchError(op.ErrSignatureDoesNotMatch)),
-		Entry("an unknown key on the header route", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, false, "AKNOBODY", "secret-alice", v2Date, relabelledCopy)
-		}, MatchError(op.ErrInvalidAccessKeyID)),
-		Entry("an unknown key on a presigned URL", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, true, "AKNOBODY", "secret-alice", v2Expires, relabelledCopy)
-		}, MatchError(op.ErrInvalidAccessKeyID)),
-		Entry("a skewed date on the header route", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, false, "AKALICE", "secret-alice", "Sun, 30 Aug 2015 10:00:00 GMT", relabelledCopy)
-		}, MatchError(op.ErrRequestTimeTooSkewed)),
-		Entry("an expired presigned URL, which has no skew check", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, true, "AKALICE", "secret-alice", "1440000000", relabelledCopy)
-		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("expired")))),
-		Entry("an Authorization without a colon", func(ctx context.Context) *http.Request {
-			req := v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, relabelledCopy)
-			req.Header.Set("Authorization", "AWS x")
-			return req
-		}, MatchError(op.ErrInvalidArgument)),
-		Entry("a presigned URL with an empty Signature", func(ctx context.Context) *http.Request {
-			req := httptest.NewRequestWithContext(ctx, http.MethodPut,
-				"http://s3.example.com/b/k?AWSAccessKeyId=AKALICE&Expires="+v2Expires+"&Signature=", nil)
-			req.Header.Set("X-Goog-Copy-Source", "b/src")
-			return req
-		}, MatchError(op.ErrInvalidArgument)),
-		Entry("a request that authenticates on the header route", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, relabelledCopy)
-		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-copy-source names x-amz-copy-source")))),
-		Entry("a presigned URL that authenticates", func(ctx context.Context) *http.Request {
-			return v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, relabelledCopy)
-		}, SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring("x-goog-copy-source names x-amz-copy-source")))),
+		Entry("X-Goog-", "X-Goog-"),
+		Entry("X-Dho-", "X-Dho-"),
+		Entry("X-Rgw-", "X-Rgw-"),
+		Entry("X-Object-", "X-Object-"),
+		Entry("X-Container-", "X-Container-"),
+		Entry("X-Account-", "X-Account-"),
 	)
 
-	It("authenticates the same SigV2 requests with the copy source under X-Amz-, on both routes", func(ctx SpecContext) {
-		amz := map[string]string{"X-Amz-Copy-Source": "b/src"}
-		for _, req := range []*http.Request{
-			v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, amz),
-			v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, amz),
+	It("authenticates the same SigV2 requests with the copy source under X-Amz-, beside unsigned directives under another meta prefix, on both routes", func(ctx SpecContext) {
+		for _, hdr := range []map[string]string{
+			{"X-Amz-Copy-Source": "b/src"},
+			{"X-Amz-Copy-Source": "b/src", "X-Goog-Copy-Source": "b/other", "X-Account-Acl": "public-read", "X-Rgw-Tagging": "k=v"},
 		} {
-			res, err := v.Authenticate(ctx, req, anyPayload)
-			Expect(err).NotTo(HaveOccurred(), "%s", req.URL)
-			Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
+			for _, req := range []*http.Request{
+				v2Put(ctx, false, "AKALICE", "secret-alice", v2Date, hdr),
+				v2Put(ctx, true, "AKALICE", "secret-alice", v2Expires, hdr),
+			} {
+				res, err := v.Authenticate(ctx, req, anyPayload)
+				Expect(err).NotTo(HaveOccurred(), "%s %v", req.URL, hdr)
+				Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
+			}
 		}
 	})
 

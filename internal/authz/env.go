@@ -351,23 +351,13 @@ func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 	return ps
 }
 
-// metaPrefixes are the header prefixes init_meta_info maps to x-amz- names,
-// in the order it visits them: it walks the request's variables sorted by
-// name, so for one attribute the prefix sorting last wins
-// (rgw_common.cc:413-460 at v19.2.6, :426-473 at v20.2.4).
-var metaPrefixes = []string{"X-Account-", "X-Amz-", "X-Container-", "X-Dho-", "X-Goog-", "X-Object-", "X-Rgw-"}
-
-// cryptAttr is the crypt attribute "x-amz-"+name: the header under the last
-// metadata prefix carrying it, then, when withQuery, a query parameter of
-// that name in any case, the last in name order winning.
+// cryptAttr is the crypt attribute "x-amz-"+name: the X-Amz- header, then,
+// when withQuery, a query parameter of that name in any case, the last in
+// name order winning. radosgw's crypt attributes also take the header under
+// six other meta prefixes (rgw_common.cc:413-464 at v19.2.7, :426-477 at
+// v20.2.4), which rgw-go's S3 API does not read (docs/exclusions.md).
 func cryptAttr(r *op.Request, name string, withQuery bool) (string, bool) {
-	var val string
-	var found bool
-	for _, p := range metaPrefixes {
-		if v, ok := op.HeaderValue(r.Header, p+name); ok {
-			val, found = v, true
-		}
-	}
+	val, found := op.HeaderValue(r.Header, "X-Amz-"+name)
 	if !withQuery {
 		return val, found
 	}
