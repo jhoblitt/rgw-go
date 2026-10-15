@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at e8c83df. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at a52f352. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -13,7 +13,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 ```mermaid
 flowchart LR
   u_S["Shared<br/>3 tasks"]
-  u_F["F: floor 19.2.7<br/>17 tasks"]
+  u_F["F: floor 19.2.7<br/>18 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
@@ -83,6 +83,7 @@ flowchart LR
   t_F15["F15"]
   t_F16["F16"]
   t_F17["F17"]
+  t_F18["F18"]
   t_F2 --> t_F3
   t_F2 --> t_F4
   t_F3 --> t_F4
@@ -103,8 +104,8 @@ flowchart LR
   t_F3 --> t_F12
   t_F4 --> t_F13
   t_F13 --> t_F15
-  t_F15 --> t_F16
   t_F15 --> t_F17
+  t_F17 --> t_F18
   click t_F1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927" "F1: docs, the spec's Squid floor is v19.2.7"
   click t_F2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f2-docs-the-registry-at-v1927" "F2: docs, the registry at v19.2.7"
   click t_F3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f3-docs-the-exclusions-at-v1927" "F3: docs, the exclusions at v19.2.7"
@@ -122,6 +123,7 @@ flowchart LR
   click t_F15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f15-auth-sigv2-refuses-a-renamed-header-carrying-an-x-amz-directive" "F15: auth, SigV2 refuses a renamed header carrying an x-amz directive"
   click t_F16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f16-s3-createbucket-reads-its-object-lock-header-from-the-renamed-map" "F16: s3, CreateBucket reads its object lock header from the renamed map"
   click t_F17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f17-auth-a-sigv2-presigned-request-means-the-same-wherever-its-headerquery-split-falls" "F17: auth, a SigV2 presigned request means the same wherever its header/query split falls"
+  click t_F18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f18-auth-authz-and-s3-the-s3-api-reads-x-amz--headers-only" "F18: auth, authz and s3, the S3 API reads X-Amz- headers only"
 ```
 
 - [F1](F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927): docs, the spec's Squid floor is v19.2.7
@@ -141,6 +143,7 @@ flowchart LR
 - [F15](F-floor-19.2.7.md#task-f15-auth-sigv2-refuses-a-renamed-header-carrying-an-x-amz-directive): auth, SigV2 refuses a renamed header carrying an x-amz directive
 - [F16](F-floor-19.2.7.md#task-f16-s3-createbucket-reads-its-object-lock-header-from-the-renamed-map): s3, CreateBucket reads its object lock header from the renamed map
 - [F17](F-floor-19.2.7.md#task-f17-auth-a-sigv2-presigned-request-means-the-same-wherever-its-headerquery-split-falls): auth, a SigV2 presigned request means the same wherever its header/query split falls
+- [F18](F-floor-19.2.7.md#task-f18-auth-authz-and-s3-the-s3-api-reads-x-amz--headers-only): auth, authz and s3, the S3 API reads X-Amz- headers only
 
 ### V: versioning
 
