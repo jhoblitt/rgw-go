@@ -33,20 +33,27 @@ import (
 // it stale.
 
 // accountNameObj is the name redirect "name.<tenant>$<name>" in the account
-// pool (:92-100); the name keeps its case.
+// pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L92-L100);
+// the name keeps its case.
 func (s *Store) accountNameObj(tenant, name string) sysObj {
 	return sysObj{pool: s.zone.Params.AccountPool, oid: "name." + tenant + "$" + name}
 }
 
 // accountUsersObj is the account users index "users.<id>" in the account
-// pool (:52-58). An account's email redirect is emailIndexObj's: accounts
-// and users share users.email (:108-114).
+// pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L52-L58).
+// An account's email redirect is emailIndexObj's: accounts and users
+// share users.email
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L108-L114).
 func (s *Store) accountUsersObj(id string) sysObj {
 	return sysObj{pool: s.zone.Params.AccountPool, oid: "users." + id}
 }
 
-// redirect is RedirectObj (:117-121): a redirect object as read, the id it
-// names and the version it was read at; found is false when it is missing.
+// redirect is RedirectObj
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L117-L121):
+// a redirect object as read, the id it names and the version it was read
+// at; found is false when it is missing.
 type redirect struct {
 	obj   sysObj
 	kind  string
@@ -55,8 +62,10 @@ type redirect struct {
 	found bool
 }
 
-// readRedirect is read_redirect (:123-146): a missing object is no error,
-// one that does not decode is radosgw's -EIO.
+// readRedirect is read_redirect
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L123-L146):
+// a missing object is no error, one that does not decode is radosgw's
+// -EIO.
 func (s *Store) readRedirect(ctx context.Context, o sysObj, kind string) (redirect, error) {
 	r := redirect{obj: o, kind: kind}
 	res, err := s.sysobj.read(ctx, o, readParams{data: true, objv: &r.v})
@@ -100,10 +109,11 @@ func emailHeld(email string) func(meta.AccountInfo) bool {
 	return func(a meta.AccountInfo) bool { return lowerASCII(a.Email) == lowerASCII(email) }
 }
 
-// GetAccount implements op.AccountStore as read (:163-198): the info, the
-// rgw attrs, the version and the mtime. A missing account is
-// ErrNoSuchEntity; an object that does not decode or names another id is
-// radosgw's -EIO.
+// GetAccount implements op.AccountStore as read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L163-L198):
+// the info, the rgw attrs, the version and the mtime. A missing account
+// is ErrNoSuchEntity; an object that does not decode or names another id
+// is radosgw's -EIO.
 func (s *Store) GetAccount(ctx context.Context, id string) (*op.AccountRecord, error) {
 	v := &objv{}
 	res, err := s.sysobj.read(ctx, s.accountObj(id), readParams{data: true, attrs: true, meta: true, objv: v})
@@ -133,14 +143,16 @@ func (s *Store) AccountName(ctx context.Context, id string) (string, error) {
 	return rec.Info.Name, nil
 }
 
-// GetAccountByName implements op.AccountStore as read_by_name (:200-217).
+// GetAccountByName implements op.AccountStore as read_by_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L200-L217).
 // A stale redirect is ErrNoSuchEntity, where radosgw returns whichever
 // account it names.
 func (s *Store) GetAccountByName(ctx context.Context, tenant, name string) (*op.AccountRecord, error) {
 	return s.accountByRedirect(ctx, s.accountNameObj(tenant, name), "name", nameHeld(tenant, name))
 }
 
-// GetAccountByEmail implements op.AccountStore as read_by_email (:219-239):
+// GetAccountByEmail implements op.AccountStore as read_by_email
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L219-L239):
 // an email a user holds names no account. A stale redirect is
 // ErrNoSuchEntity too.
 func (s *Store) GetAccountByEmail(ctx context.Context, email string) (*op.AccountRecord, error) {
@@ -161,21 +173,22 @@ func (s *Store) accountByRedirect(ctx context.Context, o sysObj, kind string, ho
 	return nil, fmt.Errorf("account %s: %w", kind, op.ErrNoSuchEntity)
 }
 
-// PutAccount implements op.AccountStore as write (:242-392). A change of id
-// is refused first. A create then writes its account object exclusively
-// with no name and no email, so that the account exists, with a version,
-// before any redirect names it. Then the redirects of the name and email
-// rec holds are claimed, changed or not (claimRedirect), so a refusal of
-// either comes before the account holds them, and a write retried after
-// one that stopped completes them. Then the whole account under the
-// version read, or the one the create's first write left; a claim taken
-// over meanwhile fenced that version, so the write then fails
+// PutAccount implements op.AccountStore as write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L242-L392).
+// A change of id is refused first. A create then writes its account object
+// exclusively with no name and no email, so that the account exists, with a
+// version, before any redirect names it. Then the redirects of the name and
+// email rec holds are claimed, changed or not (claimRedirect), so a refusal
+// of either comes before the account holds them, and a write retried after
+// one that stopped completes them. Then the whole account under the version
+// read, or the one the create's first write left; a claim taken over
+// meanwhile fenced that version, so the write then fails
 // ErrConcurrentModification instead of landing a name it lost. Last, as
-// radosgw does after its account write, old's name and email redirects
-// when they still name the account, a failure of each logged and ignored
-// (:343-389). radosgw claims the new redirects after the account object and
-// ignores their failure, so one failure leaves two accounts holding one
-// name.
+// radosgw does after its account write, old's name and email redirects when
+// they still name the account, a failure of each logged and ignored
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L343-L389).
+// radosgw claims the new redirects after the account object and ignores
+// their failure, so one failure leaves two accounts holding one name.
 //
 // A create whose claim fails removes the name redirect it claimed, then its
 // nameless object, each under the version it wrote, keeping the object when
@@ -310,17 +323,19 @@ const claimTries = 3
 // that names id is written again unchanged under the version read, so a
 // takeover that judged it stale before then fails its versioned removal;
 // a missing one is created exclusively under a fresh version
-// (write_redirect, :148-160). One naming a user, whose ids
-// the email index shares (:108-114), or another account that holds what o
-// indexes, read past the cache under its version, is
-// ErrAccountAlreadyExists. One naming an account that is gone or holds
-// something else is stale and taken over: that account's object is first
-// written again unchanged under the version that showed it stale, so a
-// write of it in flight fails rather than land the name it no longer has
-// the redirect for, then the redirect is removed under the version it was
-// read at and created again. A redirect that changes meanwhile is read
-// again, up to claimTries times, then ErrConcurrentModification. It
-// returns the version the redirect's write left.
+// (write_redirect,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L148-L160).
+// One naming a user, whose ids the email index shares (:108-114), or
+// another account that holds what o indexes, read past the cache under
+// its version, is ErrAccountAlreadyExists. One naming an account that is
+// gone or holds something else is stale and taken over: that account's
+// object is first written again unchanged under the version that showed
+// it stale, so a write of it in flight fails rather than land the name it
+// no longer has the redirect for, then the redirect is removed under the
+// version it was read at and created again. A redirect that changes
+// meanwhile is read again, up to claimTries times, then
+// ErrConcurrentModification. It returns the version the redirect's write
+// left.
 func (s *Store) claimRedirect(ctx context.Context, o sysObj, kind, id string, holds func(meta.AccountInfo) bool) (meta.ObjVersion, error) {
 	for range claimTries {
 		r, err := s.readRedirectFresh(ctx, o, kind)
@@ -510,10 +525,12 @@ func (s *Store) RemoveAccount(ctx context.Context, rec *op.AccountRecord) error 
 	return nil
 }
 
-// oidcProviderPrefix is oidc_url_oid_prefix (driver/rados/rgw_sal_rados.cc:2136
-// at v19.2.6, :2622 at v20.2.4): an account's providers are the objects of
-// the oidc pool named "<account id>oidc_url.<url>" (oidc_provider_oid,
-// :2138-2143 at v19.2.6).
+// oidcProviderPrefix is oidc_url_oid_prefix
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2136 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2622 at v20.2.4):
+// an account's providers are the objects of the oidc pool named "<account
+// id>oidc_url.<url>" (oidc_provider_oid,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2138-L2143 at v19.2.6).
 const oidcProviderPrefix = "oidc_url."
 
 // errResourceFound ends a listing at the first resource it finds.
@@ -571,8 +588,8 @@ func (s *Store) accountResourceIndex(ctx context.Context, oid, what string) erro
 
 // accountOIDCProviders refuses the removal when the oidc pool holds a
 // provider of the account, listing the pool as get_oidc_providers does
-// (rgw_sal_rados.cc:2206-2252 at v19.2.6). A zone without an oidc pool, or
-// whose pool does not exist, holds none.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2206-L2252 at v19.2.6).
+// A zone without an oidc pool, or whose pool does not exist, holds none.
 func (s *Store) accountOIDCProviders(ctx context.Context, id string) error {
 	if s.zone.Params.OIDCPool.Name == "" {
 		return nil

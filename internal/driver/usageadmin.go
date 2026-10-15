@@ -17,12 +17,15 @@ import (
 )
 
 // usageTrimWindow is MAX_USAGE_TRIM_ENTRIES, the keys one
-// user_usage_log_trim walks (cls_rgw.cc:3794 at v19.2.6, :4196 at
-// v20.2.4); countUsage reads in windows of the same size.
+// user_usage_log_trim walks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3794 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4196 at v20.2.4);
+// countUsage reads in windows of the same size.
 const usageTrimWindow = 1000
 
 // ReadUsage implements op.UsageReader. It is RGWRados::read_usage
-// (driver/rados/rgw_rados.cc:1674-1716 at v19.2.6, :1777-1819 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1674-L1716 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1777-L1819 at v20.2.4):
 // from the shard it.Index names, one user_usage_log_read of the records
 // still wanted at a time, continuing from it.ReadIter. A shard that is not
 // truncated, or has no usage object, moves it to the next shard with a
@@ -98,8 +101,9 @@ func (s *Store) ReadUsage(ctx context.Context, user, bucket string, start, end u
 	return recs, truncated, nil
 }
 
-// readUsageShard is cls_rgw_usage_log_read (cls/rgw/cls_rgw_client.cc:793-828
-// at v19.2.6) on one usage object.
+// readUsageShard is cls_rgw_usage_log_read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_client.cc#L793-L828 at v19.2.6)
+// on one usage object.
 func (s *Store) readUsageShard(ctx context.Context, pool radosclient.Pool, oid string, q rgwcls.UsageReadOp) (rgwcls.UsageReadRet, error) {
 	r := radosclient.NewReadOp()
 	res := rgwcls.UsageLogRead(r, q, s.release)
@@ -114,11 +118,12 @@ func (s *Store) readUsageShard(ctx context.Context, pool radosclient.Pool, oid s
 }
 
 // aggregateUsageEntry is rgw_usage_log_entry::aggregate without a category
-// filter (cls/rgw/cls_rgw_types.h:1005-1023 at v19.2.6, :1044-1062 at
-// v20.2.4): e's owner, payer, bucket and epoch when dst has no owner yet,
-// then each of e's categories added to dst's and to its total, which so
-// becomes the categories' sum whatever total e carried, and the s3select
-// counters.
+// filter
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1005-L1023 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1044-L1062 at v20.2.4):
+// e's owner, payer, bucket and epoch when dst has no owner yet, then each
+// of e's categories added to dst's and to its total, which so becomes the
+// categories' sum whatever total e carried, and the s3select counters.
 func aggregateUsageEntry(dst, e rgwcls.UsageLogEntry) rgwcls.UsageLogEntry {
 	if meta.ParseUserID(dst.Owner).ID == "" {
 		dst.Owner, dst.Payer, dst.Bucket, dst.Epoch = e.Owner, e.Payer, e.Bucket, e.Epoch
@@ -138,7 +143,8 @@ func aggregateUsageEntry(dst, e rgwcls.UsageLogEntry) rgwcls.UsageLogEntry {
 }
 
 // TrimUsage implements op.UsageReader. It is RGWRados::trim_usage
-// (driver/rados/rgw_rados.cc:1718-1736 at v19.2.6, :1821-1839 at v20.2.4)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1718-L1736 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1821-L1839 at v20.2.4)
 // over user's shards, every shard without a user, with each shard's rounds
 // bounded (trimUsageShard) where radosgw's are not.
 func (s *Store) TrimUsage(ctx context.Context, user, bucket string, start, end uint64) error {
@@ -163,19 +169,19 @@ func (s *Store) TrimUsage(ctx context.Context, user, bucket string, start, end u
 var usageTrimCapFactor = 10
 
 // trimUsageShard is cls_rgw_usage_log_trim_repeat
-// (driver/rados/rgw_rados.cc:10197-10211 at v19.2.6, :11121-11135 at
-// v20.2.4) on one usage object, which repeats user_usage_log_trim until
-// ENODATA, or ENOENT for a shard without a usage object. Each call walks
-// its window from the range's start (cls_rgw.cc:3791 at v19.2.6, :4193 at
-// v20.2.4), so records it skips pile up at the window's front and each
-// round removes fewer; on Squid and Tentacle the class may never answer
-// ENODATA at all, for a record filed under its payer (tracker #72593) or
-// a bucket filter behind 1000 other records (#58136). So after each round
-// that answers 0 the shard is read again with the same filter, and the
-// trim stops, logged and no failure, once a round changed nothing that
-// read sees, where radosgw's loop would spin. A cap of
-// usageTrimCapFactor times usageTrimRounds of the first read's count backs
-// that up.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10197-L10211 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11121-L11135 at v20.2.4)
+// on one usage object, which repeats user_usage_log_trim until ENODATA, or
+// ENOENT for a shard without a usage object. Each call walks its window
+// from the range's start (cls_rgw.cc:3791 at v19.2.6, :4193 at v20.2.4),
+// so records it skips pile up at the window's front and each round removes
+// fewer; on Squid and Tentacle the class may never answer ENODATA at all,
+// for a record filed under its payer (tracker #72593) or a bucket filter
+// behind 1000 other records (#58136). So after each round that answers 0
+// the shard is read again with the same filter, and the trim stops, logged
+// and no failure, once a round changed nothing that read sees, where
+// radosgw's loop would spin. A cap of usageTrimCapFactor times
+// usageTrimRounds of the first read's count backs that up.
 func (s *Store) trimUsageShard(ctx context.Context, pool radosclient.Pool, oid, user, bucket string, start, end uint64) error {
 	before, err := s.countUsage(ctx, pool, oid, user, bucket, start, end)
 	if err != nil {

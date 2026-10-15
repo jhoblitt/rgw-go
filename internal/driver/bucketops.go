@@ -22,20 +22,29 @@ import (
 // RadosBucket::create and RadosBucket::remove (driver/rados/rgw_sal_rados.cc).
 // A bare line number is v19.2.6's.
 
-// maxCreateRetries is MAX_CREATE_RETRIES (rgw_rados.cc:2371; v20.2.4 :2476).
+// maxCreateRetries is MAX_CREATE_RETRIES
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2371;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2476).
 const maxCreateRetries = 20
 
-// bucketID is create_bucket_id (rgw_rados.cc:2344-2352; v20.2.4
-// :2447-2455): "<zone id>.<instance id>.<n>", n counting from 1 per process
-// as next_bucket_id does.
+// bucketID is create_bucket_id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2344-L2352;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2447-L2455):
+// "<zone id>.<instance id>.<n>", n counting from 1 per process as
+// next_bucket_id does.
 func (s *Store) bucketID() string {
 	return fmt.Sprintf("%s.%d.%d", s.zone.Params.ID, s.cluster.InstanceID(), s.nextBucketID.Add(1))
 }
 
-// defaultLayout is init_default_bucket_layout (rgw_bucket.cc:2781-2801;
-// v20.2.4 :2895-2919) on a fresh layout: generation 0 of indexType, hashed
-// by Mod, with rgw_override_bucket_index_max_shards shards when it is set
-// and the zone's bucket_index_max_shards otherwise, neither bounded
+// defaultLayout is init_default_bucket_layout
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2781-L2801;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2895-L2919)
+// on a fresh layout: generation 0 of indexType, hashed by Mod, with
+// rgw_override_bucket_index_max_shards shards when it is set and the
+// zone's bucket_index_max_shards otherwise, neither bounded
 // (docs/ceph-upstream-bugs.md, "radosgw clamps a copy of
 // rgw_override_bucket_index_max_shards that bucket creation never reads"),
 // and the in-index log of a Normal index.
@@ -56,8 +65,11 @@ func (s *Store) defaultLayout(indexType meta.IndexType) meta.BucketLayout {
 
 // hasIndexObjects reports whether init_index and clean_index act on info's
 // current index: Squid's create and remove its shard objects whatever the
-// index type, and Tentacle's only for a Normal index (svc_bi_rados.cc:354-393
-// at v19.2.6; :456-458 and :521-523 at v20.2.4).
+// index type, and Tentacle's only for a Normal index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L354-L393 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L456-L458
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L521-L523 at v20.2.4).
 func (s *Store) hasIndexObjects(info *meta.BucketInfo) bool {
 	return s.release < denc.Tentacle || info.Layout.Current.Layout.Type == meta.IndexNormal
 }
@@ -65,10 +77,14 @@ func (s *Store) hasIndexObjects(info *meta.BucketInfo) bool {
 // initIndex is init_index for the current index: an exclusive create and
 // bucket_init_index on every shard, at most rgw_bucket_index_max_aio in
 // flight, a shard already there counting as initialized
-// (CLSRGWIssueBucketIndexInit, cls_rgw_client.cc:196-242 and
-// cls_rgw_client.h:305-314 at v19.2.6; IndexInitWriter, svc_bi_rados.cc:411-492
-// at v20.2.4). The first failure stops further shards, and every shard this
-// call created is removed again before its error is returned.
+// (CLSRGWIssueBucketIndexInit,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_client.cc#L196-L242
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_client.h#L305-L314 at v19.2.6;
+// IndexInitWriter,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L411-L492 at v20.2.4).
+// The first failure stops further shards, and every shard this call created is
+// removed again before its error is returned.
 func (s *Store) initIndex(ctx context.Context, info *meta.BucketInfo) error {
 	if !s.hasIndexObjects(info) {
 		return nil
@@ -121,7 +137,8 @@ func (s *Store) initIndex(ctx context.Context, info *meta.BucketInfo) error {
 // cleanIndex is clean_index for the current index: every shard removed, at
 // most rgw_bucket_index_max_aio in flight, a missing one being no failure
 // (CLSRGWIssueBucketIndexClean at v19.2.6; IndexCleanWriter,
-// svc_bi_rados.cc:494-558 at v20.2.4). It returns the first failure.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L494-L558 at v20.2.4).
+// It returns the first failure.
 func (s *Store) cleanIndex(ctx context.Context, info *meta.BucketInfo) error {
 	if !s.hasIndexObjects(info) {
 		return nil
@@ -149,10 +166,13 @@ func (s *Store) cleanIndex(ctx context.Context, info *meta.BucketInfo) error {
 }
 
 // newBucketInfo is the bucket info one try of create_bucket writes
-// (rgw_rados.cc:2372-2408; v20.2.4 :2477-2516): a new bucket id as marker
-// and id, the owner, zonegroup and placement asked for, requester-pays off,
-// created now, and the default layout. A zero p.Quota is S3's quota that is
-// not given, which keeps RGWBucketInfo's unlimited default.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2372-L2408;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2477-L2516):
+// a new bucket id as marker and id, the owner, zonegroup and placement
+// asked for, requester-pays off, created now, and the default layout. A
+// zero p.Quota is S3's quota that is not given, which keeps RGWBucketInfo's
+// unlimited default.
 func (s *Store) newBucketInfo(p op.CreateBucketParams, indexType meta.IndexType) meta.BucketInfo {
 	id := s.bucketID()
 	info := meta.NewBucketInfo()
@@ -167,7 +187,10 @@ func (s *Store) newBucketInfo(p op.CreateBucketParams, indexType meta.IndexType)
 }
 
 // discardInstance removes the instance and index of a try that lost, logging
-// what it cannot remove (rgw_rados.cc:2434-2447; v20.2.4 :2542-2555).
+// what it cannot remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2434-L2447;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2542-L2555).
 func (s *Store) discardInstance(ctx context.Context, info *meta.BucketInfo) {
 	if err := s.cleanIndex(ctx, info); err != nil {
 		slog.WarnContext(ctx, "could not remove bucket index", slog.String("bucket", info.Bucket.Name), slog.Any("error", err))
@@ -178,13 +201,20 @@ func (s *Store) discardInstance(ctx context.Context, info *meta.BucketInfo) {
 }
 
 // CreateBucket implements op.BucketStore as RGWRados::create_bucket
-// (rgw_rados.cc:2354-2458; v20.2.4 :2457-2566) with put_linked_bucket_info
-// (:9039-9075) under RadosBucket::create (rgw_sal_rados.cc:159-231; v20.2.4
-// :168-248). Each try initializes the index, writes the instance exclusively
-// and then the entry point exclusively, each under a fresh version. When the
-// entry point exists, the bucket is read by name: when that finds none, the
-// try is abandoned and another made with a new id, and after twenty tries
-// the create fails with radosgw's -ENOENT, NoSuchKey with no message
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2354-L2458;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2457-L2566)
+// with put_linked_bucket_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9039-L9075)
+// under RadosBucket::create
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L159-L231;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L168-L248).
+// Each try initializes the index, writes the instance exclusively and then
+// the entry point exclusively, each under a fresh version. When the entry
+// point exists, the bucket is read by name: when that finds none, the try is
+// abandoned and another made with a new id, and after twenty tries the create
+// fails with radosgw's -ENOENT, NoSuchKey with no message
 // (rgw_rados.cc:2455-2457; v20.2.4 :2563-2565); otherwise this try's instance
 // and index are removed and the existing record is returned with
 // ErrBucketAlreadyExists. That existing bucket is linked to p.Owner when it
@@ -254,11 +284,13 @@ func (s *Store) CreateBucket(ctx context.Context, p op.CreateBucketParams) (*op.
 }
 
 // existingBucket is RadosBucket::create's answer for a name that exists
-// (rgw_sal_rados.cc:173-228; v20.2.4 :183-245): another owner's bucket as it
-// is; p.Owner's own linked to it, which a link the class refuses as existing
-// leaves alone, then unlinked again when its entry point has since gone.
-// Either way the record comes back with ErrBucketAlreadyExists, which the op
-// decides on by owner.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L173-L228;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L183-L245):
+// another owner's bucket as it is; p.Owner's own linked to it, which a link
+// the class refuses as existing leaves alone, then unlinked again when its
+// entry point has since gone. Either way the record comes back with
+// ErrBucketAlreadyExists, which the op decides on by owner.
 func (s *Store) existingBucket(ctx context.Context, p op.CreateBucketParams, existing *op.BucketRecord) (*op.BucketRecord, error) {
 	exists := fmt.Errorf("bucket %s: %w", p.Name, op.ErrBucketAlreadyExists)
 	if existing.Info.Owner.String() != p.Owner.String() {
@@ -277,14 +309,18 @@ func (s *Store) existingBucket(ctx context.Context, p op.CreateBucketParams, exi
 
 // unlinkIfRemoved reads the entry point of b once its link is written and,
 // when a concurrent DELETE has removed it, unlinks b from owner, logging a
-// failure (rgw_sal_rados.cc:200-227; v20.2.4 :217-244). The read goes
-// through the metadata cache, as radosgw's does, and the unlink removes
-// only an entry naming b. An entry point naming another instance is a
-// bucket created under the name after b was deleted. Another owner's
-// bucket leaves b's entry stale, so b is unlinked, where radosgw keeps the
-// entry. The same owner's bucket shares b's entry, which this link may have
-// pointed back at b after that bucket's own link, so the entry point's
-// instance is linked again and the owner's list names the live bucket.
+// failure
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L200-L227;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L217-L244).
+// The read goes through the metadata cache, as radosgw's does, and the
+// unlink removes only an entry naming b. An entry point naming another
+// instance is a bucket created under the name after b was deleted. Another
+// owner's bucket leaves b's entry stale, so b is unlinked, where radosgw
+// keeps the entry. The same owner's bucket shares b's entry, which this
+// link may have pointed back at b after that bucket's own link, so the
+// entry point's instance is linked again and the owner's list names the
+// live bucket.
 func (s *Store) unlinkIfRemoved(ctx context.Context, owner meta.Owner, b meta.BucketID) {
 	e, err := s.readEntryPoint(ctx, b.Tenant, b.Name)
 	switch {
@@ -311,13 +347,16 @@ func (s *Store) unlinkIfRemoved(ctx context.Context, owner meta.Owner, b meta.Bu
 // emptinessPage is check_bucket_empty's NUM_ENTRIES.
 const emptinessPage = 1000
 
-// checkBucketEmpty is RGWRados::check_bucket_empty (rgw_rados.cc:5186-5231;
-// v20.2.4 :5723-5768): the unordered listing, versions included, from the
-// start, pages of a thousand, until an entry parses into the empty
-// namespace, which is BucketNotEmpty. radosgw checks nothing for a bucket
-// whose zonegroup id is not this one's; DeleteBucket, which calls this,
-// refuses such a bucket first, and checks one whose empty id
-// RGWZoneGroup::equals takes for this zonegroup.
+// checkBucketEmpty is RGWRados::check_bucket_empty
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5186-L5231;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768):
+// the unordered listing, versions included, from the start, pages of a
+// thousand, until an entry parses into the empty namespace, which is
+// BucketNotEmpty. radosgw checks nothing for a bucket whose zonegroup id is
+// not this one's; DeleteBucket, which calls this, refuses such a bucket
+// first, and checks one whose empty id RGWZoneGroup::equals takes for this
+// zonegroup.
 func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) error {
 	var marker rgwcls.ObjKey
 	for {
@@ -342,28 +381,47 @@ func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) erro
 const maxRemoveRetries = 20
 
 // DeleteBucket implements op.BucketStore as RGWDeleteBucket's own-bucket
-// steps (rgw_op.cc:3759-3772; v20.2.4 :3968-3981) and RadosBucket::remove
-// with delete_children false (rgw_sal_rados.cc:350-468; v20.2.4 :367-489)
-// through RGWRados::delete_bucket (rgw_rados.cc:5238-5302; v20.2.4
-// :5936-6018). It first reads the instance again by its id, as remove's
-// load_bucket does (rgw_sal_rados.cc:356-360; v20.2.4 :373-377): one already
-// gone is radosgw's -ENOENT, NoSuchKey, and the delete stops there. A
-// bucket of another zonegroup, as RGWZoneGroup::equals tells it, is
+// steps
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3759-L3772;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3968-L3981)
+// and RadosBucket::remove with delete_children false
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L350-L468;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L367-L489)
+// through RGWRados::delete_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5238-L5302;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5936-L6018).
+// It first reads the instance again by its id, as remove's load_bucket does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L356-L360;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L373-L377):
+// one already gone is radosgw's -ENOENT, NoSuchKey, and the delete stops
+// there. A bucket of another zonegroup, as RGWZoneGroup::equals tells it, is
 // PermanentRedirect before the index is read or anything removed. radosgw
 // reaches its delete with another zonegroup's bucket only for a system
 // request to the master zonegroup (rgw_op.cc:565; v20.2.4 :595): the delete
 // the owning zonegroup's zone forwarded to the metadata master after
-// checking emptiness itself (:3759-3783 and rgw_forward_request_to_master,
-// :126-134; v20.2.4 :3968-3992 and :161-169). rgw-go forwards nothing
-// (docs/exclusions.md). For a bucket of this zonegroup it
-// syncs the owner's stats, logging a failure, refuses a bucket with
-// objects, and aborts the bucket's multipart uploads (abortMultiparts,
-// rgw_sal_rados.cc:395-400; v20.2.4 :412-417), stopping at an abort that
-// fails; radosgw compares the raw id there and so skips all three for a
-// bucket with an empty zonegroup id on the master zonegroup
-// (docs/ceph-upstream-bugs.md). It then reads the entry point afresh,
-// as remove's new tracker does, and leaves it when the read fails or it
-// names another instance; otherwise it removes it under the version read,
+// checking emptiness itself
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3759-L3783
+// and rgw_forward_request_to_master,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L126-L134;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3968-L3992
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L161-L169).
+// rgw-go forwards nothing (docs/exclusions.md). For a bucket of this
+// zonegroup it syncs the owner's stats, logging a failure, refuses a bucket
+// with objects, and aborts the bucket's multipart uploads (abortMultiparts,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L395-L400;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L412-L417),
+// stopping at an abort that fails; radosgw compares the raw id there and so
+// skips all three for a bucket with an empty zonegroup id on the master
+// zonegroup (docs/ceph-upstream-bugs.md). It then reads the entry point
+// afresh, as remove's new tracker does, and leaves it when the read fails or
+// it names another instance; otherwise it removes it under the version read,
 // and a failure there is returned before anything else is removed, a lost
 // race as op.ErrRemovalRaced once the removal's claim is cleared
 // (releaseRemoval). The instance follows, under
@@ -466,8 +524,9 @@ const maxUnlinkRetries = 5
 // that first compares the entry with what was read, reading again when it
 // changed in between. An entry naming another instance, a bucket re-created
 // under the name, stays. radosgw removes the entry by name alone
-// (cls_user_remove_bucket, cls/user/cls_user.cc:239-276 at both tags). An
-// entry that keeps changing is left after maxUnlinkRetries reads, with a
+// (cls_user_remove_bucket,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L239-L276 at both tags).
+// An entry that keeps changing is left after maxUnlinkRetries reads, with a
 // warning (docs/exclusions.md).
 func (s *Store) unlinkInstance(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
 	return s.unlinkEntry(ctx, owner, b, false)
@@ -476,8 +535,9 @@ func (s *Store) unlinkInstance(ctx context.Context, owner meta.Owner, b meta.Buc
 // unlinkEntry is unlinkInstance that, with byName, also removes an entry
 // carrying no bucket id, which names whatever bucket its name loads, as
 // load_bucket reads an rgw_bucket without an id by its name
-// (rgw_sal_rados.cc:616-622 at v19.2.6, :636-641 at v20.2.4). A caller
-// passes byName only when the name loads b.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L616-L622 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L636-L641 at v20.2.4).
+// A caller passes byName only when the name loads b.
 func (s *Store) unlinkEntry(ctx context.Context, owner meta.Owner, b meta.BucketID, byName bool) error {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {

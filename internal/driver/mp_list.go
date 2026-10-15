@@ -14,8 +14,14 @@ import (
 )
 
 // The multipart listings are RadosMultipartUpload::list_parts and
-// RadosBucket::list_multiparts (driver/rados/rgw_sal_rados.cc:3329-3431 and
-// :915-956 at v19.2.6, :4175-4277 and :935-976 at v20.2.4, the same code).
+// RadosBucket::list_multiparts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3329-L3431
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L915-L956 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4175-L4277
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L935-L976 at v20.2.4,
+// the same code).
 
 // omapGetAllPage is MAX_OMAP_GET_ENTRIES, the page RGWSI_SysObj_Core::
 // omap_get_all reads an omap by (services/svc_sys_obj_core.cc at v19.2.6 and
@@ -69,9 +75,12 @@ func decodePartInfo(k string, b []byte) (meta.UploadPartInfo, error) {
 
 // lastPartNumber is the NextPartNumberMarker ListParts renders: cur_max, the
 // highest number of the page as an int, 0 for an empty page
-// (rgw_rest_s3.cc:4135-4149 at v19.2.6, :4671-4685 at v20.2.4). execute
-// passes list_parts no next_marker (rgw_op.cc:6693 at v19.2.6, :7632 at
-// v20.2.4), whose last_num is not always the page's.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4135-L4149 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4671-L4685 at v20.2.4).
+// execute passes list_parts no next_marker
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6693 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7632 at v20.2.4),
+// whose last_num is not always the page's.
 func lastPartNumber(parts []meta.UploadPartInfo) int {
 	if len(parts) == 0 {
 		return 0
@@ -142,7 +151,9 @@ func (s *Store) sortedPartsPage(ctx context.Context, ref mpRef, marker, limit in
 }
 
 // ListParts implements op.MultipartStore as RGWListMultipart::execute lists
-// a page of parts (rgw_op.cc:6669-6694 at v19.2.6, :7593-7633 at v20.2.4),
+// a page of parts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6669-L6694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7593-L7633 at v20.2.4),
 // without its get_info: the op read the meta object already for the policy
 // and the placement, so only the omap is read here (listPartsPage), and a
 // meta object gone since is NoSuchUpload. A part's Size is its accounted

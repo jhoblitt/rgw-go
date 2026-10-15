@@ -17,13 +17,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// CompleteMultipartUpload is RGWCompleteMultipart::execute (rgw_op.cc:6367-6541
-// at v19.2.6, :7163-7431 at v20.2.4) over RadosMultipartUpload::complete
-// (driver/rados/rgw_sal_rados.cc:3433-3640 at v19.2.6, :4279-4490 at
-// v20.2.4); a bare line number below is v19.2.6's rgw_op.cc.
+// CompleteMultipartUpload is RGWCompleteMultipart::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7431 at v20.2.4)
+// over RadosMultipartUpload::complete
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3433-L3640 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4);
+// a bare line number below is v19.2.6's rgw_op.cc.
 
 // maxMetaDeleteRetries is MAX_DELETE_RETRIES, the removals of the meta
-// object a completion tries while parts keep racing it (:6497).
+// object a completion tries while parts keep racing it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6497).
 const maxMetaDeleteRetries = 15
 
 // partHeadStats bounds the part head stats a completion has in flight.
@@ -200,8 +204,10 @@ func (s *Store) checkPartHeads(ctx context.Context, parts []meta.UploadPartInfo)
 }
 
 // checkPreviouslyCompleted is RGWCompleteMultipart::check_previously_completed
-// (:6543-6580; v20.2.4 :7433-7504): the key's head carries the ETag the
-// request's parts make.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6543-L6580;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504):
+// the key's head carries the ETag the request's parts make.
 func (s *Store) checkPreviouslyCompleted(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, parts []op.CompletePart) (*op.ObjectState, bool) {
 	st, err := s.readHead(ctx, rec, key, false)
 	if err != nil || !st.Exists {
@@ -223,13 +229,13 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 // an upload:
 //   - a bucket whose writes take a versioned path, versioning enabled or
 //     suspended or object lock, is answered 501 before the store is
-//     touched: radosgw writes a version there (:6459-6466), and the plain
+//     touched: radosgw writes a version there (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6459-L6466), and the plain
 //     key's head written here would stand beside the bucket's olh;
 //   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
 //     cookie of this completion's own (newLockCookie), whose ENOENT, when
 //     the key already carries the parts' ETag (checkPreviouslyCompleted), is
 //     radosgw's re-sent completion, answered with that stored ETag
-//     (:6438-6441; v19.2.7 :6584, v20.2.4 :7472); any other refusal is 500
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6438-L6441; v19.2.7 https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584, v20.2.4 https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472); any other refusal is 500
 //     "This multipart completion is already in progress";
 //   - the meta object's attrs and version (readMeta). A completion record
 //     there is an earlier completion's whose meta object outlived its head
@@ -302,7 +308,8 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 	rec, key := up.Bucket, up.Key
 	ms, err := s.readMeta(ctx, ref)
 	if errors.Is(err, radosclient.ErrNotFound) {
-		// get_obj_attrs's -ENOENT reaches the client as it is (:6448-6453).
+		// get_obj_attrs's -ENOENT reaches the client as it is
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6448-L6453).
 		return nil, false, fmt.Errorf("%w: the meta object %s is gone", op.ErrNoSuchKey, ref.oid)
 	}
 	if err != nil {
@@ -420,12 +427,14 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 // synchronously, as cleanup_part_history sends it
 // (rgw_sal_rados.cc:3132-3146), then the meta object's removal with
 // cleanup's index entries, retried up to maxMetaDeleteRetries times while
-// parts race it (:6493-6530): after each ECANCELED the meta object is read
-// again and cleanup_orphaned_parts runs, whose parts were registered after
-// the listing and so are not the object's. The prefixes cleanup handled
-// carry over, which keeps the object's own parts out of that cleanup. A
-// removal that keeps failing is logged, as radosgw logs it; the completion
-// stands. released reports that the lock went with the meta object.
+// parts race it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6493-L6530):
+// after each ECANCELED the meta object is read again and
+// cleanup_orphaned_parts runs, whose parts were registered after the
+// listing and so are not the object's. The prefixes cleanup handled carry
+// over, which keeps the object's own parts out of that cleanup. A removal
+// that keeps failing is logged, as radosgw logs it; the completion stands.
+// released reports that the lock went with the meta object.
 func (s *Store) retireUpload(ctx context.Context, up *op.Upload, ref mpRef, ms *metaState, cleanup *partCleanup) (released bool) {
 	if len(cleanup.chain) > 0 {
 		s.enqueueGC(ctx, cleanup.chain, up.ID)
@@ -459,10 +468,11 @@ func (s *Store) retireUpload(ctx context.Context, up *op.Upload, ref mpRef, ms *
 }
 
 // cleanupOrphanedParts is RadosMultipartUpload::cleanup_orphaned_parts
-// (rgw_sal_rados.cc:3038-3101; v20.2.4 :3882-3945): every part the meta
-// object lists whose current prefix c has not handled goes to the GC under
-// the upload id, its stripes and head, with its head's index entry added to
-// c's, and so does its history.
+// (rgw_sal_rados.cc:3038-3101; v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3882-L3945):
+// every part the meta object lists whose current prefix c has not handled
+// goes to the GC under the upload id, its stripes and head, with its head's
+// index entry added to c's, and so does its history.
 func (s *Store) cleanupOrphanedParts(ctx context.Context, up *op.Upload, ref mpRef, c *partCleanup) error {
 	parts, err := s.listAllParts(ctx, ref, up.ID)
 	if err != nil {

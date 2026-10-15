@@ -19,8 +19,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// usageObjPrefix is RGW_USAGE_OBJ_PREFIX (driver/rados/rgw_rados.cc:120 at
-// v19.2.6, :128 at v20.2.4).
+// usageObjPrefix is RGW_USAGE_OBJ_PREFIX
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L120 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L128 at v20.2.4).
 const usageObjPrefix = "usage."
 
 // usageFinalFlushTimeout is how long the usage worker goes on flushing once
@@ -51,14 +52,16 @@ func (t timeTicker) Stop() { t.t.Stop() }
 // under, and its bucket.
 type usageKey struct{ user, bucket string }
 
-// usageBatch is RGWUsageBatch (driver/rados/rgw_rados.h:140-148 at v19.2.6,
-// :142-150 at v20.2.4): a key's merged entry for each hour, by the epoch of
-// the hour's start.
+// usageBatch is RGWUsageBatch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.h#L140-L148 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.h#L142-L150 at v20.2.4):
+// a key's merged entry for each hour, by the epoch of the hour's start.
 type usageBatch map[uint64]*rgwcls.UsageLogEntry
 
-// usageLogger is rgw_log.cc's UsageLogger (:95-180 at v19.2.6 and v20.2.4):
-// the usage entries of finished requests, merged per user, bucket and hour
-// until a flush writes them to the zone's usage log.
+// usageLogger is rgw_log.cc's UsageLogger
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L95-L180 at v19.2.6
+// and v20.2.4): the usage entries of finished requests, merged per user,
+// bucket and hour until a flush writes them to the zone's usage log.
 type usageLogger struct {
 	mu sync.Mutex
 	// flushing is a one-slot semaphore that serializes flushes, as
@@ -102,7 +105,8 @@ func (s *Store) openUsageLog(ctx context.Context) {
 	s.AddWorker("usage-flush", s.runUsageFlush)
 }
 
-// roundToHour is utime_t::round_to_hour (include/utime.h:208-216 at v19.2.6
+// roundToHour is utime_t::round_to_hour
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L208-L216 at v19.2.6
 // and v20.2.4): the start of t's hour in loc. radosgw rounds through
 // localtime_r and mktime, so in a time zone whose offset is not whole hours
 // its hours do not start on UTC's.
@@ -112,9 +116,11 @@ func roundToHour(t time.Time, loc *time.Location) time.Time {
 	return time.Unix(local-local%3600-int64(off), 0).In(loc)
 }
 
-// usageOID is usage_log_hash (driver/rados/rgw_rados.cc:1615-1628 at v19.2.6,
-// :1718-1731 at v20.2.4): the usage object of user's index-th shard, or,
-// without a user, the index-th usage object.
+// usageOID is usage_log_hash
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1615-L1628 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1718-L1731 at v20.2.4):
+// the usage object of user's index-th shard, or, without a user, the index-th
+// usage object.
 func (s *Store) usageOID(user string, index uint32) string {
 	val := index
 	if user != "" {
@@ -164,9 +170,11 @@ func (s *Store) Log(ctx context.Context, e op.UsageEntry) {
 		batch[epoch] = ent
 		u.numEntries++
 	}
-	// rgw_usage_log_entry::aggregate (cls/rgw/cls_rgw_types.h:1005-1023 at
-	// v19.2.6, :1044-1062 at v20.2.4) keeps the owner and payer of the first
-	// entry merged, unless that entry's owner is empty.
+	// rgw_usage_log_entry::aggregate
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1005-L1023 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1044-L1062 at v20.2.4)
+	// keeps the owner and payer of the first entry merged, unless that
+	// entry's owner is empty.
 	if meta.ParseUserID(ent.Owner).ID == "" {
 		ent.Owner, ent.Payer, ent.Bucket, ent.Epoch = owner.String(), payer.String(), e.Bucket, epoch
 	}
@@ -223,12 +231,14 @@ func (u *usageLogger) flushSlot() chan struct{} {
 	return u.flushing
 }
 
-// logUsage is RGWRados::log_usage (driver/rados/rgw_rados.cc:1630-1672 at
-// v19.2.6, :1733-1775 at v20.2.4). In rgw_user_bucket order it skips each key
-// without a user, with a warning, and gathers the entries of every other key
-// under its user's usage object, named with an index that grows by one with
-// each user. It then adds each object's entries with one user_usage_log_add,
-// in the objects' name order, and stops at the first failure.
+// logUsage is RGWRados::log_usage
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1630-L1672 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1733-L1775 at v20.2.4).
+// In rgw_user_bucket order it skips each key without a user, with a warning,
+// and gathers the entries of every other key under its user's usage object,
+// named with an index that grows by one with each user. It then adds each
+// object's entries with one user_usage_log_add, in the objects' name order,
+// and stops at the first failure.
 func (s *Store) logUsage(ctx context.Context, batches map[usageKey]usageBatch) error {
 	keys := slices.SortedFunc(maps.Keys(batches), func(a, b usageKey) int {
 		return cmp.Or(strings.Compare(a.user, b.user), strings.Compare(a.bucket, b.bucket))

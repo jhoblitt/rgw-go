@@ -50,11 +50,12 @@ type sysobjs struct {
 
 // openSysObj builds the metadata cache and the notifier on the zone's
 // control pool and creates the control objects, as radosgw's notify service
-// does at start (init_watch, services/svc_notify.cc:199-264 at v19.2.6,
-// :162-224 at v20.2.4), whose failure fails radosgw's start. The cache
-// stays disabled until every control watch is registered, and for good when
-// rgw_cache_enabled is false, while the notifier still watches and sends
-// (docs/exclusions.md).
+// does at start (init_watch,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L199-L264 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L162-L224 at v20.2.4),
+// whose failure fails radosgw's start. The cache stays disabled until every
+// control watch is registered, and for good when rgw_cache_enabled is
+// false, while the notifier still watches and sends (docs/exclusions.md).
 func openSysObj(ctx context.Context, pools *poolCache, params meta.ZoneParams, o options, r denc.Release) (*sysobjs, error) {
 	hidden := newHiddenPools(params)
 	cache := newObjectCache(o.cacheLRUSize, o.cacheExpiry, params.DomainRoot, time.Now)
@@ -217,8 +218,9 @@ func (s *sysobjs) readRADOS(ctx context.Context, pool radosclient.Pool, oid stri
 }
 
 // filterRGWAttrs is rgw_filter_attrset with RGW_ATTR_PREFIX
-// (driver/rados/rgw_tools.cc:285-296 at v19.2.6, :301-312 at v20.2.4): the
-// user.rgw. xattrs alone.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L285-L296 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L301-L312 at v20.2.4):
+// the user.rgw. xattrs alone.
 func filterRGWAttrs(attrs map[string][]byte) map[string][]byte {
 	out := make(map[string][]byte, len(attrs))
 	for k, v := range attrs {

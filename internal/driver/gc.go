@@ -20,12 +20,16 @@ import (
 
 // The GC worker is radosgw's RGWGC processor (driver/rados/rgw_gc.cc). A
 // bare line number below is v19.2.6's; v20.2.4 has the same code, from
-// RGWGC::list (:247) on 12 to 15 lines later.
+// RGWGC::list
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L247)
+// on 12 to 15 lines later.
 
-// gcProcess is the shard lock's name, gc_index_lock_name (:29).
+// gcProcess is the shard lock's name, gc_index_lock_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L29).
 const gcProcess = "gc_process"
 
-// gcListMax is the page RGWGC::process lists (:585).
+// gcListMax is the page RGWGC::process lists
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L585).
 const gcListMax = 100
 
 // gcUnlockTimeout bounds the shard unlock a pass ends with, which must not
@@ -34,7 +38,9 @@ const gcListMax = 100
 const gcUnlockTimeout = 30 * time.Second
 
 // errGCNoTime is the -EAGAIN RGWGC::process answers before it locks a shard
-// when it has no time to hold the lock for (:560-565), which ends the pass.
+// when it has no time to hold the lock for
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L560-L565),
+// which ends the pass.
 var errGCNoTime = fmt.Errorf("driver: gc: rgw_gc_processor_max_time is not positive: %w", syscall.EAGAIN)
 
 // gcPool is the zone's gc pool, radosgw's gc_pool_ctx.
@@ -42,11 +48,14 @@ func (s *Store) gcPool(ctx context.Context) (radosclient.Pool, error) {
 	return s.pools.get(ctx, s.ZoneParams().GCPool)
 }
 
-// gcInitialize is RGWGC::initialize (:31-56) through gc_log_init2
-// (rgw_gc_log.cc:11-19): each shard is created, checked at cls version 0,
-// given its rgw_gc queue and set to version 1 in one op, so a shard already
-// moved to the queue answers ECANCELED and is left as it is. radosgw ignores
-// every shard's result; only a gc pool that cannot be opened fails it.
+// gcInitialize is RGWGC::initialize
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L31-L56)
+// through gc_log_init2
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc_log.cc#L11-L19):
+// each shard is created, checked at cls version 0, given its rgw_gc queue
+// and set to version 1 in one op, so a shard already moved to the queue
+// answers ECANCELED and is left as it is. radosgw ignores every shard's
+// result; only a gc pool that cannot be opened fails it.
 func (s *Store) gcInitialize(ctx context.Context) error {
 	pool, err := s.gcPool(ctx)
 	if err != nil {
@@ -79,11 +88,13 @@ func newGCWorker(s *Store) *gcWorker {
 	return &gcWorker{s: s, transitioned: make([]bool, len(s.w.gcShards)), now: time.Now, sleep: sleepCtx}
 }
 
-// run is GCWorker::entry (:782-809): a pass over every shard for the expired
-// entries, then a wait of rgw_gc_processor_period less the whole seconds the
-// pass took, none when it took the period or longer, until ctx ends. A period
-// that is not positive is waited as one second, where radosgw would run its
-// passes without pause (docs/exclusions.md).
+// run is GCWorker::entry
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L782-L809):
+// a pass over every shard for the expired entries, then a wait of
+// rgw_gc_processor_period less the whole seconds the pass took, none when it
+// took the period or longer, until ctx ends. A period that is not positive is
+// waited as one second, where radosgw would run its passes without pause
+// (docs/exclusions.md).
 func (g *gcWorker) run(ctx context.Context) error {
 	period := g.s.w.opts.gcProcessorPeriod
 	if period <= 0 {
@@ -122,10 +133,11 @@ func goingDown(ctx context.Context) bool {
 	}
 }
 
-// process is RGWGC::process(bool) (:729-748): every shard in turn from a
-// random one, each for at most rgw_gc_processor_max_time, then the drain of
-// the omap-era tag removals unless ctx has ended. A shard's failure ends the
-// pass without the drain.
+// process is RGWGC::process(bool)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L729-L748):
+// every shard in turn from a random one, each for at most
+// rgw_gc_processor_max_time, then the drain of the omap-era tag removals
+// unless ctx has ended. A shard's failure ends the pass without the drain.
 func (g *gcWorker) process(ctx context.Context, expiredOnly bool) error {
 	n := len(g.s.w.gcShards)
 	budget := time.Duration(g.s.w.opts.gcProcessorMaxTime) * time.Second
@@ -184,8 +196,9 @@ type gcPage struct {
 	truncated    bool
 }
 
-// shardPass is the locked part of processShard (:580-717), returning where
-// radosgw jumps to done.
+// shardPass is the locked part of processShard
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L580-L717),
+// returning where radosgw jumps to done.
 func (g *gcWorker) shardPass(ctx context.Context, pool radosclient.Pool, idx int, end time.Time, expiredOnly bool, io *gcIO) {
 	oid := g.s.w.gcShards[idx]
 	var page gcPage
@@ -235,7 +248,8 @@ func (g *gcWorker) shardPass(ctx context.Context, pool radosclient.Pool, idx int
 	}
 }
 
-// freeEntries schedules the refcount puts of a page's entries (:633-702)
+// freeEntries schedules the refcount puts of a page's entries
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L633-L702)
 // and reports whether the pass goes on: not once the budget is spent, nor
 // after a failure on a queue-era shard, nor once ctx has ended.
 func (g *gcWorker) freeEntries(ctx context.Context, idx int, entries []rgw.GCObjInfo, end time.Time, io *gcIO) bool {
@@ -312,8 +326,9 @@ func listResult(ctx context.Context, pool radosclient.Pool, oid string, r *rados
 }
 
 // readVersion is cls_version_read with its result ignored, as RGWGC::process
-// ignores it (:596-597): the shard's version counter, 0 when it cannot be
-// read.
+// ignores it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L596-L597):
+// the shard's version counter, 0 when it cannot be read.
 func (g *gcWorker) readVersion(ctx context.Context, pool radosclient.Pool, oid string) uint64 {
 	r := radosclient.NewReadOp()
 	res := version.Read(r, g.s.release)
@@ -358,10 +373,12 @@ type gcPending struct {
 	err  error
 }
 
-// gcIO is RGWGCIOManager (:340-548): the operations in flight, completed in
-// the order they started; the objects each omap-era tag still waits on; and
-// the tags each omap-era shard has freed, removed rgw_gc_max_trim_chunk at a
-// time. Only the worker's goroutine touches it.
+// gcIO is RGWGCIOManager
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L340-L548):
+// the operations in flight, completed in the order they started; the objects
+// each omap-era tag still waits on; and the tags each omap-era shard has
+// freed, removed rgw_gc_max_trim_chunk at a time. Only the worker's
+// goroutine touches it.
 type gcIO struct {
 	g *gcWorker
 	// maxAIO and trimChunk are rgw_gc_max_concurrent_io and
@@ -403,11 +420,13 @@ func (io *gcIO) start(p *gcPending, fn func() error) {
 // so none outlives the pass.
 func (io *gcIO) wait() { io.wg.Wait() }
 
-// scheduleIO is schedule_io (:382-404): while more than maxAIO operations
-// are in flight it completes the oldest, failing on a failure only when shard
-// idx has moved to the queue, then starts the refcount put of the tail oid
-// under tag, at pool full too, as radosgw's ioctx sets pool_full_try (:677).
-// ctx's end stops the wait without starting the put.
+// scheduleIO is schedule_io
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L382-L404):
+// while more than maxAIO operations are in flight it completes the oldest,
+// failing on a failure only when shard idx has moved to the queue, then
+// starts the refcount put of the tail oid under tag, at pool full too, as
+// radosgw's ioctx sets pool_full_try (:677). ctx's end stops the wait without
+// starting the put.
 func (io *gcIO) scheduleIO(ctx context.Context, pool radosclient.Pool, oid string, idx int, tag string) error {
 	for uint64(len(io.ios)) > io.maxAIO {
 		if goingDown(ctx) {
@@ -426,9 +445,10 @@ func (io *gcIO) scheduleIO(ctx context.Context, pool radosclient.Pool, oid strin
 	return nil
 }
 
-// handleNext is handle_next_completion (:406-438): it waits for the oldest
-// operation, an ENOENT counting as done, and for a freed tail of an omap-era
-// shard counts its tag down.
+// handleNext is handle_next_completion
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L406-L438):
+// it waits for the oldest operation, an ENOENT counting as done, and for a
+// freed tail of an omap-era shard counts its tag down.
 func (io *gcIO) handleNext(ctx context.Context) error {
 	p := io.ios[0]
 	<-p.done
@@ -455,9 +475,11 @@ func (io *gcIO) handleNext(ctx context.Context) error {
 	return nil
 }
 
-// scheduleTagRemoval is schedule_tag_removal (:446-465): a tag still waiting
-// on objects is counted down, and one waiting on none joins its shard's
-// removals, which go out once they reach rgw_gc_max_trim_chunk.
+// scheduleTagRemoval is schedule_tag_removal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L446-L465):
+// a tag still waiting on objects is counted down, and one waiting on none
+// joins its shard's removals, which go out once they reach
+// rgw_gc_max_trim_chunk.
 func (io *gcIO) scheduleTagRemoval(ctx context.Context, idx int, tag string) {
 	if left, ok := io.tagLeft[idx][tag]; ok {
 		left--
@@ -473,16 +495,19 @@ func (io *gcIO) scheduleTagRemoval(ctx context.Context, idx int, tag string) {
 	}
 }
 
-// addTagIOSize is add_tag_io_size (:467-470): the number of objects tag
-// waits on, kept as first recorded.
+// addTagIOSize is add_tag_io_size
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L467-L470):
+// the number of objects tag waits on, kept as first recorded.
 func (io *gcIO) addTagIOSize(idx int, tag string, n int) {
 	if _, ok := io.tagLeft[idx][tag]; !ok {
 		io.tagLeft[idx][tag] = n
 	}
 }
 
-// drainIOs is drain_ios (:472-484): every operation completed, reporting the
-// last failure, or the -EAGAIN of ctx's end.
+// drainIOs is drain_ios
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L472-L484):
+// every operation completed, reporting the last failure, or the -EAGAIN of
+// ctx's end.
 func (io *gcIO) drainIOs(ctx context.Context) error {
 	var last error
 	for len(io.ios) > 0 {
@@ -496,9 +521,10 @@ func (io *gcIO) drainIOs(ctx context.Context) error {
 	return last
 }
 
-// drain is RGWGCIOManager::drain (:486-491): the operations completed, the
-// tag removals of every omap-era shard sent, an empty one too, as
-// flush_remove_tags sends it, and those completed.
+// drain is RGWGCIOManager::drain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L486-L491):
+// the operations completed, the tag removals of every omap-era shard sent,
+// an empty one too, as flush_remove_tags sends it, and those completed.
 func (io *gcIO) drain(ctx context.Context) {
 	_ = io.drainIOs(ctx) //nolint:errcheck // radosgw ignores the drain's result
 	for idx := range io.removeTags {
@@ -509,9 +535,10 @@ func (io *gcIO) drain(ctx context.Context) {
 	_ = io.drainIOs(ctx) //nolint:errcheck // as above
 }
 
-// flushRemoveTags is flush_remove_tags (:493-523): the shard's gc_remove of
-// the tags it has freed, in the background; the list is cleared even when
-// the removal cannot be sent.
+// flushRemoveTags is flush_remove_tags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L493-L523):
+// the shard's gc_remove of the tags it has freed, in the background; the
+// list is cleared even when the removal cannot be sent.
 func (io *gcIO) flushRemoveTags(ctx context.Context, idx int) {
 	tags := io.removeTags[idx]
 	io.removeTags[idx] = nil
@@ -529,8 +556,9 @@ func (io *gcIO) flushRemoveTags(ctx context.Context, idx int) {
 	})
 }
 
-// removeQueueEntries is remove_queue_entries (:535-547): the first n
-// entries of the shard's queue go.
+// removeQueueEntries is remove_queue_entries
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L535-L547):
+// the first n entries of the shard's queue go.
 func (io *gcIO) removeQueueEntries(ctx context.Context, pool radosclient.Pool, idx, n int) error {
 	w := radosclient.NewWriteOp()
 	gc.QueueRemoveEntries(w, uint32(n), io.g.s.release) //nolint:gosec // a page holds at most gcListMax entries

@@ -18,10 +18,13 @@ import (
 // through RADOS, past the metadata cache. A bare line number is
 // buckets.cc's at v19.2.6, and it is the same at v20.2.4. An op that
 // carries a time carries the gateway's clock, as cls_user_set_buckets and
-// cls_user_complete_stats_sync stamp radosgw's (cls/user/cls_user_client.cc:25
-// and :34 at both tags).
+// cls_user_complete_stats_sync stamp radosgw's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_client.cc#L25
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_client.cc#L34 at both tags).
 
-// clsBucket is rgw_bucket::convert (rgw_basic_types.cc:52-60 at both tags):
+// clsBucket is rgw_bucket::convert
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L52-L60 at both tags):
 // the name, marker and id, and the explicit placement's pools in their
 // string form.
 func clsBucket(b meta.BucketID) user.Bucket {
@@ -39,8 +42,9 @@ func (s *Store) ownerBucketsPool(ctx context.Context, owner meta.Owner) (radoscl
 	return p, o.oid, err
 }
 
-// setOwnerBucket is buckets.cc's set (:27-43): cls_user_set_buckets of the
-// one entry.
+// setOwnerBucket is buckets.cc's set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L27-L43):
+// cls_user_set_buckets of the one entry.
 func (s *Store) setOwnerBucket(ctx context.Context, owner meta.Owner, entry user.BucketEntry, add bool) error {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {
@@ -52,9 +56,11 @@ func (s *Store) setOwnerBucket(ctx context.Context, owner meta.Owner, entry user
 	return err
 }
 
-// linkBucket is buckets::add (:45-60): the class creates the owner's entry
-// for b, or gives an existing one b's bucket id and created, keeping its
-// stats. A zero created is the clock's time.
+// linkBucket is buckets::add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L45-L60):
+// the class creates the owner's entry for b, or gives an existing one b's
+// bucket id and created, keeping its stats. A zero created is the clock's
+// time.
 func (s *Store) linkBucket(ctx context.Context, owner meta.Owner, b meta.BucketID, created time.Time) error {
 	if created.IsZero() {
 		created = s.sysobj.now()
@@ -62,8 +68,10 @@ func (s *Store) linkBucket(ctx context.Context, owner meta.Owner, b meta.BucketI
 	return s.setOwnerBucket(ctx, owner, user.BucketEntry{Bucket: clsBucket(b), CreationTime: created}, true)
 }
 
-// unlinkBucket is buckets::remove (:62-78): the class removes the owner's
-// entry for b, a missing one being no failure.
+// unlinkBucket is buckets::remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L62-L78):
+// the class removes the owner's entry for b, a missing one being no
+// failure.
 func (s *Store) unlinkBucket(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {
@@ -75,9 +83,10 @@ func (s *Store) unlinkBucket(ctx context.Context, owner meta.Owner, b meta.Bucke
 	return err
 }
 
-// writeOwnerBucketStats is buckets::write_stats (:142-151): ent's stats
-// replace those of the owner's entry for its bucket, which the class skips
-// when the list no longer holds it.
+// writeOwnerBucketStats is buckets::write_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L142-L151):
+// ent's stats replace those of the owner's entry for its bucket, which the
+// class skips when the list no longer holds it.
 func (s *Store) writeOwnerBucketStats(ctx context.Context, owner meta.Owner, ent meta.BucketEnt) error {
 	return s.setOwnerBucket(ctx, owner, user.BucketEntry{
 		Bucket: clsBucket(ent.Bucket), Size: ent.Size, SizeRounded: ent.SizeRounded,
@@ -85,9 +94,10 @@ func (s *Store) writeOwnerBucketStats(ctx context.Context, owner meta.Owner, ent
 	}, false)
 }
 
-// readOwnerStats is buckets::read_stats (:153-184): the owner's summed
-// stats and the header's last sync and last update, all zero when the
-// owner has no buckets object.
+// readOwnerStats is buckets::read_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L153-L184):
+// the owner's summed stats and the header's last sync and last update,
+// all zero when the owner has no buckets object.
 func (s *Store) readOwnerStats(ctx context.Context, owner meta.Owner) (stats op.Stats, lastSync, lastUpdate time.Time, err error) {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {
@@ -110,8 +120,9 @@ func (s *Store) readOwnerStats(ctx context.Context, owner meta.Owner) (stats op.
 	return op.Stats{Size: st.TotalBytes, SizeRounded: st.TotalBytesRounded, NumObjects: st.TotalEntries}, h.LastStatsSync, h.LastStatsUpdate, nil
 }
 
-// completeOwnerStatsSync is buckets::complete_flush_stats (:261-273): the
-// header's last sync becomes the clock's time when that is later.
+// completeOwnerStatsSync is buckets::complete_flush_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L261-L273):
+// the header's last sync becomes the clock's time when that is later.
 func (s *Store) completeOwnerStatsSync(ctx context.Context, owner meta.Owner) error {
 	pool, oid, err := s.ownerBucketsPool(ctx, owner)
 	if err != nil {
@@ -124,7 +135,8 @@ func (s *Store) completeOwnerStatsSync(ctx context.Context, owner meta.Owner) er
 }
 
 // syncOwnerStats is RGWBucketCtl::sync_owner_stats
-// (driver/rados/rgw_bucket.cc:3474-3501 at v19.2.6, :3556-3583 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L3474-L3501 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3556-L3583 at v20.2.4):
 // the bucket's Main-category index stats, written into its owner's entry.
 // It returns the stats it read.
 func (s *Store) syncOwnerStats(ctx context.Context, owner meta.Owner, info *meta.BucketInfo) (meta.BucketEnt, error) {
@@ -137,8 +149,8 @@ func (s *Store) syncOwnerStats(ctx context.Context, owner meta.Owner, info *meta
 
 // ownerTenant is the tenant an owner's listed buckets belong to: the
 // user's, or the account's. radosgw takes the requester's tenant
-// (rgw_op.cc:2567-2568 at v19.2.6), which for an account's user is its
-// account's.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2567-L2568 at v19.2.6),
+// which for an account's user is its account's.
 func (s *Store) ownerTenant(ctx context.Context, owner meta.Owner) (string, error) {
 	if owner.User != nil {
 		return owner.User.Tenant, nil
@@ -151,14 +163,18 @@ func (s *Store) ownerTenant(ctx context.Context, owner meta.Owner) (string, erro
 }
 
 // ListUserBuckets implements op.UserStore as rgwrados::buckets::list
-// (:80-140): cls_user_bucket_list from marker for what maxEntries leaves,
-// again while the class's page is truncated and fewer than maxEntries are
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L80-L140):
+// cls_user_bucket_list from marker for what maxEntries leaves, again
+// while the class's page is truncated and fewer than maxEntries are
 // listed. Each entry is a bucket of the owner's tenant with the stats it
 // last synced. A missing buckets object ends the listing without error.
 //
 // next is the class's marker when the class truncated its page, and more
 // is that truncation. radosgw's listing carries the marker alone, and an
-// empty one ends it (rgw_sal.h:244-249 and rgw_op.cc:2604 at v19.2.6,
+// empty one ends it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sal.h#L244-L249
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2604 at v19.2.6,
 // :229-234 and :2836 at v20.2.4), so a truncation without a marker is not
 // more. A maxEntries of 0, which radosgw is asked for when
 // rgw_list_buckets_max_chunk is 0, is one class call of 0 entries, which

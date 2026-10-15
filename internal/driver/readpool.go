@@ -22,7 +22,8 @@ type readConfig struct {
 // request size, with which no read makes progress, and a window smaller than
 // one request, which radosgw takes but then fails every data read larger
 // than the window with EDEADLK (the aio throttles' get,
-// rgw_aio_throttle.cc:40-42 at v19.2.6 and v20.2.4).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_aio_throttle.cc#L40-L42 at v19.2.6
+// and v20.2.4).
 func loadReadConfig(conf *cephconf.Options) (readConfig, error) {
 	var r reads
 	c := readConfig{
@@ -41,15 +42,18 @@ func loadReadConfig(conf *cephconf.Options) (readConfig, error) {
 }
 
 // dataPool is rgw_get_obj_data_pool for an object outside the extra-data
-// pool (driver/rados/rgw_obj_manifest.cc:412-430 at v19.2.6 and v20.2.4): the
-// bucket's explicit data pool when it has one, else the data pool of the
-// rule's placement for the rule's storage class
-// (RGWZoneParams::get_head_data_pool, driver/rados/rgw_zone.h:285-308 at
-// v19.2.6, :307-330 at v20.2.4), else that of the zonegroup's default
-// placement for its storage class. ok is false when the zone has neither
-// placement. radosgw's head-object helpers answer -EIO there, logging
-// "probably misconfiguration" (get_obj_head_ref,
-// driver/rados/rgw_rados.cc:2508-2512 at v19.2.6, :2616-2620 at v20.2.4),
+// pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L412-L430 at v19.2.6
+// and v20.2.4): the bucket's explicit data pool when it has one, else the
+// data pool of the rule's placement for the rule's storage class
+// (RGWZoneParams::get_head_data_pool,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_zone.h#L285-L308 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.h#L307-L330 at v20.2.4),
+// else that of the zonegroup's default placement for its storage class. ok is
+// false when the zone has neither placement. radosgw's head-object helpers
+// answer -EIO there, logging "probably misconfiguration" (get_obj_head_ref,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2508-L2512 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2616-L2620 at v20.2.4),
 // while its object stat drops the failure (docs/ceph-upstream-bugs.md).
 func (s *Store) dataPool(rule meta.PlacementRule, bucket meta.BucketID) (pool meta.Pool, ok bool) {
 	if bucket.ExplicitPlacement.DataPool.Name != "" {
@@ -68,11 +72,12 @@ func (s *Store) dataPool(rule meta.PlacementRule, bucket meta.BucketID) (pool me
 	return classPool(pi, def.StorageClass), true
 }
 
-// classPool is RGWZonePlacementInfo::get_data_pool (rgw_zone_types.h:281-290
-// at v19.2.6 and v20.2.4): the storage class's data pool, or STANDARD's for a
-// class the placement does not list, so an object of a since-removed class
-// still reads. A listed class without a data pool also takes STANDARD's,
-// where radosgw takes an empty pool (docs/exclusions.md).
+// classPool is RGWZonePlacementInfo::get_data_pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone_types.h#L281-L290 at v19.2.6
+// and v20.2.4): the storage class's data pool, or STANDARD's for a class the
+// placement does not list, so an object of a since-removed class still reads.
+// A listed class without a data pool also takes STANDARD's, where radosgw
+// takes an empty pool (docs/exclusions.md).
 func classPool(pi meta.ZonePlacementInfo, class string) meta.Pool {
 	if c, ok := pi.StorageClasses[class]; ok && c.DataPool != nil {
 		return *c.DataPool
@@ -93,9 +98,11 @@ type objRef struct {
 // A placement that resolves no pool is UnknownError, the -EIO of radosgw's
 // head-object helpers. A resolved pool without a name is InvalidArgument:
 // radosgw opens it with create set, which librados refuses with EINVAL
-// (RadosClient::pool_create, librados/RadosClient.cc:686-687 at v19.2.6,
-// :688-689 at v20.2.4). A pool that does not exist fails with an error that
-// wraps radosclient.ErrNotFound and names it.
+// (RadosClient::pool_create,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/librados/RadosClient.cc#L686-L687 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L688-L689 at v20.2.4).
+// A pool that does not exist fails with an error that wraps
+// radosclient.ErrNotFound and names it.
 func (s *Store) rawRef(ctx context.Context, rule meta.PlacementRule, obj meta.Obj) (objRef, error) {
 	pool, ok := s.dataPool(rule, obj.Bucket)
 	return s.openRef(ctx, resolvedPool{pool: pool, ok: ok, kind: "data pool", rule: rule}, obj, op.ScopeObject)

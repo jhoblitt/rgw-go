@@ -50,8 +50,8 @@ func (s *Store) ReadObject(ctx context.Context, st *op.ObjectState, rng op.ByteR
 	ci := st.Compression
 	// rgw_compression_info_from_attr takes an object of type none as
 	// uncompressed, once it has refused an empty block list with -EIO
-	// (rgw_compression.cc:20-22 at v19.2.6 and v20.2.4), which is the op's to
-	// answer.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L20-L22 at v19.2.6
+	// and v20.2.4), which is the op's to answer.
 	if ci == nil || ci.Type == compression.None {
 		return s.readStored(ctx, st, rng.Offset, rng.Length, sink)
 	}
@@ -355,7 +355,8 @@ func (s *Store) issue(ctx context.Context, st *op.ObjectState, p piece, window *
 // readPiece is one op of get_obj_iterate_cb: on the head, append_atomic_test's
 // guard that the idtag is still the one st was read with, then read(read_ofs,
 // len) into buf. The guard's ECANCELED is ConcurrentModification
-// (rgw_common.cc:141 at v19.2.6, :143 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L141 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L143 at v20.2.4).
 func (s *Store) readPiece(ctx context.Context, st *op.ObjectState, p piece, buf []byte) ([]byte, error) {
 	ref, err := s.rawRef(ctx, p.rule, p.obj)
 	if err != nil {

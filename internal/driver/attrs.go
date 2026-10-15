@@ -13,17 +13,21 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// restoreTemporary is rgw::sal::RGWRestoreType::Temporary (rgw_sal.h:178-182
-// at v20.2.4), which user.rgw.restore-type holds as its single byte.
+// restoreTemporary is rgw::sal::RGWRestoreType::Temporary
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.h#L178-L182 at v20.2.4),
+// which user.rgw.restore-type holds as its single byte.
 const restoreTemporary = 1
 
-// SetObjectAttrs is RGWRados::set_attrs (driver/rados/rgw_rados.cc:6593-6757
-// at v19.2.6, :7393-7593 at v20.2.4; a bare line number below is v19.2.6's)
-// as RadosObject::set_obj_attrs calls it with FLAG_LOG_OP, which
-// modify_obj_attrs and delete_obj_attrs always pass
-// (driver/rados/rgw_sal_rados.cc:2378-2429 at v19.2.6, :2971-3022 at
-// v20.2.4). st is the state the op's Init read, as radosgw's object context
-// holds it; a lost race is ErrConcurrentModification.
+// SetObjectAttrs is RGWRados::set_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6593-L6757 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7393-L7593 at v20.2.4;
+// a bare line number below is v19.2.6's) as RadosObject::set_obj_attrs calls
+// it with FLAG_LOG_OP, which modify_obj_attrs and delete_obj_attrs always
+// pass
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2378-L2429 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2971-L3022 at v20.2.4).
+// st is the state the op's Init read, as radosgw's object context holds it;
+// a lost race is ErrConcurrentModification.
 func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[string][]byte, rm []string) error {
 	rec := st.Bucket
 	key := st.Key
@@ -35,13 +39,16 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 		return err
 	}
 	w := radosclient.NewWriteOp()
-	// append_atomic_test (:6457-6472): the tag guards the write unless the
-	// head has none, or has the one get_obj_state_impl fakes for a head with
-	// a manifest, which st.WriteTag leaves empty.
+	// append_atomic_test
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6457-L6472):
+	// the tag guards the write unless the head has none, or has the one
+	// get_obj_state_impl fakes for a head with a manifest, which st.WriteTag
+	// leaves empty.
 	if st.WriteTag != "" {
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	}
-	// "ensure null version object exist" (:6619-6622).
+	// "ensure null version object exist"
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6619-L6622).
 	if st.Key.Instance == "null" && st.Manifest == nil {
 		return op.ErrNoSuchKey
 	}
@@ -54,7 +61,8 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 			w.SetXattr(name, v)
 		}
 	}
-	// A guard alone is enough to send the op (:6658-6659).
+	// A guard alone is enough to send the op
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6658-L6659).
 	if len(w.Steps()) == 0 {
 		return nil
 	}
@@ -65,13 +73,15 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 	w.SetXattr(meta.AttrIDTag, []byte(x.tag+"\x00"))
 	// "make a tiny adjustment to the existing mtime so that
 	// fetch_remote_obj() won't return ERR_NOT_MODIFIED when syncing the
-	// modified object" (rgw_sal_rados.cc:2382-2384).
+	// modified object"
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2382-L2384).
 	mtime := st.Mtime.Add(time.Nanosecond)
 	w.SetMtime(mtime)
 	epoch, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
 	if err != nil {
 		// Unlike a PUT's head write, set_attrs cancels whatever the failure,
-		// a timeout included (:6726-6731).
+		// a timeout included
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6726-L6731).
 		x.cancel()
 		return op.FromRADOS(err, op.ScopeObject)
 	}
@@ -79,10 +89,13 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 	return nil
 }
 
-// attrsEntry is the index entry set_attrs completes with (:6693-6725;
-// v20.2.4 :7494-7561): the owner, ETag, content type and storage class from
-// set when it names them, even empty, and from st's attrs otherwise; st's
-// size and accounted size; the nudged mtime.
+// attrsEntry is the index entry set_attrs completes with
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6693-L6725;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7494-L7561):
+// the owner, ETag, content type and storage class from set when it names
+// them, even empty, and from st's attrs otherwise; st's size and accounted
+// size; the nudged mtime.
 func (s *Store) attrsEntry(st *op.ObjectState, set map[string][]byte, mtime time.Time) rgw.DirEntryMeta {
 	pick := func(name string) []byte {
 		if v, ok := set[name]; ok {
@@ -109,9 +122,9 @@ func (s *Store) attrsEntry(st *op.ObjectState, set map[string][]byte, mtime time
 
 // restoreCategory is v20.2.4's "Retain Object category as CloudTiered while
 // restore is in progress or failed or if its temporarily restored copy"
-// (:7524-7557 at v20.2.4), which reads set alone, never the stored attrs. A
-// value too short to decode throws, which radosgw catches with the category
-// as it then stands.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7524-L7557 at v20.2.4),
+// which reads set alone, never the stored attrs. A value too short to
+// decode throws, which radosgw catches with the category as it then stands.
 func (s *Store) restoreCategory(m *rgw.DirEntryMeta, set map[string][]byte) {
 	status, ok := set[meta.AttrRestoreStatus]
 	if !ok || len(status) == 0 {

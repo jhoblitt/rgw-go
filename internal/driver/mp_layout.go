@@ -28,16 +28,19 @@ type mpRef struct {
 }
 
 // extraPool is rgw_get_obj_data_pool for an object with in_extra_data set
-// (driver/rados/rgw_obj_manifest.cc:412-430 at v19.2.6 and v20.2.4), as
-// dataPool is for one without: the bucket's explicit data-extra pool, or its
-// explicit data pool when it names none (rgw_data_placement_target::
-// get_data_extra_pool, rgw_pool_types.h:146-151); else the data-extra pool
-// of the rule's placement, or that placement's STANDARD data pool when it
-// names none (RGWZonePlacementInfo::get_data_extra_pool,
-// rgw_zone_types.h:274-280); else the same of the zonegroup's default
-// placement (each the same at both tags). The storage class plays no part,
-// so a COLD upload's meta object sits beside a STANDARD one's. ok is false
-// when the zone has neither placement.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L412-L430 at v19.2.6
+// and v20.2.4), as dataPool is for one without: the bucket's explicit
+// data-extra pool, or its explicit data pool when it names none
+// (rgw_data_placement_target:: get_data_extra_pool,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_pool_types.h#L146-L151);
+// else the data-extra pool of the rule's placement, or that placement's
+// STANDARD data pool when it names none
+// (RGWZonePlacementInfo::get_data_extra_pool,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone_types.h#L274-L280);
+// else the same of the zonegroup's default placement (each the same at both
+// tags). The storage class plays no part, so a COLD upload's meta object
+// sits beside a STANDARD one's. ok is false when the zone has neither
+// placement.
 func (s *Store) extraPool(rule meta.PlacementRule, bucket meta.BucketID) (pool meta.Pool, ok bool) {
 	if ep := bucket.ExplicitPlacement; ep.DataPool.Name != "" {
 		if ep.DataExtraPool.Name == "" {
@@ -66,12 +69,13 @@ func placementExtraPool(pi meta.ZonePlacementInfo) meta.Pool {
 }
 
 // metaRef is the meta object of upload uploadID of key in rec's bucket,
-// RadosMultipartUpload::get_meta_obj with in_extra_data set (:3265-3268,
-// :3288-3290): "<key>.<uploadID>.meta" in the multipart namespace, placed by
-// the bucket's placement rule, with openRef's errors; a pool that does not
-// exist wraps radosclient.ErrNotFound, which op.FromRADOS makes
-// NoSuchUpload. An upload id holding a "." is NoSuchUpload, as the ops
-// answer it.
+// RadosMultipartUpload::get_meta_obj with in_extra_data set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3265-L3268,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3288-L3290):
+// "<key>.<uploadID>.meta" in the multipart namespace, placed by the bucket's
+// placement rule, with openRef's errors; a pool that does not exist wraps
+// radosclient.ErrNotFound, which op.FromRADOS makes NoSuchUpload. An upload
+// id holding a "." is NoSuchUpload, as the ops answer it.
 func (s *Store) metaRef(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string) (mpRef, error) {
 	if strings.Contains(uploadID, ".") {
 		// RGWMPObj::init would name another key's upload with it.
@@ -97,15 +101,21 @@ type metaState struct {
 	info    meta.MultipartUploadInfo
 }
 
-// readMeta is RadosMultipartUpload::get_info with the attrs (:3642-3717;
-// v20.2.4 :4492-4578): the meta object's prefetching stat, raw_obj_stat's
-// one op of cls_version_read, getxattrs, stat2 and a read of
-// rgw_max_chunk_size at 0 (driver/rados/rgw_rados.cc:8827-8870), whose bytes
-// decode as the multipart_upload_info. A missing object or an empty one is
-// NoSuchUpload (:3673-3676, :3700-3702); an info that does not decode is
-// radosgw's -EIO (:3706-3711), which its error table lacks, so UnknownError.
-// radosgw reads an empty head's first byte with a second op, which reads
-// nothing; rgw-go answers from the first.
+// readMeta is RadosMultipartUpload::get_info with the attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3642-L3717;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4492-L4578):
+// the meta object's prefetching stat, raw_obj_stat's one op of
+// cls_version_read, getxattrs, stat2 and a read of rgw_max_chunk_size at 0
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8827-L8870),
+// whose bytes decode as the multipart_upload_info. A missing object or an
+// empty one is NoSuchUpload (:3673-3676,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3700-L3702);
+// an info that does not decode is radosgw's -EIO
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3706-L3711),
+// which its error table lacks, so UnknownError. radosgw reads an empty
+// head's first byte with a second op, which reads nothing; rgw-go answers
+// from the first.
 func (s *Store) readMeta(ctx context.Context, ref mpRef) (*metaState, error) {
 	rop := radosclient.NewReadOp()
 	objv := version.Read(rop, s.release)
@@ -124,7 +134,9 @@ func (s *Store) readMeta(ctx context.Context, ref mpRef) (*metaState, error) {
 	}
 	st := &metaState{ref: ref, size: stat.Size, mtime: stat.ModTime, attrs: filterAttrs(xattrs.Xattrs)}
 	// cls_version_read's completion leaves the version alone when its reply
-	// does not decode (cls_version_client.cc:66-77 at v19.2.6 and v20.2.4).
+	// does not decode
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version_client.cc#L66-L77 at v19.2.6
+	// and v20.2.4).
 	if v, verr := objv.Version(); verr == nil {
 		st.version = v
 	}

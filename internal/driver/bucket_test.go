@@ -22,8 +22,8 @@ func seedInstance(c *fakerados.Cluster, info meta.BucketInfo, attrs map[string][
 // seedBucket stores a bucket in the zone seedRookZone seeds for the store
 // "ceph-objectstore" as radosgw's create_bucket does: the entry point naming
 // info's instance, at epV and without attrs (put_linked_bucket_info,
-// driver/rados/rgw_rados.cc:9039-9075 at v19.2.6), and the instance holding
-// info and attrs at instV.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9039-L9075 at v19.2.6),
+// and the instance holding info and attrs at instV.
 func seedBucket(c *fakerados.Cluster, info meta.BucketInfo, attrs map[string][]byte, epV, instV meta.ObjVersion) {
 	ep := meta.BucketEntryPoint{Bucket: info.Bucket, Owner: info.Owner, CreationTime: info.CreationTime, Linked: true}
 	seedVersioned(c, info.Bucket.EntryPointOID(), encode(ep), nil, epV)
@@ -33,9 +33,11 @@ func seedBucket(c *fakerados.Cluster, info meta.BucketInfo, attrs map[string][]b
 // encodeOldEntryPoint is an entry point as radosgw wrote it before version
 // 8: an RGWBucketInfo encoding of a struct version below 8, which
 // RGWBucketEntryPoint::decode hands whole to RGWBucketInfo::decode
-// (rgw_common.h:1134-1142 at v19.2.6, :1177-1185 at v20.2.4). info's current
-// encoding relabelled version 7 is one: a version-7 decoder reads the fields
-// up to the placement rule and skips the rest by the struct's length.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1134-L1142 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1177-L1185 at v20.2.4).
+// info's current encoding relabelled version 7 is one: a version-7 decoder
+// reads the fields up to the placement rule and skips the rest by the
+// struct's length.
 func encodeOldEntryPoint(info meta.BucketInfo) []byte {
 	b := encode(info)
 	b[0] = 7

@@ -14,29 +14,34 @@ import (
 // held in memory across every request. radosgw bounds only each writer's
 // writes in flight, by rgw_put_obj_min_window_size (the throttle
 // RadosStore::get_atomic_writer gives each writer,
-// driver/rados/rgw_sal_rados.cc:2284 at v19.2.6, :2770 at v20.2.4), so its
-// body memory grows with the PUTs it serves. A piece takes its share before
-// it is read from the body and gives it back when its write ends, so nothing
-// that holds a share waits on the budget, and it cannot deadlock. A share is
-// clamped to the budget: a piece larger than the whole budget takes all of
-// it and proceeds alone.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2284 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2770 at v20.2.4),
+// so its body memory grows with the PUTs it serves. A piece takes its share
+// before it is read from the body and gives it back when its write ends, so
+// nothing that holds a share waits on the budget, and it cannot deadlock. A
+// share is clamped to the budget: a piece larger than the whole budget takes
+// all of it and proceeds alone.
 //
 // A client that sends its body slowly holds its piece's share for as long as
 // it takes: request_timeout_ms bounds each read, not the piece, as beast's
-// timer does (StreamIO::recv_body, rgw_asio_frontend.cc:152-175 at v19.2.6
+// timer does (StreamIO::recv_body,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L152-L175 at v19.2.6
 // and v20.2.4). bodyBudgetSize keeps a piece for every request the cap
 // admits, so stalled clients cannot hold back another PUT, which radosgw's
-// slow clients do only by filling that cap: radosgw reads a chunk before
-// its throttle (get_data, then process, rgw_op.cc:4391-4413 at v19.2.6,
-// :4623-4645 at v20.2.4). The piece is sized from rgw_max_chunk_size and
-// rgw_obj_stripe_size, not from the sizes planPut aligns them to. Only an
-// erasure-coded pool without allow_ec_overwrites has an alignment, its
-// stripe width (pg_pool_t::requires_aligned_append, osd_types.h:1754-1757
-// at v19.2.6, :1791-1794 at v20.2.4, as RGWRados::get_required_alignment
-// asks it, rgw_rados.cc:659-693 and :694-728): on such a pool with a stripe
-// width over 4 MiB a chunk or stripe exceeds its option, a slow client holds
-// more than its piece's room, and stalled clients there can hold back
-// another PUT.
+// slow clients do only by filling that cap: radosgw reads a chunk before its
+// throttle (get_data, then process,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4391-L4413 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4623-L4645 at v20.2.4).
+// The piece is sized from rgw_max_chunk_size and rgw_obj_stripe_size, not
+// from the sizes planPut aligns them to. Only an erasure-coded pool without
+// allow_ec_overwrites has an alignment, its stripe width
+// (pg_pool_t::requires_aligned_append,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.h#L1754-L1757 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.h#L1791-L1794 at v20.2.4,
+// as RGWRados::get_required_alignment asks it, rgw_rados.cc:659-693 and
+// :694-728): on such a pool with a stripe width over 4 MiB a chunk or stripe
+// exceeds its option, a slow client holds more than its piece's room, and
+// stalled clients there can hold back another PUT.
 //
 // The head a PUT keeps for its head write takes no share: it is held for the
 // whole request, so a request would hold it while its tail waited on the

@@ -15,8 +15,9 @@ import (
 )
 
 // normalName is RGWSI_SysObj_Cache's normal_name, "<pool>+<ns>+<oid>"
-// (services/svc_sys_obj_cache.cc:67-72 at v19.2.6 and v20.2.4). It keys the
-// cache and picks the control object a notify goes to.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L67-L72 at v19.2.6
+// and v20.2.4). It keys the cache and picks the control object a notify
+// goes to.
 func normalName(p meta.Pool, oid string) string {
 	return p.Name + "+" + p.NS + "+" + oid
 }
@@ -274,10 +275,11 @@ func (c *objectCache) setEnabled(on bool) {
 // onNotify handles a control notify by invalidating the object it names,
 // whichever op it carries, and never stores its record: radosgw puts an
 // UPDATE_OBJ record into its cache unchecked
-// (services/svc_sys_obj_cache.cc:489-492 at v19.2.6 and v20.2.4;
-// docs/ceph-upstream-bugs.md, "radosgw caches any control-pool UPDATE_OBJ
-// notify payload unchecked"). An object without an oid names the pool's
-// entry in the domain root, as normalize_pool_and_obj does (:74-83).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L489-L492 at v19.2.6
+// and v20.2.4; docs/ceph-upstream-bugs.md, "radosgw caches any
+// control-pool UPDATE_OBJ notify payload unchecked"). An object without
+// an oid names the pool's entry in the domain root, as
+// normalize_pool_and_obj does (:74-83).
 func (c *objectCache) onNotify(info meta.CacheNotifyInfo) {
 	if info.Op != meta.CacheUpdateObj && info.Op != meta.CacheInvalidateObj {
 		slog.Warn("invalidating for a control notify of an unknown op",

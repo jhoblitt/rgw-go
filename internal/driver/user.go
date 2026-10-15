@@ -19,12 +19,16 @@ import (
 // line number is v19.2.6's, and each fact cited holds at v20.2.4 too.
 
 // userObj is a user's info object in users.uid, named by the user id
-// (RGWSI_User_Module, :41-48; v20.2.4 :112-113).
+// (RGWSI_User_Module,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L41-L48;
+// v20.2.4 :112-113).
 func (s *Store) userObj(id meta.UserID) sysObj {
 	return sysObj{pool: s.zone.Params.UserUIDPool, oid: id.String()}
 }
 
-// keyIndexObj is an access key's index object in users.keys (:335, :517).
+// keyIndexObj is an access key's index object in users.keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L335,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L517).
 func (s *Store) keyIndexObj(key string) sysObj {
 	return sysObj{pool: s.zone.Params.UserKeysPool, oid: key}
 }
@@ -37,29 +41,37 @@ func keyHolderPool(keys meta.Pool) meta.Pool {
 
 // keyHolderObj is an access key's entry in rgw-go's key holder index,
 // which holds the encoded RGWUID of the user holding the key, active or
-// not. radosgw's key index names active keys alone (:329-339), so it cannot
-// tell who holds a deactivated key.
+// not. radosgw's key index names active keys alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L329-L339),
+// so it cannot tell who holds a deactivated key.
 func (s *Store) keyHolderObj(key string) sysObj {
 	return sysObj{pool: keyHolderPool(s.zone.Params.UserKeysPool), oid: key}
 }
 
 // emailIndexObj is an email's index object in users.email, named by the
-// lower-cased email so that a lookup matches any case (:318-321, :529-531).
+// lower-cased email so that a lookup matches any case
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L318-L321,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L529-L531).
 func (s *Store) emailIndexObj(email string) sysObj {
 	return sysObj{pool: s.zone.Params.UserEmailPool, oid: lowerASCII(email)}
 }
 
-// swiftIndexObj is a Swift key's index object in users.swift (:347, :540).
+// swiftIndexObj is a Swift key's index object in users.swift
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L347,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L540).
 func (s *Store) swiftIndexObj(name string) sysObj {
 	return sysObj{pool: s.zone.Params.UserSwiftPool, oid: name}
 }
 
-// bucketsSuffix is RGW_BUCKETS_OBJ_SUFFIX (:29).
+// bucketsSuffix is RGW_BUCKETS_OBJ_SUFFIX
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L29).
 const bucketsSuffix = ".buckets"
 
 // ownerBucketsObj is an owner's bucket list: "<uid>.buckets" in users.uid
-// for a user (:109-113), "buckets.<id>" in the account pool for an account
-// (driver/rados/account.cc:44-50 at both tags).
+// for a user
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L109-L113),
+// "buckets.<id>" in the account pool for an account
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L44-L50 at both tags).
 func (s *Store) ownerBucketsObj(owner meta.Owner) sysObj {
 	if owner.User != nil {
 		return sysObj{pool: s.zone.Params.UserUIDPool, oid: owner.User.String() + bucketsSuffix}
@@ -68,7 +80,8 @@ func (s *Store) ownerBucketsObj(owner meta.Owner) sysObj {
 }
 
 // accountObj is an account's info object, "account.<id>" in the account
-// pool (account.cc:84-90 at both tags).
+// pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L84-L90 at both tags).
 func (s *Store) accountObj(id string) sysObj {
 	return sysObj{pool: s.zone.Params.AccountPool, oid: "account." + id}
 }
@@ -90,9 +103,12 @@ func lowerASCII(s string) string {
 	return string(b)
 }
 
-// GetUser implements op.UserStore as read_user_info (:115-156; v20.2.4
-// :96-137): the anonymous user is NoSuchUser without a read, and a uid
-// object that does not decode or names another user is radosgw's -EIO.
+// GetUser implements op.UserStore as read_user_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L115-L156;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L96-L137):
+// the anonymous user is NoSuchUser without a read, and a uid object
+// that does not decode or names another user is radosgw's -EIO.
 func (s *Store) GetUser(ctx context.Context, id meta.UserID) (*op.UserRecord, error) {
 	if id.ID == op.AnonymousUserID {
 		return nil, fmt.Errorf("user %s: %w", id, op.ErrNoSuchUser)
@@ -114,18 +130,23 @@ func (s *Store) GetUser(ctx context.Context, id meta.UserID) (*op.UserRecord, er
 }
 
 // GetUserByAccessKey implements op.UserStore through the access key's index
-// object (get_user_info_by_access_key, :765-777).
+// object (get_user_info_by_access_key,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L765-L777).
 func (s *Store) GetUserByAccessKey(ctx context.Context, key string) (*op.UserRecord, error) {
 	return s.userFromIndex(ctx, s.keyIndexObj(key))
 }
 
 // GetUserByEmail implements op.UserStore through the email's index object
-// (get_user_info_by_email, :730-741).
+// (get_user_info_by_email,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L730-L741).
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*op.UserRecord, error) {
 	return s.userFromIndex(ctx, s.emailIndexObj(email))
 }
 
-// userFromIndex is get_user_info_from_index (:670-724; v20.2.4 :646-700):
+// userFromIndex is get_user_info_from_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L670-L724;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L646-L700):
 // the user an index object names. Accounts share users.email with users, so
 // an index naming an account is NoSuchUser.
 func (s *Store) userFromIndex(ctx context.Context, o sysObj) (*op.UserRecord, error) {
@@ -140,8 +161,11 @@ func (s *Store) userFromIndex(ctx context.Context, o sysObj) (*op.UserRecord, er
 	return s.GetUser(ctx, *owner.User)
 }
 
-// readIndex is read_index (:650-668; v20.2.4 :626-644): the RGWUID an index
-// object holds.
+// readIndex is read_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L650-L668;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L626-L644):
+// the RGWUID an index object holds.
 func (s *Store) readIndex(ctx context.Context, o sysObj) (meta.UID, error) {
 	res, err := s.sysobj.read(ctx, o, readParams{data: true})
 	if err != nil {
@@ -167,15 +191,17 @@ func activeKeys(m map[string]meta.AccessKey) map[string]bool {
 }
 
 // PutUser implements op.UserStore as store_user_info's PutOperation
-// (:189-511; v20.2.4 :171-486), whose old_info is the stored record unless
-// the put is exclusive. The account and group user indexes it also keeps
-// are the admin API's. Before the uid object, each of the record's access
-// keys is claimed in rgw-go's key holder index (claimKey), a key the write
-// gains being refused where another user holds it, and a new email's index
-// object is claimed (claimEmail); after the indexes, each key the stored
-// record held that the new one drops is released (releaseKey). A write that
-// fails after a claim leaves the claim, which names the user and is its own
-// to a retry.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L189-L511;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L171-L486),
+// whose old_info is the stored record unless the put is exclusive. The
+// account and group user indexes it also keeps are the admin API's. Before
+// the uid object, each of the record's access keys is claimed in rgw-go's
+// key holder index (claimKey), a key the write gains being refused where
+// another user holds it, and a new email's index object is claimed
+// (claimEmail); after the indexes, each key the stored record held that the
+// new one drops is released (releaseKey). A write that fails after a claim
+// leaves the claim, which names the user and is its own to a retry.
 func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	id := rec.Info.UserID
 	var old *meta.UserInfo
@@ -218,11 +244,16 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		}
 	}
 
-	// prepare (:234-241; v20.2.4 :213-220): a write version given with a tag
-	// is written; otherwise a read version with a tag moves on by one under
-	// it, and without one the write version is fresh. A read
-	// version of 0 is not checked (version_for_check, rgw_common.h:950-955;
-	// v20.2.4 :974-979).
+	// prepare
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L234-L241;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L213-L220):
+	// a write version given with a tag is written; otherwise a read version
+	// with a tag moves on by one under it, and without one the write version
+	// is fresh. A read version of 0 is not checked (version_for_check,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L950-L955;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L974-L979).
 	v := &objv{write: newWriteVersion()}
 	if opts.IfVersion != nil {
 		v.read = *opts.IfVersion
@@ -243,10 +274,14 @@ func (s *Store) PutUser(ctx context.Context, rec *op.UserRecord, opts op.PutUser
 		s.recheckClaim(ctx, id, key)
 	}
 
-	// complete (:309-358; v20.2.4 :289-338): each new key index holds the
-	// encoded RGWUID and is written as the uid object was, exclusively or
-	// not, without a version. The email's was claimed before the uid object,
-	// and is written here only over another user's, as opts.SharedEmail lets.
+	// complete
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L309-L358;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L289-L338):
+	// each new key index holds the encoded RGWUID and is written as the uid
+	// object was, exclusively or not, without a version. The email's was
+	// claimed before the uid object, and is written here only over another
+	// user's, as opts.SharedEmail lets.
 	link := encodeAt(meta.UID(id.String()), s.release)
 	putIndex := func(o sysObj) error {
 		if _, err := s.sysobj.write(ctx, o, link, nil, opts.Exclusive, time.Time{}, nil); err != nil {
@@ -675,7 +710,8 @@ func (s *Store) readEmailIndex(ctx context.Context, o sysObj) (meta.Owner, meta.
 	return meta.ParseOwner(string(uid)), v.read, nil
 }
 
-// checkKeys is prepare's check of each key newly active in keys (:243-270):
+// checkKeys is prepare's check of each key newly active in keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L243-L270):
 // one whose index names an existing other user is radosgw's -EEXIST. The
 // check reads the user through the index, as get_user_info_by_swift and
 // get_user_info_by_access_key do, and takes any failure to read it, a
@@ -706,8 +742,10 @@ func (s *Store) removeIndex(ctx context.Context, o sysObj) error {
 // account, holds, or one written over since the read, stays. An index
 // without a version, which radosgw writes, is removed once it is read to
 // name the user, as radosgw removes it. A missing index is no failure.
-// radosgw removes the index whoever it names (remove_old_indexes, :415-417;
-// remove_user_info, :584-590).
+// radosgw removes the index whoever it names (remove_old_indexes,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L415-L417;
+// remove_user_info,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L584-L590).
 func (s *Store) releaseEmail(ctx context.Context, id meta.UserID, email string) error {
 	o := s.emailIndexObj(email)
 	v := &objv{}
@@ -734,11 +772,13 @@ func (s *Store) releaseEmail(ctx context.Context, id meta.UserID, email string) 
 	return mapUserErr(err)
 }
 
-// removeOldIndexes is PutOperation::remove_old_indexes (:399-443): the
-// indexes of the old record that the new one no longer has, the email's
+// removeOldIndexes is PutOperation::remove_old_indexes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L399-L443):
+// the indexes of the old record that the new one no longer has, the email's
 // through releaseEmail. radosgw names an access key's index by the key's own
-// id when it removes one (remove_key_index, :513-520), and by its map key
-// when it writes one.
+// id when it removes one (remove_key_index,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L513-L520),
+// and by its map key when it writes one.
 func (s *Store) removeOldIndexes(ctx context.Context, old, cur meta.UserInfo) error {
 	if old.Email != "" && lowerASCII(old.Email) != lowerASCII(cur.Email) {
 		if err := s.releaseEmail(ctx, old.UserID, old.Email); err != nil {
@@ -763,21 +803,30 @@ func (s *Store) removeOldIndexes(ctx context.Context, old, cur meta.UserInfo) er
 	return nil
 }
 
-// RemoveUser implements op.UserStore as remove_user_info (:551-630; v20.2.4
-// :526-604): the active keys' indexes, the email index and, for a user
-// outside an account, its bucket list go first, then the uid object, under
-// rec's version when its Ver is not 0, and last the user's entries in the
-// key holder index, which hold the keys until the user is gone. The account
-// and group unlinks it also makes (:601-622; v20.2.4 :575-596) are the
-// admin API's.
+// RemoveUser implements op.UserStore as remove_user_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L551-L630;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L526-L604):
+// the active keys' indexes, the email index and, for a user outside an
+// account, its bucket list go first, then the uid object, under rec's
+// version when its Ver is not 0, and last the user's entries in the key
+// holder index, which hold the keys until the user is gone. The account and
+// group unlinks it also makes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L601-L622;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L575-L596)
+// are the admin API's.
 //
 // radosgw takes a uid object that is gone, or whose version check fails,
-// for success (remove_uid_index, :639; v20.2.4 :614-616); RemoveUser
-// reports the first as NoSuchUser and the second as ConcurrentModification,
-// by which time the indexes and the bucket list are already gone, as they
-// are in radosgw. A version check of a missing object fails as one of a
-// changed object does, so a failed check is told apart by reading the
-// object from RADOS.
+// for success (remove_uid_index,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L639;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L614-L616);
+// RemoveUser reports the first as NoSuchUser and the second as
+// ConcurrentModification, by which time the indexes and the bucket list are
+// already gone, as they are in radosgw. A version check of a missing object
+// fails as one of a changed object does, so a failed check is told apart by
+// reading the object from RADOS.
 func (s *Store) RemoveUser(ctx context.Context, rec *op.UserRecord) error {
 	info := rec.Info
 	for _, k := range info.AccessKeys {
@@ -839,7 +888,8 @@ func (s *Store) missing(ctx context.Context, o sysObj) bool {
 	return false
 }
 
-// readAccount is rgwrados::account::read (account.cc:163-198 at both tags):
+// readAccount is rgwrados::account::read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L163-L198 at both tags):
 // the account's info, whose id must be the one asked for. A missing account
 // is radosgw's raw ENOENT.
 func (s *Store) readAccount(ctx context.Context, id string) (meta.AccountInfo, error) {

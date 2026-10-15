@@ -37,13 +37,16 @@ type HeadStater interface {
 }
 
 const (
-	// listAbsoluteMax is bucket_list_objects_absolute_max (rgw_rados.h:1018
-	// at v19.2.6, :1068 at v20.2.4), the most entries one page returns.
+	// listAbsoluteMax is bucket_list_objects_absolute_max
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.h#L1018 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.h#L1068 at v20.2.4),
+	// the most entries one page returns.
 	listAbsoluteMax = 25000
-	// listSoftAttempts is SOFT_MAX_ATTEMPTS (:1859).
+	// listSoftAttempts is SOFT_MAX_ATTEMPTS
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1859).
 	listSoftAttempts = 8
 	// listUnorderedReadAhead is list_objects_unordered's max_read_ahead
-	// (:2201).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2201).
 	listUnorderedReadAhead = 100
 	// suggestTimeout bounds a listing's background index suggestion, which
 	// radosgw sends with aio_operate and never waits for.
@@ -53,7 +56,8 @@ const (
 // ListObjects implements op.BucketStore: RGWRados::Bucket::List::list_objects,
 // which lists ordered or, with AllowUnordered, unordered. An unordered
 // listing with a delimiter is the -EINVAL RGWListBucket::execute answers
-// (rgw_op.cc:3085-3090 at v19.2.6, :3326-3331 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3085-L3090 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3326-L3331 at v20.2.4).
 func (s *Store) ListObjects(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	if p.AllowUnordered {
 		if p.Delimiter != "" {
@@ -64,22 +68,24 @@ func (s *Store) ListObjects(ctx context.Context, rec *op.BucketRecord, p op.List
 	return s.listObjectsOrdered(ctx, rec, p)
 }
 
-// listObjectsOrdered is list_objects_ordered (:1802-2159). The marker and
-// prefix become index key names in p.NS; with a delimiter a marker inside a
-// common prefix moves past it. Each round asks listOrdered for what the
-// page still lacks, with the round as the expansion factor, and walks the
-// entries: an unparsable name is skipped, so is an entry that is not
-// visible unless versions are listed; a name outside p.NS ends a namespaced
-// listing and is skipped by a plain one, which moves its marker past a run
-// of namespaced names; then the prefix filter, the delimiter rollup,
-// p.NameFilter and the page bound. Rounds end when the cls listing is complete, at least half the
-// page is filled, or after eight rounds with anything, or when the marker
-// stops moving.
+// listObjectsOrdered is list_objects_ordered
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1802-L2159). The
+// marker and prefix become index key names in p.NS; with a delimiter a marker inside a common
+// prefix moves past it. Each round asks listOrdered for what the page still lacks, with the round
+// as the expansion factor, and walks the entries: an unparsable name is skipped, so is an entry
+// that is not visible unless versions are listed; a name outside p.NS ends a namespaced listing
+// and is skipped by a plain one, which moves its marker past a run of namespaced names; then the
+// prefix filter, the delimiter rollup, p.NameFilter and the page bound. Rounds end when the cls
+// listing is complete, at least half the page is filled, or after eight rounds with anything, or
+// when the marker stops moving.
 //
 // cls_filtered starts false here and cls_bucket_list_ordered only ANDs into
-// it (:1817, :9783), so radosgw always takes the branch written for OSDs
-// that do not roll up delimiters, and so does rgw-go (docs/ceph-upstream-bugs.md,
-// "radosgw never takes its OSD-filtered delimiter path").
+// it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1817,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9783),
+// so radosgw always takes the branch written for OSDs that do not roll up
+// delimiters, and so does rgw-go (docs/ceph-upstream-bugs.md, "radosgw never
+// takes its OSD-filtered delimiter path").
 func (s *Store) listObjectsOrdered(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	maxN := min(max(p.MaxKeys, 0), listAbsoluteMax)
 	readAhead := max(s.opts.listMinReadahead, maxN)
@@ -167,10 +173,12 @@ rounds:
 				}
 			}
 			// radosgw runs access_list_filter before the prefix and the
-			// delimiter (:2003-2009), so it also refuses a class common-prefix
-			// entry whose name the filter refuses; a refused name is skipped
-			// here only where it would be listed (docs/exclusions.md,
-			// "ListMultipartUploads keeps the common prefixes radosgw drops").
+			// delimiter
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2003-L2009),
+			// so it also refuses a class common-prefix entry whose name the
+			// filter refuses; a refused name is skipped here only where it
+			// would be listed (docs/exclusions.md, "ListMultipartUploads keeps
+			// the common prefixes radosgw drops").
 			if p.NameFilter != nil && !p.NameFilter(key.Name) {
 				continue
 			}
@@ -258,10 +266,12 @@ func objectEntry(key meta.ObjKey, e *rgwcls.DirEntry) op.ObjectEntry {
 	}
 }
 
-// calcPerShard is calc_ordered_bucket_list_per_shard (:9578-9611): the
-// entries to ask each of numShards shards for so that numEntries are likely
-// to come back, after Raab and Steger's balls-into-bins bound, at least 8,
-// and 0 for no shards. The quotient is an integer division, as in C++.
+// calcPerShard is calc_ordered_bucket_list_per_shard
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9578-L9611):
+// the entries to ask each of numShards shards for so that numEntries are
+// likely to come back, after Raab and Steger's balls-into-bins bound, at
+// least 8, and 0 for no shards. The quotient is an integer division, as in
+// C++.
 func calcPerShard(numEntries, numShards uint32) uint32 {
 	if numShards == 0 {
 		return 0
@@ -283,16 +293,18 @@ type shardTracker struct {
 
 func (t *shardTracker) atEnd() bool { return t.pos >= len(t.names) }
 
-// listOrdered is cls_bucket_list_ordered (:9614-9945): one bucket_list per
-// shard of the current index generation, at most rgw_bucket_index_max_aio
-// in flight, for calcPerShard entries scaled by the expansion factor, then
-// a merge of the replies by name. An entry that is not there and is neither
-// a delete marker nor a common prefix, or has a pending op, is checked
-// against its head; one whose head is gone is dropped. The merge stops at
-// numEntries, or when a truncated shard runs out, since the next name could
-// be on it. The suggestions the checks made are sent, and the listing is
-// truncated when any shard has entries left. last is the key of the last
-// entry visited, kept or dropped, and visited is false when there was none.
+// listOrdered is cls_bucket_list_ordered
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9614-L9945):
+// one bucket_list per shard of the current index generation, at most
+// rgw_bucket_index_max_aio in flight, for calcPerShard entries scaled by
+// the expansion factor, then a merge of the replies by name. An entry that
+// is not there and is neither a delete marker nor a common prefix, or has a
+// pending op, is checked against its head; one whose head is gone is
+// dropped. The merge stops at numEntries, or when a truncated shard runs
+// out, since the next name could be on it. The suggestions the checks made
+// are sent, and the listing is truncated when any shard has entries left.
+// last is the key of the last entry visited, kept or dropped, and visited
+// is false when there was none.
 func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfter rgwcls.ObjKey, prefix, delimiter string,
 	numEntries uint32, listVersions bool, attempt uint16,
 ) (entries []rgwcls.DirEntry, truncated bool, last rgwcls.ObjKey, visited bool, err error) {
@@ -435,26 +447,28 @@ func (s *Store) bucketList(ctx context.Context, pool radosclient.Pool, oid strin
 	return ret, ver, nil
 }
 
-// checkDiskState is check_disk_state (:10323-10475): it reconciles the
-// index entry ent, found on the shard oid, with the object's head and
-// records the suggestion that repairs the shard under updates[oid]. keep is
-// false when the head is gone and the entry is not a delete marker: the
-// suggestion removes it, with ver set to indexVer. Otherwise the entry takes
-// the head's size, accounted size, mtime, etag, content type, storage class,
-// owner, appendability, Main category, data pool and epoch, write tag and
-// existence, and the suggestion updates it, and the multipart parts its
-// manifest names leave the index, as sweepParts says. Either way the entry
-// leaves its pending ops behind. A head check that fails fails the listing,
-// but one the object store cannot make yet keeps the entry as it is with no
-// suggestion.
-// A multipart upload's meta entry is kept as it is too: radosgw checks it in
-// the data-extra pool, which the object store does not read
-// (docs/exclusions.md, "A pending multipart upload's index entry is not
-// reconciled by a listing"). radosgw picks that pool for every raw name
-// MultipartMetaFilter accepts (:10341-10344), a plain object named like
-// "a.b.meta" too, which it then fails to find; rgw-go checks a plain object
-// in the data pool whatever its name (docs/exclusions.md, "A plain object
-// whose name ends in .meta is checked where it is stored").
+// checkDiskState is check_disk_state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10323-L10475):
+// it reconciles the index entry ent, found on the shard oid, with the
+// object's head and records the suggestion that repairs the shard under
+// updates[oid]. keep is false when the head is gone and the entry is not a
+// delete marker: the suggestion removes it, with ver set to indexVer.
+// Otherwise the entry takes the head's size, accounted size, mtime, etag,
+// content type, storage class, owner, appendability, Main category, data
+// pool and epoch, write tag and existence, and the suggestion updates it,
+// and the multipart parts its manifest names leave the index, as sweepParts
+// says. Either way the entry leaves its pending ops behind. A head check
+// that fails fails the listing, but one the object store cannot make yet
+// keeps the entry as it is with no suggestion. A multipart upload's meta
+// entry is kept as it is too: radosgw checks it in the data-extra pool,
+// which the object store does not read (docs/exclusions.md, "A pending
+// multipart upload's index entry is not reconciled by a listing"). radosgw
+// picks that pool for every raw name MultipartMetaFilter accepts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10341-L10344),
+// a plain object named like "a.b.meta" too, which it then fails to find;
+// rgw-go checks a plain object in the data pool whatever its name
+// (docs/exclusions.md, "A plain object whose name ends in .meta is checked
+// where it is stored").
 func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexVer rgwcls.EntryVer, ent *rgwcls.DirEntry,
 	updates map[string][]rgwcls.Suggestion, oid string,
 ) (keep bool, err error) {
@@ -515,15 +529,17 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 }
 
 // sweepParts is check_disk_state's walk of an existing head's manifest
-// (:10413-10429; v20.2.4 :11337-11353): every stripe in the multipart
-// namespace, a part's head, has its index entry completed as deleted with
-// delete_obj_index, hashed on the part's own name as raw_obj_to_obj leaves
-// it (svc_tier_rados.h:131-143), though the part writer indexed it under the
-// upload's (docs/ceph-upstream-bugs.md, "check_disk_state removes a
-// multipart part's index entry from the wrong shard"). The walk stops with
-// denc.ErrMalformed at a step that does not move forward and with
-// meta.ErrTooManyStripes past meta.MaxWalkStripes stripes, where radosgw's
-// never ends.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10413-L10429;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11337-L11353):
+// every stripe in the multipart namespace, a part's head, has its index
+// entry completed as deleted with delete_obj_index, hashed on the part's own
+// name as raw_obj_to_obj leaves it (svc_tier_rados.h:131-143), though the
+// part writer indexed it under the upload's (docs/ceph-upstream-bugs.md,
+// "check_disk_state removes a multipart part's index entry from the wrong
+// shard"). The walk stops with denc.ErrMalformed at a step that does not
+// move forward and with meta.ErrTooManyStripes past meta.MaxWalkStripes
+// stripes, where radosgw's never ends.
 func (s *Store) sweepParts(rec *op.BucketRecord, st *op.ObjectState) error {
 	limit := cmp.Or(s.sweepLimit, meta.MaxWalkStripes)
 	it, err := st.Manifest.Seek(0)
@@ -543,11 +559,13 @@ func (s *Store) sweepParts(rec *op.BucketRecord, st *op.ObjectState) error {
 	return err
 }
 
-// blStr is rgw_bl_str (rgw_common.h:2063-2071 at v19.2.6): the attr's bytes
-// with trailing NULs trimmed.
+// blStr is rgw_bl_str
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L2063-L2071 at v19.2.6):
+// the attr's bytes with trailing NULs trimmed.
 func blStr(b []byte) string { return strings.TrimRight(string(b), "\x00") }
 
-// aclOwner is check_disk_state's RGWRados::decode_policy (:1754-1768),
+// aclOwner is check_disk_state's RGWRados::decode_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1754-L1768),
 // which decodes only the owner of the head's ACL: an ACL that does not
 // decode leaves the owner empty with a warning, as no ACL does.
 func aclOwner(ctx context.Context, b []byte, rec *op.BucketRecord, key meta.ObjKey) acl.Owner {
@@ -559,10 +577,11 @@ func aclOwner(ctx context.Context, b []byte, rec *op.BucketRecord, key meta.ObjK
 	return o
 }
 
-// policyOwner is RGWRados::decode_policy (driver/rados/rgw_rados.cc:1754-1768
-// at v19.2.6, :1857-1871 at v20.2.4) through
-// RGWAccessControlPolicy::decode_owner: the owner of an encoded ACL, its
-// grants skipped undecoded, so a policy whose grants do not decode still
+// policyOwner is RGWRados::decode_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1754-L1768 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1857-L1871 at v20.2.4)
+// through RGWAccessControlPolicy::decode_owner: the owner of an encoded ACL,
+// its grants skipped undecoded, so a policy whose grants do not decode still
 // names its owner. No ACL is no owner; one whose owner does not decode is no
 // owner and the decode's error.
 func policyOwner(b []byte) (acl.Owner, error) {
@@ -579,10 +598,11 @@ func policyOwner(b []byte) (acl.Owner, error) {
 	return o, nil
 }
 
-// parseIndexKey is rgw_obj_key::parse_index_key (rgw_obj_types.h:125-146 at
-// v19.2.6 and v20.2.4), which rgw_obj_key's constructor from an index key
-// runs: like ParseIndexKeyName but with the instance left in the namespace,
-// and a name it cannot split kept whole.
+// parseIndexKey is rgw_obj_key::parse_index_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L125-L146 at v19.2.6
+// and v20.2.4), which rgw_obj_key's constructor from an index key runs:
+// like ParseIndexKeyName but with the instance left in the namespace, and a
+// name it cannot split kept whole.
 func parseIndexKey(k string) (name, ns string) {
 	if !strings.HasPrefix(k, "_") {
 		return k, ""
@@ -599,8 +619,10 @@ func parseIndexKey(k string) (name, ns string) {
 }
 
 // suggest sends each shard's suggestions as one dir_suggest_changes write,
-// blindly, as radosgw sends them with aio_operate (:9898-9912), guarded
-// against resharding on Tentacle as v20.2.4 guards them (:10819-10832;
+// blindly, as radosgw sends them with aio_operate
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9898-L9912),
+// guarded against resharding on Tentacle as v20.2.4 guards them
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10819-L10832;
 // docs/ceph-upstream-bugs.md, "Squid does not guard listing-time index
 // suggestions against resharding"). Each write runs on its own goroutine,
 // past the request's end and for at most suggestTimeout, at most
@@ -635,15 +657,17 @@ func (s *Store) suggest(ctx context.Context, pool radosclient.Pool, updates map[
 	}
 }
 
-// listObjectsUnordered is list_objects_unordered (:2181-2330): rounds of
-// listUnordered with a read-ahead of up to 100 entries past the page, while
-// the shards have more and the page is not over. The next marker follows
-// every parsable entry read while the page has room, before the entry is
-// filtered; only the page's last counted entry can leave it, since a
+// listObjectsUnordered is list_objects_unordered
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2181-L2330):
+// rounds of listUnordered with a read-ahead of up to 100 entries past the
+// page, while the shards have more and the page is not over. The next marker
+// follows every parsable entry read while the page has room, before the entry
+// is filtered; only the page's last counted entry can leave it, since a
 // listing ends truncated only once the page is full. An unparsable name, an
 // entry that is not visible unless versions are listed, one outside p.NS, one
-// p.NameFilter refuses (:2297-2303) and one outside the prefix are then
-// skipped. No common prefixes are formed.
+// p.NameFilter refuses
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2297-L2303)
+// and one outside the prefix are then skipped. No common prefixes are formed.
 func (s *Store) listObjectsUnordered(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	maxN := min(max(p.MaxKeys, 0), listAbsoluteMax)
 	readAhead := uint32(maxN + min(maxN, listUnorderedReadAhead)) //nolint:gosec // at most 2 * listAbsoluteMax
@@ -696,15 +720,16 @@ rounds:
 	return res, nil
 }
 
-// listUnordered is cls_bucket_list_unordered (:9965-10155): the shards one
-// after another, from the one startAfter hashes to (a multipart upload's
-// meta entry by its upload's key, parse_index_hash_source) or from the
-// first, each read with bucket_list and no delimiter until numEntries are
-// listed and one more is seen, which makes the listing truncated. An entry
-// is checked against its head as listOrdered checks one, the removals
-// carrying the shard read's version, and the suggestions are sent. last is
-// the last entry listed, valid when any is. A start key that does not parse
-// is radosgw's -EINVAL.
+// listUnordered is cls_bucket_list_unordered
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9965-L10155):
+// the shards one after another, from the one startAfter hashes to (a
+// multipart upload's meta entry by its upload's key,
+// parse_index_hash_source) or from the first, each read with bucket_list
+// and no delimiter until numEntries are listed and one more is seen, which
+// makes the listing truncated. An entry is checked against its head as
+// listOrdered checks one, the removals carrying the shard read's version,
+// and the suggestions are sent. last is the last entry listed, valid when
+// any is. A start key that does not parse is radosgw's -EINVAL.
 func (s *Store) listUnordered(ctx context.Context, rec *op.BucketRecord, startAfter rgwcls.ObjKey, prefix string,
 	numEntries uint32, listVersions bool,
 ) (entries []rgwcls.DirEntry, truncated bool, last rgwcls.ObjKey, err error) {
@@ -770,9 +795,10 @@ shards:
 	return entries, truncated, last, nil
 }
 
-// indexHashSource is parse_index_hash_source (:9951-9962): a multipart meta
-// name up to its second-to-last dot, the upload's key its entries hash by;
-// ok is false when either dot is missing or first.
+// indexHashSource is parse_index_hash_source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9951-L9962):
+// a multipart meta name up to its second-to-last dot, the upload's key its
+// entries hash by; ok is false when either dot is missing or first.
 func indexHashSource(name string) (string, bool) {
 	i := strings.LastIndexByte(name, '.')
 	if i < 1 {

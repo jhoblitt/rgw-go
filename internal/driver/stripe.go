@@ -22,8 +22,9 @@ import (
 // stripe and chunk by chunk, with at most rgw_put_obj_min_window_size bytes
 // of writes in flight.
 
-// alignedSize is RGWRados::get_max_aligned_size (rgw_rados.cc:695-708 at
-// v19.2.6, the same at v20.2.4).
+// alignedSize is RGWRados::get_max_aligned_size
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L695-L708 at v19.2.6,
+// the same at v20.2.4).
 func alignedSize(size, alignment uint64) uint64 {
 	if alignment == 0 {
 		return size
@@ -34,9 +35,10 @@ func alignedSize(size, alignment uint64) uint64 {
 	return size - size%alignment
 }
 
-// poolAlignment is RGWRados::get_required_alignment (rgw_rados.cc:659-693 at
-// v19.2.6): asked of the pool on every PUT, as radosgw asks librados, which
-// answers from its OSD map.
+// poolAlignment is RGWRados::get_required_alignment
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L659-L693 at v19.2.6):
+// asked of the pool on every PUT, as radosgw asks librados, which answers
+// from its OSD map.
 func (s *Store) poolAlignment(ctx context.Context, p radosclient.Pool) (uint64, error) {
 	a, err := p.RequiredAlignment(ctx)
 	if err != nil {
@@ -72,9 +74,10 @@ type layout struct {
 
 // planPut resolves the pools and sizes for a PUT of key under storageClass
 // (rgw_putobj_processor.cc:268-341). The tail rule is the request's class
-// on the bucket's placement, as rgw_op.cc:577-578 builds s->dest_placement.
-// The stripe is aligned to the head pool's alignment, even when the tails
-// live in another pool (:314-317).
+// on the bucket's placement, as
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L577-L578
+// builds s->dest_placement. The stripe is aligned to the head pool's
+// alignment, even when the tails live in another pool (:314-317).
 func (s *Store) planPut(ctx context.Context, rec *op.BucketRecord, _ meta.ObjKey, storageClass string) (layout, error) {
 	bucket := rec.Info.Bucket
 	l := layout{headRule: rec.Info.PlacementRule}
@@ -106,7 +109,8 @@ func (s *Store) planPut(ctx context.Context, rec *op.BucketRecord, _ meta.ObjKey
 	}
 	if samePool {
 		// get_placement looks the bucket's placement up by name alone, and
-		// a placement it cannot find keeps the head inline (:304-310).
+		// a placement it cannot find keeps the head inline
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L304-L310).
 		if pi, ok := s.zone.Params.PlacementPools[l.headRule.Name]; !ok || pi.InlineData {
 			l.maxHead = headChunk
 		}
@@ -114,9 +118,12 @@ func (s *Store) planPut(ctx context.Context, rec *op.BucketRecord, _ meta.ObjKey
 	if l.chunk > s.w.opts.putWindow {
 		// A pool's alignment raised the chunk above the window, through which
 		// BlockingAioThrottle::get lets no piece of a chunk: it fails it with
-		// EDEADLK (rgw_aio_throttle.cc:40-42 at v19.2.6 and v20.2.4), which no
-		// S3 error names, so set_req_state_err answers 500 UnknownError
-		// (rgw_common.cc:346-353 at v19.2.6, :359-366 at v20.2.4).
+		// EDEADLK
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_aio_throttle.cc#L40-L42 at v19.2.6
+		// and v20.2.4), which no S3 error names, so set_req_state_err answers
+		// 500 UnknownError
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L346-L353 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L359-L366 at v20.2.4).
 		return layout{}, fmt.Errorf("%w: the %d-byte chunk of pool %s exceeds rgw_put_obj_min_window_size %d",
 			op.ErrUnknown, l.chunk, l.tailPool.Name(), s.w.opts.putWindow)
 	}
@@ -169,13 +176,15 @@ type tailWriter struct {
 	exclusiveFirst bool
 	// first is that stripe when its exclusive create met EEXIST, kept so a
 	// writer under another prefix can send it without the body being read
-	// again (rgw_putobj_processor.cc:414-439 at v19.2.6, :448-473 at
-	// v20.2.4).
+	// again
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L473 at v20.2.4).
 	first *firstPiece
 	// keepHead leaves stripe 0 out of discard: ~RadosWriter removes a part
 	// head that sits where the bucket's placement puts heads through the
-	// bucket index, after every other stripe (rgw_putobj_processor.cc:184-229
-	// at v19.2.6), which is the caller's to do.
+	// bucket index, after every other stripe
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229 at v19.2.6),
+	// which is the caller's to do.
 	keepHead bool
 
 	mu      sync.Mutex
@@ -261,15 +270,16 @@ func (t *tailWriter) addStripe(n uint64) int {
 	return len(t.stripes) - 1
 }
 
-// write is RadosWriter::process (rgw_putobj_processor.cc:140-159) for the
-// first n bytes of p at ofs within stripe idx: [set_alloc_hint2(0, 0, 0)]
-// and write_full at offset 0, write elsewhere, once the window has room for
-// the piece's buffer. A write that failed since the last piece is reported
-// here, as process_completed reports the completions aio->get returns.
-// Stripes are written in parallel, but radosgw submits a stripe's pieces from
-// one thread in stream order, so each piece waits for the write of the one
-// before it: a later piece landing first would leave the stripe's write_full
-// to truncate it.
+// write is RadosWriter::process
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L140-L159)
+// for the first n bytes of p at ofs within stripe idx: [set_alloc_hint2(0, 0,
+// 0)] and write_full at offset 0, write elsewhere, once the window has room
+// for the piece's buffer. A write that failed since the last piece is
+// reported here, as process_completed reports the completions aio->get
+// returns. Stripes are written in parallel, but radosgw submits a stripe's
+// pieces from one thread in stream order, so each piece waits for the write
+// of the one before it: a later piece landing first would leave the stripe's
+// write_full to truncate it.
 func (t *tailWriter) write(ctx context.Context, idx int, ofs uint64, p *[]byte, n int) error {
 	t.mu.Lock()
 	failed := t.err
@@ -345,8 +355,10 @@ func readPiece(r io.Reader, buf []byte) (n int, done bool, err error) {
 
 // bodyErr maps the reader's verdicts: io.ErrUnexpectedEOF is
 // ErrRequestTimeout, as a body that ended short of its length is
-// (rgw_op.cc:4430-4433 at v19.2.6, :4662-4665 at v20.2.4); an *op.Error
-// (auth's verification failures) and a context error pass through.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4430-L4433 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4662-L4665 at v20.2.4);
+// an *op.Error (auth's verification failures) and a context error pass
+// through.
 func bodyErr(err error) error {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return op.ErrRequestTimeout
@@ -356,9 +368,9 @@ func bodyErr(err error) error {
 
 // readHead reads the first m.MaxHeadSize bytes of r, the head's data. Its
 // buffer is sized as RGWPutObj_ObjStore::get_data sizes a read
-// (rgw_rest.cc:1068-1085 at v19.2.6): the declared length when it is
-// smaller, so a small object does not cost a whole chunk. A body that runs
-// past its declared length grows it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1068-L1085 at v19.2.6):
+// the declared length when it is smaller, so a small object does not cost
+// a whole chunk. A body that runs past its declared length grows it.
 func (t *tailWriter) readHead(r io.Reader, declared int64) (head []byte, done bool, err error) {
 	limit := t.m.MaxHeadSize
 	if limit == 0 {
@@ -446,11 +458,12 @@ func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int
 // the declared length when that is smaller, grown to limit when the body
 // runs past it. A stripe longer than the put window cannot pass
 // BlockingAioThrottle::get, which fails it with EDEADLK
-// (rgw_aio_throttle.cc:40-42 at v19.2.6 and v20.2.4), answered 500
-// UnknownError by set_req_state_err; reading one byte past the window is
-// enough to know. The share of the body budget taken first is limit's, the
-// most the buffer can grow to; what the buffer does not weigh goes back once
-// it is read, and all of it if the body reader panics.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_aio_throttle.cc#L40-L42 at v19.2.6
+// and v20.2.4), answered 500 UnknownError by set_req_state_err; reading one
+// byte past the window is enough to know. The share of the body budget taken
+// first is limit's, the most the buffer can grow to; what the buffer does
+// not weigh goes back once it is read, and all of it if the body reader
+// panics.
 func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64, limit uint64) (*firstPiece, error) {
 	body := t.s.w.body
 	reserved, err := body.acquire(ctx, limit)
@@ -522,12 +535,14 @@ func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, body io.Reade
 	return t.stream(ctx, io.TeeReader(body, h), uint64(f.n), f.done) //nolint:gosec // a read count is never negative
 }
 
-// writeFirst is RadosWriter::write_exclusive (rgw_putobj_processor.cc:161-177
-// at v19.2.6, :189-205 at v20.2.4) of a part's first stripe to stripe 0, the
-// part head: create(true), set_alloc_hint2(0, 0, 0) and write_full in one op,
-// awaited before anything else is issued, under the window room the caller
-// holds. An empty part still sends it, with an empty write_full. EEXIST
-// keeps f in t.first and is returned as it is.
+// writeFirst is RadosWriter::write_exclusive
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L161-L177 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L189-L205 at v20.2.4)
+// of a part's first stripe to stripe 0, the part head: create(true),
+// set_alloc_hint2(0, 0, 0) and write_full in one op, awaited before anything
+// else is issued, under the window room the caller holds. An empty part still
+// sends it, with an empty write_full. EEXIST keeps f in t.first and is
+// returned as it is.
 func (t *tailWriter) writeFirst(f *firstPiece) error {
 	obj := t.stripeObj(0)
 	stripe := meta.Stripe{Obj: obj}
@@ -622,8 +637,9 @@ func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done 
 	return size, nil
 }
 
-// drain is RadosWriter::drain (rgw_putobj_processor.cc:179-182): it waits
-// for every tail write and returns the first failure.
+// drain is RadosWriter::drain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L179-L182):
+// it waits for every tail write and returns the first failure.
 func (t *tailWriter) drain() error {
 	t.wg.Wait()
 	t.mu.Lock()
@@ -631,8 +647,9 @@ func (t *tailWriter) drain() error {
 	return op.FromRADOS(t.err, op.ScopeObject)
 }
 
-// discard is ~RadosWriter's cleanup (rgw_putobj_processor.cc:184-229): after
-// the writes in flight end, every tail a write reached is removed
+// discard is ~RadosWriter's cleanup
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229):
+// after the writes in flight end, every tail a write reached is removed
 // (delete_raw_obj), a missing one ignored and a failure logged as leaked;
 // with keepHead, stripe 0 is left. It runs under the driver's lifetime
 // context, not the request's.

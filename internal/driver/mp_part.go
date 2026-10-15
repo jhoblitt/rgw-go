@@ -22,17 +22,23 @@ import (
 )
 
 // A part upload is RGWPutObj::execute with MultipartObjectProcessor
-// (rgw_op.cc:4142-4596 and driver/rados/rgw_putobj_processor.cc:414-610 at
-// v19.2.6, rgw_op.cc:4374-4834 and :448-650 at v20.2.4; a bare line number
-// below is v19.2.6's rgw_putobj_processor.cc).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4596
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L610 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4374-L4834
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L650 at v20.2.4;
+// a bare line number below is v19.2.6's rgw_putobj_processor.cc).
 
 // partLayout is the layout of a part, which
 // MultipartObjectProcessor::prepare_head computes for the tail rule alone
-// (:441-482): the part head and its shadow stripes all go to the tail rule's
-// pool, and both the chunk and the stripe are aligned to that pool's
-// alignment. indexedHead reports that the pool is the one the bucket's
-// placement puts heads in, where ~RadosWriter removes the part head through
-// the bucket index (:184-229).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L441-L482):
+// the part head and its shadow stripes all go to the tail rule's pool, and
+// both the chunk and the stripe are aligned to that pool's alignment.
+// indexedHead reports that the pool is the one the bucket's placement puts
+// heads in, where ~RadosWriter removes the part head through the bucket
+// index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229).
 type partLayout struct {
 	layout
 	indexedHead bool
@@ -81,9 +87,10 @@ type partResult struct {
 // the first stripe created exclusively; when the part head exists, as it
 // does for a part number uploaded before, the prefix becomes
 // "<key>.<32 random characters>" and the stripe is sent again, once
-// (:414-439). Then the body's length (rgw_op.cc:4430-4433), the quota on the
-// bytes received (:4444-4448), the Content-MD5 (:4483-4486) and the drain
-// that MultipartObjectProcessor::complete starts with. It returns with every
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439).
+// Then the body's length (rgw_op.cc:4430-4433), the quota on the bytes
+// received (:4444-4448), the Content-MD5 (:4483-4486) and the drain that
+// MultipartObjectProcessor::complete starts with. It returns with every
 // stripe drained, or with what it wrote removed, as ~RadosWriter removes it.
 func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte) (partResult, error) {
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
@@ -132,12 +139,15 @@ func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32) *tailWrite
 }
 
 // registerPart is MultipartObjectProcessor::complete after its drain
-// (:491-610): the part head's write_meta, never set atomic, with no data and
-// no manifest, in the tail rule's pool, its index entry on the shard of the
-// upload's key (head_obj.index_hash_source, :466-467); then one op on the
-// meta object: assert_exists, mp_upload_part_info_update of the part's
-// RGWUploadPartInfo under partKey, and cls_version_inc (:539-576). It
-// returns the part head's mtime. On a failure the part's objects are
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L491-L610):
+// the part head's write_meta, never set atomic, with no data and no
+// manifest, in the tail rule's pool, its index entry on the shard of the
+// upload's key (head_obj.index_hash_source,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L466-L467);
+// then one op on the meta object: assert_exists, mp_upload_part_info_update
+// of the part's RGWUploadPartInfo under partKey, and cls_version_inc
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L539-L576).
+// It returns the part head's mtime. On a failure the part's objects are
 // removed, as ~RadosWriter removes them, except when the meta object's op
 // timed out and may yet land (:596-602); a missing meta object is
 // NoSuchUpload, the upload completed or aborted under the part.
@@ -164,9 +174,10 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 	x := s.newIndexOp(rec, headObj.Key, "")
 	x.hashName = key.Name
 	// RGWPutObj::execute completes a part without FLAG_LOG_OP, as parts
-	// replicate whole after CompleteMultipartUpload (rgw_op.cc:4553-4555 at
-	// v19.2.6, :4828-4830 at v20.2.4), so neither the prepare nor the
-	// completion is logged.
+	// replicate whole after CompleteMultipartUpload
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4553-L4555 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4828-L4830 at v20.2.4),
+	// so neither the prepare nor the completion is logged.
 	x.noLog = true
 	res, err := s.writeMeta(ctx, hw, x)
 	if err == nil && res.canceled {
@@ -197,9 +208,11 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 
 // partKey is the meta object's omap key for part n of upload uploadID:
 // "part.%08d" for a v2 upload id, and for an older one "part." and the number
-// as the request spelled it (:534-543), which reaches the driver as an int
-// and is printed in its canonical form (docs/exclusions.md, "An upload
-// without a v2 id keys a part by its canonical number").
+// as the request spelled it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L534-L543),
+// which reaches the driver as an int and is printed in its canonical form
+// (docs/exclusions.md, "An upload without a v2 id keys a part by its
+// canonical number").
 func partKey(uploadID string, n uint32) string {
 	if meta.IsV2UploadID(uploadID) {
 		return meta.MultipartPartKey(n)
@@ -207,12 +220,14 @@ func partKey(uploadID string, n uint32) string {
 	return "part." + strconv.Itoa(int(int32(n))) //nolint:gosec // part_num is an int
 }
 
-// discardPart is ~RadosWriter for a part (:184-229): every stripe a write
-// reached is removed. A part head in the pool the bucket's placement puts
-// heads in goes last, through RGWRados::delete_obj, its index entry removed
-// with it; any other part head is a raw delete among the stripes, first, as
-// the written set orders "__multipart_" before "__shadow_". counted reports
-// that the head's write_meta added it to the quota cache.
+// discardPart is ~RadosWriter for a part
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229):
+// every stripe a write reached is removed. A part head in the pool the
+// bucket's placement puts heads in goes last, through RGWRados::delete_obj,
+// its index entry removed with it; any other part head is a raw delete
+// among the stripes, first, as the written set orders "__multipart_" before
+// "__shadow_". counted reports that the head's write_meta added it to the
+// quota cache.
 func (s *Store) discardPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, pl partLayout, tw *tailWriter, counted bool) {
 	tw.discard()
 	if pl.indexedHead && tw.headWritten() {

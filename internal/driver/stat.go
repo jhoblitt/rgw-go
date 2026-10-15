@@ -25,18 +25,23 @@ func (s *Store) PrefetchObject(ctx context.Context, rec *op.BucketRecord, key me
 	return s.readHead(ctx, rec, key, true)
 }
 
-// readHead is RGWRados::raw_obj_stat (driver/rados/rgw_rados.cc:8827-8870 at
-// v19.2.6, :9771-9814 at v20.2.4) followed by the decoding
-// get_obj_state_impl does (:6120-6297 at v19.2.6, :6874-7051 at v20.2.4):
+// readHead is RGWRados::raw_obj_stat
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8827-L8870 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9771-L9814 at v20.2.4)
+// followed by the decoding get_obj_state_impl does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6120-L6297 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6874-L7051 at v20.2.4):
 // one RADOS op that reads the head's version, every xattr, the stat and,
 // with prefetch, its first rgw_max_chunk_size bytes.
 func (s *Store) readHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
 	ref, err := s.headRef(ctx, rec, key)
 	if errors.Is(err, radosclient.ErrNotFound) {
 		// radosgw's stat creates a missing data pool, opening it with create
-		// set (rgw_get_rados_ref, driver/rados/rgw_tools.cc:107-108 at
-		// v19.2.6, :108-109 at v20.2.4), and then finds no object in it.
-		// rgw-go creates no pool (docs/exclusions.md).
+		// set (rgw_get_rados_ref,
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L107-L108 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L108-L109 at v20.2.4),
+		// and then finds no object in it. rgw-go creates no pool
+		// (docs/exclusions.md).
 		return &op.ObjectState{Bucket: rec, Key: key}, nil
 	}
 	if err != nil {
@@ -70,7 +75,9 @@ func (s *Store) readHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 	st.Exists = true
 	st.Epoch = ver
 	// cls_version_read's completion leaves the version alone when its reply
-	// does not decode (cls_version_client.cc:66-77 at v19.2.6 and v20.2.4).
+	// does not decode
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version_client.cc#L66-L77 at v19.2.6
+	// and v20.2.4).
 	if v, verr := objv.Version(); verr == nil {
 		st.Version = meta.ObjVersion(v)
 	}
@@ -111,8 +118,9 @@ func filterAttrs(in map[string][]byte) map[string][]byte {
 // decodeState fills st's typed fields from its attrs in get_obj_state_impl's
 // order, so a head that fails two ways fails as radosgw's does. An attr that
 // does not decode is radosgw's -EIO, which its error table lacks, so it
-// answers UnknownError (set_req_state_err, rgw_common.cc:349-353 at v19.2.6,
-// :362-366 at v20.2.4).
+// answers UnknownError (set_req_state_err,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L349-L353 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L362-L366 at v20.2.4).
 func decodeState(ctx context.Context, st *op.ObjectState) error {
 	rec := st.Bucket
 	if etag, ok := st.Attrs[meta.AttrETag]; ok {
@@ -161,9 +169,10 @@ func decodeAttr[T any](b []byte, decode func(*denc.Decoder) T) (T, error) {
 	return v, d.Err()
 }
 
-// setHead is RGWObjManifest::set_head (driver/rados/rgw_obj_manifest.h:406-415
-// at v19.2.6 and v20.2.4). Its objs[0] inserts an empty piece where there
-// is none, which the assignment here reproduces.
+// setHead is RGWObjManifest::set_head
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.h#L406-L415 at v19.2.6
+// and v20.2.4). Its objs[0] inserts an empty piece where there is none, which
+// the assignment here reproduces.
 func setHead(m *meta.Manifest, rule meta.PlacementRule, obj meta.Obj, size uint64) {
 	m.HeadPlacementRule = rule
 	m.Obj = obj

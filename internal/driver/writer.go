@@ -14,8 +14,10 @@ import (
 )
 
 // reshardWait is RGWReshardWait's default duration, the pause between two
-// reads of a resharding shard's status (rgw_reshard.h:266 at v19.2.6, :275
-// at v20.2.4), which RGWRados::init_complete takes.
+// reads of a resharding shard's status
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_reshard.h#L266 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_reshard.h#L275 at v20.2.4),
+// which RGWRados::init_complete takes.
 const reshardWait = 5 * time.Second
 
 // gcObjMinWaitDefault is rgw_gc_obj_min_wait's default, 2_hr in
@@ -31,9 +33,10 @@ const gcDueSkew = 24 * 60 * 60
 // gcExpiration is the expiration_secs an enqueue sends for a wait of wait
 // seconds at now: the wait, but no more than keeps now plus it within the
 // 32 bits of seconds the class stores the due time in (encode(real_time),
-// include/encoding.h:346-354 at v19.2.6, :347-355 at v20.2.4), less
-// gcDueSkew. radosgw narrows the wait to the uint32_t every gc call takes
-// and lets the sum wrap, which makes the tails due at once
+// https://github.com/ceph/ceph/blob/v19.2.6/src/include/encoding.h#L346-L354 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L347-L355 at v20.2.4),
+// less gcDueSkew. radosgw narrows the wait to the uint32_t every gc call
+// takes and lets the sum wrap, which makes the tails due at once
 // (docs/exclusions.md, "A negative or overlong gc object wait").
 func gcExpiration(wait int64, now time.Time) uint32 {
 	limit := max(int64(math.MaxUint32)-now.Unix()-gcDueSkew, 0)
@@ -112,7 +115,8 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	}
 	o.gcObjMinWait = minWait
 	// std::max<uint32_t>(1, rgw_multi_obj_del_max_aio) narrows the option
-	// before it floors it (rgw_op.cc:7011 at v19.2.6).
+	// before it floors it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7011 at v19.2.6).
 	o.multiObjDelMaxAIO = int(max(uint32(delAIO), 1)) //nolint:gosec // narrowed as C++ narrows it
 	if o.copyConcurrentIO == 0 {
 		// radosgw fails every copy that shares tails with EDEADLK then
@@ -129,9 +133,10 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	return o, nil
 }
 
-// randAlnum is gen_rand_alphanumeric (common/random_string.cc:33-51 at
-// v19.2.6 and v20.2.4): n characters of alphanumeric, each a random byte
-// modulo its 64 characters, which is unbiased.
+// randAlnum is gen_rand_alphanumeric
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L33-L51 at v19.2.6
+// and v20.2.4): n characters of alphanumeric, each a random byte modulo
+// its 64 characters, which is unbiased.
 func randAlnum(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b) // crypto/rand.Read never returns an error
@@ -175,7 +180,9 @@ func newWriter(ctx context.Context, s *Store, opts writeOptions) *writer {
 	return w
 }
 
-// randTag is append_rand_alpha(cct, "", tag, 32) (rgw_common.h:1621-1628 at
-// v19.2.6, :1623-1630 at v20.2.4): "_" and 31 random characters, the tag an
-// index operation gets when its request brings none.
+// randTag is append_rand_alpha(cct, "", tag, 32)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1621-L1628 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1623-L1630 at v20.2.4):
+// "_" and 31 random characters, the tag an index operation gets when its
+// request brings none.
 func (w *writer) randTag() string { return "_" + w.rand(31) }
