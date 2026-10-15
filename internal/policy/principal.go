@@ -1,7 +1,8 @@
 package policy
 
-// PrincipalKind is rgw::auth::Principal::types (src/rgw/rgw_basic_types.h:144
-// at v19.2.6, :146 at v20.2.4).
+// PrincipalKind is rgw::auth::Principal::types
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L144 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L146 at v20.2.4).
 type PrincipalKind uint8
 
 // The principal kinds, in rgw::auth::Principal::types order.
@@ -12,17 +13,21 @@ const (
 	PrincipalWildcard
 	PrincipalOIDCProvider
 	PrincipalAssumedRole
-	// PrincipalService exists from v20.2.4 (src/rgw/rgw_basic_types.h:146,
-	// :187-191).
+	// PrincipalService exists from v20.2.4
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L146,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L187-L191).
 	PrincipalService
 )
 
-// Principal is rgw::auth::Principal (src/rgw/rgw_basic_types.h:143-235 at
-// v19.2.6, :145-252 at v20.2.4): whom a statement's Principal or NotPrincipal
-// names. radosgw's == and < compare only the kind and the rgw_user, tenant
-// and id (:228-234 at v19.2.6, :245-251 at v20.2.4), so to radosgw any two
-// OIDC providers, or any two services, are equal; Go's == also compares
-// IDPURL and a service's name.
+// Principal is rgw::auth::Principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L143-L235 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L145-L252 at v20.2.4):
+// whom a statement's Principal or NotPrincipal names. radosgw's == and <
+// compare only the kind and the rgw_user, tenant and id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L228-L234 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L245-L251 at v20.2.4),
+// so to radosgw any two OIDC providers, or any two services, are equal;
+// Go's == also compares IDPURL and a service's name.
 type Principal struct {
 	Kind PrincipalKind
 	// Account is get_account, the rgw_user's tenant, which holds the account

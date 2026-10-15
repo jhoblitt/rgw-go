@@ -2,8 +2,10 @@ package policy
 
 import "slices"
 
-// Env is rgw::IAM::Environment (src/rgw/rgw_iam_policy.h:326 at v19.2.6, :345
-// at v20.2.4), the condition keys of a request and their values. It is a
+// Env is rgw::IAM::Environment
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L326 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L345 at v20.2.4),
+// the condition keys of a request and their values. It is a
 // std::unordered_multimap, so a key may hold several values, equal ones
 // included, and a key with no values is absent, which is what the Null
 // operator and IfExists test. The zero value is an empty Env. A copy shares
@@ -80,13 +82,17 @@ func (e *Env) Lookup(key string) []string {
 
 // Find is env.find(key)->second, the one value radosgw's typed condition
 // operators, Numeric, Date, Bool, BinaryEquals, IpAddress and NotIpAddress,
-// read (src/rgw/rgw_iam_policy.cc:856, :880 at v19.2.6; :875, :900 at
-// v20.2.4): the first of key's values in libstdc++'s linked order, as the
-// type's doc describes. Unless sem.FindKeepsFirstValue, that is the value
-// added last. With it, that is the first value of v20.2.4's order, where a
-// value added while the Env holds 20 pairs or fewer goes after the first and
-// one added past 20 pairs goes before it; once the first is removed, the
-// next in that order is first. ok is false when key is absent.
+// read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L856,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L880 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L900 at v20.2.4):
+// the first of key's values in libstdc++'s linked order, as the type's doc
+// describes. Unless sem.FindKeepsFirstValue, that is the value added last.
+// With it, that is the first value of v20.2.4's order, where a value added
+// while the Env holds 20 pairs or fewer goes after the first and one added
+// past 20 pairs goes before it; once the first is removed, the next in that
+// order is first. ok is false when key is absent.
 func (e *Env) Find(key string, sem Semantics) (value string, ok bool) {
 	v := e.keys[key]
 	if v == nil {
@@ -99,8 +105,10 @@ func (e *Env) Find(key string, sem Semantics) (value string, ok bool) {
 }
 
 // Remove erases every pair equal to (key, value), as rgw_iam_remove_objtags
-// erases a copy source's tags (src/rgw/rgw_op.cc:651-699 at v19.2.6,
-// :681-729 at v20.2.4); a key left with no values is removed.
+// erases a copy source's tags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L651-L699 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L681-L729 at v20.2.4);
+// a key left with no values is removed.
 func (e *Env) Remove(key, value string) {
 	v := e.keys[key]
 	if v == nil {

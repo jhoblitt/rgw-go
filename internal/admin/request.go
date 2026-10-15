@@ -11,18 +11,24 @@ import (
 )
 
 // Args are the query arguments as RGWHTTPArgs holds them, with RESTArgs'
-// readers (rgw_rest.cc:854-1032 at v19.2.6, :859-1037 at v20.2.4). A
-// repeated key keeps its last value: RGWHTTPArgs::append assigns
-// val_map[name] = val (rgw_common.cc:918-924 at v19.2.6, :931-937 at
-// v20.2.4), the rule auth's query parser follows too.
+// readers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L854-L1032 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L859-L1037 at v20.2.4).
+// A repeated key keeps its last value: RGWHTTPArgs::append assigns
+// val_map[name] = val
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L918-L924 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L931-L937 at v20.2.4),
+// the rule auth's query parser follows too.
 type Args struct {
 	vals map[string]string
 	// sys holds the names starting "rgwx-", which append keeps in
-	// sys_val_map, where get and exists never look (rgw_common.cc:918-924 at
-	// v19.2.6, :931-937 at v20.2.4).
+	// sys_val_map, where get and exists never look
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L918-L924 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L931-L937 at v20.2.4).
 	sys map[string]string
 	// sub is the first admin sub-resource in query order: append records
-	// only the first (rgw_common.cc:962-975 at v19.2.6).
+	// only the first
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L962-L975 at v19.2.6).
 	sub string
 }
 
@@ -30,10 +36,11 @@ type Args struct {
 // sub-resources.
 var adminSubResources = []string{"subuser", "key", "caps", "index", "policy", "quota", "list", "object", "sync"}
 
-// ParseArgs is RGWHTTPArgs::parse (rgw_common.cc:848-898 at v19.2.6): each
-// "&"-separated pair is url-decoded whole as a query, so '+' is a space and
-// an escaped '=' separates, then split at its first '='; a name holding
-// "X-Amz-" has every byte but its dashes lowercased.
+// ParseArgs is RGWHTTPArgs::parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L848-L898 at v19.2.6):
+// each "&"-separated pair is url-decoded whole as a query, so '+' is a
+// space and an escaped '=' separates, then split at its first '='; a name
+// holding "X-Amz-" has every byte but its dashes lowercased.
 func ParseArgs(rawQuery string) Args {
 	a := Args{vals: map[string]string{}, sys: map[string]string{}}
 	if rawQuery == "" {
@@ -70,8 +77,9 @@ func (a Args) Get(name string) (string, bool) {
 
 // String is RESTArgs::get_string: def when absent, otherwise the value
 // url-decoded a second time as a query, so a "+" the parse decoded from
-// "%2B" becomes a space (rgw_rest.cc:854-871 at v19.2.6, :859-876 at
-// v20.2.4).
+// "%2B" becomes a space
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L854-L871 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L859-L876 at v20.2.4).
 func (a Args) String(name, def string) (v string, present bool) {
 	v, ok := a.vals[name]
 	if !ok {
@@ -80,9 +88,10 @@ func (a Args) String(name, def string) (v string, present bool) {
 	return rgwtext.URLDecode(v, true), true
 }
 
-// Bool is RESTArgs::get_bool (rgw_rest.cc:1002-1032 at v19.2.6): absent is
-// def; empty, "true" in any case and "1" are true; "false" in any case and
-// "0" are false; anything else is def and ErrInvalidArgument.
+// Bool is RESTArgs::get_bool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1002-L1032 at v19.2.6):
+// absent is def; empty, "true" in any case and "1" are true; "false" in
+// any case and "0" are false; anything else is def and ErrInvalidArgument.
 func (a Args) Bool(name string, def bool) (v, present bool, err error) {
 	s, ok := a.vals[name]
 	if !ok {
@@ -97,37 +106,42 @@ func (a Args) Bool(name string, def bool) (v, present bool, err error) {
 	return def, true, op.ErrInvalidArgument
 }
 
-// Int64 is RESTArgs::get_int64 over stringtoll (rgw_string.h:38-52 at
-// v19.2.6 and v20.2.4): strtoll, refusing LLONG_MAX and trailing text.
+// Int64 is RESTArgs::get_int64 over stringtoll
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L38-L52 at v19.2.6
+// and v20.2.4): strtoll, refusing LLONG_MAX and trailing text.
 func (a Args) Int64(name string, def int64) (v int64, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToLL)
 }
 
-// Int32 is RESTArgs::get_int32 over stringtol (rgw_string.h:70-84): strtol's
-// 64-bit long, refusing LONG_MAX and trailing text, then truncated to 32
-// bits.
+// Int32 is RESTArgs::get_int32 over stringtol
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L70-L84):
+// strtol's 64-bit long, refusing LONG_MAX and trailing text, then
+// truncated to 32 bits.
 func (a Args) Int32(name string, def int32) (v int32, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToL)
 }
 
-// Uint64 is RESTArgs::get_uint64 over stringtoull (rgw_string.h:54-68):
+// Uint64 is RESTArgs::get_uint64 over stringtoull
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L54-L68):
 // strtoull, which negates a negative value, refusing ULLONG_MAX and
 // trailing text.
 func (a Args) Uint64(name string, def uint64) (v uint64, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToULL)
 }
 
-// Uint32 is RESTArgs::get_uint32 over stringtoul (rgw_string.h:86-100):
-// strtoul's 64-bit unsigned long, refusing ULONG_MAX and trailing text, then
-// truncated to 32 bits.
+// Uint32 is RESTArgs::get_uint32 over stringtoul
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L86-L100):
+// strtoul's 64-bit unsigned long, refusing ULONG_MAX and trailing text,
+// then truncated to 32 bits.
 func (a Args) Uint32(name string, def uint32) (v uint32, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToUL)
 }
 
-// Epoch is RESTArgs::get_epoch over utime_t::parse_date (rgw_rest.cc:982-1000
-// at v19.2.6; src/include/utime.h:397-500 at v19.2.6 and v20.2.4): a date,
-// a date with a time, or "<sec>.<usec>"; anything else is
-// ErrInvalidArgument.
+// Epoch is RESTArgs::get_epoch over utime_t::parse_date
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L982-L1000 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L397-L500 at v19.2.6
+// and v20.2.4): a date, a date with a time, or "<sec>.<usec>"; anything else
+// is ErrInvalidArgument.
 func (a Args) Epoch(name string, def uint64) (v uint64, present bool, err error) {
 	return read(a, name, def, parseDate)
 }
@@ -158,9 +172,10 @@ var nameArgs = []string{
 // RefuseNUL is ErrInvalidArgument when an argument in nameArgs, decoded as
 // String decodes it for the handlers, holds a NUL, where the C string
 // go-ceph hands librados for the name would end. radosgw's
-// RESTArgs::get_string keeps the NUL (rgw_rest.cc:854-871 at v19.2.6,
-// :859-876 at v20.2.4), and librados's C++ API takes the name whole
-// (docs/exclusions.md).
+// RESTArgs::get_string keeps the NUL
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L854-L871 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L859-L876 at v20.2.4),
+// and librados's C++ API takes the name whole (docs/exclusions.md).
 func (a Args) RefuseNUL() error {
 	for _, name := range nameArgs {
 		if v, _ := a.String(name, ""); strings.IndexByte(v, 0) >= 0 {
@@ -184,12 +199,13 @@ func lowerASCII(s string) string {
 	return string(b)
 }
 
-// parseDate is utime_t::parse_date's epoch (src/include/utime.h:397-500 at
-// v19.2.6 and v20.2.4) over glibc's strptime. "%Y-%m-%d" is read first; past
-// it a ' ' or 'T' introduces the time, read into the same struct tm with a
-// format built from the time's own text (timeFormat); anything else after
-// the date is ignored. A text that is not a date is "<sec>.<usec>", read
-// with sscanf's "%d.%d". The epoch is internal_timegm's less the %z offset.
+// parseDate is utime_t::parse_date's epoch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L397-L500 at v19.2.6
+// and v20.2.4) over glibc's strptime. "%Y-%m-%d" is read first; past it a '
+// ' or 'T' introduces the time, read into the same struct tm with a format
+// built from the time's own text (timeFormat); anything else after the date
+// is ignored. A text that is not a date is "<sec>.<usec>", read with
+// sscanf's "%d.%d". The epoch is internal_timegm's less the %z offset.
 func parseDate(s string) (uint64, bool) {
 	s = rgwtext.CString(s)
 	tm, rest, ok := strptime.Parse(strptime.Tm{}, s, "%Y-%m-%d")
@@ -206,13 +222,15 @@ func parseDate(s string) (uint64, bool) {
 }
 
 // timeFormat is the strptime format parse_date builds from the time text p
-// in char fmt[32] (utime.h:413-437): the first 31 bytes of p, with "%H:%M"
-// over bytes 0-4 and "%S" over 6-7, so p's sixth byte stays as a literal
-// and every byte from the ninth on stays as format text, conversions
-// included. When the ninth byte is '.', the digits after it stay literal
-// and a sign where they end becomes "%z", which also ends the format. With
-// the sign at byte 30, radosgw writes that terminator one byte past the
-// array (docs/ceph-upstream-bugs.md); the format it reads is the same.
+// in char fmt[32]
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L413-L437):
+// the first 31 bytes of p, with "%H:%M" over bytes 0-4 and "%S" over 6-7,
+// so p's sixth byte stays as a literal and every byte from the ninth on
+// stays as format text, conversions included. When the ninth byte is '.',
+// the digits after it stay literal and a sign where they end becomes "%z",
+// which also ends the format. With the sign at byte 30, radosgw writes that
+// terminator one byte past the array (docs/ceph-upstream-bugs.md); the
+// format it reads is the same.
 func timeFormat(p string) string {
 	var f [32]byte
 	copy(f[:31], p)
@@ -261,10 +279,12 @@ const (
 )
 
 // SelectFormat is RGWHandler_REST::allocate_formatter with the admin
-// handlers' default, JSON (rgw_rest.cc:1732-1764 at v19.2.6;
-// RGWHandler_Auth_S3::init, rgw_rest_s3.cc:5130-5138): the format argument
-// when it is exactly "xml", "json" or "html", otherwise the Accept header up
-// to its first ';', compared exactly.
+// handlers' default, JSON
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1732-L1764 at v19.2.6;
+// RGWHandler_Auth_S3::init,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5130-L5138):
+// the format argument when it is exactly "xml", "json" or "html",
+// otherwise the Accept header up to its first ';', compared exactly.
 func SelectFormat(a Args, accept string) Format {
 	switch v, _ := a.Get("format"); v {
 	case "xml":
@@ -302,20 +322,22 @@ type Request struct {
 }
 
 // managers are the resources radosgw registers under rgw_admin_entry:
-// info, usage and account in init_apis (rgw_appmain.cc:354-361 at v19.2.6,
-// :363-370 at v20.2.4), and the RADOS driver's register_admin_apis
-// (driver/rados/rgw_sal_rados.cc:2025-2036 at v19.2.6, :2568-2579 at
-// v20.2.4).
+// info, usage and account in init_apis
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L354-L361 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L363-L370 at v20.2.4),
+// and the RADOS driver's register_admin_apis
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2025-L2036 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2568-L2579 at v20.2.4).
 var managers = []string{"info", "usage", "account", "user", "bucket", "metadata", "log", "config", "realm", "ratelimit"}
 
 // ParseRequest parses path, the decoded URI radosgw picks the manager by,
 // under the entry prefix, as RGWRESTMgr::get_resource_mgr walks it
-// (rgw_rest.cc:1974-1997 at v19.2.6): past the entry, a '/' and a
-// registered resource's exact, case-sensitive name, then the end or a '/'.
-// Anything else stays with RGWRESTMgr_Admin, which has no handler, and is
-// ErrMethodNotAllowed with Format JSON. The segment after the resource is
-// Sub; any further one is ignored, as init_from_header leaves it to the
-// object name no admin op reads.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1974-L1997 at v19.2.6):
+// past the entry, a '/' and a registered resource's exact, case-sensitive
+// name, then the end or a '/'. Anything else stays with RGWRESTMgr_Admin,
+// which has no handler, and is ErrMethodNotAllowed with Format JSON. The
+// segment after the resource is Sub; any further one is ignored, as
+// init_from_header leaves it to the object name no admin op reads.
 func ParseRequest(path, prefix, rawQuery string) (Request, error) {
 	q := Request{Args: ParseArgs(rawQuery)}
 	rest, ok := strings.CutPrefix(path, "/"+prefix)

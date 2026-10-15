@@ -39,8 +39,9 @@ const (
 	accountIDLen    = 20
 )
 
-// ValidAccountID is rgw::account::validate_id (rgw_account.cc:47-71 at
-// v19.2.6 and v20.2.4): "RGW" and 17 digits.
+// ValidAccountID is rgw::account::validate_id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L47-L71 at v19.2.6
+// and v20.2.4): "RGW" and 17 digits.
 func ValidAccountID(s string) bool {
 	if len(s) != accountIDLen || !strings.HasPrefix(s, accountIDPrefix) {
 		return false

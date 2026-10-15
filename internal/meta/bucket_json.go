@@ -25,12 +25,15 @@ func (f *jsonFields) object(name string) *jsonFields {
 }
 
 // pool is decode_json_obj(rgw_pool&): the string form through rgw_pool's
-// constructor (rgw_common.cc:2429-2434 at v19.2.6, :2491-2496 at v20.2.4).
+// constructor
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2429-L2434 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2491-L2496 at v20.2.4).
 func (f *jsonFields) pool(name string) Pool { return ParsePool(f.str(name)) }
 
 // owner is decode_json_obj(rgw_owner&): parse_owner of the string
-// (rgw_basic_types.cc:228-233 at v19.2.6, :231-236 at v20.2.4), the empty
-// user when absent.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L228-L233 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.cc#L231-L236 at v20.2.4),
+// the empty user when absent.
 func (f *jsonFields) owner(name string) Owner {
 	if !f.has(name) {
 		return UserOwner(UserID{})
@@ -38,9 +41,10 @@ func (f *jsonFields) owner(name string) Owner {
 	return ParseOwner(f.str(name))
 }
 
-// bucketID is rgw_bucket::decode_json (rgw_basic_types.cc:153-165 at
-// v19.2.6 and v20.2.4): with no explicit data pool, the old format's
-// "pool", "data_extra_pool" and "index_pool" members of the bucket itself.
+// bucketID is rgw_bucket::decode_json
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L153-L165 at v19.2.6
+// and v20.2.4): with no explicit data pool, the old format's "pool",
+// "data_extra_pool" and "index_pool" members of the bucket itself.
 func (f *jsonFields) bucketID(name string) BucketID {
 	o := f.object(name)
 	b := BucketID{
@@ -64,7 +68,8 @@ func (f *jsonFields) bucketID(name string) BucketID {
 }
 
 // UnmarshalJSON is RGWBucketEntryPoint::decode_json
-// (driver/rados/rgw_bucket.cc:3593-3604 at v19.2.6, :3694-3705 at v20.2.4)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L3593-L3604 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3694-L3705 at v20.2.4)
 // over RGWBucketEntryPoint's defaults.
 func (b *BucketEntryPoint) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
@@ -90,18 +95,21 @@ func (b *BucketEntryPoint) UnmarshalJSON(data []byte) error {
 }
 
 // UnmarshalJSON is RGWBucketInfo::decode_json at v19.2.7
-// (rgw_common.cc:2547-2591), on Tentacle too, over RGWBucketInfo's
-// defaults: the layout is NewBucketLayout's with the dump's num_shards,
-// bi_shard_hash_type and index_type, and a Normal index gets its in-index
-// log, as init_default_bucket_layout gives one
-// (driver/rados/rgw_bucket.cc:2781-2801 at v19.2.7, :2895-2919 at v20.2.4);
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2547-L2591),
+// on Tentacle too, over RGWBucketInfo's defaults: the layout is
+// NewBucketLayout's with the dump's num_shards, bi_shard_hash_type and
+// index_type, and a Normal index gets its in-index log, as
+// init_default_bucket_layout gives one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2781-L2801 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2895-L2919 at v20.2.4);
 // "region" stands in for an absent or empty zonegroup. A website
 // configuration or a sync policy with groups is ErrOpaqueJSON, as they are
 // carried opaque, and a hash type, index type or reshard status the enums do
 // not name is refused. obj_lock is read only while the document's flags
-// enable object lock, though v20.2.4 never reads it (:2606-2647), and
-// ObjLock is nil exactly when it is not read, where v19.2.7 takes an absent
-// obj_lock as RGWObjectLock(). decode_json does not read
+// enable object lock, though v20.2.4 never reads it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647),
+// and ObjLock is nil exactly when it is not read, where v19.2.7 takes an
+// absent obj_lock as RGWObjectLock(). decode_json does not read
 // new_bucket_instance_id, so it is empty.
 func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
@@ -169,15 +177,17 @@ func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 }
 
 // BucketCompleteInfo is RGWBucketCompleteInfo, the "bucket.instance"
-// metadata section's document (driver/rados/rgw_bucket.h:51-57 at v19.2.6,
-// :50-56 at v20.2.4).
+// metadata section's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.h#L51-L57 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.h#L50-L56 at v20.2.4).
 type BucketCompleteInfo struct {
 	Info  BucketInfo `json:"bucket_info"`
 	Attrs AttrsJSON  `json:"attrs"`
 }
 
 // UnmarshalJSON is RGWBucketCompleteInfo::decode_json
-// (driver/rados/rgw_bucket.cc:2117-2120 at v19.2.6, :2283-2286 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2117-L2120 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2283-L2286 at v20.2.4).
 func (c *BucketCompleteInfo) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
 	if err != nil {

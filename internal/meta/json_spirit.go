@@ -17,11 +17,13 @@ import (
 // substitute_esc_chars that changes nothing here, and to boost 1.87 classic
 // spirit as built into the v19 packages.
 //
-// The grammar (json_spirit_reader_template.h:468-524) is lenient: whitespace
-// is C isspace, arrays and objects accept stray commas, parsing stops after
-// the first value with any trailing text left unread, and numbers are tried
-// as strict_real_p, then int64_p, then uint64_p. A throw anywhere, for
-// example an object without its closing brace, fails the whole parse.
+// The grammar
+// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/json_spirit/json_spirit_reader_template.h#L468-L524)
+// is lenient: whitespace is C isspace, arrays and objects accept stray
+// commas, parsing stops after the first value with any trailing text left
+// unread, and numbers are tried as strict_real_p, then int64_p, then
+// uint64_p. A throw anywhere, for example an object without its closing
+// brace, fails the whole parse.
 //
 // The few forms whose C++ result depends on behavior not transcribed here
 // fail with denc.ErrMalformed rather than store a guess: \x and octal string
@@ -234,11 +236,13 @@ func (p *spiritParser) str() (string, bool) {
 }
 
 // substituteEscChars is substitute_esc_chars
-// (json_spirit_reader_template.h:133-172) with append_esc_char_and_incr_iter
-// (:95-131): the JSON escapes, \u with four hex digits, a non-hex digit
-// counting as 0, encoded by encode_utf8 even for surrogates, and any other
-// escaped character dropped with its backslash. A backslash in the last
-// position is kept.
+// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/json_spirit/json_spirit_reader_template.h#L133-L172)
+// with append_esc_char_and_incr_iter
+// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/json_spirit/json_spirit_reader_template.h#L95-L131):
+// the JSON escapes, \u with four hex digits, a non-hex digit counting as 0,
+// encoded by encode_utf8 even for surrogates, and any other escaped
+// character dropped with its backslash. A backslash in the last position is
+// kept.
 func substituteEscChars(s string) string {
 	if len(s) < 2 || !strings.Contains(s, `\`) {
 		return s
@@ -326,7 +330,9 @@ func (p *spiritParser) number() (string, bool) {
 }
 
 // formatReal is Generator::output(double) without remove_trailing_zeros:
-// append_double(os, d, 17) (json_spirit_writer_template.h:105-109, :252),
+// append_double(os, d, 17)
+// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/json_spirit/json_spirit_writer_template.h#L105-L109,
+// https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/json_spirit/json_spirit_writer_template.h#L252),
 // std::showpoint with setprecision(17), which is printf's %#.17g.
 func formatReal(d float64) string { return fmt.Sprintf("%#.17g", d) }
 

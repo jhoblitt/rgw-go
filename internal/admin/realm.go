@@ -16,8 +16,14 @@ const realmContentType = "application/json"
 // routes. Each dumps its body without starting the flusher and names
 // application/json and the length itself, end_header(s, NULL,
 // "application/json", s->formatter->get_len())
-// (driver/rados/rgw_rest_realm.cc:48-49, :301-302 and :344-348 at v19.2.6,
-// :49-50, :322-323 and :365-369 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L48-L49,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L301-L302
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L344-L348 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L49-L50,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L322-L323
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L365-L369 at v20.2.4).
 func newRealmHandlers() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		"get_realm":   getRealm,
@@ -27,7 +33,8 @@ func newRealmHandlers() map[string]HandlerFunc {
 }
 
 // getRealm is RGWOp_Realm_Get: the id and name through get_string, the
-// realm in a "realm" section (:276-304 at v19.2.6).
+// realm in a "realm" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L276-L304 at v19.2.6).
 func getRealm(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetRealm{}
 	o.ID, _ = q.Args.String("id", "")
@@ -45,7 +52,7 @@ func getRealm(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reque
 
 // listRealms is RGWOp_Realm_List: a "realms_list" section holding the
 // default id and the names as encode_json writes a std::list<std::string>
-// (:334-350 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L334-L350 at v19.2.6).
 func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.ListRealms{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -65,10 +72,12 @@ func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 
 // getPeriod is RGWOp_Period_Get: realm_id and period_id through
 // get_string, epoch through get_uint32, whose result radosgw ignores, so an
-// epoch it cannot parse is 0, the latest (:66-80 at v19.2.6); the period in
-// a "period" section (:34-52). A period whose zonegroup holds sync policy
-// groups fails the dump, which is answered NotImplemented
-// (docs/exclusions.md).
+// epoch it cannot parse is 0, the latest
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L66-L80 at v19.2.6);
+// the period in a "period" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L34-L52).
+// A period whose zonegroup holds sync policy groups fails the dump, which
+// is answered NotImplemented (docs/exclusions.md).
 func getPeriod(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetPeriod{}
 	o.RealmID, _ = q.Args.String("realm_id", "")

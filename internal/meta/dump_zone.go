@@ -8,11 +8,14 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
-// Dump is RGWZoneParams::dump (rgw_zone.cc:309-334 at v19.2.6; :312-340 at
-// v20.2.4, which adds dedup_pool, bucket_logging_pool and restore_pool).
-// Neither release dumps the OIDC or vector pool.
+// Dump is RGWZoneParams::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L309-L334 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L312-L340 at v20.2.4,
+// which adds dedup_pool, bucket_logging_pool and restore_pool). Neither
+// release dumps the OIDC or vector pool.
 func (z ZoneParams) Dump(f formatter.Formatter, rel denc.Release) {
-	// RGWSystemMetaObj::dump (rgw_zone.cc:812-816 at v19.2.6).
+	// RGWSystemMetaObj::dump
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L812-L816 at v19.2.6).
 	f.DumpString("id", z.ID)
 	f.DumpString("name", z.Name)
 	dumpPool(f, "domain_root", z.DomainRoot)
@@ -47,7 +50,8 @@ func (z ZoneParams) Dump(f formatter.Formatter, rel denc.Release) {
 		dumpPool(f, "bucket_logging_pool", z.BucketLoggingPool)
 	}
 	// encode_json_plain: RGWAccessKey::dump_plain in an object section
-	// (rgw_zone.cc:43-48, rgw_common.cc:2968-2972 at v19.2.6).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L43-L48,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2968-L2972 at v19.2.6).
 	f.OpenObjectSection("system_key")
 	f.DumpString("access_key", z.SystemKey.ID)
 	f.DumpString("secret_key", z.SystemKey.Secret)
@@ -62,8 +66,9 @@ func (z ZoneParams) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is RGWZonePlacementInfo::dump (rgw_zone.cc:763-773 at v19.2.6,
-// :771-781 at v20.2.4).
+// Dump is RGWZonePlacementInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L763-L773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L771-L781 at v20.2.4).
 func (p ZonePlacementInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpPool(f, "index_pool", p.IndexPool)
 	dumpSection(f, "storage_classes", p.StorageClasses, rel)
@@ -72,17 +77,19 @@ func (p ZonePlacementInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpBool("inline_data", p.InlineData)
 }
 
-// Dump is RGWZoneStorageClasses::dump (rgw_zone.cc:869-874 at v19.2.6,
-// :884-889 at v20.2.4): one section per class, named by the class, in key
-// order.
+// Dump is RGWZoneStorageClasses::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L869-L874 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L884-L889 at v20.2.4):
+// one section per class, named by the class, in key order.
 func (c ZoneStorageClasses) Dump(f formatter.Formatter, rel denc.Release) {
 	for _, name := range slices.Sorted(maps.Keys(c)) {
 		dumpSection(f, name, c[name], rel)
 	}
 }
 
-// Dump is RGWZoneStorageClass::dump (rgw_zone.cc:926-934 at v19.2.6,
-// :966-974 at v20.2.4).
+// Dump is RGWZoneStorageClass::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L926-L934 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L966-L974 at v20.2.4).
 func (s ZoneStorageClass) Dump(f formatter.Formatter, _ denc.Release) {
 	if s.DataPool != nil {
 		dumpPool(f, "data_pool", *s.DataPool)
@@ -92,10 +99,13 @@ func (s ZoneStorageClass) Dump(f formatter.Formatter, _ denc.Release) {
 	}
 }
 
-// DumpAs is encode_json(name, JSONFormattable) (ceph_json.cc:922-946 at
-// v19.2.6): a value quoted or bare as it was stored (:29-36), an array whose
-// entries are named "obj", an object whose members carry their keys, in key
-// order; nothing for FMT_NONE or a type byte past FMT_OBJ.
+// DumpAs is encode_json(name, JSONFormattable)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L922-L946 at v19.2.6):
+// a value quoted or bare as it was stored
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L29-L36),
+// an array whose entries are named "obj", an object whose members carry
+// their keys, in key order; nothing for FMT_NONE or a type byte past
+// FMT_OBJ.
 func (j JSONFormattable) DumpAs(f formatter.Formatter, name string) {
 	switch j.Type {
 	case FormattableValue:

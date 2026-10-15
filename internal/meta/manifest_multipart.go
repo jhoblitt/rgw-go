@@ -13,14 +13,18 @@ var ErrExplicitManifest = errors.New("meta: cannot append an explicit manifest")
 
 // NewPartManifest is the manifest MultipartObjectProcessor::prepare,
 // prepare_head and generator::create_begin leave for part partNum, before
-// any data (driver/rados/rgw_putobj_processor.cc:441-489 at v19.2.6,
-// :475-523 at v20.2.4; driver/rados/rgw_obj_manifest.h:265-270 and
-// driver/rados/rgw_obj_manifest.cc:221-272 at both): prefix names the
-// part's objects; one rule keyed at 0 numbers the part partNum with no part
-// size and stripes of stripeSize; no head data, as the part head is the
-// rule's first stripe; Obj is target, the upload's object rather than the
-// part head; and the tails go in target's bucket under its instance, placed
-// by tailRule with what it leaves empty taken from headRule.
+// any data
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L441-L489 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L475-L523 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.h#L265-L270
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L221-L272 at both):
+// prefix names the part's objects; one rule keyed at 0 numbers the part
+// partNum with no part size and stripes of stripeSize; no head data, as the
+// part head is the rule's first stripe; Obj is target, the upload's object
+// rather than the part head; and the tails go in target's bucket under its
+// instance, placed by tailRule with what it leaves empty taken from
+// headRule.
 func NewPartManifest(target Obj, headRule, tailRule PlacementRule, prefix string, partNum uint32, stripeSize uint64) Manifest {
 	m := NewManifest()
 	m.Obj = target
@@ -44,18 +48,18 @@ func (m Manifest) StripeObj(part uint32, stripe uint64) Obj {
 }
 
 // Append is RGWObjManifest::append for rule-based manifests
-// (driver/rados/rgw_obj_manifest.cc:44-132 at v19.2.6 and v20.2.4), which
-// RadosMultipartUpload::complete calls for each part in turn. A manifest
-// without rules adopts the part whole. Otherwise each of the part's rules,
-// in order, is absorbed into m's last rule while its part size, stripe size
-// and prefix match and its part number is the one m's last rule reaches
-// next. At the first that is not, it and the rest are added shifted by m's
-// size; where its size or prefix differed, they all take its prefix as
-// their override when that is not m's. A rule without a part size is given
-// the rest of its manifest when it is compared, and m's last rule keeps it.
-// m's size then grows by the part's. Append fails with ErrExplicitManifest,
-// leaving m unchanged, where radosgw would convert both manifests to
-// explicit ones.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L44-L132 at v19.2.6
+// and v20.2.4), which RadosMultipartUpload::complete calls for each part in
+// turn. A manifest without rules adopts the part whole. Otherwise each of
+// the part's rules, in order, is absorbed into m's last rule while its part
+// size, stripe size and prefix match and its part number is the one m's
+// last rule reaches next. At the first that is not, it and the rest are
+// added shifted by m's size; where its size or prefix differed, they all
+// take its prefix as their override when that is not m's. A rule without a
+// part size is given the rest of its manifest when it is compared, and m's
+// last rule keeps it. m's size then grows by the part's. Append fails with
+// ErrExplicitManifest, leaving m unchanged, where radosgw would convert
+// both manifests to explicit ones.
 func (m *Manifest) Append(part Manifest) error {
 	if m.ExplicitObjs || part.ExplicitObjs {
 		return ErrExplicitManifest

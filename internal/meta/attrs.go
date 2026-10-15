@@ -36,6 +36,8 @@ const (
 	AttrCloudTierConfig  = AttrPrefix + "cloud_tier_config"
 )
 
-// AttrRateLimit is RGW_ATTR_RATELIMIT (rgw_common.h:81 at v19.2.6, :86 at
-// v20.2.4), the RateLimitInfo a user or bucket carries.
+// AttrRateLimit is RGW_ATTR_RATELIMIT
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L81 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L86 at v20.2.4),
+// the RateLimitInfo a user or bucket carries.
 const AttrRateLimit = AttrPrefix + "ratelimit"

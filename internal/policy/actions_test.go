@@ -13,8 +13,11 @@ import (
 )
 
 // tentacleOnly are the actions v20.2.4 added to action_t
-// (src/rgw/rgw_iam_policy.h:84, :118-123 and :153-155 at v20.2.4); mainOnly
-// are the two only ceph main has.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L84,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L118-L123
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L153-L155 at v20.2.4);
+// mainOnly are the two only ceph main has.
 var (
 	tentacleOnly = []policy.Action{
 		policy.S3PostBucketLogging,
@@ -114,7 +117,8 @@ var _ = Describe("actions", func() {
 			}
 			Expect(got).To(Equal(rows))
 		},
-		// src/rgw/rgw_iam_policy.cc:64-215 at v19.2.6, :64-225 at v20.2.4.
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L64-L215 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L64-L225 at v20.2.4.
 		Entry("squid", denc.Squid, map[string]int{
 			"s3": 73, "s3-object-lambda": 2, "iam": 55, "sts": 4, "sns": 6, "organizations": 10,
 		}),
@@ -169,7 +173,8 @@ var _ = Describe("ActionSet", func() {
 				Expect(v.Has(a)).To(Equal(s == service && name != "*"), "%s", a)
 			}
 		},
-		// src/rgw/rgw_iam_policy.h:226-231 at v19.2.6, :236-241 at v20.2.4.
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L226-L231 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L236-L241 at v20.2.4.
 		Entry("s3", policy.S3AllValue, "s3"),
 		Entry("s3-object-lambda", policy.S3ObjectLambdaAllValue, "s3-object-lambda"),
 		Entry("iam", policy.IAMAllValue, "iam"),

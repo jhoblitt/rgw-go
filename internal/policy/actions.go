@@ -3,9 +3,10 @@ package policy
 import "github.com/jhoblitt/rgw-go/internal/denc"
 
 // The actions after the s3 block, in action_t order
-// (src/rgw/rgw_iam_policy.h:119-206 at v19.2.6, :126-216 at v20.2.4). Each
-// service ends in its All, the "<service>:*" wildcard. The iam block is
-// v20.2.4's, which added the three OIDC provider actions.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L119-L206 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L126-L216 at v20.2.4).
+// Each service ends in its All, the "<service>:*" wildcard. The iam block
+// is v20.2.4's, which added the three OIDC provider actions.
 const (
 	S3ObjectLambdaGetObject Action = s3AllCount + iota
 	S3ObjectLambdaListBucket
@@ -97,10 +98,11 @@ const (
 )
 
 // Known reports whether the radosgw of release r accepts a in a policy: whether
-// a has a row in that release's actpairs table (src/rgw/rgw_iam_policy.cc:64-215
-// at v19.2.6, :64-225 at v20.2.4). The All wildcards have no row but are known
-// on every release, since "*" and "<service>:*" set them. A value that names
-// no action is known on none.
+// a has a row in that release's actpairs table
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L64-L215 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L64-L225 at v20.2.4).
+// The All wildcards have no row but are known on every release, since "*" and
+// "<service>:*" set them. A value that names no action is known on none.
 func Known(a Action, r denc.Release) bool {
 	switch a {
 	case S3PutAccountPublicAccessBlock, S3GetAccountPublicAccessBlock:

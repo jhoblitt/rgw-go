@@ -71,8 +71,9 @@ var _ = Describe("ParseArgs", func() {
 		Entry("strcasecmp folds ASCII alone", "suspended=fal%C5%BFe", true, true, true, true),
 		Entry("text after a NUL is not compared", "suspended=true%00x", false, true, true, false),
 	)
-	// rgw_string.h:38-100 at v19.2.6 and v20.2.4: strtoll and its kin, then a
-	// refusal of the type's maximum and of trailing text, and nothing else.
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L38-L100 at v19.2.6
+	// and v20.2.4: strtoll and its kin, then a refusal of the type's maximum
+	// and of trailing text, and nothing else.
 	DescribeTable("Int64 is stringtoll",
 		func(q string, want int64, wantErr bool) {
 			v, present, err := admin.ParseArgs(q).Int64("n", 7)

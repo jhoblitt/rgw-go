@@ -80,7 +80,10 @@ var _ = Describe("ObjectLegalHold", func() {
 
 // lockBytes is RGWObjectLock::encode of enabled and, when it is non-nil, a
 // rule of the default retention r, each struct ENCODE_START(1, 1)
-// (rgw_object_lock.h:127-135, :74-78 and :34-40 at v19.2.7).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L127-L135,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L74-L78
+// and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L34-L40 at v19.2.7).
 func lockBytes(enabled bool, r *meta.DefaultRetention) []byte {
 	return encoded(func(e *denc.Encoder) {
 		beginEnd(e, 1, 1, func() {

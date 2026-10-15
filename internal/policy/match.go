@@ -7,12 +7,14 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
-// MatchWildcards is match_wildcards (src/rgw/rgw_string.cc:7-22): fnmatch(3)
-// with no flags, or FNM_CASEFOLD when caseInsensitive is set. Without
-// FNM_PATHNAME and FNM_PERIOD, * matches any run of bytes, '/' and a leading
-// '.' included; ? matches one byte; [...] is a class with ranges, a leading !
-// or ^ negating it; and \ escapes the byte after it. match_wildcards hands
-// fnmatch std::string::data(), so each string ends at its first NUL.
+// MatchWildcards is match_wildcards
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.cc#L7-L22):
+// fnmatch(3) with no flags, or FNM_CASEFOLD when caseInsensitive is set.
+// Without FNM_PATHNAME and FNM_PERIOD, * matches any run of bytes, '/' and
+// a leading '.' included; ? matches one byte; [...] is a class with ranges,
+// a leading ! or ^ negating it; and \ escapes the byte after it.
+// match_wildcards hands fnmatch std::string::data(), so each string ends at
+// its first NUL.
 func MatchWildcards(pattern, input string, caseInsensitive bool) bool {
 	m := fnmatcher{pattern: rgwtext.CString(pattern), input: rgwtext.CString(input), fold: caseInsensitive}
 	ok, _, _ := m.match(0, 0, false)
@@ -405,7 +407,9 @@ func isCType(name string, b byte) (member, known bool) {
 // components are matched case-sensitively.
 //
 // radosgw's match_policy instead hands substr the next colon's position as a
-// length (src/rgw/rgw_common.cc:2178-2179 at v19.2.6, :2241-2242 at v20.2.4),
+// length
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2178-L2179 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2241-L2242 at v20.2.4),
 // comparing each component after the first together with the text after it.
 // The two agree on action names, which have one colon; docs/exclusions.md
 // records where they differ for ARNs.
@@ -429,14 +433,22 @@ var serviceAlls = [...]Action{S3All, S3ObjectLambdaAll, IAMAll, STSAll, SNSAll, 
 
 // MatchAction sets in dst every action of release r whose name matches
 // pattern, as the parser's actpairs loop does for an Action or NotAction
-// (src/rgw/rgw_iam_policy.cc:637-641 at v19.2.6, :650-654 at v20.2.4). Then,
-// as :642-677 (v20.2.4 :655-690) do, it sets each service's All once every
-// action of the service the release knows is in dst: radosgw tests its own
-// release's range, which holds exactly those actions, where rgw-go's ranges
-// also hold the actions a release lacks. It returns false when no action
-// matched, which the parser reports as "`<pattern>` is not a valid action".
-// radosgw's parser never matches a pattern that starts with '*': it takes any
-// such pattern for "*" and sets allValue (:632-635, v20.2.4 :645-648).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L637-L641 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L650-L654 at v20.2.4).
+// Then, as
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L642-L677
+// (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L655-L690)
+// do, it sets each service's All once every action of the service the release
+// knows is in dst: radosgw tests its own release's range, which holds exactly
+// those actions, where rgw-go's ranges also hold the actions a release lacks.
+// It returns false when no action matched, which the parser reports as
+// "`<pattern>` is not a valid action". radosgw's parser never matches a
+// pattern that starts with '*': it takes any such pattern for "*" and sets
+// allValue
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L632-L635,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L645-L648).
 func MatchAction(dst *ActionSet, pattern string, r denc.Release) bool {
 	matched := false
 	first := Action(0)

@@ -32,13 +32,14 @@ func uidArg(a Args) meta.UserID {
 	return meta.ParseUserID(uid)
 }
 
-// createKey is RGWOp_Key_Create::execute (driver/rados/rgw_rest_user.cc:680-726
-// at v19.2.6, :690-736 at v20.2.4): generate-key and active default to
-// true, active applies when named, and a non-empty key-type other than
-// swift or s3 is undefined. The body is the user's Swift keys or S3 keys
-// by the type check_op settled on, secrets included, as
-// RGWUserAdminOp_Key::create dumps them whatever the caller's caps
-// (driver/rados/rgw_user.cc:2608-2622 at v19.2.6).
+// createKey is RGWOp_Key_Create::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L680-L726 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L690-L736 at v20.2.4):
+// generate-key and active default to true, active applies when named, and a
+// non-empty key-type other than swift or s3 is undefined. The body is the
+// user's Swift keys or S3 keys by the type check_op settled on, secrets
+// included, as RGWUserAdminOp_Key::create dumps them whatever the caller's caps
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2608-L2622 at v19.2.6).
 func createKey(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewCreateKey()
@@ -72,8 +73,10 @@ func createKey(ctx context.Context, w http.ResponseWriter, r *op.Request, q Requ
 	})
 }
 
-// removeKey is RGWOp_Key_Remove::execute (driver/rados/rgw_rest_user.cc:742-773
-// at v19.2.6, :752-783 at v20.2.4), which sends no body.
+// removeKey is RGWOp_Key_Remove::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L742-L773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L752-L783 at v20.2.4),
+// which sends no body.
 func removeKey(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewRemoveKey()
@@ -100,8 +103,10 @@ func subuserKeyType(a Args) op.KeyType {
 }
 
 // createSubuser is RGWOp_Subuser_Create::execute
-// (driver/rados/rgw_rest_user.cc:495-554 at v19.2.6, :505-564 at v20.2.4).
-// The body is dump_subusers_info's (driver/rados/rgw_user.cc:2519-2525).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L495-L554 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L505-L564 at v20.2.4).
+// The body is dump_subusers_info's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2519-L2525).
 func createSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewCreateSubuser()
@@ -121,9 +126,11 @@ func createSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 }
 
 // modifySubuser is RGWOp_Subuser_Modify::execute
-// (driver/rados/rgw_rest_user.cc:570-621 at v19.2.6, :580-631 at v20.2.4),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L570-L621 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L580-L631 at v20.2.4),
 // which sets the permission it reads whether or not access is named. The
-// body is dump_subusers_info's (driver/rados/rgw_user.cc:2552-2558).
+// body is dump_subusers_info's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2552-L2558).
 func modifySubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewModifySubuser()
@@ -142,7 +149,8 @@ func modifySubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 }
 
 // removeSubuser is RGWOp_Subuser_Remove::execute
-// (driver/rados/rgw_rest_user.cc:637-664 at v19.2.6, :647-674 at v20.2.4),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L637-L664 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L647-L674 at v20.2.4),
 // which sends no body.
 func removeSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
@@ -158,9 +166,11 @@ func removeSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	return nil
 }
 
-// addCaps is RGWOp_Caps_Add::execute (driver/rados/rgw_rest_user.cc:789-811
-// at v19.2.6, :799-821 at v20.2.4). The body is the user's caps,
-// RGWUserCaps::dump (driver/rados/rgw_user.cc:2675-2678).
+// addCaps is RGWOp_Caps_Add::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L789-L811 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L799-L821 at v20.2.4).
+// The body is the user's caps, RGWUserCaps::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2675-L2678).
 func addCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewAddCaps()
 	o.UID = uidArg(q.Args)
@@ -171,9 +181,11 @@ func addCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reques
 	return WriteBody(w, r, q, func(f formatter.Formatter) { o.Result.DumpAs(f, "caps") })
 }
 
-// removeCaps is RGWOp_Caps_Remove::execute (driver/rados/rgw_rest_user.cc:827-849
-// at v19.2.6, :837-859 at v20.2.4). The body is the user's caps
-// (driver/rados/rgw_user.cc:2710-2713).
+// removeCaps is RGWOp_Caps_Remove::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L827-L849 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L837-L859 at v20.2.4).
+// The body is the user's caps
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2710-L2713).
 func removeCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewRemoveCaps()
 	o.UID = uidArg(q.Args)
@@ -184,8 +196,9 @@ func removeCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	return WriteBody(w, r, q, func(f formatter.Formatter) { o.Result.DumpAs(f, "caps") })
 }
 
-// getQuotaInfo is RGWOp_Quota_Info::execute (driver/rados/rgw_rest_user.cc:886-941
-// at v19.2.6, :896-951 at v20.2.4).
+// getQuotaInfo is RGWOp_Quota_Info::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L886-L941 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L896-L951 at v20.2.4).
 func getQuotaInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewGetUserQuota()
 	o.UID = uidArg(q.Args)
@@ -198,9 +211,11 @@ func getQuotaInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 }
 
 // dumpQuotaInfo is RGWOp_Quota_Info::execute's body
-// (driver/rados/rgw_rest_user.cc:930-938 at v19.2.6): for no quota type,
-// UserQuotas::dump's bucket_quota then user_quota in a "quota" section
-// (:861-864), otherwise the one quota under its own name.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L930-L938 at v19.2.6):
+// for no quota type, UserQuotas::dump's bucket_quota then user_quota in
+// a "quota" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L861-L864),
+// otherwise the one quota under its own name.
 func dumpQuotaInfo(f formatter.Formatter, info meta.UserInfo, quotaType string, rel denc.Release) {
 	switch quotaType {
 	case "":
@@ -222,14 +237,16 @@ func dumpQuota(f formatter.Formatter, name string, q meta.Quota, rel denc.Releas
 	f.CloseSection()
 }
 
-// setQuotaInfo is RGWOp_Quota_Set::execute (driver/rados/rgw_rest_user.cc:1005-1127
-// at v19.2.6, :1015-1137 at v20.2.4), which sends no body. radosgw's argument
-// readers are unchecked: stringtoll writes nothing for a value it refuses,
-// leaving max-objects and max-size at RGWQuotaInfo's -1, no limit, and
-// max-size-kb uninitialized; get_bool leaves enabled at the current value
-// (docs/ceph-upstream-bugs.md, "radosgw's quota set stores garbage for an
-// unparsable max-size-kb"). rgw-go answers any of them it cannot parse with
-// ErrInvalidArgument after the permission check, and stores nothing.
+// setQuotaInfo is RGWOp_Quota_Set::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L1005-L1127 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L1015-L1137 at v20.2.4),
+// which sends no body. radosgw's argument readers are unchecked: stringtoll writes
+// nothing for a value it refuses, leaving max-objects and max-size at
+// RGWQuotaInfo's -1, no limit, and max-size-kb uninitialized; get_bool leaves
+// enabled at the current value (docs/ceph-upstream-bugs.md, "radosgw's quota set
+// stores garbage for an unparsable max-size-kb"). rgw-go answers any of them it
+// cannot parse with ErrInvalidArgument after the permission check, and stores
+// nothing.
 func setQuotaInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewSetUserQuota()

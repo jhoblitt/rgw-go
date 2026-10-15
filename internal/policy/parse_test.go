@@ -17,11 +17,14 @@ import (
 )
 
 // The radosgw cases are PolicyTest's and IPPolicyTest's Parse cases
-// (src/test/rgw/test_rgw_iam_policy.cc:227-755 and :1143-1200 at v19.2.6),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L227-L755
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1143-L1200 at v19.2.6),
 // which parse for arbitraryTenant and reject invalid principals. The error
-// cases follow ParseState (src/rgw/rgw_iam_policy.cc:224-810 at v19.2.6) and
-// rapidjson's Reader (src/s3select/rapidjson/include/rapidjson/reader.h at
-// rapidjson fcb23c2d, which both tags build).
+// cases follow ParseState
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L224-L810 at v19.2.6)
+// and rapidjson's Reader (src/s3select/rapidjson/include/rapidjson/reader.h
+// at rapidjson fcb23c2d, which both tags build).
 
 func parseOpts(r denc.Release) policy.ParseOptions {
 	return policy.ParseOptions{Tenant: new(arbitraryTenant), RejectInvalidPrincipals: true, Release: r}

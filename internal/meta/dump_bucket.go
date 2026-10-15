@@ -7,16 +7,18 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
-// Dump is rgw_data_placement_target::dump (rgw_basic_types.cc:131-136 at
-// v19.2.6 and v20.2.4).
+// Dump is rgw_data_placement_target::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L131-L136 at v19.2.6
+// and v20.2.4).
 func (p DataPlacement) Dump(f formatter.Formatter, _ denc.Release) {
 	dumpPool(f, "data_pool", p.DataPool)
 	dumpPool(f, "data_extra_pool", p.DataExtraPool)
 	dumpPool(f, "index_pool", p.IndexPool)
 }
 
-// Dump is rgw_bucket::dump (rgw_basic_types.cc:144-151 at v19.2.6 and
-// v20.2.4).
+// Dump is rgw_bucket::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L144-L151 at v19.2.6
+// and v20.2.4).
 func (b BucketID) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("name", b.Name)
 	f.DumpString("marker", b.Marker)
@@ -25,8 +27,9 @@ func (b BucketID) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "explicit_placement", b.ExplicitPlacement, rel)
 }
 
-// Dump is RGWBucketEntryPoint::dump (driver/rados/rgw_bucket.cc:3580-3591 at
-// v19.2.6, :3681-3692 at v20.2.4).
+// Dump is RGWBucketEntryPoint::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L3580-L3591 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3681-L3692 at v20.2.4).
 func (b BucketEntryPoint) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "bucket", b.Bucket, rel)
 	f.DumpString("owner", b.Owner.String())
@@ -42,10 +45,12 @@ func (b BucketEntryPoint) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is RGWBucketInfo::dump at v19.2.7 (rgw_common.cc:2515-2545) on both
-// releases, as MarshalJSON writes it. The website configuration and the sync
-// policy are carried opaque, so a bucket with either fails the formatter as
-// MarshalJSON fails, and so does an ObjLock that does not decode.
+// Dump is RGWBucketInfo::dump at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2515-L2545)
+// on both releases, as MarshalJSON writes it. The website configuration and
+// the sync policy are carried opaque, so a bucket with either fails the
+// formatter as MarshalJSON fails, and so does an ObjLock that does not
+// decode.
 func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	if b.HasWebsite() {
 		f.Fail(fmt.Errorf("%w: website_conf", ErrOpaqueJSON))
@@ -86,8 +91,9 @@ func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is RGWObjectLock::dump at v19.2.7 (rgw_object_lock.cc:93-101): enabled
-// only when true.
+// Dump is RGWObjectLock::dump at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L93-L101):
+// enabled only when true.
 func (l ObjectLock) Dump(f formatter.Formatter, rel denc.Release) {
 	if l.Enabled {
 		f.DumpBool("enabled", true)
@@ -98,13 +104,15 @@ func (l ObjectLock) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is ObjectLockRule::dump at v19.2.7 (rgw_object_lock.cc:56-58).
+// Dump is ObjectLockRule::dump at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L56-L58).
 func (r ObjectLockRule) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "defaultRetention", r.DefaultRetention, rel)
 }
 
-// Dump is DefaultRetention::dump at v19.2.7 (rgw_object_lock.cc:26-33): the
-// mode, then days when positive, else years.
+// Dump is DefaultRetention::dump at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L26-L33):
+// the mode, then days when positive, else years.
 func (r DefaultRetention) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("mode", r.Mode)
 	if r.Days > 0 {
@@ -114,8 +122,9 @@ func (r DefaultRetention) Dump(f formatter.Formatter, _ denc.Release) {
 	}
 }
 
-// Dump is RGWBucketCompleteInfo::dump (driver/rados/rgw_bucket.cc:2112-2115
-// at v19.2.6, :2278-2281 at v20.2.4).
+// Dump is RGWBucketCompleteInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2112-L2115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2278-L2281 at v20.2.4).
 func (c BucketCompleteInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "bucket_info", c.Info, rel)
 	dumpAttrs(f, "attrs", c.Attrs)

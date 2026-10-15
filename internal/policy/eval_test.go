@@ -14,11 +14,11 @@ import (
 
 // The radosgw cases are PolicyTest's and IPPolicyTest's
 // (src/test/rgw/test_rgw_iam_policy.cc), the same at v19.2.6 and v20.2.4 but
-// for Eval3's action set; line numbers are v19.2.6's. Each example policy is
-// built by hand from the testdata text of the same name, as parsed for
-// arbitraryTenant, with each wildcard action taken from its per-service value
-// rather than a release's parse. Each expectEval function takes its policy as
-// an argument, so a parsed document can be held to the same expectations.
+// for Eval3's action set. Each example policy is built by hand from the
+// testdata text of the same name, as parsed for arbitraryTenant, with each
+// wildcard action taken from its per-service value rather than a release's
+// parse. Each expectEval function takes its policy as an argument, so a
+// parsed document can be held to the same expectations.
 
 // arbitraryTenant is the tenant the cases parse their policies for. The parser
 // gives it to every resource ARN that names no account.
@@ -27,10 +27,11 @@ const arbitraryTenant = "arbitrary_tenant"
 // accountID is the account example2 and the IP policies name as principal.
 const accountID = "ACCOUNT-ID-WITHOUT-HYPHENS"
 
-// fakeIdentity is the cases' FakeIdentity (:144-208): the wildcard is every
-// principal, and any other identity is the wildcard principal and the one
-// equal to it. The cases' identities are TYPE_RGW; typ lets a spec make one a
-// role.
+// fakeIdentity is the cases' FakeIdentity
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L144-L208):
+// the wildcard is every principal, and any other identity is the wildcard
+// principal and the one equal to it. The cases' identities are TYPE_RGW; typ
+// lets a spec make one a role.
 type fakeIdentity struct {
 	id  policy.Principal
 	typ meta.IdentityType
@@ -71,7 +72,8 @@ func iamARN(account, resource string) policy.ARN {
 }
 
 // anyResource is what the parser makes of "Resource": "*" for arbitraryTenant
-// (Parse3, :381-385).
+// (Parse3,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L381-L385).
 func anyResource() policy.ARN {
 	return policy.ARN{
 		Partition: policy.PartitionWildcard, Service: policy.ServiceWildcard,
@@ -79,8 +81,12 @@ func anyResource() policy.ARN {
 	}
 }
 
-// s3Allow is Eval3's s3allow (:481-515), the actions "s3:List*" and "s3:Get*"
-// name on r: 34 on v19.2.6, and on v20.2.4 three more (:488-525 there).
+// s3Allow is Eval3's s3allow
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L481-L515),
+// the actions "s3:List*" and "s3:Get*" name on r: 34 on v19.2.6, and on
+// v20.2.4 three more
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/test_rgw_iam_policy.cc#L488-L525
+// there).
 func s3Allow(r denc.Release) policy.ActionSet {
 	s := actionSet(
 		policy.S3ListMultipartUploadParts, policy.S3ListBucket, policy.S3ListBucketVersions,
@@ -200,7 +206,8 @@ func example6() *policy.Policy {
 }
 
 // example7's principal keeps its empty account: the parser gives the tenant
-// to resources only (Parse7, :751).
+// to resources only (Parse7,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L751).
 func example7() *policy.Policy {
 	return &policy.Policy{
 		Text:    testdata("example7.json"),
@@ -214,7 +221,9 @@ func example7() *policy.Policy {
 	}
 }
 
-// blocklisted is the IP policies' NotIpAddress values (:1342, :1363).
+// blocklisted is the IP policies' NotIpAddress values
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1342,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1363).
 func blocklisted() []string {
 	return []string{"192.168.1.1/32", "2001:0db8:85a3:0000:0000:8a2e:0370:7334"}
 }
@@ -270,7 +279,8 @@ func ipFull() *policy.Policy {
 	}
 }
 
-// expectEval1 is Eval1 (:257-276).
+// expectEval1 is Eval1
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L257-L276).
 func expectEval1(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	ExpectWithOffset(1, p.Eval(e, nil, policy.S3ListBucket, new(s3ARN("example_bucket")), sem)).
@@ -281,7 +291,8 @@ func expectEval1(p *policy.Policy, sem policy.Semantics) {
 		To(Equal(policy.Pass), "ListBucket on erroneous_bucket")
 }
 
-// expectEval2 is Eval2 (:321-357).
+// expectEval2 is Eval2
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L321-L357).
 func expectEval2(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	trueAcct := fakeID(policy.AccountPrincipal(accountID))
@@ -300,8 +311,9 @@ func expectEval2(p *policy.Policy, sem policy.Semantics) {
 	}
 }
 
-// expectEval3 is Eval3 (:475-582) on r, whose parser gives example3's third
-// statement s3Allow(r).
+// expectEval3 is Eval3
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L475-L582)
+// on r, whose parser gives example3's third statement s3Allow(r).
 func expectEval3(p *policy.Policy, r denc.Release) {
 	sem := policy.SemanticsFor(r)
 	var em policy.Env
@@ -336,7 +348,8 @@ func expectEval3(p *policy.Policy, r denc.Release) {
 	}
 }
 
-// expectEval4 is Eval4 (:614-627).
+// expectEval4 is Eval4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L614-L627).
 func expectEval4(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	role := iamARN(arbitraryTenant, "role/example_role")
@@ -344,7 +357,8 @@ func expectEval4(p *policy.Policy, sem policy.Semantics) {
 	ExpectWithOffset(1, p.Eval(e, nil, policy.IAMDeleteRole, &role, sem)).To(Equal(policy.Pass), "DeleteRole")
 }
 
-// expectEval5 is Eval5 (:659-677).
+// expectEval5 is Eval5
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L659-L677).
 func expectEval5(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	role := iamARN(arbitraryTenant, "role/example_role")
@@ -354,7 +368,8 @@ func expectEval5(p *policy.Policy, sem policy.Semantics) {
 		To(Equal(policy.Pass), "CreateRole on a role of no account")
 }
 
-// expectEval6 is Eval6 (:709-722).
+// expectEval6 is Eval6
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L709-L722).
 func expectEval6(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	user := iamARN(arbitraryTenant, "user/A")
@@ -362,7 +377,8 @@ func expectEval6(p *policy.Policy, sem policy.Semantics) {
 	ExpectWithOffset(1, p.Eval(e, nil, policy.S3ListBucket, &user, sem)).To(Equal(policy.Allow), "ListBucket")
 }
 
-// expectEval7 is Eval7 (:757-782).
+// expectEval7 is Eval7
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L757-L782).
 func expectEval7(p *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	res := s3ARN("mybucket/*")
@@ -372,9 +388,10 @@ func expectEval7(p *policy.Policy, sem policy.Semantics) {
 	}
 }
 
-// expectEvalIPAddress is EvalIPAddress (:1202-1307). The cases name the env
-// holding ::1 allowedIPv6 and the one holding 2001:db8:85a3::8a2e:370:7334
-// blocklistedIPv6.
+// expectEvalIPAddress is EvalIPAddress
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1202-L1307).
+// The cases name the env holding ::1 allowedIPv6 and the one holding
+// 2001:db8:85a3::8a2e:370:7334 blocklistedIPv6.
 func expectEvalIPAddress(allow, deny, full *policy.Policy, sem policy.Semantics) {
 	var e policy.Env
 	allowedIP := envOf("aws:SourceIp", "192.168.1.2")

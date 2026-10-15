@@ -15,7 +15,9 @@ type Route struct {
 	Name string
 	// Payloads are the signed payload forms get_auth_data_v4 accepts for the
 	// op's type: RGW_OP_ADMIN_SET_METADATA is the one admin type on its
-	// single-chunk list (rgw_rest_s3.cc:5916 at v19.2.6, :6483 at v20.2.4),
+	// single-chunk list
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5916 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6483 at v20.2.4),
 	// and no admin type takes aws-chunked.
 	Payloads op.PayloadForms
 }
@@ -47,11 +49,14 @@ type capPair struct {
 // rgw_rest_info.cc, rgw_rest_config.h, rgw_rest_account.cc,
 // rgw_rest_ratelimit.cc and driver/rados/rgw_rest_realm.cc at v19.2.6 and
 // v20.2.4): the op passes when the identity holds any one pair, which only
-// get_user_info offers two of (rgw_rest_user.cc:77-83 at v19.2.6).
+// get_user_info offers two of
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L77-L83 at v19.2.6).
 // get_metadata_myself is an RGWOp_Metadata_Get. Squid's account get and
 // delete check a cap named "account", which no caps command can grant
-// (rgw_rest_account.cc:173-174 and :195-196 at v19.2.6); accountCaps
-// applies that.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L173-L174
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L195-L196 at v19.2.6);
+// accountCaps applies that.
 var routeCaps = map[string][]capPair{
 	"get_info":        {{"info", meta.CapRead}},
 	"get_zone_config": {{"zone", meta.CapRead}},
@@ -114,17 +119,26 @@ func accountCaps(name string, rel denc.Release) []capPair {
 }
 
 // Dispatch is the op_get, op_put, op_post and op_delete of the admin
-// handlers at v19.2.6 and v20.2.4 (driver/rados/rgw_rest_user.cc:1129-1177,
-// driver/rados/rgw_rest_bucket.cc:393-427, rgw_rest_metadata.cc:302-317,
-// rgw_rest_usage.cc:123-131, rgw_rest_info.cc:46-49,
-// rgw_rest_config.cc:49-57, driver/rados/rgw_rest_realm.cc:246-247 and
-// :355-358, rgw_rest_ratelimit.cc:344-351, rgw_rest_account.cc:223-241, at
-// v19.2.6's lines). A method or sub-resource radosgw has no op for is
-// ErrMethodNotAllowed, get_op's null (rgw_process.cc:325-329 at v19.2.6).
+// handlers at v19.2.6 and v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L1129-L1177,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L393-L427,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L302-L317,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L123-L131,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_info.cc#L46-L49,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_config.cc#L49-L57,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L246-L247
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L355-L358,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L344-L351,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L223-L241, at v19.2.6's
+// lines). A method or sub-resource radosgw has no op for is
+// ErrMethodNotAllowed, get_op's null
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L325-L329 at v19.2.6).
 // So are the ops docs/exclusions.md excludes with multisite: Sync_Bucket
 // (PUT bucket?sync), the log API and the period POST. rel gates the one row
 // that differs by release: PUT account?quota, which Squid's op_put has no
-// branch for and so runs as modify_account (v20.2.4 :306-311).
+// branch for and so runs as modify_account (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L306-L311).
 func Dispatch(method string, q Request, rel denc.Release) (Route, error) {
 	name := opName(method, q, rel)
 	if name == "" {
@@ -211,7 +225,8 @@ func bucketOp(method, sub string) string {
 }
 
 // metadataOp tests the arguments themselves, args.exists, not the
-// sub-resource (rgw_rest_metadata.cc:302-309).
+// sub-resource
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L302-L309).
 func metadataOp(method string, a Args) string {
 	switch method {
 	case http.MethodGet:

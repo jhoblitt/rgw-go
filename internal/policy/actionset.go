@@ -44,7 +44,8 @@ func (s *ActionSet) Union(o ActionSet) {
 	}
 }
 
-// contBits is set_cont_bits (src/rgw/rgw_iam_policy.h:219-223 at v19.2.6):
+// contBits is set_cont_bits
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L219-L223 at v19.2.6):
 // the actions from start up to, not including, end.
 func contBits(start, end Action) ActionSet {
 	var s ActionSet
@@ -54,9 +55,11 @@ func contBits(start, end Action) ActionSet {
 	return s
 }
 
-// The per-service values of src/rgw/rgw_iam_policy.h:226-232 at v19.2.6
-// (:236-242 at v20.2.4). Each covers its service's block without the
-// service's All; allValue covers every action.
+// The per-service values of
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L226-L232 at v19.2.6
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L236-L242 at v20.2.4).
+// Each covers its service's block without the service's All; allValue
+// covers every action.
 var (
 	s3AllValue             = contBits(0, S3All)
 	s3ObjectLambdaAllValue = contBits(S3All+1, S3ObjectLambdaAll)

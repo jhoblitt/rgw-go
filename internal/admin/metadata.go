@@ -21,7 +21,7 @@ import (
 
 // maxMetadataBody bounds a metadata put's document. radosgw reads the
 // whole body, however long (RGWOp_Metadata_Put::get_data,
-// rgw_rest_metadata.cc:176-219).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L176-L219).
 const maxMetadataBody = 16 << 20
 
 // newMetadataHandlers are RGWHandler_Metadata's routes.
@@ -35,8 +35,9 @@ func newMetadataHandlers() map[string]HandlerFunc {
 	}
 }
 
-// frameMetadataKey is frame_metadata_key (rgw_rest_metadata.cc:35-52): the
-// path's section, then ":" and key when key is not empty; with no section
+// frameMetadataKey is frame_metadata_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L35-L52):
+// the path's section, then ":" and key when key is not empty; with no section
 // in the path, key alone is the whole metadata key.
 func frameMetadataKey(q Request, key string) string {
 	if q.Sub == "" {
@@ -49,8 +50,9 @@ func frameMetadataKey(q Request, key string) string {
 }
 
 // splitMetadataKey is RGWMetadataManager::parse_metadata_key
-// (rgw_metadata.cc:437-446 at v19.2.6, :232-241 at v20.2.4): the section
-// before the first ':', the entry after it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L437-L446 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L232-L241 at v20.2.4):
+// the section before the first ':', the entry after it.
 func splitMetadataKey(framed string) (section, entry string) {
 	section, entry, _ = strings.Cut(framed, ":")
 	return section, entry
@@ -63,7 +65,8 @@ func getMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Re
 	return serveMetadataGet(ctx, w, r, q, frameMetadataKey(q, key))
 }
 
-// getMetadataMyself is RGWOp_Metadata_Get_Myself (rgw_rest_metadata.cc:71-75),
+// getMetadataMyself is RGWOp_Metadata_Get_Myself
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L71-L75),
 // whose key is the requester's owner id.
 func getMetadataMyself(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	return serveMetadataGet(ctx, w, r, q, frameMetadataKey(q, r.Identity.Owner.String()))
@@ -80,8 +83,9 @@ func serveMetadataGet(ctx context.Context, w http.ResponseWriter, r *op.Request,
 }
 
 // dumpMetadataInfo is RGWMetadataManager::get's document
-// (rgw_metadata.cc:485-494 at v19.2.6, :280-289 at v20.2.4), which the op
-// writes without starting the flusher.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L485-L494 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L280-L289 at v20.2.4),
+// which the op writes without starting the flusher.
 func dumpMetadataInfo(f formatter.Formatter, key string, e op.MetadataEntry, rel denc.Release) {
 	f.OpenObjectSection("metadata_info")
 	f.DumpString("key", key)
@@ -101,9 +105,9 @@ func dumpMetadataInfo(f formatter.Formatter, key string, e op.MetadataEntry, rel
 }
 
 // listMetadata is RGWOp_Metadata_List's argument handling
-// (rgw_rest_metadata.cc:77-108): the marker as RGWHTTPArgs::get holds it,
-// and max-entries through strict_strtol cast to unsigned, a value it
-// refuses being -EINVAL.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L77-L108):
+// the marker as RGWHTTPArgs::get holds it, and max-entries through
+// strict_strtol cast to unsigned, a value it refuses being -EINVAL.
 func listMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.ListMetadata{}
 	key, _ := q.Args.Get("key")
@@ -125,8 +129,8 @@ func listMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 }
 
 // strictStrtol is ceph's strict_strtol in base 10 over a C string
-// (common/strtol.cc:61-73 at v19.2.6 and v20.2.4): strict_strtoll, refused
-// outside int's range.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/strtol.cc#L61-L73 at v19.2.6
+// and v20.2.4): strict_strtoll, refused outside int's range.
 func strictStrtol(s string) (int32, bool) {
 	v, ok := rgwtext.StrictStrtoll(rgwtext.CString(s))
 	if !ok || v < math.MinInt32 || v > math.MaxInt32 {
@@ -136,9 +140,12 @@ func strictStrtol(s string) (int32, bool) {
 }
 
 // dumpMetadataKeys is RGWOp_Metadata_List's document
-// (rgw_rest_metadata.cc:134-170): the bare "keys" array unless max-entries
-// was given, which radosgw keeps for backward compatibility (:98), and the
-// marker base64-wrapped (:164-168).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L134-L170):
+// the bare "keys" array unless max-entries was given, which radosgw keeps
+// for backward compatibility
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L98),
+// and the marker base64-wrapped
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L164-L168).
 func dumpMetadataKeys(f formatter.Formatter, o *op.ListMetadata) {
 	if o.Extended {
 		f.OpenObjectSection("result")
@@ -159,10 +166,12 @@ func dumpMetadataKeys(f formatter.Formatter, o *op.ListMetadata) {
 }
 
 // metadataPut is RGWOp_Metadata_Put::execute's order past the cap check
-// (rgw_rest_metadata.cc:234-274): the body, then update-type, then the put.
-// ran records that execute began, after which send_response sends
-// RGWX_UPDATE_VERSION whatever the outcome (:276-288); a refusal before it,
-// abort_early's, carries neither header.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L234-L274):
+// the body, then update-type, then the put. ran records that execute
+// began, after which send_response sends RGWX_UPDATE_VERSION whatever the
+// outcome
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L276-L288);
+// a refusal before it, abort_early's, carries neither header.
 type metadataPut struct {
 	*op.PutMetadata
 	updateType string
@@ -217,8 +226,9 @@ func readMetadataBody(r *op.Request) ([]byte, error) {
 }
 
 // setMetadata is RGWOp_Metadata_Put with its send_response
-// (rgw_rest_metadata.cc:234-288). Both headers keep radosgw's spelling,
-// which http.Header.Set would canonicalize.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L234-L288).
+// Both headers keep radosgw's spelling, which http.Header.Set would
+// canonicalize.
 func setMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	key, _ := q.Args.Get("key")
 	o := &metadataPut{PutMetadata: &op.PutMetadata{}}
@@ -241,7 +251,8 @@ func setMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Re
 	return nil
 }
 
-// removeMetadata is RGWOp_Metadata_Delete (rgw_rest_metadata.cc:290-300),
+// removeMetadata is RGWOp_Metadata_Delete
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L290-L300),
 // which sends no body.
 func removeMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	key, _ := q.Args.Get("key")

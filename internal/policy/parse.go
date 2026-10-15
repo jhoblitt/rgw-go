@@ -12,7 +12,8 @@ import (
 )
 
 // ParseOptions are Policy's constructor arguments
-// (src/rgw/rgw_iam_policy.cc:1815-1826 at v19.2.6, :1850-1861 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1815-L1826 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1850-L1861 at v20.2.4).
 type ParseOptions struct {
 	// Tenant gives its value to every resource ARN whose account is "" or
 	// "*", and refuses a resource of any account but its own; nil accepts
@@ -32,10 +33,12 @@ type ParseOptions struct {
 	Context context.Context
 }
 
-// ParseError is PolicyParseException (src/rgw/rgw_iam_policy.h:563-579 at
-// v19.2.6, :616-632 at v20.2.4). Offset is rapidjson's: a byte offset into
-// the policy text, comments included. Annotation is the parser's own message
-// when it refused the document, and rapidjson's message for a syntax error.
+// ParseError is PolicyParseException
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L563-L579 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L616-L632 at v20.2.4).
+// Offset is rapidjson's: a byte offset into the policy text, comments
+// included. Annotation is the parser's own message when it refused the
+// document, and rapidjson's message for a syntax error.
 type ParseError struct {
 	Offset     int64
 	Annotation string
@@ -68,8 +71,9 @@ func Parse(text string, opts ParseOptions) (*Policy, error) {
 	return pol, nil
 }
 
-// tokenKind is rgw::IAM::TokenKind (src/rgw/rgw_iam_policy_keywords.h:9-12
-// at v19.2.6 and v20.2.4).
+// tokenKind is rgw::IAM::TokenKind
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.h#L9-L12 at v19.2.6
+// and v20.2.4).
 type tokenKind uint8
 
 const (
@@ -109,9 +113,10 @@ const (
 	tokOther
 )
 
-// seenBit is PolicyParser::dex (src/rgw/rgw_iam_policy.cc:277-314 at
-// v19.2.6, :287-324 at v20.2.4): Version is 0x1 and each id up to
-// CanonicalUser the next bit.
+// seenBit is PolicyParser::dex
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L277-L314 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L287-L324 at v20.2.4):
+// Version is 0x1 and each id up to CanonicalUser the next bit.
 func seenBit(id tokenID) uint32 { return 1 << (id - tokVersion) }
 
 // statementBits are the keys a statement may name once, which set and reset
@@ -119,7 +124,8 @@ func seenBit(id tokenID) uint32 { return 1 << (id - tokVersion) }
 // included.
 const statementBits uint32 = (1<<(tokOther-tokVersion) - 1) &^ (1<<(tokSid-tokVersion) - 1)
 
-// keyword is rgw::IAM::Keyword (rgw_iam_policy_keywords.gperf:8-15).
+// keyword is rgw::IAM::Keyword
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.gperf#L8-L15).
 type keyword struct {
 	name       string
 	kind       tokenKind
@@ -130,17 +136,20 @@ type keyword struct {
 }
 
 // The pseudo keywords for the document's top level and for a condition key
-// (src/rgw/rgw_iam_policy.cc:219-222 at v19.2.6, :229-232 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L219-L222 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L229-L232 at v20.2.4).
 var (
 	kwTop     = &keyword{name: "<Top>", kind: kindPseudo, id: tokTop}
 	kwCondKey = &keyword{name: "<Condition Key>", kind: kindCondKey, id: tokOther, arrayable: true}
 )
 
-// keywords is rgw_iam_policy_keywords.gperf's table (:17-138 at v19.2.6,
-// :17-139 at v20.2.4, where the one added line is a comment), which looks up
-// a key or string exactly. A key or string holding a NUL is no keyword in
-// radosgw either: gperf's hash of its length and its first and fourth bytes
-// never places it on the keyword it starts with.
+// keywords is rgw_iam_policy_keywords.gperf's table
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.gperf#L17-L138 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy_keywords.gperf#L17-L139 at v20.2.4,
+// where the one added line is a comment), which looks up a key or string
+// exactly. A key or string holding a NUL is no keyword in radosgw either:
+// gperf's hash of its length and its first and fourth bytes never places it
+// on the keyword it starts with.
 var keywords = func() map[string]*keyword {
 	ks := []*keyword{
 		{name: "Version", kind: kindTop, id: tokVersion},
@@ -176,9 +185,11 @@ var keywords = func() map[string]*keyword {
 	return m
 }()
 
-// parseState is ParseState (src/rgw/rgw_iam_policy.cc:224-260 at v19.2.6,
-// :234-270 at v20.2.4): the keyword whose value is being read, and whether
-// that value is an array or object still open.
+// parseState is ParseState
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L224-L260 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L234-L270 at v20.2.4):
+// the keyword whose value is being read, and whether that value is an
+// array or object still open.
 type parseState struct {
 	w            *keyword
 	arraying     bool
@@ -187,9 +198,10 @@ type parseState struct {
 }
 
 // parser is PolicyParser and its ParseState methods
-// (src/rgw/rgw_iam_policy.cc:262-809 at v19.2.6, :272-828 at v20.2.4), the
-// handler rapidjson drives. A method that refuses an event sets annotation
-// and returns false.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L262-L809 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L272-L828 at v20.2.4),
+// the handler rapidjson drives. A method that refuses an event sets
+// annotation and returns false.
 type parser struct {
 	opts   ParseOptions
 	sem    Semantics
@@ -217,8 +229,10 @@ func (p *parser) refusal() string { return p.annotation }
 
 // literal is PolicyParser's own Default override, which rapidjson's
 // BaseReaderHandler::Null and Bool call: it refuses them without an
-// annotation of its own (src/rgw/rgw_iam_policy.cc:436-438 at v19.2.6,
-// :446-448 at v20.2.4), so the message is radosgw's initial "No error?"
+// annotation of its own
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L436-L438 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L446-L448 at v20.2.4),
+// so the message is radosgw's initial "No error?"
 // (docs/ceph-upstream-bugs.md, the entry on JSON true, false and null).
 func (p *parser) literal() bool { return false }
 
@@ -476,9 +490,11 @@ const unsupportedARN = "` is not a supported AWS or Federated ARN. Supported ARN
 	"`arn:aws:iam::tenant:user/user-name` for a user, " +
 	"`arn:aws:iam::tenant:oidc-provider/idp-url` for OIDC."
 
-// principal is ParseState::parse_principal (src/rgw/rgw_iam_policy.cc:
-// 521-587 at v19.2.6, :531-599 at v20.2.4) for a value under principal type
-// w; errmsg says why it is not one radosgw supports.
+// principal is ParseState::parse_principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L521-L587 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L531-L599 at v20.2.4)
+// for a value under principal type w; errmsg says why it is not one
+// radosgw supports.
 func (p *parser) principal(w *keyword, s string) (pr Principal, errmsg string, ok bool) {
 	switch w.id {
 	case tokAWS, tokFederated:
@@ -517,10 +533,12 @@ func (p *parser) principal(w *keyword, s string) (pr Principal, errmsg string, o
 
 // addPrincipal adds pr to ps unless radosgw's principal set holds an equal
 // one already. Principal's == and < compare only the kind and the rgw_user,
-// tenant and id (src/rgw/rgw_basic_types.h:228-234 at v19.2.6, :245-251 at
-// v20.2.4), which an OIDC provider and a service leave empty, so the set
-// keeps the first of them and drops the rest (docs/ceph-upstream-bugs.md,
-// "radosgw drops all but the first OIDC provider or Service principal in a
+// tenant and id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L228-L234 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L245-L251 at v20.2.4),
+// which an OIDC provider and a service leave empty, so the set keeps the
+// first of them and drops the rest (docs/ceph-upstream-bugs.md, "radosgw
+// drops all but the first OIDC provider or Service principal in a
 // statement").
 func addPrincipal(ps []Principal, pr Principal) []Principal {
 	key := func(q Principal) Principal {

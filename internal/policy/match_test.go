@@ -18,7 +18,8 @@ var _ = Describe("MatchWildcards", func() {
 
 	DescribeTable("matches as radosgw's own tests expect",
 		expectMatch,
-		// TEST(MatchWildcards, Simple), src/test/rgw/test_rgw_iam_policy.cc:1369-1387 at v19.2.6.
+		// TEST(MatchWildcards, Simple),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1369-L1387 at v19.2.6.
 		Entry("empty against empty", "", "", true, true),
 		Entry("empty against text", "", "abc", false, false),
 		Entry("text against empty", "abc", "", false, false),
@@ -27,7 +28,8 @@ var _ = Describe("MatchWildcards", func() {
 		Entry("uppercase against its lowercase", "abC", "abc", false, true),
 		Entry("a prefix of the input", "abc", "abcd", false, false),
 		Entry("longer than the input", "abcd", "abc", false, false),
-		// TEST(MatchWildcards, QuestionMark), :1389-1411.
+		// TEST(MatchWildcards, QuestionMark),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1389-L1411.
 		Entry("? against empty", "?", "", false, false),
 		Entry("? against one byte", "?", "a", true, true),
 		Entry("? leading", "?bc", "abc", true, true),
@@ -38,7 +40,8 @@ var _ = Describe("MatchWildcards", func() {
 		Entry("two ?", "a?c?e", "abcde", true, true),
 		Entry("??? against three bytes", "???", "abc", true, true),
 		Entry("??? against four bytes", "???", "abcd", false, false),
-		// TEST(MatchWildcards, Asterisk), :1413-1447.
+		// TEST(MatchWildcards, Asterisk),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1413-L1447.
 		Entry("* against empty", "*", "", true, true),
 		Entry("* in the input is literal", "", "*", false, false),
 		Entry("*a against empty", "*a", "", false, false),
@@ -115,7 +118,7 @@ var _ = Describe("MatchPolicy", func() {
 	DescribeTable("matches as radosgw's own tests expect",
 		expectMatch,
 		// TEST(MatchPolicy, Action) and TEST(MatchPolicy, ARN),
-		// src/test/rgw/test_rgw_iam_policy.cc:1449-1465 at v19.2.6.
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1449-L1465 at v19.2.6.
 		Entry("equal components", "a:b:c", "a:b:c", true, true),
 		Entry("components that differ in case", "a:b:c", "A:B:C", true, false),
 		Entry("* within a component", "a:*:e", "a:bcd:e", true, true),
@@ -196,7 +199,7 @@ var _ = Describe("MatchAction", func() {
 	It("sets a service's All bit only once the patterns matched so far cover the service", func() {
 		// The IAMFullAccess managed policy names the ten organizations
 		// actions one by one, and radosgw's test of it expects organizationsAll
-		// (src/test/rgw/test_rgw_iam_policy.cc:792-801 at v19.2.6).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L792-L801 at v19.2.6).
 		names := []string{
 			"organizations:DescribeAccount",
 			"organizations:DescribeOrganization",

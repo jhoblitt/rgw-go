@@ -7,13 +7,14 @@ import (
 )
 
 // Operator is a condition operator: the cond_op subset of rgw::IAM::TokenID
-// (src/rgw/rgw_iam_policy_keywords.h:29-56 at v19.2.6 and v20.2.4), in its
-// order.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.h#L29-L56 at v19.2.6
+// and v20.2.4), in its order.
 type Operator uint8
 
 // The condition operators. String gives each one's keyword as the keyword
-// table spells it (src/rgw/rgw_iam_policy_keywords.gperf:38-77 at v19.2.6 and
-// v20.2.4), "IpAddress" for OpIPAddress.
+// table spells it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.gperf#L38-L77 at v19.2.6
+// and v20.2.4), "IpAddress" for OpIPAddress.
 const (
 	OpStringEquals Operator = iota
 	OpStringNotEquals
@@ -111,9 +112,11 @@ func ParseOperator(s string) (Operator, bool) {
 	return o, ok
 }
 
-// Condition is rgw::IAM::Condition (src/rgw/rgw_iam_policy.h:348-365 at
-// v19.2.6, :367-384 at v20.2.4): an operator, the condition key it tests and
-// the values it compares the key's values with.
+// Condition is rgw::IAM::Condition
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L348-L365 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L367-L384 at v20.2.4):
+// an operator, the condition key it tests and the values it compares the
+// key's values with.
 type Condition struct {
 	Op  Operator
 	Key string
@@ -121,15 +124,18 @@ type Condition struct {
 	// Key is absent.
 	IfExists bool
 	// IsRuntime is set when one of Values is an interpolation, "${...}"
-	// (src/rgw/rgw_iam_policy.cc:703-720 at v19.2.6, :716-732 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L703-L720 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L716-L732 at v20.2.4).
 	// The string and ARN operators then compare Key's values with the values
 	// of the key the last of Values names.
 	IsRuntime bool
 	Values    []string
 }
 
-// Eval is Condition::eval (src/rgw/rgw_iam_policy.cc:854-1006 at v19.2.6,
-// :873-1010 at v20.2.4) under sem's rules.
+// Eval is Condition::eval
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L854-L1006 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L873-L1010 at v20.2.4)
+// under sem's rules.
 //
 // The string and ARN operators compare every value Key holds (equal_range)
 // with every condition value. The typed operators, Numeric, Date, Bool,
@@ -219,7 +225,8 @@ func (c Condition) Eval(env Env, sem Semantics) bool {
 	case OpIPAddress:
 		return typedAny(s, c.Values, ParseMaskedIP, MaskedIP.Equal)
 	case OpNotIPAddress:
-		// Both releases: v19.2.6 spells typed_none out (:974-992).
+		// Both releases: v19.2.6 spells typed_none out
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L974-L992).
 		return typedNone(s, c.Values, ParseMaskedIP, MaskedIP.Equal)
 
 	case OpArnEquals, OpArnLike:
@@ -328,9 +335,11 @@ func greaterEqual[T ordered](a, b T) bool { return a >= b }
 // stringLike is string_like: the condition value is the pattern.
 func stringLike(v, d string) bool { return MatchWildcards(d, v, false) }
 
-// arnLike is arn_like (:845-852 at v19.2.6, :864-871 at v20.2.4): the
-// environment's ARN must hold exactly five colons, and the condition value is
-// the pattern, matched case-sensitively.
+// arnLike is arn_like
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L845-L852 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L864-L871 at v20.2.4):
+// the environment's ARN must hold exactly five colons, and the condition
+// value is the pattern, matched case-sensitively.
 func arnLike(v, d string) bool {
 	return strings.Count(v, ":") == 5 && MatchPolicy(d, v, false)
 }

@@ -12,11 +12,14 @@ import (
 // RGW_ATTR_USER_POLICY or a group's RGW_ATTR_IAM_POLICY: a bare
 // std::map<string, string> of policy name to text, which radosgw parses in
 // name order with the user's policy tenant and invalid principals dropped
-// (load_inline_policy, src/rgw/rgw_auth.cc:85-95 at v19.2.6 and v20.2.4). A
-// policy that does not parse fails the decode, as its exception fails
-// radosgw's authentication; the error wraps its *ParseError. Bytes past the
-// map fail it too, where radosgw's full-bufferlist decode asserts and
-// aborts (src/include/encoding.h:632-637 at v19.2.6, :633-638 at v20.2.4;
+// (load_inline_policy,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L85-L95 at v19.2.6
+// and v20.2.4). A policy that does not parse fails the decode, as its
+// exception fails radosgw's authentication; the error wraps its
+// *ParseError. Bytes past the map fail it too, where radosgw's
+// full-bufferlist decode asserts and aborts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/encoding.h#L632-L637 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L633-L638 at v20.2.4;
 // docs/ceph-upstream-bugs.md, "radosgw aborts on a stored IAM policy attr
 // with bytes past its encoding").
 func DecodeUserPolicies(b []byte, tenant *string, r denc.Release) ([]*Policy, error) {
@@ -37,11 +40,12 @@ func DecodeUserPolicies(b []byte, tenant *string, r denc.Release) ([]*Policy, er
 }
 
 // DecodeManagedPolicies decodes RGW_ATTR_MANAGED_POLICY, ManagedPolicies
-// (src/rgw/rgw_iam_managed_policy.cc:177-189): ENCODE_START(1, 1) around a
-// flat_set<string> of ARNs. It returns the managed policy each ARN names, in
-// the set's sorted order with repeats dropped, skipping an ARN that names
-// none (load_managed_policy, src/rgw/rgw_auth.cc:97-108). Bytes past the
-// struct fail the decode, as DecodeUserPolicies's do.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_managed_policy.cc#L177-L189):
+// ENCODE_START(1, 1) around a flat_set<string> of ARNs. It returns the
+// managed policy each ARN names, in the set's sorted order with repeats
+// dropped, skipping an ARN that names none (load_managed_policy,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L97-L108).
+// Bytes past the struct fail the decode, as DecodeUserPolicies's do.
 func DecodeManagedPolicies(b []byte, r denc.Release) ([]*Policy, error) {
 	d := denc.NewDecoder(b)
 	h := d.BeginStruct(1)

@@ -347,12 +347,15 @@ type bucketInfoDump struct {
 	ObjLock             *ObjectLock                 `json:"obj_lock,omitzero"`
 }
 
-// MarshalJSON is RGWBucketInfo::dump at v19.2.7 (rgw_common.cc:2515-2545), on
-// Tentacle too: of the layout only the current index's shard count, hash type
-// and index type, and obj_lock while the flags enable object lock, which
-// v20.2.4 does not write (:2577-2604). It fails with ErrOpaqueJSON when the
-// dump would include website_conf or sync_policy, which are held as
-// RawStruct, and with ObjectLock's error when ObjLock does not decode.
+// MarshalJSON is RGWBucketInfo::dump at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2515-L2545),
+// on Tentacle too: of the layout only the current index's shard count, hash
+// type and index type, and obj_lock while the flags enable object lock, which
+// v20.2.4 does not write
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2577-L2604).
+// It fails with ErrOpaqueJSON when the dump would include website_conf or
+// sync_policy, which are held as RawStruct, and with ObjectLock's error when
+// ObjLock does not decode.
 func (b BucketInfo) MarshalJSON() ([]byte, error) {
 	if b.HasWebsite() {
 		return nil, fmt.Errorf("%w: website_conf", ErrOpaqueJSON)

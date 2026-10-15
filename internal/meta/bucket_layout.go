@@ -423,19 +423,23 @@ func (l BucketLayout) MarshalJSON() ([]byte, error) {
 }
 
 // shardsPrime0 is RGW_SHARDS_PRIME_0, the smaller rgw_shards_mod prime
-// (driver/rados/rgw_tools.h:35 at v19.2.6, :52 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.h#L35 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.h#L52 at v20.2.4).
 const shardsPrime0 = 7877
 
 // ShardsMax is rgw_shards_max(), RGW_SHARDS_PRIME_1: the larger
 // rgw_shards_mod prime, and the most shards a sharded log may have
-// (driver/rados/rgw_tools.h:36-43 at v19.2.6, :53-60 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.h#L36-L43 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.h#L53-L60 at v20.2.4).
 const ShardsMax = 65521
 
-// ShardsMod is rgw_shards_mod (driver/rados/rgw_tools.h:46-55 at v19.2.6,
-// :63-72 at v20.2.4): the hash reduced by RGW_SHARDS_PRIME_0, or ShardsMax
-// above that many shards, then by the count. A count of 0 answers 0 rather
-// than dividing; rgw_shards_mod answers -1, which its GC caller then uses
-// as an index (docs/ceph-upstream-bugs.md, tracker #80991).
+// ShardsMod is rgw_shards_mod
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.h#L46-L55 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.h#L63-L72 at v20.2.4):
+// the hash reduced by RGW_SHARDS_PRIME_0, or ShardsMax above that many
+// shards, then by the count. A count of 0 answers 0 rather than dividing;
+// rgw_shards_mod answers -1, which its GC caller then uses as an index
+// (docs/ceph-upstream-bugs.md, tracker #80991).
 func ShardsMod(hval, maxShards uint32) uint32 {
 	if maxShards == 0 {
 		return 0

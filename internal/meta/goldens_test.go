@@ -324,8 +324,9 @@ var _ = Describe("corpus goldens", func() {
 		Expect(invalid).To(Equal(1))
 	})
 	// Neither type has a Go JSON form to compare: RGWUploadPartInfo::dump
-	// prints only num, size, etag, modified and past_prefixes (rgw_multi.cc:94-102
-	// at v19.2.6), and multipart_upload_info::dump only the placement's dump.
+	// prints only num, size, etag, modified and past_prefixes
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.cc#L94-L102 at v19.2.6),
+	// and multipart_upload_info::dump only the placement's dump.
 	It("RGWUploadPartInfo", func() {
 		goldentest.RoundTrip(dir, "RGWUploadPartInfo", goldentest.Options{Release: denc.Squid, SkipJSON: true}, meta.DecodeUploadPartInfo,
 			func(e *denc.Encoder, v meta.UploadPartInfo, r denc.Release) { v.Encode(e, r) })

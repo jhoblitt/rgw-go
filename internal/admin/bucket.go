@@ -11,8 +11,7 @@ import (
 )
 
 // The bucket routes are driver/rados/rgw_rest_bucket.cc's RGWOp_* execute
-// bodies, whose line numbers are the same at v19.2.6 and v20.2.4. A bare
-// rgw_bucket.cc line is v19.2.6's.
+// bodies, whose line numbers are the same at v19.2.6 and v20.2.4.
 
 // newBucketHandlers are the bucket routes but the index check.
 func newBucketHandlers() map[string]HandlerFunc {
@@ -36,10 +35,12 @@ func (f *flags) destructive(name string) bool {
 	return f.get(name, false)
 }
 
-// getBucketInfo is RGWOp_Bucket_Info::execute (rgw_rest_bucket.cc:33-62):
+// getBucketInfo is RGWOp_Bucket_Info::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L33-L62):
 // uid, bucket, stats, max-entries and marker, the readers unchecked as
 // radosgw's are, so a value they refuse is the default. The body is
-// RGWBucketAdminOp::info's, its flusher started (rgw_bucket.cc:1649-1650).
+// RGWBucketAdminOp::info's, its flusher started
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1649-L1650).
 func getBucketInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewBucketInfo()
@@ -61,7 +62,8 @@ func getBucketInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 // dumpBucketInfo is info's document: one bucket's stats; or a "buckets"
 // array of stats or of "bucket" names, inside a "result" section with
 // truncated, count and, when truncated, marker for a user's listing given
-// max-entries (list_owner_bucket_info, rgw_bucket.cc:1582-1626).
+// max-entries (list_owner_bucket_info,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1582-L1626).
 func dumpBucketInfo(f formatter.Formatter, o *op.BucketInfo, rel denc.Release) {
 	if o.Single != nil {
 		dumpBucketStats(f, *o.Single, rel)
@@ -89,12 +91,15 @@ func dumpBucketInfo(f formatter.Formatter, o *op.BucketInfo, rel denc.Release) {
 }
 
 // bucketCategories is RGWObjCategory's enum order under to_string's names
-// (cls_rgw_types.cc:133-143 at v19.2.6 and v20.2.4), the order the stats
-// std::map iterates in.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.cc#L133-L143 at v19.2.6
+// and v20.2.4), the order the stats std::map iterates in.
 var bucketCategories = []string{"rgw.none", "rgw.main", "rgw.shadow", "rgw.multimeta", "rgw.cloudtiered", "unknown"}
 
-// dumpBucketUsage is dump_bucket_usage (rgw_bucket.cc:298-310; v20.2.4
-// :299-311): one section per category present.
+// dumpBucketUsage is dump_bucket_usage
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L298-L310;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L299-L311):
+// one section per category present.
 func dumpBucketUsage(f formatter.Formatter, cats map[string]op.CategoryStats) {
 	f.OpenObjectSection("usage")
 	for _, name := range bucketCategories {
@@ -108,7 +113,8 @@ func dumpBucketUsage(f formatter.Formatter, cats map[string]op.CategoryStats) {
 }
 
 // dumpCategoryStats is RGWStorageStats::dump with dump_utilized true
-// (rgw_common.cc:3102-3115 at v19.2.6, :3164-3177 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3102-L3115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177 at v20.2.4).
 func dumpCategoryStats(f formatter.Formatter, s op.CategoryStats) {
 	f.DumpUnsigned("size", s.Size)
 	f.DumpUnsigned("size_actual", s.SizeRounded)
@@ -119,9 +125,11 @@ func dumpCategoryStats(f formatter.Formatter, s op.CategoryStats) {
 	f.DumpUnsigned("num_objects", s.NumObjects)
 }
 
-// dumpBucketStats is bucket_stats' "stats" section (rgw_bucket.cc:1351-1436;
-// v20.2.4 :1514-1602, which adds reshard_status, judge_reshard_lock_time
-// and read_tracker).
+// dumpBucketStats is bucket_stats' "stats" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1351-L1436;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1514-L1602,
+// which adds reshard_status, judge_reshard_lock_time and read_tracker).
 func dumpBucketStats(f formatter.Formatter, d op.BucketStatsData, rel denc.Release) {
 	info := d.Rec.Info
 	current := info.Layout.Current
@@ -165,8 +173,9 @@ func dumpBucketStats(f formatter.Formatter, d op.BucketStatsData, rel denc.Relea
 	info.Quota.Dump(f, rel)
 	f.CloseSection()
 	if d.Tags != nil {
-		// RGWObjTags::dump (rgw_tag.cc:59-66): each tag's key is its field
-		// name, in multimap order.
+		// RGWObjTags::dump
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L59-L66):
+		// each tag's key is its field name, in multimap order.
 		f.OpenObjectSection("tagset")
 		for _, t := range d.Tags.Tags {
 			f.DumpString(t.Key, t.Value)
@@ -179,7 +188,8 @@ func dumpBucketStats(f formatter.Formatter, d op.BucketStatsData, rel denc.Relea
 	f.CloseSection()
 }
 
-// linkBucket is RGWOp_Bucket_Link::execute (rgw_rest_bucket.cc:142-170),
+// linkBucket is RGWOp_Bucket_Link::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L142-L170),
 // which sends no body. Forwarding to the metadata master is multisite's.
 func linkBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
@@ -196,7 +206,8 @@ func linkBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	return nil
 }
 
-// unlinkBucket is RGWOp_Bucket_Unlink::execute (rgw_rest_bucket.cc:186-209),
+// unlinkBucket is RGWOp_Bucket_Unlink::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L186-L209),
 // which sends no body.
 func unlinkBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
@@ -211,7 +222,8 @@ func unlinkBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 	return nil
 }
 
-// removeBucket is RGWOp_Bucket_Remove::execute (rgw_rest_bucket.cc:225-248),
+// removeBucket is RGWOp_Bucket_Remove::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L225-L248),
 // which sends no body. purge-objects and bypass-gc delete, so a value
 // get_bool cannot parse, which radosgw takes as false, and an empty one,
 // which it takes as true, are refused after the cap check
@@ -233,9 +245,10 @@ func removeBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 }
 
 // setBucketQuota is RGWOp_Set_Bucket_Quota::execute
-// (rgw_rest_bucket.cc:266-328), which sends no body. The quota arguments
-// are read whether or not the request has a body, and one that does not
-// parse is refused after the cap check, as on the user quota route.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L266-L328),
+// which sends no body. The quota arguments are read whether or not the
+// request has a body, and one that does not parse is refused after the cap
+// check, as on the user quota route.
 func setBucketQuota(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewSetBucketQuota()
@@ -255,9 +268,10 @@ func setBucketQuota(ctx context.Context, w http.ResponseWriter, r *op.Request, q
 	return nil
 }
 
-// getBucketPolicy is RGWOp_Get_Policy::execute (rgw_rest_bucket.cc:78-92):
+// getBucketPolicy is RGWOp_Get_Policy::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L78-L92):
 // the policy in a "policy" section, its flusher started
-// (rgw_bucket.cc:972-978).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L972-L978).
 func getBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewGetBucketPolicyAdmin()
 	o.Bucket, _ = q.Args.String("bucket", "")
@@ -273,7 +287,8 @@ func getBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 	})
 }
 
-// removeObject is RGWOp_Object_Remove::execute (rgw_rest_bucket.cc:376-390),
+// removeObject is RGWOp_Object_Remove::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L376-L390),
 // which sends no body.
 func removeObject(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewRemoveObjectAdmin()

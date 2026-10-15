@@ -3,9 +3,9 @@ package policy
 import "github.com/jhoblitt/rgw-go/internal/denc"
 
 // The AWS managed policies radosgw builds in, the raw strings of
-// src/rgw/rgw_iam_managed_policy.cc:26-154 (the same at v19.2.6 and v20.2.4)
-// byte for byte: each starts with the newline after its raw string's opening
-// delimiter.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_managed_policy.cc#L26-L154
+// (the same at v19.2.6 and v20.2.4) byte for byte: each starts with the
+// newline after its raw string's opening delimiter.
 const (
 	iamFullAccessText = `
 {
@@ -109,7 +109,7 @@ const (
 )
 
 // managedPolicies is get_managed_policy's table
-// (src/rgw/rgw_iam_managed_policy.cc:156-175).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_managed_policy.cc#L156-L175).
 var managedPolicies = map[string]string{
 	"arn:aws:iam::aws:policy/IAMFullAccess":           iamFullAccessText,
 	"arn:aws:iam::aws:policy/IAMReadOnlyAccess":       iamReadOnlyAccessText,
@@ -119,10 +119,11 @@ var managedPolicies = map[string]string{
 	"arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess":  amazonS3ReadOnlyAccessText,
 }
 
-// ManagedPolicy is get_managed_policy (src/rgw/rgw_iam_managed_policy.cc:
-// 156-175): the built-in policy an AWS managed-policy ARN names, parsed on
-// r with no tenant and invalid principals dropped, and false for any other
-// ARN. Each call parses afresh, so callers do not share a Policy.
+// ManagedPolicy is get_managed_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_managed_policy.cc#L156-L175):
+// the built-in policy an AWS managed-policy ARN names, parsed on r with no
+// tenant and invalid principals dropped, and false for any other ARN. Each
+// call parses afresh, so callers do not share a Policy.
 func ManagedPolicy(arn string, r denc.Release) (*Policy, bool) {
 	text, ok := managedPolicies[arn]
 	if !ok {

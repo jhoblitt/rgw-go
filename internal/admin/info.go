@@ -21,8 +21,10 @@ func getInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reques
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
-	// RGWOp_Info_Get::execute (rgw_rest_info.cc:23-44 at v19.2.6 and
-	// v20.2.4): the two "dummy" sections show only in XML and HTML.
+	// RGWOp_Info_Get::execute
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_info.cc#L23-L44 at v19.2.6
+	// and v20.2.4): the two "dummy" sections show only in XML and
+	// HTML.
 	return WriteBody(w, r, q, func(f formatter.Formatter) {
 		f.OpenObjectSection("dummy")
 		f.OpenObjectSection("info")
@@ -42,8 +44,9 @@ func getZoneConfig(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
-	// RGWOp_ZoneConfig_Get::send_response (rgw_rest_config.cc:35-47 at
-	// v19.2.6 and v20.2.4): the headers go out before the dump, so no
+	// RGWOp_ZoneConfig_Get::send_response
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_config.cc#L35-L47 at v19.2.6
+	// and v20.2.4): the headers go out before the dump, so no
 	// declaration or status page precedes it.
 	return WriteDumped(w, r, q, func(f formatter.Formatter) {
 		f.OpenObjectSection("zone_params")

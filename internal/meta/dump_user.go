@@ -8,11 +8,13 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
-// Dump is RGWUserInfo::dump (rgw_common.cc:2775-2835 at v19.2.6,
-// :2837-2897 at v20.2.4). The subusers and keys are encode_json_map with an
-// object name and a callback, one named section per entry
-// (ceph_json.h:659-690 at v19.2.6), and each key carries its secret, as
-// radosgw's metadata get prints it.
+// Dump is RGWUserInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2775-L2835 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2837-L2897 at v20.2.4).
+// The subusers and keys are encode_json_map with an object name and a
+// callback, one named section per entry
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L659-L690 at v19.2.6),
+// and each key carries its secret, as radosgw's metadata get prints it.
 func (u UserInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	user := u.UserID.String()
 	f.DumpString("user_id", user)
@@ -33,7 +35,8 @@ func (u UserInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpUserKeys(f, "swift_keys", user, u.SwiftKeys, true)
 	u.Caps.DumpAs(f, "caps")
 	f.DumpString("op_mask", maskString(opTypeFlags, u.OpMask))
-	// "no need to show it for every user" (rgw_common.cc:2794 at v19.2.6).
+	// "no need to show it for every user"
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2794 at v19.2.6).
 	if u.System != 0 {
 		f.DumpBool("system", true)
 	}
@@ -65,10 +68,13 @@ func (u UserInfo) Dump(f formatter.Formatter, rel denc.Release) {
 }
 
 // dumpUserKeys is encode_json_map over access_keys or swift_keys with
-// user_info_dump_key or user_info_dump_swift_key (rgw_common.cc:2620-2630 at
-// v19.2.6, :2682-2692 at v20.2.4): RGWAccessKey::dump(f, user, swift), which
-// names the owner with the subuser appended and leaves out a Swift key's id
-// (:2974-2988; :3036-3050).
+// user_info_dump_key or user_info_dump_swift_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2620-L2630 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2682-L2692 at v20.2.4):
+// RGWAccessKey::dump(f, user, swift), which names the owner with the subuser
+// appended and leaves out a Swift key's id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2974-L2988;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3036-L3050).
 func dumpUserKeys(f formatter.Formatter, name, user string, keys map[string]AccessKey, swift bool) {
 	f.OpenArraySection(name)
 	for _, id := range slices.Sorted(maps.Keys(keys)) {
@@ -90,8 +96,9 @@ func dumpUserKeys(f formatter.Formatter, name, user string, keys map[string]Acce
 	f.CloseSection()
 }
 
-// Dump is RGWUserCompleteInfo::dump (driver/rados/rgw_user.h:736-739 at
-// v19.2.6, rgw_user.cc:2730-2733 at v20.2.4).
+// Dump is RGWUserCompleteInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L736-L739 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2730-L2733 at v20.2.4).
 func (c UserCompleteInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	c.Info.Dump(f, rel)
 	dumpAttrs(f, "attrs", c.Attrs)

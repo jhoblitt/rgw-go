@@ -20,10 +20,11 @@ const (
 	relativeBelow = 60 * 60 * 24 * 365 * 10
 )
 
-// Gmtime is utime_t::gmtime (src/include/utime.h:247-277 at v19.2.6), the
-// text encode_json gives a time through dump_stream: "<sec>.<usec>" for a
-// time within ten years of the epoch, the zero time included, and an ISO
-// 8601 UTC date with microseconds otherwise.
+// Gmtime is utime_t::gmtime
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L247-L277 at v19.2.6),
+// the text encode_json gives a time through dump_stream: "<sec>.<usec>"
+// for a time within ten years of the epoch, the zero time included, and
+// an ISO 8601 UTC date with microseconds otherwise.
 func (t Time) Gmtime() string {
 	var sec, nsec uint32
 	if !t.IsZero() {
