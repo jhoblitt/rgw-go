@@ -364,8 +364,11 @@
 // lines differ between them; when it is a continuation with no candidate
 // file, or with no identifier beside it in a clause that names two files;
 // when its file is no file at the ref, or several that no identifier tells
-// apart; when the lines hold no identifier named beside it; and when its
-// link fails a check a link must pass, such as lines past the file's end.
+// apart; when the lines hold no identifier named beside it; when its link
+// fails a check a link must pass, such as lines past the file's end; and when
+// godoc would link the text right after it as part of the URL, as it does a
+// "'s", "-" or "*", which go/doc/comment's linking of a doc comment's URL
+// decides.
 //
 // The text around a link is kept, an "at <tag>" after it included, but a
 // marker that gave citations their ref, with the blanks after it, is dropped

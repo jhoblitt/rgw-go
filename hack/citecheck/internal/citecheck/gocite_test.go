@@ -243,6 +243,10 @@ var _ = Describe("Go comments", func() {
 		Entry(`a continuation after another citation's own "at <tag>"`,
 			"// prepare ("+prepareS+" at v19.2.6, :14-21).\n", 3, ":14-21",
 			`no ref: no "at <tag>" follows it, no [S] or [T] marks it, and no comment above says what a bare line number means`),
+		Entry(`a citation whose "'s" godoc would link as part of the URL`,
+			"// A bare line number below is v19.2.6's.\n\n// The pool opens at rgw_gofix.cc:6's call.\n", 5, "rgw_gofix.cc:6",
+			`godoc would link the "'s" after it as part of the URL: reword it so that a blank, or a "." or "," that `+
+				`ends the clause, follows the citation`),
 		Entry("a continuation whose nearest file is too short",
 			"// prepare ("+prepareS+") and write_meta (:20-30 at v19.2.6).\n", 3, ":20-30",
 			"line 30 is past the end of src/rgw/rgw_gofix.cc, which has 28 lines at v19.2.6"),
