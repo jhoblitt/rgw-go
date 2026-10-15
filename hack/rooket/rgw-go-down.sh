@@ -52,7 +52,7 @@ while kill -0 "${pid}" 2>/dev/null; do
 	sleep 1
 done
 forget
-# main prints the error that ended a run on its last line.
-last=$(tail -n 1 "${log}" 2>/dev/null || true)
-[[ "${last}" != "rgw-go: "* ]] || die "rgw-go (pid ${pid}) stopped with an error: ${last}"
+error=
+[[ ! -f "${log}" ]] || error=$(exit_error "${log}")
+[[ -z "${error}" ]] || die "rgw-go (pid ${pid}) stopped with an error: ${error}"
 echo "rgw-go (pid ${pid}) stopped"

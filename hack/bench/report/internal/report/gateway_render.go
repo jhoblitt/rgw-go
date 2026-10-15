@@ -258,21 +258,36 @@ func (r *gwRun) phase(t gwTable, k gwRowKey) *gwPhase {
 
 func (g *gwRender) renderGC(b *strings.Builder, t gwTable) {
 	var lines []string
+	torn := false
 	for _, r := range g.runs {
 		for _, p := range t.profiles {
 			gc, ok := r.gc[p]
 			if !ok {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("- %s, %s: %d cycles, longest stop-the-world pause %s µs, %s µs in all",
-				r.label, p, gc.cycles, num(gc.maxPauseUs), num(gc.totalPauseUs)))
+			line := fmt.Sprintf("- %s, %s: %d cycles, longest stop-the-world pause %s µs, %s µs in all",
+				r.label, p, gc.cycles, num(gc.maxPauseUs), num(gc.totalPauseUs))
+			switch {
+			case gc.torn == 1:
+				line += "; 1 torn line, its cycle's pauses unknown"
+			case gc.torn > 1:
+				line += fmt.Sprintf("; %d torn lines, their cycles' pauses unknown", gc.torn)
+			}
+			torn = torn || gc.torn > 0
+			lines = append(lines, line)
 		}
 	}
 	if len(lines) == 0 {
 		return
 	}
 	b.WriteString("\nGC cycles over the whole profile, its preparation and removals included, from GODEBUG=gctrace=1; " +
-		"each cycle stops the world twice:\n\n")
+		"each cycle stops the world twice")
+	if torn {
+		b.WriteString(". A torn line is a cycle's line cut short, by a record of rgw-go's JSON log, which shares its " +
+			"stderr, or by the end of the log the run read; one torn too early to be kept is known from the gap it leaves " +
+			"in the cycles' numbers. A torn line's cycle counts, and its pauses are in neither the longest nor the total")
+	}
+	b.WriteString(":\n\n")
 	b.WriteString(strings.Join(lines, "\n") + "\n")
 }
 

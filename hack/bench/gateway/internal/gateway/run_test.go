@@ -246,6 +246,22 @@ var _ = Describe("Runner.Run", func() {
 		}
 	})
 
+	It("keeps a GC line a JSON record tore as it is, and not its rest, for the report to judge", func() {
+		dir := GinkgoT().TempDir()
+		log, kept := filepath.Join(dir, "rgw-go.log"), filepath.Join(dir, "gctrace-noop.log")
+		whole := "gc 310773 @1479.912s 4%: 0.073+0.58+0.031 ms clock, 2.3+1.2/2.4/0+0.99 ms cpu, 10->10->4 MB, 11 MB goal, " +
+			"0 MB stacks, 0 MB globals, 32 P\n"
+		torn := `gc 310774 @1479.916s 4{"level":"WARN","msg":"bucket listing failed after the response started"}` + "\n"
+		Expect(os.WriteFile(log, []byte(`{"level":"INFO","msg":"request"}`+"\n"+whole+torn+
+			`%: 0.086+0.61+0.039 ms clock, 2.7+1.6/2.7/0+1.2 ms cpu, 10->10->{"level":"WARN","msg":"request"}`+"\n"+
+			"4 MB, 11 MB goal, 0 MB stacks, 0 MB globals, 32 P\n"+
+			`gc {"level":"WARN","msg":"torn before its cycle's number"}`+"\n"), 0o600)).To(Succeed())
+		Expect(gateway.KeepGCTrace(log, 0, kept)).To(Succeed())
+		got, err := os.ReadFile(kept)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal(whole + torn))
+	})
+
 	It("samples the radosgw in its pod and rgw-go on the host, each file under its header", func(ctx SpecContext) {
 		for _, gw := range []string{"radosgw", "rgw-go"} {
 			w := newWorld(gw)
