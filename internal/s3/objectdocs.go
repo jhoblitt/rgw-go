@@ -9,8 +9,9 @@ import (
 )
 
 // getObjectTags serves get_obj_tags (RGWGetObjTags_ObjStore_S3::send_response_data,
-// rgw_rest_s3.cc:746-773 at v19.2.6, :829-856 at v20.2.4): the tag set, an
-// empty TagSet for none.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L746-L773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L829-L856 at v20.2.4):
+// the tag set, an empty TagSet for none.
 func getObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetObjectTagging{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -21,8 +22,9 @@ func getObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // getObjectACL is the object half of get_acls (RGWGetACLs_ObjStore_S3::send_response,
-// rgw_rest_s3.cc:3605-3614 at v19.2.6, :3888-3897 at v20.2.4): the object's
-// ACL.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3605-L3614 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3888-L3897 at v20.2.4):
+// the object's ACL.
 func getObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.GetObjectACL{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -35,8 +37,8 @@ func getObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 // writeDocument answers 200 with the XML declaration and doc, already
 // escaped, as application/xml. Its length is the one radosgw's frontend adds
 // to a response whose end_header named none, without Accept-Ranges
-// (rgw_client_io_filters.h:221-253 at v19.2.6 and v20.2.4). A HEAD gets the
-// headers alone (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
+// and v20.2.4). A HEAD gets the headers alone (docs/exclusions.md).
 func writeDocument(w http.ResponseWriter, r *op.Request, doc []byte) {
 	SetCommonHeaders(w, r)
 	h := w.Header()

@@ -116,7 +116,8 @@ var _ = Describe("identity", func() {
 			Entry("a subuser, signed by another", "rw", "", policy.UserPrincipal("t", "alice:ro"), false),
 			Entry("every subuser, signed by one", "ro", "", policy.UserPrincipal("t", "alice:*"), true),
 			// match_principal compares the rest with "*" before the subuser
-			// (rgw_auth.cc:64), so the user itself matches too.
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L64),
+			// so the user itself matches too.
 			Entry("every subuser, signed by the user", "", "", policy.UserPrincipal("t", "alice:*"), true),
 			Entry("an empty subuser", "", "", policy.UserPrincipal("t", "alice:"), false),
 			Entry("a prefix of the name", "", "", policy.UserPrincipal("t", "alic"), false),

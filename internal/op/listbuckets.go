@@ -9,8 +9,8 @@ import (
 )
 
 // DefaultListBucketsChunk is rgw_list_buckets_max_chunk's default
-// (src/common/options/rgw.yaml.in:1939-1948 at v19.2.6, :2039-2048 at
-// v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L1939-L1948 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2039-L2048 at v20.2.4).
 const DefaultListBucketsChunk = 1000
 
 // ListBucketsChunk is the page size an rgw_list_buckets_max_chunk of v asks
@@ -27,11 +27,13 @@ func ListBucketsChunk(v int64) int {
 // ListBuckets is RGWListBuckets: the service-scope GET and HEAD. Execute
 // hands the owner's buckets to Page one listing page at a time, as
 // RGWListBuckets::execute hands each page to send_response_data
-// (rgw_op.cc:2511-2607 at v19.2.6, :2743-2839 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2511-L2607 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2743-L2839 at v20.2.4).
 type ListBuckets struct {
 	// Marker is where the listing starts; Limit caps it, -1 for no limit.
 	// radosgw's S3 get_params sets only limit = -1 and no marker
-	// (rgw_rest_s3.h:133-136 at v19.2.6, :134-137 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L133-L136 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L134-L137 at v20.2.4).
 	Marker string
 	Limit  int
 

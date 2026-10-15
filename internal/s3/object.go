@@ -24,7 +24,9 @@ func objectHandlers(env *op.Env) map[string]HandlerFunc {
 
 // objectWrites serves the object write routes with what radosgw reads once
 // at startup: generic_attrs_map, which rgw_rest_init extends with
-// rgw_extended_http_attrs (rgw_rest.cc:185-209 at v19.2.6 and v20.2.4).
+// rgw_extended_http_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L185-L209 at v19.2.6
+// and v20.2.4).
 type objectWrites struct {
 	generic []genericAttr
 }

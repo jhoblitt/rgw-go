@@ -10,10 +10,11 @@ import (
 )
 
 // identity is an op.Identity as rgw::auth::LocalApplier answers for it
-// (rgw_auth.cc:1019-1102 at v19.2.6, :1039-1131 at v20.2.4), the applier
-// radosgw builds for local users and the anonymous user alike. The account
-// it matches is op.Identity.Account, the account auth loaded from the user's
-// account id.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1019-L1102 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1039-L1131 at v20.2.4),
+// the applier radosgw builds for local users and the anonymous user alike.
+// The account it matches is op.Identity.Account, the account auth loaded
+// from the user's account id.
 type identity struct{ id *op.Identity }
 
 var (
@@ -29,9 +30,10 @@ func (v identity) IsOwnerOf(ownerID string) bool {
 	return v.IsOwnerOfOwner(meta.ParseOwner(ownerID))
 }
 
-// IsOwnerOfOwner is match_owner (rgw_auth.cc:67-75 at v19.2.6 and v20.2.4):
-// a user owner is the user, tenant, id and namespace alike, and an account
-// owner is the user's account.
+// IsOwnerOfOwner is match_owner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L67-L75 at v19.2.6
+// and v20.2.4): a user owner is the user, tenant, id and namespace alike,
+// and an account owner is the user's account.
 func (v identity) IsOwnerOfOwner(o meta.Owner) bool {
 	if o.User != nil {
 		u := v.user()
@@ -40,9 +42,11 @@ func (v identity) IsOwnerOfOwner(o meta.Owner) bool {
 	return v.id.Account != nil && o.Account == v.id.Account.ID
 }
 
-// PermsFromACLSpec is get_perms_from_aclspec (rgw_auth.cc:1032-1046 at
-// v19.2.6, :1052-1066 at v20.2.4): the user map's flags for the user, or-ed
-// with the account's for an account user.
+// PermsFromACLSpec is get_perms_from_aclspec
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1032-L1046 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1066 at v20.2.4):
+// the user map's flags for the user, or-ed with the account's for an
+// account user.
 func (v identity) PermsFromACLSpec(m map[string]int32) acl.Permission {
 	var perm acl.Permission
 	if u := v.user(); u != nil {
@@ -54,17 +58,20 @@ func (v identity) PermsFromACLSpec(m map[string]int32) acl.Permission {
 	return perm
 }
 
-// IsAnonymous is Identity::is_anonymous (rgw_auth.h:65-70 at v19.2.6, :74-79
-// at v20.2.4), which asks is_owner_of for the user "anonymous" in the default
-// tenant.
+// IsAnonymous is Identity::is_anonymous
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.h#L65-L70 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.h#L74-L79 at v20.2.4),
+// which asks is_owner_of for the user "anonymous" in the default tenant.
 func (v identity) IsAnonymous() bool {
 	return v.IsOwnerOfOwner(meta.UserOwner(meta.UserID{ID: op.AnonymousUserID}))
 }
 
-// IsIdentity is is_identity (rgw_auth.cc:1058-1076 at v19.2.6, :1086-1104 at
-// v20.2.4): the wildcard; an account principal naming the user's account or
-// tenant; a user principal under the user's account, matched by display
-// name, or under its tenant, matched by user id.
+// IsIdentity is is_identity
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1058-L1076 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1086-L1104 at v20.2.4):
+// the wildcard; an account principal naming the user's account or tenant; a
+// user principal under the user's account, matched by display name, or under
+// its tenant, matched by user id.
 func (v identity) IsIdentity(p policy.Principal) bool {
 	u := v.user()
 	switch {
@@ -84,10 +91,11 @@ func (v identity) IsIdentity(p policy.Principal) bool {
 	}
 }
 
-// matchPrincipal is match_principal (rgw_auth.cc:31-65 at v19.2.6 and
-// v20.2.4): expected is the path, without the leading slash the principal's
-// ":user/" already matched, then the name, then nothing or ":" and either "*"
-// or the subuser.
+// matchPrincipal is match_principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L31-L65 at v19.2.6
+// and v20.2.4): expected is the path, without the leading slash the
+// principal's ":user/" already matched, then the name, then nothing or ":"
+// and either "*" or the subuser.
 func matchPrincipal(path, name, subuser, expected string) bool {
 	if path != "" {
 		path = path[1:]
@@ -117,9 +125,11 @@ func (v identity) IdentityType() meta.IdentityType {
 	return meta.IdentityNone
 }
 
-// PermMask is get_perm_mask (rgw_auth.cc:1086-1102 at v19.2.6, :1114-1130 at
-// v20.2.4): full control without a subuser, a subuser's own mask, and none for
-// a subuser the user does not have.
+// PermMask is get_perm_mask
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1086-L1102 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1114-L1130 at v20.2.4):
+// full control without a subuser, a subuser's own mask, and none for a subuser
+// the user does not have.
 func (v identity) PermMask() acl.Permission {
 	if v.id.SubUser == "" {
 		return acl.PermFullControl
@@ -135,9 +145,11 @@ func (v identity) PermMask() acl.Permission {
 	return acl.Permission(s.Perm)
 }
 
-// ACLOwner is get_aclowner (rgw_auth.cc:1019-1030 at v19.2.6, :1039-1050 at
-// v20.2.4): the account, named by its name, for an account user, and
-// otherwise the user, named by its display name.
+// ACLOwner is get_aclowner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1019-L1030 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1039-L1050 at v20.2.4):
+// the account, named by its name, for an account user, and otherwise the
+// user, named by its display name.
 func (v identity) ACLOwner() acl.Owner {
 	if v.id.Account != nil {
 		return acl.Owner{ID: v.id.Account.ID, DisplayName: v.id.Account.Name}
@@ -150,8 +162,9 @@ func (v identity) ACLOwner() acl.Owner {
 
 // PolicyTenant is the tenant a user's identity policies are parsed with: the
 // user's tenant, or nil for a user of an account, whose policies may name any
-// account (load_account_and_policies, rgw_auth.cc:157-159 at v19.2.6 and
-// v20.2.4).
+// account (load_account_and_policies,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L157-L159 at v19.2.6
+// and v20.2.4).
 func PolicyTenant(id *op.Identity) *string {
 	if id.User == nil || id.User.AccountID != "" {
 		return nil

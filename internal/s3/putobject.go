@@ -20,21 +20,28 @@ import (
 // The object write routes are rgw_rest_s3.cc's RGWPutObj_ObjStore_S3,
 // RGWDeleteObj_ObjStore_S3, RGWDeleteMultiObj_ObjStore_S3,
 // RGWCopyObj_ObjStore_S3, RGWPutACLs_ObjStore_S3 at object scope,
-// RGWPutObjTags_ObjStore_S3 and RGWDeleteObjTags_ObjStore_S3. A bare line
-// number is v19.2.6's rgw_rest_s3.cc; [T] marks v20.2.4's.
+// RGWPutObjTags_ObjStore_S3 and RGWDeleteObjTags_ObjStore_S3.
 
 // putObject is put_obj without a copy source (RGWPutObj_ObjStore_S3,
-// get_params :2597-2704, [T] :2758-2865; send_response :2730-2782, [T]
-// :2891-2952). A request whose uploadId is not empty is a part, which
-// uploadPart serves; RGWPutObj::execute takes an empty one for none
-// (rgw_op.cc:4214 at v19.2.6, :4423 at v20.2.4). A PUT naming a copy source
-// that is no copy and an append are not served yet. The op reads the
-// request's parameters through putObjectParams once the bucket is loaded,
-// as init_processing reads them, and makes the checks of stored state
-// through putObjectChecks once the requester is authorized, so that a
-// refused requester learns nothing the store holds (docs/exclusions.md).
-// The success is send_response's: the ETag, the Content-Length
-// of 0 with Accept-Ranges that dump_content_length sends (:2747, [T] :2911),
+// get_params
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2597-L2704,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2758-L2865;
+// send_response
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2891-L2952).
+// A request whose uploadId is not empty is a part, which uploadPart serves;
+// RGWPutObj::execute takes an empty one for none
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4214 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4423 at v20.2.4).
+// A PUT naming a copy source that is no copy and an append are not served
+// yet. The op reads the request's parameters through putObjectParams once
+// the bucket is loaded, as init_processing reads them, and makes the checks
+// of stored state through putObjectChecks once the requester is authorized,
+// so that a refused requester learns nothing the store holds
+// (docs/exclusions.md). The success is send_response's: the ETag, the
+// Content-Length of 0 with Accept-Ranges that dump_content_length sends
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2911),
 // x-amz-version-id when there is one, Rgwx-Mtime for a system request, and
 // the status rgw_s3_success_create_obj_status names.
 func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
@@ -73,13 +80,16 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // request alone: a body without a Content-Length that is not chunked is
 // MissingContentLength; a request that asks for encryption is refused
 // (refuseEncryption); x-amz-tagging that set_from_string refuses is
-// InvalidArgument, as radosgw answers any such refusal on a PUT (:2626-2637,
-// [T] :2787-2798); the object-lock headers' values are checked
-// (objectLockHeaders); a partNumber is read as for a part (partNumberArg); a
-// Content-MD5 that ceph_unarmor does not decode to 16 bytes is InvalidDigest
-// (rgw_op.cc:4184-4198 at v19.2.6, :4393-4407 at v20.2.4); and the attrs are
-// requestAttrs'. radosgw checks the last two after authorizing, and the
-// attrs once the body is stored (docs/exclusions.md).
+// InvalidArgument, as radosgw answers any such refusal on a PUT
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2626-L2637,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787-L2798);
+// the object-lock headers' values are checked (objectLockHeaders); a
+// partNumber is read as for a part (partNumberArg); a Content-MD5 that
+// ceph_unarmor does not decode to 16 bytes is InvalidDigest
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407 at v20.2.4);
+// and the attrs are requestAttrs'. radosgw checks the last two after
+// authorizing, and the attrs once the body is stored (docs/exclusions.md).
 func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return op.ErrMissingContentLength
@@ -113,14 +123,17 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 }
 
 // partNumberArg is get_params' read of partNumber beside uploadId
-// (rgw_rest_s3.cc:2682-2694 at v19.2.7, :2835-2847 at v20.2.4), which every
-// request put_obj serves makes, a part or not. A value that is not empty is
-// strict_strtol's in base 10, read as the C string get_params passes it, and
-// one it refuses is InvalidArgument. An empty or absent one is
-// InvalidArgument beside an upload id that is not empty, and otherwise 0, no
-// part number. A number without an upload id is no part: RGWPutObj::execute
-// takes the request for a PutObject (rgw_op.cc:4214 at v19.2.7, :4423 at
-// v20.2.4) and reads the number only for a part.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2682-L2694 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2835-L2847 at v20.2.4),
+// which every request put_obj serves makes, a part or not. A value that is
+// not empty is strict_strtol's in base 10, read as the C string get_params
+// passes it, and one it refuses is InvalidArgument. An empty or absent one
+// is InvalidArgument beside an upload id that is not empty, and otherwise 0,
+// no part number. A number without an upload id is no part:
+// RGWPutObj::execute takes the request for a PutObject
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4214 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4423 at v20.2.4)
+// and reads the number only for a part.
 func partNumberArg(r *op.Request) (int, error) {
 	v := r.Query.Get("partNumber")
 	if v == "" {
@@ -139,9 +152,12 @@ func partNumberArg(r *op.Request) (int, error) {
 // putObjectChecks is the rest of get_params in its order, once the requester
 // is authorized: the ACL is create_s3_policy's for the requester, whose
 // grantees are looked up and whose bucket-owner grants name the bucket's ACL
-// owner (:2618-2620, [T] :2779-2781); then a retention or a legal hold on a
-// bucket without object lock is refused (objectLock). radosgw makes both
-// before verify_permission (docs/exclusions.md).
+// owner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2618-L2620,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2779-L2781);
+// then a retention or a legal hold on a bucket without object lock is
+// refused (objectLock). radosgw makes both before verify_permission
+// (docs/exclusions.md).
 func putObjectChecks(ctx context.Context, r *op.Request, o *op.PutObject) error {
 	p, err := newObjectACL(ctx, r)
 	if err != nil {
@@ -152,9 +168,11 @@ func putObjectChecks(ctx context.Context, r *op.Request, o *op.PutObject) error 
 }
 
 // newObjectACL is create_s3_policy for a new object or copy
-// (rgw_rest_s3.cc:2408-2422, [T] :2524-2538): the requester's ACL owner, and
-// for the bucket-owner canned ACLs the owner of the bucket's ACL,
-// s->bucket_owner. Its errors are mapped through authz.ErrorFor.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2408-L2422,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2524-L2538):
+// the requester's ACL owner, and for the bucket-owner canned ACLs the owner
+// of the bucket's ACL, s->bucket_owner. Its errors are mapped through
+// authz.ErrorFor.
 func newObjectACL(ctx context.Context, r *op.Request) (acl.Policy, error) {
 	bucketACL, err := op.BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
@@ -170,15 +188,18 @@ func newObjectACL(ctx context.Context, r *op.Request) (acl.Policy, error) {
 
 // refuseEncryption answers NotImplemented for a write that asks for
 // encryption: one carrying an X-Amz- header that init_meta_info files in
-// crypt_attribute_map (rgw_common.cc:413-464 at v19.2.7, :426-477 at
-// v20.2.4), X-Amz-Server-Side-Encryption among them; one naming a copy
-// source's SSE-C key; and, when query is set, a query parameter
-// map_qs_metadata files there for a PutObject (rgw_rest_s3.cc:2591-2593 at
-// v19.2.6, :2752-2754 at v20.2.4). radosgw encrypts SSE-C and fails SSE-S3
-// and SSE-KMS without a key server; rgw-go encrypts nothing in phase 1, and
-// must not store in the clear what a client asked to have encrypted
-// (docs/exclusions.md). A bucket's default encryption is the op's to
-// refuse, once the requester is authorized.
+// crypt_attribute_map
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4),
+// X-Amz-Server-Side-Encryption among them; one naming a copy source's SSE-C
+// key; and, when query is set, a query parameter map_qs_metadata files
+// there for a PutObject
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2591-L2593 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2752-L2754 at v20.2.4).
+// radosgw encrypts SSE-C and fails SSE-S3 and SSE-KMS without a key server;
+// rgw-go encrypts nothing in phase 1, and must not store in the clear what
+// a client asked to have encrypted (docs/exclusions.md). A bucket's default
+// encryption is the op's to refuse, once the requester is authorized.
 func refuseEncryption(r *op.Request, query bool) error {
 	for name := range headerMeta(r.Header) {
 		if isCryptName(name) {
@@ -196,13 +217,15 @@ func refuseEncryption(r *op.Request, query bool) error {
 }
 
 // objectLock is PutObject's get_params refusal of a retention or legal hold
-// for a bucket without object lock, InvalidRequest (:2669-2673, [T]
-// :2830-2834), which a copy makes too, where radosgw stores them on such a
-// bucket (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object
-// lock on a bucket without object lock"; docs/exclusions.md). The callers
-// make it once the requester is authorized, so that a refused requester
-// learns nothing of the bucket's configuration. On a bucket with object lock
-// a PutObject or CopyObject answers NotImplemented, and a multipart write
+// for a bucket without object lock, InvalidRequest
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2669-L2673,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2830-L2834),
+// which a copy makes too, where radosgw stores them on such a bucket
+// (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object lock
+// on a bucket without object lock"; docs/exclusions.md). The callers make it
+// once the requester is authorized, so that a refused requester learns
+// nothing of the bucket's configuration. On a bucket with object lock a
+// PutObject or CopyObject answers NotImplemented, and a multipart write
 // naming a retention or a legal hold does (multipartObjectLock), until
 // versioning is served.
 func objectLock(r *op.Request) error {
@@ -219,12 +242,15 @@ func namesObjectLock(r *op.Request) bool {
 }
 
 // objectLockHeaders is get_params' check of the three object-lock headers
-// (:2639-2668, [T] :2800-2829; RGWCopyObj_ObjStore_S3::get_params
-// :3480-3509, [T] :3760-3789), which reads nothing the bucket holds: a mode
-// with a retain-until date that from_iso_8601 reads as later than now, the
-// mode GOVERNANCE or COMPLIANCE; a mode or a date alone; a legal hold of ON
-// or OFF; each other value InvalidArgument, with the message a copy sets
-// when isCopy is set.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2639-L2668,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2800-L2829;
+// RGWCopyObj_ObjStore_S3::get_params
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3480-L3509,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3760-L3789),
+// which reads nothing the bucket holds: a mode with a retain-until date
+// that from_iso_8601 reads as later than now, the mode GOVERNANCE or
+// COMPLIANCE; a mode or a date alone; a legal hold of ON or OFF; each other
+// value InvalidArgument, with the message a copy sets when isCopy is set.
 func objectLockHeaders(r *op.Request, isCopy bool) error {
 	mode, hasMode := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Mode")
 	date, hasDate := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Retain-Until-Date")
@@ -255,12 +281,12 @@ func objectLockHeaders(r *op.Request, isCopy bool) error {
 	return nil
 }
 
-// fromISO8601 is ceph::from_iso_8601 with ws_terminates (src/common/iso_8601.cc
-// :51-151 at v19.2.6 and v20.2.4) as RGWObjectRetention's caller then reads
-// it, real_clock::to_time_t: the time's whole seconds, through real_time's
-// unsigned 64-bit nanoseconds, which wrap for a time after 2554. A date or
-// time may end early, or at white space, or after a "Z"; a year before 1970
-// does not parse.
+// fromISO8601 is ceph::from_iso_8601 with ws_terminates
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.cc#L51-L151 at v19.2.6
+// and v20.2.4) as RGWObjectRetention's caller then reads it,
+// real_clock::to_time_t: the time's whole seconds, through real_time's unsigned
+// 64-bit nanoseconds, which wrap for a time after 2554. A date or time may end
+// early, or at white space, or after a "Z"; a year before 1970 does not parse.
 func fromISO8601(s string) (int64, bool) {
 	p := 0
 	digits := func(n int) (int, bool) {
@@ -328,12 +354,13 @@ func fromISO8601(s string) (int64, bool) {
 	return 0, false
 }
 
-// cephUnarmor is ceph_unarmor (src/common/armor.c:107-137 at v19.2.6 and
-// v20.2.4) into the 17-byte buffer RGWPutObj::execute passes: groups of four
-// base64 digits, "-" and "_" read as "+" and "/" and "=" as a zero digit,
-// line feeds between groups skipped; an "=" in a group's third or fourth
-// place ends the decode there, whatever follows. A group cut short, a byte
-// that is no digit and output past the buffer fail.
+// cephUnarmor is ceph_unarmor
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/armor.c#L99-L131 at v19.2.6
+// and v20.2.4) into the 17-byte buffer RGWPutObj::execute passes: groups of
+// four base64 digits, "-" and "_" read as "+" and "/" and "=" as a zero
+// digit, line feeds between groups skipped; an "=" in a group's third or
+// fourth place ends the decode there, whatever follows. A group cut short, a
+// byte that is no digit and output past the buffer fail.
 func cephUnarmor(src string) ([]byte, bool) {
 	const capacity = md5.Size + 1
 	dst := make([]byte, 0, capacity)
@@ -397,8 +424,13 @@ func armorBits(c byte) int {
 }
 
 // successStatus is get_success_retcode over rgw_s3_success_create_obj_status
-// (:2719-2728 and :2736-2740, [T] :2880-2889 and :2897-2901): 201 or 204 when
-// the option names it, otherwise 200.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2719-L2728
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2736-L2740,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2880-L2889
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2897-L2901):
+// 201 or 204 when the option names it, otherwise 200.
 func successStatus(r *op.Request) int {
 	if r.Env.Conf != nil {
 		if v, err := r.Env.Conf.Int64("rgw_s3_success_create_obj_status"); err == nil && (v == http.StatusCreated || v == http.StatusNoContent) {
@@ -409,8 +441,11 @@ func successStatus(r *op.Request) int {
 }
 
 // setSystemMtime is send_response's Rgwx-Mtime for a system request
-// (:2779-2781, [T] :2949-2951; dump_epoch_header, rgw_rest.cc:487-496 at
-// v19.2.6): the mtime's seconds and nanoseconds.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2779-L2781,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2949-L2951;
+// dump_epoch_header,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L487-L496 at v19.2.6):
+// the mtime's seconds and nanoseconds.
 func setSystemMtime(h http.Header, r *op.Request, mtime time.Time) {
 	if r.Identity.System && !mtime.IsZero() {
 		h.Set("Rgwx-Mtime", fmt.Sprintf("%d.%09d", mtime.Unix(), mtime.Nanosecond()))

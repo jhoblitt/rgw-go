@@ -53,12 +53,17 @@ type ListObjectsParams struct {
 	// NameFilter, when set, is RGWRados::Bucket::ListParams::
 	// access_list_filter: a name in NS it refuses is skipped, uncounted, after
 	// the page's next marker has moved past it, as list_objects_ordered and
-	// list_objects_unordered skip it (rgw_rados.cc:2003-2009 and :2297-2303 at
-	// v19.2.6, :2106-2112 and :2400-2406 at v20.2.4). A name the delimiter
-	// rolls into a common prefix still forms it, where radosgw refuses the
-	// prefix itself (docs/exclusions.md, "ListMultipartUploads keeps the
-	// common prefixes radosgw drops"). ListUploads passes
-	// meta.IsMultipartMeta, radosgw's MultipartMetaFilter.
+	// list_objects_unordered skip it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2003-L2009
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2297-L2303 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2106-L2112
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2400-L2406 at v20.2.4).
+	// A name the delimiter rolls into a common prefix still forms it, where
+	// radosgw refuses the prefix itself (docs/exclusions.md,
+	// "ListMultipartUploads keeps the common prefixes radosgw drops").
+	// ListUploads passes meta.IsMultipartMeta, radosgw's MultipartMetaFilter.
 	NameFilter func(name string) bool
 }
 
@@ -102,8 +107,10 @@ type BucketStore interface {
 	// RGWRados::create_bucket always does. When the name exists, Exclusive or
 	// not, it returns the EXISTING record together with ErrBucketAlreadyExists,
 	// as create_bucket re-reads and returns the bucket it lost to
-	// (rgw_rados.cc:2417-2449 at v19.2.6, :2525-2557 at v20.2.4), so the op
-	// can compare owners; it never re-links the name to a new instance.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2417-L2449 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2525-L2557 at v20.2.4),
+	// so the op can compare owners; it never re-links the name to a new
+	// instance.
 	CreateBucket(ctx context.Context, p CreateBucketParams) (*BucketRecord, error)
 	// DeleteBucket removes the instance, the entry point and the user's list
 	// entry; a bucket with objects fails with ErrBucketNotEmpty, and one

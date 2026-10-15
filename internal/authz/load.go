@@ -12,9 +12,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
-// The attrs the loaders read, from rgw_common.h (:154-157 at v19.2.6,
-// :173-176 at v20.2.4). The ACLs are op.BucketACLFor's and op.ObjectACLFor's,
-// and the tags tags.Attr.
+// The attrs the loaders read, from rgw_common.h
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L154-L157 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L173-L176 at v20.2.4).
+// The ACLs are op.BucketACLFor's and op.ObjectACLFor's, and the tags
+// tags.Attr.
 const (
 	attrIAMPolicy     = meta.AttrPrefix + "iam-policy"
 	attrUserPolicy    = meta.AttrPrefix + "user-policy"
@@ -22,11 +24,12 @@ const (
 	attrPublicAccess  = meta.AttrPrefix + "public-access"
 )
 
-// bucketPolicy is get_iam_policy_from_attr (rgw_op.cc:329-338 at v19.2.6,
-// rgw_common.cc:3276-3285 at v20.2.4): the bucket's stored policy parsed with
-// tenant and, as for every stored policy, unsupported principals dropped; nil
-// for a bucket without one. A policy that does not parse is the
-// *policy.ParseError, wrapped.
+// bucketPolicy is get_iam_policy_from_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L329-L338 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3276-L3285 at v20.2.4):
+// the bucket's stored policy parsed with tenant and, as for every stored
+// policy, unsupported principals dropped; nil for a bucket without one. A
+// policy that does not parse is the *policy.ParseError, wrapped.
 func bucketPolicy(ctx context.Context, rec *op.BucketRecord, tenant string, r denc.Release) (*policy.Policy, error) {
 	if rec == nil {
 		return nil, nil
@@ -43,11 +46,12 @@ func bucketPolicy(ctx context.Context, rec *op.BucketRecord, tenant string, r de
 }
 
 // identityPolicies are the identity's own policies as
-// load_account_and_policies loads them (rgw_auth.cc:135-187 at v19.2.6 and
-// v20.2.4): its inline policies, parsed with PolicyTenant, then the managed
-// policies it attaches. The policies of the IAM groups it belongs to are not
-// among them. An attr that does not decode, or a policy that does not parse,
-// is an error, where radosgw fails the authentication.
+// load_account_and_policies loads them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L135-L187 at v19.2.6
+// and v20.2.4): its inline policies, parsed with PolicyTenant, then the
+// managed policies it attaches. The policies of the IAM groups it belongs to
+// are not among them. An attr that does not decode, or a policy that does
+// not parse, is an error, where radosgw fails the authentication.
 func identityPolicies(id *op.Identity, r denc.Release) ([]*policy.Policy, error) {
 	var ps []*policy.Policy
 	if b, ok := id.Attrs[attrUserPolicy]; ok {
@@ -67,13 +71,17 @@ func identityPolicies(id *op.Identity, r denc.Release) ([]*policy.Policy, error)
 	return ps, nil
 }
 
-// publicAccess is get_public_access_conf_from_attr (rgw_op.cc:340-355 at
-// v19.2.6, :370-385 at v20.2.4): the bucket's public-access block, nil when
-// absent. radosgw takes a block that does not decode for none, which turns
-// off IgnorePublicAcls, BlockPublicPolicy and RestrictPublicBuckets; rgw-go
-// refuses the request instead with AccessDenied, as radosgw refuses one whose
-// stored bucket policy does not parse (rgw_op.cc:598-615 at v19.2.6, :628-645
-// at v20.2.4; docs/exclusions.md).
+// publicAccess is get_public_access_conf_from_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L340-L355 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L370-L385 at v20.2.4):
+// the bucket's public-access block, nil when absent. radosgw takes a block
+// that does not decode for none, which turns off IgnorePublicAcls,
+// BlockPublicPolicy and RestrictPublicBuckets; rgw-go refuses the request
+// instead with AccessDenied, as radosgw refuses one whose stored bucket
+// policy does not parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L598-L615 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645 at v20.2.4;
+// docs/exclusions.md).
 func publicAccess(rec *op.BucketRecord) (*acl.PublicAccessBlock, error) {
 	if rec == nil {
 		return nil, nil
@@ -92,19 +100,22 @@ func publicAccess(rec *op.BucketRecord) (*acl.PublicAccessBlock, error) {
 }
 
 // The condition key prefixes rgw_check_policy_condition looks for
-// (rgw_op.cc:109-111 at v19.2.6, :120-122 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L109-L111 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L120-L122 at v20.2.4).
 const (
 	existingObjectTagPrefix = "s3:ExistingObjectTag"
 	resourceTagPrefix       = "s3:ResourceTag"
 	runtimeResourceTag      = "${s3:ResourceTag"
 )
 
-// needsTags is rgw_check_policy_condition (rgw_op.cc:776-821 at v19.2.6,
-// :812-857 at v20.2.4) over policies, nil ones skipped: existing when a
-// condition key starts with s3:ExistingObjectTag, which a caller that does not
-// check existing tags ignores, and resource when one starts with
-// s3:ResourceTag or a condition value with ${s3:ResourceTag, each prefix
-// matched without regard to ASCII case.
+// needsTags is rgw_check_policy_condition
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L776-L821 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L812-L857 at v20.2.4)
+// over policies, nil ones skipped: existing when a condition key starts with
+// s3:ExistingObjectTag, which a caller that does not check existing tags
+// ignores, and resource when one starts with s3:ResourceTag or a condition
+// value with ${s3:ResourceTag, each prefix matched without regard to ASCII
+// case.
 func needsTags(policies ...*policy.Policy) (existing, resource bool) {
 	for _, p := range policies {
 		if p == nil {
@@ -118,9 +129,11 @@ func needsTags(policies ...*policy.Policy) (existing, resource bool) {
 }
 
 // tagSet is the tag set attrs carries, as rgw_iam_add_tags_from_bl decodes
-// it (rgw_op.cc:708-725 at v19.2.6, :738-755 at v20.2.4); nil when attrs
-// carries none. A tag set that does not decode is an error. radosgw returns
-// -EIO before adding a key, and every caller ignores it.
+// it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L708-L725 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755 at v20.2.4);
+// nil when attrs carries none. A tag set that does not decode is an error.
+// radosgw returns -EIO before adding a key, and every caller ignores it.
 func tagSet(attrs map[string][]byte) (*tags.Set, error) {
 	b, ok := attrs[tags.Attr]
 	if !ok {

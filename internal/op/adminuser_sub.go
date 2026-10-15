@@ -13,7 +13,8 @@ import (
 )
 
 // The generated key lengths, PUBLIC_ID_LEN and SECRET_KEY_LEN
-// (driver/rados/rgw_user.h:23-24 at v19.2.6, :22-23 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L23-L24 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.h#L22-L23 at v20.2.4).
 const (
 	accessKeyLen = 20
 	secretKeyLen = 40
@@ -39,13 +40,14 @@ func randomFrom(table string, n int) string {
 	return string(b)
 }
 
-// genSecretKey is rgw_generate_secret_key (driver/rados/rgw_user.cc:500-506
-// at v19.2.6).
+// genSecretKey is rgw_generate_secret_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L500-L506 at v19.2.6).
 func genSecretKey() string { return randomFrom(plainAlnum, secretKeyLen) }
 
-// genAccessKey is rgw_generate_access_key (:508-533): ids are drawn until
-// one no user holds. A lookup that fails otherwise is generate_key's
-// ERR_INVALID_ACCESS_KEY.
+// genAccessKey is rgw_generate_access_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L508-L533):
+// ids are drawn until one no user holds. A lookup that fails otherwise is
+// generate_key's ERR_INVALID_ACCESS_KEY.
 func genAccessKey(ctx context.Context, env *Env) (string, error) {
 	for {
 		id := randomFrom(upperAlnum, accessKeyLen)
@@ -60,8 +62,8 @@ func genAccessKey(ctx context.Context, env *Env) (string, error) {
 }
 
 // keyType is the type RGWAccessKeyPool::check_op settles on
-// (driver/rados/rgw_user.cc:474-483 at v19.2.6): an undefined type is Swift
-// when a subuser is named, S3 otherwise.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L474-L483 at v19.2.6):
+// an undefined type is Swift when a subuser is named, S3 otherwise.
 func (p UserKeyParams) keyType() KeyType {
 	if p.Type != KeyTypeUndefined {
 		return p.Type
@@ -72,8 +74,9 @@ func (p UserKeyParams) keyType() KeyType {
 	return KeyTypeS3
 }
 
-// swiftKeyID is build_default_swift_kid (:352-363): "<uid>:<subuser>", or ""
-// without either.
+// swiftKeyID is build_default_swift_kid
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L352-L363):
+// "<uid>:<subuser>", or "" without either.
 func swiftKeyID(uid meta.UserID, p UserKeyParams) string {
 	if uid.ID == "" || p.Subuser == "" {
 		return ""
@@ -83,9 +86,9 @@ func swiftKeyID(uid meta.UserID, p UserKeyParams) string {
 
 // keyCheck is the rest of check_op, for a key of type typ: an S3 key needs
 // an access key unless one is generated. It then is check_existing_key
-// (:394-455), which finds a Swift key by "<uid>:<subuser>" alone and an S3
-// key by the access key, both among info's own keys, and returns the id it
-// found.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L394-L455),
+// which finds a Swift key by "<uid>:<subuser>" alone and an S3 key by the
+// access key, both among info's own keys, and returns the id it found.
 func keyCheck(info *meta.UserInfo, p UserKeyParams, typ KeyType) (id string, existing bool, err error) {
 	if typ == KeyTypeS3 && !p.genAccess() && p.AccessKey == "" {
 		return "", false, ErrInvalidAccessKeyID
@@ -106,7 +109,8 @@ func keyCheck(info *meta.UserInfo, p UserKeyParams, typ KeyType) (id string, exi
 }
 
 // addKey is RGWAccessKeyPool::add with the user write deferred
-// (driver/rados/rgw_user.cc:457-777 at v19.2.6, :462-782 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L457-L777 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L462-L782 at v20.2.4):
 // check_op, then modify_key for a key info holds and generate_key
 // otherwise. A modify that leaves an S3 key active refuses an id another
 // user also holds, active or not (refuseHeldKey); one that leaves it
@@ -133,14 +137,15 @@ func addKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyParams)
 	return generateKey(ctx, env, info, p, typ)
 }
 
-// generateKey is generate_key (:536-639). An explicit S3 id another user
-// holds is ErrKeyExists, active or not (refuseHeldKey), and a failed read
-// refuses the key too, where radosgw goes on. The Swift index is no UserStore read, so the
-// explicit id of a Swift request, which generate_key checks and then
-// replaces, goes unchecked, and "<uid>:<subuser>" is checked by PutUser.
-// The key records the subuser named. A request that names active=false
-// gets an inactive key; radosgw's generate_key never reads
-// access_key_active and makes it active (docs/exclusions.md).
+// generateKey is generate_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L536-L639).
+// An explicit S3 id another user holds is ErrKeyExists, active or not
+// (refuseHeldKey), and a failed read refuses the key too, where radosgw goes
+// on. The Swift index is no UserStore read, so the explicit id of a Swift
+// request, which generate_key checks and then replaces, goes unchecked, and
+// "<uid>:<subuser>" is checked by PutUser. The key records the subuser named. A
+// request that names active=false gets an inactive key; radosgw's generate_key
+// never reads access_key_active and makes it active (docs/exclusions.md).
 func generateKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyParams, typ KeyType) error {
 	var id string
 	if !p.genAccess() {
@@ -193,12 +198,17 @@ func generateKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyPa
 
 // refuseHeldKey is ErrKeyExists when a user other than self holds id among
 // its access keys, active or not, as FindKeyHolder finds it. radosgw checks
-// only its key index, which names active keys alone (svc_user_rados.cc:329-339
-// and :424-432 at v19.2.6, :309-319 and :404-412 at v20.2.4), so it lets a
-// second user take a deactivated key's id, and the index then authenticates
-// whichever user it names (docs/ceph-upstream-bugs.md, "radosgw lets another
-// user take an inactive access key's id"). A failed lookup refuses the key,
-// as storeErr's error.
+// only its key index, which names active keys alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L329-L339
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L424-L432 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L309-L319
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L404-L412 at v20.2.4),
+// so it lets a second user take a deactivated key's id, and the index then
+// authenticates whichever user it names (docs/ceph-upstream-bugs.md, "radosgw
+// lets another user take an inactive access key's id"). A failed lookup
+// refuses the key, as storeErr's error.
 func refuseHeldKey(ctx context.Context, env *Env, self meta.UserID, id string) error {
 	holder, err := env.Users.FindKeyHolder(ctx, id)
 	switch {
@@ -223,15 +233,17 @@ func emplace(m map[string]meta.AccessKey, id string, k meta.AccessKey) map[strin
 	return m
 }
 
-// modifyKey is modify_key (:642-710) for the key id info holds, changed in
-// place: a new secret when one is named or generated, the active flag only
-// when the request names it, and the creation date kept. radosgw rebuilds a
-// Swift key from its id and subuser alone, which reactivates a deactivated
-// key, drops its creation date and can leave it without a secret
-// (docs/ceph-upstream-bugs.md, "radosgw's Swift key modify rebuilds the
-// key"); rgw-go keeps the stored key instead, and refuses a change that
-// would leave any key without a secret as generate_key refuses an empty
-// one, ERR_INVALID_SECRET_KEY (:589-592).
+// modifyKey is modify_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L642-L710)
+// for the key id info holds, changed in place: a new secret when one is
+// named or generated, the active flag only when the request names it, and
+// the creation date kept. radosgw rebuilds a Swift key from its id and
+// subuser alone, which reactivates a deactivated key, drops its creation
+// date and can leave it without a secret (docs/ceph-upstream-bugs.md,
+// "radosgw's Swift key modify rebuilds the key"); rgw-go keeps the stored
+// key instead, and refuses a change that would leave any key without a
+// secret as generate_key refuses an empty one, ERR_INVALID_SECRET_KEY
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L589-L592).
 func modifyKey(info *meta.UserInfo, p UserKeyParams, typ KeyType, id string) error {
 	var k meta.AccessKey
 	switch typ {
@@ -262,7 +274,8 @@ func modifyKey(info *meta.UserInfo, p UserKeyParams, typ KeyType, id string) err
 	return nil
 }
 
-// removeKey is RGWAccessKeyPool::remove with the write deferred (:779-853):
+// removeKey is RGWAccessKeyPool::remove with the write deferred
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L779-L853):
 // check_op, then the key info holds is removed; one it does not hold is
 // ErrInvalidAccessKeyID. Only info's own keys are looked at.
 func removeKey(info *meta.UserInfo, p UserKeyParams) error {
@@ -282,11 +295,12 @@ func removeKey(info *meta.UserInfo, p UserKeyParams) error {
 	return nil
 }
 
-// subuserOf is RGWUserAdminOpState::set_subuser (rgw_user.cc:281-299 at
-// v19.2.6, :286-304 at v20.2.4) over the op's uid: a subuser
-// "<user>:<name>" names its user too, whose id replaces uid's, or all of
-// uid when it carries a tenant. set is subuser_specified, which a name
-// left empty past the ':' still sets.
+// subuserOf is RGWUserAdminOpState::set_subuser
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L281-L299 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L286-L304 at v20.2.4)
+// over the op's uid: a subuser "<user>:<name>" names its user too, whose
+// id replaces uid's, or all of uid when it carries a tenant. set is
+// subuser_specified, which a name left empty past the ':' still sets.
 func subuserOf(uid meta.UserID, s string) (_ meta.UserID, name string, set bool) {
 	if s == "" {
 		return uid, "", false
@@ -313,8 +327,10 @@ func subuserKey(uid meta.UserID, subuser string, p UserKeyParams) (meta.UserID, 
 // keyOpUser is RGWUser::init for the key, subuser, caps and quota ops,
 // then init_members and their has_existing_user check: the anonymous uid
 // with no user found is keys.init's EINVAL, which comes first
-// (driver/rados/rgw_user.cc:247-264 and :1461-1478 at v19.2.6), and any
-// other uid with none found is ERR_NO_SUCH_USER.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L247-L264
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1461-L1478 at v19.2.6),
+// and any other uid with none found is ERR_NO_SUCH_USER.
 func keyOpUser(ctx context.Context, env *Env, uid meta.UserID, accessKey string, swift bool) (*UserRecord, error) {
 	l, err := lookupUser(ctx, env, uid, "", accessKey, swift)
 	switch {
@@ -337,8 +353,9 @@ func putUser(ctx context.Context, env *Env, rec *UserRecord) error {
 }
 
 // CreateKey is RGWOp_Key_Create and RGWUserAdminOp_Key::create
-// (driver/rados/rgw_rest_user.cc:666-726, driver/rados/rgw_user.cc:2586-2625
-// at v19.2.6). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L666-L726,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2586-L2625 at v19.2.6).
+// Cap users=write.
 type CreateKey struct {
 	AdminOp
 	UID meta.UserID
@@ -385,8 +402,9 @@ func (o *CreateKey) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveKey is RGWOp_Key_Remove and RGWUserAdminOp_Key::remove
-// (driver/rados/rgw_rest_user.cc:728-773, driver/rados/rgw_user.cc:2627-2648
-// at v19.2.6). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L728-L773,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2627-L2648 at v19.2.6).
+// Cap users=write.
 type RemoveKey struct {
 	AdminOp
 	UID meta.UserID
@@ -418,9 +436,10 @@ func (o *RemoveKey) Execute(ctx context.Context, r *Request) error {
 	return putUser(ctx, r.Env, rec)
 }
 
-// subuserCheck is RGWSubUserPool::check_op (driver/rados/rgw_user.cc:963-1002
-// at v19.2.6): a name, a valid permission, and a key type, Swift unless one
-// is named. It reports whether info holds the subuser.
+// subuserCheck is RGWSubUserPool::check_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L963-L1002 at v19.2.6):
+// a name, a valid permission, and a key type, Swift unless one is named. It
+// reports whether info holds the subuser.
 func subuserCheck(info *meta.UserInfo, key *UserKeyParams, perm uint32) (existing bool, err error) {
 	if key.Subuser == "" {
 		return false, ErrInvalidArgument
@@ -436,8 +455,11 @@ func subuserCheck(info *meta.UserInfo, key *UserKeyParams, perm uint32) (existin
 }
 
 // CreateSubuser is RGWOp_Subuser_Create and RGWUserAdminOp_Subuser::create
-// (driver/rados/rgw_rest_user.cc:481-554, driver/rados/rgw_user.cc:2495-2528
-// at v19.2.6) over RGWSubUserPool::add (:1004-1085). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L481-L554,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2495-L2528 at v19.2.6)
+// over RGWSubUserPool::add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1004-L1085).
+// Cap users=write.
 type CreateSubuser struct {
 	AdminOp
 	UID meta.UserID
@@ -501,8 +523,11 @@ func (o *CreateSubuser) Execute(ctx context.Context, r *Request) error {
 }
 
 // ModifySubuser is RGWOp_Subuser_Modify and RGWUserAdminOp_Subuser::modify
-// (driver/rados/rgw_rest_user.cc:556-621, driver/rados/rgw_user.cc:2530-2561
-// at v19.2.6) over RGWSubUserPool::modify (:1151-1222). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L556-L621,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2530-L2561 at v19.2.6)
+// over RGWSubUserPool::modify
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1151-L1222).
+// Cap users=write.
 type ModifySubuser struct {
 	AdminOp
 	UID     meta.UserID
@@ -567,8 +592,11 @@ func (o *ModifySubuser) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveSubuser is RGWOp_Subuser_Remove and RGWUserAdminOp_Subuser::remove
-// (driver/rados/rgw_rest_user.cc:623-664, driver/rados/rgw_user.cc:2563-2584
-// at v19.2.6) over RGWSubUserPool::remove (:1087-1149). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L623-L664,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2563-L2584 at v19.2.6)
+// over RGWSubUserPool::remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1087-L1149).
+// Cap users=write.
 type RemoveSubuser struct {
 	AdminOp
 	UID     meta.UserID
@@ -590,10 +618,11 @@ func (o *RemoveSubuser) VerifyPermission(_ context.Context, r *Request) error {
 }
 
 // Execute is RGWUser::init, check_op and execute_remove: a subuser info
-// lacks is ErrNoSuchSubUser; remove_subuser_keys (:856-923) removes the
-// Swift key "<uid>:<name>" and every S3 key recorded for the subuser, the
-// user's own keys and other subusers' untouched; then the subuser goes and
-// the user is written.
+// lacks is ErrNoSuchSubUser; remove_subuser_keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L856-L923)
+// removes the Swift key "<uid>:<name>" and every S3 key recorded for the
+// subuser, the user's own keys and other subusers' untouched; then the
+// subuser goes and the user is written.
 func (o *RemoveSubuser) Execute(ctx context.Context, r *Request) error {
 	uid, key := subuserKey(o.UID, o.Subuser, UserKeyParams{Type: KeyTypeUndefined})
 	rec, err := keyOpUser(ctx, r.Env, uid, "", false)
@@ -619,11 +648,13 @@ func (o *RemoveSubuser) Execute(ctx context.Context, r *Request) error {
 }
 
 // AddCaps is RGWOp_Caps_Add and RGWUserAdminOp_Caps::add
-// (driver/rados/rgw_rest_user.cc:775-811, driver/rados/rgw_user.cc:2650-2683
-// at v19.2.6) over RGWUserCapPool::add (:1263-1297). Cap users=write, and
-// nothing more: radosgw lets a users=write caller grant any cap, to any
-// user and to itself, which makes users=write a superuser cap; rgw-go
-// keeps that design.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L775-L811,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2650-L2683 at v19.2.6)
+// over RGWUserCapPool::add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1263-L1297).
+// Cap users=write, and nothing more: radosgw lets a users=write caller grant
+// any cap, to any user and to itself, which makes users=write a superuser
+// cap; rgw-go keeps that design.
 type AddCaps struct {
 	AdminOp
 	UID meta.UserID
@@ -670,8 +701,11 @@ func (o *AddCaps) change(ctx context.Context, r *Request, fn func(*meta.Caps) er
 }
 
 // RemoveCaps is RGWOp_Caps_Remove and RGWUserAdminOp_Caps::remove
-// (driver/rados/rgw_rest_user.cc:813-849, driver/rados/rgw_user.cc:2685-2718
-// at v19.2.6) over RGWUserCapPool::remove (:1305-1339). Cap users=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L813-L849,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2685-L2718 at v19.2.6)
+// over RGWUserCapPool::remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1305-L1339).
+// Cap users=write.
 type RemoveCaps struct{ AddCaps }
 
 // NewRemoveCaps returns a RemoveCaps.
@@ -690,8 +724,9 @@ func (o *RemoveCaps) Execute(ctx context.Context, r *Request) error {
 // and v20.2.4).
 func validQuotaType(t string) bool { return t == "" || t == "user" || t == "bucket" }
 
-// GetUserQuota is RGWOp_Quota_Info (driver/rados/rgw_rest_user.cc:871-941 at
-// v19.2.6). Cap users=read.
+// GetUserQuota is RGWOp_Quota_Info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L871-L941 at v19.2.6).
+// Cap users=read.
 type GetUserQuota struct {
 	AdminOp
 	UID meta.UserID
@@ -726,8 +761,9 @@ func (o *GetUserQuota) Execute(ctx context.Context, r *Request) error {
 }
 
 // QuotaParams are the arguments RGWOp_Quota_Set reads when the request has
-// no body (driver/rados/rgw_rest_user.cc:1103-1111 at v19.2.6), each nil
-// when the request does not name it.
+// no body
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L1103-L1111 at v19.2.6),
+// each nil when the request does not name it.
 type QuotaParams struct {
 	MaxObjects, MaxSize *int64
 	// MaxSizeKB is max-size-kb, which replaces MaxSize with itself * 1024.
@@ -739,8 +775,9 @@ type QuotaParams struct {
 // reads.
 const quotaInputMaxLen = 1024
 
-// SetUserQuota is RGWOp_Quota_Set (driver/rados/rgw_rest_user.cc:943-1127 at
-// v19.2.6). Cap users=write.
+// SetUserQuota is RGWOp_Quota_Set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L943-L1127 at v19.2.6).
+// Cap users=write.
 type SetUserQuota struct {
 	AdminOp
 	UID meta.UserID
@@ -909,9 +946,9 @@ func decodeQuotaBody(body []byte, q *meta.Quota) error {
 }
 
 // decodeUserQuotas is get_json_input into UserQuotas
-// (driver/rados/rgw_rest_user.cc:851-869 at v19.2.6): bucket_quota and
-// user_quota, each RGWQuotaInfo's defaults when absent, as decode_json
-// resets an absent member.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L851-L869 at v19.2.6):
+// bucket_quota and user_quota, each RGWQuotaInfo's defaults when
+// absent, as decode_json resets an absent member.
 func decodeUserQuotas(body []byte) (user, bucket *meta.Quota, err error) {
 	raw, err := firstJSONValue(body)
 	if err != nil {

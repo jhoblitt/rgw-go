@@ -150,7 +150,8 @@ func (f failingReads) ReadObject(ctx context.Context, st *op.ObjectState, rng op
 
 // missingObjectRule is OwnerOnly with the authorizer's refusal of a missing
 // object, which radosgw makes in read_permissions, before verify_permission
-// (read_obj_policy, rgw_op.cc:385-447 at v19.2.6).
+// (read_obj_policy,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L385-L447 at v19.2.6).
 func missingObjectRule() *opfakes.FakeAuthorizer {
 	a := &opfakes.FakeAuthorizer{}
 	a.VerifyObjectStub = func(ctx context.Context, r *op.Request, act policy.Action, perm acl.Permission) error {

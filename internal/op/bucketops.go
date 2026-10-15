@@ -17,15 +17,18 @@ import (
 )
 
 // The bucket ops of this file are rgw_op.cc's RGWCreateBucket,
-// RGWDeleteBucket, RGWStatBucket and RGWGetBucketLocation. A bare line
-// number is v19.2.6's; the v20.2.4 code is the same unless noted.
+// RGWDeleteBucket, RGWStatBucket and RGWGetBucketLocation. Where a
+// link cites v19.2.6 alone, the v20.2.4 code is the same unless noted.
 
 // loadBucket is rgw_build_bucket_policies' load of the bucket the request
 // names, which every S3 op but CreateBucket makes before anything else
 // once the requester is authenticated: a missing bucket is NoSuchBucket
-// (rgw_op.cc:523-541; v20.2.4 :553-571), and a bucket of another zonegroup
-// is redirectForeignBucket's PermanentRedirect, with r.BucketRec set either
-// way, as s->bucket is, for the headers and the usage log.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L523-L541;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L553-L571),
+// and a bucket of another zonegroup is redirectForeignBucket's
+// PermanentRedirect, with r.BucketRec set either way, as s->bucket is, for
+// the headers and the usage log.
 func loadBucket(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
@@ -36,12 +39,14 @@ func loadBucket(ctx context.Context, r *Request) error {
 }
 
 // redirectForeignBucket is rgw_build_bucket_policies' zonegroup check
-// (rgw_op.cc:558-574; v20.2.4 :588-604): a bucket whose zonegroup
-// RGWZoneGroup::equals does not take for this one is PermanentRedirect,
-// except for a system request to the master zonegroup and for a PUT of an
-// object whose copy source's bucket this zonegroup holds (localSource).
-// GetBucketLocation, the third exception, loads its bucket without the
-// check.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L558-L574;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L588-L604):
+// a bucket whose zonegroup RGWZoneGroup::equals does not take for this
+// one is PermanentRedirect, except for a system request to the master
+// zonegroup and for a PUT of an object whose copy source's bucket this
+// zonegroup holds (localSource). GetBucketLocation, the third exception,
+// loads its bucket without the check.
 func redirectForeignBucket(ctx context.Context, r *Request) error {
 	zg := r.Env.Zone.ZoneGroup()
 	switch {
@@ -55,9 +60,12 @@ func redirectForeignBucket(ctx context.Context, r *Request) error {
 	return ErrPermanentRedirect
 }
 
-// localSource is s->local_source (rgw_op.cc:509-518; v20.2.4 :539-548): the
-// request names a copy source whose bucket loads and is of zonegroup zg. A
-// source that fails to load is no local source, whatever the failure.
+// localSource is s->local_source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L509-L518;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L539-L548):
+// the request names a copy source whose bucket loads and is of zonegroup
+// zg. A source that fails to load is no local source, whatever the failure.
 func localSource(ctx context.Context, r *Request, zg meta.ZoneGroup) bool {
 	if r.SrcBucket == "" {
 		return false
@@ -66,13 +74,17 @@ func localSource(ctx context.Context, r *Request, zg meta.ZoneGroup) bool {
 	return err == nil && zg.Equals(src.Info.Zonegroup)
 }
 
-// CreateBucket is RGWCreateBucket (rgw_op.cc:3170-3244, :3416-3707; v20.2.4
-// :3398-3472, :3644-3880) for S3. Params, when set, is the protocol's
-// get_params, which Execute runs first, as radosgw's execute does: it checks
-// the bucket name, builds ACL from the request's ACL headers, reads the
-// request's CreateBucketConfiguration into LocationConstraint and Placement
-// and the object-lock header into ObjectLock. Execute then fills Existed and
-// Result.
+// CreateBucket is RGWCreateBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3170-L3244,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3416-L3707;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3398-L3472,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3644-L3880)
+// for S3. Params, when set, is the protocol's get_params, which Execute runs
+// first, as radosgw's execute does: it checks the bucket name, builds ACL
+// from the request's ACL headers, reads the request's
+// CreateBucketConfiguration into LocationConstraint and Placement and the
+// object-lock header into ObjectLock. Execute then fills Existed and Result.
 type CreateBucket struct {
 	Params func(ctx context.Context, o *CreateBucket) error
 
@@ -110,7 +122,9 @@ func (*CreateBucket) Action() policy.Action { return policy.S3CreateBucket }
 func (*CreateBucket) OpMask() uint32 { return OpTypeWrite }
 
 // Init loads nothing: radosgw skips the bucket load for a create
-// (rgw_rest.cc:1883-1891; v20.2.4 :1886-1894).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1883-L1891;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1886-L1894).
 func (*CreateBucket) Init(context.Context, *Request) error { return nil }
 
 // VerifyPermission is RGWCreateBucket::verify_permission: an anonymous
@@ -131,12 +145,15 @@ func (o *CreateBucket) VerifyPermission(ctx context.Context, r *Request) error {
 	return checkOwnerMaxBuckets(ctx, r)
 }
 
-// checkOwnerMaxBuckets is check_owner_max_buckets (rgw_op.cc:3170-3213;
-// v20.2.4 :3398-3441): the limit is the account's max_buckets for an
-// account's identity and the user's otherwise. A negative limit refuses
-// every bucket and zero none; otherwise the owner's buckets are counted, in
-// pages of rgw_list_buckets_max_chunk or of what the limit leaves when that
-// is more, until the limit is reached, TooManyBuckets, or the list ends.
+// checkOwnerMaxBuckets is check_owner_max_buckets
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3170-L3213;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3398-L3441):
+// the limit is the account's max_buckets for an account's identity and the
+// user's otherwise. A negative limit refuses every bucket and zero none;
+// otherwise the owner's buckets are counted, in pages of
+// rgw_list_buckets_max_chunk or of what the limit leaves when that is more,
+// until the limit is reached, TooManyBuckets, or the list ends.
 func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 	owner := r.Identity.Owner
 	var remaining int64
@@ -182,25 +199,32 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 	}
 }
 
-// Execute is RGWCreateBucket::execute (rgw_op.cc:3458-3707; v20.2.4
-// :3686-3880) for a single-site S3 request. After Params, the object-lock
-// header is checked as get_params checks it (rgw_rest_s3.cc:2534-2540;
-// v20.2.4 :2695-2701), and a bucket with object lock is NotImplemented until
-// object lock is served. A requested index is NotImplemented too, for a
-// bucket that does not exist, after every check radosgw makes before it
-// creates one (docs/exclusions.md). The location constraint
-// picks the bucket's zonegroup, the placement is selected, and a bucket of
-// the name that exists must match the request's zonegroup, placement and
-// ACL. The bucket is then created for the ACL's owner with the ACL as its
-// user.rgw.acl. A bucket that existed and is the owner's is Existed; one
-// that is another owner's is BucketAlreadyExists, which radosgw answers as
-// created when that owner's create lands during this one
-// (docs/exclusions.md).
+// Execute is RGWCreateBucket::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3458-L3707;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3686-L3880)
+// for a single-site S3 request. After Params, the object-lock header is
+// checked as get_params checks it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2534-L2540;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701),
+// and a bucket with object lock is NotImplemented until object lock is
+// served. A requested index is NotImplemented too, for a bucket that does
+// not exist, after every check radosgw makes before it creates one
+// (docs/exclusions.md). The location constraint picks the bucket's
+// zonegroup, the placement is selected, and a bucket of the name that exists
+// must match the request's zonegroup, placement and ACL. The bucket is then
+// created for the ACL's owner with the ACL as its user.rgw.acl. A bucket
+// that existed and is the owner's is Existed; one that is another owner's is
+// BucketAlreadyExists, which radosgw answers as created when that owner's
+// create lands during this one (docs/exclusions.md).
 //
 // r.BucketRec carries the usage log's owner and payer, radosgw's
 // s->bucket_owner and s->bucket: none before the existing bucket is read,
 // then the existing bucket's requester-pays with no owner, and from the
-// create on the ACL's owner (rgw_op.cc:3541-3581; rgw_log.cc:203-220).
+// create on the ACL's owner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3541-L3581;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L203-L220).
 func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {
 		if err := o.Params(ctx, o); err != nil {
@@ -242,7 +266,8 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 		}
 	}
 	// A bucket that exists is answered as radosgw answers it whatever index
-	// the request asks for (rgw_sal_rados.cc:183-202 at v20.2.4).
+	// the request asks for
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L183-L202 at v20.2.4).
 	if o.BucketIndex && existing == nil {
 		return ErrNotImplemented
 	}
@@ -268,7 +293,8 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// bucketZoneGroup is the location-constraint check (rgw_op.cc:3470-3522):
+// bucketZoneGroup is the location-constraint check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3470-L3522):
 // with a period, a constraint names a zonegroup of the period map by its
 // api name; without one it must be this zonegroup's api name; neither is
 // checked under rgw_relaxed_region_enforcement. A user's bucket must land in
@@ -315,7 +341,8 @@ func relaxedRegionEnforcement(r *Request) bool {
 
 // zoneGroupByAPI is RGWPeriodMap's zonegroups_by_api lookup: the map is
 // built over the zonegroups in id order, so of two with one api name the
-// later id wins (rgw_zone.cc:1039-1047).
+// later id wins
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L1039-L1047).
 func zoneGroupByAPI(zgs map[string]meta.ZoneGroup, api string) (meta.ZoneGroup, bool) {
 	var found meta.ZoneGroup
 	ok := false
@@ -327,11 +354,14 @@ func zoneGroupByAPI(zgs map[string]meta.ZoneGroup, api string) (meta.ZoneGroup, 
 	return found, ok
 }
 
-// selectBucketPlacement is select_bucket_placement (rgw_op.cc:3416-3456;
-// v20.2.4 :3644-3684): a rule without a name inherits the user's default
-// placement and then the zonegroup's, and still without one the zonegroup
-// is misconfigured; the rule must name a placement target of the zonegroup
-// whose tags, when it has any, include one of the user's.
+// selectBucketPlacement is select_bucket_placement
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3416-L3456;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3644-L3684):
+// a rule without a name inherits the user's default placement and then the
+// zonegroup's, and still without one the zonegroup is misconfigured; the
+// rule must name a placement target of the zonegroup whose tags, when it
+// has any, include one of the user's.
 func selectBucketPlacement(zg meta.ZoneGroup, user *meta.UserInfo, rule meta.PlacementRule) (meta.PlacementRule, error) {
 	if rule.Name == "" {
 		if user != nil {
@@ -354,11 +384,13 @@ func selectBucketPlacement(zg meta.ZoneGroup, user *meta.UserInfo, rule meta.Pla
 	return rule, nil
 }
 
-// checkExisting is the existing-bucket checks (rgw_op.cc:3549-3579; v20.2.4
-// :3777-3807): a request may not change the bucket's zonegroup, unless it is
-// a system request, its placement, or its ACL, each refusal
-// BucketAlreadyExists with radosgw's message. An ACL that does not decode is
-// not compared.
+// checkExisting is the existing-bucket checks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3549-L3579;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3777-L3807):
+// a request may not change the bucket's zonegroup, unless it is a system
+// request, its placement, or its ACL, each refusal BucketAlreadyExists with
+// radosgw's message. An ACL that does not decode is not compared.
 func (o *CreateBucket) checkExisting(ctx context.Context, r *Request, existing *BucketRecord, zonegroup string, rule meta.PlacementRule) error {
 	info := &existing.Info
 	if !r.Identity.System && zonegroup != info.Zonegroup {
@@ -373,8 +405,9 @@ func (o *CreateBucket) checkExisting(ctx context.Context, r *Request, existing *
 	return nil
 }
 
-// samePolicy is RGWAccessControlPolicy's operator== (rgw_acl.cc:22-69): the
-// owners, the grant multimaps in order, the user and group maps and the
+// samePolicy is RGWAccessControlPolicy's operator==
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L22-L69):
+// the owners, the grant multimaps in order, the user and group maps and the
 // referer lists all equal, which the two encodings being equal decides.
 func samePolicy(a, b acl.Policy) bool {
 	ea, eb := denc.NewEncoder(), denc.NewEncoder()
@@ -387,8 +420,11 @@ func samePolicy(a, b acl.Policy) bool {
 // response is written.
 func (*CreateBucket) Complete(context.Context, *Request) {}
 
-// DeleteBucket is RGWDeleteBucket (rgw_op.cc:3709-3804; v20.2.4
-// :3938-4013) for a single-site request.
+// DeleteBucket is RGWDeleteBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3709-L3804;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3938-L4013)
+// for a single-site request.
 type DeleteBucket struct{}
 
 var _ Op = (*DeleteBucket)(nil)
@@ -413,10 +449,13 @@ func (o *DeleteBucket) VerifyPermission(ctx context.Context, r *Request) error {
 }
 
 // Execute removes the bucket. A plain ConcurrentModification from the
-// store is success, as radosgw makes it (rgw_op.cc:3792-3797; v20.2.4
-// :4001-4006); ErrRemovalRaced, a removal that lost the entry point after
-// claiming the bucket, which stays, and ErrRenamePending are the 409s they
-// are. A bucket an unfinished admin rename marks is refused with
+// store is success, as radosgw makes it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3792-L3797;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4001-L4006);
+// ErrRemovalRaced, a removal that lost the entry point after claiming the
+// bucket, which stays, and ErrRenamePending are the 409s they are. A
+// bucket an unfinished admin rename marks is refused with
 // ConcurrentModification first, as its other name shares the index
 // (docs/exclusions.md, "Bucket link and unlink write differently from
 // radosgw").
@@ -435,8 +474,11 @@ func (*DeleteBucket) Execute(ctx context.Context, r *Request) error {
 // response is written.
 func (*DeleteBucket) Complete(context.Context, *Request) {}
 
-// StatBucket is RGWStatBucket (rgw_op.cc:2983-3031; v20.2.4 :3215-3265), the
-// bucket HEAD.
+// StatBucket is RGWStatBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2983-L3031;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3215-L3265),
+// the bucket HEAD.
 type StatBucket struct {
 	// ReadStats asks for the bucket's stats: always on Squid, and on
 	// Tentacle only with read-stats.
@@ -450,7 +492,8 @@ var _ Op = (*StatBucket)(nil)
 // Name is RGWStatBucket::name().
 func (*StatBucket) Name() string { return "stat_bucket" }
 
-// Action is s3:ListBucket, which governs a bucket HEAD (rgw_op.cc:2989-2991).
+// Action is s3:ListBucket, which governs a bucket HEAD
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2989-L2991).
 func (*StatBucket) Action() policy.Action { return policy.S3ListBucket }
 
 // OpMask is RGW_OP_TYPE_READ.
@@ -466,7 +509,8 @@ func (o *StatBucket) VerifyPermission(ctx context.Context, r *Request) error {
 }
 
 // Execute reads the stats when asked, load_bucket_stats' Main category.
-// Squid's radosgw reads the bucket once more first (rgw_op.cc:3025-3028),
+// Squid's radosgw reads the bucket once more first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3025-L3028),
 // which only a delete in between changes.
 func (o *StatBucket) Execute(ctx context.Context, r *Request) error {
 	if !o.ReadStats {
@@ -484,9 +528,14 @@ func (o *StatBucket) Execute(ctx context.Context, r *Request) error {
 // response is written.
 func (*StatBucket) Complete(context.Context, *Request) {}
 
-// GetBucketLocation is RGWGetBucketLocation (rgw_op.cc:3136-3147; v20.2.4
-// :3364-3375) with the api name RGWGetBucketLocation_ObjStore_S3 renders
-// (rgw_rest_s3.cc:2129-2150; v20.2.4 :2230-2253).
+// GetBucketLocation is RGWGetBucketLocation
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3136-L3147;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3364-L3375)
+// with the api name RGWGetBucketLocation_ObjStore_S3 renders
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2129-L2150;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2230-L2253).
 type GetBucketLocation struct {
 	APIName string
 }
@@ -503,8 +552,10 @@ func (*GetBucketLocation) Action() policy.Action { return policy.S3GetBucketLoca
 func (*GetBucketLocation) OpMask() uint32 { return OpTypeRead }
 
 // Init loads the bucket without redirecting one of another zonegroup, the
-// exception rgw_build_bucket_policies makes for this op (rgw_op.cc:567;
-// v20.2.4 :597).
+// exception rgw_build_bucket_policies makes for this op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L567;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L597).
 func (*GetBucketLocation) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {
@@ -521,11 +572,15 @@ func (o *GetBucketLocation) VerifyPermission(ctx context.Context, r *Request) er
 }
 
 // Execute names the bucket's zonegroup as RGWSI_Zone::get_zonegroup finds
-// it (svc_zone.cc:634-643; v20.2.4 :438-447): this zonegroup by its api
-// name; with a period, the period map's by its api name, the one named
-// "default" for an empty id, and a zonegroup the map lacks by its id unless
-// that is "default"; without a period, any other zonegroup is the empty one
-// get_zonegroup leaves unfilled, which has no api name.
+// it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L634-L643;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L438-L447):
+// this zonegroup by its api name; with a period, the period map's by its
+// api name, the one named "default" for an empty id, and a zonegroup the
+// map lacks by its id unless that is "default"; without a period, any other
+// zonegroup is the empty one get_zonegroup leaves unfilled, which has no
+// api name.
 func (o *GetBucketLocation) Execute(_ context.Context, r *Request) error {
 	id := r.BucketRec.Info.Zonegroup
 	zi := r.Env.Zone

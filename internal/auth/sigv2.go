@@ -16,12 +16,15 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
-// signedSubresourcesV2 is signed_subresources (rgw_auth_s3.cc:31-60 at
-// v19.2.6, :32-61 at v20.2.4): the SigV2 canonical resource appends the
-// ones the request carries, in this order. RGWHTTPArgs::append never files
-// encryption or object-lock as a sub-resource (rgw_common.cc:925-975 at
-// v19.2.6, :938-988 at v20.2.4), so neither is ever signed, as in radosgw
-// (docs/ceph-upstream-bugs.md).
+// signedSubresourcesV2 is signed_subresources
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L31-L60 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L32-L61 at v20.2.4):
+// the SigV2 canonical resource appends the ones the request carries, in
+// this order. RGWHTTPArgs::append never files encryption or object-lock as
+// a sub-resource
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L925-L975 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L938-L988 at v20.2.4),
+// so neither is ever signed, as in radosgw (docs/ceph-upstream-bugs.md).
 var signedSubresourcesV2 = []string{
 	"acl", "cors", "delete", "encryption", "lifecycle", "location", "logging",
 	"notification", "partNumber", "policy", "policyStatus", "publicAccessBlock", "requestPayment",
@@ -30,15 +33,16 @@ var signedSubresourcesV2 = []string{
 	"uploadId", "uploads", "versionId", "versioning", "versions", "website", "object-lock",
 }
 
-// authDataV2 is AWSGeneralAbstractor::get_auth_data_v2 (rgw_rest_s3.cc
-// :6033-6113 at v19.2.6, :6604-6684 at v20.2.4). Without a non-empty
-// Authorization header the credentials are the query's AWSAccessKeyId and
-// Signature, and Expires must be present and later than now in whole seconds;
-// otherwise the header after "AWS " splits at its last ':' into key and
-// signature, both empty without one. An x-amz-security-token present but
-// empty, in the query or the headers respectively, is refused. Only a
-// header-signed request has its date checked for skew. Every refusal but the
-// skew is EPERM, with no message.
+// authDataV2 is AWSGeneralAbstractor::get_auth_data_v2
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6033-L6113 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6604-L6684 at v20.2.4).
+// Without a non-empty Authorization header the credentials are the query's
+// AWSAccessKeyId and Signature, and Expires must be present and later than
+// now in whole seconds; otherwise the header after "AWS " splits at its last
+// ':' into key and signature, both empty without one. An x-amz-security-token
+// present but empty, in the query or the headers respectively, is refused.
+// Only a header-signed request has its date checked for skew. Every refusal
+// but the skew is EPERM, with no message.
 func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) {
 	d := &authData{payload: payloadClass{kind: payloadNone}}
 	if a, _ := rv.header("authorization"); a == "" {
@@ -78,19 +82,24 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 	return d, nil
 }
 
-// canonicalStringV2 is rgw_create_s3_canonical_header (rgw_auth_s3.cc
-// :193-260 at v19.2.6, :194-263 at v20.2.4) and the string it builds
-// (:130-169, :131-170): the method, Content-MD5 and Content-Type as sent or
-// empty, and the date line, each ended by a newline; then the amz headers, on
-// the query route the query's meta, and the canonical resource. A Content-MD5
-// with a byte that is neither base64 nor whitespace is refused. On the query
-// route the date line is Expires, cut at a NUL as radosgw appends it as a C
-// string. On the header route an x-amz-date empties the date line and is the
-// request date, which is otherwise the Date header, and that is also the date
-// line. headerTime is the request date's instant, zero on the query route.
-// The method is the request's; at v20.2.4 radosgw signs an OPTIONS CORS
-// request over its Access-Control-Request-Method instead
-// (get_canonical_method, :258 and :1749-1776 at v20.2.4).
+// canonicalStringV2 is rgw_create_s3_canonical_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L193-L260 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L194-L263 at v20.2.4)
+// and the string it builds
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L130-L169,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L131-L170):
+// the method, Content-MD5 and Content-Type as sent or empty, and the date
+// line, each ended by a newline; then the amz headers, on the query route
+// the query's meta, and the canonical resource. A Content-MD5 with a byte
+// that is neither base64 nor whitespace is refused. On the query route the
+// date line is Expires, cut at a NUL as radosgw appends it as a C string. On
+// the header route an x-amz-date empties the date line and is the request
+// date, which is otherwise the Date header, and that is also the date line.
+// headerTime is the request date's instant, zero on the query route. The
+// method is the request's; at v20.2.4 radosgw signs an OPTIONS CORS request
+// over its Access-Control-Request-Method instead (get_canonical_method,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776 at v20.2.4).
 func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts string, headerTime time.Time, err error) {
 	md5, _ := rv.header("content-md5")
 	if !isBase64Charset(md5) {
@@ -128,7 +137,9 @@ func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts 
 }
 
 // v2RequestTime is the header time rgw_create_s3_canonical_header takes from
-// the request date (rgw_auth_s3.cc:230-243 at v19.2.6, :232-245 at v20.2.4):
+// the request date
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L230-L243 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L232-L245 at v20.2.4):
 // parse_rfc2616, else parse_iso8601 without the extended format, and a year
 // before 1970 refused as strptime read it, before second 60 or a zone offset
 // moves the instant across the year's edge. The instant is kept whole where
@@ -148,8 +159,10 @@ func v2RequestTime(date string) (time.Time, error) {
 	return t, nil
 }
 
-// writeCanonAmz is get_canon_amz_hdrs (rgw_auth_s3.cc:66-86 at v19.2.6, :67-87
-// at v20.2.4): "key:value\n" in key order.
+// writeCanonAmz is get_canon_amz_hdrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L66-L86 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87 at v20.2.4):
+// "key:value\n" in key order.
 func writeCanonAmz(b *strings.Builder, m map[string]string) {
 	for _, k := range slices.Sorted(maps.Keys(m)) {
 		b.WriteString(k)
@@ -160,18 +173,21 @@ func writeCanonAmz(b *strings.Builder, m map[string]string) {
 }
 
 // amzHeadersV2 is the x_meta_map req_info::init_meta_info builds
-// (rgw_common.cc:422-464 at v19.2.7, :435-477 at v20.2.4) from the headers
-// whose name begins x-amz- in any case, each under its name lower-cased, as
-// beast's HTTP_ name, upper-cased with '-' and '_' swapped, comes back from it
-// (rgw_asio_client.cc:36-66 at v19.2.6 and v20.2.4). init_meta_info files a
-// header under six other meta prefixes there too, under its x-amz- name;
-// rgw-go's S3 API reads none of them, so none is signed (docs/exclusions.md).
-// The value is the header's last, the one RGWEnv::set keeps. beast files
-// spellings of one name under one HTTP_ name, where the last set wins; of
-// spellings the header map keeps apart, which net/http's server does not as
-// it canonicalizes each name, the last in byte order wins, as internal/s3's
-// requestEnv keeps one, so the line signed is the value stored. x-amz-date
-// is among them, which is how it reaches the string to sign.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L422-L464 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L435-L477 at v20.2.4)
+// from the headers whose name begins x-amz- in any case, each under its name
+// lower-cased, as beast's HTTP_ name, upper-cased with '-' and '_' swapped,
+// comes back from it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L66 at v19.2.6
+// and v20.2.4). init_meta_info files a header under six other meta prefixes
+// there too, under its x-amz- name; rgw-go's S3 API reads none of them, so
+// none is signed (docs/exclusions.md). The value is the header's last, the one
+// RGWEnv::set keeps. beast files spellings of one name under one HTTP_ name,
+// where the last set wins; of spellings the header map keeps apart, which
+// net/http's server does not as it canonicalizes each name, the last in byte
+// order wins, as internal/s3's requestEnv keeps one, so the line signed is the
+// value stored. x-amz-date is among them, which is how it reaches the string
+// to sign.
 func amzHeadersV2(rv *requestView) map[string]string {
 	m := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(rv.req.Header)) {
@@ -183,11 +199,13 @@ func amzHeadersV2(rv *requestView) map[string]string {
 	return m
 }
 
-// qsMetaV2 is get_v2_qs_map (rgw_auth_s3.cc:175-187 at v19.2.6, :176-188 at
-// v20.2.4). It walks RGWHTTPArgs' std::map, in byte order of the names as
-// parsed: a parameter whose lower-cased name starts with x-amz-meta- joins
-// that name as rgw_add_amz_meta_header joins, and one whose lower-cased name
-// is x-amz-security-token replaces any before it.
+// qsMetaV2 is get_v2_qs_map
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L175-L187 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188 at v20.2.4).
+// It walks RGWHTTPArgs' std::map, in byte order of the names as parsed: a
+// parameter whose lower-cased name starts with x-amz-meta- joins that name
+// as rgw_add_amz_meta_header joins, and one whose lower-cased name is
+// x-amz-security-token replaces any before it.
 func qsMetaV2(rv *requestView) map[string]string {
 	m := map[string]string{}
 	for _, k := range slices.Sorted(maps.Keys(rv.params)) {
@@ -205,25 +223,29 @@ func qsMetaV2(rv *requestView) map[string]string {
 // queryMetaV2 is a presigned SigV2 request's qsMetaV2, for
 // AuthResult.QueryMeta, once Verifier.Authenticate has authenticated the
 // request. The string to sign runs the query's lines straight on from the
-// headers', each set sorted on its own (rgw_auth_s3.cc:164-165 at v19.2.7,
-// :165-166 at v20.2.4), so a run of x-amz-meta-* or x-amz-security-token
-// lines can move between the end of the headers and the start of the query
-// with the signature kept. radosgw stores query meta on a PutObject or an
-// UploadPart alone and reads the session token from the header alone
-// (rgw_op.cc:904-909 at v19.2.7, :939-944 at v20.2.4), so the two forms mean
-// different things (docs/ceph-upstream-bugs.md). rgw-go has every read take
-// them as one set, on both releases (docs/exclusions.md), and refuses what
-// does not make one: a name the string to sign carries from both sides, and
-// an empty session token, in the headers or under a query name in any case,
-// where authDataV2 refuses only the query's x-amz-security-token spelt so. It
-// also refuses a query line whose name or value, url-decoded, holds a CR or
-// LF: get_canon_amz_hdrs writes each line unescaped (rgw_auth_s3.cc:66-86 at
-// v19.2.7, :67-87 at v20.2.4), so such a parameter signs as the several lines
-// it spells, signed header lines or a token among them, while every read
-// takes it as one (docs/ceph-upstream-bugs.md). A header value cannot carry
-// either: net/http joins a continuation line with a space and answers 400 to
-// a value holding any other control character. And it refuses a query meta
-// name holding a colon, which moves the line's first colon, the end of its
+// headers', each set sorted on its own
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L164-L165 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L165-L166 at v20.2.4),
+// so a run of x-amz-meta-* or x-amz-security-token lines can move between the end of
+// the headers and the start of the query with the signature kept. radosgw stores
+// query meta on a PutObject or an UploadPart alone and reads the session token from
+// the header alone
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904-L909 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L939-L944 at v20.2.4),
+// so the two forms mean different things (docs/ceph-upstream-bugs.md). rgw-go has
+// every read take them as one set, on both releases (docs/exclusions.md), and refuses
+// what does not make one: a name the string to sign carries from both sides, and an
+// empty session token, in the headers or under a query name in any case, where
+// authDataV2 refuses only the query's x-amz-security-token spelt so. It also refuses
+// a query line whose name or value, url-decoded, holds a CR or LF: get_canon_amz_hdrs
+// writes each line unescaped
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L66-L86 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87 at v20.2.4),
+// so such a parameter signs as the several lines it spells, signed header lines or a
+// token among them, while every read takes it as one (docs/ceph-upstream-bugs.md). A
+// header value cannot carry either: net/http joins a continuation line with a space
+// and answers 400 to a value holding any other control character. And it refuses a
+// query meta name holding a colon, which moves the line's first colon, the end of its
 // name, into the name: x-amz-meta-a:x=y signs as an x-amz-meta-a of x:y. No
 // header name holds one. The separator refusals cover the packed form alone: a signer
 // who signs a value holding a line break has also signed the request with its
@@ -253,12 +275,15 @@ func queryMetaV2(rv *requestView) (map[string]string, error) {
 
 // expiresLineBreak refuses, once Verifier.Authenticate has authenticated a
 // presigned SigV2 request, an Expires holding a CR or LF. Expires is the date
-// line, written as sent up to a NUL (rgw_auth_s3.cc:217 and :159-162 at
-// v19.2.7, :219 and :160-163 at v20.2.4), and its expiry is read by atoll,
-// which stops at the first byte that is no digit, so an Expires of
-// 1441000000%0Ax-amz-copy-source:b/src passes and signs as the header
-// X-Amz-Copy-Source: b/src does, which the request no longer carries
-// (docs/ceph-upstream-bugs.md).
+// line, written as sent up to a NUL
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L217 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L159-L162 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L219 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L160-L163 at v20.2.4),
+// and its expiry is read by atoll, which stops at the first byte that is no
+// digit, so an Expires of 1441000000%0Ax-amz-copy-source:b/src passes and
+// signs as the header X-Amz-Copy-Source: b/src does, which the request no
+// longer carries (docs/ceph-upstream-bugs.md).
 func expiresLineBreak(rv *requestView) error {
 	if expires, _ := rv.param("Expires"); strings.ContainsAny(expires, "\r\n") {
 		return errors.New("the Expires parameter signs a line break")
@@ -271,14 +296,16 @@ func expiresLineBreak(rv *requestView) error {
 // sub-resource canonicalResourceV2 can write after it: '&', its name, and '&'
 // or the value's end, or '=' for one parseQuery files with its value, which an
 // admin sub-resource is not. get_canon_resource joins the sub-resources with
-// '&' and writes each value unescaped (rgw_auth_s3.cc:91-124 at v19.2.7,
-// :92-125 at v20.2.4), so partNumber=1%26uploadId%3DU signs as the
-// partNumber and uploadId of an UploadPart while it names no upload, and a
-// response-content-disposition can carry a GET's signed versionId away
-// (docs/ceph-upstream-bugs.md). Any other '&', as in a filename, still
-// passes, as no other request signs the same resource. The refusal covers the
-// packed form alone: a signer who signs a value spelling a later sub-resource
-// has also signed the request that carries it apart, which is served.
+// '&' and writes each value unescaped
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L91-L124 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125 at v20.2.4),
+// so partNumber=1%26uploadId%3DU signs as the partNumber and uploadId of an
+// UploadPart while it names no upload, and a response-content-disposition can
+// carry a GET's signed versionId away (docs/ceph-upstream-bugs.md). Any other
+// '&', as in a filename, still passes, as no other request signs the same
+// resource. The refusal covers the packed form alone: a signer who signs a
+// value spelling a later sub-resource has also signed the request that carries
+// it apart, which is served.
 func packedSubresourceV2(rv *requestView) error {
 	for i, name := range signedSubresourcesV2 {
 		v, ok := rv.subres[name]
@@ -305,9 +332,11 @@ func packedSubresourceV2(rv *requestView) error {
 	return nil
 }
 
-// addAmzMeta is rgw_add_amz_meta_header (rgw_common.cc:472-487 at v19.2.6,
-// :485-500 at v20.2.4), which init_meta_info repeats inline: a second value
-// for k follows the first, right-trimmed, after a comma.
+// addAmzMeta is rgw_add_amz_meta_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L472-L487 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L485-L500 at v20.2.4),
+// which init_meta_info repeats inline: a second value for k follows the
+// first, right-trimmed, after a comma.
 func addAmzMeta(m map[string]string, k, v string) {
 	if old, ok := m[k]; ok {
 		for old != "" && isSpace(old[len(old)-1]) {
@@ -318,14 +347,17 @@ func addAmzMeta(m map[string]string, k, v string) {
 	m[k] = v
 }
 
-// canonicalResourceV2 is get_canon_resource (rgw_auth_s3.cc:91-124 at
-// v19.2.6, :92-125 at v20.2.4) over req_info.request_uri as
-// RGWREST::preprocess leaves it: the path as sent, after '/' and the bucket
-// the Host names, the one the S3 handler routes by, with a '/' between them
-// when the path lacks one (rgw_rest.cc:2154-2161 at v19.2.6, :2171-2178 at
-// v20.2.4). Each sub-resource of signedSubresourcesV2 the request carries
-// follows in that order, after '?' for the first and '&' for the rest, with
-// '=' and its decoded value unless that is empty.
+// canonicalResourceV2 is get_canon_resource
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L91-L124 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125 at v20.2.4)
+// over req_info.request_uri as RGWREST::preprocess leaves it: the path as
+// sent, after '/' and the bucket the Host names, the one the S3 handler
+// routes by, with a '/' between them when the path lacks one
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178 at v20.2.4).
+// Each sub-resource of signedSubresourcesV2 the request carries follows in
+// that order, after '?' for the first and '&' for the rest, with '=' and
+// its decoded value unless that is empty.
 func canonicalResourceV2(rv *requestView, dnsNames []string) string {
 	var b strings.Builder
 	if bucket := vhost.Bucket(vhost.Hostname(rv.req.Host), dnsNames); bucket != "" {
@@ -353,9 +385,11 @@ func canonicalResourceV2(rv *requestView, dnsNames []string) string {
 	return b.String()
 }
 
-// signatureV2 is get_v2_signature (rgw_auth_s3.cc:1068-1093 at v19.2.6,
-// :1045-1070 at v20.2.4): base64 of HMAC-SHA1 over the string to sign, keyed
-// with the secret's bytes. An empty secret is EINVAL.
+// signatureV2 is get_v2_signature
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1068-L1093 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1045-L1070 at v20.2.4):
+// base64 of HMAC-SHA1 over the string to sign, keyed with the secret's
+// bytes. An empty secret is EINVAL.
 func signatureV2(secret, stringToSign string) (string, error) {
 	if secret == "" {
 		return "", fmt.Errorf("%w: empty secret key", op.ErrInvalidArgument)

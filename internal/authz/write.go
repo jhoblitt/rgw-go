@@ -16,12 +16,13 @@ import (
 
 // UserResolver implements acl.Resolver over the user and account stores, as
 // read_owner_display_name and read_aclowner_by_email look grantees up
-// (rgw_acl_s3.cc:300-337 at v19.2.6 and v20.2.4). Accounts is
-// op.AccountStore in every caller; when nil, an account owner or grantee is
-// a miss, as radosgw reports an unknown id. Only a lookup that finds nothing
-// is a miss. Any other failure, an account lookup the driver does not
-// implement among them, is the S3 error it maps to, carrying neither the
-// store's text nor the grantee, which may be a request header's value.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L300-L337 at v19.2.6
+// and v20.2.4). Accounts is op.AccountStore in every caller; when nil, an
+// account owner or grantee is a miss, as radosgw reports an unknown id. Only
+// a lookup that finds nothing is a miss. Any other failure, an account
+// lookup the driver does not implement among them, is the S3 error it maps
+// to, carrying neither the store's text nor the grantee, which may be a
+// request header's value.
 type UserResolver struct {
 	Users    op.UserStore
 	Accounts AccountLookup
@@ -100,14 +101,16 @@ func lookupFailed(lookup string, err error) error {
 }
 
 // BuildACL is RGWPutACLs::execute's derivation and validation of the new
-// policy for a bucket, object false, or an object (rgw_op.cc:5821-5910 at
-// v19.2.6, :6467-6556 at v20.2.4). A canned ACL with a body is
-// acl.ErrInvalid. A canned ACL or a grant header builds the policy as
-// create_s3_policy does for existing's owner, a bucket's canned ACL ignored
-// when its name holds "bucket" (get_policy_from_state, rgw_rest_s3.cc:3637-3647
-// at v19.2.6, :3920-3930 at v20.2.4); otherwise the body parses through
-// acl.ParseS3XML. A new owner, when existing has one, is
-// acl.ErrOwnerMismatch; more grants than rgw_acl_grants_max_num is
+// policy for a bucket, object false, or an object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5821-L5910 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6467-L6556 at v20.2.4).
+// A canned ACL with a body is acl.ErrInvalid. A canned ACL or a grant header
+// builds the policy as create_s3_policy does for existing's owner, a bucket's
+// canned ACL ignored when its name holds "bucket" (get_policy_from_state,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3637-L3647 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3920-L3930 at v20.2.4);
+// otherwise the body parses through acl.ParseS3XML. A new owner, when existing
+// has one, is acl.ErrOwnerMismatch; more grants than rgw_acl_grants_max_num is
 // acl.ErrTooManyGrants in an *acl.ParseError carrying radosgw's message; a
 // public policy on a bucket whose public-access block sets BlockPublicAcls
 // is op.ErrAccessDenied. A block that does not decode blocks, where radosgw
@@ -162,15 +165,16 @@ func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolve
 	return p, nil
 }
 
-// DefaultACL is create_s3_policy (rgw_rest_s3.cc:2408-2422 at v19.2.6,
-// :2524-2538 at v20.2.4), the new ACL of CreateBucket, PutObject,
-// InitMultipart and CopyObject: a grant header beside a canned ACL is
-// op.ErrInvalidRequest; grant headers alone build through acl.FromHeaders for
-// owner; otherwise acl.Canned with the X-Amz-Acl value, private when it is
-// absent or empty, bucketOwner holding the bucket-owner grants and the
-// policy of an anonymous owner. Its errors are returned as acl makes them,
-// some holding a request header's text, so a caller maps them through
-// ErrorFor before rendering.
+// DefaultACL is create_s3_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2408-L2422 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2524-L2538 at v20.2.4),
+// the new ACL of CreateBucket, PutObject, InitMultipart and CopyObject: a
+// grant header beside a canned ACL is op.ErrInvalidRequest; grant headers
+// alone build through acl.FromHeaders for owner; otherwise acl.Canned with
+// the X-Amz-Acl value, private when it is absent or empty, bucketOwner
+// holding the bucket-owner grants and the policy of an anonymous owner. Its
+// errors are returned as acl makes them, some holding a request header's
+// text, so a caller maps them through ErrorFor before rendering.
 func DefaultACL(ctx context.Context, r *op.Request, res acl.Resolver, owner, bucketOwner acl.Owner) (acl.Policy, error) {
 	canned, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
 	return createS3Policy(ctx, r, res, canned, owner, bucketOwner)
@@ -184,7 +188,9 @@ func (e *Evaluator) BuildDefaultACL(ctx context.Context, r *op.Request, res acl.
 
 // createS3Policy is create_s3_policy for the canned ACL canned. Each header
 // is read by its last value, as RGWEnv::set keeps the last of a repeated
-// header (rgw_env.cc:22-25 at v19.2.6 and v20.2.4).
+// header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
+// and v20.2.4).
 func createS3Policy(ctx context.Context, r *op.Request, res acl.Resolver, canned string, owner, bucketOwner acl.Owner) (acl.Policy, error) {
 	if !hasGrantHeader(r.Header) {
 		return acl.Canned(owner, bucketOwner, canned)
@@ -206,8 +212,9 @@ func createS3Policy(ctx context.Context, r *op.Request, res acl.Resolver, canned
 }
 
 // grantHeaderPrefix is the prefix of s->has_acl_header's headers,
-// exists_prefix("HTTP_X_AMZ_GRANT") (rgw_rest_s3.cc:5024 at v19.2.6, :5584 at
-// v20.2.4).
+// exists_prefix("HTTP_X_AMZ_GRANT")
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5024 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5584 at v20.2.4).
 const grantHeaderPrefix = "X-Amz-Grant"
 
 // hasGrantHeader reports whether h holds a header whose name starts with
@@ -221,8 +228,10 @@ func hasGrantHeader(h http.Header) bool {
 	return false
 }
 
-// ownerEmpty is ACLOwner::empty (rgw_acl.cc:249-255 at v19.2.6 and
-// v20.2.4): a user owner without an id, or an empty account id.
+// ownerEmpty is ACLOwner::empty
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L249-L255 at v19.2.6
+// and v20.2.4): a user owner without an id, or an empty account
+// id.
 func ownerEmpty(id string) bool {
 	o := meta.ParseOwner(id)
 	if o.User != nil {
@@ -247,15 +256,17 @@ func blocks(rec *op.BucketRecord, set func(*acl.PublicAccessBlock) bool) bool {
 	return b != nil && set(b)
 }
 
-// ParseBucketPolicy is RGWPutBucketPolicy::execute's parse (rgw_op.cc:8098-8120
-// at v19.2.6, :9024-9051 at v20.2.4): the body as a policy of the request's
-// bucket's tenant, refusing the principals radosgw does not support when
-// rgw_policy_reject_invalid_principals is set, under the cluster's release.
-// A body that does not parse is the *policy.ParseError; a public policy on a
-// bucket whose public-access block sets BlockPublicPolicy, judged by the
-// release's is_public, is op.ErrAccessDenied, a block that does not decode
-// blocking. The attr to store is the policy's Text. A caller maps its errors
-// through ErrorFor before rendering.
+// ParseBucketPolicy is RGWPutBucketPolicy::execute's parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8098-L8120 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9024-L9051 at v20.2.4):
+// the body as a policy of the request's bucket's tenant, refusing the
+// principals radosgw does not support when rgw_policy_reject_invalid_principals
+// is set, under the cluster's release. A body that does not parse is the
+// *policy.ParseError; a public policy on a bucket whose public-access block
+// sets BlockPublicPolicy, judged by the release's is_public, is
+// op.ErrAccessDenied, a block that does not decode blocking. The attr to store
+// is the policy's Text. A caller maps its errors through ErrorFor before
+// rendering.
 func (e *Evaluator) ParseBucketPolicy(r *op.Request, body []byte) (*policy.Policy, error) {
 	tenant := r.Tenant
 	p, err := policy.Parse(string(body), policy.ParseOptions{

@@ -6,14 +6,20 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
-// AdminOp is the part every admin op shares, RGWRESTOp (rgw_rest.h:522-537
-// at v19.2.6). Its Action is ActionNone and its OpMask 0, RGWOp::op_mask's
-// default; Init does nothing, and neither does Complete: radosgw registers
-// the admin API's managers without set_logging, so process_request never
-// logs an admin request's usage (rgw_appmain.cc:354-361, rgw_process.cc:322
-// and :461-463 at v19.2.6). Each op writes its own VerifyPermission, which
-// is RGWRESTOp::verify_permission (rgw_rest.cc:1687-1690): CheckCaps with
-// the op's check_caps pair, which Run lets an admin identity through.
+// AdminOp is the part every admin op shares, RGWRESTOp
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L522-L537 at v19.2.6).
+// Its Action is ActionNone and its OpMask 0, RGWOp::op_mask's default; Init
+// does nothing, and neither does Complete: radosgw registers the admin
+// API's managers without set_logging, so process_request never logs an
+// admin request's usage
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L354-L361,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L322 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L461-L463 at v19.2.6).
+// Each op writes its own VerifyPermission, which is
+// RGWRESTOp::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1687-L1690):
+// CheckCaps with the op's check_caps pair, which Run lets an admin identity
+// through.
 type AdminOp struct{}
 
 // Action is ActionNone: radosgw's IAM never evaluates an admin op.

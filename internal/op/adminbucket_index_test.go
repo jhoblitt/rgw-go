@@ -219,7 +219,7 @@ var _ = Describe("admin bucket index check", func() {
 	Describe("a live upload", func() {
 		// reupload is the head of a part sent twice: the second upload of
 		// the part takes "<key>.<32 random characters>" for its prefix
-		// (rgw_putobj_processor.cc:414-439 at v19.2.6).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439 at v19.2.6).
 		const reupload = "obj.0123456789abcdefghijABCDEFGHIJ.1"
 
 		It("has a re-uploaded part reported as radosgw reports it, and kept by fix", func(ctx SpecContext) {

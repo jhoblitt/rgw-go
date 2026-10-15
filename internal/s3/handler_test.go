@@ -263,8 +263,9 @@ var _ = Describe("Handler", func() {
 	)
 	// RGWHandler_REST_S3::init parses x-amz-copy-source inside get_handler,
 	// after get_handler's own refusal of an object subresource on a bucket and
-	// before get_op's refusals and authentication (rgw_process.cc:310-327 at
-	// v19.2.6, rgw_rest_s3.cc:5026-5041).
+	// before get_op's refusals and authentication
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L310-L327 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5041).
 	DescribeTable("refuses a copy source radosgw cannot parse where RGWHandler_REST_S3::init does",
 		func(method, target string, code int, errCode string, hdr ...string) {
 			rec := serveReq(h, method, target, nil, hdr...)
@@ -308,8 +309,9 @@ var _ = Describe("Handler", func() {
 		Expect(status).To(Equal(405))
 	})
 	// process_request dispatches, sets s->op_type and only then authenticates
-	// (rgw_process.cc:325-345 at v19.2.6), so the authenticator sees the
-	// dispatched op's payload forms at the cluster's release.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L325-L345 at v19.2.6),
+	// so the authenticator sees the dispatched op's payload forms at the
+	// cluster's release.
 	DescribeTable("hands the authenticator the dispatched route's payload forms",
 		func(rel denc.Release, method, target string, want op.PayloadForms) {
 			var got op.PayloadForms
@@ -346,8 +348,9 @@ var _ = Describe("Handler", func() {
 			Expect(seen.BytesIn).To(BeEquivalentTo(len("decoded")), "radosgw's accounting sits above the chunk decoder")
 		})
 		// AWSv4ComplMulti::modify_request_state sets content_length to
-		// x-amz-decoded-content-length (rgw_auth_s3.cc:1532-1542 at v19.2.6,
-		// :1509-1519 at v20.2.4).
+		// x-amz-decoded-content-length
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1532-L1542 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1509-L1519 at v20.2.4).
 		DescribeTable("comes with the authenticator's content length, not the wire's",
 			func(length int64) {
 				alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})

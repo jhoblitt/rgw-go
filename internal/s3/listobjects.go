@@ -17,11 +17,11 @@ import (
 )
 
 // The bucket listings are RGWListBucket_ObjStore_S3 and _S3v2
-// (rgw_rest_s3.cc:1710-2116 at v19.2.6, :1821-2227 at v20.2.4). Their
-// send_response sends the headers with end_header(...,
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1710-L2116 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1821-L2227 at v20.2.4).
+// Their send_response sends the headers with end_header(...,
 // CHUNKED_TRANSFER_ENCODING) once the op has run, then the whole document
 // in the one flush it ends with; a failed op is an ordinary error document.
-// A bare line number below is v19.2.6's rgw_rest_s3.cc.
 
 // xmlnsS3 is XMLNS_AWS_S3, the namespace every listing's root carries.
 const xmlnsS3 = "http://s3.amazonaws.com/doc/2006-03-01/"
@@ -31,8 +31,10 @@ type listPrefix struct {
 	Prefix xmltext.Text `xml:"Prefix"`
 }
 
-// listContents is one Contents section of a v1 or v2 listing (:1931-1956,
-// :2082-2101). Owner is nil where v2 leaves it out.
+// listContents is one Contents section of a v1 or v2 listing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1931-L1956,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2082-L2101).
+// Owner is nil where v2 leaves it out.
 type listContents struct {
 	Key          xmltext.Text `xml:"Key"`
 	LastModified xmltext.Text `xml:"LastModified"`
@@ -43,8 +45,10 @@ type listContents struct {
 	Type         xmltext.Text `xml:"Type"`
 }
 
-// listBucketResult is the v1 document (:1916-1966): send_common_response's
-// elements, the Contents, then Marker and NextMarker.
+// listBucketResult is the v1 document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1916-L1966):
+// send_common_response's elements, the Contents, then Marker and
+// NextMarker.
 type listBucketResult struct {
 	XMLName        xml.Name       `xml:"ListBucketResult"`
 	Xmlns          string         `xml:"xmlns,attr"`
@@ -61,7 +65,8 @@ type listBucketResult struct {
 	NextMarker     xmltext.Text   `xml:"NextMarker,omitempty"`
 }
 
-// listBucketV2Result is the v2 document (:2072-2114).
+// listBucketV2Result is the v2 document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2072-L2114).
 type listBucketV2Result struct {
 	XMLName               xml.Name       `xml:"ListBucketResult"`
 	Xmlns                 string         `xml:"xmlns,attr"`
@@ -81,8 +86,10 @@ type listBucketV2Result struct {
 }
 
 // listVersion is one Version or DeleteMarker section of a versions listing
-// (:1826-1861, :1993-2025), its name in XMLName. A delete marker has no
-// ETag, Size or StorageClass, and v2 writes no Type.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1826-L1861,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1993-L2025),
+// its name in XMLName. A delete marker has no ETag, Size or StorageClass,
+// and v2 writes no Type.
 type listVersion struct {
 	XMLName      xml.Name
 	Key          xmltext.Text `xml:"Key"`
@@ -96,7 +103,8 @@ type listVersion struct {
 	Type         xmltext.Text `xml:"Type,omitempty"`
 }
 
-// listVersionsResult is the v1 versions document (:1799-1869).
+// listVersionsResult is the v1 versions document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1799-L1869).
 type listVersionsResult struct {
 	XMLName             xml.Name      `xml:"ListVersionsResult"`
 	Xmlns               string        `xml:"xmlns,attr"`
@@ -117,7 +125,8 @@ type listVersionsResult struct {
 
 // listV2TrailingPrefix is a CommonPrefixes section the v2 versions document
 // repeats after its versions, each carrying KeyCount and, when sent,
-// StartAfter (:2033-2046).
+// StartAfter
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2033-L2046).
 type listV2TrailingPrefix struct {
 	XMLName    xml.Name      `xml:"CommonPrefixes"`
 	Prefix     xmltext.Text  `xml:"Prefix"`
@@ -125,12 +134,13 @@ type listV2TrailingPrefix struct {
 	StartAfter *xmltext.Text `xml:"StartAfter"`
 }
 
-// listVersionsV2Result is the v2 versions document (:1970-2051), as
-// radosgw writes it: the continuation tokens before EncodingType, versions
-// without Type, delete markers named DeleteContinuationToken, and the
-// common prefixes twice, the second time each with KeyCount and StartAfter
-// (docs/ceph-upstream-bugs.md, "radosgw's ListObjectsV2 with versions
-// renders a malformed ListVersionsResult").
+// listVersionsV2Result is the v2 versions document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1970-L2051),
+// as radosgw writes it: the continuation tokens before EncodingType,
+// versions without Type, delete markers named DeleteContinuationToken, and
+// the common prefixes twice, the second time each with KeyCount and
+// StartAfter (docs/ceph-upstream-bugs.md, "radosgw's ListObjectsV2 with
+// versions renders a malformed ListVersionsResult").
 type listVersionsV2Result struct {
 	XMLName                        xml.Name      `xml:"ListVersionsResult"`
 	Xmlns                          string        `xml:"xmlns,attr"`
@@ -163,7 +173,8 @@ func listObjectsV2(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // serveListBucket reads the query as get_common_params and get_params do
-// (:1710-1771), runs the op and renders its document.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1710-L1771),
+// runs the op and renders its document.
 func serveListBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, v2 bool) error {
 	q := r.Query
 	o := &op.ListObjects{
@@ -223,7 +234,9 @@ type listing struct {
 	tentacle bool
 }
 
-// urlsafe is dump_urlsafe (rgw_rest.h:712-721 at v19.2.6 and v20.2.4).
+// urlsafe is dump_urlsafe
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L712-L721 at v19.2.6
+// and v20.2.4).
 func (l listing) urlsafe(encode bool, s string, encodeSlash bool) xmltext.Text {
 	if encode {
 		return xmltext.Text(op.URLEncode(s, encodeSlash))
@@ -252,7 +265,7 @@ func (l listing) prefixes(encode bool) []listPrefix {
 
 // lastModified is dump_time, rgw_to_iso8601 with milliseconds, which
 // Tentacle's listings first cut to whole seconds (dump_time_exact_seconds,
-// rgw_rest.cc:506-509 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L506-L509 at v20.2.4).
 func (l listing) lastModified(t time.Time) xmltext.Text {
 	if l.tentacle {
 		t = t.Truncate(time.Second)
@@ -299,7 +312,8 @@ func quotedETag(etag string) xmltext.Text {
 	return xmltext.Text(`"` + rgwtext.CString(etag) + `"`)
 }
 
-// v1 is RGWListBucket_ObjStore_S3::send_response's document (:1916-1966).
+// v1 is RGWListBucket_ObjStore_S3::send_response's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1916-L1966).
 func (l listing) v1() listBucketResult {
 	o, r := l.o, l.r
 	doc := listBucketResult{
@@ -320,8 +334,8 @@ func (l listing) v1() listBucketResult {
 }
 
 // v2 is RGWListBucket_ObjStore_S3v2::send_response's document
-// (:2072-2114). The tokens and StartAfter are written as sent, never
-// URL-encoded.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2072-L2114).
+// The tokens and StartAfter are written as sent, never URL-encoded.
 func (l listing) v2() listBucketV2Result {
 	o, r := l.o, l.r
 	doc := listBucketV2Result{
@@ -383,8 +397,9 @@ func (l listing) versionEntries(v2 bool) []listVersion {
 }
 
 // versions is RGWListBucket_ObjStore_S3::send_versioned_response's document
-// (:1799-1869). Its Delimiter, KeyMarker and VersionIdMarker are written as
-// sent; the next version marker of a key without an instance is "null".
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1799-L1869).
+// Its Delimiter, KeyMarker and VersionIdMarker are written as sent; the
+// next version marker of a key without an instance is "null".
 func (l listing) versions(versionIDMarker string) listVersionsResult {
 	o, r := l.o, l.r
 	doc := listVersionsResult{
@@ -403,8 +418,10 @@ func (l listing) versions(versionIDMarker string) listVersionsResult {
 }
 
 // versionsV2 is RGWListBucket_ObjStore_S3v2::send_versioned_response's
-// document (:1970-2051). encode_key is set only after the first common
-// prefixes are written, so those are never URL-encoded.
+// document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1970-L2051).
+// encode_key is set only after the first common prefixes are written,
+// so those are never URL-encoded.
 func (l listing) versionsV2() listVersionsV2Result {
 	o, r := l.o, l.r
 	doc := listVersionsV2Result{
@@ -439,8 +456,9 @@ func arg(q url.Values, name string) (string, bool) {
 }
 
 // argBool is RGWHTTPArgs::get_bool with a default of false
-// (rgw_common.cc:1001-1037 at v19.2.6): true only for "true", in any case;
-// "false" and any other value are false.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1001-L1037 at v19.2.6):
+// true only for "true", in any case; "false" and any other value are
+// false.
 func argBool(q url.Values, name string) bool {
 	return strings.EqualFold(rgwtext.CString(q.Get(name)), "true")
 }

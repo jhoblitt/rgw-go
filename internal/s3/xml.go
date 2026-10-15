@@ -20,16 +20,22 @@ const xmlHeader = `<?xml version="1.0" encoding="UTF-8"?>`
 // common headers, at status. Every string v carries is an xmltext.Text, so
 // its text is escaped as radosgw's formatter escapes it. Its Content-Length
 // is the one radosgw's frontend adds when a response whose end_header named
-// no length completes (rgw_client_io_filters.h:221-253 at v19.2.6 and
-// v20.2.4), so it carries no Accept-Ranges.
+// no length completes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
+// and v20.2.4), so it carries no Accept-Ranges.
 func WriteXML(w http.ResponseWriter, r *op.Request, status int, v any) {
 	writeXML(w, r, status, v, false)
 }
 
 // writeXML sends xmlHeader and v at status. errDoc is end_header's error
-// branch (rgw_rest.cc:620-624 at v19.2.6, :625-629 at v20.2.4): the length
-// goes out through dump_content_length, and x-amz-request-charged, which
-// end_header adds only when !is_err() (:597-601, :602-606), is withheld.
+// branch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L620-L624 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629 at v20.2.4):
+// the length goes out through dump_content_length, and
+// x-amz-request-charged, which end_header adds only when !is_err()
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L597-L601,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606),
+// is withheld.
 func writeXML(w http.ResponseWriter, r *op.Request, status int, v any, errDoc bool) {
 	body, err := xml.Marshal(v)
 	if err != nil {
@@ -59,8 +65,10 @@ func writeXML(w http.ResponseWriter, r *op.Request, status int, v any, errDoc bo
 func ISO8601(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
 // chunkedXML is the body of a response radosgw sends with end_header(...,
-// CHUNKED_TRANSFER_ENCODING) (rgw_rest.cc:626-627 at v19.2.6, :631-632 at
-// v20.2.4): add and encode collect the next chunk and flush sends it, where
+// CHUNKED_TRANSFER_ENCODING)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L626-L627 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L631-L632 at v20.2.4):
+// add and encode collect the next chunk and flush sends it, where
 // rgw_flush_formatter hands the formatter's output to the chunking filter.
 // add writes its argument as is, so it takes markup and text already escaped
 // with xmltext.Escape; encode takes a value whose strings are xmltext.Text.
@@ -78,9 +86,12 @@ type chunkedXML struct {
 // calls it where radosgw's end_header runs, once the op has succeeded; from
 // then on a failure can only end the response short, and the returned writer
 // is never nil. A HEAD gets no Transfer-Encoding (dump_chunked_encoding skips
-// it, rgw_rest.cc:399-411) and the Content-Length: 0 that radosgw's
-// BufferingFilter completes it with, which carries no Accept-Ranges
-// (rgw_client_io_filters.h:207-253 at v19.2.6 and v20.2.4).
+// it,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L399-L411)
+// and the Content-Length: 0 that radosgw's BufferingFilter completes it with,
+// which carries no Accept-Ranges
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L207-L253 at v19.2.6
+// and v20.2.4).
 func startChunkedXML(w http.ResponseWriter, r *op.Request) (*chunkedXML, error) {
 	c := &chunkedXML{w: w, rc: http.NewResponseController(w), head: r.Method == http.MethodHead}
 	SetCommonHeaders(w, r)
@@ -110,11 +121,11 @@ func (c *chunkedXML) encode(v any) error {
 }
 
 // flush sends what was collected as one chunk, and nothing when nothing was:
-// rgw_flush_formatter skips empty output and every HEAD (rgw_rest.cc:316-324
-// at v19.2.6 and v20.2.4). One write per flush keeps a flush one chunk:
-// net/http's response buffer, empty after every flush, hands a write larger
-// than itself straight to the chunk writer, and Flush sends a smaller one
-// whole.
+// rgw_flush_formatter skips empty output and every HEAD
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L316-L324 at v19.2.6
+// and v20.2.4). One write per flush keeps a flush one chunk: net/http's
+// response buffer, empty after every flush, hands a write larger than itself
+// straight to the chunk writer, and Flush sends a smaller one whole.
 func (c *chunkedXML) flush() error {
 	if c.head || c.buf.Len() == 0 {
 		return nil

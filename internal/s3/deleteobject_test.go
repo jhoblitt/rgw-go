@@ -13,7 +13,8 @@ import (
 )
 
 // expectNoContent checks rec is a 204 with no body and no type, as
-// end_header sends a DeleteObject's (rgw_rest_s3.cc:3455-3470).
+// end_header sends a DeleteObject's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3455-L3470).
 func expectNoContent(rec *httptest.ResponseRecorder) {
 	GinkgoHelper()
 	Expect(rec.Code).To(Equal(204), rec.Body.String())

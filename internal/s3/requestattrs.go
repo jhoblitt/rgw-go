@@ -14,20 +14,24 @@ import (
 )
 
 // amzEnvPrefix is the first of req_info::init_meta_info's meta_prefixes
-// (rgw_common.cc:413-420 at v19.2.7, :426-433 at v20.2.4), the environment
-// name prefix of the headers that become x_meta_map entries. rgw-go's S3 API
-// reads no header under the other six, so none is stored
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L420 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L433 at v20.2.4),
+// the environment name prefix of the headers that become x_meta_map entries.
+// rgw-go's S3 API reads no header under the other six, so none is stored
 // (docs/exclusions.md).
 const amzEnvPrefix = "HTTP_X_AMZ_"
 
 // metaBlocklist is the x_meta_map entries rgw_get_request_metadata does not
-// store: v20.2.4's list (rgw_op.h:2344-2357), which adds the copy-source
-// SSE-C headers, x-amz-content-sha256, x-amz-checksum-algorithm and
-// x-amz-date to v19.2.6's four (:2177-2182), applied on both releases, and
-// x-amz-security-token, which both releases store. v19.2.6 stores a
-// CopyObject's copy-source SSE-C key in the clear, and both store a
-// request's session token (docs/ceph-upstream-bugs.md, "radosgw stores
-// request credentials as object attrs"; docs/exclusions.md).
+// store: v20.2.4's list
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2344-L2357),
+// which adds the copy-source SSE-C headers, x-amz-content-sha256,
+// x-amz-checksum-algorithm and x-amz-date to v19.2.6's four
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2177-L2182),
+// applied on both releases, and x-amz-security-token, which both releases
+// store. v19.2.6 stores a CopyObject's copy-source SSE-C key in the clear,
+// and both store a request's session token (docs/ceph-upstream-bugs.md,
+// "radosgw stores request credentials as object attrs";
+// docs/exclusions.md).
 var metaBlocklist = map[string]bool{
 	"x-amz-server-side-encryption-customer-algorithm":             true,
 	"x-amz-server-side-encryption-customer-key":                   true,
@@ -46,8 +50,9 @@ var metaBlocklist = map[string]bool{
 // header and the attr populate_with_generic_attrs stores its value under.
 type genericAttr struct{ env, attr string }
 
-// baseGenericAttrs is rgw_rest.cc's generic_attrs (:123-131 at v19.2.6 and
-// v20.2.4).
+// baseGenericAttrs is rgw_rest.cc's generic_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L123-L131 at v19.2.6
+// and v20.2.4).
 var baseGenericAttrs = []genericAttr{
 	{"CONTENT_TYPE", meta.AttrContentType},
 	{"HTTP_CONTENT_LANGUAGE", meta.AttrContentLang},
@@ -59,10 +64,11 @@ var baseGenericAttrs = []genericAttr{
 }
 
 // genericAttrsFor is generic_attrs_map as rgw_rest_init builds it
-// (rgw_rest.cc:185-209 at v19.2.6 and v20.2.4): baseGenericAttrs, plus each
-// name rgw_extended_http_attrs lists, its header's environment name upper
-// cased with dashes as underscores and its attr lowercased with dashes as
-// underscores, in the map's order of environment names.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L185-L209 at v19.2.6
+// and v20.2.4): baseGenericAttrs, plus each name rgw_extended_http_attrs
+// lists, its header's environment name upper cased with dashes as
+// underscores and its attr lowercased with dashes as underscores, in the
+// map's order of environment names.
 func genericAttrsFor(conf *cephconf.Options) []genericAttr {
 	byEnv := map[string]string{}
 	for _, g := range baseGenericAttrs {
@@ -82,8 +88,8 @@ func genericAttrsFor(conf *cephconf.Options) []genericAttr {
 	return attrs
 }
 
-// uppercaseUnderscore is uppercase_underscore_http_attr (rgw_rest.cc
-// :163-179 at v19.2.6).
+// uppercaseUnderscore is uppercase_underscore_http_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L163-L179 at v19.2.6).
 func uppercaseUnderscore(s string) string {
 	b := []byte(s)
 	for i, c := range b {
@@ -97,9 +103,10 @@ func uppercaseUnderscore(s string) string {
 }
 
 // envName is the name beast files a header under in RGWEnv
-// (rgw_asio_client.cc:36-66 at v19.2.6 and v20.2.4): Content-Length and
-// Content-Type under their CGI names, every other header under HTTP_ and its
-// name upper cased with each dash an underscore and each underscore a dash.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L66 at v19.2.6
+// and v20.2.4): Content-Length and Content-Type under their CGI names, every
+// other header under HTTP_ and its name upper cased with each dash an
+// underscore and each underscore a dash.
 func envName(header string) string {
 	switch {
 	case strings.EqualFold(header, "Content-Length"):
@@ -122,8 +129,9 @@ func envName(header string) string {
 }
 
 // requestEnv is the headers as RGWEnv holds them: each environment name with
-// the last value of its header, as RGWEnv::set keeps the last (rgw_env.cc
-// :22-25 at v19.2.6 and v20.2.4), and the names in its map's order.
+// the last value of its header, as RGWEnv::set keeps the last
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
+// and v20.2.4), and the names in its map's order.
 func requestEnv(h http.Header) (names []string, vals map[string]string) {
 	vals = map[string]string{}
 	for _, k := range slices.Sorted(maps.Keys(h)) {
@@ -135,8 +143,9 @@ func requestEnv(h http.Header) (names []string, vals map[string]string) {
 }
 
 // lowercaseDash is lowercase_dash_http_attr with bidirection, as S3 calls it
-// (rgw_common.cc:2198-2220 at v19.2.6, :2261-2283 at v20.2.4): each
-// underscore a dash, each dash an underscore, and letters lowercased.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2198-L2220 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2261-L2283 at v20.2.4):
+// each underscore a dash, each dash an underscore, and letters lowercased.
 func lowercaseDash(s string) string {
 	b := []byte(s)
 	for i, c := range b {
@@ -152,10 +161,11 @@ func lowercaseDash(s string) string {
 	return string(b)
 }
 
-// addMeta is rgw_add_amz_meta_header (rgw_common.cc:472-487 at v19.2.6,
-// :485-500 at v20.2.4), the join init_meta_info also makes: a name already
-// present keeps its value, trailing white space trimmed, then a comma and
-// v.
+// addMeta is rgw_add_amz_meta_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L472-L487 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L485-L500 at v20.2.4),
+// the join init_meta_info also makes: a name already present keeps its
+// value, trailing white space trimmed, then a comma and v.
 func addMeta(xmeta map[string]string, name, v string) {
 	if old, ok := xmeta[name]; ok {
 		xmeta[name] = strings.TrimRight(old, " \t\n\v\f\r") + "," + v
@@ -165,10 +175,13 @@ func addMeta(xmeta map[string]string, name, v string) {
 }
 
 // headerMeta is the x_meta_map req_info::init_meta_info builds from the
-// headers (rgw_common.cc:413-464 at v19.2.7, :426-477 at v20.2.4) under
-// amzEnvPrefix: each header whose environment name starts with it, under
-// that name after HTTP_, lowercased with each underscore a dash and each dash
-// an underscore (lowercaseDash), which gives back the header's own name.
+// headers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4)
+// under amzEnvPrefix: each header whose environment name starts with it,
+// under that name after HTTP_, lowercased with each underscore a dash and
+// each dash an underscore (lowercaseDash), which gives back the header's own
+// name.
 func headerMeta(h http.Header) map[string]string {
 	names, vals := requestEnv(h)
 	xmeta := map[string]string{}
@@ -182,7 +195,8 @@ func headerMeta(h http.Header) map[string]string {
 
 // cryptPrefix is the prefix init_meta_info files an x_meta_map name into
 // crypt_attribute_map under: its first 20 bytes, as strncmp compares them
-// (rgw_common.cc:455-457 at v19.2.6, :468-470 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L455-L457 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L468-L470 at v20.2.4).
 const cryptPrefix = "x-amz-server-side-en"
 
 // copySourceCryptPrefix is the prefix of the copy source's SSE-C headers,
@@ -195,15 +209,20 @@ func isCryptName(name string) bool {
 	return strings.HasPrefix(name, cryptPrefix) || strings.HasPrefix(name, copySourceCryptPrefix)
 }
 
-// requestAttrs is populate_with_generic_attrs (rgw_op.cc:3307-3316 at
-// v19.2.6, :3535-3544 at v20.2.4) and rgw_get_request_metadata (rgw_op.h
-// :2171-2233 at v19.2.6, :2338-2408 at v20.2.4) over the x_meta_map that
-// headerMeta builds from the headers and, when query is set, map_qs_metadata
-// adds from the query string (rgw_rest_s3.cc:2589-2603 at v19.2.7, :2742-2756
-// at v20.2.4), which PutObject calls and CopyObject does not. radosgw adds
-// the query's on every route; rgw-go adds them only where the route reads
-// them (op.AuthRoute.ReadsQueryMeta): an anonymous request's, and a signed
-// one's whose signature covers them (docs/exclusions.md):
+// requestAttrs is populate_with_generic_attrs
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3307-L3316 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3535-L3544 at v20.2.4)
+// and rgw_get_request_metadata
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2171-L2233 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408 at v20.2.4)
+// over the x_meta_map that headerMeta builds from the headers and, when query
+// is set, map_qs_metadata adds from the query string
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756 at v20.2.4),
+// which PutObject calls and CopyObject does not. radosgw adds the query's on
+// every route; rgw-go adds them only where the route reads them
+// (op.AuthRoute.ReadsQueryMeta): an anonymous request's, and a signed one's
+// whose signature covers them (docs/exclusions.md):
 //   - each generic header present, an empty one included, is its attr;
 //   - each X-Amz- header is its name, lowercased, and so is each
 //     x-amz-meta-* query parameter; a name reached twice joins its values
@@ -272,12 +291,16 @@ func confUint(r *op.Request, name string, get func(*cephconf.Options, string) (u
 	return v
 }
 
-// formatXattr is format_xattr (rgw_op.h:2141-2160 at v19.2.6, :2308-2327 at
-// v20.2.4): a value that is not UTF-8 as check_utf8 reads it, or holds a
-// control character, is mime_encode_as_qp's quoted-printable text inside
-// "=?UTF-8?Q?" and "?=" (src/common/mime.c:19-50): up to its first NUL, each
-// byte with the high bit set, each "=" and each control character as "=XX",
-// the rest as it is. Any other value is unchanged.
+// formatXattr is format_xattr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2141-L2160 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327 at v20.2.4):
+// a value that is not UTF-8 as check_utf8 reads it, or holds a control
+// character, is mime_encode_as_qp's quoted-printable text inside
+// "=?UTF-8?Q?" and "?="
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/mime.c#L19-L50): up
+// to its first NUL, each byte with the high bit set, each "=" and each
+// control character as "=XX", the rest as it is. Any other value is
+// unchanged.
 func formatXattr(v string) string {
 	if utf8.ValidString(v) && !hasControlChar(v) {
 		return v
@@ -295,8 +318,9 @@ func formatXattr(v string) string {
 	return b.String()
 }
 
-// hasControlChar is check_for_control_characters (src/common/utf8.c:221-230
-// at v19.2.6 and v20.2.4) over the whole value.
+// hasControlChar is check_for_control_characters
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/utf8.c#L221-L230 at v19.2.6
+// and v20.2.4) over the whole value.
 func hasControlChar(v string) bool {
 	for i := range len(v) {
 		if isControlChar(v[i]) {
@@ -306,6 +330,7 @@ func hasControlChar(v string) bool {
 	return false
 }
 
-// isControlChar is is_control_character (src/common/utf8.c:216-219 at
-// v19.2.6 and v20.2.4): a byte below 0x20 other than NUL, or DEL.
+// isControlChar is is_control_character
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/utf8.c#L216-L219 at v19.2.6
+// and v20.2.4): a byte below 0x20 other than NUL, or DEL.
 func isControlChar(c byte) bool { return c != 0 && c < 0x20 || c == 0x7f }

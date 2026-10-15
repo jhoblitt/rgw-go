@@ -428,8 +428,13 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 		})
 
 		// set_attrs names the index entry's owner through decode_policy,
-		// which decodes the ACL's owner alone (rgw_rados.cc:6694-6700 and
-		// :1754-1768 at v19.2.6, :7494-7500 and :1857-1871 at v20.2.4).
+		// which decodes the ACL's owner alone
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6694-L6700
+		// and
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1754-L1768 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7494-L7500
+		// and
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1857-L1871 at v20.2.4).
 		DescribeTable("names the owner of an object ACL that set_attrs wrote as decode_policy reads it",
 			func(ctx SpecContext, policy func(u *op.UserRecord) []byte, owned bool) {
 				u := newUser(ctx, "owner")

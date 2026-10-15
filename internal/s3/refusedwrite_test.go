@@ -300,10 +300,13 @@ var _ = Describe("what a copy onto itself reveals to a requester the destination
 	// The residual of the order the specs above pin: bob may write plain but
 	// cannot read src. radosgw answers the same way. RGWCopyObj::verify_permission
 	// reads the source's head and calls check_storage_class before the source's
-	// own permission check (rgw_op.cc:5420-5435 at v19.2.6, :5986-5997 at
-	// v20.2.4), and RGWCopyObj_ObjStore_S3::check_storage_class refuses a copy
-	// that changes nothing with InvalidRequest (rgw_rest_s3.cc:3553-3564 at
-	// v19.2.6, :3833-3844 at v20.2.4).
+	// own permission check
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5420-L5435 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5986-L5997 at v20.2.4),
+	// and RGWCopyObj_ObjStore_S3::check_storage_class refuses a copy that changes
+	// nothing with InvalidRequest
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3553-L3564 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3833-L3844 at v20.2.4).
 	It("answers 400 for an object that exists in the class asked for and 403 for one that does not exist, ahead of the source's own check", func(ctx SpecContext) {
 		w := newWriteWorld(ctx, denc.Squid)
 		w.grantBob(ctx, acl.PermWrite)

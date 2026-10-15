@@ -17,15 +17,17 @@ import (
 
 // The defaults RGWDeleteMultiObj uses: rgw_max_put_param_size's, for a
 // configuration that cannot be read, and DELETE_MULTI_OBJ_MAX_NUM, for a
-// negative rgw_delete_multi_obj_max_num (rgw_op.cc:7040-7044 at v19.2.6,
-// :7954-7958 at v20.2.4).
+// negative rgw_delete_multi_obj_max_num
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7040-L7044 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7954-L7958 at v20.2.4).
 const (
 	defaultMaxPutParamSize = 1 << 20
 	deleteMultiObjMaxNum   = 1000
 )
 
 // DeleteResult is one key's outcome of a DeleteObjects: what
-// send_partial_response renders (rgw_rest_s3.cc:4273-4329 at v19.2.6).
+// send_partial_response renders
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4273-L4329 at v19.2.6).
 type DeleteResult struct {
 	// Key is the requested key; its Instance renders as VersionId.
 	Key meta.ObjKey
@@ -46,18 +48,20 @@ type DeleteObjectsEntry struct {
 	// IfMatch, IfMatchSize and IfMatchLastModified are the entry's ETag,
 	// Size and LastModifiedTime, which v20.2.4 reads and rgw-go applies on
 	// both releases; nil, nil and zero when absent. An ETag element present
-	// and empty is a condition, which fails (rgw_multi_del.cc:38-40 at
-	// v20.2.4).
+	// and empty is a condition, which fails
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi_del.cc#L38-L40 at v20.2.4).
 	IfMatch             *string
 	IfMatchSize         *uint64
 	IfMatchLastModified time.Time
 }
 
-// DeleteObjects is RGWDeleteMultiObj (rgw_op.cc:6758-7106 at v19.2.6,
-// :7697-8020 at v20.2.4). Init reads the body; Execute parses it through
-// Parse and makes the whole-request checks, then calls Begin once and hands
-// each key's outcome to Result as the key completes, as radosgw streams its
-// response. A check that fails before the first key goes to Status instead.
+// DeleteObjects is RGWDeleteMultiObj
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6758-L7106 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7697-L8020 at v20.2.4).
+// Init reads the body; Execute parses it through Parse and makes the
+// whole-request checks, then calls Begin once and hands each key's outcome
+// to Result as the key completes, as radosgw streams its response. A check
+// that fails before the first key goes to Status instead.
 type DeleteObjects struct {
 	// Parse is the protocol's parser for the body (RGWMultiDelXMLParser,
 	// rgw_multi_del.cc), called where execute parses; its error is sent
@@ -91,11 +95,13 @@ func (o *DeleteObjects) Action() policy.Action { return policy.S3DeleteObject }
 func (o *DeleteObjects) OpMask() uint32 { return OpTypeDelete }
 
 // Init is init_permissions, then get_params during init_processing
-// (rgw_op.cc:6758-6766 at v19.2.6, :7697-7705 at v20.2.4; rgw_rest.cc
-// :1660-1674 at v19.2.6): the bucket, NoSuchBucket before the body is
-// touched, then the whole body as ReadParamBody reads it under
-// rgw_max_put_param_size. get_params asks read_all_input for no chunked
-// input, which it ignores, so a chunked body is read too.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6758-L6766 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7697-L7705 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1660-L1674 at v19.2.6):
+// the bucket, NoSuchBucket before the body is touched, then the whole
+// body as ReadParamBody reads it under rgw_max_put_param_size.
+// get_params asks read_all_input for no chunked input, which it
+// ignores, so a chunked body is read too.
 func (o *DeleteObjects) Init(ctx context.Context, r *Request) error {
 	err := loadBucket(ctx, r)
 	if err != nil {
@@ -110,8 +116,10 @@ func (o *DeleteObjects) Init(ctx context.Context, r *Request) error {
 // policy that does not parse, an ACL that does not decode. Those come marked
 // from the authorizer's bucket check, which this one call makes. Any other
 // refusal is none here: RGWDeleteMultiObj::verify_permission authorizes
-// nothing (rgw_op.cc:6768-6780 at v19.2.6, :7707-7719 at v20.2.4), and each
-// key is authorized as it is deleted.
+// nothing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6768-L6780 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719 at v20.2.4),
+// and each key is authorized as it is deleted.
 func (o *DeleteObjects) VerifyPermission(ctx context.Context, r *Request) error {
 	if err := VerifyBucketPermission(ctx, r, policy.S3DeleteObject, acl.PermFor(policy.S3DeleteObject)); IsBeforeVerify(err) {
 		return err
@@ -119,11 +127,15 @@ func (o *DeleteObjects) VerifyPermission(ctx context.Context, r *Request) error 
 	return nil
 }
 
-// Execute is RGWDeleteMultiObj::execute (rgw_op.cc:7007-7106 at v19.2.6,
-// :7921-8014 at v20.2.4): the whole-request checks, each answered with
-// send_status alone (goto error at v19.2.6; v20.2.4 returns and its
-// send_response calls send_status, :8016-8020), then begin_response and the
-// keys, at most max(1, rgw_multi_obj_del_max_aio) of them in flight.
+// Execute is RGWDeleteMultiObj::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7007-L7106 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7921-L8014 at v20.2.4):
+// the whole-request checks, each answered with send_status alone (goto
+// error at v19.2.6; v20.2.4 returns and its send_response calls
+// send_status,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8016-L8020),
+// then begin_response and the keys, at most max(1,
+// rgw_multi_obj_del_max_aio) of them in flight.
 func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	objects, err := o.checkRequest(r)
 	if err != nil {
@@ -152,10 +164,11 @@ func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 func (o *DeleteObjects) Complete(context.Context, *Request) {}
 
 // checkRequest is execute's work before begin_response, in its order
-// (rgw_op.cc:7019-7068 at v19.2.6, :7923-7983 at v20.2.4): the body, its
-// parse, Tentacle's refusal of an empty list, the key count, and MFA. A
-// bucket whose versioning or object lock rgw-go does not serve is refused
-// first, and a request naming a version last.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7019-L7068 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7923-L7983 at v20.2.4):
+// the body, its parse, Tentacle's refusal of an empty list, the key
+// count, and MFA. A bucket whose versioning or object lock rgw-go does
+// not serve is refused first, and a request naming a version last.
 func (o *DeleteObjects) checkRequest(r *Request) ([]DeleteObjectsEntry, error) {
 	if err := versioningUnserved(r.BucketRec); err != nil {
 		return nil, err
@@ -221,11 +234,16 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 	return int(max(uint32(v), 1)) //nolint:gosec // std::max<uint32_t> narrows the option
 }
 
-// deleteOne is handle_individual_object (rgw_op.cc:6818-6910 at v19.2.6,
-// :7743-7855 at v20.2.4): the key, its permission, s3:DeleteObjectVersion for
-// a key naming any version, the null one included (:6829-6831, :7766-7768),
-// checked in the request's bucket with the request's public-access block, and
-// the delete with the entry's conditions, where a missing key is success.
+// deleteOne is handle_individual_object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6818-L6910 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743-L7855 at v20.2.4):
+// the key, its permission, s3:DeleteObjectVersion for a key naming any
+// version, the null one included
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6829-L6831,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7766-L7768),
+// checked in the request's bucket with the request's public-access block,
+// and the delete with the entry's conditions, where a missing key is
+// success.
 func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry) DeleteResult {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {

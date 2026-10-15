@@ -17,13 +17,16 @@ import (
 
 // The admin bucket ops are driver/rados/rgw_rest_bucket.cc's RGWOp_* bodies
 // over driver/rados/rgw_bucket.cc's RGWBucketAdminOp. rgw_rest_bucket.cc's
-// line numbers are the same at v19.2.6 and v20.2.4; a bare rgw_bucket.cc
-// line is v19.2.6's. radosgw's REST ops pass no error-message sink to
-// RGWBucketAdminOp, so its refusals reach the client without the text
-// radosgw-admin prints, and these carry none either.
+// line numbers are the same at v19.2.6 and v20.2.4. radosgw's REST ops pass
+// no error-message sink to RGWBucketAdminOp, so its refusals reach the
+// client without the text radosgw-admin prints, and these carry none
+// either.
 
-// BucketStatsData is what bucket_stats (rgw_bucket.cc:1351-1436; v20.2.4
-// :1514-1602) renders for one bucket.
+// BucketStatsData is what bucket_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1351-L1436;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1514-L1602)
+// renders for one bucket.
 type BucketStatsData struct {
 	Rec *BucketRecord
 	// HasIndex is a bucket of the local zonegroup with a Normal index, the
@@ -65,11 +68,13 @@ func splitBucket(s, tenant string) (t, name string) {
 	return t, name
 }
 
-// loadAdminBucket is RGWBucket::init (rgw_bucket.cc:169-216; v20.2.4
-// :170-217) for a request that names no bucket id: bucket and uid both
-// empty is EINVAL; the bucket is the "tenant/name" bucket names, else the
-// uid's tenant; then, when the uid names a user, that user. A bucket or user that does not exist is
-// radosgw's -ENOENT, NoSuchKey; the callers that answer otherwise map it.
+// loadAdminBucket is RGWBucket::init
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L169-L216; v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L170-L217) for a
+// request that names no bucket id: bucket and uid both empty is EINVAL; the bucket is the
+// "tenant/name" bucket names, else the uid's tenant; then, when the uid names a user, that user. A
+// bucket or user that does not exist is radosgw's -ENOENT, NoSuchKey; the callers that answer
+// otherwise map it.
 func loadAdminBucket(ctx context.Context, env *Env, uid meta.UserID, bucket string) (*BucketRecord, error) {
 	rec, err := loadInitBucket(ctx, env, uid, bucket, "")
 	if err != nil {
@@ -83,7 +88,9 @@ func loadAdminBucket(ctx context.Context, env *Env, uid meta.UserID, bucket stri
 
 // loadInitBucket is RGWBucket::init's bucket load, by its instance when
 // bucketID is given, as load_bucket loads an rgw_bucket with an id
-// (driver/rados/rgw_sal_rados.cc:616-629; v20.2.4 :634-647).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L616-L629;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L634-L647).
 func loadInitBucket(ctx context.Context, env *Env, uid meta.UserID, bucket, bucketID string) (*BucketRecord, error) {
 	if bucket == "" && uid.ID == "" {
 		return nil, ErrInvalidArgument
@@ -225,10 +232,16 @@ func DecodeRenameIntent(attrs map[string][]byte) (RenameIntent, bool) {
 func bucketsCap(r *Request, perm uint32) error { return CheckCaps(r, "buckets", perm) }
 
 // BucketInfo is RGWOp_Bucket_Info and RGWBucketAdminOp::info
-// (rgw_rest_bucket.cc:19-62; rgw_bucket.cc:1631-1724, list_owner_bucket_info
-// :1546-1629; v20.2.4 :1797-1890 and :1712-1795). Cap buckets=read. Exactly
-// one of Single, Entries and Names is set: a named bucket's stats; the
-// buckets listed, with stats; or their names.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L19-L62;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1631-L1724,
+// list_owner_bucket_info
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1546-L1629;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1797-L1890
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1712-L1795).
+// Cap buckets=read. Exactly one of Single, Entries and Names is set: a named
+// bucket's stats; the buckets listed, with stats; or their names.
 type BucketInfo struct {
 	AdminOp
 	// Bucket may be "tenant/name".
@@ -268,14 +281,15 @@ func (o *BucketInfo) VerifyPermission(_ context.Context, r *Request) error {
 const bucketMetadataPage = 1000
 
 // Execute is RGWBucketAdminOp::info. A named bucket missing is
-// NoSuchBucket (rgw_bucket.cc:1642-1644). Its stats are read from the
-// bucket the name loaded, "tenant/name" split. radosgw's bucket_stats looks
-// the unsplit name up again under the uid's tenant, which finds the same
-// bucket unless the uid names a tenant, and then answers with nothing
-// (docs/exclusions.md, "The admin bucket info reports a bucket named
-// tenant/name whatever the uid's tenant"). A listing with stats
-// skips a bucket it cannot read, as radosgw ignores bucket_stats' return
-// there.
+// NoSuchBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1642-L1644).
+// Its stats are read from the bucket the name loaded, "tenant/name" split.
+// radosgw's bucket_stats looks the unsplit name up again under the uid's
+// tenant, which finds the same bucket unless the uid names a tenant, and
+// then answers with nothing (docs/exclusions.md, "The admin bucket info
+// reports a bucket named tenant/name whatever the uid's tenant"). A listing
+// with stats skips a bucket it cannot read, as radosgw ignores
+// bucket_stats' return there.
 func (o *BucketInfo) Execute(ctx context.Context, r *Request) error {
 	env := r.Env
 	o.Single, o.Entries, o.Names = nil, nil, nil
@@ -387,9 +401,9 @@ func (o *BucketInfo) listOwner(ctx context.Context, env *Env) error {
 // "tenant/name". With Stats each key is split at its '/', which loads what
 // radosgw's lookup of the whole key under the empty tenant loads, as both
 // name the entry point "tenant/name" (rgw_bucket::get_key,
-// rgw_basic_types.cc:62-79 at v19.2.6 and v20.2.4). radosgw's loop stops at a listing
-// failure and answers what it listed with a 200; rgw-go answers the
-// failure.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.cc#L62-L79 at v19.2.6
+// and v20.2.4). radosgw's loop stops at a listing failure and answers what it listed
+// with a 200; rgw-go answers the failure.
 func (o *BucketInfo) listAll(ctx context.Context, env *Env) error {
 	if o.Stats {
 		o.Entries = []BucketStatsData{}
@@ -418,7 +432,9 @@ func (o *BucketInfo) listAll(ctx context.Context, env *Env) error {
 
 // bucketOwner is the owner RGWBucketAdminOp::link and ::unlink act for:
 // the account when account-id is given, else the uid's user, else EINVAL
-// (rgw_bucket.cc:1001-1009 and :1028-1036).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1001-L1009
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1028-L1036).
 func bucketOwner(uid meta.UserID, accountID string) (meta.Owner, error) {
 	switch {
 	case accountID != "":
@@ -430,8 +446,11 @@ func bucketOwner(uid meta.UserID, accountID string) (meta.Owner, error) {
 }
 
 // LinkBucket is RGWOp_Bucket_Link and RGWBucketAdminOp::link
-// (rgw_rest_bucket.cc:128-170; rgw_bucket.cc:1026-1187, v20.2.4
-// :1177-1338). Cap buckets=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L128-L170;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1026-L1187,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1177-L1338).
+// Cap buckets=write.
 type LinkBucket struct {
 	AdminOp
 	UID       meta.UserID
@@ -586,8 +605,11 @@ func (o *LinkBucket) unfinishedRename(ctx context.Context, env *Env, tenant stri
 }
 
 // UnlinkBucket is RGWOp_Bucket_Unlink and RGWBucketAdminOp::unlink
-// (rgw_rest_bucket.cc:172-209; rgw_bucket.cc:999-1024, v20.2.4
-// :1150-1175). Cap buckets=write.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L172-L209;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L999-L1024,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1150-L1175).
+// Cap buckets=write.
 type UnlinkBucket struct {
 	AdminOp
 	UID       meta.UserID
@@ -621,14 +643,19 @@ func (o *UnlinkBucket) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveBucketAdmin is RGWOp_Bucket_Remove and
-// RGWBucketAdminOp::remove_bucket (rgw_rest_bucket.cc:211-248;
-// rgw_bucket.cc:1282-1327, v20.2.4 :1444-1490). Cap buckets=write.
+// RGWBucketAdminOp::remove_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L211-L248;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1282-L1327,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1444-L1490).
+// Cap buckets=write.
 type RemoveBucketAdmin struct {
 	AdminOp
 	Bucket, Tenant string
 	PurgeObjects   bool
 	// BypassGC takes remove_bypass_gc, which purges whatever PurgeObjects
-	// says (rgw_bucket.cc:1303-1306).
+	// says
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1303-L1306).
 	BypassGC bool
 }
 
@@ -649,8 +676,10 @@ func (o *RemoveBucketAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // the zonegroup check for a forwarded request, which it recognizes by an
 // argument its parser never lets it see (docs/ceph-upstream-bugs.md), and
 // rgw-go, which forwards nothing, never skips it. The op answers every
-// -ENOENT as NoSuchBucket (rgw_rest_bucket.cc:245-247). Each pass deletes
-// what is left, so a removal that failed partway completes on retry.
+// -ENOENT as NoSuchBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L245-L247).
+// Each pass deletes what is left, so a removal that failed partway
+// completes on retry.
 func (o *RemoveBucketAdmin) Execute(ctx context.Context, r *Request) error {
 	env := r.Env
 	rec, err := env.Buckets.GetBucket(ctx, o.Tenant, o.Bucket)
@@ -690,7 +719,10 @@ func (o *RemoveBucketAdmin) freeDanglingName(ctx context.Context, env *Env) erro
 }
 
 // SetBucketQuota is RGWOp_Set_Bucket_Quota and RGWBucket::set_quota
-// (rgw_rest_bucket.cc:250-328; rgw_bucket.cc:261-272 and :1726-1736).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L250-L328;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L261-L272
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1726-L1736).
 // Cap buckets=write.
 type SetBucketQuota struct {
 	AdminOp
@@ -769,15 +801,20 @@ func (o *SetBucketQuota) Execute(ctx context.Context, r *Request) error {
 }
 
 // validAdminObjectName is the name check the S3 handler makes,
-// validate_object_name (rgw_rest.cc:1846-1859 at v19.2.6, :1850-1863 at
-// v20.2.4), with the empty name, which names the bucket there: at most 1024
-// bytes of UTF-8, and not empty. No object can carry another name.
+// validate_object_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1846-L1859 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1850-L1863 at v20.2.4),
+// with the empty name, which names the bucket there: at most 1024 bytes of
+// UTF-8, and not empty. No object can carry another name.
 func validAdminObjectName(name string) bool {
 	return name != "" && len(name) <= 1024 && utf8.ValidString(name)
 }
 
 // GetBucketPolicyAdmin is RGWOp_Get_Policy and RGWBucket::get_policy
-// (rgw_rest_bucket.cc:64-92; rgw_bucket.cc:907-983, v20.2.4 :1058-1134).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L64-L92;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L907-L983,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1058-L1134).
 // Cap buckets=read.
 type GetBucketPolicyAdmin struct {
 	AdminOp
@@ -838,7 +875,10 @@ func (o *GetBucketPolicyAdmin) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveObjectAdmin is RGWOp_Object_Remove and RGWBucket::remove_object
-// (rgw_rest_bucket.cc:362-390; rgw_bucket.cc:148-161 and :274-289).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L362-L390;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L148-L161
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L274-L289).
 // Cap buckets=write.
 type RemoveObjectAdmin struct {
 	AdminOp
@@ -861,10 +901,14 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // versioning is or was enabled or that has object lock is answered
 // NotImplemented before the store is asked about the object: radosgw keys
 // the object with no instance and passes the bucket's versioning
-// (rgw_bucket.cc:274-289 at v19.2.6, :275-290 at v20.2.4;
-// rgw_sal_rados.cc:2933-2937, :3775-3779), so on a versioned bucket it
-// writes a delete marker, whether or not the object exists
-// (driver/rados/rgw_rados.cc:5774-5812 at v19.2.6, :6462-6517 at v20.2.4),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L274-L289 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2933-L2937,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3775-L3779),
+// so on a versioned bucket it writes a delete marker, whether or not the
+// object exists
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4),
 // where the store's unversioned delete would remove the object outright
 // (docs/exclusions.md). On any other bucket, a name no object can carry,
 // empty, longer than 1024 bytes or not UTF-8, is answered NoSuchKey without

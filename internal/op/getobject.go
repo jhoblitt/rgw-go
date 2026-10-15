@@ -83,7 +83,8 @@ var _ Op = (*GetObject)(nil)
 func (o *GetObject) Name() string { return "get_obj" }
 
 // Action is the action RGWGetObj::verify_permission authorizes
-// (rgw_op.cc:989-1001 at v19.2.6, :1195-1199 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L989-L1001 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1195-L1199 at v20.2.4).
 func (o *GetObject) Action() policy.Action {
 	switch {
 	case o.Torrent && o.Versioned:
@@ -101,10 +102,14 @@ func (o *GetObject) Action() policy.Action {
 func (o *GetObject) OpMask() uint32 { return OpTypeRead }
 
 // Init loads the bucket and the object's head, as rgw_build_bucket_policies
-// and rgw_build_object_policies do before verify_permission (rgw_op.cc:494
-// and :631-649 at v19.2.6, :524 and :661-679 at v20.2.4). A missing bucket is
-// NoSuchBucket before any object is read. The head is read with the prefetch
-// prefetch_data asks for, which Read::prepare later finds in its cache.
+// and rgw_build_object_policies do before verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L494 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L631-L649 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L524 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L661-L679 at v20.2.4).
+// A missing bucket is NoSuchBucket before any object is read. The head is
+// read with the prefetch prefetch_data asks for, which Read::prepare later
+// finds in its cache.
 func (o *GetObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	o.VersionID = r.Object.Instance
@@ -120,9 +125,9 @@ func (o *GetObject) Init(ctx context.Context, r *Request) error {
 }
 
 // VerifyPermission is RGWGetObj::verify_permission. On Tentacle a refusal of
-// an object that exists says which permission is missing (rgw_op.cc:1201-1209
-// at v20.2.4); radosgw refuses a missing object earlier, in read_permissions,
-// without one.
+// an object that exists says which permission is missing
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1201-L1209 at v20.2.4);
+// radosgw refuses a missing object earlier, in read_permissions, without one.
 func (o *GetObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
@@ -133,8 +138,10 @@ func (o *GetObject) VerifyPermission(ctx context.Context, r *Request) error {
 	return fmt.Errorf("%w: %w", ErrAccessDenied.WithMessage("missing "+a.String()+" permission"), err)
 }
 
-// Execute is RGWGetObj::execute (rgw_op.cc:2214-2462 at v19.2.6, :2449-2694
-// at v20.2.4) in its order: init_common's parse of the Range and the dates,
+// Execute is RGWGetObj::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2214-L2462 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2449-L2694 at v20.2.4)
+// in its order: init_common's parse of the Range and the dates,
 // Read::prepare's part redirect and conditionals, the torrent, compression,
 // cloud-tier and Swift large object checks, the range against the object,
 // rgw_s3_prepare_decrypt, the response-* parameters send_response_data
@@ -155,8 +162,9 @@ type commonInputs struct {
 	since, unmodSince *time.Time
 }
 
-// initCommon is RGWGetObj::init_common (rgw_op.cc:2464-2487 at v19.2.6,
-// :2696-2719 at v20.2.4).
+// initCommon is RGWGetObj::init_common
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2464-L2487 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2696-L2719 at v20.2.4).
 func (o *GetObject) initCommon(r *Request) (commonInputs, error) {
 	ofs, end, err := o.parseRange(r)
 	if err != nil {
@@ -208,7 +216,9 @@ func (o *GetObject) serve(ctx context.Context, r *Request, in commonInputs) erro
 func (o *GetObject) Complete(context.Context, *Request) {}
 
 // resolveRange resolves the parsed range against ObjSize, as execute does
-// after its checks (rgw_op.cc:2396-2406 at v19.2.6, :2629-2639 at v20.2.4):
+// after its checks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2396-L2406 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2629-L2639 at v20.2.4):
 // any Range header on an empty object is InvalidRange, and Length is
 // total_len, 0 for an empty object.
 func (o *GetObject) resolveRange(r *Request, ofs, end int64) error {
@@ -231,8 +241,9 @@ func (o *GetObject) resolveRange(r *Request, ofs, end int64) error {
 }
 
 // send writes the status alone for HEAD and for nothing to read, and
-// otherwise streams the bytes to Sink (rgw_op.cc:2436-2457 at v19.2.6,
-// :2668-2689 at v20.2.4).
+// otherwise streams the bytes to Sink
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2436-L2457 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2668-L2689 at v20.2.4).
 func (o *GetObject) send(ctx context.Context, r *Request) error {
 	if !o.GetData || o.Length == 0 {
 		o.Sink.WriteHeader(o.Status, nil)
@@ -244,9 +255,10 @@ func (o *GetObject) send(ctx context.Context, r *Request) error {
 	return o.Sink.Flush()
 }
 
-// prefetch is RGWGetObj::prefetch_data (rgw_op.cc:2176-2191 at v19.2.6,
-// :2411-2426 at v20.2.4): a GET without a Range header reads the head's first
-// chunk with its stat.
+// prefetch is RGWGetObj::prefetch_data
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2176-L2191 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2411-L2426 at v20.2.4):
+// a GET without a Range header reads the head's first chunk with its stat.
 func (o *GetObject) prefetch() bool { return o.GetData && o.Range == "" }
 
 func (o *GetObject) readHead(ctx context.Context, objects ObjectStore, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error) {
@@ -256,9 +268,11 @@ func (o *GetObject) readHead(ctx context.Context, objects ObjectStore, rec *Buck
 	return objects.StatObject(ctx, rec, key)
 }
 
-// parseRange is init_common's parse of the Range header (rgw_op.cc:2464-2471
-// at v19.2.6, :2696-2703 at v20.2.4): with rgw_ignore_get_invalid_range set,
-// a range parse_range refuses is the whole object.
+// parseRange is init_common's parse of the Range header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2464-L2471 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2696-L2703 at v20.2.4):
+// with rgw_ignore_get_invalid_range set, a range parse_range refuses is the
+// whole object.
 func (o *GetObject) parseRange(r *Request) (ofs, end int64, err error) {
 	if o.Range == "" {
 		return 0, -1, nil
@@ -284,7 +298,8 @@ func parseCondTime(v string) (*time.Time, error) {
 }
 
 // prepare is RGWRados::Object::Read::prepare
-// (driver/rados/rgw_rados.cc:6847-7000 at v19.2.6, :7686-7849 at v20.2.4)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6847-L7000 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7686-L7849 at v20.2.4)
 // over the head Init read. Tentacle counts the parts of any multipart object;
 // both releases count them for a part redirect, and radosgw reports the count
 // only when prepare succeeds.
@@ -319,14 +334,18 @@ func (o *GetObject) prepare(ctx context.Context, r *Request, since, unmodSince *
 	return nil
 }
 
-// redirectToPart is get_part_obj_state (driver/rados/rgw_rados.cc:6759-6845
-// at v19.2.6, :7595-7684 at v20.2.4) and prepare's handling of its result
-// (:6880-6917 at v19.2.6, :7728-7765 at v20.2.4). It reads part n's head with
-// the request's prefetch and serves it with the object's crypt attrs where
-// the part has none, and returns the parts count. Part 1 of an object that
-// is not multipart, or has no part 1, is the whole object, as "the java
-// sdk's TransferManager.download()" expects, with no count. Any other part
-// that is not there, and any failure to read its head, is InvalidPart.
+// redirectToPart is get_part_obj_state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6759-L6845 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7595-L7684 at v20.2.4)
+// and prepare's handling of its result
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6880-L6917 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7728-L7765 at v20.2.4).
+// It reads part n's head with the request's prefetch and serves it with the
+// object's crypt attrs where the part has none, and returns the parts count.
+// Part 1 of an object that is not multipart, or has no part 1, is the whole
+// object, as "the java sdk's TransferManager.download()" expects, with no
+// count. Any other part that is not there, and any failure to read its head,
+// is InvalidPart.
 func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error) {
 	head, n := o.CondState, *o.PartNumber
 	var (
@@ -403,13 +422,16 @@ func manifestError(r *Request, err error) error {
 
 // partManifest is the manifest get_part_obj_state builds for a part head
 // that has none, which is every part head radosgw writes
-// (driver/rados/rgw_rados.cc:6815-6844 at v19.2.6, :7651-7683 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6815-L6844 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7651-L7683 at v20.2.4):
 // one rule for part n from offset 0, cut at the size of the part's first
 // stripe, under the part's override prefix or the object's prefix, with the
 // part head as an empty head and the part's size. Its stripes are the
 // multipart object's stripes of part n, and the first is the part head, so a
 // read of the part serves that stripe from the part head's prefetched bytes,
-// as get_obj_iterate_cb does (:7391-7421 at v19.2.6, :8242-8273 at v20.2.4).
+// as get_obj_iterate_cb does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7391-L7421 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8242-L8273 at v20.2.4).
 func partManifest(m *meta.Manifest, n int, ofs, size uint64, head meta.Obj) (meta.Manifest, error) {
 	it, err := m.Seek(ofs)
 	if err != nil {
@@ -442,7 +464,8 @@ func partManifest(m *meta.Manifest, n int, ofs, size uint64, head meta.Obj) (met
 }
 
 // checkConditions is Read::prepare's conditional block
-// (driver/rados/rgw_rados.cc:6945-6990 at v19.2.6, :7793-7839 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6945-L6990 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7793-L7839 at v20.2.4).
 // The dates are compared with the served state's mtime at a second's
 // precision, as for any request that is not a system request. The etags are
 // compared with the object's ETag attr, which an unquoted If-Match must start
@@ -472,8 +495,10 @@ func (o *GetObject) checkConditions(r *Request, since, unmodSince *time.Time) er
 	return nil
 }
 
-// torrent is execute's ?torrent branch (rgw_op.cc:2275-2299 at v19.2.6,
-// :2511-2535 at v20.2.4). rgw-go serves no torrent (docs/exclusions.md).
+// torrent is execute's ?torrent branch
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2275-L2299 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2511-L2535 at v20.2.4).
+// rgw-go serves no torrent (docs/exclusions.md).
 func (o *GetObject) torrent(ctx context.Context, r *Request) error {
 	if string(o.State.Attrs[meta.AttrCryptMode]) == "SSE-C-AES256" {
 		return fmt.Errorf("%w: no torrent of %s, which is encrypted with SSE-C", ErrInvalidArgument, r.Object.Name)
@@ -487,9 +512,9 @@ func (o *GetObject) torrent(ctx context.Context, r *Request) error {
 }
 
 // setObjSize is s->obj_size after rgw_compression_info_from_attrset
-// (rgw_compression.cc:10-40 at v19.2.6 and v20.2.4): the uncompressed size
-// of a compressed object. Compression info of type none is served as stored;
-// info with no blocks is -EIO.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L10-L40 at v19.2.6
+// and v20.2.4): the uncompressed size of a compressed object. Compression
+// info of type none is served as stored; info with no blocks is -EIO.
 func (o *GetObject) setObjSize(r *Request) error {
 	o.ObjSize = o.State.Size
 	c := o.State.Compression
@@ -505,13 +530,15 @@ func (o *GetObject) setObjSize(r *Request) error {
 	return nil
 }
 
-// checkCloudTier is handle_cloudtier_obj for a GET (rgw_op.cc:938-968 at
-// v19.2.6; :989-1122 at v20.2.4, with read-through). Squid refuses an object
-// transitioned to cloud-s3. Tentacle, for either S3 tier type, serves a
-// restored object, answers a restore in progress, and otherwise looks the
-// tier up by the bucket's placement and the object's storage class. A tier
-// that allows read-through would start a restore, which rgw-go does not
-// implement (docs/exclusions.md).
+// checkCloudTier is handle_cloudtier_obj for a GET
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L938-L968 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L989-L1122 at v20.2.4,
+// with read-through). Squid refuses an object transitioned to cloud-s3.
+// Tentacle, for either S3 tier type, serves a restored object, answers a
+// restore in progress, and otherwise looks the tier up by the bucket's
+// placement and the object's storage class. A tier that allows read-through
+// would start a restore, which rgw-go does not implement
+// (docs/exclusions.md).
 func (o *GetObject) checkCloudTier(ctx context.Context, r *Request) error {
 	m := o.State.Manifest
 	if m == nil {
@@ -563,8 +590,10 @@ func (o *GetObject) checkCloudTier(ctx context.Context, r *Request) error {
 func isS3Tier(t string) bool { return t == meta.TierTypeCloudS3 || t == meta.TierTypeCloudS3Glacier }
 
 // refuseLargeObject refuses a Swift dynamic or static large object, which
-// radosgw composes from its segments (rgw_op.cc:2373-2394 at v19.2.6,
-// :2606-2627 at v20.2.4) and rgw-go does not (docs/exclusions.md).
+// radosgw composes from its segments
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2373-L2394 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2606-L2627 at v20.2.4)
+// and rgw-go does not (docs/exclusions.md).
 func (o *GetObject) refuseLargeObject(ctx context.Context, r *Request) error {
 	for _, a := range []string{meta.AttrUserManifest, meta.AttrSLOManifest} {
 		if _, ok := o.State.Attrs[a]; ok {
@@ -588,13 +617,15 @@ const (
 // sseCKeySize is AES_256_CBC::AES_256_KEYSIZE.
 const sseCKeySize = 32
 
-// prepareDecrypt is rgw_s3_prepare_decrypt (rgw_crypt.cc:1303-1505 at
-// v19.2.6, :1318-1527 at v20.2.4), which GET and HEAD call alike, by the
-// object's stored mode. rgw-go has no key server, so SSE-KMS, SSE-S3 and
-// RGW-AUTO answer as radosgw does without one (docs/exclusions.md); it does
-// not decrypt SSE-C yet, so an SSE-C request that passes every check is
-// NotImplemented. rgw_crypt_require_ssl, true when it cannot be read, refuses
-// a request that is not secure, except for SSE-S3 on Tentacle.
+// prepareDecrypt is rgw_s3_prepare_decrypt
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_crypt.cc#L1303-L1505 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1318-L1527 at v20.2.4),
+// which GET and HEAD call alike, by the object's stored mode. rgw-go has no
+// key server, so SSE-KMS, SSE-S3 and RGW-AUTO answer as radosgw does without
+// one (docs/exclusions.md); it does not decrypt SSE-C yet, so an SSE-C
+// request that passes every check is NotImplemented. rgw_crypt_require_ssl,
+// true when it cannot be read, refuses a request that is not secure, except
+// for SSE-S3 on Tentacle.
 func (o *GetObject) prepareDecrypt(ctx context.Context, r *Request) error {
 	if o.SSEHeader {
 		return fmt.Errorf("%w: x-amz-server-side-encryption on a read", ErrInvalidRequest)
@@ -654,11 +685,12 @@ func (o *GetObject) checkSSEC(ctx context.Context, r *Request) error {
 }
 
 // checkOverrides is send_response_data's check of the response-* parameters
-// (rgw_rest_s3.cc:513-533 at v19.2.6, :630-650 at v20.2.4): none from an
-// anonymous request, and no value with a byte iscntrl takes. radosgw tests
-// each char, signed, so a byte above 0x7f passes. radosgw makes the check
-// while it writes the headers and mishandles its refusal; rgw-go answers it
-// with a plain 400 (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L513-L533 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L630-L650 at v20.2.4):
+// none from an anonymous request, and no value with a byte iscntrl takes.
+// radosgw tests each char, signed, so a byte above 0x7f passes. radosgw
+// makes the check while it writes the headers and mishandles its refusal;
+// rgw-go answers it with a plain 400 (docs/exclusions.md).
 func (o *GetObject) checkOverrides(r *Request) error {
 	if len(o.ResponseOverrides) == 0 {
 		return nil

@@ -164,8 +164,12 @@ var _ = Describe("parseV4Query", func() {
 	})
 
 	// The credential is parse_v4_query_string's first check, EPERM at both
-	// tags (rgw_auth_s3.cc:290-293 at v19.2.6, :293-296 at v20.2.4), which is
-	// 403 AccessDenied (rgw_common.cc:89 at v19.2.6, :90 at v20.2.4).
+	// tags
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L290-L293 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L293-L296 at v20.2.4),
+	// which is 403 AccessDenied
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L89 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L90 at v20.2.4).
 	DescribeTable("refuses a missing or empty X-Amz-Credential before anything else, with AccessDenied",
 		func(ctx SpecContext, query string) {
 			_, err := parse(ctx, query, nil, signingTime.Add(time.Hour))

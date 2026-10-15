@@ -9,9 +9,14 @@ import (
 )
 
 // deleteObject is delete_obj (RGWDeleteObj_ObjStore_S3, get_params
-// :3435-3483 and send_response :3485-3500 at v19.2.7, [T] :3685-3733 and
-// :3735-3750). Each condition is its header's last value, nil when the
-// header is absent: x-amz-delete-if-unmodified-since and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3483
+// and send_response
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3485-L3500 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3733
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3735-L3750).
+// Each condition is its header's last value, nil when the header is
+// absent: x-amz-delete-if-unmodified-since and
 // x-amz-if-match-last-modified-time url-decoded, If-Match and
 // x-amz-if-match-size as sent, all four read by both releases alike. The
 // success, a missing key's included, is 204 with x-amz-version-id when the

@@ -38,10 +38,11 @@ func asciiLower(s string) string {
 
 const upperHex = "0123456789ABCDEF"
 
-// aws4URIEncode is aws4_uri_encode (rgw_auth_s3.h:555-590 at v19.2.6,
-// :558-593 at v20.2.4): alphanumerics, '-', '_', '.', '~' and, unless
-// encodeSlash, '/' pass; every other byte is rgw_uri_escape_char's %XX in
-// upper case.
+// aws4URIEncode is aws4_uri_encode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L555-L590 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L558-L593 at v20.2.4):
+// alphanumerics, '-', '_', '.', '~' and, unless encodeSlash, '/' pass;
+// every other byte is rgw_uri_escape_char's %XX in upper case.
 func aws4URIEncode(s string, encodeSlash bool) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -122,10 +123,11 @@ func checkGMTEnd(rest string) bool {
 }
 
 // parseISO8601Basic is parse_iso8601 with extended_format false
-// (rgw_common.cc:599-659 at v19.2.6, :612-672 at v20.2.4): strptime's
-// "%Y%m%dT%H%M%S", then, once trimmed, nothing, "Z", or '.' and a fraction
-// stringtoul accepts, and 'Z'. The fraction is dropped: radosgw's auth paths
-// pass no pns, or build the header time from whole seconds.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L599-L659 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672 at v20.2.4):
+// strptime's "%Y%m%dT%H%M%S", then, once trimmed, nothing, "Z", or '.' and a
+// fraction stringtoul accepts, and 'Z'. The fraction is dropped: radosgw's
+// auth paths pass no pns, or build the header time from whole seconds.
 func parseISO8601Basic(s string) (time.Time, bool) {
 	t, _, ok := iso8601BasicDate(s)
 	return t, ok
@@ -152,8 +154,9 @@ func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
 }
 
 // rfc2616Forms are parse_rfc2616's attempts in its order, each with the
-// check it makes of what strptime leaves (rgw_common.cc:566-597 at v19.2.6,
-// :579-610 at v20.2.4).
+// check it makes of what strptime leaves
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L566-L597 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L579-L610 at v20.2.4).
 var rfc2616Forms = []struct {
 	format string
 	end    func(string) bool
@@ -164,10 +167,12 @@ var rfc2616Forms = []struct {
 	{"%a, %d %b %Y %H:%M:%S %z", checkStrEnd}, // RFC 1123 with a numeric zone
 }
 
-// parseRFC2616 is parse_rfc2616 (rgw_common.cc:594-597 at v19.2.6, :607-610
-// at v20.2.4). The numeric zone is applied, as
-// rgw_create_s3_canonical_header subtracts tm_gmtoff from the header time
-// (rgw_auth_s3.cc:241-242 at v19.2.6).
+// parseRFC2616 is parse_rfc2616
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L594-L597 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L607-L610 at v20.2.4).
+// The numeric zone is applied, as rgw_create_s3_canonical_header subtracts
+// tm_gmtoff from the header time
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L241-L242 at v19.2.6).
 func parseRFC2616(s string) (time.Time, bool) {
 	t, _, ok := rfc2616Date(s)
 	return t, ok

@@ -78,8 +78,9 @@ func RefuseNUL(what string, values ...string) error {
 
 // RefuseNULKey is RefuseNUL for a metadata key. radosgw takes a NUL in the
 // key whole, as in every other admin argument (frame_metadata_key,
-// rgw_rest_metadata.cc:35-52 at v19.2.6 and v20.2.4), so the key gets the
-// answer the admin API gives a NUL in any argument naming a RADOS object.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L35-L52 at v19.2.6
+// and v20.2.4), so the key gets the answer the admin API gives a NUL in
+// any argument naming a RADOS object.
 func RefuseNULKey(key string) error { return RefuseNUL("the metadata key", key) }
 
 // RefuseNULKeys is RefuseNUL over a user document's names that name
@@ -96,7 +97,8 @@ func RefuseNULKeys(info *meta.UserInfo) error {
 }
 
 // The user metadata section is RGWUserMetadataHandler
-// (driver/rados/rgw_user.cc:2719-2839 at v19.2.6, :2741-2868 at v20.2.4)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2719-L2839 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2741-L2868 at v20.2.4)
 // over a UserStore and an AccountStore. Both stores serve it through these
 // functions, so the section is the same whichever store holds the users.
 
@@ -121,15 +123,18 @@ func GetMetadataUser(ctx context.Context, users UserStore, key string) (Metadata
 }
 
 // PutMetadataUser is the user section's put, RGWMetadataHandlerPut_User's
-// put_checked through store_user_info (rgw_user.cc:2817-2839 at v19.2.6;
-// RGWUserMetadataHandler::put, :2820-2851 at v20.2.4): e.Data decoded as
-// RGWUserCompleteInfo, then written as writeUser writes a user, the account
-// users index around it, with the document's attrs when it has them. The
-// stored user is read first, as put_pre reads it (rgw_metadata.cc:255-278
-// at v19.2.6), and the write is made under the version read, or as an
-// exclusive create when there is none; a version opts.IfVersion names that
-// the read does not find is ErrConcurrentModification. The write version
-// is e.Version's when it has a tag.
+// put_checked through store_user_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2817-L2839 at v19.2.6;
+// RGWUserMetadataHandler::put,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2820-L2851 at v20.2.4):
+// e.Data decoded as RGWUserCompleteInfo, then written as writeUser writes a
+// user, the account users index around it, with the document's attrs when
+// it has them. The stored user is read first, as put_pre reads it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L255-L278 at v19.2.6),
+// and the write is made under the version read, or as an exclusive create
+// when there is none; a version opts.IfVersion names that the read does not
+// find is ErrConcurrentModification. The write version is e.Version's when
+// it has a tag.
 //
 // Each refusal comes before anything is written:
 //   - a document that does not decode is ErrInvalidArgument;
@@ -265,14 +270,15 @@ func checkMetadataUser(ctx context.Context, users UserStore, accounts AccountSto
 	return nil
 }
 
-// RemoveMetadataUser is the user section's remove (rgw_user.cc:2772-2787 at
-// v19.2.6, :2853-2868 at v20.2.4): the user the key names, read and then
-// removed under the version read, then its entry in its account's users
-// index. A user outside an account whose bucket list holds a bucket is
-// ErrBucketAlreadyExists, as the user removal route refuses it, since
-// remove_user_info removes that list and with it the buckets' place in
-// their owner's list; radosgw's metadata remove does not check. A missing
-// user is ErrNoSuchKey.
+// RemoveMetadataUser is the user section's remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2772-L2787 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2853-L2868 at v20.2.4):
+// the user the key names, read and then removed under the version read,
+// then its entry in its account's users index. A user outside an account
+// whose bucket list holds a bucket is ErrBucketAlreadyExists, as the user
+// removal route refuses it, since remove_user_info removes that list and
+// with it the buckets' place in their owner's list; radosgw's metadata
+// remove does not check. A missing user is ErrNoSuchKey.
 func RemoveMetadataUser(ctx context.Context, users UserStore, accounts AccountStore, key string) error {
 	rec, err := users.GetUser(ctx, meta.ParseUserID(key))
 	if errors.Is(err, ErrNoSuchUser) {

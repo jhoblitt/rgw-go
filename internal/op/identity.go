@@ -67,14 +67,16 @@ type AuthResult struct {
 	// ContentLength is the length of Body when Body is non-nil: the
 	// x-amz-decoded-content-length of an aws-chunked payload, which radosgw
 	// makes the request's content length (AWSv4ComplMulti::modify_request_state,
-	// rgw_auth_s3.cc:1532-1542 at v19.2.6, :1509-1519 at v20.2.4), otherwise
-	// the request's own Content-Length; -1 when unknown. Ignored when Body is
-	// nil. An authenticator that returns a Body sets it: the zero value is an
-	// empty body, not an unknown one.
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1532-L1542 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1509-L1519 at v20.2.4),
+	// otherwise the request's own Content-Length; -1 when unknown. Ignored when
+	// Body is nil. An authenticator that returns a Body sets it: the zero value
+	// is an empty body, not an unknown one.
 	ContentLength int64
 	// PayloadSHA256 is the x-amz-content-sha256 value, "UNSIGNED-PAYLOAD" when
 	// the header is absent, as radosgw takes it (get_v4_exp_payload_hash,
-	// rgw_auth_s3.h:638-661 at v19.2.6, :641-664 at v20.2.4).
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L638-L661 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L641-L664 at v20.2.4).
 	PayloadSHA256 string
 	// QueryMeta is the x-amz-meta-* parameters and x-amz-security-token a
 	// SigV2 presigned request signs in its query, by lower-case name, each
@@ -105,11 +107,13 @@ const (
 	RouteAnonymous
 	// RouteSigV2Header is SigV2 in the Authorization header, whose string to
 	// sign takes nothing from the query but the sub-resources
-	// (rgw_auth_s3.cc:215-216 at v19.2.7, :217-218 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L215-L216 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L217-L218 at v20.2.4).
 	RouteSigV2Header
 	// RouteSigV2Query is presigned SigV2, whose string to sign takes the
 	// query's x-amz-meta-* and x-amz-security-token alone (get_v2_qs_map,
-	// rgw_auth_s3.cc:175-187 at v19.2.7, :176-188 at v20.2.4).
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188 at v20.2.4).
 	RouteSigV2Query
 	// RouteSigV4Header and RouteSigV4Query are SigV4, whose canonical query
 	// names every parameter.
@@ -121,10 +125,12 @@ const (
 
 // ReadsQueryMeta reports whether a request on the route has its query's
 // x-amz-meta-* parameters stored, as radosgw's map_qs_metadata merges them
-// on every route (rgw_rest_s3.cc:2589-2603 at v19.2.7, :2742-2756 at
-// v20.2.4): the routes that sign them, and an anonymous request. SigV2's
-// header route signs none of them (docs/exclusions.md), and any other
-// route reads none.
+// on every route
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756 at v20.2.4):
+// the routes that sign them, and an anonymous request. SigV2's header
+// route signs none of them (docs/exclusions.md), and any other route reads
+// none.
 func (rt AuthRoute) ReadsQueryMeta() bool {
 	switch rt {
 	case RouteAnonymous, RouteSigV2Query, RouteSigV4Header, RouteSigV4Query:
@@ -151,8 +157,10 @@ func (rt AuthRoute) ReadsQueryEncryption() bool {
 // PayloadForms is the set of signed payload forms an op accepts. radosgw's
 // SigV4 abstractor chooses the payload completer by op type and throws
 // ERR_NOT_IMPLEMENTED for a form the op is not listed for, before the access
-// key is looked up (get_auth_data_v4, rgw_rest_s3.cc:5899-5969 at v19.2.6,
-// :6466-6540 at v20.2.4). An empty body and an unsigned payload need no form.
+// key is looked up (get_auth_data_v4,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540 at v20.2.4).
+// An empty body and an unsigned payload need no form.
 type PayloadForms uint8
 
 // The payload forms.

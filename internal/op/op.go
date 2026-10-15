@@ -9,7 +9,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
-// The RGW_OP_TYPE_* bits of a user's op mask (rgw_common.h:232-237 at v19.2.6, :254-259 at v20.2.4).
+// The RGW_OP_TYPE_* bits of a user's op mask
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L232-L237 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L254-L259 at v20.2.4).
 const (
 	OpTypeRead   uint32 = 0x01
 	OpTypeWrite  uint32 = 0x02
@@ -24,7 +26,9 @@ const (
 type Op interface {
 	// Name is radosgw's RGWOp::name() ("get_obj", "list_buckets"), even where the
 	// route name differs: the usage log files each request under it as its
-	// category (rgw_log.cc:245, :556-559), and the ops log and metrics use it too.
+	// category (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L245,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L556-L559), and
+	// the ops log and metrics use it too.
 	Name() string
 	// Action is the s3:* action VerifyPermission evaluates.
 	Action() policy.Action
@@ -34,7 +38,8 @@ type Op interface {
 	Init(ctx context.Context, r *Request) error
 	// VerifyPermission is radosgw's verify_permission, op mask aside, which Run
 	// checks. It passes on the authorizer's errors, wrapped at most, so that a
-	// refusal radosgw makes before verify_op_mask (rgw_process.cc:173-211),
+	// refusal radosgw makes before verify_op_mask
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L173-L211),
 	// which the authorizer marks with BeforeVerify, reaches Run with its mark.
 	VerifyPermission(ctx context.Context, r *Request) error
 	Execute(ctx context.Context, r *Request) error
@@ -45,18 +50,21 @@ type Op interface {
 }
 
 // Run drives o through the lifecycle for r in rgw_process_authenticated's
-// order (rgw_process.cc:173-211 at v19.2.6 and v20.2.4). radosgw refuses some
-// requests before verify_op_mask, while authenticating or in init_permissions
-// or read_permissions, and never overrides those refusals. The authorizer
-// makes those checks inside VerifyPermission and marks their refusals with
-// BeforeVerify, so Run calls VerifyPermission ahead of the op-mask check and
-// returns a marked refusal first; the op mask then decides ahead of any other
-// VerifyPermission error. An Admin identity (auth sets Admin for admin and
-// system users) is let through such an error only when it is an access
-// denial (EACCES, EPERM or ERR_AUTHORIZATION), because the others might be
-// invalid input (rgw_process.cc:228-239 at v20.2.4). radosgw at v19.2.6 lets
-// an admin through any error (:228-236); docs/exclusions.md records the
-// difference.
+// order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L173-L211 at v19.2.6
+// and v20.2.4). radosgw refuses some requests before verify_op_mask, while
+// authenticating or in init_permissions or read_permissions, and never
+// overrides those refusals. The authorizer makes those checks inside
+// VerifyPermission and marks their refusals with BeforeVerify, so Run calls
+// VerifyPermission ahead of the op-mask check and returns a marked refusal
+// first; the op mask then decides ahead of any other VerifyPermission error.
+// An Admin identity (auth sets Admin for admin and system users) is let
+// through such an error only when it is an access denial (EACCES, EPERM or
+// ERR_AUTHORIZATION), because the others might be invalid input
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239 at v20.2.4).
+// radosgw at v19.2.6 lets an admin through any error
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L228-L236);
+// docs/exclusions.md records the difference.
 func Run(ctx context.Context, o Op, r *Request) error {
 	if err := o.Init(ctx, r); err != nil {
 		return err

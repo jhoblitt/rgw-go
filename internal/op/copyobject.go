@@ -13,13 +13,17 @@ import (
 )
 
 // copyOntoItselfMsg is the message check_storage_class sets
-// (rgw_rest_s3.cc:3557-3559 at v19.2.6, :3837-3839 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3557-L3559 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3837-L3839 at v20.2.4).
 const copyOntoItselfMsg = "This copy request is illegal because it is trying to copy an object to itself without " +
 	"changing the object's metadata, storage class, website redirect location or encryption attributes."
 
-// CopyObject is RGWCopyObj (rgw_op.cc:5376-5693 at v19.2.6, :5942-6273 at
-// v20.2.4; rgw_rest_s3.cc:3478-3603 at v19.2.6, :3758-3886 at v20.2.4). The
-// handler fills the inputs; ObjectStore.CopyObject copies, and the op
+// CopyObject is RGWCopyObj
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5376-L5693 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5942-L6273 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3478-L3603 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3886 at v20.2.4).
+// The handler fills the inputs; ObjectStore.CopyObject copies, and the op
 // authorizes and checks.
 type CopyObject struct {
 	SrcTenant, SrcBucket string
@@ -46,7 +50,9 @@ type CopyObject struct {
 	// Params, when set, is the part of the protocol's get_params that reads
 	// the request alone: Init calls it once the destination bucket is loaded,
 	// as RGWCopyObj::init_processing calls get_params before it loads the
-	// source bucket (rgw_op.cc:5383-5400 at v19.2.6, :5949-5966 at v20.2.4).
+	// source bucket
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5383-L5400 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5949-L5966 at v20.2.4).
 	// It fills the inputs it reads.
 	Params func(ctx context.Context, o *CopyObject) error
 	// Authorized, when set, is the rest of get_params and init_dest_policy,
@@ -93,22 +99,29 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// VerifyPermission is RGWCopyObj::verify_permission (rgw_op.cc:5407-5498 at
-// v19.2.6, :5973-6064 at v20.2.4) in its order: read_obj_policy's rule for a
-// missing source and its decode of the source's ACL, check_storage_class
-// for a copy onto itself, the source's read, then s3:PutObject on the
-// destination. The destination is checked first all the same, and a refusal
-// there that Run would not let an admin through is answered before the
-// source is touched. Then come the op mask, which radosgw checks before
-// verify_permission (rgw_process.cc:208 at v19.2.6 and v20.2.4), and the
-// request's storage class on the destination's placement, which
-// init_permissions checks first (rgw_op.cc:576-583 at v19.2.6, :606-613 at
-// v20.2.4). Only then are the source's bucket, NoSuchBucket when missing,
-// and its head read, the head with its first chunk, as read_obj_policy reads
-// it with prefetch_data set (:5413-5422 at v19.2.6, :5979-5988 at v20.2.4),
-// where radosgw loads the source bucket in init_processing (:5392-5400,
-// :5958-5966), before the op mask, and reads the source before the
-// destination's check.
+// VerifyPermission is RGWCopyObj::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5407-L5498 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5973-L6064 at v20.2.4)
+// in its order: read_obj_policy's rule for a missing source and its decode
+// of the source's ACL, check_storage_class for a copy onto itself, the
+// source's read, then s3:PutObject on the destination. The destination is
+// checked first all the same, and a refusal there that Run would not let an
+// admin through is answered before the source is touched. Then come the op
+// mask, which radosgw checks before verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L208 at v19.2.6
+// and v20.2.4), and the request's storage class on the destination's
+// placement, which init_permissions checks first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4).
+// Only then are the source's bucket, NoSuchBucket when missing, and its head
+// read, the head with its first chunk, as read_obj_policy reads it with
+// prefetch_data set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5413-L5422 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5979-L5988 at v20.2.4),
+// where radosgw loads the source bucket in init_processing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5392-L5400,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5958-L5966),
+// before the op mask, and reads the source before the destination's check.
 //
 // radosgw authorizes the source's read against its bucket's ACL alone and
 // reads the object's ACL without using it (docs/ceph-upstream-bugs.md,
@@ -166,11 +179,14 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 }
 
 // checkStorageClass is RGWCopyObj_ObjStore_S3::check_storage_class
-// (rgw_rest_s3.cc:3553-3564 at v19.2.6, :3833-3844 at v20.2.4): a copy onto
-// itself must change the storage class. The source's is its storage class attr on its bucket's
-// placement, as read_obj_policy reads it (rgw_op.cc:314-322 and :5428-5435
-// at v19.2.6), compared with s->dest_placement as rgw_placement_rule's ==
-// does, an empty class being STANDARD.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3553-L3564 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3833-L3844 at v20.2.4): a
+// copy onto itself must change the storage class. The source's is its storage class attr on
+// its bucket's placement, as read_obj_policy reads it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L314-L322 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5428-L5435 at v19.2.6),
+// compared with s->dest_placement as rgw_placement_rule's == does, an empty class being
+// STANDARD.
 func (o *CopyObject) checkStorageClass(r *Request) error {
 	srcRule := meta.PlacementRule{StorageClass: o.src.StorageClass}.InheritFrom(o.srcRec.Info.PlacementRule)
 	dstRule := meta.PlacementRule{StorageClass: o.StorageClass}.InheritFrom(r.BucketRec.Info.PlacementRule)
@@ -180,17 +196,20 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 	return nil
 }
 
-// Execute is RGWCopyObj::execute (rgw_op.cc:5558-5693 at v19.2.6,
-// :6124-6273 at v20.2.4) in its order: init_common's parse of the two dates,
-// the source's cloud tier, its accounted size against rgw_max_put_size and
-// the destination's quota unless the request is a system request, then
-// copy_obj, whose read of the source applies the conditions (Read::prepare,
-// driver/rados/rgw_rados.cc:4742-4754 at v19.2.6) before it copies under the
-// request id as its tag. First Authorized runs, and a public destination
-// policy under the destination's block of public ACLs is refused, as
-// PutObject refuses one, where radosgw makes no such check for a copy
-// (docs/exclusions.md). Then a destination whose versioning or object lock
-// rgw-go does not serve, and a copy naming a version, are refused.
+// Execute is RGWCopyObj::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5558-L5693 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6124-L6273 at v20.2.4)
+// in its order: init_common's parse of the two dates, the source's cloud
+// tier, its accounted size against rgw_max_put_size and the destination's
+// quota unless the request is a system request, then copy_obj, whose read of
+// the source applies the conditions (Read::prepare,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4742-L4754 at v19.2.6)
+// before it copies under the request id as its tag. First Authorized runs,
+// and a public destination policy under the destination's block of public
+// ACLs is refused, as PutObject refuses one, where radosgw makes no such
+// check for a copy (docs/exclusions.md). Then a destination whose versioning
+// or object lock rgw-go does not serve, and a copy naming a version, are
+// refused.
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if o.Authorized != nil {
 		if err := o.Authorized(ctx, o); err != nil {
@@ -252,10 +271,11 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 func (o *CopyObject) Complete(context.Context, *Request) {}
 
 // checkCloudTier is execute's refusal of a source transitioned to a cloud
-// tier: on Squid one whose manifest names cloud-s3 (rgw_op.cc:5604-5623 at
-// v19.2.6), on Tentacle one whose manifest names either S3 tier type and
-// whose size is zero, which a restored object's is not (:6170-6190 at
-// v20.2.4).
+// tier: on Squid one whose manifest names cloud-s3
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5604-L5623 at v19.2.6),
+// on Tentacle one whose manifest names either S3 tier type and whose size
+// is zero, which a restored object's is not
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6170-L6190 at v20.2.4).
 func (o *CopyObject) checkCloudTier(r *Request) error {
 	m := o.src.Manifest
 	if m == nil {

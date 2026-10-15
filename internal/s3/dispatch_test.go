@@ -386,7 +386,8 @@ var _ = Describe("Dispatch", func() {
 	)
 	// radosgw refuses a signed payload form by op type inside authentication:
 	// the single-chunk whitelist and the streamed one of get_auth_data_v4
-	// (rgw_rest_s3.cc:5899-5969 at v19.2.6, :6466-6540 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540 at v20.2.4).
 	DescribeTable("carries the payload forms radosgw's SigV4 completer takes for the op",
 		func(ctx SpecContext, req sent, rel denc.Release, want op.PayloadForms) {
 			route, err := dispatch(ctx, req, rel)

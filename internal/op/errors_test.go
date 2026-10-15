@@ -56,15 +56,35 @@ var _ = Describe("Error", func() {
 		Expect(op.Errors()).To(HaveLen(86 - 4 + 2))
 	})
 	It("shares a code and status only where radosgw's own table has duplicate rows, and never an errno", func() {
-		// rgw_http_s3_errors at v19.2.6 (rgw_common.cc:51-144; v20.2.4 :52-146 adds one
+		// rgw_http_s3_errors at v19.2.6
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L51-L144; v20.2.4
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L52-L146 adds one
 		// row) carries the same {status, code} under several ret values: InvalidRequest/400
-		// for ERR_INVALID_REQUEST (:62), ERR_INVALID_CORS_RULES_ERROR (:82),
-		// ERR_INVALID_WEBSITE_ROUTING_RULES_ERROR (:83) and ERR_ZERO_IN_URL (:136, folded
-		// into ErrInvalidRequest here); AccessDenied/403 for EACCES (:88), EPERM (:89,
-		// folded into ErrAccessDenied) and ERR_MFA_REQUIRED (:96); NoSuchEntity/404 for
-		// ERR_NO_ROLE_FOUND (:105) and ERR_NO_SUCH_ENTITY (:108); NoSuchCORSConfiguration/404
-		// for ERR_NO_CORS_FOUND (:106) and ERR_NO_SUCH_CORS_CONFIGURATION (:109).
-		// ServiceUnavailable/503 (:133-134) and InsufficientCapacity/507 (:142-143) are
+		// for ERR_INVALID_REQUEST
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L62),
+		// ERR_INVALID_CORS_RULES_ERROR
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L82),
+		// ERR_INVALID_WEBSITE_ROUTING_RULES_ERROR
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L83) and
+		// ERR_ZERO_IN_URL
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L136, folded
+		// into ErrInvalidRequest here); AccessDenied/403 for EACCES
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L88), EPERM
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L89, folded into
+		// ErrAccessDenied) and ERR_MFA_REQUIRED
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L96);
+		// NoSuchEntity/404 for ERR_NO_ROLE_FOUND
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L105) and
+		// ERR_NO_SUCH_ENTITY
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L108);
+		// NoSuchCORSConfiguration/404 for ERR_NO_CORS_FOUND
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L106) and
+		// ERR_NO_SUCH_CORS_CONFIGURATION
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L109).
+		// ServiceUnavailable/503
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L133-L134) and
+		// InsufficientCapacity/507
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L142-L143) are
 		// doubled there too, but FromRADOS folds EBUSY, EDQUOT and ENOSPC into one
 		// sentinel each. Errors.Is matches within a duplicate group (it compares code and
 		// status), so a spec that must tell two of them apart compares Errno or identity.

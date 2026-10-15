@@ -31,9 +31,14 @@ type ObjectState struct {
 	Head []byte
 	// Version is the head's cls_version, read in the same op as the stat, as
 	// RGWObjVersionTracker::prepare_op_for_read composes cls_version_read
-	// into every raw_obj_stat (rgw_rados.cc:158-167 and :8843-8845 at v19.2.6,
-	// :166-175 and :9787-9789 at v20.2.4); zero for an object that carries
-	// none.
+	// into every raw_obj_stat
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L158-L167
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8843-L8845 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L166-L175
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9787-L9789 at v20.2.4);
+	// zero for an object that carries none.
 	Version meta.ObjVersion
 
 	// defaultACLLogged is set once ObjectACLFor has warned that the head
@@ -63,16 +68,20 @@ type PutParams struct {
 	IfMatch, IfNoneMatch string
 	// ETag, when set, is stored instead of the computed MD5 (multipart completion).
 	ETag string
-	// Tag is the write tag: radosgw uses the request id (rgw_op.cc:4288 and
-	// driver/rados/rgw_putobj_processor.cc:377 at v19.2.6, :4501 and :407 at
-	// v20.2.4), so user.rgw.idtag and user.rgw.tail_tag hold it
-	// NUL-terminated and the index entry holds it bare. Empty selects
-	// append_rand_alpha's form, "_" and 31 random characters.
+	// Tag is the write tag: radosgw uses the request id
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4288 and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L377 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4501 and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L407 at v20.2.4),
+	// so user.rgw.idtag and user.rgw.tail_tag hold it NUL-terminated and the
+	// index entry holds it bare. Empty selects append_rand_alpha's form, "_"
+	// and 31 random characters.
 	Tag string
 	// ContentMD5 is the decoded Content-MD5 header, 16 bytes, nil when the
 	// request carried none; a body whose MD5 differs is ErrBadDigest before
-	// the head is written (RGWPutObj::execute, rgw_op.cc:4483-4486 at
-	// v19.2.6, :4715-4718 at v20.2.4).
+	// the head is written (RGWPutObj::execute,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4483-L4486 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4715-L4718 at v20.2.4).
 	ContentMD5 []byte
 }
 
@@ -88,24 +97,27 @@ type PutResult struct {
 // DeleteParams shapes a delete.
 type DeleteParams struct {
 	// IfMatch is If-Match: "*" or an ETag the object's must begin with,
-	// unquoted first (check_preconditions, driver/rados/rgw_rados.cc:7287-7306
-	// at v20.2.4); empty means unset, and a header or ETag element present
-	// with an empty value arrives as a single NUL, which matches no ETag
-	// (storeCondition).
+	// unquoted first (check_preconditions,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7287-L7306 at v20.2.4);
+	// empty means unset, and a header or ETag element present with an empty
+	// value arrives as a single NUL, which matches no ETag (storeCondition).
 	IfMatch string
 	// Mtime is the delete time; zero means now.
 	Mtime time.Time
 	// UnmodifiedSince is x-amz-delete-if-unmodified-since: the object must not
 	// have changed after it, compared in whole seconds; zero means unset
-	// (Delete::delete_obj, driver/rados/rgw_rados.cc:5860-5875 at v19.2.6,
-	// :6609-6624 at v20.2.4).
+	// (Delete::delete_obj,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5860-L5875 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6624 at v20.2.4).
 	UnmodifiedSince time.Time
 	// IfMatchSize is x-amz-if-match-size: the object's size must equal it;
-	// nil means unset (check_preconditions, :7264-7269 at v20.2.4).
+	// nil means unset (check_preconditions,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7264-L7269 at v20.2.4).
 	IfMatchSize *uint64
 	// IfMatchLastModified is x-amz-if-match-last-modified-time: the object's
 	// mtime must equal it, compared in whole seconds; zero means unset
-	// (check_preconditions, :7271-7284 at v20.2.4).
+	// (check_preconditions,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7271-L7284 at v20.2.4).
 	IfMatchLastModified time.Time
 }
 
@@ -124,12 +136,13 @@ type CopyParams struct {
 	// unset, and a header present with an empty value arrives as a single
 	// NUL (storeCondition).
 	IfMatch, IfNoneMatch string
-	// Tag is the write tag: radosgw passes the request id (rgw_op.cc:5672 at
-	// v19.2.6, :6246 at v20.2.4), under which a copy that shares the source's
-	// tails takes their references and writes its head. Empty selects
-	// append_rand_alpha's form, "_" and 31 random characters. A copy that
-	// streams the data ignores it and draws a random tag, as copy_obj_data
-	// does.
+	// Tag is the write tag: radosgw passes the request id
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5672 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6246 at v20.2.4),
+	// under which a copy that shares the source's tails takes their
+	// references and writes its head. Empty selects append_rand_alpha's form,
+	// "_" and 31 random characters. A copy that streams the data ignores it
+	// and draws a random tag, as copy_obj_data does.
 	Tag string
 }
 
@@ -154,7 +167,8 @@ type ObjectStore interface {
 	// unversioned delete only: a bucket whose versioning is or was enabled or
 	// that has object lock is ErrNotImplemented before anything is read or
 	// removed, where radosgw's versioned delete would write a delete marker
-	// (driver/rados/rgw_rados.cc:5774-5812 at v19.2.6, :6462-6517 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4).
 	DeleteObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p DeleteParams) error
 	// CopyObject writes src's data to dstKey in dst with src's ETag.
 	CopyObject(ctx context.Context, src *ObjectState, dst *BucketRecord, dstKey meta.ObjKey, p CopyParams) (*PutResult, error)

@@ -19,19 +19,27 @@ import (
 var errBadDeleteObject = errors.New("s3: an Object element radosgw refuses")
 
 // deleteObjects is multi_object_delete (RGWDeleteMultiObj_ObjStore_S3,
-// :4231-4336, [T] :4779-4877), streamed as radosgw streams it:
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4231-L4336,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4779-L4877),
+// streamed as radosgw streams it:
 //   - a failure the op meets before its first key is send_status alone
-//     (:4247-4255): the status line, none of end_header's headers and no
-//     document, which net/http completes with Content-Length: 0 and Date, as
-//     radosgw's frontend completes such a response
-//     (rgw_client_io_filters.h:221-253 at v19.2.6 and v20.2.4);
-//   - otherwise begin_response (:4257-4271) sends the common headers,
-//     Content-Type: application/xml and 200 without a length, so that
-//     net/http frames the body chunked, as end_header(...,
-//     CHUNKED_TRANSFER_ENCODING) does, then the XML declaration dump_start
-//     put before it, then the DeleteResult open tag, each flushed;
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4247-L4255):
+//     the status line, none of end_header's headers and no document, which
+//     net/http completes with Content-Length: 0 and Date, as radosgw's
+//     frontend completes such a response
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
+//     and v20.2.4);
+//   - otherwise begin_response
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4257-L4271)
+//     sends the common headers, Content-Type: application/xml and 200
+//     without a length, so that net/http frames the body chunked, as
+//     end_header(..., CHUNKED_TRANSFER_ENCODING) does, then the XML
+//     declaration dump_start put before it, then the DeleteResult open
+//     tag, each flushed;
 //   - each key's element leaves as the key completes (send_partial_response,
-//     :4273-4329), and end_response closes the document (:4331-4336).
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4273-L4329),
+//     and end_response closes the document
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4331-L4336).
 //
 // An error before either, the bucket's or the body's, is an ordinary error
 // response; after begin_response only the request's end can stop the op,
@@ -94,12 +102,15 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // deleteResultElement renders one key's outcome as send_partial_response
-// does (:4273-4329, [T] :4821-4871): a success, unless quiet, as Deleted with
-// the Key, the VersionId when the key names one, and DeleteMarker, which
-// dump_bool writes as true, and DeleteMarkerVersionId when the delete made a
-// marker; a failure, quiet or not, as Error with the Key, the VersionId even
-// when empty, and the S3 code as both Code and Message. Each text goes
-// through xmltext.Escape, as XMLFormatter::dump_string escapes it.
+// does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4273-L4329,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821-L4871):
+// a success, unless quiet, as Deleted with the Key, the VersionId when the
+// key names one, and DeleteMarker, which dump_bool writes as true, and
+// DeleteMarkerVersionId when the delete made a marker; a failure, quiet or
+// not, as Error with the Key, the VersionId even when empty, and the S3 code
+// as both Code and Message. Each text goes through xmltext.Escape, as
+// XMLFormatter::dump_string escapes it.
 func deleteResultElement(res op.DeleteResult, quiet bool) string {
 	var b strings.Builder
 	el := func(name, text string) { b.WriteString("<" + name + ">" + xmltext.Escape(text) + "</" + name + ">") }
@@ -130,15 +141,18 @@ func deleteResultElement(res op.DeleteResult, quiet bool) string {
 }
 
 // parseDelete is RGWMultiDelXMLParser (rgw_multi_del.cc) as
-// RGWDeleteMultiObj::execute reads its result (rgw_op.cc:7025-7039 at
-// v19.2.6, v20.2.4 :7929-7946): the entries of the root Delete's Object
-// children and its Quiet, true when its text is "true" in any case. Every
-// Object element in the document, wherever it sits, must hold a non-empty
-// Key, and its ETag, LastModifiedTime and Size must read as v20.2.4 reads
-// them (deleteEntry); rgw-go reads them on both releases, as it checks them
-// on both (docs/exclusions.md). A document that fails is InvalidArgument on
-// Squid, -EINVAL, and MalformedXML with radosgw's message on Tentacle; so is
-// a root other than Delete.
+// RGWDeleteMultiObj::execute reads its result
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7025-L7039 at v19.2.6,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7929-L7946):
+// the entries of the root Delete's Object children and its Quiet, true when
+// its text is "true" in any case. Every Object element in the document,
+// wherever it sits, must hold a non-empty Key, and its ETag,
+// LastModifiedTime and Size must read as v20.2.4 reads them (deleteEntry);
+// rgw-go reads them on both releases, as it checks them on both
+// (docs/exclusions.md). A document that fails is InvalidArgument on Squid,
+// -EINVAL, and MalformedXML with radosgw's message on Tentacle; so is a root
+// other than Delete.
 func parseDelete(body []byte, rel denc.Release) (entries []op.DeleteObjectsEntry, quiet bool, err error) {
 	refused := func(msg string) error {
 		if rel >= denc.Tentacle {
@@ -170,12 +184,14 @@ func parseDelete(body []byte, rel denc.Release) (entries []op.DeleteObjectsEntry
 	return entries, quiet, nil
 }
 
-// deleteEntry is RGWMultiDelObject::xml_end at v20.2.4 (rgw_multi_del.cc
-// :17-58): the Key, which must be present and not empty; the VersionId as
-// the instance; the ETag, read as a C string, as an If-Match; the
+// deleteEntry is RGWMultiDelObject::xml_end at v20.2.4
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi_del.cc#L17-L62):
+// the Key, which must be present and not empty; the VersionId as the
+// instance; the ETag, read as a C string, as an If-Match; the
 // LastModifiedTime, which must not be empty and must parse after url_decode
 // as parse_time takes it; and the Size, which strict_strtoll must read whole.
-// v19.2.6 reads the first two alone (:17-36).
+// v19.2.6 reads the first two alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi_del.cc#L17-L36).
 func deleteEntry(e *xmltext.Element) (op.DeleteObjectsEntry, error) {
 	var entry op.DeleteObjectsEntry
 	key := e.FindFirst("Key")

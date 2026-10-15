@@ -10,7 +10,8 @@ import (
 const purgePage = 1000
 
 // PurgeBucket is RadosBucket::remove with delete_children
-// (driver/rados/rgw_sal_rados.cc:350-468 at v19.2.6, :367-489 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L350-L468 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L367-L489 at v20.2.4):
 // every entry of the plain namespace, versions included, listed unordered
 // and deleted, an entry already gone skipped as -ENOENT is; then
 // DeleteBucket, which aborts the in-flight uploads as remove's
@@ -60,10 +61,12 @@ func DeleteBucketWithChildren(ctx context.Context, env *Env, rec *BucketRecord, 
 }
 
 // RemoveBucketBypassGC is RadosBucket::remove_bypass_gc
-// (driver/rados/rgw_sal_rados.cc:470-608 at v19.2.6, :491-629 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L470-L608 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L491-L629 at v20.2.4):
 // the driver's data pass, whose failure ends the removal before anything
 // else runs, then the ordinary purge, remove with delete_children, whose
-// result is returned (:598-607 at v19.2.6).
+// result is returned
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L598-L607 at v19.2.6).
 func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
@@ -84,9 +87,11 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 // zonegroup, as RGWZoneGroup::equals tells it, before a purge deletes
 // anything. radosgw's remove neither lists nor deletes such a bucket's
 // objects, which it leaves to the zonegroup that owns them, and removes the
-// bucket (rgw_sal_rados.cc:366-369 at v19.2.6, :383-386 at v20.2.4); rgw-go
-// knows no other zonegroup to leave them to, and the RADOS store refuses
-// the removal (docs/exclusions.md).
+// bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L366-L369 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L383-L386 at v20.2.4);
+// rgw-go knows no other zonegroup to leave them to, and the RADOS store
+// refuses the removal (docs/exclusions.md).
 func refuseForeignPurge(env *Env, rec *BucketRecord) error {
 	if env.Zone.ZoneGroup().Equals(rec.Info.Zonegroup) {
 		return nil

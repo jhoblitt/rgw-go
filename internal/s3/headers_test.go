@@ -83,9 +83,11 @@ func headerNames(lines []string) []string {
 
 var _ = Describe("response header names", func() {
 	// radosgw sends each name as dump_header is handed it: a user metadata
-	// name as its attr is stored after user.rgw. (rgw_rest_s3.cc:581-585 at
-	// v19.2.6, :698-702 at v20.2.4), and every other name as its source spells
-	// it. SDKs take the bytes after x-amz-meta- for the metadata key.
+	// name as its attr is stored after user.rgw.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L581-L585 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L698-L702 at v20.2.4),
+	// and every other name as its source spells it. SDKs take the bytes after
+	// x-amz-meta- for the metadata key.
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		It(method+" sends user metadata, and radosgw's other names, in radosgw's case", func(ctx SpecContext) {
 			w := newReadWorld(ctx, denc.Squid)
