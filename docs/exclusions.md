@@ -3609,6 +3609,185 @@ does the following.
   `X-Goog-Copy-Source`. Run against both releases' clusters on 2026-10-14,
   rgw-go refused it, and radosgw answered 200 and logged the request as
   `op=put_obj` at v20.2.4.
+- **A presigned SigV2 request's signed meta and session token mean the same
+  in its headers and its query.** The presigned string to sign writes the
+  query's `x-amz-meta-*` and `x-amz-security-token` lines straight after the
+  headers' `x-amz-*` lines, each set sorted on its own
+  ([rgw_auth_s3.cc:164-165](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L164-L165),
+  [rgw_auth_s3.cc:165-166](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L165-L166);
+  [rgw_auth_s3.cc:175-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187),
+  [rgw_auth_s3.cc:176-188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188)),
+  so a run of those lines can move between the end of the headers and the
+  start of the query with the signature kept, and botocore's presigned URLs
+  carry the meta and the token they sign in the query. radosgw gives the two
+  forms different meanings (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  presigned SigV2 signature survives moving signed meta or a session token
+  between the headers and the
+  query](ceph-upstream-bugs.md#radosgws-presigned-sigv2-signature-survives-moving-signed-meta-or-a-session-token-between-the-headers-and-the-query)"):
+  only a PutObject or an UploadPart adds the query's meta to what it stores
+  ([rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619),
+  [rgw_rest_s3.cc:2772](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772)),
+  a CopyObject or a CreateMultipartUpload storing the headers' alone; and
+  `sts:authentication` is true only for a token in the headers
+  ([rgw_op.cc:904-909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904-L909),
+  [rgw_op.cc:939-944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L939-L944)).
+  rgw-go, on both releases, takes the meta and the token a presigned SigV2
+  request signs in its query, once the request has authenticated, as if
+  they were sent as `X-Amz-` headers, for every read of the request
+  (`queryMetaV2`, `s3.ApplyAuth`):
+  - a CopyObject under `REPLACE` and a CreateMultipartUpload store meta
+    signed in the query, which radosgw drops; a PutObject and an UploadPart
+    store what radosgw stores, and a CopyObject under `COPY` keeps the
+    source's meta in either form, as radosgw's does;
+  - `sts:authentication` is true for a token signed in the query, where
+    radosgw's is false;
+  - a name signed on both sides is refused with 403 AccessDenied, where
+    radosgw joins a PutObject's two meta values with a comma, stores the
+    header's alone on the other writes, and reads the token from the query
+    to authenticate and from the header for `sts:authentication`;
+  - an empty session token is refused with 403 AccessDenied in the headers
+    and under a query name in any case, where radosgw refuses an empty one
+    only in the query, under a name that reads `x-amz-security-token` once
+    radosgw lower-cases a name holding `X-Amz-`
+    ([rgw_common.cc:870-878](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L870-L878),
+    [rgw_common.cc:883-891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L883-L891))
+    ([rgw_rest_s3.cc:6104-6109](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6104-L6109),
+    [rgw_rest_s3.cc:6634-6639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6634-L6639)).
+    An empty `X-AMZ-SECURITY-TOKEN=` or `x-Amz-security-token=` signs the
+    same `x-amz-security-token:` line, as the string to sign lower-cases the
+    name, and radosgw serves it as a request with no token, with
+    `sts:authentication` false.
+
+  The refusals come once the request has authenticated, so a request
+  radosgw refuses for its access key, its signature or its expiry gets
+  radosgw's error, and one that authenticates is answered 403 where
+  radosgw serves it. A client that signs each name on one side, as
+  botocore's presigned URLs do, sees no refusal. No engine of rgw-go's
+  reads the session token to authenticate a request; one that does, an STS
+  engine among them, must take a presigned request's token from this one
+  set too, never from its query or its headers alone. The header route,
+  whose string to sign carries no query, is unchanged, and so is SigV4,
+  whose canonical query names each parameter. s3-tests'
+  `test_sigv2_presigned_multipart_meta_moved_to_query` and
+  `test_sigv2_presigned_copy_replace_meta_in_query`
+  ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
+  send a CreateMultipartUpload and a `REPLACE`
+  CopyObject with their meta signed in the query. Run against both
+  releases' clusters on 2026-10-14, rgw-go stored the meta, and radosgw
+  answered 200 and stored none of it.
+- **A presigned SigV2 request is refused when its query meta or session
+  token holds a line break.** `get_canon_amz_hdrs` writes each
+  `x-amz-meta-*` and `x-amz-security-token` line of a presigned string to
+  sign as `name:value` and a newline, with nothing escaped
+  ([rgw_auth_s3.cc:66-86](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L66-L86),
+  [rgw_auth_s3.cc:67-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87)),
+  and the query's names and values are url-decoded first
+  ([rgw_common.cc:865](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L865),
+  [rgw_common.cc:878](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L878)),
+  so one such parameter whose name or value holds `%0A` signs as the
+  several lines it spells. `x-amz-meta-a=1%0Ax-amz-meta-b:2` signs as the
+  headers `X-Amz-Meta-A: 1` and `X-Amz-Meta-B: 2` do, and
+  `x-amz-meta-a=1%0Ax-amz-security-token:tok` as `X-Amz-Meta-A: 1` beside a
+  signed session token, which the packed form hides
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's presigned SigV2 string to sign
+  takes a line break in a query meta name or value for a line of its
+  own](ceph-upstream-bugs.md#radosgws-presigned-sigv2-string-to-sign-takes-a-line-break-in-a-query-meta-name-or-value-for-a-line-of-its-own)").
+  radosgw accepts the packed request and stores one attr where the signer
+  signed two, or drops the token. rgw-go refuses with 403 AccessDenied, on
+  both releases, a presigned SigV2 request with an `x-amz-meta-*` or
+  `x-amz-security-token` query parameter whose name or value, url-decoded,
+  holds a CR or an LF (`queryMetaV2`), at the same point as the refusals
+  above: a request radosgw refuses for its access key, its signature or
+  its expiry gets radosgw's error, and one that authenticates is answered
+  403 where radosgw serves it. A header value cannot carry either byte to
+  rgw-go, as net/http joins a continuation line with a space and answers
+  400 to a value holding any other control character, and the header route
+  signs no query, so it needs no such refusal. The refusal covers the
+  packed form alone: SigV2 cannot tell a signer's packed value from the
+  request its holder splits out of it, which carries the same signature. A
+  signer who signs a meta value holding a line break, such as
+  `1%0Ax-amz-security-token:tok`, has also signed the request that sends
+  that token on a line of its own, and rgw-go serves that request, as
+  radosgw does, while it refuses the signer's own. s3-tests'
+  `test_sigv2_presigned_meta_lines_packed_into_one_query_value`
+  ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
+  packs a botocore-presigned PUT's
+  two meta parameters into one. Run against both releases' clusters on
+  2026-10-14, rgw-go refused it, and radosgw stored it with 200.
+- **A presigned SigV2 request is refused when its Expires holds a line
+  break.** The presigned date line is `Expires` as sent, up to a NUL
+  ([rgw_auth_s3.cc:217](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L217),
+  [rgw_auth_s3.cc:219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L219)),
+  and its expiry is read with `atoll`, which stops at the first byte that
+  is no digit
+  ([rgw_rest_s3.cc:6090-6101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6090-L6101),
+  [rgw_rest_s3.cc:6620-6631](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6620-L6631)),
+  so `Expires=1441000000%0Ax-amz-copy-source:b/src` signs as a request with
+  the header `X-Amz-Copy-Source: b/src` and carries none: radosgw serves a
+  presigned CopyObject so resent as a PutObject of the request's body
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's presigned SigV2 date line
+  takes a line break in Expires for a line of its
+  own](ceph-upstream-bugs.md#radosgws-presigned-sigv2-date-line-takes-a-line-break-in-expires-for-a-line-of-its-own)").
+  rgw-go refuses with 403 AccessDenied, on both releases, a presigned SigV2
+  request whose `Expires` holds a CR or an LF (`expiresLineBreak`), once the
+  request has authenticated, as the refusals above. An `Expires` is a
+  number, so no client sends one. The refusal covers the packed form alone:
+  the request with those lines sent as headers carries the same signature
+  and is served. s3-tests'
+  `test_sigv2_presigned_copy_source_moved_to_expires`
+  ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
+  sends such a CopyObject. Run against both
+  releases' clusters on 2026-10-14, rgw-go refused it, and radosgw stored
+  it as a PutObject with 200.
+- **A presigned SigV2 request is refused when a query meta name holds a
+  colon.** A query `x-amz-meta-*` line is its name, `:` and its value
+  ([rgw_auth_s3.cc:66-86](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L66-L86),
+  [rgw_auth_s3.cc:67-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87)),
+  so the name `x-amz-meta-a:x` with the value `y` signs as `x-amz-meta-a`
+  with the value `x:y`, and radosgw stores it under the other name
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's presigned SigV2 string to sign
+  takes a colon in a query meta name for the end of the
+  name](ceph-upstream-bugs.md#radosgws-presigned-sigv2-string-to-sign-takes-a-colon-in-a-query-meta-name-for-the-end-of-the-name)").
+  rgw-go refuses with 403 AccessDenied, on both releases, a presigned SigV2
+  request with a query `x-amz-meta-*` whose name holds a colon
+  (`queryMetaV2`), at the same point; a value may hold one. No header name
+  can hold a colon, so no client names its meta that way. The refusal
+  covers the colon in the name alone: the request with the colon moved
+  into the value carries the same signature and is served. s3-tests'
+  `test_sigv2_presigned_meta_name_with_colon`
+  ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
+  sends such a PUT. Run against both releases'
+  clusters on 2026-10-14, rgw-go refused it, and radosgw stored it with
+  200.
+- **A SigV2 request is refused when a signed sub-resource's value spells a
+  later one.** The canonical resource joins the signed sub-resources with
+  `&` in a fixed order, each url-decoded value written as it is
+  ([rgw_auth_s3.cc:91-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L91-L124),
+  [rgw_auth_s3.cc:92-125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125)),
+  so `response-content-disposition=x%26versionId%3DV` signs as a GET of
+  version `V`, which radosgw then serves at its current version
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's SigV2 canonical resource takes
+  an ampersand in a sub-resource value for the next
+  sub-resource](ceph-upstream-bugs.md#radosgws-sigv2-canonical-resource-takes-an-ampersand-in-a-sub-resource-value-for-the-next-sub-resource)").
+  rgw-go refuses with 403 AccessDenied, on both releases and both SigV2
+  routes, a request whose signed sub-resource's url-decoded value holds
+  `&`, the name of a sub-resource the resource writes after it, and `&` or
+  the value's end, or `=` for one written with its value
+  (`packedSubresourceV2`), at the same point. Any
+  other `&` passes, so a `response-content-disposition` naming the file
+  `a&b.txt` is served as radosgw serves it; one naming `a&versionId=1` is
+  refused. The refusal covers the packed form alone: SigV2 cannot tell a
+  signer's packed value from the request its holder splits out of it,
+  which carries the same signature. A signer who signs a
+  `response-content-disposition` of `x&versionId=V` has also signed the GET
+  of version `V`, and rgw-go serves that GET, as radosgw does, while it
+  refuses the signer's own. s3-tests'
+  `test_sigv2_presigned_upload_part_with_upload_id_packed_into_part_number`
+  ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
+  packs an UploadPart's
+  `uploadId` into its `partNumber`. Run against both releases' clusters on
+  2026-10-14, radosgw answered it 400, as its PutObject reads the part
+  number whenever one is present, and rgw-go 403.
 
 ### Authorization differences
 

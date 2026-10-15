@@ -47,9 +47,13 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 // form outside them is ErrNotImplemented, answered before the access key is
 // looked up, where get_auth_data_v4 throws it. A SigV2 request that has
 // authenticated is then refused if it carries a directive under another meta
-// prefix (relabelledDirective), an rgw-go refusal radosgw does not make. Every
-// result carries ContentLength; a Body is the payload's verifying reader,
-// which reports the payload's verdict on the Read that ends it.
+// prefix (relabelledDirective) or a sub-resource value that spells a later
+// one (packedSubresourceV2), and a presigned one if its Expires holds a line
+// break (expiresLineBreak) or its signed meta does not make one set across
+// its headers and its query (queryMetaV2), rgw-go refusals radosgw does not
+// make; the query's part of that set is the result's QueryMeta. Every result
+// carries ContentLength; a Body is the payload's verifying reader, which
+// reports the payload's verdict on the Read that ends it.
 func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	// Without Keystone and LDAP, rgw_s3_auth_use_rados off leaves radosgw no
 	// backend, and it denies every request, anonymous ones included
@@ -94,12 +98,34 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	if err != nil {
 		return nil, err
 	}
+	var queryMeta map[string]string
 	if ver == versionV2 {
 		if refused := relabelledDirective(rv); refused != nil {
 			return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
 		}
+		if refused := packedSubresourceV2(rv); refused != nil {
+			return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
+		}
+		if d.presigned {
+			if refused := expiresLineBreak(rv); refused != nil {
+				return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
+			}
+			// The handlers read the query's part of the set once
+			// s3.ApplyAuth has folded it into the headers. An engine that
+			// reads a presigned request's session token, an STS engine
+			// among them, must take it from the set as well, never from
+			// the query or the headers alone (docs/exclusions.md).
+			qm, refused := queryMetaV2(rv)
+			if refused != nil {
+				return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
+			}
+			queryMeta = qm
+		}
 	}
-	res := &op.AuthResult{Identity: id, ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Presigned: d.presigned}
+	res := &op.AuthResult{
+		Identity: id, ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Presigned: d.presigned,
+		QueryMeta: queryMeta,
+	}
 	if d.v4 != nil {
 		res.PayloadSHA256 = d.payloadHash
 		// The completer's modify_request_state runs once the strategy has
