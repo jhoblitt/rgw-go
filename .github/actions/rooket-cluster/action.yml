@@ -45,9 +45,9 @@ runs:
           /usr/share/swift /usr/local/share/powershell || true
         df -h /
 
-    # Ceph 19.2.6 and 20.2.4 create AES256KRB5 cephx keys, which noble's
+    # Ceph 19.2.7 and 20.2.4 create AES256KRB5 cephx keys, which noble's
     # librados 19.2.3 cannot parse, so librados comes from download.ceph.com.
-    # Squid 19.2.6 has no noble build; a Tentacle client serves both clusters.
+    # Squid 19.2.7 has no noble build; a Tentacle client serves both clusters.
     # The image's AWS CLI v2 serves populate.sh; noble has no awscli package.
     - name: Install librados headers and jq
       shell: bash

@@ -20,7 +20,7 @@ bit-compatible with RGW's RADOS layout, able to coexist with radosgw on the
 same zone during a rolling replacement or rollback, administered by the
 unmodified radosgw-admin, and benchmarked against C++ RGW and rgw-rs.
 Priorities, in order: performance, then scalability, then a compact and
-maintainable code base. The Ceph version floor is Squid 19.2.6 or Tentacle
+maintainable code base. The Ceph version floor is Squid 19.2.7 or Tentacle
 20.2.4 for every daemon, OSDs and any radosgw on the zone included; data
 written by any earlier release is still decoded (design spec, section 3).
 The feature level is Tentacle radosgw wherever a feature is gateway-side.
@@ -429,7 +429,7 @@ deliverer, and the expiry call is a single atomic class operation that is
 safe to run unlocked.
 
 Two hazards rgw-go cannot fix, only avoid triggering. A Squid radosgw,
-19.2.6 included (Tentacle fixed it in 20.2.3), lists the queue registry
+19.2.7 included (Tentacle fixed it in 20.2.3), lists the queue registry
 without ever advancing its paging marker, so a registry holding more than
 1024 queue objects hangs that radosgw, which a newer release's sharding can
 reach from roughly a hundred topics on a shared registry. And OSDs below

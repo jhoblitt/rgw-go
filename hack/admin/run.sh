@@ -72,11 +72,11 @@ fi
 # go-ceph picks its expectations for a release from CEPH_VERSION, as its CI
 # sets it. At this tag the only ones that differ between squid, tentacle and
 # main are account_test.go's skips of GET and DELETE on /admin/account, which
-# it takes for every release up to tentacle. v19.2.6's radosgw checks a cap
-# named account for both calls (rgw_rest_account.cc:174, :196), which no
-# caps command grants, so they answer 403 to the admin user and Squid keeps
-# the skips. v20.2.4's checks accounts, which the admin user holds, so
-# Tentacle runs as main and both calls are compared.
+# it takes for every release up to tentacle. v19.2.7's radosgw checks a cap
+# named account for both calls (rgw_rest_account.cc:174, :196 at v19.2.7),
+# which no caps command grants, so they answer 403 to the admin user and
+# Squid keeps the skips. v20.2.4's checks accounts, which the admin user
+# holds, so Tentacle runs as main and both calls are compared.
 case "${release}" in
 squid) suite_version=squid ;;
 tentacle) suite_version=main ;;

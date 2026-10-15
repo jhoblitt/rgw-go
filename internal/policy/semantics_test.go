@@ -10,7 +10,7 @@ import (
 )
 
 var _ = Describe("SemanticsFor", func() {
-	It("keeps every v19.2.6 rule on squid", func() {
+	It("keeps every v19.2.7 rule on squid", func() {
 		Expect(policy.SemanticsFor(denc.Squid)).To(Equal(policy.Semantics{}))
 	})
 

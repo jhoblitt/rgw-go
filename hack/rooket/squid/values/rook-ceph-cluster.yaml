@@ -2,7 +2,7 @@
 # already fits the chart's ceph-objectstore pools to a single OSD.
 cephImage:
   repository: quay.io/ceph/ceph
-  tag: v19.2.6
+  tag: v19.2.7
 cephClusterSpec:
   # With the dashboard on, Rook creates a dashboard-admin user in the object
   # store's zone, which the population and the gate would have to account for.
