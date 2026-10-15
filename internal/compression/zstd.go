@@ -32,8 +32,9 @@ func newZstdDecoder() (Decoder, error) {
 // Decode refuses a frame that fails or decodes to any length but the
 // header's, where radosgw, which ignores ZSTD_decompressStream's result,
 // returns what the frame yielded up to that length; only a block shorter
-// than its header is refused by both (ZstdCompressor.h:73-75 at v19.2.6 and
-// v20.2.4).
+// than its header is refused by both
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/zstd/ZstdCompressor.h#L73-L75 at v19.2.6
+// and v20.2.4).
 func (z zstdDecoder) Decode(dst, block []byte, limit int, _ *int32) ([]byte, error) {
 	if len(block) < 4 {
 		return nil, failed("zstd", -1, errors.New("block shorter than its length header"))

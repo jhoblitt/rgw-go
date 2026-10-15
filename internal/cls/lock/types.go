@@ -30,7 +30,8 @@ const (
 
 // Flags are the LOCK_FLAG_* bits: MayRenew makes a lock the caller already
 // holds idempotent; MustRenew fails with ENOENT unless the caller holds it.
-// Both set is EINVAL (lock_obj, cls_lock.cc:145-163).
+// Both set is EINVAL (lock_obj,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L145-L163).
 type Flags uint8
 
 // The LOCK_FLAG_* bits.
@@ -48,14 +49,17 @@ type EntityName struct {
 	Num  int64
 }
 
-// EntityTypeClient is CEPH_ENTITY_TYPE_CLIENT (msgr.h:94).
+// EntityTypeClient is CEPH_ENTITY_TYPE_CLIENT
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/msgr.h#L94).
 const EntityTypeClient uint8 = 0x08
 
-// entityTypeNames is ceph_entity_type_name (ceph_strings.cc:8-19).
+// entityTypeNames is ceph_entity_type_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_strings.cc#L8-L19).
 var entityTypeNames = map[uint8]string{0x01: "mon", 0x02: "mds", 0x04: "osd", 0x08: "client", 0x10: "mgr", 0x20: "auth"}
 
 // parseTypes are the prefixes entity_name_t::parse accepts
-// (msg_types.cc:15-45), which leave out auth.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/msg/msg_types.cc#L15-L45),
+// which leave out auth.
 var parseTypes = map[string]uint8{"mon": 0x01, "osd": 0x04, "mds": 0x02, "client": 0x08, "mgr": 0x10}
 
 // Encode mirrors entity_name_t's DENC: the type, then the number.

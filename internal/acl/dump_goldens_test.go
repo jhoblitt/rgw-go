@@ -16,9 +16,9 @@ type dumper interface {
 }
 
 // dumpGolden renders v as ceph-dencoder's dump_json does
-// (ceph_dencoder.cc:189-194): a pretty JSONFormatter, the value's dump()
-// inside an "object" section, then a line break. The corpus JSON comes from
-// the v19 dencoder.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/tools/ceph-dencoder/ceph_dencoder.cc#L189-L194):
+// a pretty JSONFormatter, the value's dump() inside an "object" section,
+// then a line break. The corpus JSON comes from the v19 dencoder.
 func dumpGolden(v dumper) string {
 	GinkgoHelper()
 	f := formatter.NewJSON(true)

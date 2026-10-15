@@ -337,11 +337,11 @@ var _ = Describe("Decoder", func() {
 
 	// LZ4Compressor::decompress decodes the count and each pair with
 	// ceph's decode, which throws end_of_buffer on a short block
-	// (LZ4Compressor.cc:110-116 at v19.2.6 and v20.2.4). Nothing between it
-	// and the beast frontend catches that, so the frontend rethrows it out of
-	// the io_context thread and the process ends (docs/ceph-upstream-bugs.md,
-	// "radosgw terminates on a stored lz4 block too short for its pair
-	// table").
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/lz4/LZ4Compressor.cc#L110-L116 at v19.2.6
+	// and v20.2.4). Nothing between it and the beast frontend catches that, so
+	// the frontend rethrows it out of the io_context thread and the process
+	// ends (docs/ceph-upstream-bugs.md, "radosgw terminates on a stored lz4
+	// block too short for its pair table").
 	DescribeTable("refuses an lz4 block too short for its own header, on which radosgw ends",
 		func(block []byte) {
 			dec, err := compression.NewDecoder(compression.LZ4)

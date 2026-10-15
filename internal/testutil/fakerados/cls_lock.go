@@ -138,7 +138,9 @@ func writeLock(call *ClassCall, name string, info lock.Info) {
 	call.Create().Xattrs[lockXattrPrefix+name] = e.Bytes()
 }
 
-// lockObj is lock_obj (cls_lock.cc:134-244), with its checks in its order.
+// lockObj is lock_obj
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L134-L244),
+// with its checks in its order.
 func lockObj(call *ClassCall, op lock.LockOp) int32 {
 	failIfExists := op.Flags&lock.FlagMayRenew == 0
 	failIfAbsent := op.Flags&lock.FlagMustRenew != 0
@@ -177,8 +179,10 @@ func lockObj(call *ClassCall, op lock.LockOp) int32 {
 	return 0
 }
 
-// removeLock is remove_lock (cls_lock.cc:282-315): ENOENT unless locker holds
-// the lock under cookie; an ephemeral lock's object goes with its holder.
+// removeLock is remove_lock
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L282-L315):
+// ENOENT unless locker holds the lock under cookie; an ephemeral lock's
+// object goes with its holder.
 func removeLock(call *ClassCall, name string, locker lock.EntityName, cookie string) int32 {
 	info, rval := readLock(call, name)
 	if rval < 0 {
@@ -196,8 +200,10 @@ func removeLock(call *ClassCall, name string, locker lock.EntityName, cookie str
 	return 0
 }
 
-// assertLocked is assert_locked (cls_lock.cc:462-521): EBUSY unless ClientName
-// holds the lock under the cookie with the type and tag asked for.
+// assertLocked is assert_locked
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L462-L521):
+// EBUSY unless ClientName holds the lock under the cookie with the type and
+// tag asked for.
 func assertLocked(call *ClassCall, op lock.AssertOp) int32 {
 	if !validLockType(op.Type) || op.Name == "" {
 		return -int32(syscall.EINVAL)

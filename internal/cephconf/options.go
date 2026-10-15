@@ -36,10 +36,10 @@ var ErrUnknownOption = errors.New("cephconf: unknown option")
 // connected Cluster sees what Rook set centrally.
 //
 // rados_conf_get renders every option type as text through Option::to_str
-// (src/common/options.cc:40-66 at v19.2.6): booleans as true or false, sizes
-// and durations as their bare count of bytes, seconds or milliseconds, and
-// strings as stored. The typed accessors parse exactly those forms, and every
-// parse failure names the option.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options.cc#L40-L66 at v19.2.6):
+// booleans as true or false, sizes and durations as their bare count of
+// bytes, seconds or milliseconds, and strings as stored. The typed accessors
+// parse exactly those forms, and every parse failure names the option.
 type Options struct{ g Getter }
 
 // NewOptions returns Options reading through g.
@@ -97,8 +97,11 @@ func (o *Options) Millis(name string) (time.Duration, error) {
 }
 
 // listDelims are ceph::split's default delimiters, which rgw::AppMain splits
-// rgw_enable_apis on (rgw_appmain.cc:391 at main; get_str_vec's ";,= \t" at
-// v19.2.6 and v20.2.4). rgw_dns_name is split on ", " (rgw_rest.cc:217), which
+// rgw_enable_apis on
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_appmain.cc#L391
+// at main; get_str_vec's ";,= \t" at v19.2.6 and v20.2.4). rgw_dns_name is
+// split on ", "
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L217), which
 // cuts every valid host name the same way.
 const listDelims = ";,= \t\n"
 

@@ -409,7 +409,8 @@ var _ = Describe("Policy.Verify", func() {
 	)
 	It("lets a matching referer grant replace even the owner's own grant, as radosgw does", func() {
 		// A Swift .r: read grant carries READ_OBJS, and the bucket path passes
-		// perm as the mask (rgw_common.cc:1420-1423).
+		// perm as the mask
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1420-L1423).
 		p := alicesPolicy(userGrant("alice", acl.PermFullControl), refererGrant("example.com", acl.PermReadObjs))
 		Expect(p.Verify(alice, acl.PermWrite, acl.PermWrite, "http://example.com/page", false)).
 			To(BeFalse(), "with a matching Referer")

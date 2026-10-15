@@ -75,7 +75,8 @@ func TLSConfig(spec Spec) (*tls.Config, error) {
 }
 
 // errNoCertificate names the TLS listener that has no certificate, as
-// init_ssl does (:1014-1037 at v20.2.4).
+// init_ssl does
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1014-L1037 at v20.2.4).
 func errNoCertificate(spec Spec) error {
 	var key string
 	switch {
@@ -104,7 +105,8 @@ func cipherSuite(name string) (uint16, bool) {
 
 // loadCertificate loads the chain from certFile and the key from keyFile,
 // or from certFile when keyFile is empty or holds no usable key, as radosgw
-// retries the certificate's file for the key (:985-1011 at v20.2.4).
+// retries the certificate's file for the key
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L985-L1011 at v20.2.4).
 func loadCertificate(certFile, keyFile string) (tls.Certificate, error) {
 	for _, kv := range []struct{ key, val string }{{"ssl_certificate", certFile}, {"ssl_private_key", keyFile}} {
 		if strings.HasPrefix(kv.val, configKeyPrefix) {

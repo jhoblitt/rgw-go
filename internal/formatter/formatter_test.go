@@ -11,8 +11,12 @@ import (
 
 // The byte strings below follow ceph's Formatter.cc (v19.2.6 and v20.2.4
 // write the same bytes): JSONFormatter's print_comma, print_name and
-// close_section (:172-281), XMLFormatter (:377-654) and HTMLFormatter
-// (HTMLFormatter.cc:34-168).
+// close_section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L172-L281),
+// XMLFormatter
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L377-L654)
+// and HTMLFormatter
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L34-L168).
 var _ = Describe("formatter", func() {
 	// sample makes the calls dump_user_info's opening makes: an object at the
 	// top, scalars of every kind, an array of objects, an empty array and a

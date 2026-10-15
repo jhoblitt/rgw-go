@@ -29,13 +29,21 @@ var (
 // DecodeError is a stored block its codec cannot decode where radosgw's
 // decompress fails as well. Ret is what that decompress returns: -1, or -2
 // where snappy's RawUncompress fails or an lz4 block decodes short of its
-// pair's length (SnappyCompressor.h:85 and :94 at v19.2.6 and v20.2.4;
-// LZ4Compressor.cc:142 and :144 at v19.2.6, :138 and :140 at v20.2.4).
+// pair's length
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/snappy/SnappyCompressor.h#L85 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/snappy/SnappyCompressor.h#L94 at v19.2.6
+// and v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/lz4/LZ4Compressor.cc#L142 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/lz4/LZ4Compressor.cc#L144 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/lz4/LZ4Compressor.cc#L138 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/lz4/LZ4Compressor.cc#L140 at v20.2.4).
 // radosgw's GET takes Ret for an errno, EPERM or ENOENT, and answers 403
 // AccessDenied or 404 NoSuchKey when no byte of the body has gone out
 // (send_response_data,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L391-L404 at v19.2.6;
-// rgw_common.cc:89 and :97). A DecodeError is an ErrCorrupt.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L89 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97). A DecodeError is
+// an ErrCorrupt.
 type DecodeError struct {
 	Codec string
 	Ret   int

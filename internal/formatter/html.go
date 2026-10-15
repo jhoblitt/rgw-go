@@ -23,8 +23,10 @@ func NewHTML(pretty bool) Formatter {
 	return &htmlFormatter{pretty: pretty}
 }
 
-// item is dump_template and dump_format_va (HTMLFormatter.cc:93-100,
-// :141-168): the name as given, the value escaped when it is text.
+// item is dump_template and dump_format_va
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L93-L100,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L141-L168):
+// the name as given, the value escaped when it is text.
 func (h *htmlFormatter) item(name, text string) {
 	h.printSpaces()
 	h.buf.WriteString("<li>" + name + ": " + text + "</li>")
@@ -40,8 +42,10 @@ func (h *htmlFormatter) DumpInt(name string, v int64) { h.item(name, strconv.For
 func (h *htmlFormatter) DumpUnsigned(name string, v uint64) { h.item(name, strconv.FormatUint(v, 10)) }
 func (h *htmlFormatter) DumpBool(name string, v bool)       { h.item(name, strconv.FormatBool(v)) }
 
-// DumpStream is dump_stream (:133-139): the list item opened now, its value
-// pending under the name "li" until finishPending.
+// DumpStream is dump_stream
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L133-L139):
+// the list item opened now, its value pending under the name "li" until
+// finishPending.
 func (h *htmlFormatter) DumpStream(name, s string) {
 	h.printSpaces()
 	h.buf.WriteString("<li>" + name + ": ")
@@ -49,7 +53,9 @@ func (h *htmlFormatter) DumpStream(name, s string) {
 	h.pending.WriteString(s)
 }
 
-// SetStatus is set_status (:58-67): a missing name keeps the previous one.
+// SetStatus is set_status
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L58-L67):
+// a missing name keeps the previous one.
 func (h *htmlFormatter) SetStatus(code int, name string) {
 	h.status = code
 	if name != "" {
@@ -57,8 +63,9 @@ func (h *htmlFormatter) SetStatus(code int, name string) {
 	}
 }
 
-// OutputHeader is output_header (:69-91): html, head, body, h1 and an open
-// ul, once until a reset.
+// OutputHeader is output_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L69-L91):
+// html, head, body, h1 and an open ul, once until a reset.
 func (h *htmlFormatter) OutputHeader() {
 	if h.headerDone {
 		return
@@ -79,7 +86,8 @@ func (h *htmlFormatter) OutputHeader() {
 	h.OpenObjectSection("ul")
 }
 
-// Reset is reset (:47-56).
+// Reset is reset
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L47-L56).
 func (h *htmlFormatter) Reset() {
 	h.xmlFormatter.Reset()
 	h.status = 0

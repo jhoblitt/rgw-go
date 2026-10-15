@@ -16,7 +16,8 @@ const (
 	methodAccountResourceList = "account_resource_list"
 )
 
-// AccountResource is cls_user_account_resource (cls_user_types.h:239-264),
+// AccountResource is cls_user_account_resource
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_types.h#L239-L264),
 // one entry of an account's index: keyed by the name lower-cased, listed by
 // the path, with metadata the resource type defines.
 type AccountResource struct {
@@ -41,8 +42,9 @@ func DecodeAccountResource(d *denc.Decoder) AccountResource {
 	return a
 }
 
-// AccountHeader is cls_user_account_header (cls_user_types.h:219-236), the
-// omap header of an account index object: how many entries it holds.
+// AccountHeader is cls_user_account_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_types.h#L219-L236),
+// the omap header of an account index object: how many entries it holds.
 type AccountHeader struct{ Count uint32 }
 
 // Encode mirrors cls_user_account_header::encode, ENCODE_START(1, 1).
@@ -81,7 +83,8 @@ func DecodeResourceMetadata(d *denc.Decoder) ResourceMetadata {
 	return m
 }
 
-// AccountResourceAddOp is cls_user_account_resource_add_op (cls_user_ops.h:267-290).
+// AccountResourceAddOp is cls_user_account_resource_add_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L267-L290).
 type AccountResourceAddOp struct {
 	Entry     AccountResource
 	Exclusive bool
@@ -105,7 +108,8 @@ func DecodeAccountResourceAddOp(d *denc.Decoder) AccountResourceAddOp {
 	return o
 }
 
-// AccountResourceGetOp is cls_user_account_resource_get_op (cls_user_ops.h:292-309).
+// AccountResourceGetOp is cls_user_account_resource_get_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L292-L309).
 type AccountResourceGetOp struct{ Name string }
 
 // Encode mirrors cls_user_account_resource_get_op::encode, ENCODE_START(1, 1).
@@ -123,7 +127,8 @@ func DecodeAccountResourceGetOp(d *denc.Decoder) AccountResourceGetOp {
 	return o
 }
 
-// AccountResourceGetRet is cls_user_account_resource_get_ret (cls_user_ops.h:311-328).
+// AccountResourceGetRet is cls_user_account_resource_get_ret
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L311-L328).
 type AccountResourceGetRet struct{ Entry AccountResource }
 
 // Encode mirrors cls_user_account_resource_get_ret::encode, ENCODE_START(1, 1).
@@ -141,7 +146,8 @@ func DecodeAccountResourceGetRet(d *denc.Decoder) AccountResourceGetRet {
 	return o
 }
 
-// AccountResourceRmOp is cls_user_account_resource_rm_op (cls_user_ops.h:330-347).
+// AccountResourceRmOp is cls_user_account_resource_rm_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L330-L347).
 type AccountResourceRmOp struct{ Name string }
 
 // Encode mirrors cls_user_account_resource_rm_op::encode, ENCODE_START(1, 1).
@@ -159,7 +165,8 @@ func DecodeAccountResourceRmOp(d *denc.Decoder) AccountResourceRmOp {
 	return o
 }
 
-// AccountResourceListOp is cls_user_account_resource_list_op (cls_user_ops.h:349-372).
+// AccountResourceListOp is cls_user_account_resource_list_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L349-L372).
 type AccountResourceListOp struct {
 	Marker, PathPrefix string
 	MaxEntries         uint32
@@ -182,7 +189,8 @@ func DecodeAccountResourceListOp(d *denc.Decoder) AccountResourceListOp {
 	return o
 }
 
-// AccountResourceListRet is cls_user_account_resource_list_ret (cls_user_ops.h:374-397).
+// AccountResourceListRet is cls_user_account_resource_list_ret
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L374-L397).
 type AccountResourceListRet struct {
 	Entries   []AccountResource
 	Truncated bool
@@ -207,17 +215,19 @@ func DecodeAccountResourceListRet(d *denc.Decoder) AccountResourceListRet {
 }
 
 // AccountResourceAdd mirrors cls_user_account_resource_add
-// (cls_user.cc:520-579): the entry is keyed by its name lower-cased, so
-// names that differ only in case share one. An existing entry is
-// overwritten unless exclusive, which is EEXIST; a new one when the
-// header's count has reached limit is EUSERS, and otherwise counts.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L520-L579):
+// the entry is keyed by its name lower-cased, so names that differ only in
+// case share one. An existing entry is overwritten unless exclusive, which is
+// EEXIST; a new one when the header's count has reached limit is EUSERS, and
+// otherwise counts.
 func AccountResourceAdd(op radosclient.Execer, entry AccountResource, exclusive bool, limit uint32, r denc.Release) {
 	op.Exec(class, methodAccountResourceAdd, clsutil.Encode(AccountResourceAddOp{Entry: entry, Exclusive: exclusive, Limit: limit}, r))
 }
 
 // AccountResourceRm mirrors cls_user_account_resource_rm
-// (cls_user.cc:616-661): a name the index lacks is ENOENT; a removed one
-// leaves the count one lower, never below zero.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L616-L661):
+// a name the index lacks is ENOENT; a removed one leaves the count one lower,
+// never below zero.
 func AccountResourceRm(op radosclient.Execer, name string, r denc.Release) {
 	op.Exec(class, methodAccountResourceRm, clsutil.Encode(AccountResourceRmOp{Name: name}, r))
 }
@@ -228,8 +238,8 @@ type AccountResourceGetResult struct {
 }
 
 // AccountResourceGet mirrors cls_user_account_resource_get
-// (cls_user.cc:581-614): the entry under name lower-cased, ENOENT when the
-// index lacks it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L581-L614):
+// the entry under name lower-cased, ENOENT when the index lacks it.
 func AccountResourceGet(op *radosclient.ReadOp, name string, r denc.Release) *AccountResourceGetResult {
 	return &AccountResourceGetResult{res: op.Exec(class, methodAccountResourceGet, clsutil.Encode(AccountResourceGetOp{Name: name}, r))}
 }
@@ -246,10 +256,10 @@ type AccountResourceListResult struct {
 }
 
 // AccountResourceList mirrors cls_user_account_resource_list
-// (cls_user.cc:663-720): at most min(max, 1000) raw entries after marker,
-// of which those whose path starts with pathPrefix are returned. The
-// marker is the last raw key read, whether or not its entry matched, and
-// the truncation the omap read's.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L663-L720):
+// at most min(max, 1000) raw entries after marker, of which those whose path
+// starts with pathPrefix are returned. The marker is the last raw key read,
+// whether or not its entry matched, and the truncation the omap read's.
 func AccountResourceList(op *radosclient.ReadOp, marker, pathPrefix string, maxEntries uint32, r denc.Release) *AccountResourceListResult {
 	in := clsutil.Encode(AccountResourceListOp{Marker: marker, PathPrefix: pathPrefix, MaxEntries: maxEntries}, r)
 	return &AccountResourceListResult{res: op.Exec(class, methodAccountResourceList, in)}

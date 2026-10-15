@@ -13,7 +13,7 @@ import (
 // is not exact: rados_nobjects_list_seek leaves a fresh listing's
 // sort_bitwise false, so its first fetch takes the cluster's bitwise sort as
 // a change of order and restarts at the start of the hash's placement group
-// (Objecter::list_nobjects_seek and list_nobjects, src/osdc/Objecter.cc
+// (Objecter::list_nobjects_seek and list_nobjects,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3761-L3773
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3828-L3835 at v19.2.6,

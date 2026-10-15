@@ -164,8 +164,9 @@ func (s *Store) RemoveAccount(_ context.Context, rec *op.AccountRecord) error {
 }
 
 // AddAccountUser implements op.AccountStore: cls_user's account_resource_add
-// without exclusive or limit (cls_user.cc:520-579 at v19.2.6), which
-// overwrites an entry under the same key.
+// without exclusive or limit
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L520-L579 at v19.2.6),
+// which overwrites an entry under the same key.
 func (s *Store) AddAccountUser(_ context.Context, accountID string, info meta.UserInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,7 +180,8 @@ func (s *Store) AddAccountUser(_ context.Context, accountID string, info meta.Us
 }
 
 // RemoveAccountUser implements op.AccountStore: account_resource_rm, which
-// answers ENOENT for a key the index lacks (cls_user.cc:616-661 at v19.2.6).
+// answers ENOENT for a key the index lacks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L616-L661 at v19.2.6).
 func (s *Store) RemoveAccountUser(_ context.Context, accountID, displayName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,7 +194,7 @@ func (s *Store) RemoveAccountUser(_ context.Context, accountID, displayName stri
 }
 
 // maxAccountResources is account_resource_list's cap on one call's entries
-// (cls_user.cc:678 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L678 at v19.2.6).
 const maxAccountResources = 1000
 
 // ListAccountUsers implements op.AccountStore: account_resource_list over the

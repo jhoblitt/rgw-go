@@ -24,9 +24,10 @@ import (
 // the op
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L330-L338 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L332-L340 at v20.2.4),
-// the beast frontend holds a single scheduler (rgw_asio_frontend.cc:470 and
+// the beast frontend holds a single scheduler
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L470 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L508-L522 at v19.2.6,
-// :425 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L425 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L460-L474 at v20.2.4),
 // whose default SimpleThrottler answers -EAGAIN past
 // rgw_max_concurrent_requests

@@ -39,8 +39,10 @@ type Server struct {
 // spec has TLS listeners and fails on an unusable one, as ssl_init does.
 // Without a TLS listener the ssl_* keys do nothing, as they do in radosgw,
 // which never refuses them there: rgw_frontend_defaults gives every beast
-// entry a certificate (rgw_appmain.cc:462-465 at v19.2.6, :470-472 at
-// v20.2.4). It logs once each key it does not apply.
+// entry a certificate
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L462-L465 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L470-L472 at v20.2.4).
+// It logs once each key it does not apply.
 func New(spec Spec, h http.Handler) (*Server, error) {
 	s := &Server{spec: spec, handler: h, drain: DrainTimeout}
 	if hasTLSListener(spec) {
@@ -107,9 +109,10 @@ type listenAddr struct {
 // others
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L612-L642 at v20.2.4).
 // A port gets one socket per address family and an endpoint one in its own;
-// beast opens an IPv6 socket IPv6-only (v6_only, :671-678), where Go's
-// "tcp" network listens on both families for any wildcard address, 0.0.0.0
-// included.
+// beast opens an IPv6 socket IPv6-only (v6_only,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L671-L678),
+// where Go's "tcp" network listens on both families for any wildcard
+// address, 0.0.0.0 included.
 func (s *Server) addrs() []listenAddr {
 	var addrs []listenAddr
 	ports := func(key string, ports []int, secure bool) {
@@ -177,8 +180,9 @@ func closeAll(listeners []net.Listener) error {
 }
 
 // noDelayOff turns TCP_NODELAY off on each connection it accepts, where Go
-// turns it on; beast sets it from tcp_nodelay (rgw_asio_frontend.cc:1165 at
-// v19.2.6, :1083 at v20.2.4).
+// turns it on; beast sets it from tcp_nodelay
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L1165 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1083 at v20.2.4).
 type noDelayOff struct{ net.Listener }
 
 func (l noDelayOff) Accept() (net.Conn, error) {

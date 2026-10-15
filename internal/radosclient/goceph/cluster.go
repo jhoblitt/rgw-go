@@ -244,9 +244,11 @@ func notFound(err error) bool {
 // without connecting, and returns the named options' values from it: what
 // the config file, CEPH_ARGS and cfg.Args set, before connect applies the
 // mon config store. radosgw fixes the ids it drops privileges to from that
-// view (global_init.cc:227-318 at v19.2.6 and v20.2.4), before it fetches
-// the mon config (:369-381). It logs nothing: Connect reads the same files
-// and logs what it finds once.
+// view
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/global/global_init.cc#L227-L318 at v19.2.6
+// and v20.2.4), before it fetches the mon config
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/global/global_init.cc#L369-L381).
+// It logs nothing: Connect reads the same files and logs what it finds once.
 func ConfiguredOptions(ctx context.Context, cfg Config, names ...string) (map[string]string, error) {
 	cfg = cfg.withDefaults()
 	conn, err := rados.NewConnWithClusterAndUser(cfg.Cluster, cfg.Name)

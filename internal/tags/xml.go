@@ -12,8 +12,10 @@ import (
 // xmltext.Parse refuses, or one that lacks an element decode_xml requires.
 var ErrMalformedXML = errors.New("tags: malformed xml")
 
-// ParseXML is RGWObjTagging_S3::decode_xml then rebuild (rgw_tag_s3.cc:14-17,
-// :32-57), as the tagging ops' get_params run them
+// ParseXML is RGWObjTagging_S3::decode_xml then rebuild
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag_s3.cc#L14-L17,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag_s3.cc#L32-L57), as the
+// tagging ops' get_params run them
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L776-L815
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L868-L913 at v19.2.6,
@@ -33,11 +35,12 @@ var ErrMalformedXML = errors.New("tags: malformed xml")
 //
 // get_params looks the root up as an optional field, so a root other than
 // Tagging is read as the empty set. Under it, TagSet is mandatory
-// (rgw_tag_s3.cc:56) and may be empty, and every Tag needs both Key and
-// Value. A document xmltext.Parse refuses, or a missing element, is
-// ErrMalformedXML. Every Tag is read before any is checked, so a missing
-// element anywhere wins over a limit; the tags are then added in multimap
-// order through Add with limit, ErrInvalidTag on the first it refuses.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag_s3.cc#L56)
+// and may be empty, and every Tag needs both Key and Value. A document
+// xmltext.Parse refuses, or a missing element, is ErrMalformedXML. Every
+// Tag is read before any is checked, so a missing element anywhere wins
+// over a limit; the tags are then added in multimap order through Add
+// with limit, ErrInvalidTag on the first it refuses.
 func ParseXML(doc []byte, limit int) (Set, error) {
 	root, err := xmltext.Parse(doc)
 	if err != nil {
@@ -74,14 +77,22 @@ func ParseXML(doc []byte, limit int) (Set, error) {
 const xmlnsS3 = "http://s3.amazonaws.com/doc/2006-03-01/"
 
 // MarshalS3XML is the body RGWGetObjTags_ObjStore_S3::send_response_data and
-// RGWGetBucketTags_ObjStore_S3::send_response_data write (rgw_rest_s3.cc:
-// 754-772 and :847-865 at v19.2.6, :837-855 and :929-947 at v20.2.4) without
-// the XML declaration the op writes before it: the Tagging section in the S3
-// namespace, the TagSet section, and one Tag per tag in multimap order
-// (RGWObjTagSet_S3::dump_xml, rgw_tag_s3.cc:59-65). Key and Value go through
-// xmltext.Escape, because encode_xml writes a string with the formatter's
-// dump_string (rgw_xml.cc:448-451). XMLFormatter closes a section with an end
-// tag, never as an empty element, so the empty set is <TagSet></TagSet>.
+// RGWGetBucketTags_ObjStore_S3::send_response_data write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L754-L772
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L847-L865 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L837-L855
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L929-L947 at v20.2.4)
+// without the XML declaration the op writes before it: the Tagging section in
+// the S3 namespace, the TagSet section, and one Tag per tag in multimap order
+// (RGWObjTagSet_S3::dump_xml,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag_s3.cc#L59-L65).
+// Key and Value go through xmltext.Escape, because encode_xml writes a string
+// with the formatter's dump_string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L448-L451).
+// XMLFormatter closes a section with an end tag, never as an empty element, so
+// the empty set is <TagSet></TagSet>.
 func (s Set) MarshalS3XML() []byte {
 	var b bytes.Buffer
 	b.WriteString(`<Tagging xmlns="` + xmlnsS3 + `"><TagSet>`)

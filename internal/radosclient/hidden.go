@@ -13,9 +13,13 @@ const (
 )
 
 // hiddenNamespaces are the namespaces radosgw gives those indexes in a
-// zone's metadata pool by default (rgw_zone.cc:586-588 at v19.2.6, :594-596
-// at v20.2.4), and the ones rgw-go's key holder index and bucket claims take
-// by default beside the key index and the domain root (:579; :587).
+// zone's metadata pool by default
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L586-L588 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L594-L596 at v20.2.4),
+// and the ones rgw-go's key holder index and bucket claims take by default
+// beside the key index and the domain root
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L579;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L587).
 var hiddenNamespaces = map[string]string{
 	"users.keys":                     KindUserKeyIndex,
 	"users.email":                    KindUserEmailIndex,

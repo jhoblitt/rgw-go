@@ -61,9 +61,10 @@ func Range(blocks []meta.CompressionBlock, partial bool, ofs, end uint64) (Windo
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L84-L98 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L84-L101 at v20.2.4)
 // and a default of 4 MiB, and multisite sync makes blocks of 512 KiB
-// (rgw_rados.cc:3576 at v19.2.6, :3744 at v20.2.4). A zone writes its data in
-// chunks of rgw_max_chunk_size, which an OSD refuses past osd_max_write_size,
-// 90 MiB by default
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3576 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3744 at v20.2.4).
+// A zone writes its data in chunks of rgw_max_chunk_size, which an OSD
+// refuses past osd_max_write_size, 90 MiB by default
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/osd/PrimaryLogPG.cc#L2139-L2147 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L2186-L2194 at v20.2.4).
 // 1 GiB is 256 times the default chunk and eleven times that default write

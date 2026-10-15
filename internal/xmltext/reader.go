@@ -14,10 +14,14 @@ import (
 
 // Element is an element as radosgw's XMLObj holds it once RGWXMLParser has
 // read it with expat's namespace processing off (XML_ParserCreate(nullptr),
-// rgw_xml.cc:158): its name as written, prefix included; its attributes under
-// their names as written (:66-73); the text directly inside it, CDATA and
-// references decoded and its children's text excluded (:83-87); and its child
-// elements in document order.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L158): its
+// name as written, prefix included; its attributes under their names as
+// written
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L66-L73); the
+// text directly inside it, CDATA and references decoded and its children's
+// text excluded
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L83-L87); and
+// its child elements in document order.
 //
 // An attribute value keeps its literal tabs and line breaks, a CRLF read as
 // LF, where expat turns each into a space. A DTD's attribute declarations are
@@ -31,9 +35,10 @@ type Element struct {
 	Children []*Element
 }
 
-// FindFirst is XMLObj::find_first(name) (rgw_xml.cc:146-153): the first child
-// named name, or nil. The children are a multimap, whose find returns the
-// first of equal keys, which keep their insertion order.
+// FindFirst is XMLObj::find_first(name)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L146-L153):
+// the first child named name, or nil. The children are a multimap, whose find
+// returns the first of equal keys, which keep their insertion order.
 func (e *Element) FindFirst(name string) *Element {
 	for _, c := range e.Children {
 		if c.Name == name {
@@ -43,8 +48,9 @@ func (e *Element) FindFirst(name string) *Element {
 	return nil
 }
 
-// Find is XMLObj::find(name) (rgw_xml.cc:123-135): the children named name,
-// in document order.
+// Find is XMLObj::find(name)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L123-L135):
+// the children named name, in document order.
 func (e *Element) Find(name string) iter.Seq[*Element] {
 	return func(yield func(*Element) bool) {
 		for _, c := range e.Children {
@@ -56,18 +62,24 @@ func (e *Element) Find(name string) iter.Seq[*Element] {
 }
 
 // ErrNotWellFormed is a document expat refuses, which RGWXMLParser::parse
-// reports as a failed parse (rgw_xml.cc:243-248).
+// reports as a failed parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L243-L248).
 var ErrNotWellFormed = errors.New("xmltext: not well-formed")
 
 // Parse is ParseFunc without an end function.
 func Parse(doc []byte) (*Element, error) { return ParseFunc(doc, nil) }
 
-// ParseFunc is RGWXMLParser::parse (rgw_xml.cc:225-251): it reads doc as expat
-// does with namespace processing off and no unknown-encoding handler
-// (:158, :219-221), and returns the root element. When end is not nil it is
-// called as each element ends, after its children, as call_xml_end calls
-// xml_end (:197-205); its error fails the parse and is returned as it is.
-// Every other failure is ErrNotWellFormed.
+// ParseFunc is RGWXMLParser::parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L225-L251): it
+// reads doc as expat does with namespace processing off and no
+// unknown-encoding handler
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L158,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L219-L221), and
+// returns the root element. When end is not nil it is called as each element
+// ends, after its children, as call_xml_end calls xml_end
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L197-L205);
+// its error fails the parse and is returned as it is. Every other failure is
+// ErrNotWellFormed.
 //
 // encoding/xml's RawToken reports names as written but checks less than
 // expat, so ParseFunc adds expat's checks: one root, matched end tags, no

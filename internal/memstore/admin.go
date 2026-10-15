@@ -35,7 +35,8 @@ func usageMatches(rec *op.UsageRecord, user, bucket string, start, end uint64) b
 }
 
 // maxUsageEntries is user_usage_log_read's limit when the caller gives none
-// (cls_rgw.cc:3739-3740 at v19.2.6, :4141-4142 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3739-L3740 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4141-L4142 at v20.2.4).
 const maxUsageEntries = 1000
 
 // ReadUsage implements op.UsageReader over the seeded records in (User,

@@ -297,7 +297,7 @@ type pager struct {
 	prefix, delim string
 	// skip is the common prefix the marker falls inside, which a previous
 	// page returned; list_objects_ordered fast-forwards the marker past it
-	// (:1844-1854).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1844-L1854).
 	skip       string
 	room       int
 	count      int

@@ -72,9 +72,10 @@ func (s serveSettings) validate() error {
 var errNoArguments = errors.New("-h or --help for usage")
 
 // serve is radosgw's main: the command-line checks rgw_main.cc makes itself
-// (:90-97 at v19.2.6 and v20.2.4), then global_pre_init's early arguments,
-// CEPH_ARGS's included (global_init.cc:110-114), which may print the version
-// and exit, then the gateway.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L90-L97 at v19.2.6
+// and v20.2.4), then global_pre_init's early arguments, CEPH_ARGS's included
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/global/global_init.cc#L110-L114),
+// which may print the version and exit, then the gateway.
 func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string) error {
 	s := serveSettings{metricsAddr: v.GetString("metrics-addr"), mode: goceph.Mode(v.GetString("rados-completions"))}
 	slog.DebugContext(ctx, "serve settings",
@@ -112,8 +113,9 @@ func needUsage(args []string) bool {
 	return slices.ContainsFunc(args, func(a string) bool { return a == "-h" || a == "--help" })
 }
 
-// usage is radosgw's usage (rgw_main.cc:42-56 at v19.2.6 and v20.2.4, with
-// generic_usage,
+// usage is radosgw's usage
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L42-L56 at v19.2.6
+// and v20.2.4, with generic_usage,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_argparse.cc#L550-L573 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_argparse.cc#L554-L577 at v20.2.4),
 // then rgw-go's own settings.
@@ -182,9 +184,10 @@ func splitDashDash(args []string) (opts, rest []string) {
 // reads any configuration
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L79-L87 at v19.2.6
 // and v20.2.4), as librados arguments that set the same default level
-// (config.cc:780-791 at v19.2.6, :781-792 at v20.2.4), so the config file,
-// the mon config store, CEPH_ARGS and the command line each still override
-// them.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/config.cc#L780-L791 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/config.cc#L781-L792 at v20.2.4),
+// so the config file, the mon config store, CEPH_ARGS and the command line
+// each still override them.
 var radosgwDefaults = []string{
 	"--default-debug_rgw=1/5",
 	"--default-keyring=$rgw_data/keyring",
@@ -372,9 +375,13 @@ func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, 
 // serves S3 with cfg. Its S3 and admin handlers count their requests in one
 // count that cfg.MaxConcurrent caps, as radosgw's beast frontend throttles
 // every request, S3 or admin, through its one scheduler once get_op has
-// found the op (rgw_asio_frontend.cc:470 and :508-522 at v19.2.6, :425 and
-// :460-474 at v20.2.4; rgw_process.cc:330-338 at v19.2.6, :332-340 at
-// v20.2.4).
+// found the op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L470 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L508-L522 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L425 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L460-L474 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L330-L338 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L332-L340 at v20.2.4).
 func newGateway(env *op.Env, a s3.Authenticator, cfg s3.Config) *Gateway {
 	cfg.InFlight = new(atomic.Int64)
 	return &Gateway{env: env, verifier: a, cfg: cfg}
@@ -631,8 +638,9 @@ func under(path, p string) bool {
 // unservedHandler answers a request no manager rgw-go serves takes as
 // radosgw answers one it finds no handler for: 405 MethodNotAllowed, or 400
 // InvalidRequest when the decoded URI the router matched holds a NUL, which
-// preprocess refuses before the lookup (rgw_rest.cc:2182-2186 at v19.2.6,
-// :2204-2208 at v20.2.4;
+// preprocess refuses before the lookup
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2182-L2186 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2204-L2208 at v20.2.4;
 // abort_early from process_request,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L316-L318 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L318-L320 at v20.2.4).

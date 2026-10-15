@@ -17,8 +17,8 @@ import (
 // QUERY_STRING
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L209-L245 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L209-L255 at v20.2.4;
-// rgw_asio_client.cc:74-84). The path is what RGWREST::preprocess then puts
-// a virtual-hosted bucket in front of.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L74-L84). The
+// path is what RGWREST::preprocess then puts a virtual-hosted bucket in front of.
 func RequestTarget(req *http.Request) (path, query string) {
 	target := req.RequestURI
 	if target == "" {
@@ -61,7 +61,9 @@ const maxBucketNameLen = 255
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L246-L261 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L256-L271 at v20.2.4);
 // preprocess then keeps what a leading '[' and the first ']' enclose, or cuts
-// at the first ':' (rgw_rest.cc:2048-2060 at v19.2.6, :2065-2077 at v20.2.4).
+// at the first ':'
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2048-L2060 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2065-L2077 at v20.2.4).
 // radosgw keeps the case the client sent.
 func Hostname(h string) string {
 	if i := strings.LastIndexByte(h, ':'); i >= 0 && isDigits(h[i+1:]) {
@@ -90,10 +92,12 @@ func isDigits(s string) bool {
 
 // Bucket is the bucket RGWREST::preprocess reads from host, a Host as
 // Hostname leaves it, given rgw_dns_name's entries and the zonegroup's
-// hostnames (rgw_rest.cc:2048-2143 at v19.2.6, :2065-2160 at v20.2.4): the
-// subdomain of a configured name, or, when names are configured, the whole
-// host if it is not a configured name, looks like no IP address and passes
-// validate_bucket_name (the CNAME case). "" names no bucket.
+// hostnames
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2048-L2143 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2065-L2160 at v20.2.4):
+// the subdomain of a configured name, or, when names are configured, the
+// whole host if it is not a configured name, looks like no IP address and
+// passes validate_bucket_name (the CNAME case). "" names no bucket.
 // rgw_resolve_cname's DNS lookup has no counterpart.
 func Bucket(host string, names []string) string {
 	if host == "" {
@@ -206,8 +210,8 @@ func LooksLikeIPAddress(s string) bool {
 	return periods == 3
 }
 
-// validBucketName is RGWHandler_REST::validate_bucket_name (rgw_rest.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1815-L1840 at v19.2.6,
+// validBucketName is RGWHandler_REST::validate_bucket_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1815-L1840 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1819-L1844 at v20.2.4),
 // which radosgw applies only to a Host it might take as a bucket: empty, which
 // names no bucket, or 3 to 255 bytes with no '/' and no 0xff byte. A bucket in

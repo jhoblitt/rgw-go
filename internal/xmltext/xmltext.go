@@ -44,7 +44,8 @@ func Escape(s string) string {
 }
 
 // escapes is what xml_stream_escaper writes in place of each byte, "" for a
-// byte it copies; the control-byte test is escape.cc:157's.
+// byte it copies; the control-byte test is the one at
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L157.
 var escapes = func() (t [256]string) {
 	const hexDigits = "0123456789abcdef"
 	for c := range t {

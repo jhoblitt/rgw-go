@@ -24,8 +24,9 @@ const (
 // Lock adds lock.lock: it takes p.Name for the request's client identity
 // under p.Cookie, failing with EEXIST when that identity already holds it
 // without MayRenew, EBUSY when another holder or tag stands in the way, ENOENT
-// with MustRenew when it does not hold it (lock_obj, cls_lock.cc:134-244). A
-// lock on a missing object CREATES the object; callers that need the object
+// with MustRenew when it does not hold it (lock_obj,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L134-L244).
+// A lock on a missing object CREATES the object; callers that need the object
 // to exist use LockExisting.
 func Lock(op radosclient.Execer, p LockOp, r denc.Release) {
 	op.Exec(Class, methodLock, clsutil.Encode(p, r))
@@ -43,7 +44,8 @@ func LockExisting(op *radosclient.WriteOp, name, cookie, description string, dur
 }
 
 // Unlock adds lock.unlock for this client's hold under cookie; ENOENT when it
-// holds none (remove_lock, cls_lock.cc:282-315).
+// holds none (remove_lock,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L282-L315).
 func Unlock(op radosclient.Execer, name, cookie string, r denc.Release) {
 	op.Exec(Class, methodUnlock, clsutil.Encode(UnlockOp{Name: name, Cookie: cookie}, r))
 }

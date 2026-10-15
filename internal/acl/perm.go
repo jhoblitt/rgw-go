@@ -2,9 +2,10 @@ package acl
 
 import "github.com/jhoblitt/rgw-go/internal/policy"
 
-// The RGW_PERM_* values beyond the S3 four (rgw_acl_types.h:35-40): Swift's
-// container read and write, and the value op_to_perm gives an action no ACL
-// permission covers.
+// The RGW_PERM_* values beyond the S3 four
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_types.h#L35-L40):
+// Swift's container read and write, and the value op_to_perm gives an action
+// no ACL permission covers.
 const (
 	PermReadObjs  Permission = 0x10
 	PermWriteObjs Permission = 0x20

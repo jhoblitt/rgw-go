@@ -3,9 +3,9 @@ package acl
 import "github.com/jhoblitt/rgw-go/internal/denc"
 
 // PublicAccessBlock is PublicAccessBlockConfiguration
-// (rgw_public_access.h:21-66), which radosgw stores in a bucket's
-// user.rgw.public-access attr. rgw-go does not manage it yet, but honors a
-// stored one.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_public_access.h#L21-L66),
+// which radosgw stores in a bucket's user.rgw.public-access attr. rgw-go
+// does not manage it yet, but honors a stored one.
 type PublicAccessBlock struct {
 	BlockPublicACLs       bool
 	IgnorePublicACLs      bool

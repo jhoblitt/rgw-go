@@ -13,14 +13,16 @@ import (
 
 // The S3 ACL forms are rgw_acl_s3.cc's, identical at v19.2.6 and v20.2.4.
 
-// The group URIs of rgw_acl_s3.cc:20-21.
+// The group URIs of
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L20-L21.
 const (
 	URIAllUsers           = "http://acs.amazonaws.com/groups/global/AllUsers"
 	URIAuthenticatedUsers = "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
 )
 
-// GroupForURI is acl_uri_to_group (rgw_acl_s3.cc:585-593): the group uri
-// names exactly, GroupNone for any other.
+// GroupForURI is acl_uri_to_group
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L585-L593):
+// the group uri names exactly, GroupNone for any other.
 func GroupForURI(uri string) uint32 {
 	switch uri {
 	case URIAllUsers:
@@ -31,8 +33,9 @@ func GroupForURI(uri string) uint32 {
 	return GroupNone
 }
 
-// URIForGroup is acl_group_to_uri (rgw_acl_s3.cc:595-607): group's uri, and
-// false for a group without one.
+// URIForGroup is acl_group_to_uri
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L595-L607):
+// group's uri, and false for a group without one.
 func URIForGroup(group uint32) (string, bool) {
 	switch group {
 	case GroupAllUsers:
@@ -49,15 +52,19 @@ func URIForGroup(group uint32) (string, bool) {
 // FromHeaders returns unchanged and ParseS3XML reports as the 400 it gives a
 // miss.
 type Resolver interface {
-	// OwnerByEmail is read_aclowner_by_email (rgw_acl_s3.cc:325-337),
+	// OwnerByEmail is read_aclowner_by_email
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L325-L337),
 	// load_owner_by_email and then read_owner_display_name: the owner with
 	// the address, and its display name. ErrUnresolvableEmail when no user
 	// has the address; ErrNoSuchOwner when the owner the address names
-	// cannot be read (:335-336), which is also a miss.
+	// cannot be read
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L335-L336),
+	// which is also a miss.
 	OwnerByEmail(ctx context.Context, email string) (Owner, error)
-	// DisplayName is read_owner_display_name (rgw_acl_s3.cc:300-323): a
-	// user's display name or an account's name. ErrNoSuchOwner when it does
-	// not exist.
+	// DisplayName is read_owner_display_name
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L300-L323):
+	// a user's display name or an account's name. ErrNoSuchOwner when it
+	// does not exist.
 	DisplayName(ctx context.Context, owner meta.Owner) (string, error)
 }
 
@@ -104,7 +111,7 @@ func (e *ParseError) Error() string {
 func (e *ParseError) Unwrap() error { return e.Err }
 
 // The messages parse_policy and resolve_grant set in s->err.message
-// (rgw_acl_s3.cc:492-670).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L492-L670).
 const (
 	msgMissingPolicy      = "Missing element AccessControlPolicy"
 	msgInvalidOwner       = "Invalid Owner ID"
@@ -114,13 +121,15 @@ const (
 	msgInvalidGranteeType = "Invalid Grantee type"
 )
 
-// ParseS3XML is rgw::s3::parse_policy (rgw_acl_s3.cc:609-670): it parses doc
-// as RGWACLXMLParser_S3 does, resolves the owner, which must exist, and adds
-// the grants of the AccessControlList in document order, each resolved
-// through r as resolve_grant does (:492-540). The document's owner display
-// name replaces the resolved one when it is not empty; a grantee's never
-// does. Every failure is a *ParseError, and a failed lookup of any kind is a
-// missing grantee, as radosgw reports it.
+// ParseS3XML is rgw::s3::parse_policy
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L609-L670):
+// it parses doc as RGWACLXMLParser_S3 does, resolves the owner, which must
+// exist, and adds the grants of the AccessControlList in document order,
+// each resolved through r as resolve_grant does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L492-L540).
+// The document's owner display name replaces the resolved one when it is not
+// empty; a grantee's never does. Every failure is a *ParseError, and a
+// failed lookup of any kind is a missing grantee, as radosgw reports it.
 func ParseS3XML(ctx context.Context, r Resolver, doc []byte) (Policy, error) {
 	root, err := xmltext.ParseFunc(doc, xmlEnd)
 	if err != nil {
@@ -130,9 +139,12 @@ func ParseS3XML(ctx context.Context, r Resolver, doc []byte) (Policy, error) {
 		return Policy{}, &ParseError{Message: msgMissingPolicy, Err: ErrInvalid}
 	}
 	// xmlEnd has accepted every element, the root's Owner and
-	// AccessControlList included (:463-473), so radosgw never sends
-	// parse_policy's "Missing element Owner" or "Missing element
-	// AccessControlList" (:630-633, :651-654).
+	// AccessControlList included
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L463-L473),
+	// so radosgw never sends parse_policy's "Missing element Owner"
+	// or "Missing element AccessControlList"
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L630-L633,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L651-L654).
 	xmlOwner, _ := ownerOf(root.FindFirst("Owner"))
 	id := meta.ParseOwner(xmlOwner.ID)
 	name, err := r.DisplayName(ctx, id)
@@ -155,7 +167,8 @@ func ParseS3XML(ctx context.Context, r Resolver, doc []byte) (Policy, error) {
 	return p, nil
 }
 
-// resolveGrant is resolve_grant (rgw_acl_s3.cc:492-540).
+// resolveGrant is resolve_grant
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L492-L540).
 func resolveGrant(ctx context.Context, r Resolver, x xmlGrant) (Grant, error) {
 	switch x.typ {
 	case GranteeEmail:
@@ -195,9 +208,10 @@ func groupGrant(group uint32, perm Permission) Grant {
 	return Grant{Type: GranteeGroup, Group: group, Permission: perm}
 }
 
-// xmlGrant is what ACLGrant_S3::xml_end (rgw_acl_s3.cc:197-244) reads from a
-// Grant: the grantee's type, the text of the grantee element that type
-// names, and the flags of the grant's first Permission.
+// xmlGrant is what ACLGrant_S3::xml_end
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L197-L244)
+// reads from a Grant: the grantee's type, the text of the grantee element
+// that type names, and the flags of the grant's first Permission.
 type xmlGrant struct {
 	typ   GranteeType
 	value string
@@ -208,8 +222,9 @@ type xmlGrant struct {
 var errRefused = errors.New("acl: element refused")
 
 // xmlEnd is the xml_end of the class RGWACLXMLParser_S3::alloc_obj gives an
-// element named e.Name (rgw_acl_s3.cc:555-581), whatever its parent; any
-// other element has XMLObj's, which accepts it.
+// element named e.Name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L555-L581),
+// whatever its parent; any other element has XMLObj's, which accepts it.
 func xmlEnd(e *xmltext.Element) error {
 	ok := true
 	switch e.Name {
@@ -228,8 +243,9 @@ func xmlEnd(e *xmltext.Element) error {
 	return nil
 }
 
-// ownerOf is ACLOwner_S3::xml_end (rgw_acl_s3.cc:154-170): the ID is
-// required and the DisplayName optional.
+// ownerOf is ACLOwner_S3::xml_end
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L154-L170):
+// the ID is required and the DisplayName optional.
 func ownerOf(e *xmltext.Element) (Owner, bool) {
 	id := e.FindFirst("ID")
 	if id == nil {
@@ -250,10 +266,11 @@ var granteeElements = map[GranteeType]string{
 	GranteeEmail:     "EmailAddress",
 }
 
-// grantOf is ACLGrant_S3::xml_end (rgw_acl_s3.cc:197-244). The grantee's
-// type is the attribute written exactly xsi:type, whatever the prefix is
-// bound to, if anything. The first Permission's own xml_end, which ran
-// first, has accepted its text.
+// grantOf is ACLGrant_S3::xml_end
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L197-L244).
+// The grantee's type is the attribute written exactly xsi:type, whatever
+// the prefix is bound to, if anything. The first Permission's own
+// xml_end, which ran first, has accepted its text.
 func grantOf(e *xmltext.Element) (xmlGrant, bool) {
 	grantee := e.FindFirst("Grantee")
 	if grantee == nil {
@@ -285,7 +302,8 @@ func grantOf(e *xmltext.Element) (xmlGrant, bool) {
 const permissionFullControl = "FULL_CONTROL"
 
 // s3Permissions are the S3 permission names other than FULL_CONTROL, in the
-// order to_xml writes them (rgw_acl_s3.cc:36-51).
+// order to_xml writes them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L36-L51).
 var s3Permissions = []struct {
 	name  string
 	flags Permission
@@ -296,8 +314,10 @@ var s3Permissions = []struct {
 	{"WRITE_ACP", PermWriteACP},
 }
 
-// permissionFlags is ACLPermission_S3::xml_end (rgw_acl_s3.cc:53-73): the
-// flags a permission name gives, compared with strcasecmp and untrimmed.
+// permissionFlags is ACLPermission_S3::xml_end
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L53-L73):
+// the flags a permission name gives, compared with strcasecmp and
+// untrimmed.
 func permissionFlags(s string) (Permission, bool) {
 	if equalFoldASCII(s, permissionFullControl) {
 		return PermFullControl, true
@@ -310,7 +330,8 @@ func permissionFlags(s string) (Permission, bool) {
 	return PermNone, false
 }
 
-// s3GranteeTypeName is ACLGranteeType_S3::to_string (rgw_acl_s3.cc:78-89).
+// s3GranteeTypeName is ACLGranteeType_S3::to_string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L78-L89).
 func s3GranteeTypeName(t GranteeType) string {
 	switch t {
 	case GranteeCanonUser:
@@ -323,8 +344,9 @@ func s3GranteeTypeName(t GranteeType) string {
 	return "unknown"
 }
 
-// s3GranteeType is ACLGranteeType_S3::set (rgw_acl_s3.cc:91-104): the names
-// compare exactly.
+// s3GranteeType is ACLGranteeType_S3::set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L91-L104):
+// the names compare exactly.
 func s3GranteeType(name string) GranteeType {
 	for _, t := range []GranteeType{GranteeCanonUser, GranteeEmail, GranteeGroup} {
 		if s3GranteeTypeName(t) == name {
@@ -339,13 +361,20 @@ func s3GranteeType(name string) GranteeType {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.h#L26 at v20.2.4).
 const s3XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 
-// MarshalS3XML is rgw::s3::write_policy_xml (rgw_acl_s3.cc:672-676) over the
-// to_xml functions (:36-51, :172-181, :246-293, :475-481): the
-// AccessControlPolicy document with no XML declaration and no whitespace. The
-// Owner is written only for a non-empty id, and a grant only when it holds an
-// S3 flag. radosgw writes ids, display names and email addresses raw
-// (:177-179, :260-265); they are escaped here as its XML formatter escapes the
-// text of its other documents.
+// MarshalS3XML is rgw::s3::write_policy_xml
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L672-L676)
+// over the to_xml functions
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L36-L51,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L172-L181,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L246-L293,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L475-L481):
+// the AccessControlPolicy document with no XML declaration and no whitespace.
+// The Owner is written only for a non-empty id, and a grant only when it holds
+// an S3 flag. radosgw writes ids, display names and email addresses raw
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L177-L179,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L260-L265);
+// they are escaped here as its XML formatter escapes the text of its other
+// documents.
 func (p Policy) MarshalS3XML() []byte {
 	var b strings.Builder
 	b.WriteString(`<AccessControlPolicy xmlns="` + s3XMLNS + `">`)
@@ -365,9 +394,12 @@ func (p Policy) MarshalS3XML() []byte {
 	return []byte(b.String())
 }
 
-// writeGrant is to_xml(const ACLGrant&) (rgw_acl_s3.cc:246-274) with
-// to_xml(ACLPermission) (:36-51). A referer, and any type S3 has no name
-// for, is an unknown grantee with no element.
+// writeGrant is to_xml(const ACLGrant&)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L246-L274)
+// with to_xml(ACLPermission)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L36-L51).
+// A referer, and any type S3 has no name for, is an unknown grantee with
+// no element.
 func writeGrant(b *strings.Builder, g Grant) {
 	perm := g.Permission
 	if perm&PermFullControl == 0 {
@@ -409,11 +441,14 @@ func writeText(b *strings.Builder, name, text string) {
 // anonymousUser is RGW_USER_ANON_ID, the anonymous user's id.
 const anonymousUser = "anonymous"
 
-// Canned is rgw::s3::create_canned_acl (rgw_acl_s3.cc:678-689) over
-// create_canned (:407-461): FULL_CONTROL to owner, then the grants the canned
-// ACL names. The policy belongs to owner, or to bucketOwner when owner is the
-// anonymous user, who still gets the FULL_CONTROL grant. The names compare
-// exactly; ErrInvalid for one radosgw does not know.
+// Canned is rgw::s3::create_canned_acl
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L678-L689)
+// over create_canned
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L407-L461):
+// FULL_CONTROL to owner, then the grants the canned ACL names. The policy
+// belongs to owner, or to bucketOwner when owner is the anonymous user, who
+// still gets the FULL_CONTROL grant. The names compare exactly; ErrInvalid
+// for one radosgw does not know.
 func Canned(owner, bucketOwner Owner, canned string) (Policy, error) {
 	p := Policy{Owner: owner}
 	if sameOwner(owner.ID, anonymousUser) {
@@ -454,20 +489,26 @@ func sameOwner(a, b string) bool {
 }
 
 // GrantHeaders are the x-amz-grant-* header values as
-// create_policy_from_headers reads them (rgw_acl_s3.cc:483-490, :691-709):
+// create_policy_from_headers reads them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L483-L490,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L691-L709):
 // each is a comma-separated list of id="...", emailAddress="..." or
-// uri="..." items (:339-405). An empty value stands for an absent header.
+// uri="..." items
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L339-L405).
+// An empty value stands for an absent header.
 type GrantHeaders struct {
 	Read, Write, ReadACP, WriteACP, FullControl string
 }
 
-// FromHeaders is rgw::s3::create_policy_from_headers (rgw_acl_s3.cc:691-709):
+// FromHeaders is rgw::s3::create_policy_from_headers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L691-L709):
 // owner's policy with the grants of the headers in the order READ, WRITE,
 // READ_ACP, WRITE_ACP, FULL_CONTROL, each header's in its order. A lookup
 // miss is ErrGranteeNotFound, the -ENOENT radosgw's lookups return, and any
 // other lookup error is returned unchanged, as parse_grantee_str returns it
-// (:356-371). An empty item is skipped, as ceph::split skips it, so an empty
-// header gives no grants.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L356-L371).
+// An empty item is skipped, as ceph::split skips it, so an empty header gives
+// no grants.
 func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (Policy, error) {
 	p := Policy{Owner: owner}
 	for _, hdr := range []struct {
@@ -494,13 +535,16 @@ func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (
 	return p, nil
 }
 
-// parseGrantee is parse_grantee_str (rgw_acl_s3.cc:339-383). The item splits
-// at its first "=" with both sides trimmed, as parse_key_value does
+// parseGrantee is parse_grantee_str
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L339-L383). The item
+// splits at its first "=" with both sides trimmed, as parse_key_value does
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L661-L679 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L674-L692 at v20.2.4),
 // the value then losing a quote at each end only when it has both
-// (rgw_trim_quotes, :1854-1876, :1917-1939); keys compare
-// case-insensitively.
+// (rgw_trim_quotes,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1854-L1876,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1917-L1939);
+// keys compare case-insensitively.
 func parseGrantee(ctx context.Context, r Resolver, item string, perm Permission) (Grant, error) {
 	key, value, ok := strings.Cut(item, "=")
 	if !ok {

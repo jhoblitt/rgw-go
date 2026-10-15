@@ -64,18 +64,24 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 	return s.user(id)
 }
 
-// PutUser implements op.UserStore as RGWSI_User_RADOS's PutOperation writes
-// a user (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L229-L351 at v19.2.6). An active
-// access key that another user's index holds, and that the stored record (read unless Exclusive) did not already hold
-// active, is ErrKeyExists before anything is written (:257-270), and so is a key the write gains, one the stored record
-// lacks or one it makes active, whose id another user holds, active or not,
-// as the RADOS driver's key holder index refuses it. A new email an account
-// holds is ErrEmailExists, and so is one another user holds unless
-// opts.SharedEmail, as the driver's claim of the email index refuses it. IfVersion is checked unless its Ver is 0, and the
-// version written is IfVersion's plus one under its tag, or a fresh one
-// without IfVersion or its tag, unless WriteVersion has a tag, which is
-// written as given (:234-241; rgw_common.h:950-955). The mtime
-// stored is opts.Mtime, or the clock's time when that is zero.
+// PutUser implements op.UserStore as RGWSI_User_RADOS's PutOperation writes a
+// user
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L229-L351 at v19.2.6).
+// An active access key that another user's index holds, and that the stored
+// record (read unless Exclusive) did not already hold active, is ErrKeyExists
+// before anything is written
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L257-L270),
+// and so is a key the write gains, one the stored record lacks or one it makes
+// active, whose id another user holds, active or not, as the RADOS driver's
+// key holder index refuses it. A new email an account holds is ErrEmailExists,
+// and so is one another user holds unless opts.SharedEmail, as the driver's
+// claim of the email index refuses it. IfVersion is checked unless its Ver is
+// 0, and the version written is IfVersion's plus one under its tag, or a fresh
+// one without IfVersion or its tag, unless WriteVersion has a tag, which is
+// written as given
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L234-L241;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L950-L955).
+// The mtime stored is opts.Mtime, or the clock's time when that is zero.
 func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,9 +175,10 @@ func (s *Store) FindKeyHolder(_ context.Context, key string) (meta.UserID, error
 }
 
 // ListUserBuckets implements op.UserStore over the owner's buckets in name
-// order, as cls_user keys a user's bucket list by name (cls_user.cc:45-48 at
-// v19.2.6). Each entry carries the bucket's creation time, placement and
-// current totals.
+// order, as cls_user keys a user's bucket list by name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L45-L48 at v19.2.6).
+// Each entry carries the bucket's creation time, placement and current
+// totals.
 func (s *Store) ListUserBuckets(_ context.Context, owner meta.Owner, marker string, maxEntries int) (ents []meta.BucketEnt, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

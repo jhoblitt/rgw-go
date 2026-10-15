@@ -70,8 +70,9 @@ func gcQueueFront(o *Object) (uint64, bool) {
 }
 
 // gcQueueInit is cls_rgw_gc_queue_init through queue_init
-// (cls_rgw_gc.cc:34-58; cls_queue_src.cc:107-138): ENOENT on a missing shard,
-// EEXIST on one whose queue has a head.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L34-L58;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/queue/cls_queue_src.cc#L107-L138):
+// ENOENT on a missing shard, EEXIST on one whose queue has a head.
 func gcQueueInit(call *ClassCall) int32 {
 	if _, rval := decodeRequest(call.In, gc.DecodeQueueInitOp); rval < 0 {
 		return rval
@@ -86,7 +87,8 @@ func gcQueueInit(call *ClassCall) int32 {
 	return 0
 }
 
-// gcQueueEnqueue is cls_rgw_gc_queue_enqueue (cls_rgw_gc.cc:60-95).
+// gcQueueEnqueue is cls_rgw_gc_queue_enqueue
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L60-L95).
 func gcQueueEnqueue(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGCSetEntryOp)
 	if rval < 0 {
@@ -104,8 +106,9 @@ func gcQueueEnqueue(call *ClassCall) int32 {
 	return 0
 }
 
-// gcQueueList is cls_rgw_gc_queue_list_entries (cls_rgw_gc.cc:97-225): from
-// the marker's entry, the front for none, max entries (128 for 0) are
+// gcQueueList is cls_rgw_gc_queue_list_entries
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L97-L225):
+// from the marker's entry, the front for none, max entries (128 for 0) are
 // counted and those due by the class's clock, or all of them, returned, with
 // the next entry's marker while more follow. A marker before the front or
 // past the end is EINVAL. It reads the stored queue, as cls_cxx_read does.
@@ -149,8 +152,9 @@ func gcQueueList(call *ClassCall) (out []byte, rval int32) {
 }
 
 // gcQueueRemove is cls_rgw_gc_queue_remove_entries
-// (cls_rgw_gc.cc:227-375): the oldest NumEntries entries (128 for 0) go,
-// every entry when fewer remain, and the front moves past them.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L227-L375):
+// the oldest NumEntries entries (128 for 0) go, every entry when fewer
+// remain, and the front moves past them.
 func gcQueueRemove(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, gc.DecodeQueueRemoveEntriesOp)
 	if rval < 0 {

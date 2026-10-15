@@ -125,11 +125,12 @@ func roundedObjSize(bytes uint64) uint64 { return (bytes + 4095) &^ 4095 }
 
 // exceeds is check_quota for one quota
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L877-L904 at v19.2.6)
-// through the applier the quota selects (:769-866): the objects, then the
-// size, which the default applier takes as size_rounded plus the rounded
-// addition and CheckOnRaw's as the raw size plus the raw addition. A
-// negative limit is none. radosgw's additions are unsigned, so a negative
-// one counts as none.
+// through the applier the quota selects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L769-L866):
+// the objects, then the size, which the default applier takes as size_rounded
+// plus the rounded addition and CheckOnRaw's as the raw size plus the raw
+// addition. A negative limit is none. radosgw's additions are unsigned, so a
+// negative one counts as none.
 func exceeds(q meta.Quota, st op.Stats, addBytes, addObjs int64) bool {
 	if !q.Enabled {
 		return false

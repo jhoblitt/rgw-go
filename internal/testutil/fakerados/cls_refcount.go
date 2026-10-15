@@ -73,9 +73,11 @@ func RefcountClass() ClassFunc {
 	}
 }
 
-// readRefcount is read_refcount (cls_refcount.cc:22-45): the stored
-// refcount, the wildcard alone for an object without one when implicit, and
-// ENOENT for a missing object, EIO for one that does not decode.
+// readRefcount is read_refcount
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/refcount/cls_refcount.cc#L22-L45):
+// the stored refcount, the wildcard alone for an object without one when
+// implicit, and ENOENT for a missing object, EIO for one that does not
+// decode.
 func readRefcount(call *ClassCall, implicit bool) (rc refcount.Refcount, rval int32) {
 	if call.Stored == nil {
 		return refcount.Refcount{}, -int32(syscall.ENOENT)
@@ -99,10 +101,11 @@ func readRefcount(call *ClassCall, implicit bool) (rc refcount.Refcount, rval in
 	return rc, 0
 }
 
-// refcountPut is cls_rc_refcount_put (cls_refcount.cc:88-139): no refs at
-// all is EINVAL; a tag neither held nor covered by the wildcard, or already
-// retired, changes nothing; otherwise the ref goes, the tag is retired, and
-// the object is removed when no ref is left.
+// refcountPut is cls_rc_refcount_put
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/refcount/cls_refcount.cc#L88-L139):
+// no refs at all is EINVAL; a tag neither held nor covered by the wildcard,
+// or already retired, changes nothing; otherwise the ref goes, the tag is
+// retired, and the object is removed when no ref is left.
 func refcountPut(call *ClassCall, op refcount.PutOp) int32 {
 	rc, rval := readRefcount(call, op.ImplicitRef)
 	if rval < 0 {

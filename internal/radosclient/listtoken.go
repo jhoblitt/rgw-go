@@ -98,8 +98,8 @@ func mix(a0, b0, c0 uint32) (a, b, c uint32) {
 
 // PlacementHash is the hash RADOS places an object without a locator by:
 // pg_pool_t::hash_key under the default object_hash, rjenkins of ns, a 0x1f
-// and oid, or of oid alone in the default namespace (src/osd/osd_types.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.cc#L1785-L1796 at v19.2.6,
+// and oid, or of oid alone in the default namespace
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.cc#L1785-L1796 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.cc#L1794-L1805 at v20.2.4).
 // An object with a locator is placed by the locator's hash instead.
 func PlacementHash(ns, oid string) uint32 {

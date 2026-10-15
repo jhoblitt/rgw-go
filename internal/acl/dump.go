@@ -12,8 +12,9 @@ import (
 // forms the admin API renders through a formatter, which the MarshalJSON
 // methods give for ceph-dencoder.
 
-// Dump is RGWAccessControlPolicy::dump (rgw_acl.cc:417-421): the list, then
-// the owner.
+// Dump is RGWAccessControlPolicy::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L417-L421):
+// the list, then the owner.
 func (p Policy) Dump(f formatter.Formatter, rel denc.Release) {
 	f.OpenObjectSection("acl")
 	p.ACL.Dump(f, rel)
@@ -23,15 +24,17 @@ func (p Policy) Dump(f formatter.Formatter, rel denc.Release) {
 	f.CloseSection()
 }
 
-// Dump is ACLOwner::dump (rgw_acl.cc:404-408).
+// Dump is ACLOwner::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L404-L408).
 func (o Owner) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("id", o.ID)
 	f.DumpString("display_name", o.DisplayName)
 }
 
-// Dump is RGWAccessControlList::dump (rgw_acl.cc:369-402): the user and
-// group maps in key order and the grants in multimap order; the referer
-// list is not dumped.
+// Dump is RGWAccessControlList::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L369-L402):
+// the user and group maps in key order and the grants in multimap
+// order; the referer list is not dumped.
 func (l List) Dump(f formatter.Formatter, rel denc.Release) {
 	f.OpenArraySection("acl_user_map")
 	for _, k := range slices.Sorted(maps.Keys(l.UserMap)) {
@@ -61,8 +64,9 @@ func (l List) Dump(f formatter.Formatter, rel denc.Release) {
 	f.CloseSection()
 }
 
-// Dump is ACLGrant::dump (rgw_acl.cc:275-302): the type, the fields of its
-// grantee, then the permission.
+// Dump is ACLGrant::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L275-L302):
+// the type, the fields of its grantee, then the permission.
 func (g Grant) Dump(f formatter.Formatter, rel denc.Release) {
 	k := g.kind()
 	f.OpenObjectSection("type")
@@ -85,13 +89,15 @@ func (g Grant) Dump(f formatter.Formatter, rel denc.Release) {
 	f.CloseSection()
 }
 
-// Dump is ACLPermission::dump (rgw_acl.cc:265-268): the flags as the int C++
-// stores.
+// Dump is ACLPermission::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L265-L268):
+// the flags as the int C++ stores.
 func (p Permission) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpInt("flags", int64(int32(p))) //nolint:gosec // dump_int of the int C++ stores
 }
 
-// Dump is ACLGranteeType::dump (rgw_acl.cc:270-273).
+// Dump is ACLGranteeType::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L270-L273).
 func (t GranteeType) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpUnsigned("type", uint64(t))
 }

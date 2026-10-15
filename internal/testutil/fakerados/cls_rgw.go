@@ -599,9 +599,10 @@ func rgwBucketCompleteOp(call *ClassCall) int32 {
 // ret_err, verbatim, when the header's reshard status is anything but
 // not-resharding. Tentacle's
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4995-L5016,
-// through guard_bucket_resharding at :906-921) refuses only an in-progress
-// reshard, and a log-record one whose reshard log has reached
-// rgw_reshardlog_threshold.
+// through guard_bucket_resharding at
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L906-L921)
+// refuses only an in-progress reshard, and a log-record one whose reshard log
+// has reached rgw_reshardlog_threshold.
 func rgwGuardBucketResharding(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGuardOp)
 	if rval < 0 {
@@ -1066,9 +1067,10 @@ func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader)
 	m := ret.Dir.Entries
 	start := op.StartObj.Name
 	if op.StartObj.Instance != "" {
-		// encode_list_index_key (:358-390) finds no versioned instance entry,
-		// which the fake never stores, and starts after every version of the
-		// name.
+		// encode_list_index_key
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L358-L390)
+		// finds no versioned instance entry, which the fake never stores, and
+		// starts after every version of the name.
 		start += "\x01"
 	}
 	var startEntry rgwcls.ObjKey
@@ -1315,8 +1317,9 @@ func (c *Cluster) Suggestions(pool, ns, oid string) []rgwcls.Suggestion {
 // category. An entry that does not decode is EIO. The fake answers ENOENT
 // for a shard that does not exist, which is what the OSD answers
 // bucket_check_index, a read; bucket_rebuild_index, a write, would instead
-// read an empty header there (PrimaryLogPG.cc:7767-7770 at v19.2.6) and
-// create the shard holding a zero header at version 1. radosgw sends
+// read an empty header there
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/osd/PrimaryLogPG.cc#L7767-L7770 at v19.2.6)
+// and create the shard holding a zero header at version 1. radosgw sends
 // neither method to a shard it has not created. The fake stores no key in
 // the 0x80 namespace, whose instance entries the class counts as well.
 func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32) {
@@ -1365,7 +1368,9 @@ func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
 // rgwBucketRebuildIndex is rgw_bucket_rebuild_index
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3116-L3126 at v19.2.6):
 // the recalculated header written in place of the stored one, its version
-// counted as write_bucket_header counts it (:696-703). Tentacle's
+// counted as write_bucket_header counts it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L696-L703).
+// Tentacle's
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3436-L3458)
 // also guards itself against a reshard, which the fake, Squid's class,
 // leaves out.
