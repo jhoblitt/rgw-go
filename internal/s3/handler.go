@@ -458,15 +458,33 @@ func LogAuthError(ctx context.Context, err error) {
 	}
 }
 
-// ApplyAuth gives r the authenticated identity and, when the authenticator
+// ApplyAuth gives r the authenticated identity; when the authenticator
 // replaces the request body with a reader that verifies the payload as it is
-// read, that reader and its length. Nothing reads the request body before
-// this. The admin handler applies its AuthResult through it too.
+// read, that reader and its length; and a SigV2 presigned request's signed
+// query meta (op.AuthResult.QueryMeta) as headers of a copy of r's, with
+// every query parameter it was read from gone, so that each read of the
+// request, its stored attrs and sts:authentication among them, takes it as if
+// sent as a header. Nothing reads the request body before this. The admin
+// handler applies its AuthResult through it too.
 func ApplyAuth(r *op.Request, res *op.AuthResult) {
 	r.Identity = res.Identity
 	if res.Body != nil {
 		r.Body = res.Body
 		r.ContentLength = res.ContentLength
+	}
+	if len(res.QueryMeta) > 0 {
+		h := r.Header.Clone()
+		if h == nil {
+			h = http.Header{}
+		}
+		for name, v := range res.QueryMeta {
+			h.Set(name, v)
+		}
+		r.Header = h
+		maps.DeleteFunc(r.Query, func(k string, _ []string) bool {
+			_, folded := res.QueryMeta[lowerASCIIString(k)]
+			return folded
+		})
 	}
 }
 

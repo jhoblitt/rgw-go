@@ -78,6 +78,14 @@ type AuthResult struct {
 	PayloadSHA256 string
 	// Presigned is set when the credentials came in the query string.
 	Presigned bool
+	// QueryMeta is the x-amz-meta-* parameters and x-amz-security-token a
+	// SigV2 presigned request signs in its query, by lower-case name, each
+	// value joined as the string to sign joins it. That string runs the
+	// query's lines on from the headers', so a name can move between the two
+	// with the signature kept; the protocol handler moves these into the
+	// request's headers and out of its query, so that every read takes the
+	// two as one set (docs/exclusions.md). Empty for every other request.
+	QueryMeta map[string]string
 }
 
 // PayloadForms is the set of signed payload forms an op accepts. radosgw's

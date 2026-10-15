@@ -283,6 +283,109 @@ func qsMetaV2(rv *requestView) map[string]string {
 	return m
 }
 
+// queryMetaV2 is a presigned SigV2 request's qsMetaV2, for
+// AuthResult.QueryMeta, once Verifier.Authenticate has authenticated the
+// request. The string to sign runs the query's lines straight on from the
+// headers', each set sorted on its own (rgw_auth_s3.cc:164-165 at v19.2.7,
+// :165-166 at v20.2.4), so a run of x-amz-meta-* or x-amz-security-token
+// lines can move between the end of the headers and the start of the query
+// with the signature kept. radosgw stores query meta on a PutObject or an
+// UploadPart alone and reads the session token from the header alone
+// (rgw_op.cc:904-909 at v19.2.7, :939-944 at v20.2.4), so the two forms mean
+// different things (docs/ceph-upstream-bugs.md). rgw-go has every read take
+// them as one set, on both releases (docs/exclusions.md), and refuses what
+// does not make one: a name the string to sign carries from both sides, and
+// an empty session token, in the headers or under a query name in any case,
+// where authDataV2 refuses only the query's x-amz-security-token spelt so. It
+// also refuses a query line whose name or value, url-decoded, holds a CR or
+// LF: get_canon_amz_hdrs writes each line unescaped (rgw_auth_s3.cc:66-86 at
+// v19.2.7, :67-87 at v20.2.4), so such a parameter signs as the several lines
+// it spells, signed header lines or a token among them, while every read
+// takes it as one (docs/ceph-upstream-bugs.md). A header value cannot carry
+// either: net/http joins a continuation line with a space and answers 400 to
+// a value holding any other control character. And it refuses a query meta
+// name holding a colon, which moves the line's first colon, the end of its
+// name, into the name: x-amz-meta-a:x=y signs as an x-amz-meta-a of x:y. No
+// header name holds one. The separator refusals cover the packed form alone: a signer
+// who signs a value holding a line break has also signed the request with its
+// lines split out, which carries the same signature and is served.
+func queryMetaV2(rv *requestView) (map[string]string, error) {
+	qs := qsMetaV2(rv)
+	hdr := amzHeadersV2(rv)
+	for _, name := range slices.Sorted(maps.Keys(qs)) {
+		if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(qs[name], "\r\n") {
+			return nil, fmt.Errorf("query parameter %q signs a line break", name)
+		}
+		if strings.Contains(name, ":") {
+			return nil, fmt.Errorf("query parameter %q signs a colon in its name", name)
+		}
+		if _, ok := hdr[name]; ok {
+			return nil, fmt.Errorf("%s is signed in both the headers and the query", name)
+		}
+	}
+	if tok, ok := rv.header("x-amz-security-token"); ok && tok == "" {
+		return nil, errors.New("empty security token")
+	}
+	if tok, ok := qs["x-amz-security-token"]; ok && tok == "" {
+		return nil, errors.New("empty security token in the query")
+	}
+	return qs, nil
+}
+
+// expiresLineBreak refuses, once Verifier.Authenticate has authenticated a
+// presigned SigV2 request, an Expires holding a CR or LF. Expires is the date
+// line, written as sent up to a NUL (rgw_auth_s3.cc:217 and :159-162 at
+// v19.2.7, :219 and :160-163 at v20.2.4), and its expiry is read by atoll,
+// which stops at the first byte that is no digit, so an Expires of
+// 1441000000%0Ax-amz-copy-source:b/src passes and signs as the header
+// X-Amz-Copy-Source: b/src does, which the request no longer carries
+// (docs/ceph-upstream-bugs.md).
+func expiresLineBreak(rv *requestView) error {
+	if expires, _ := rv.param("Expires"); strings.ContainsAny(expires, "\r\n") {
+		return errors.New("the Expires parameter signs a line break")
+	}
+	return nil
+}
+
+// packedSubresourceV2 refuses, once Verifier.Authenticate has authenticated a
+// SigV2 request, a signed sub-resource whose value, url-decoded, spells a
+// sub-resource canonicalResourceV2 can write after it: '&', its name, and '&'
+// or the value's end, or '=' for one parseQuery files with its value, which an
+// admin sub-resource is not. get_canon_resource joins the sub-resources with
+// '&' and writes each value unescaped (rgw_auth_s3.cc:91-124 at v19.2.7,
+// :92-125 at v20.2.4), so partNumber=1%26uploadId%3DU signs as the
+// partNumber and uploadId of an UploadPart while it names no upload, and a
+// response-content-disposition can carry a GET's signed versionId away
+// (docs/ceph-upstream-bugs.md). Any other '&', as in a filename, still
+// passes, as no other request signs the same resource. The refusal covers the
+// packed form alone: a signer who signs a value spelling a later sub-resource
+// has also signed the request that carries it apart, which is served.
+func packedSubresourceV2(rv *requestView) error {
+	for i, name := range signedSubresourcesV2 {
+		v, ok := rv.subres[name]
+		if !ok {
+			continue
+		}
+		for _, later := range signedSubresourcesV2[i+1:] {
+			withValue := subResources[later]
+			if !withValue && !adminSubResources[later] {
+				continue
+			}
+			for rest := v; ; {
+				_, after, found := strings.Cut(rest, "&"+later)
+				if !found {
+					break
+				}
+				if after == "" || after[0] == '&' || after[0] == '=' && withValue {
+					return fmt.Errorf("sub-resource %s's value spells the sub-resource %s", name, later)
+				}
+				rest = after
+			}
+		}
+	}
+	return nil
+}
+
 // addAmzMeta is rgw_add_amz_meta_header (rgw_common.cc:472-487 at v19.2.6,
 // :485-500 at v20.2.4), which init_meta_info repeats inline: a second value
 // for k follows the first, right-trimmed, after a comma.
