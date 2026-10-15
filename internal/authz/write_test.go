@@ -308,6 +308,39 @@ var _ = Describe("the write-side helpers", func() {
 			Entry("on Tentacle", denc.Tentacle, pabAttr(acl.PublicAccessBlock{BlockPublicPolicy: true})),
 			Entry("with a block that does not decode", denc.Tentacle, []byte{1}),
 		)
+		DescribeTable("judges a policy public under a block of public policies as Amazon S3 does",
+			func(ctx SpecContext, r denc.Release, body string, refused bool) {
+				block := pabAttr(acl.PublicAccessBlock{BlockPublicPolicy: true})
+				_, err := authz.New(evalConfig(r)).ParseBucketPolicy(policyReq(ctx, "", block), []byte(body))
+				if refused {
+					Expect(err).To(MatchError(op.ErrAccessDenied))
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+			},
+			// docs/ceph-upstream-bugs.md, "Squid's is_public counts every Allow
+			// statement whose NotPrincipal is not the wildcard".
+			Entry("Squid accepts a grant to one user", denc.Squid,
+				doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::b/*", "")), false),
+			// docs/ceph-upstream-bugs.md, "radosgw's is_public judges a
+			// wildcard-principal statement against a fixed three-key environment".
+			Entry("Squid refuses a grant to everyone over TLS", denc.Squid,
+				doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::b/*", `{"Bool": {"aws:SecureTransport": "true"}}`)), true),
+			Entry("Tentacle refuses a grant to everyone over TLS", denc.Tentacle,
+				doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::b/*", `{"Bool": {"aws:SecureTransport": "true"}}`)), true),
+			Entry("Squid accepts a grant to everyone from 1.1.1.1 alone", denc.Squid,
+				doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::b/*", `{"IpAddress": {"aws:SourceIp": "1.1.1.1/32"}}`)), false),
+			Entry("Tentacle accepts a grant to everyone from 1.1.1.1 alone", denc.Tentacle,
+				doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::b/*", `{"IpAddress": {"aws:SourceIp": "1.1.1.1/32"}}`)), false),
+			// docs/ceph-upstream-bugs.md, "Tentacle's is_public misses a fixed
+			// principal that admits the anonymous requester".
+			Entry("Squid refuses a grant to the default tenant's account", denc.Squid,
+				doc(stmt("Allow", awsPrincipal("arn:aws:iam:::root"), "s3:GetObject", "arn:aws:s3:::b/*", "")), true),
+			Entry("Tentacle refuses a grant to the default tenant's account", denc.Tentacle,
+				doc(stmt("Allow", awsPrincipal("arn:aws:iam:::root"), "s3:GetObject", "arn:aws:s3:::b/*", "")), true),
+			Entry("Tentacle refuses a grant to the anonymous user", denc.Tentacle,
+				doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/anonymous"), "s3:GetObject", "arn:aws:s3:::b/*", "")), true),
+		)
 		It("lets a public policy through a block of public ACLs alone", func(ctx SpecContext) {
 			body := doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::b/*", ""))
 			_, err := eval.ParseBucketPolicy(policyReq(ctx, "", pabAttr(acl.PublicAccessBlock{BlockPublicACLs: true})), []byte(body))

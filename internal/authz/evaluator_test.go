@@ -639,9 +639,63 @@ var _ = Describe("Evaluator", func() {
 					Expect(f.getObject(alice(), "polbkt", "o")).To(Succeed(), "the owner")
 				})
 
-				It("judges the policy public as Tentacle does", func() {
+				It("judges the policy public as Amazon S3 does", func() {
 					f.setPolicy("polbkt", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::polbkt/*", "")))
 					Expect(f.getObject(bob(), "polbkt", "o")).To(Succeed(), "a grant to bob alone is not public")
+				})
+
+				// docs/ceph-upstream-bugs.md, "radosgw's is_public judges a
+				// wildcard-principal statement against a fixed three-key
+				// environment".
+				It("refuses all but the owner when the policy grants everyone under a key Amazon S3 does not list", func() {
+					f.setPolicy("polbkt", doc(stmt("Allow", `"*"`, "s3:GetObject", "arn:aws:s3:::polbkt/*",
+						`{"StringEquals": {"aws:PrincipalType": "User"}}`)))
+					Expect(f.getObject(bob(), "polbkt", "o")).To(MatchError(op.ErrAccessDenied), "bob")
+					Expect(f.getObject(alice(), "polbkt", "o")).To(Succeed(), "the owner")
+				})
+
+				// docs/ceph-upstream-bugs.md, "Tentacle's is_public misses a
+				// fixed principal that admits the anonymous requester".
+				It("refuses the anonymous requester a grant to the default tenant's account", func() {
+					f.setPolicy("polbkt", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::root"), "s3:GetObject", "arn:aws:s3:::polbkt/*", "")))
+					Expect(f.getObject(anon(), "polbkt", "o")).To(MatchError(op.ErrAccessDenied), "anonymous")
+					Expect(f.getObject(bob(), "polbkt", "o")).To(MatchError(op.ErrAccessDenied), "bob, of the default tenant")
+					Expect(f.getObject(alice(), "polbkt", "o")).To(Succeed(), "the owner")
+				})
+
+				// IsPublic decides by principal kind and name what the
+				// evaluator's IsIdentity decides by matching: every principal
+				// through which the evaluator grants the anonymous requester
+				// must be public, so the block refuses it.
+				It("refuses the anonymous requester through every principal that admits it", func() {
+					forms := []string{
+						`"*"`, `{"AWS": "*"}`, `{"AWS": ""}`, `{"AWS": "arn:aws:iam:::root"}`,
+						`{"AWS": "arn:aws:iam:::user/anonymous"}`, `{"AWS": "arn:aws:iam:::user/anonymous:*"}`,
+						`{"AWS": "arn:aws:iam:::user/anonymous:x"}`, `{"AWS": "arn:aws:iam:::user/anonymous:"}`,
+						`{"AWS": "arn:aws:iam:::user//anonymous"}`, `{"AWS": "arn:aws:iam:::user/x/anonymous"}`,
+						`{"AWS": "anonymous"}`, `{"AWS": "arn:aws:iam::anonymous:root"}`,
+						`{"AWS": "arn:aws:iam::t1:user/anonymous"}`, `{"AWS": "arn:aws:iam:::user/alice"}`,
+						`{"AWS": "arn:aws:iam:::role/anonymous"}`, `{"AWS": "arn:aws:sts:::assumed-role/anonymous/s"}`,
+						`{"Federated": "arn:aws:iam:::oidc-provider/anonymous"}`, `{"Federated": "arn:aws:iam:::root"}`,
+						// Squid's parse drops a Service principal; Tentacle's
+						// keeps it.
+						`{"Service": "anonymous"}`,
+					}
+					var admitted []string
+					for _, principal := range forms {
+						f.setPolicy("polbkt", doc(stmt("Allow", principal, "s3:GetObject", "arn:aws:s3:::polbkt/*", "")))
+						f.setAttr("", "polbkt", attrPublicAccess, pabAttr(acl.PublicAccessBlock{}))
+						if f.getObject(anon(), "polbkt", "o") != nil {
+							continue
+						}
+						admitted = append(admitted, principal)
+						f.setAttr("", "polbkt", attrPublicAccess, pabAttr(acl.PublicAccessBlock{RestrictPublicBuckets: true}))
+						Expect(f.getObject(anon(), "polbkt", "o")).To(MatchError(op.ErrAccessDenied), "anonymous through %s", principal)
+					}
+					Expect(admitted).To(ConsistOf(`"*"`, `{"AWS": "*"}`, `{"AWS": ""}`, `{"AWS": "arn:aws:iam:::root"}`,
+						`{"AWS": "arn:aws:iam:::user/anonymous"}`, `{"AWS": "arn:aws:iam:::user/anonymous:*"}`,
+						`{"Federated": "arn:aws:iam:::root"}`),
+						"the principals that admit the anonymous requester without the block")
 				})
 			})
 

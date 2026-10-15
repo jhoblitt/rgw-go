@@ -16,12 +16,11 @@ var _ = Describe("SemanticsFor", func() {
 
 	It("takes every v20.2.4 rule on tentacle", func() {
 		Expect(policy.SemanticsFor(denc.Tentacle)).To(gstruct.MatchAllFields(gstruct.Fields{
-			"NullTestsValues":              BeTrue(),
-			"NotMeansNone":                 BeTrue(),
-			"PublicNeedsWildcardPrincipal": BeTrue(),
-			"RejectAllowWithNotPrincipal":  BeTrue(),
-			"ServicePrincipals":            BeTrue(),
-			"FindKeepsFirstValue":          BeTrue(),
+			"NullTestsValues":             BeTrue(),
+			"NotMeansNone":                BeTrue(),
+			"RejectAllowWithNotPrincipal": BeTrue(),
+			"ServicePrincipals":           BeTrue(),
+			"FindKeepsFirstValue":         BeTrue(),
 		}))
 	})
 })
