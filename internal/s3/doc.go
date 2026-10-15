@@ -21,7 +21,9 @@
 // Handlers bind per scope. serviceHandlers, bucketHandlers and
 // objectHandlers, each in its own file, bind their entries to their own
 // scope, and multipartHandlers binds each entry to the one scope Dispatch
-// routes its name in. A route with no handler answers NotImplemented.
+// routes its name in. Each feature's routes are a featureRoutes set in that
+// feature's own file, bound to the set's scope. A route with no handler
+// answers NotImplemented.
 //
 // A HandlerFunc renders through WriteError, radosgw's error document with its
 // length and Accept-Ranges; WriteXML, a document carrying the length

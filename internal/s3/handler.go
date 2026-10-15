@@ -43,26 +43,30 @@ type routeKey struct {
 	name  string
 }
 
-// unitHandlers is the units' route maps, by the scope their entries bind to.
+// unitHandlers is the units' route maps, by the scope their entries bind to,
+// and the features' route sets.
 type unitHandlers struct {
 	service, bucket, object, multipart map[string]HandlerFunc
+	sets                               []routeSet
 }
 
 var scopeNames = [...]string{op.ScopeService: "service", op.ScopeBucket: "bucket", op.ScopeObject: "object"}
 
 // NewHandler builds the handler with every implemented route registered and
 // every other route answering NotImplemented. It binds each entry of
-// serviceHandlers, bucketHandlers and objectHandlers to its map's scope, and
-// each entry of multipartHandlers to the one scope Dispatch routes its name
-// in. It panics on an entry whose scope Dispatch never routes its name to, a
-// multipartHandlers entry routed in more than one scope, and a scope and
-// name bound twice.
+// serviceHandlers, bucketHandlers and objectHandlers to its map's scope, each
+// entry of a featureRoutes set to that set's scope, and each entry of
+// multipartHandlers to the one scope Dispatch routes its name in. It panics
+// on a scope Dispatch never routes, an entry whose scope Dispatch never
+// routes its name to, a multipartHandlers entry routed in more than one
+// scope, and a scope and name bound twice, across the maps and sets alike.
 func NewHandler(env *op.Env, auth Authenticator, cfg Config) *Handler {
 	return buildHandler(env, auth, cfg, unitHandlers{
 		service:   serviceHandlers(),
 		bucket:    bucketHandlers(),
 		object:    objectHandlers(env),
 		multipart: multipartHandlers(env),
+		sets:      featureRoutes(env, auth),
 	})
 }
 
@@ -74,13 +78,14 @@ func buildHandler(env *op.Env, auth Authenticator, cfg Config, u unitHandlers) *
 	if h.inflight == nil {
 		h.inflight = new(atomic.Int64)
 	}
-	for scope, fns := range map[op.Scope]map[string]HandlerFunc{
-		op.ScopeService: u.service,
-		op.ScopeBucket:  u.bucket,
-		op.ScopeObject:  u.object,
-	} {
-		for name, fn := range fns {
-			h.bind(scope, name, fn)
+	sets := append([]routeSet{
+		{op.ScopeService, u.service},
+		{op.ScopeBucket, u.bucket},
+		{op.ScopeObject, u.object},
+	}, u.sets...)
+	for _, s := range sets {
+		for name, fn := range s.handlers {
+			h.bind(s.scope, name, fn)
 		}
 	}
 	for name, fn := range u.multipart {
@@ -94,6 +99,9 @@ func buildHandler(env *op.Env, auth Authenticator, cfg Config, u unitHandlers) *
 }
 
 func (h *Handler) bind(scope op.Scope, name string, fn HandlerFunc) {
+	if int(scope) >= len(scopeNames) {
+		panic(fmt.Sprintf("s3: route %q names scope %d, which Dispatch never routes", name, scope))
+	}
 	if !routedAt(scope, name) {
 		panic(fmt.Sprintf("s3: no %s route is named %q", scopeNames[scope], name))
 	}
@@ -106,9 +114,9 @@ func (h *Handler) bind(scope op.Scope, name string, fn HandlerFunc) {
 
 // Register installs fn for the route named name under every scope that
 // routes it, replacing any handler there, before the handler serves. The
-// units bind their routes through their files' maps, which NewHandler
-// binds; Register replaces a route for a spec. It panics on a name no scope
-// routes.
+// units bind their routes through their files' maps and the features' route
+// sets, which NewHandler binds; Register replaces a route for a spec. It
+// panics on a name no scope routes.
 func (h *Handler) Register(name string, fn HandlerFunc) {
 	scopes := routedScopes(name)
 	if len(scopes) == 0 {
