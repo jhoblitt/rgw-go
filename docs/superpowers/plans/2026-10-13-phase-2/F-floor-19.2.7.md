@@ -767,6 +767,31 @@ Found in F17's work (its report's concern 2), and numbered here before F17 merge
   s3-tests can sign SigV2 that way (F15's test shows how).
 - **Depends on:** F18, since both change requestattrs.go and `cryptAttr`. **PR:** its own.
   **Brief:** about 35 lines.
+### Task F20: s3, PutObject parses partNumber as radosgw does
+
+Found in F17's work (its report's second round), and numbered here before F17 merged (PP-12).
+
+- **Layer:** s3. **Cluster:** for the s3-tests run only.
+- **Files:** modify internal/s3/putobject.go and its specs; docs/exclusions.md, if any difference
+  stays.
+- **Behaviour:**
+  1. radosgw's PutObject reads `partNumber` whenever the query carries one. It answers EINVAL to one
+     that `strict_strtol` cannot parse, and to an `uploadId` without a `partNumber`
+     ([rgw_rest_s3.cc:2682-2694](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2682-L2694),
+     [rgw_rest_s3.cc:2835-2847](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2835-L2847);
+     [strtol.cc:42-73](https://github.com/ceph/ceph/blob/v19.2.7/src/common/strtol.cc#L42-L73)).
+  2. rgw-go reads `partNumber` only beside an `uploadId` (internal/s3/putobject.go). So a PutObject
+     carrying an unparseable `partNumber` and no `uploadId` stores an object where radosgw answers
+     400. That gap is what let F17's packed sub-resource turn a presigned UploadPart into a
+     PutObject in rgw-go, before F17 refused the packing.
+  3. rgw-go parses `partNumber` as `strict_strtol` does, on both releases, whenever the query
+     carries one. It answers radosgw's status and error code for one that does not parse, and for an
+     `uploadId` without one. A `partNumber` that parses but has no `uploadId` behaves as radosgw's
+     does; the task reads what that is at both tags.
+- **Specs:** `partNumber` of `x`, `1x`, an empty value, a sign, leading spaces and an overflow; with
+  and without an `uploadId`; each answered as radosgw answers.
+- **s3-tests:** a PutObject with `?partNumber=x` answers 400, unless s3-tests already has one.
+- **Depends on:** nothing. **PR:** its own. **Brief:** about 25 lines.
 
 ## Order
 
@@ -774,7 +799,7 @@ Found in F17's work (its report's concern 2), and numbered here before F17 merge
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F17, F18, F19 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F17 after F15; F18 after F17; F19 after F18; F16 superseded by F18) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F17, F18, F19, F20 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F17 after F15; F18 after F17; F19 after F18; F20 nothing; F16 superseded by F18) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
