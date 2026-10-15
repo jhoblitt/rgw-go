@@ -700,10 +700,12 @@ six other header prefixes onto `x-amz-`.
      as does F13's six-prefix rule with its `x-rgw-auth` exemption. A relabelled SigV2 request then
      fails its signature with 403 SignatureDoesNotMatch, as on AWS, and an unsigned `X-Goog-Meta-*` is
      ignored.
-  5. A Swift API, if one is added later, reads its own namespace (`X-Object-Meta-*` and the rest) by
-     name into the same stored attributes, as radosgw's Swift handlers already do for containers and
-     accounts ([rgw_rest_swift.cc:750-781](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_swift.cc#L750-L781)). This task builds none
-     of it.
+  5. A Swift API, if one is added later, maps its own namespace (`X-Object-Meta-*`,
+     `X-Container-Meta-*`, `X-Account-Meta-*`) explicitly into the same stored attributes. radosgw
+     instead files them through the same renaming, with a Swift-specific name normalisation
+     ([rgw_common.cc:442-443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L442-L443)); its Swift handlers read those headers by
+     name only to remove metadata ([rgw_rest_swift.cc:748-785](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_swift.cc#L748-L785)).
+     This task builds none of it.
 - **Specs:** each of the six prefixes:
   - an unsigned header ignored under SigV4 and SigV2;
   - a signed SigV2 relabel of the copy source, the ACL and the tagging failing its signature;
