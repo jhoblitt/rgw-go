@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S4 | 4 |
+| `00-index.md` | this index, and the shared tasks S1 to S5 | 5 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V15c |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
@@ -203,9 +203,30 @@ The controller's rulings on the research's open questions, under the owner's rul
 - **Consumers:** WP-17's otp class registers its method set from the start.
 - **Depends on:** S1. **PR:** one. **Brief:** about 70 lines.
 
+### Task S5: IgnorePublicAcls ignores Swift's public container grants
+
+- **Layer:** acl and authz (`internal/acl`, `internal/authz`). **Files:** modify `internal/acl/eval.go` and the authz evaluator's ACL checks, their specs, and `docs/exclusions.md`. **Cluster:** for one spec, if the rooket clusters' radosgw serves Swift.
+- **Why:** S3's review found that a public container grant written through Swift escapes IgnorePublicAcls, in radosgw at both tags and in rgw-go, which reproduces it. Two paths let it through:
+  - the referer grants are read whatever IgnorePublicAcls says ([rgw_acl.cc:190-192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L190-L192), [rgw_acl.cc:190-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L190-L192)); rgw-go's `internal/acl/eval.go` reads them outside its `ignorePublicACLs` gate;
+  - with `rgw_enforce_swift_acls`, true by default, an object read falls back to the bucket ACL's Swift flags with IgnorePublicAcls off ([rgw_common.cc:1598-1599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599), [rgw_common.cc:1655-1656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656)); rgw-go's object ACL check passes `false` there too.
+
+  With all four public access block settings on, a container a Swift user made public with `.r:*` serves anonymous S3 GetObject, and anonymous ListBucket whenever the request sends a Referer. The registry records the radosgw side.
+- **Behaviour** (AWS: IgnorePublicAcls "causes Amazon S3 to ignore all public ACLs on a bucket and any objects that it contains"):
+  1. Under IgnorePublicAcls, no referer grant is read. A Referer is the client's to send, so every referer grant is a grant to everyone.
+  2. Under IgnorePublicAcls, the Swift fallback ignores the bucket ACL's grants to AllUsers and AuthenticatedUsers and its referer grants, as the bucket and object checks do.
+  3. Without IgnorePublicAcls, both paths answer as today.
+  4. `acl.Policy.IsPublic` counts a grant to AllUsers or AuthenticatedUsers of any flag, Swift's included, and any referer grant, as public, so the policy status BC-20 serves does not call such a bucket private.
+  5. An exclusion states the difference from radosgw on both releases.
+- **Specs:**
+  - under IgnorePublicAcls, a stored bucket ACL with a `.r:*` referer grant and an AllUsers READ_OBJS grant denies an anonymous GetObject, and an anonymous ListBucket with and without a Referer; without it, both are allowed as today;
+  - a referer grant to one domain is ignored under IgnorePublicAcls;
+  - IsPublic is true for an ACL with only Swift flags or only a referer grant;
+  - if the clusters' radosgw serves Swift, one cluster spec: radosgw's Swift API sets `X-Container-Read: .r:*`, S3 sets all four block settings, and rgw-go refuses the anonymous read. If they do not, the implementer records why, and the stored ACL's bytes from such a container pin the specs instead.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 90 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, and S4 once S1 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, and S5 at once.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T unit starts at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
