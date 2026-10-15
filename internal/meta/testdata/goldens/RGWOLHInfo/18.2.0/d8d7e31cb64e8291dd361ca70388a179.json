@@ -1,0 +1,22 @@
+{
+    "target": {
+        "bucket": {
+            "name": "yournamehere-r5ahkpb1ndqks8o1-121",
+            "marker": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.139",
+            "bucket_id": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.139",
+            "tenant": "",
+            "explicit_placement": {
+                "data_pool": "",
+                "data_extra_pool": "",
+                "index_pool": ""
+            }
+        },
+        "key": {
+            "name": "bar",
+            "instance": "Uw4cQp5JrGTqGITBJGlLGE5ut.rOTln",
+            "ns": ""
+        }
+    },
+    "removed": false
+}
+

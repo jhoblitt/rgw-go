@@ -296,6 +296,14 @@ var _ = Describe("corpus goldens", func() {
 		goldentest.RoundTrip(dir, "ObjectMetaInfo", squid, meta.DecodeObjectMetaInfo,
 			func(e *denc.Encoder, v meta.ObjectMetaInfo, r denc.Release) { v.Encode(e, r) })
 	})
+	It("RGWOLHInfo", func() {
+		goldentest.RoundTrip(dir, "RGWOLHInfo", squid, meta.DecodeOLHInfo,
+			func(e *denc.Encoder, v meta.OLHInfo, r denc.Release) { v.Encode(e, r) })
+	})
+	It("RGWOLHPendingInfo", func() {
+		goldentest.RoundTrip(dir, "RGWOLHPendingInfo", squid, meta.DecodeOLHPendingInfo,
+			func(e *denc.Encoder, v meta.OLHPendingInfo, r denc.Release) { v.Encode(e, r) })
+	})
 	// One corpus object holds an unquoted non-numeric value, which
 	// JSONFormattable::dump prints bare, so its dencoder JSON does not parse:
 	// bytes are compared here and JSON in the next spec.

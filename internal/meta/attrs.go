@@ -36,6 +36,13 @@ const (
 	AttrCloudTierConfig  = AttrPrefix + "cloud_tier_config"
 )
 
+// AttrOLHPendingPrefix is RGW_ATTR_OLH_PENDING_PREFIX
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L131-L136 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L150-L155 at v20.2.4):
+// an OLH head holds one attr under it, named by its op tag, for each
+// modification begun and not yet applied.
+const AttrOLHPendingPrefix = AttrOLHPrefix + "pending."
+
 // AttrRateLimit is RGW_ATTR_RATELIMIT
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L81 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L86 at v20.2.4),

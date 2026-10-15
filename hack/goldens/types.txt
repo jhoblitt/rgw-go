@@ -40,6 +40,8 @@ RGWCompressionInfo internal/meta
 RGWCacheNotifyInfo internal/meta
 ObjectCacheInfo internal/meta
 ObjectMetaInfo internal/meta
+RGWOLHInfo internal/meta
+RGWOLHPendingInfo internal/meta
 obj_version internal/cls/version
 cls_version_check_op internal/cls/version
 cls_version_set_op internal/cls/version
