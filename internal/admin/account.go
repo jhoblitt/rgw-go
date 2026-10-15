@@ -80,7 +80,8 @@ func writeAccountInfo(w http.ResponseWriter, r *op.Request, q Request, info meta
 	})
 }
 
-// createAccount is RGWOp_Account_Create::execute (rgw_rest_account.cc:31-102).
+// createAccount is RGWOp_Account_Create::execute
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L31-L102).
 func createAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	fl := &flags{a: q.Args}
 	o := &op.CreateAccount{Params: accountParams(q.Args, fl)}
@@ -90,7 +91,8 @@ func createAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	return writeAccountInfo(w, r, q, o.Result)
 }
 
-// modifyAccount is RGWOp_Account_Modify::execute (rgw_rest_account.cc:115-168),
+// modifyAccount is RGWOp_Account_Modify::execute
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L115-L168),
 // which Squid also runs for PUT ?quota, so the quota arguments go unread.
 func modifyAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	fl := &flags{a: q.Args}
@@ -101,7 +103,8 @@ func modifyAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	return writeAccountInfo(w, r, q, o.Result)
 }
 
-// getAccount is RGWOp_Account_Get::execute (rgw_rest_account.cc:182-191),
+// getAccount is RGWOp_Account_Get::execute
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L182-L191),
 // which reads no email.
 func getAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetAccountInfo{Params: accountIdentity(q.Args)}
@@ -111,7 +114,8 @@ func getAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	return writeAccountInfo(w, r, q, o.Result)
 }
 
-// deleteAccount is RGWOp_Account_Delete::execute (rgw_rest_account.cc:204-221),
+// deleteAccount is RGWOp_Account_Delete::execute
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L204-L221),
 // which sends no body.
 func deleteAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.RemoveAccount{Params: accountIdentity(q.Args)}

@@ -19,12 +19,15 @@ const (
 	PrincipalService
 )
 
-// Principal is rgw::auth::Principal (src/rgw/rgw_basic_types.h:143-235 at
-// v19.2.6, :145-252 at v20.2.4): whom a statement's Principal or NotPrincipal
-// names. radosgw's == and < compare only the kind and the rgw_user, tenant
-// and id (:228-234 at v19.2.6, :245-251 at v20.2.4), so to radosgw any two
-// OIDC providers, or any two services, are equal; Go's == also compares
-// IDPURL and a service's name.
+// Principal is rgw::auth::Principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L143-L235 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L145-L252 at v20.2.4):
+// whom a statement's Principal or NotPrincipal names. radosgw's == and <
+// compare only the kind and the rgw_user, tenant and id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L228-L234 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L245-L251 at v20.2.4),
+// so to radosgw any two OIDC providers, or any two services, are equal;
+// Go's == also compares IDPURL and a service's name.
 type Principal struct {
 	Kind PrincipalKind
 	// Account is get_account, the rgw_user's tenant, which holds the account

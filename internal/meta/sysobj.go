@@ -94,9 +94,10 @@ func PeriodOID(id string, epoch uint32) string {
 }
 
 // RealmPeriodOID names the object holding one epoch of a period read for
-// realm realmID, as RGWPeriod::get_period_oid does (rgw_period.cc:80-88 at
-// v19.2.6 and v20.2.4): only the realm's own staging period,
-// "<realm id>:staging", is named without its epoch.
+// realm realmID, as RGWPeriod::get_period_oid does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_period.cc#L80-L88 at v19.2.6
+// and v20.2.4): only the realm's own staging period, "<realm id>:staging",
+// is named without its epoch.
 func RealmPeriodOID(realmID, id string, epoch uint32) string {
 	if id == realmID+periodStagingSuffix {
 		return periodInfoPrefix + id

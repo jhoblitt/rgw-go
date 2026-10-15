@@ -13,8 +13,11 @@ import (
 )
 
 // tentacleOnly are the actions v20.2.4 added to action_t
-// (src/rgw/rgw_iam_policy.h:84, :118-123 and :153-155 at v20.2.4); mainOnly
-// are the two only ceph main has.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L84,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L118-L123
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L153-L155 at v20.2.4);
+// mainOnly are the two only ceph main has.
 var (
 	tentacleOnly = []policy.Action{
 		policy.S3PostBucketLogging,

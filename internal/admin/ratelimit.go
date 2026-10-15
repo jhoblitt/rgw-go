@@ -23,7 +23,9 @@ func newRateLimitHandlers() map[string]HandlerFunc {
 // trueOrFalse is the check the ratelimit ops make of global and enabled
 // before get_bool reads them: present, the value as RGWHTTPArgs::get holds
 // it must be "true" or "false" in any case, boost::iequals
-// (rgw_rest_ratelimit.cc:25-35 and :210-229).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L25-L35
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L210-L229).
 func trueOrFalse(a Args, name string) (v, present bool, err error) {
 	s, ok := a.Get(name)
 	if !ok {
@@ -39,12 +41,15 @@ func trueOrFalse(a Args, name string) (v, present bool, err error) {
 }
 
 // getRateLimitInfo is RGWOp_Ratelimit_Info::execute's argument handling
-// (rgw_rest_ratelimit.cc:13-35): uid, ratelimit-scope, bucket and tenant
-// through get_string, and a global that is not true or false refused after
-// the cap check. Each branch starts the flusher before it dumps, so the
-// body is WriteBody's: a bucket's or user's limits inside a section of the
-// same name, as encode_json nests them in it, or the period config's three
-// rate limits (:59-63, :95-99, :109-115).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L13-L35):
+// uid, ratelimit-scope, bucket and tenant through get_string, and a global
+// that is not true or false refused after the cap check. Each branch starts
+// the flusher before it dumps, so the body is WriteBody's: a bucket's or
+// user's limits inside a section of the same name, as encode_json nests
+// them in it, or the period config's three rate limits
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L59-L63,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L95-L99,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L109-L115).
 func getRateLimitInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := &op.GetRateLimit{}
@@ -84,9 +89,10 @@ func getRateLimitInfo(ctx context.Context, w http.ResponseWriter, r *op.Request,
 }
 
 // putRateLimitInfo is RGWOp_Ratelimit_Set::execute's argument handling
-// (rgw_rest_ratelimit.cc:197-229): the four limits through get_int64, any
-// that does not parse refused first, then an enabled, then a global, that
-// is not true or false, each refusal after the cap check. It sends no body.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L197-L229):
+// the four limits through get_int64, any that does not parse refused first,
+// then an enabled, then a global, that is not true or false, each refusal
+// after the cap check. It sends no body.
 func putRateLimitInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := &op.SetRateLimit{}

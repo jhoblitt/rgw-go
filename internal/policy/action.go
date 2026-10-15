@@ -4,13 +4,14 @@ package policy
 // policy's action bitset lines up with radosgw's.
 type Action uint16
 
-// The S3 actions, in action_t order (src/rgw/rgw_iam_policy.h:46-129 at ceph
-// main 7ed73efc1be). The block is the union of both release floors and main:
-// Squid lacks the seven Tentacle added (PostBucketLogging, the two
+// The S3 actions, in action_t order
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_iam_policy.h#L46-L129
+// at ceph main 7ed73efc1be). The block is the union of both release floors
+// and main: Squid lacks the seven Tentacle added (PostBucketLogging, the two
 // GetObject*Attributes, the four Replicate* ones), and neither floor knows
 // the two Account*PublicAccessBlock actions. The numbering is never
-// persisted, so the superset is harmless; Known says which actions a release
-// knows.
+// persisted, so the superset is harmless; Known says which actions a
+// release knows.
 const (
 	S3GetObject Action = iota
 	S3GetObjectVersion

@@ -10,14 +10,22 @@ import (
 )
 
 // The rows are the op_get, op_put, op_post and op_delete of each admin
-// handler at v19.2.6 and v20.2.4: driver/rados/rgw_rest_user.cc:1129-1177 and
-// rgw_rest_bucket.cc:393-427, rgw_rest_metadata.cc:302-317,
-// rgw_rest_usage.cc:123-131, rgw_rest_info.cc:46-49,
-// rgw_rest_config.cc:49-57, driver/rados/rgw_rest_realm.cc:246-247 and
-// :355-358, rgw_rest_ratelimit.cc:344-351 and rgw_rest_account.cc:223-241
+// handler at v19.2.6 and v20.2.4:
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L1129-L1177
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L393-L427,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L302-L317,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L123-L131,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_info.cc#L46-L49,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_config.cc#L49-L57,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L246-L247
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L355-L358,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L344-L351
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L223-L241
 // (v20.2.4
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L301-L321),
-// at v19.2.6's line numbers unless given.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L301-L321).
 var _ = Describe("Dispatch", func() {
 	dispatch := func(method, path, query string, rel denc.Release) (admin.Route, error) {
 		GinkgoHelper()

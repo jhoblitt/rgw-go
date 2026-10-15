@@ -113,23 +113,26 @@ func (a Args) Int64(name string, def int64) (v int64, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToLL)
 }
 
-// Int32 is RESTArgs::get_int32 over stringtol (rgw_string.h:70-84): strtol's
-// 64-bit long, refusing LONG_MAX and trailing text, then truncated to 32
-// bits.
+// Int32 is RESTArgs::get_int32 over stringtol
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L70-L84):
+// strtol's 64-bit long, refusing LONG_MAX and trailing text, then
+// truncated to 32 bits.
 func (a Args) Int32(name string, def int32) (v int32, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToL)
 }
 
-// Uint64 is RESTArgs::get_uint64 over stringtoull (rgw_string.h:54-68):
+// Uint64 is RESTArgs::get_uint64 over stringtoull
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L54-L68):
 // strtoull, which negates a negative value, refusing ULLONG_MAX and
 // trailing text.
 func (a Args) Uint64(name string, def uint64) (v uint64, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToULL)
 }
 
-// Uint32 is RESTArgs::get_uint32 over stringtoul (rgw_string.h:86-100):
-// strtoul's 64-bit unsigned long, refusing ULONG_MAX and trailing text, then
-// truncated to 32 bits.
+// Uint32 is RESTArgs::get_uint32 over stringtoul
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L86-L100):
+// strtoul's 64-bit unsigned long, refusing ULONG_MAX and trailing text,
+// then truncated to 32 bits.
 func (a Args) Uint32(name string, def uint32) (v uint32, present bool, err error) {
 	return read(a, name, def, rgwtext.StringToUL)
 }
@@ -169,9 +172,10 @@ var nameArgs = []string{
 // RefuseNUL is ErrInvalidArgument when an argument in nameArgs, decoded as
 // String decodes it for the handlers, holds a NUL, where the C string
 // go-ceph hands librados for the name would end. radosgw's
-// RESTArgs::get_string keeps the NUL (rgw_rest.cc:854-871 at v19.2.6,
-// :859-876 at v20.2.4), and librados's C++ API takes the name whole
-// (docs/exclusions.md).
+// RESTArgs::get_string keeps the NUL
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L854-L871 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L859-L876 at v20.2.4),
+// and librados's C++ API takes the name whole (docs/exclusions.md).
 func (a Args) RefuseNUL() error {
 	for _, name := range nameArgs {
 		if v, _ := a.String(name, ""); strings.IndexByte(v, 0) >= 0 {
@@ -218,13 +222,15 @@ func parseDate(s string) (uint64, bool) {
 }
 
 // timeFormat is the strptime format parse_date builds from the time text p
-// in char fmt[32] (utime.h:413-437): the first 31 bytes of p, with "%H:%M"
-// over bytes 0-4 and "%S" over 6-7, so p's sixth byte stays as a literal
-// and every byte from the ninth on stays as format text, conversions
-// included. When the ninth byte is '.', the digits after it stay literal
-// and a sign where they end becomes "%z", which also ends the format. With
-// the sign at byte 30, radosgw writes that terminator one byte past the
-// array (docs/ceph-upstream-bugs.md); the format it reads is the same.
+// in char fmt[32]
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L413-L437):
+// the first 31 bytes of p, with "%H:%M" over bytes 0-4 and "%S" over 6-7,
+// so p's sixth byte stays as a literal and every byte from the ninth on
+// stays as format text, conversions included. When the ninth byte is '.',
+// the digits after it stay literal and a sign where they end becomes "%z",
+// which also ends the format. With the sign at byte 30, radosgw writes that
+// terminator one byte past the array (docs/ceph-upstream-bugs.md); the
+// format it reads is the same.
 func timeFormat(p string) string {
 	var f [32]byte
 	copy(f[:31], p)
@@ -275,9 +281,10 @@ const (
 // SelectFormat is RGWHandler_REST::allocate_formatter with the admin
 // handlers' default, JSON
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1732-L1764 at v19.2.6;
-// RGWHandler_Auth_S3::init, rgw_rest_s3.cc:5130-5138): the format argument
-// when it is exactly "xml", "json" or "html", otherwise the Accept header up
-// to its first ';', compared exactly.
+// RGWHandler_Auth_S3::init,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5130-L5138):
+// the format argument when it is exactly "xml", "json" or "html",
+// otherwise the Accept header up to its first ';', compared exactly.
 func SelectFormat(a Args, accept string) Format {
 	switch v, _ := a.Get("format"); v {
 	case "xml":

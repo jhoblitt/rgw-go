@@ -44,8 +44,10 @@ func checkBucketIndex(ctx context.Context, w http.ResponseWriter, r *op.Request,
 // every entry of both checks is a string named "object"
 // (dump_mulipart_index_results,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L88-L94 at v19.2.6,
-// and dump_bucket_index, :291-296), so the objects section repeats that
-// key; then dump_index_check (:312-324).
+// and dump_bucket_index,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L291-L296),
+// so the objects section repeats that key; then dump_index_check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L312-L324).
 func dumpBucketCheck(f formatter.Formatter, o *op.CheckBucketIndex) {
 	f.OpenObjectSection("bucket_check")
 	f.OpenArraySection("invalid_multipart_entries")

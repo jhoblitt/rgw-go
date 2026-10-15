@@ -417,8 +417,10 @@ func keyUser(info meta.UserInfo, k meta.AccessKey) string {
 	return info.UserID.String() + ":" + k.Subuser
 }
 
-// dumpAccessKeys is dump_access_keys_info (:93-111 at v19.2.6): "key" sections in
-// std::map order, with the secret, which only callers dump_keys admits see.
+// dumpAccessKeys is dump_access_keys_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L93-L111 at v19.2.6):
+// "key" sections in std::map order, with the secret, which only callers
+// dump_keys admits see.
 func dumpAccessKeys(f formatter.Formatter, info meta.UserInfo) {
 	f.OpenArraySection("keys")
 	for _, id := range slices.Sorted(maps.Keys(info.AccessKeys)) {
@@ -433,7 +435,8 @@ func dumpAccessKeys(f formatter.Formatter, info meta.UserInfo) {
 	f.CloseSection()
 }
 
-// dumpSwiftKeys is dump_swift_keys_info (:113-130 at v19.2.6).
+// dumpSwiftKeys is dump_swift_keys_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L113-L130 at v19.2.6).
 func dumpSwiftKeys(f formatter.Formatter, info meta.UserInfo) {
 	f.OpenArraySection("swift_keys")
 	for _, id := range slices.Sorted(maps.Keys(info.SwiftKeys)) {

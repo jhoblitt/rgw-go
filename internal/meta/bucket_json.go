@@ -106,9 +106,10 @@ func (b *BucketEntryPoint) UnmarshalJSON(data []byte) error {
 // configuration or a sync policy with groups is ErrOpaqueJSON, as they are
 // carried opaque, and a hash type, index type or reshard status the enums do
 // not name is refused. obj_lock is read only while the document's flags
-// enable object lock, though v20.2.4 never reads it (:2606-2647), and
-// ObjLock is nil exactly when it is not read, where v19.2.7 takes an absent
-// obj_lock as RGWObjectLock(). decode_json does not read
+// enable object lock, though v20.2.4 never reads it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647),
+// and ObjLock is nil exactly when it is not read, where v19.2.7 takes an
+// absent obj_lock as RGWObjectLock(). decode_json does not read
 // new_bucket_instance_id, so it is empty.
 func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)

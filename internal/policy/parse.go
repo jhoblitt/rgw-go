@@ -124,7 +124,8 @@ func seenBit(id tokenID) uint32 { return 1 << (id - tokVersion) }
 // included.
 const statementBits uint32 = (1<<(tokOther-tokVersion) - 1) &^ (1<<(tokSid-tokVersion) - 1)
 
-// keyword is rgw::IAM::Keyword (rgw_iam_policy_keywords.gperf:8-15).
+// keyword is rgw::IAM::Keyword
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.gperf#L8-L15).
 type keyword struct {
 	name       string
 	kind       tokenKind
@@ -489,9 +490,11 @@ const unsupportedARN = "` is not a supported AWS or Federated ARN. Supported ARN
 	"`arn:aws:iam::tenant:user/user-name` for a user, " +
 	"`arn:aws:iam::tenant:oidc-provider/idp-url` for OIDC."
 
-// principal is ParseState::parse_principal (src/rgw/rgw_iam_policy.cc:
-// 521-587 at v19.2.6, :531-599 at v20.2.4) for a value under principal type
-// w; errmsg says why it is not one radosgw supports.
+// principal is ParseState::parse_principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L521-L587 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L531-L599 at v20.2.4)
+// for a value under principal type w; errmsg says why it is not one
+// radosgw supports.
 func (p *parser) principal(w *keyword, s string) (pr Principal, errmsg string, ok bool) {
 	switch w.id {
 	case tokAWS, tokFederated:
@@ -530,10 +533,12 @@ func (p *parser) principal(w *keyword, s string) (pr Principal, errmsg string, o
 
 // addPrincipal adds pr to ps unless radosgw's principal set holds an equal
 // one already. Principal's == and < compare only the kind and the rgw_user,
-// tenant and id (src/rgw/rgw_basic_types.h:228-234 at v19.2.6, :245-251 at
-// v20.2.4), which an OIDC provider and a service leave empty, so the set
-// keeps the first of them and drops the rest (docs/ceph-upstream-bugs.md,
-// "radosgw drops all but the first OIDC provider or Service principal in a
+// tenant and id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L228-L234 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L245-L251 at v20.2.4),
+// which an OIDC provider and a service leave empty, so the set keeps the
+// first of them and drops the rest (docs/ceph-upstream-bugs.md, "radosgw
+// drops all but the first OIDC provider or Service principal in a
 // statement").
 func addPrincipal(ps []Principal, pr Principal) []Principal {
 	key := func(q Principal) Principal {

@@ -225,7 +225,8 @@ func (c Condition) Eval(env Env, sem Semantics) bool {
 	case OpIPAddress:
 		return typedAny(s, c.Values, ParseMaskedIP, MaskedIP.Equal)
 	case OpNotIPAddress:
-		// Both releases: v19.2.6 spells typed_none out (:974-992).
+		// Both releases: v19.2.6 spells typed_none out
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L974-L992).
 		return typedNone(s, c.Values, ParseMaskedIP, MaskedIP.Equal)
 
 	case OpArnEquals, OpArnLike:
@@ -334,9 +335,11 @@ func greaterEqual[T ordered](a, b T) bool { return a >= b }
 // stringLike is string_like: the condition value is the pattern.
 func stringLike(v, d string) bool { return MatchWildcards(d, v, false) }
 
-// arnLike is arn_like (:845-852 at v19.2.6, :864-871 at v20.2.4): the
-// environment's ARN must hold exactly five colons, and the condition value is
-// the pattern, matched case-sensitively.
+// arnLike is arn_like
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L845-L852 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L864-L871 at v20.2.4):
+// the environment's ARN must hold exactly five colons, and the condition
+// value is the pattern, matched case-sensitively.
 func arnLike(v, d string) bool {
 	return strings.Count(v, ":") == 5 && MatchPolicy(d, v, false)
 }

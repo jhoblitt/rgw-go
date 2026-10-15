@@ -5,9 +5,12 @@ import (
 	"strings"
 )
 
-// The RGW_CAP_* bits (rgw_common.h:209-211 at v19.2.6, :231-233 at v20.2.4)
-// and RGW_PERM_INVALID (rgw_acl_types.h:40), what rgw_str_to_perm answers for
-// a word it does not know.
+// The RGW_CAP_* bits
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L209-L211 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L231-L233 at v20.2.4)
+// and RGW_PERM_INVALID
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_types.h#L40),
+// what rgw_str_to_perm answers for a word it does not know.
 const (
 	CapRead     uint32 = 0x1
 	CapWrite    uint32 = 0x2
@@ -35,7 +38,8 @@ func ValidCapType(t string) bool {
 	return ok
 }
 
-// flagDelims are get_str_list's default delimiters (str_list.cc:32).
+// flagDelims are get_str_list's default delimiters
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/str_list.cc#L32).
 const flagDelims = ";,= \t"
 
 // parseFlags is rgw_parse_list_of_flags: s split on any of get_str_list's

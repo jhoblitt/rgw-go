@@ -13,7 +13,9 @@ import (
 )
 
 // These pin what the corpus cannot: the keys RGWZoneParams::dump adds at
-// v20.2.4 (rgw_zone.cc:312-340) and the embedded tier config.
+// v20.2.4
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L312-L340)
+// and the embedded tier config.
 var _ = Describe("Dump", func() {
 	render := func(v meta.Dumper, rel denc.Release) string {
 		f := formatter.NewJSON(false)

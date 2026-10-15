@@ -28,7 +28,8 @@ var _ = Describe("MatchWildcards", func() {
 		Entry("uppercase against its lowercase", "abC", "abc", false, true),
 		Entry("a prefix of the input", "abc", "abcd", false, false),
 		Entry("longer than the input", "abcd", "abc", false, false),
-		// TEST(MatchWildcards, QuestionMark), :1389-1411.
+		// TEST(MatchWildcards, QuestionMark),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1389-L1411.
 		Entry("? against empty", "?", "", false, false),
 		Entry("? against one byte", "?", "a", true, true),
 		Entry("? leading", "?bc", "abc", true, true),
@@ -39,7 +40,8 @@ var _ = Describe("MatchWildcards", func() {
 		Entry("two ?", "a?c?e", "abcde", true, true),
 		Entry("??? against three bytes", "???", "abc", true, true),
 		Entry("??? against four bytes", "???", "abcd", false, false),
-		// TEST(MatchWildcards, Asterisk), :1413-1447.
+		// TEST(MatchWildcards, Asterisk),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L1413-L1447.
 		Entry("* against empty", "*", "", true, true),
 		Entry("* in the input is literal", "", "*", false, false),
 		Entry("*a against empty", "*a", "", false, false),

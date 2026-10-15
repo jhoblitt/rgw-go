@@ -16,7 +16,8 @@ var ErrExplicitManifest = errors.New("meta: cannot append an explicit manifest")
 // any data
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L441-L489 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L475-L523 at v20.2.4;
-// driver/rados/rgw_obj_manifest.h:265-270 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.h#L265-L270
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L221-L272 at both):
 // prefix names the part's objects; one rule keyed at 0 numbers the part
 // partNum with no part size and stripes of stripeSize; no head data, as the

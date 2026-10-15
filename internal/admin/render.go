@@ -86,9 +86,10 @@ func WriteBody(w http.ResponseWriter, r *op.Request, q Request, dump func(format
 }
 
 // WriteDumped writes a body the op dumped without dump_start, as the zone
-// config, metadata get and list do (rgw_rest_config.cc:35-47 at v19.2.6):
-// no declaration and no status page. A dump that calls Fail writes nothing,
-// and WriteDumped returns the failure.
+// config, metadata get and list do
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_config.cc#L35-L47 at v19.2.6):
+// no declaration and no status page. A dump that calls Fail writes
+// nothing, and WriteDumped returns the failure.
 func WriteDumped(w http.ResponseWriter, r *op.Request, q Request, dump func(formatter.Formatter)) error {
 	return writeDump(w, r, q, q.Format.mimeType(), false, dump)
 }
@@ -179,8 +180,8 @@ func writeErrorDocument(w http.ResponseWriter, r *op.Request, q Request, e *op.E
 // length, which it sends through dump_content_length with Accept-Ranges:
 // every error document and the getters that name it. A success that names
 // none gets the length radosgw's frontend adds when the response completes
-// (rgw_client_io_filters.h:221-253 at v19.2.6 and v20.2.4), without
-// Accept-Ranges.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
+// and v20.2.4), without Accept-Ranges.
 func write(w http.ResponseWriter, r *op.Request, status int, contentType string, body []byte, named bool) {
 	s3.SetCommonHeaders(w, r)
 	w.Header().Set("Content-Type", contentType)

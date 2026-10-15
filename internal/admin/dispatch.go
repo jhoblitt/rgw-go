@@ -53,8 +53,10 @@ type capPair struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L77-L83 at v19.2.6).
 // get_metadata_myself is an RGWOp_Metadata_Get. Squid's account get and
 // delete check a cap named "account", which no caps command can grant
-// (rgw_rest_account.cc:173-174 and :195-196 at v19.2.6); accountCaps
-// applies that.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L173-L174
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L195-L196 at v19.2.6);
+// accountCaps applies that.
 var routeCaps = map[string][]capPair{
 	"get_info":        {{"info", meta.CapRead}},
 	"get_zone_config": {{"zone", meta.CapRead}},
@@ -223,7 +225,8 @@ func bucketOp(method, sub string) string {
 }
 
 // metadataOp tests the arguments themselves, args.exists, not the
-// sub-resource (rgw_rest_metadata.cc:302-309).
+// sub-resource
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L302-L309).
 func metadataOp(method string, a Args) string {
 	switch method {
 	case http.MethodGet:

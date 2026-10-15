@@ -105,7 +105,8 @@ func subuserKeyType(a Args) op.KeyType {
 // createSubuser is RGWOp_Subuser_Create::execute
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L495-L554 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L505-L564 at v20.2.4).
-// The body is dump_subusers_info's (driver/rados/rgw_user.cc:2519-2525).
+// The body is dump_subusers_info's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2519-L2525).
 func createSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewCreateSubuser()
@@ -128,7 +129,8 @@ func createSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L570-L621 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L580-L631 at v20.2.4),
 // which sets the permission it reads whether or not access is named. The
-// body is dump_subusers_info's (driver/rados/rgw_user.cc:2552-2558).
+// body is dump_subusers_info's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2552-L2558).
 func modifySubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewModifySubuser()
@@ -168,7 +170,7 @@ func removeSubuser(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L789-L811 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L799-L821 at v20.2.4).
 // The body is the user's caps, RGWUserCaps::dump
-// (driver/rados/rgw_user.cc:2675-2678).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2675-L2678).
 func addCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewAddCaps()
 	o.UID = uidArg(q.Args)
@@ -182,7 +184,8 @@ func addCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reques
 // removeCaps is RGWOp_Caps_Remove::execute
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L827-L849 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L837-L859 at v20.2.4).
-// The body is the user's caps (driver/rados/rgw_user.cc:2710-2713).
+// The body is the user's caps
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2710-L2713).
 func removeCaps(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewRemoveCaps()
 	o.UID = uidArg(q.Args)
@@ -210,8 +213,9 @@ func getQuotaInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 // dumpQuotaInfo is RGWOp_Quota_Info::execute's body
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L930-L938 at v19.2.6):
 // for no quota type, UserQuotas::dump's bucket_quota then user_quota in
-// a "quota" section (:861-864), otherwise the one quota under its own
-// name.
+// a "quota" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L861-L864),
+// otherwise the one quota under its own name.
 func dumpQuotaInfo(f formatter.Formatter, info meta.UserInfo, quotaType string, rel denc.Release) {
 	switch quotaType {
 	case "":

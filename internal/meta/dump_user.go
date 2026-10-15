@@ -72,7 +72,9 @@ func (u UserInfo) Dump(f formatter.Formatter, rel denc.Release) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2620-L2630 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2682-L2692 at v20.2.4):
 // RGWAccessKey::dump(f, user, swift), which names the owner with the subuser
-// appended and leaves out a Swift key's id (:2974-2988; :3036-3050).
+// appended and leaves out a Swift key's id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2974-L2988;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3036-L3050).
 func dumpUserKeys(f formatter.Formatter, name, user string, keys map[string]AccessKey, swift bool) {
 	f.OpenArraySection(name)
 	for _, id := range slices.Sorted(maps.Keys(keys)) {

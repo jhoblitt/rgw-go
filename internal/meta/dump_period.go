@@ -21,7 +21,9 @@ func (r Realm) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpUnsigned("epoch", uint64(r.Epoch))
 }
 
-// Dump is RGWPeriod::dump (rgw_period.cc:234-246 at v19.2.6 and v20.2.4).
+// Dump is RGWPeriod::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_period.cc#L234-L246 at v19.2.6
+// and v20.2.4).
 func (p Period) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("id", p.ID)
 	f.DumpUnsigned("epoch", uint64(p.Epoch))
@@ -111,7 +113,9 @@ func (g ZoneGroup) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpStrings(f, "enabled_features", g.EnabledFeatures)
 }
 
-// Dump is RGWZone::dump (rgw_zone.cc:71-85 at v19.2.6 and v20.2.4).
+// Dump is RGWZone::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L71-L85 at v19.2.6
+// and v20.2.4).
 func (z Zone) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("id", z.ID)
 	f.DumpString("name", z.Name)

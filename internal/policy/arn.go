@@ -16,7 +16,8 @@ const (
 )
 
 // partitionNames are the names to_partition and ARN::to_string know
-// (src/rgw/rgw_arn.cc:13-28, :192-200).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L13-L28,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L192-L200).
 var partitionNames = [PartitionWildcard]string{
 	PartitionAWS:      "aws",
 	PartitionAWSCN:    "aws-cn",
@@ -114,7 +115,9 @@ const (
 )
 
 // serviceNames is the name table to_service and ARN::to_string share
-// (src/rgw/rgw_arn.cc:32-112, :202-281), the same at v19.2.6 and v20.2.4.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L32-L112,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L202-L281),
+// the same at v19.2.6 and v20.2.4.
 var serviceNames = [ServiceWildcard]string{
 	ServiceApigateway:               "apigateway",
 	ServiceAppstream:                "appstream",
@@ -205,7 +208,8 @@ var servicesByName = func() map[string]Service {
 	return m
 }()
 
-// ARN is rgw::ARN (src/rgw/rgw_arn.h:42-68),
+// ARN is rgw::ARN
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.h#L42-L68),
 // arn:<partition>:<service>:<region>:<account>:<resource>. The account is the
 // tenant or account id a resource belongs to. rgw_arn.h and rgw_arn.cc are
 // the same at v19.2.6 and v20.2.4, so each citation here holds at both.
@@ -217,23 +221,25 @@ type ARN struct {
 	Resource  string
 }
 
-// BucketARN is ARN(const rgw_bucket&) (src/rgw/rgw_arn.cc:137-142): aws, s3,
-// no region, the bucket's tenant and its name.
+// BucketARN is ARN(const rgw_bucket&)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L137-L142):
+// aws, s3, no region, the bucket's tenant and its name.
 func BucketARN(tenant, bucket string) ARN {
 	return ARN{Partition: PartitionAWS, Service: ServiceS3, Account: tenant, Resource: bucket}
 }
 
-// ObjectARN is ARN(const rgw_obj&) (src/rgw/rgw_arn.cc:126-135): BucketARN
-// with "/<key>" appended to the resource. key is the object's name; the
-// version instance is not part of the ARN.
+// ObjectARN is ARN(const rgw_obj&)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L126-L135):
+// BucketARN with "/<key>" appended to the resource. key is the object's
+// name; the version instance is not part of the ARN.
 func ObjectARN(tenant, bucket, key string) ARN {
 	return ARN{Partition: PartitionAWS, Service: ServiceS3, Account: tenant, Resource: bucket + "/" + key}
 }
 
 // IAMARN is ARN(resource_name, type, tenant, has_path)
-// (src/rgw/rgw_arn.cc:154-163): aws, iam, no region, the tenant, and
-// "<typ>/<name>", or "<typ><name>" when hasPath says name already starts with
-// its path.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L154-L163):
+// aws, iam, no region, the tenant, and "<typ>/<name>", or "<typ><name>"
+// when hasPath says name already starts with its path.
 func IAMARN(name, typ, tenant string, hasPath bool) ARN {
 	resource := typ
 	if !hasPath {
@@ -252,11 +258,13 @@ var (
 	arnNoWildcards = regexp.MustCompile(`\Aarn:([^:*]*):([^:*]*):([^:*]*):([^:*]*):([^\n\r]*)\z`)
 )
 
-// ParseARN is ARN::parse (src/rgw/rgw_arn.cc:165-187). With wildcards, "*"
-// alone is the ARN whose every field is a wildcard, the partition and the
-// service may each be exactly "*", and no field, the resource included, may
-// hold ':'. Without wildcards the four fields before the resource may hold
-// neither ':' nor '*', and the resource may hold anything but a line break.
+// ParseARN is ARN::parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L165-L187).
+// With wildcards, "*" alone is the ARN whose every field is a wildcard,
+// the partition and the service may each be exactly "*", and no field, the
+// resource included, may hold ':'. Without wildcards the four fields before
+// the resource may hold neither ':' nor '*', and the resource may hold
+// anything but a line break.
 func ParseARN(s string, wildcards bool) (ARN, bool) {
 	if wildcards && s == "*" {
 		return ARN{Partition: PartitionWildcard, Service: ServiceWildcard, Region: "*", Account: "*", Resource: "*"}, true
@@ -280,7 +288,8 @@ func ParseARN(s string, wildcards bool) (ARN, bool) {
 	return ARN{Partition: p, Service: svc, Region: m[3], Account: m[4], Resource: m[5]}, true
 }
 
-// parsePartition is to_partition (src/rgw/rgw_arn.cc:13-28).
+// parsePartition is to_partition
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L13-L28).
 func parsePartition(s string, wildcards bool) (Partition, bool) {
 	if wildcards && s == "*" {
 		return PartitionWildcard, true
@@ -293,8 +302,9 @@ func parsePartition(s string, wildcards bool) (Partition, bool) {
 	return 0, false
 }
 
-// parseService is to_service (src/rgw/rgw_arn.cc:30-124), whose names are
-// matched exactly, case included.
+// parseService is to_service
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L30-L124),
+// whose names are matched exactly, case included.
 func parseService(s string, wildcards bool) (Service, bool) {
 	if wildcards && s == "*" {
 		return ServiceWildcard, true
@@ -303,8 +313,10 @@ func parseService(s string, wildcards bool) (Service, bool) {
 	return svc, ok
 }
 
-// String is ARN::to_string (src/rgw/rgw_arn.cc:189-300): a partition or
-// service with no name, the wildcards included, renders as "*".
+// String is ARN::to_string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L189-L300):
+// a partition or service with no name, the wildcards included, renders as
+// "*".
 func (a ARN) String() string {
 	partition, service := "*", "*"
 	if a.Partition < PartitionWildcard {
@@ -316,10 +328,11 @@ func (a ARN) String() string {
 	return "arn:" + partition + ":" + service + ":" + a.Region + ":" + a.Account + ":" + a.Resource
 }
 
-// Match is ARN::match (src/rgw/rgw_arn.cc:319-344) with a as the pattern. A
-// candidate whose partition or service is a wildcard never matches; the
-// region and the account match with MatchWildcards folding case, the
-// resource without.
+// Match is ARN::match
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L319-L344)
+// with a as the pattern. A candidate whose partition or service is a
+// wildcard never matches; the region and the account match with
+// MatchWildcards folding case, the resource without.
 func (a ARN) Match(candidate ARN) bool {
 	if candidate.Partition == PartitionWildcard ||
 		a.Partition != candidate.Partition && a.Partition != PartitionWildcard {

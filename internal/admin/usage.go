@@ -26,7 +26,9 @@ func newUsageHandlers() map[string]HandlerFunc {
 }
 
 // usageArgs are the arguments both usage ops read with RESTArgs::get_string
-// (rgw_rest_usage.cc:38-40 and :91-93).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L38-L40
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L91-L93).
 func usageArgs(a Args) (uid, bucket, tenant string) {
 	uid, _ = a.String("uid", "")
 	bucket, _ = a.String("bucket", "")
@@ -35,11 +37,12 @@ func usageArgs(a Args) (uid, bucket, tenant string) {
 }
 
 // getUsage is RGWOp_Usage_Get::execute's argument handling
-// (rgw_rest_usage.cc:28-70), whose get_epoch and get_bool returns go
-// unchecked: a boolean get_bool cannot parse is its default, and so, in
-// rgw-go, is a date get_epoch cannot parse (docs/exclusions.md, "The admin
-// usage routes give a date they cannot parse a value of their own"). The
-// categories split on get_str_list's delimiters.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L28-L70),
+// whose get_epoch and get_bool returns go unchecked: a boolean get_bool
+// cannot parse is its default, and so, in rgw-go, is a date get_epoch
+// cannot parse (docs/exclusions.md, "The admin usage routes give a date
+// they cannot parse a value of their own"). The categories split on
+// get_str_list's delimiters.
 func getUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := &op.ShowUsage{}
@@ -71,9 +74,10 @@ func epochArg(a Args, name string, def uint64) uint64 {
 }
 
 // trimUsage is RGWOp_Usage_Delete::execute's argument handling
-// (rgw_rest_usage.cc:85-121) and its empty 200. A date get_epoch cannot
-// parse is InvalidArgument, after the cap check (docs/exclusions.md); the
-// unchecked get_bool reads remove-all as false when it cannot parse it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L85-L121)
+// and its empty 200. A date get_epoch cannot parse is InvalidArgument,
+// after the cap check (docs/exclusions.md); the unchecked get_bool reads
+// remove-all as false when it cannot parse it.
 func trimUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := &op.TrimUsage{}
@@ -99,8 +103,9 @@ func trimUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Requ
 
 // dumpUsage is RGWUsage::show's document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L50-L160 at v19.2.6
-// and v20.2.4), which it writes after starting the flusher (:48): the
-// entries when shown, the summary when shown. A bucket's time is
+// and v20.2.4), which it writes after starting the flusher
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L48):
+// the entries when shown, the summary when shown. A bucket's time is
 // utime_t(epoch, 0)'s gmtime and its epoch dump_int's; its s3select
 // counters, and the summary's categories and total, follow the category
 // filter.
@@ -111,8 +116,10 @@ func dumpUsage(f formatter.Formatter, o *op.ShowUsage) {
 		for i, u := range o.Entries {
 			// show opens a user's section when the user differs from the
 			// last, which starts as "", so records filed under no user at the
-			// listing's start go into entries bare (rgw_usage.cc:54-55 and
-			// :86-96).
+			// listing's start go into entries bare
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L54-L55
+			// and
+			// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L86-L96).
 			bare := i == 0 && u.User == ""
 			if !bare {
 				f.OpenObjectSection("user")
@@ -121,7 +128,7 @@ func dumpUsage(f formatter.Formatter, o *op.ShowUsage) {
 			}
 			for j := range u.Buckets {
 				b := &u.Buckets[j]
-				epoch := int64(b.Epoch) //nolint:gosec // dump_int writes the epoch signed (:101)
+				epoch := int64(b.Epoch) //nolint:gosec // dump_int writes the epoch signed (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L101)
 				f.OpenObjectSection("bucket")
 				f.DumpString("bucket", b.Bucket)
 				f.DumpStream("time", meta.Time{Time: time.Unix(epoch, 0)}.Gmtime())
@@ -167,7 +174,8 @@ func dumpUsage(f formatter.Formatter, o *op.ShowUsage) {
 	f.CloseSection()
 }
 
-// dumpUsageCategories is dump_usage_categories_info (rgw_usage.cc:14-31):
+// dumpUsageCategories is dump_usage_categories_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L14-L31):
 // the categories in name order, leaving out those a non-empty filter does
 // not name.
 func dumpUsageCategories(f formatter.Formatter, usage map[string]op.UsageData, filter map[string]bool) {

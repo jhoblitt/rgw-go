@@ -111,14 +111,16 @@ func (s *Statement) Eval(env Env, id Identity, a Action, res *ARN, sem Semantics
 	return Pass
 }
 
-// EvalPrincipal is Statement::eval_principal (src/rgw/rgw_iam_policy.cc:
-// 1244-1276 at v19.2.6, :1248-1280 at v20.2.4): Allow when the statement
-// applies to id, Deny when it does not. Every statement applies to a nil id,
-// and none that names neither Principal nor NotPrincipal applies to any other.
-// An identity must be named by a non-empty Principal and must not be named by
-// NotPrincipal, except that a role named by a non-empty Principal is not
-// checked against NotPrincipal at all. The principal type radosgw reports
-// alongside, for session policies, is not computed.
+// EvalPrincipal is Statement::eval_principal
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1244-L1276 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1248-L1280 at v20.2.4):
+// Allow when the statement applies to id, Deny when it does not. Every
+// statement applies to a nil id, and none that names neither Principal nor
+// NotPrincipal applies to any other. An identity must be named by a
+// non-empty Principal and must not be named by NotPrincipal, except that a
+// role named by a non-empty Principal is not checked against NotPrincipal at
+// all. The principal type radosgw reports alongside, for session policies,
+// is not computed.
 func (s *Statement) EvalPrincipal(id Identity) Effect {
 	if id == nil {
 		return Allow
@@ -138,9 +140,10 @@ func (s *Statement) EvalPrincipal(id Identity) Effect {
 	return Allow
 }
 
-// EvalConditions is Statement::eval_conditions (src/rgw/rgw_iam_policy.cc:
-// 1278-1285 at v19.2.6, :1282-1289 at v20.2.4): Allow when every condition
-// holds in env under sem, Deny otherwise.
+// EvalConditions is Statement::eval_conditions
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1278-L1285 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1282-L1289 at v20.2.4):
+// Allow when every condition holds in env under sem, Deny otherwise.
 func (s *Statement) EvalConditions(env Env, sem Semantics) Effect {
 	for _, c := range s.Conditions {
 		if !c.Eval(env, sem) {

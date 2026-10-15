@@ -239,10 +239,11 @@ func ParseMaskedIP(s string) (MaskedIP, bool) {
 	return m, true
 }
 
-// String is MaskedIP's operator<< (src/rgw/rgw_iam_policy.cc:811-840 at
-// v19.2.6, :830-859 at v20.2.4): an IPv6 address as eight hextets in
-// lower-case hex without leading zeros or "::", an IPv4 address as a dotted
-// quad, then "/" and the prefix.
+// String is MaskedIP's operator<<
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L811-L840 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L830-L859 at v20.2.4):
+// an IPv6 address as eight hextets in lower-case hex without leading zeros
+// or "::", an IPv4 address as a dotted quad, then "/" and the prefix.
 func (m MaskedIP) String() string {
 	var b strings.Builder
 	if m.V6 {

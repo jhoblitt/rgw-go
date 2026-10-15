@@ -33,7 +33,8 @@ func newRealmHandlers() map[string]HandlerFunc {
 }
 
 // getRealm is RGWOp_Realm_Get: the id and name through get_string, the
-// realm in a "realm" section (:276-304 at v19.2.6).
+// realm in a "realm" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L276-L304 at v19.2.6).
 func getRealm(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetRealm{}
 	o.ID, _ = q.Args.String("id", "")
@@ -51,7 +52,7 @@ func getRealm(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reque
 
 // listRealms is RGWOp_Realm_List: a "realms_list" section holding the
 // default id and the names as encode_json writes a std::list<std::string>
-// (:334-350 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L334-L350 at v19.2.6).
 func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.ListRealms{}
 	if err := op.Run(ctx, o, r); err != nil {
@@ -71,10 +72,12 @@ func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 
 // getPeriod is RGWOp_Period_Get: realm_id and period_id through
 // get_string, epoch through get_uint32, whose result radosgw ignores, so an
-// epoch it cannot parse is 0, the latest (:66-80 at v19.2.6); the period in
-// a "period" section (:34-52). A period whose zonegroup holds sync policy
-// groups fails the dump, which is answered NotImplemented
-// (docs/exclusions.md).
+// epoch it cannot parse is 0, the latest
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L66-L80 at v19.2.6);
+// the period in a "period" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L34-L52).
+// A period whose zonegroup holds sync policy groups fails the dump, which
+// is answered NotImplemented (docs/exclusions.md).
 func getPeriod(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetPeriod{}
 	o.RealmID, _ = q.Args.String("realm_id", "")

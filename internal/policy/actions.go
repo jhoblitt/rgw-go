@@ -3,9 +3,10 @@ package policy
 import "github.com/jhoblitt/rgw-go/internal/denc"
 
 // The actions after the s3 block, in action_t order
-// (src/rgw/rgw_iam_policy.h:119-206 at v19.2.6, :126-216 at v20.2.4). Each
-// service ends in its All, the "<service>:*" wildcard. The iam block is
-// v20.2.4's, which added the three OIDC provider actions.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L119-L206 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L126-L216 at v20.2.4).
+// Each service ends in its All, the "<service>:*" wildcard. The iam block
+// is v20.2.4's, which added the three OIDC provider actions.
 const (
 	S3ObjectLambdaGetObject Action = s3AllCount + iota
 	S3ObjectLambdaListBucket

@@ -11,15 +11,17 @@ import (
 )
 
 // Multipart object names, RGWMPObj (services/svc_tier_rados.h) and
-// MP_META_SUFFIX (services/svc_tier_rados.cc:8), identical at v19.2.6 and
-// v20.2.4.
+// MP_META_SUFFIX
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_tier_rados.cc#L8),
+// identical at v19.2.6 and v20.2.4.
 const (
 	MultipartMetaSuffix = ".meta"
 	// MultipartUploadIDPrefix starts every upload id radosgw makes,
-	// MULTIPART_UPLOAD_ID_PREFIX (rgw_multi.h:16).
+	// MULTIPART_UPLOAD_ID_PREFIX
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.h#L16).
 	MultipartUploadIDPrefix = "2~"
 	// MultipartUploadIDPrefixLegacy is MULTIPART_UPLOAD_ID_PREFIX_LEGACY
-	// (rgw_multi.h:15).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.h#L15).
 	MultipartUploadIDPrefixLegacy = "2/"
 )
 
@@ -41,7 +43,8 @@ func MultipartMetaName(key, uploadID string) string {
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L484-L489 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L473
-// and :518-523 at v20.2.4).
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L518-L523 at v20.2.4).
 func MultipartPrefix(key, unique string) string { return key + "." + unique }
 
 // MultipartPartName is RGWMPObj::get_part: "<prefix>.<n>", the part head's
@@ -55,8 +58,11 @@ func MultipartPartName(prefix string, n uint32) string {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L534-L543
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3352-L3356 at v19.2.6,
-// :572-581 and :4198-4202 at v20.2.4). An older upload keys its parts by
-// the part number as the request spelled it.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L572-L581
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4198-L4202 at v20.2.4).
+// An older upload keys its parts by the part number as the request spelled
+// it.
 func MultipartPartKey(n uint32) string {
 	return fmt.Sprintf("part.%08d", int32(n)) //nolint:gosec // MultipartObjectProcessor's part_num is an int
 }
@@ -86,15 +92,17 @@ func ParseMultipartMeta(name string) (key, uploadID string, ok bool) {
 	return name[:mid], name[mid+1 : end], true
 }
 
-// IsMultipartMeta is MultipartMetaFilter (services/svc_tier_rados.cc:10-32):
+// IsMultipartMeta is MultipartMetaFilter
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_tier_rados.cc#L10-L32):
 // the name is longer than ".meta", ends in it, and has a dot before it.
 func IsMultipartMeta(name string) bool {
 	rest, ok := strings.CutSuffix(name, MultipartMetaSuffix)
 	return ok && rest != "" && strings.IndexByte(rest, '.') >= 0
 }
 
-// IsV2UploadID is is_v2_upload_id (rgw_multi.cc:76-82): an upload id with
-// either prefix keys its parts as MultipartPartKey does.
+// IsV2UploadID is is_v2_upload_id
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.cc#L76-L82):
+// an upload id with either prefix keys its parts as MultipartPartKey does.
 func IsV2UploadID(id string) bool {
 	return strings.HasPrefix(id, MultipartUploadIDPrefix) || strings.HasPrefix(id, MultipartUploadIDPrefixLegacy)
 }

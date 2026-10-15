@@ -292,10 +292,12 @@ func (f *jsonFields) quota(name string) Quota {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3052-L3067 at v20.2.4)
 // needs access_key and secret_key, takes the subuser from "subuser", else
 // from what follows the ':' of "user", and changes active only when
-// present. The Swift form (:3007-3023; :3069-3085) takes the id from
-// "user", which it needs, unless "subuser" is present, in which case
-// radosgw leaves the id empty; a key without an id is refused here, which
-// refuses a Swift key without its user too. It reads "active" as
+// present. The Swift form
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3007-L3023;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3069-L3085)
+// takes the id from "user", which it needs, unless "subuser" is present,
+// in which case radosgw leaves the id empty; a key without an id is refused
+// here, which refuses a Swift key without its user too. It reads "active" as
 // decode_json reads any member, so a Swift key without one is inactive.
 func decodeAccessKey(f *jsonFields, swift bool) (AccessKey, error) {
 	k := NewAccessKey()

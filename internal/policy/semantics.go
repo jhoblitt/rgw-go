@@ -5,29 +5,38 @@ import "github.com/jhoblitt/rgw-go/internal/denc"
 // Semantics selects the release whose policy rules rgw-go follows, so that a
 // stored policy parses and evaluates as the zone's own radosgw parses and
 // evaluates it. The zero value is v19.2.6's; each field takes v20.2.4's rule
-// in its place. Citations without a file are src/rgw/rgw_iam_policy.cc.
+// in its place.
 type Semantics struct {
 	// NullTestsValues: Null compares whether the key is absent, as a bool,
-	// with the condition's values (:876-879 at v20.2.4), where v19.2.6
-	// answers whether the key is absent and ignores them (:857-859).
+	// with the condition's values
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L876-L879 at v20.2.4),
+	// where v19.2.6 answers whether the key is absent and ignores them
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L857-L859).
 	NullTestsValues bool
 	// NotMeansNone: the Not operators hold when no pair of an environment
 	// value and a condition value matches (multimap_none and typed_none, e.g.
-	// :910-912 at v20.2.4), where v19.2.6 holds when some pair differs
-	// (orrible and shortible over std::not_fn, e.g. :890-892).
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L910-L912 at v20.2.4),
+	// where v19.2.6 holds when some pair differs (orrible and shortible over
+	// std::not_fn, e.g.
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L890-L892).
 	NotMeansNone bool
 	// PublicNeedsWildcardPrincipal: is_public counts an Allow statement only
-	// for a wildcard Principal (:1935-1947 at v20.2.4); v19.2.6 also counts
-	// every other Allow statement whose NotPrincipal names no wildcard
-	// (:1900-1917).
+	// for a wildcard Principal
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1935-L1947 at v20.2.4);
+	// v19.2.6 also counts every other Allow statement whose NotPrincipal names
+	// no wildcard
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1900-L1917).
 	PublicNeedsWildcardPrincipal bool
 	// RejectAllowWithNotPrincipal: an Allow statement with a NotPrincipal
-	// fails the parse, "Allow with NotPrincipal is not allowed." (:773-776 at
-	// v20.2.4); v19.2.6 accepts it.
+	// fails the parse, "Allow with NotPrincipal is not allowed."
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L773-L776 at v20.2.4);
+	// v19.2.6 accepts it.
 	RejectAllowWithNotPrincipal bool
-	// ServicePrincipals: a "Service" principal names that service (:591-592
-	// at v20.2.4); v19.2.6's parse_principal has no case for it and treats it
-	// as an unsupported principal type (:583-586).
+	// ServicePrincipals: a "Service" principal names that service
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L591-L592 at v20.2.4);
+	// v19.2.6's parse_principal has no case for it and treats it as an
+	// unsupported principal type
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L583-L586).
 	ServicePrincipals bool
 	// FindKeepsFirstValue: Env.Find answers as the environment's
 	// unordered_multimap does in v20.2.4, built with GCC 13.3, whose emplace

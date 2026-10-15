@@ -101,9 +101,11 @@ func (s ZoneStorageClass) Dump(f formatter.Formatter, _ denc.Release) {
 
 // DumpAs is encode_json(name, JSONFormattable)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L922-L946 at v19.2.6):
-// a value quoted or bare as it was stored (:29-36), an array whose entries
-// are named "obj", an object whose members carry their keys, in key order;
-// nothing for FMT_NONE or a type byte past FMT_OBJ.
+// a value quoted or bare as it was stored
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L29-L36),
+// an array whose entries are named "obj", an object whose members carry
+// their keys, in key order; nothing for FMT_NONE or a type byte past
+// FMT_OBJ.
 func (j JSONFormattable) DumpAs(f formatter.Formatter, name string) {
 	switch j.Type {
 	case FormattableValue:

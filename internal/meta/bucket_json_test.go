@@ -114,7 +114,8 @@ var _ = Describe("BucketInfo.UnmarshalJSON", func() {
 // RGWObjectLock's, ObjectLockRule's and DefaultRetention's
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L93-L101,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L56-L58,
-// :26-33 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L26-L33
+// and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L65-L71,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L44-L46,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8-L12 at v19.2.7),

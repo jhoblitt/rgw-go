@@ -336,16 +336,27 @@ var _ = Describe("Manifest.Stripes", func() {
 	)
 
 	// The expected layouts are traced by hand through src/rgw/rgw_obj_manifest.cc
-	// in main: obj_iterator::seek (lines 130-172) picks rule 0 and part 1 at
-	// offset 0; operator++ (lines 53-99) adds stripe_max_size to stripe_ofs,
-	// moves to the next part once stripe_ofs reaches part_ofs + part_size
-	// (lines 64-84), switching to next_rule_iter when stripe_ofs reaches its
-	// start_ofs and taking its start_part_num and override_prefix (lines 72-78
-	// and 89), and trims the stripe to the part (line 86); convert_to_explicit
-	// (rgw/driver/rados/rgw_obj_manifest.cc lines 141-157) sizes each stripe as
-	// the distance to the next stripe_ofs. get_implicit_location (lines
-	// 209-259) names a part's first stripe <prefix>.<part> in multipart and the
-	// rest <prefix>.<part>_<stripe> in shadow.
+	// in main: obj_iterator::seek
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L130-L172)
+	// picks rule 0 and part 1 at offset 0; operator++
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L53-L99)
+	// adds stripe_max_size to stripe_ofs, moves to the next part once
+	// stripe_ofs reaches part_ofs + part_size
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L64-L84),
+	// switching to next_rule_iter when stripe_ofs reaches its start_ofs and
+	// taking its start_part_num and override_prefix
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L72-L78
+	// and
+	// https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L89),
+	// and trims the stripe to the part
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L86);
+	// convert_to_explicit
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/driver/rados/rgw_obj_manifest.cc#L141-L157)
+	// sizes each stripe as the distance to the next stripe_ofs.
+	// get_implicit_location
+	// (https://github.com/ceph/ceph/blob/61fda52e5b46e5b2fe46c490618ea6c9055adfb4/src/rgw/rgw_obj_manifest.cc#L209-L259)
+	// names a part's first stripe <prefix>.<part> in multipart and the rest
+	// <prefix>.<part>_<stripe> in shadow.
 	DescribeTable("lays out multi-rule manifests as obj_iterator does",
 		func(size uint64, rules map[uint64]meta.ManifestRule, want []stripeName) {
 			m := meta.Manifest{ObjSize: size, Obj: headObj, Prefix: "p", Rules: rules}

@@ -61,7 +61,9 @@ func (p *Policy) Eval(env Env, id Identity, a Action, res *ARN, sem Semantics) E
 }
 
 // iamAllEnv is the environment is_public evaluates a statement's conditions
-// in (src/rgw/rgw_iam_policy.cc:1894-1898 at v19.2.6, :1929-1933 at v20.2.4).
+// in
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1894-L1898 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1929-L1933 at v20.2.4).
 var iamAllEnv = func() Env {
 	var e Env
 	e.Add("aws:SourceIp", "1.1.1.1")
