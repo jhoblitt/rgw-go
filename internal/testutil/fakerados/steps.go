@@ -333,7 +333,9 @@ func stepFlags(steps []radosclient.Step, i int) radosclient.StepFlags {
 }
 
 // failResults gives every step that carries a result the op's error, as
-// goceph fills each result from the op's error when the op fails.
+// goceph fills each result from the op's error when the op fails. A read
+// op's class call that failed the op keeps the result exec gave it, its
+// output and return value; an op runs once, so no other result is set yet.
 func failResults(steps []radosclient.Step, err error) {
 	rval := -errnoOf(err)
 	for _, st := range steps {
@@ -351,6 +353,9 @@ func failResults(steps []radosclient.Step, err error) {
 		case *radosclient.OmapGetKeysStep:
 			s.Result.Err = err
 		case *radosclient.ExecStep:
+			if _, _, rerr := s.Result.Reply(); !errors.Is(rerr, radosclient.ErrIncomplete) {
+				continue
+			}
 			s.Result.Set(nil, rval)
 		}
 	}
@@ -737,7 +742,17 @@ func (x *execution) exec(s *radosclient.ExecStep) (func(), error) {
 	}
 	x.reply(len(out))
 	if rval < 0 {
-		return func() { s.Result.Set(nil, rval) }, &radosclient.Error{Errno: -rval, Op: x.name}
+		err := &radosclient.Error{Errno: -rval, Op: x.name}
+		if x.writeOp {
+			return func() { s.Result.Set(nil, rval) }, err
+		}
+		// librados hands a read op's exec its output whatever the method
+		// returned (C_out_buffer::finish), and the OSD keeps a failed op's
+		// output in its reply (PrimaryLogPG::execute_ctx). A read op carries
+		// no FailOK, so this call fails the op, whose fills never run: the
+		// result is set here.
+		s.Result.Set(slices.Clone(out), rval)
+		return nil, err
 	}
 	if x.writeOp {
 		out = nil

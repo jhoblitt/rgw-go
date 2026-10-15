@@ -23,6 +23,23 @@ func (r *ExecResult) Bytes() ([]byte, error) {
 	return r.out, nil
 }
 
+// Reply returns the class method's output and its return value: the value
+// when negative, and 0 for a success, a positive return included. A
+// negative value keeps its output, since a method may encode a reply before
+// it fails, as cls_rgw's bucket_list does before it answers advance-and-retry
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L691 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L730-L741 at v20.2.4).
+// A write op's call has no output, because librados's C write-op exec has
+// no output buffer. When another step failed the op, there is no output and
+// the value is the op's negative errno. It returns ErrIncomplete before the
+// op ran.
+func (r *ExecResult) Reply() (out []byte, rval int32, err error) {
+	if !r.done {
+		return nil, 0, ErrIncomplete
+	}
+	return r.out, r.rval, nil
+}
+
 // Set records the method's output and return value; implementations and tests call it.
 func (r *ExecResult) Set(out []byte, rval int32) {
 	r.out = out

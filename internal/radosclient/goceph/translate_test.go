@@ -380,6 +380,49 @@ var _ = Describe("a positive librados return", func() {
 	)
 })
 
+// stepOutput stands in for go-ceph's read exec step after its op ran.
+type stepOutput []byte
+
+func (s stepOutput) Output() ([]byte, error) { return s, nil }
+
+var _ = Describe("a read exec's result", func() {
+	var res *radosclient.ExecResult
+
+	BeforeEach(func() {
+		res = radosclient.NewReadOp().Exec("rgw", "bucket_list", nil)
+	})
+
+	It("holds the output and a zero return value after a success", func() {
+		goceph.FinishReadExec(stepOutput("listed"), res, 1, nil)
+		out, rval, err := res.Reply()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(Equal([]byte("listed")), "output")
+		Expect(rval).To(BeZero(), "return value")
+	})
+
+	It("keeps the output of the call that failed the op, beside its errno", func() {
+		// The OSD stops at the failing call and returns its value as the op's,
+		// and librados reports it as the step's prval too.
+		efbig := rados.OperationError{OpError: codeErr(-27), StepErrors: map[int]error{1: codeErr(-27)}}
+		goceph.FinishReadExec(stepOutput("marker"), res, 1, efbig)
+		out, rval, err := res.Reply()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(Equal([]byte("marker")), "output")
+		Expect(rval).To(Equal(int32(-27)), "return value")
+		_, err = res.Bytes()
+		Expect(err).To(MatchError(radosclient.ErrTooBig), "Bytes's error")
+	})
+
+	It("takes no output from a call when a later step failed the op", func() {
+		canceled := rados.OperationError{OpError: codeErr(-125), StepErrors: map[int]error{2: codeErr(-125)}}
+		goceph.FinishReadExec(stepOutput("listed"), res, 1, canceled)
+		out, rval, err := res.Reply()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(BeNil(), "output")
+		Expect(rval).To(Equal(int32(-125)), "return value, the op's")
+	})
+})
+
 // readSteps and writeSteps build an op and return its steps.
 func readSteps(build func(op *radosclient.ReadOp)) []radosclient.Step {
 	op := radosclient.NewReadOp()

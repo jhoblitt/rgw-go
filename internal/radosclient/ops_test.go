@@ -160,6 +160,39 @@ var _ = Describe("ExecResult", func() {
 		Entry("on a ReadOp", builder(readOp)),
 		Entry("on a WriteOp", builder(writeOp)),
 	)
+
+	Describe("Reply", func() {
+		var res *radosclient.ExecResult
+		BeforeEach(func() {
+			res = radosclient.NewReadOp().Exec("rgw", "bucket_list", []byte("in"))
+		})
+
+		It("is incomplete before the op ran", func() {
+			out, rval, err := res.Reply()
+			Expect(err).To(MatchError(radosclient.ErrIncomplete))
+			Expect(out).To(BeNil(), "output")
+			Expect(rval).To(BeZero(), "return value")
+		})
+
+		It("is the output and a zero return value after a success", func() {
+			res.Set([]byte("listed"), 0)
+			out, rval, err := res.Reply()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(Equal([]byte("listed")), "output")
+			Expect(rval).To(BeZero(), "return value")
+		})
+
+		It("keeps the output of a call that returned a negative value, which Bytes refuses", func() {
+			res.Set([]byte("marker"), -27)
+			out, rval, err := res.Reply()
+			Expect(err).NotTo(HaveOccurred(), "a negative return value is part of the reply")
+			Expect(out).To(Equal([]byte("marker")), "output")
+			Expect(rval).To(Equal(int32(-27)), "return value")
+			out, err = res.Bytes()
+			Expect(err).To(MatchError(radosclient.ErrTooBig), "Bytes's error")
+			Expect(out).To(BeNil(), "Bytes's output")
+		})
+	})
 })
 
 var _ = Describe("Error", func() {

@@ -328,19 +328,34 @@ func omapGetKeysStep(b readBuilder, s *radosclient.OmapGetKeysStep, idx int) fin
 }
 
 func readExecStep(b readBuilder, s *radosclient.ExecStep, idx int) finisher {
-	st := b.Exec(s.Class, s.Method, s.In)
-	r := s.Result
+	return execFinisher(b.Exec(s.Class, s.Method, s.In), s.Result, idx)
+}
+
+// execOutput is the part of *rados.ReadOpExecStep a read exec's finisher reads.
+type execOutput interface {
+	Output() ([]byte, error)
+}
+
+// execFinisher fills r from st, the go-ceph step at index idx. librados hands
+// over a call's output whatever the method returned (C_out_buffer::finish
+// ignores r,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L4291-L4323 at v19.2.7
+// and v20.2.4), so the call whose own return value failed the op keeps its
+// output beside that value. When another step failed the op, the call gets
+// no output: its value is the op's errno, not its own.
+func execFinisher(st execOutput, r *radosclient.ExecResult, idx int) finisher {
 	return func(o outcome) {
-		if err := o.step(idx); err != nil {
+		err := o.step(idx)
+		if err != nil && o.steps[idx] == nil {
 			r.Set(nil, -errnoOf(err))
 			return
 		}
-		out, err := st.Bytes()
-		if err != nil {
-			r.Set(nil, -errnoOf(err))
+		out, oerr := st.Output()
+		if oerr != nil {
+			r.Set(nil, -errnoOf(oerr))
 			return
 		}
-		r.Set(out, 0)
+		r.Set(out, -errnoOf(err))
 	}
 }
 
