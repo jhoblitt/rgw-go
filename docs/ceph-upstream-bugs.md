@@ -283,6 +283,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle transition of an encrypted multipart object drops its part lengths](#radosgws-lifecycle-transition-of-an-encrypted-multipart-object-drops-its-part-lengths) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807), [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826) |  |
 | [s3-tests' TargetObjectKeyFormat probe always answers True](#s3-tests-targetobjectkeyformat-probe-always-answers-true) | pending | pending | ✓ |
 | [radosgw logs an upload id without a part number as a part number without an upload id](#radosgw-logs-an-upload-id-without-a-part-number-as-a-part-number-without-an-upload-id) | pending | pending | ✓ |
+| [radosgw's IgnorePublicAcls and ACL is_public miss Swift's grants to everyone](#radosgws-ignorepublicacls-and-acl-is_public-miss-swifts-grants-to-everyone) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -13957,3 +13958,97 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** not filed; a cosmetic log message.
 - **Found:** phase 2 Task F20, 2026-10-14, reading get_params' partNumber
   parse; derived from the source, not reproduced.
+
+## radosgw's IgnorePublicAcls and ACL is_public miss Swift's grants to everyone
+
+- **Kind:** defect, security-relevant: a public-access-block bypass. A
+  bucket whose Swift container ACL is `.r:*` keeps serving anonymous S3
+  reads of every object, and listings to a request carrying a Referer,
+  under IgnorePublicAcls, and GetBucketPolicyStatus reports it not public.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A Swift container ACL `X-Container-Read: .r:*` becomes a referer grant
+    of `*` with `SWIFT_PERM_READ`, which is `RGW_PERM_READ_OBJS`
+    (`referrer_to_grant`,
+    [rgw_acl_swift.cc:146-149](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L146-L149),
+    [rgw_acl_swift.cc:146-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L146-L149);
+    `SWIFT_PERM_READ`,
+    [rgw_acl_swift.cc:21-22](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L21-L22),
+    [rgw_acl_swift.cc:21-22](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L21-L22)),
+    and `register_grant` adds the flags of a `*` referer grant to the
+    AllUsers group (`acl_group_map`,
+    [rgw_acl.cc:86-88](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L86-L88),
+    [rgw_acl.cc:86-88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L86-L88)).
+  - `verify_permission` gives a requester holding `RGW_PERM_READ_OBJS`
+    `RGW_PERM_READ` and `RGW_PERM_READ_ACP`, and one holding
+    `RGW_PERM_WRITE_OBJS` `RGW_PERM_WRITE` and `RGW_PERM_WRITE_ACP`, on S3
+    requests too, so that "the swift READ permission on bucket will allow
+    listing the bucket content"
+    ([rgw_acl.cc:208-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L208-L221),
+    [rgw_acl.cc:208-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L208-L221)).
+  - IgnorePublicAcls is `get_perm`'s `ignore_public_acls`, which skips the
+    AllUsers and AuthenticatedUsers groups
+    ([rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L180-L187),
+    [rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L180-L187)).
+    Its referer lookup, which replaces the flags with those of the last
+    matching referer grant, is not gated by it (`get_referer_perm`,
+    [rgw_acl.cc:190-192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L190-L192),
+    [rgw_acl.cc:190-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L190-L192)),
+    and a `*` grant matches any Referer that names a host (`is_match`,
+    [rgw_acl.h:212-233](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.h#L212-L233),
+    [rgw_acl.h:212-233](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.h#L212-L233)).
+    The bucket check passes the request's Referer
+    (`verify_bucket_permission_no_policy`,
+    [rgw_common.cc:1420-1423](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1420-L1423),
+    [rgw_common.cc:1451-1454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1451-L1454)),
+    so with a Referer an anonymous ListBucket gets READ_OBJS, and READ.
+  - With `rgw_enforce_swift_acls` set, as it is by default
+    ([rgw.yaml.in:1026-1033](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1026-L1033),
+    [rgw.yaml.in:1084-1091](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1084-L1091)),
+    `verify_object_permission_no_policy` falls back from the object's ACL to
+    the bucket ACL's Swift flags, calling `bucket_acl.verify_permission` with
+    the Referer alone
+    ([rgw_common.cc:1598-1599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599),
+    [rgw_common.cc:1655-1656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656);
+    the check of `rgw_enforce_swift_acls`,
+    [rgw_common.cc:1581](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1581),
+    [rgw_common.cc:1638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1638)).
+    That leaves `ignore_public_acls` at its default, false
+    ([rgw_acl.h:397-402](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.h#L397-L402),
+    [rgw_acl.h:397-402](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.h#L397-L402)),
+    so the AllUsers READ_OBJS lets anyone read every object, whatever its own
+    ACL, IgnorePublicAcls or not.
+  - `RGWAccessControlPolicy::is_public` masks the AllUsers and
+    AuthenticatedUsers flags with `RGW_PERM_FULL_CONTROL`
+    ([rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247),
+    [rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L235-L247)),
+    which holds neither `RGW_PERM_READ_OBJS` nor `RGW_PERM_WRITE_OBJS`
+    ([rgw_acl_types.h:35-38](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_types.h#L35-L38),
+    [rgw_acl_types.h:35-38](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_types.h#L35-L38)),
+    so it calls such an ACL not public. Amazon S3 calls an ACL public "if it
+    grants any permissions to members of the predefined `AllUsers` or
+    `AuthenticatedUsers` groups"
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status).
+- **Impact:** on a zone that serves Swift, an owner who sets
+  IgnorePublicAcls to shut out public grants still exposes a container
+  that Swift opened with `.r:*`. Every object in it is readable by an
+  anonymous S3 GetObject, and an anonymous ListBucket that sends a
+  Referer lists it. GetBucketPolicyStatus answers IsPublic false for it
+  (`isPublic`,
+  [rgw_op.cc:8610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8610),
+  [rgw_op.cc:9578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9578)).
+  An ACL an S3 request writes carries no Swift flags, so the
+  BlockPublicAcls checks of S3 writes are unaffected.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it today, in all three places:
+  - `acl.Policy.Perm` does not gate its referer branch on
+    `ignorePublicACLs` (`internal/acl/eval.go`);
+  - the object check's Swift fallback passes `false` for it
+    (`objectACL`, `internal/authz/evaluator.go`);
+  - `acl.Policy.IsPublic` keeps the mask (`internal/acl/eval.go`).
+
+  rgw-go's fix is a planned task.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S3, 2026-10-15, checking `acl.Policy.IsPublic`
+  against Amazon S3's rule for ACLs. Its review traced the IgnorePublicAcls
+  escape the same day. Derived from the source, not reproduced.
