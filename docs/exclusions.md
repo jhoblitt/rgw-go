@@ -3522,16 +3522,93 @@ does the following.
 
   A client that signs every header it sends, as the AWS SDKs do, sees no
   difference, and neither does rgw-cache. A signed header under any of the
-  prefixes is renamed as radosgw renames it. SigV2 is unchanged, since its
-  string to sign already carries every renamed header
+  prefixes is renamed as radosgw renames it. SigV2 needs no such rule, since
+  its string to sign already carries every renamed header
   ([rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)),
-  though there a signed directive can be moved under another prefix
-  (`docs/ceph-upstream-bugs.md`, "[radosgw's SigV2 signature survives
-  moving a signed x-amz directive under another meta
-  prefix](ceph-upstream-bugs.md#radosgws-sigv2-signature-survives-moving-a-signed-x-amz-directive-under-another-meta-prefix)").
+  but there a signed directive can be moved under another prefix, which
+  rgw-go refuses ("SigV2 refuses a directive under another meta prefix").
   s3-tests' `test_sigv4_presigned_put_xgoog_meta_unsigned`
   ([jhoblitt/ceph#4](https://github.com/jhoblitt/ceph/pull/4)) sends such a
   presigned PUT, which radosgw stores and rgw-go refuses.
+- **SigV2 refuses a directive under another meta prefix.** rgw-go refuses
+  with 403 AccessDenied a SigV2 request, header-signed or presigned,
+  carrying a header under `X-Goog-`, `X-Dho-`, `X-Rgw-`, `X-Object-`,
+  `X-Container-` or `X-Account-` whose `x-amz-` name begins with one that
+  its handlers read from the `X-Amz-` header alone, on both releases
+  (`relabelledDirective`). Those names (`rawAmzDirectives`) are the canned
+  ACL; every name beginning `x-amz-grant`, as radosgw's `has_acl_header`
+  takes them; the copy source and every name beginning with it, its range,
+  conditionals and SSE-C key among them; the metadata directive; the storage
+  class; tagging; the three object-lock headers; every name beginning
+  `x-amz-server-side-encryption`; a delete's three conditions;
+  GetObjectAttributes' three parameters; CreateBucket's object lock; the
+  request payer; the expected bucket owner; and the session token. radosgw
+  signs such a header under its `x-amz-` name, as `init_meta_info` files it
+  ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
+  [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)),
+  accepts the request and, reading each directive from its raw
+  `HTTP_X_AMZ_` variable, drops what the header names. CreateBucket's
+  object lock alone it reads from `x_meta_map`, under any prefix
+  ([rgw_rest_s3.cc:2542](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542),
+  [rgw_rest_s3.cc:2695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695)),
+  where rgw-go's CreateBucket reads `X-Amz-` alone, so a signed
+  `X-Goog-Bucket-Object-Lock-Enabled`, which radosgw honours, rgw-go
+  refuses under SigV2 and ignores under SigV4. The string to sign naming a
+  header by its `x-amz-` name lets the holder of a SigV2 signature move a
+  signed header between `X-Amz-` and another prefix with the signature
+  intact (`docs/ceph-upstream-bugs.md`, "[radosgw's SigV2 signature
+  survives moving a signed x-amz directive under another meta
+  prefix](ceph-upstream-bugs.md#radosgws-sigv2-signature-survives-moving-a-signed-x-amz-directive-under-another-meta-prefix)").
+  rgw-go refuses the header by its name alone, whatever else the request
+  carries:
+  - moved off `X-Amz-`, a signed directive would be dropped, as a signed
+    `X-Amz-Copy-Source` resent as `X-Goog-Copy-Source` would turn a
+    CopyObject into a PutObject of the request's body; the moved request is
+    refused;
+  - moved onto `X-Amz-`, a header the signer sent under another prefix, as
+    `X-Goog-Acl`, would become the directive. The resent request cannot be
+    refused, as it is the one a signer of `X-Amz-Acl` sends, over the same
+    string to sign, but the signer's own request is refused, beside an
+    `X-Amz-Acl` or not. So no request rgw-go accepts reads a signed
+    `x-amz-acl` line as anything but the `X-Amz-Acl` header it spells. A
+    request refused only when its `X-Amz-` form is gone would not do:
+    `X-Amz-Acl: private` beside `X-Goog-Acl: public-read` signs the same
+    joined `x-amz-acl:private,public-read` line as `X-Account-Acl: private`
+    beside `X-Amz-Acl: public-read`, since `X-Account-` sorts before
+    `X-Amz-`, and the two carry different canned ACLs.
+
+  Meta under any prefix, `X-Goog-Meta-*` among them, is still accepted, and
+  so is a header whose `x-amz-` name no handler reads from `X-Amz-` alone,
+  such as `X-Goog-Foo`: the handlers read either through the renamed map
+  alone, which files it under the same name whatever its prefix, so the
+  move changes nothing. The writes read the server-side-encryption
+  names under every prefix too, but a read takes
+  `x-amz-server-side-encryption` and the SSE-C key from `X-Amz-` alone, as
+  radosgw's `rgw_s3_prepare_decrypt` does
+  ([rgw_crypt.cc:1312-1359](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1312-L1359),
+  [rgw_crypt.cc:1328-1378](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1328-L1378)),
+  so every such name is refused; a write asking for encryption is refused
+  under any prefix anyway, with 501 NotImplemented, so there only the status
+  differs. The refusal comes once the request has authenticated
+  (`Verifier.Authenticate`), so one radosgw refuses for its Authorization,
+  its access key, its signature, its date or its expiry gets radosgw's
+  error: InvalidArgument, InvalidAccessKeyId, SignatureDoesNotMatch,
+  RequestTimeTooSkewed or AccessDenied. One that authenticates is refused
+  before radosgw's post-authentication checks and its op, so where radosgw
+  answers it with InvalidBucketName, InvalidTenantName or InvalidObjectName
+  for a bad name, UserSuspended for a suspended user
+  ([rgw_process.cc:364-375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L364-L375),
+  [rgw_process.cc:367-378](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L367-L378)), or an error of
+  the op, NoSuchBucket or a bucket policy's AccessDenied among them, rgw-go
+  answers 403 AccessDenied. SigV4 needs no such refusal, as its canonical headers
+  name each header as sent. A spec (`internal/auth/rawdirectives_test.go`)
+  ties the list to the source of every package under internal/ and cmd/.
+  s3-tests' `test_sigv2_signed_copy_source_moved_to_xgoog`
+  ([jhoblitt/ceph#5](https://github.com/jhoblitt/ceph/pull/5)) sends a
+  SigV2 CopyObject whose signed `X-Amz-Copy-Source` is resent as
+  `X-Goog-Copy-Source`. Run against both releases' clusters on 2026-10-14,
+  rgw-go refused it, and radosgw answered 200 and logged the request as
+  `op=put_obj` at v20.2.4.
 
 ### Authorization differences
 

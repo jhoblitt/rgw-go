@@ -1175,7 +1175,9 @@ Every new entry adds its row to this table, in document order.
   of "[radosgw's SigV4 check misses the meta-prefixed headers init_meta_info
   renames to
   x-amz](#radosgws-sigv4-check-misses-the-meta-prefixed-headers-init_meta_info-renames-to-x-amz)".
-  Unfixed at v19.2.7 and v20.2.4. Unreproduced: derived from the source.
+  Unfixed at v19.2.7 and v20.2.4. Reproduced for a copy source moved off
+  `X-Amz-` on running radosgw at both tags, 2026-10-14 (s3-tests, below);
+  the rest is derived from the source.
 - **Evidence:**
   - SigV2's string to sign carries `x_meta_map`
     ([rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
@@ -1221,7 +1223,63 @@ Every new entry adds its row to this table, in document order.
       ([rgw_rest_s3.cc:3541-3544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3541-L3544) and
       [rgw_rest_s3.cc:3555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3555);
       [rgw_rest_s3.cc:3791-3794](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3791-L3794) and
-      [rgw_rest_s3.cc:3805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3805)).
+      [rgw_rest_s3.cc:3805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3805)),
+      and its object lock there too
+      ([rgw_rest_s3.cc:3511-3513](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3511-L3513),
+      [rgw_rest_s3.cc:3761-3763](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3761-L3763));
+    - a DeleteObject's three conditions and its governance bypass in
+      `RGWDeleteObj_ObjStore_S3::get_params`
+      ([rgw_rest_s3.cc:3437-3439](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3437-L3439) and
+      [rgw_rest_s3.cc:3476](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3476);
+      [rgw_rest_s3.cc:3687-3689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3687-L3689) and
+      [rgw_rest_s3.cc:3726](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3726)),
+      and the MFA token in `RGWHandler_REST_S3::postauth_init`
+      ([rgw_rest_s3.cc:5026](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026),
+      [rgw_rest_s3.cc:5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556));
+    - a read's encryption parameters in `rgw_s3_prepare_decrypt`
+      ([rgw_crypt.cc:1312-1359](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1312-L1359),
+      [rgw_crypt.cc:1328-1378](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1328-L1378));
+    - the requester-pays header in `get_request_payer`
+      ([rgw_common.cc:1112](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1112),
+      [rgw_common.cc:1125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1125)) and
+      the session token that sets `sts:authentication` in
+      `rgw_build_iam_environment`
+      ([rgw_op.cc:904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904),
+      [rgw_op.cc:939](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L939));
+    - at v20.2.4 alone, the expected bucket owner
+      ([rgw_common.cc:1407](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1407) and
+      [rgw_common.cc:1575](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1575)) and
+      GetObjectAttributes' parameters
+      ([rgw_rest_s3.cc:3947-3975](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3947-L3975));
+    - a GetObject's `x-amz-cache`, which, for a requester holding the
+      `amz-cache` cap, `RGWGetObj_ObjStore_S3::verify_requester` and
+      `override_range_hdr` apply as request headers before they
+      authenticate the request a second time
+      ([rgw_rest_s3.cc:717](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L717) and
+      [rgw_rest_s3.cc:730](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L730);
+      [rgw_rest_s3.cc:792](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L792) and
+      [rgw_rest_s3.cc:805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L805));
+    - at v20.2.4 alone, also the checksum headers: an upload's algorithm,
+      `x-amz-checksum-algorithm` or `x-amz-sdk-checksum-algorithm`, and the
+      checksum under that algorithm's name, which the body is held to
+      ([rgw_cksum_pipe.h:74-75](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L74-L75),
+      [rgw_cksum_pipe.h:104](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L104),
+      [rgw_cksum_pipe.h:125-126](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L125-L126) and
+      [rgw_cksum_pipe.h:195](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L195)),
+      a GetObject's `x-amz-checksum-mode`
+      ([rgw_rest_s3.cc:315](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L315)),
+      CreateMultipartUpload's `x-amz-checksum-type`
+      ([rgw_rest_s3.cc:4509](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4509)),
+      and PutBucketPolicy's `x-amz-confirm-remove-self-bucket-access`
+      ([rgw_op.cc:9039](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9039)),
+      without whose attr the account root of the bucket's owner may put
+      the bucket policy past the policy itself
+      ([rgw_op.cc:8983-8986](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8983-L8986)).
+
+    CreateBucket's object lock is not among them: radosgw reads it from
+    `x_meta_map`, under any prefix
+    ([rgw_rest_s3.cc:2542](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542),
+    [rgw_rest_s3.cc:2695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695)).
   - So the string to sign names a header's value under its `x-amz-` name,
     not the prefix it came under, and a header can be moved between
     prefixes with its signature intact, both ways. A signed `X-Amz-*`
@@ -1240,38 +1298,100 @@ Every new entry adds its row to this table, in document order.
     a PutObject of the request's own body at the destination the signer
     named. An upload is stored without the canned ACL, the grants, the
     storage class, the tags or the object lock it was signed with. A
-    conditional copy becomes unconditional, and a copy signed with a
-    `REPLACE` metadata directive copies the source's metadata instead.
+    conditional copy or delete becomes unconditional, a copy signed with a
+    `REPLACE` metadata directive copies the source's metadata instead, and
+    a GetObject of an `amz-cache` requester skips the second
+    authentication its `x-amz-cache` asked for. At v20.2.4 a request signed
+    with an expected bucket owner is no longer held to it, and an upload is
+    no longer held to the checksum it was signed with, which, as SigV2 signs
+    no body, leaves the body checked by its Content-MD5 alone, and a bucket
+    policy signed with `x-amz-confirm-remove-self-bucket-access` is stored
+    without it, so the account root keeps its way past the policy
+    ([rgw_op.cc:9039-9042](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9039-L9042),
+    [rgw_op.cc:8983-8986](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8983-L8986)).
   - Moved onto `X-Amz-`, a header the signer sent under another prefix,
     such as `X-Goog-Acl` or `X-Goog-Copy-Source`, becomes the directive it
     names: a CopyObject from that source, that canned ACL or grant, that
-    tag set or that object lock, none of which radosgw applied to the
-    request as signed.
-- **Releases:** v19.2.7 and v20.2.4, by source reading; earlier releases
-  were not checked.
-- **rgw-go:** has the same gap. `amzHeadersV2` (`internal/auth/sigv2.go`)
-  signs a renamed header under its `x-amz-` name, as radosgw does, while
-  the handlers read the directives by their `X-Amz-` names:
-  - the copy source in the PUT routing and the copy
-    (internal/s3/putobject.go:44, internal/s3/request.go:227 and :274,
-    internal/s3/copyobject.go:37) and in the authorizer
-    (internal/authz/env.go:258 and :266);
-  - the canned ACL and the grants (internal/s3/putobject.go:51,
-    internal/s3/multipart.go:140, internal/authz/write.go:118, :175 and
-    :200-204, internal/authz/env.go:293, :300-304 and :325);
+    tag set or that object lock, a delete's governance bypass, or, at
+    v20.2.4, a bucket policy's confirmation that takes away the account
+    root's way past it, none of which radosgw applied to the request as
+    signed.
+  - The two moves combine: since `X-Account-` sorts before `X-Amz-`,
+    `X-Amz-Acl: private` beside `X-Goog-Acl: public-read` and
+    `X-Account-Acl: private` beside `X-Amz-Acl: public-read` both sign the
+    line `x-amz-acl:private,public-read`, while radosgw's canned ACL is
+    `private` for the first and `public-read` for the second.
+- **Releases:** v19.2.7 and v20.2.4, by source reading and, for the copy
+  source, on running clusters; earlier releases were not checked.
+- **rgw-go:** closes the gap, on both releases (`docs/exclusions.md`,
+  "SigV2 refuses a directive under another meta prefix"). `amzHeadersV2`
+  (`internal/auth/sigv2.go`) still signs a renamed header under its
+  `x-amz-` name, as radosgw does, but `relabelledDirective` refuses with
+  403 AccessDenied a SigV2 request, header-signed or presigned, carrying
+  under one of the six other prefixes a header whose `x-amz-` name begins
+  with an entry of `rawAmzDirectives`, the names the handlers read from
+  `X-Amz-` alone:
+  - the copy source, its range and its conditionals, in the PUT routing,
+    the copy and UploadPartCopy (internal/s3/putobject.go:44,
+    internal/s3/request.go:227-228 and :274, internal/s3/copyobject.go:37
+    and :45-48, internal/s3/multipart.go:142-150) and in the authorizer
+    (internal/authz/env.go:258-259 and :266);
+  - the canned ACL and the grants, these by `has_acl_header`'s prefix
+    `x-amz-grant` (internal/s3/putobject.go:51,
+    internal/s3/multipart.go:140, internal/authz/write.go:118, :175,
+    :200-204 and :211, internal/authz/env.go:293, :300-304 and :325);
   - the storage class (internal/s3/putobject.go:51,
-    internal/s3/copyobject.go:44, internal/s3/multipart.go:60);
-  - the tagging (internal/s3/putobject.go:90) and the object lock
-    (internal/s3/putobject.go:193 and :204);
-  - a copy's conditionals and metadata directive
-    (internal/s3/copyobject.go:45-48 and :91, internal/authz/env.go:268).
+    internal/s3/copyobject.go:44, internal/s3/multipart.go:60 and :140,
+    internal/s3/bucket.go:108);
+  - the tagging (internal/s3/putobject.go:90, internal/s3/multipart.go:88
+    and :198, internal/authz/env.go:280) and the object lock
+    (internal/s3/putobject.go:193 and :204-206);
+  - a copy's metadata directive (internal/s3/copyobject.go:91,
+    internal/authz/env.go:268);
+  - a read's `x-amz-server-side-encryption` and SSE-C key
+    (internal/s3/getobject.go:110 and :121-123,
+    internal/s3/getobjattrs.go:19 and :23-25), so by prefix every
+    server-side-encryption name, which the writes read under every prefix
+    and refuse;
+  - GetObjectAttributes' parameters (internal/s3/getobjattrs.go:53, :60
+    and :67) and a delete's conditions (internal/s3/deleteobject.go:21,
+    :23 and :24);
+  - CreateBucket's object lock (internal/s3/bucket.go:116), which radosgw
+    reads from `x_meta_map` instead, so rgw-go ignores the renamed form
+    under SigV4, where radosgw honours it;
+  - the expected bucket owner and the request payer
+    (internal/authz/evaluator.go:462 and :571), and the session token
+    behind `sts:authentication` (internal/authz/env.go:92).
 
-  Plan task F15, added by
-  [jhoblitt/rgw-go#302](https://github.com/jhoblitt/rgw-go/pull/302),
-  closes rgw-go's implementation of the gap.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+  rgw-go reads none of the other names above from `X-Amz-` alone: it acts
+  on neither `x-amz-cache` nor `x-amz-confirm-remove-self-bucket-access`,
+  nor checks or returns a checksum, and stores an `x_meta_map` name among
+  them, or leaves it out, alike under any prefix. A spec
+  (`internal/auth/rawdirectives_test.go`) parses every package under
+  internal/ and cmd/ and fails on an `x-amz-` header name, the value of a
+  constant or the constant start of a concatenation among them, that a
+  request read or any other use but a header write takes, unless an entry
+  begins it or the spec lists that use, by package, declaration and kind,
+  as no raw read. The refusal looks at the header's name alone, whatever
+  else the request carries, and comes once the request has authenticated,
+  so a request radosgw refuses for its credentials, signature or date gets
+  radosgw's error. Moved off `X-Amz-`, the request is refused. Moved onto
+  it, the resent request is the one a signer of the `X-Amz-` header sends,
+  over the same string to sign, and cannot be told from it, but the
+  signer's own request is refused, beside an `X-Amz-` one or not, which
+  also refuses both requests of the `X-Account-` swap. Meta under any
+  prefix still passes, as does a name no handler reads raw. s3-tests'
+  `test_sigv2_signed_copy_source_moved_to_xgoog`
+  ([jhoblitt/ceph#5](https://github.com/jhoblitt/ceph/pull/5)) resends a
+  signed SigV2 CopyObject's `X-Amz-Copy-Source` as `X-Goog-Copy-Source`.
+  Run on 2026-10-14 against the clusters of both releases, rgw-go refused
+  it, and radosgw answered 200 and logged the request as `op=put_obj` at
+  v20.2.4.
+- **Upstream:** pending: rgw-bug-reproduction confirmed it in triage on
+  2026-10-14.
 - **Found:** phase 2 unit F, the review of task F13, 2026-10-14; derived
-  from the source, not reproduced.
+  from the source, and the copy-source case reproduced on running radosgw
+  v19.2.7 and v20.2.4 on 2026-10-14 (task F15).
 
 ## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
 
