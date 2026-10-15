@@ -67,7 +67,7 @@ Every task's requirements include these. Values are copied from the spec and the
 - **Threat model:** each unit file states its threat model. Reviews judge a component against it, and adversarial review is for the spec's security boundaries only (PP-14).
 - **Shell is glue:** parsing, validation and logic are Go with tests (PP-15).
 - **s3-tests:** every rgw-go fix, where reasonable, carries an s3-tests test that covers it, merged into jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task. The pin bump is its own change.
-- **The next s3-tests pin bump** adds the known-differences lines that the tests landed since the pin need: F13's `test_sigv4_presigned_put_xgoog_meta_unsigned`, in both known-differences files (rgw-go refuses the unsigned header, radosgw stores it).
+- **The next s3-tests pin bump** adds the known-differences lines that the tests landed since the pin need: F13's `test_sigv4_presigned_put_xgoog_meta_unsigned`, in both known-differences files (rgw-go refuses the unsigned header, radosgw stores it), and F15's `test_sigv2_signed_copy_source_moved_to_xgoog`, in both (rgw-go refuses the relabelled copy source, radosgw stores a plain PutObject, as F15's runs on both releases showed).
 - **Go conventions:** go-conventions (Ginkgo v2 and Gomega specs, errors wrapped, slog). Every build, test and lint passes `ceph_preview`; cgo builds use the project CLAUDE.md's `CGO_CFLAGS` and `CGO_LDFLAGS`. No task ids in code.
 - **Clusters:** only disposable rooket clusters (`make cluster-up RELEASE=squid|tentacle`), reached through `ROOKET_NAME=rgw-go-<release> rooket k`; never the ambient kubectl. A task marked "Cluster: yes" runs one at a time.
 - **rgw-rs:** every material change to `docs/exclusions.md` is announced to the rgw-rs session.
