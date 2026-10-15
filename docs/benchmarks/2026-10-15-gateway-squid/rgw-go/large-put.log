@@ -1,0 +1,47 @@
+OPERATION   RESULT TYPE         FIRST DONE   LAST DONE
+=========== ================    ==========   =========
+MKBUCKETS   Elapsed time     :        37ms        37ms
+            Buckets/s        :          52          52
+            Buckets total    :           2           2
+---
+OPERATION   RESULT TYPE         FIRST DONE   LAST DONE
+=========== ================    ==========   =========
+WRITE       Elapsed time     :      5.690s      5.864s
+            Objects/s        :           1           5
+            Throughput MiB/s :         359         349
+            Total MiB        :        2048        2048
+            Objects total    :           7          32
+            Objects latency  : [ min=5.67s avg=5.76s max=5.84s ]
+            Objects lat % us : [ 1%<=5701632 50%<=5767168 75%<=5832704 99%<=5898240 99.9%<=5898240 ]
+            Objects lat hist : [ 5701632: 7, 5767168: 9, 5832704: 14, 5898240: 2 ]
+            IO latency       : [ min=5.67s avg=5.76s max=5.84s ]
+            IO lat % us      : [ 1%<=5701632 50%<=5767168 75%<=5832704 99%<=5898240 99.9%<=5898240 ]
+            IO lat hist      : [ 5701632: 7, 5767168: 9, 5832704: 14, 5898240: 2 ]
+---
+OPERATION   RESULT TYPE         FIRST DONE   LAST DONE
+=========== ================    ==========   =========
+RMOBJECTS   Elapsed time     :        45ms        62ms
+            Objects/s        :          66         514
+            Objects total    :           3          32
+---
+OPERATION   RESULT TYPE         FIRST DONE   LAST DONE
+=========== ================    ==========   =========
+WRITE       Elapsed time     :      4.717s      4.762s
+            Objects/s        :           1           6
+            IOPS             :          54          53
+            Throughput MiB/s :         434         430
+            Total MiB        :        2048        2048
+            Objects total    :           7          32
+            Objects latency  : [ min=4.70s avg=4.71s max=4.74s ]
+            Objects lat % us : [ 1%<=4718592 50%<=4718592 75%<=4718592 99%<=4784128 99.9%<=4784128 ]
+            Objects lat hist : [ 4718592: 30, 4784128: 2 ]
+            IO latency       : [ min=111ms avg=572ms max=857ms ]
+            IO lat % us      : [ 1%<=532480 50%<=573440 75%<=589824 99%<=647168 99.9%<=860160 ]
+            IO lat hist      : [ 111616: 1, 507904: 1, 532480: 9, 540672: 18, 548864: 19, 557056: 14, 565248: 27, 573440: 39, 581632: 62, 589824: 25, 598016: 3, 606208: 9, 614400: 5, 622592: 16, 630784: 5, 647168: 1, 811008: 1, 860160: 1 ]
+---
+OPERATION   RESULT TYPE         FIRST DONE   LAST DONE
+=========== ================    ==========   =========
+RMOBJECTS   Elapsed time     :        37ms        55ms
+            Objects/s        :          53         574
+            Objects total    :           2          32
+---

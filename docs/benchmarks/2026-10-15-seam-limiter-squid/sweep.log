@@ -1,0 +1,13 @@
+{"time":"2026-10-15T12:50:06.002596418-07:00","level":"INFO","msg":"seam limiter re-run","release":"squid","cluster_image":"quay.io/ceph/ceph:v19.2.7","dir":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/squid/seam-20261015T195006Z-limited","inflight_bytes":104857600,"config":"","repo":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run","rooket":"rooket","go_tags":"ceph_preview"}
+{"time":"2026-10-15T12:50:06.002829955-07:00","level":"INFO","msg":"building the benchmark","bin":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/squid/seam.test"}
+{"time":"2026-10-15T12:50:11.172823263-07:00","level":"INFO","msg":"the pool has room","bytes_available":9688940544}
+{"time":"2026-10-15T12:50:11.172926086-07:00","level":"INFO","msg":"bench","mode":"sync","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"2.19 7.25 6.43"}
+{"time":"2026-10-15T12:50:17.527457491-07:00","level":"INFO","msg":"bench done","mode":"sync","load":"2.09 7.06 6.37"}
+{"time":"2026-10-15T12:50:18.769103181-07:00","level":"INFO","msg":"the pool has room","bytes_available":8548089856}
+{"time":"2026-10-15T12:50:18.769231261-07:00","level":"INFO","msg":"bench","mode":"callback","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"2.09 7.06 6.37"}
+{"time":"2026-10-15T12:50:24.515386097-07:00","level":"INFO","msg":"bench done","mode":"callback","load":"2.08 6.97 6.35"}
+{"time":"2026-10-15T12:50:25.725609208-07:00","level":"INFO","msg":"the pool has room","bytes_available":9332359168}
+{"time":"2026-10-15T12:50:25.725718592-07:00","level":"INFO","msg":"bench","mode":"pipe","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"2.08 6.97 6.35"}
+{"time":"2026-10-15T12:50:31.419520329-07:00","level":"INFO","msg":"bench done","mode":"pipe","load":"2.08 6.89 6.33"}
+{"time":"2026-10-15T12:50:32.432801585-07:00","level":"INFO","msg":"objects left in the pool","pool":"rgw-go-test","objects":362}
+{"time":"2026-10-15T12:50:32.432826292-07:00","level":"INFO","msg":"the limiter re-run's cells are in the run directory; it renders no REPORT.md","dir":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/squid/seam-20261015T195006Z-limited"}

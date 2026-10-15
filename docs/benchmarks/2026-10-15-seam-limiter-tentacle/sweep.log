@@ -1,0 +1,13 @@
+{"time":"2026-10-15T13:54:11.246641622-07:00","level":"INFO","msg":"seam limiter re-run","release":"tentacle","cluster_image":"quay.io/ceph/ceph:v20.2.4","dir":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/tentacle/seam-20261015T205411Z-limited","inflight_bytes":104857600,"config":"","repo":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run","rooket":"rooket","go_tags":"ceph_preview"}
+{"time":"2026-10-15T13:54:11.246686506-07:00","level":"INFO","msg":"building the benchmark","bin":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/tentacle/seam.test"}
+{"time":"2026-10-15T13:54:17.274548008-07:00","level":"INFO","msg":"the pool has room","bytes_available":10040598528}
+{"time":"2026-10-15T13:54:17.27467776-07:00","level":"INFO","msg":"bench","mode":"sync","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"6.99 9.82 12.57"}
+{"time":"2026-10-15T13:54:21.864659703-07:00","level":"INFO","msg":"bench done","mode":"sync","load":"6.51 9.67 12.51"}
+{"time":"2026-10-15T13:54:23.080615275-07:00","level":"INFO","msg":"the pool has room","bytes_available":8298258432}
+{"time":"2026-10-15T13:54:23.08071428-07:00","level":"INFO","msg":"bench","mode":"callback","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"6.07 9.52 12.45"}
+{"time":"2026-10-15T13:54:27.56648854-07:00","level":"INFO","msg":"bench done","mode":"callback","load":"5.83 9.42 12.40"}
+{"time":"2026-10-15T13:54:28.792423972-07:00","level":"INFO","msg":"the pool has room","bytes_available":8856100864}
+{"time":"2026-10-15T13:54:28.792528086-07:00","level":"INFO","msg":"bench","mode":"pipe","args":"-shapes=write4m -conc=64 -budget-bytes=0 -inflight-bytes=104857600 -test.benchtime=640x","limit_s":364,"load":"5.83 9.42 12.40"}
+{"time":"2026-10-15T13:54:33.281114287-07:00","level":"INFO","msg":"bench done","mode":"pipe","load":"6.08 9.41 12.38"}
+{"time":"2026-10-15T13:54:34.246573337-07:00","level":"INFO","msg":"objects left in the pool","pool":"rgw-go-test","objects":2172}
+{"time":"2026-10-15T13:54:34.246602542-07:00","level":"INFO","msg":"the limiter re-run's cells are in the run directory; it renders no REPORT.md","dir":"/home/jhoblitt/github/rgw-go/.claude/worktrees/bench-run/hack/bench/out/tentacle/seam-20261015T205411Z-limited"}
