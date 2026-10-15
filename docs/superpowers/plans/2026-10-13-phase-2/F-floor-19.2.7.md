@@ -727,6 +727,46 @@ six other header prefixes onto `x-amz-`.
   - The next pin bump's known-differences note for that test follows.
 - **Depends on:** F17, since both change sigv2.go and the verifier. **PR:** its own. **Brief:**
   about 50 lines.
+### Task F19: auth and s3, a header-signed SigV2 request takes no unsigned query metadata or encryption
+
+Found in F17's work (its report's concern 2), and numbered here before F17 merged (PP-12).
+
+- **Layer:** auth, authz, s3. **Cluster:** for the s3-tests run only.
+- **Files:** internal/s3/requestattrs.go, internal/authz/env.go (`cryptAttr`'s query read), the auth
+  result they read, and their specs; docs/ceph-upstream-bugs.md (a new entry, F17-2);
+  docs/exclusions.md.
+- **Behaviour:**
+  1. radosgw's PutObject merges the query's `x-amz-meta-*` into `x_meta_map`, and its
+     `x-amz-server-side-encryption*` into the encryption settings, overwriting a header's
+     ([rgw_rest_s3.cc:2589-2603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603), called at
+     [rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619);
+     [rgw_rest_s3.cc:2742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742) and
+     [rgw_rest_s3.cc:2772](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772)). CompleteMultipartUpload and PostObject merge
+     too. It merges on every route, but SigV2's header route does not sign the query: the query
+     map joins the string to sign only on the presigned route
+     ([rgw_auth_s3.cc:215-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L215-L216),
+     [rgw_auth_s3.cc:217-218](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L217-L218)). So a header-signed SigV2 request,
+     replayed within its skew window, can gain metadata, or have its signed encryption replaced,
+     through query parameters nothing signs. SigV4 signs the canonical query, and the SigV2 presigned
+     route signs these names (F17).
+  2. rgw-go stores the metadata the same way (F17's report), and `cryptAttr` reads query encryption
+     settings. On a header-signed SigV2 request rgw-go reads neither: query `x-amz-meta-*` are not
+     stored, and query encryption settings are not read. That matches F18's rule, that rgw-go reads
+     nothing a request's signature does not cover. SigV4, the SigV2 presigned route and anonymous
+     requests are unchanged, since an anonymous request signs nothing and may send the same names as
+     headers.
+  3. Each difference from radosgw goes into docs/exclusions.md. The registry gains the F17-2 entry,
+     with evidence at both tags, and the Upstream line in the registry's "pending:
+     rgw-bug-reproduction ..." form; it went there on 2026-10-14.
+- **Specs:**
+  - a header-signed SigV2 PutObject and CompleteMultipartUpload with a query `x-amz-meta-x` stores
+    no `x`;
+  - one with query encryption settings beside signed header ones uses the header's;
+  - presigned SigV2, SigV4 and anonymous requests unchanged.
+- **s3-tests:** a header-signed SigV2 PutObject resent with `?x-amz-meta-x=1` stores no `x`, if
+  s3-tests can sign SigV2 that way (F15's test shows how).
+- **Depends on:** F18, since both change requestattrs.go and `cryptAttr`. **PR:** its own.
+  **Brief:** about 35 lines.
 
 ## Order
 
@@ -734,7 +774,7 @@ six other header prefixes onto `x-amz-`.
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F17, F18 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F17 after F15; F18 after F17; F16 superseded by F18) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F17, F18, F19 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F17 after F15; F18 after F17; F19 after F18; F16 superseded by F18) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
