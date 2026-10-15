@@ -7,14 +7,18 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// writeTagLen is generate_new_write_ver's TAG_LEN (rgw_common.cc:3207 at
-// v19.2.6, :3269 at v20.2.4). append_rand_alpha spends it on an underscore
-// and TAG_LEN-1 characters of gen_rand_alphanumeric (rgw_common.h:1621-1628
-// at v19.2.6, :1623-1630 at v20.2.4).
+// writeTagLen is generate_new_write_ver's TAG_LEN
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3207 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3269 at v20.2.4).
+// append_rand_alpha spends it on an underscore and TAG_LEN-1 characters of
+// gen_rand_alphanumeric
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1621-L1628 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1623-L1630 at v20.2.4).
 const writeTagLen = 24
 
 // alphanumeric is gen_rand_alphanumeric's table, a URL-safe base64 alphabet
-// despite its name (common/random_string.cc:48 at both tags).
+// despite its name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L48 at both tags).
 const alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
 // newWriteVersion is generate_new_write_ver: version 1 with a random tag, so
@@ -23,9 +27,12 @@ func newWriteVersion() meta.ObjVersion {
 	return meta.ObjVersion{Ver: 1, Tag: "_" + randAlnum(writeTagLen-1)}
 }
 
-// objv is RGWObjVersionTracker (rgw_common.h:924, driver/rados/rgw_rados.cc:158-197
-// at v19.2.6; rgw_common.h:948, rgw_rados.cc:166-232 at v20.2.4): read is
-// the version last read or written, which a later op checks when it is set,
+// objv is RGWObjVersionTracker
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L924,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L158-L197 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L948,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L166-L232 at v20.2.4):
+// read is the version last read or written, which a later op checks when it is set,
 // and write the version the next write sets, which it otherwise increments.
 type objv struct{ read, write meta.ObjVersion }
 

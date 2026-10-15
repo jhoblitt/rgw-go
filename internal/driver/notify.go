@@ -16,15 +16,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// controlPrefix is notify_oid_prefix (services/svc_notify.cc:19 at v19.2.6,
-// :22 at v20.2.4).
+// controlPrefix is notify_oid_prefix
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L19 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L22 at v20.2.4).
 const controlPrefix = "notify"
 
 // controlOIDs names the control objects as init_watch does
-// (services/svc_notify.cc:199-221 at v19.2.6, :162-183 at v20.2.4): num
-// objects notify.<i>, the single legacy object notify for 0, and one object,
-// notify.0, for a negative count. init_watch holds the count in an int, so
-// only the option's low 32 bits count.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L199-L221 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L162-L183 at v20.2.4):
+// num objects notify.<i>, the single legacy object notify for 0, and one
+// object, notify.0, for a negative count. init_watch holds the count in an
+// int, so only the option's low 32 bits count.
 func controlOIDs(num int64) []string {
 	n := int32(num) //nolint:gosec // truncated as radosgw's int num_watchers truncates it
 	if n == 0 {
@@ -105,8 +107,10 @@ func (n *notifier) createControlObjects(ctx context.Context) error {
 }
 
 // createControlObject creates oid unless it exists, as init_watch's
-// op.create(false) does (services/svc_notify.cc:231-238 at v19.2.6,
-// :198-205 at v20.2.4); one that exists keeps its data.
+// op.create(false) does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L231-L238 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L198-L205 at v20.2.4);
+// one that exists keeps its data.
 func (n *notifier) createControlObject(ctx context.Context, oid string) error {
 	wop := radosclient.NewWriteOp()
 	wop.Create(false)
@@ -119,10 +123,13 @@ func (n *notifier) createControlObject(ctx context.Context, oid string) error {
 // run keeps a watch registered on every control object until ctx ends, then
 // returns ctx's error. A registration that fails, the first as any later
 // one, is retried after the backoff, for ever. radosgw fails to start when
-// a first registration fails (init_watch, services/svc_notify.cc:243-261 at
-// v19.2.6, :207-221 at v20.2.4), re-registers a lost watch at once, and
-// aborts the process after 100 failures over its lifetime
-// (RGWWatcher::reinit, :89-115 at v19.2.6, :87-113 at v20.2.4;
+// a first registration fails (init_watch,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L243-L261 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L207-L221 at v20.2.4),
+// re-registers a lost watch at once, and aborts the process after 100
+// failures over its lifetime (RGWWatcher::reinit,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L89-L115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L87-L113 at v20.2.4;
 // docs/ceph-upstream-bugs.md, tracker #80992).
 func (n *notifier) run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
@@ -178,8 +185,9 @@ func (n *notifier) watchLoop(ctx context.Context, i int, oid string) {
 // hold counts watch i registered until it breaks or ctx ends, then closes it
 // and returns the error that broke it. A failure to close a watch that broke
 // is expected. One at shutdown is logged and does not fail run, as
-// finalize_watch ignores it (services/svc_notify.cc:266-276 at v19.2.6,
-// :226-240 at v20.2.4).
+// finalize_watch ignores it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L266-L276 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L226-L240 at v20.2.4).
 func (n *notifier) hold(ctx context.Context, i int, oid string, w radosclient.Watch) error {
 	n.setUp(ctx, i, true)
 	var lost error
@@ -204,9 +212,11 @@ func (n *notifier) hold(ctx context.Context, i int, oid string, w radosclient.Wa
 
 // setUp counts watch i registered or not, and tells onEnabled when every
 // watch has become registered or one has stopped being, as add_watcher and
-// remove_watcher do (services/svc_notify.cc:343-365 at v19.2.6, :330-352 at
-// v20.2.4). onEnabled runs under the lock, as _set_enabled runs under
-// watchers_lock, so two watches changing at once cannot reorder the calls.
+// remove_watcher do
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L343-L365 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L330-L352 at v20.2.4).
+// onEnabled runs under the lock, as _set_enabled runs under watchers_lock,
+// so two watches changing at once cannot reorder the calls.
 func (n *notifier) setUp(ctx context.Context, i int, up bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -228,10 +238,12 @@ func (n *notifier) setUp(ctx context.Context, i int, up bool) {
 
 // onNotify decodes a cache-notify record and hands it to handle, as
 // RGWWatcher::handle_notify hands it to RGWSI_SysObj_Cache::watch_cb
-// (services/svc_notify.cc:56-81 at v19.2.6, :54-79 at v20.2.4;
-// services/svc_sys_obj_cache.cc:465-482 at both). A record that does not
-// decode is logged and dropped; the seam acks the notify either way, as
-// handle_notify acks whatever the callback returned.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L56-L81 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L54-L79 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L465-L482 at both).
+// A record that does not decode is logged and dropped; the seam acks the
+// notify either way, as handle_notify acks whatever the callback
+// returned.
 func (n *notifier) onNotify(_, notifierID uint64, payload []byte) {
 	d := denc.NewDecoder(payload)
 	info := meta.DecodeCacheNotifyInfo(d)
@@ -244,18 +256,23 @@ func (n *notifier) onNotify(_, notifierID uint64, payload []byte) {
 }
 
 // pick is pick_control_obj: the control object the notify for the cache entry
-// named key goes to (services/svc_notify.cc:191-197 at v19.2.6, :153-160 at
-// v20.2.4).
+// named key goes to
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L191-L197 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L153-L160 at v20.2.4).
 func (n *notifier) pick(key string) string {
 	return n.oids[shardMod(meta.StrHashLinux(key), uint32(len(n.oids)))] //nolint:gosec // controlOIDs makes at most 2^31-1 objects
 }
 
 // distribute is RGWSI_Notify::distribute and robust_notify
-// (services/svc_notify.cc:394-412 and :455-513 at v19.2.6, :381-399 and
-// :442-500 at v20.2.4): one notify with librados's default timeout, then,
-// while it keeps timing out, up to maxRetries notifies invalidating the same
-// object, which carry nothing else. The caller logs a failure and carries
-// on, as radosgw does.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L394-L412
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_notify.cc#L455-L513 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L381-L399
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L442-L500 at v20.2.4):
+// one notify with librados's default timeout, then, while it keeps timing
+// out, up to maxRetries notifies invalidating the same object, which carry
+// nothing else. The caller logs a failure and carries on, as radosgw does.
 func (n *notifier) distribute(ctx context.Context, key string, info meta.CacheNotifyInfo) error {
 	oid := n.pick(key)
 	_, err := n.pool.Notify(ctx, oid, encodeAt(info, n.release), 0)

@@ -18,12 +18,12 @@ type completion struct {
 	c rgw.CompleteOp
 }
 
-// completionManager is RGWIndexCompletionManager (driver/rados/rgw_rados.cc,
-// a bare line number below being v19.2.6's): bucket_complete_op writes sent
-// off the request path, and the worker that sends again the ones a reshard
-// refused. Each submitted write runs in its own goroutine under the
-// manager's context, which Run's context ending cancels; the worker runs as
-// the Store's index-completions worker.
+// completionManager is RGWIndexCompletionManager
+// (driver/rados/rgw_rados.cc): bucket_complete_op writes sent off the
+// request path, and the worker that sends again the ones a reshard refused.
+// Each submitted write runs in its own goroutine under the manager's
+// context, which Run's context ending cancels; the worker runs as the
+// Store's index-completions worker.
 type completionManager struct {
 	s      *Store
 	ctx    context.Context
@@ -45,10 +45,12 @@ func newCompletionManager(ctx context.Context, s *Store) *completionManager {
 }
 
 // submit is cls_obj_complete_op's aio_operate and handle_completion
-// (:9514-9518, :994-1021): the write runs in its own goroutine and the
-// request does not wait for it. A busy-resharding answer queues the
-// completion for run; any other failure is logged and the completion
-// dropped, leaving the pending entry for listing to reconcile.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9514-L9518,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L994-L1021):
+// the write runs in its own goroutine and the request does not wait
+// for it. A busy-resharding answer queues the completion for run; any
+// other failure is logged and the completion dropped, leaving the
+// pending entry for listing to reconcile.
 func (m *completionManager) submit(x *indexOp, c rgw.CompleteOp) {
 	m.mu.Lock()
 	if m.closed {
@@ -94,10 +96,13 @@ func (m *completionManager) pending() int {
 	return m.inflight + len(m.queue)
 }
 
-// run is RGWIndexCompletionManager::process (:875-938) as the Store's
-// worker: each completion a reshard refused is sent again, one at a time.
-// When ctx ends, the writes in flight are canceled and awaited and the
-// queued ones abandoned, as the manager's stop abandons them (:804-819).
+// run is RGWIndexCompletionManager::process
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L875-L938)
+// as the Store's worker: each completion a reshard refused is sent again,
+// one at a time. When ctx ends, the writes in flight are canceled and
+// awaited and the queued ones abandoned, as the manager's stop abandons
+// them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L804-L819).
 func (m *completionManager) run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, m.cancel)
 	defer stop()
@@ -129,11 +134,14 @@ func (m *completionManager) run(ctx context.Context) error {
 	}
 }
 
-// retry is one pass of process's loop (:890-937): the bucket instance read
-// again and the completion sent to the shard it names, under the reshard
-// guard. Unlike the first attempt, process sends the request without the
-// object locator: its cls_rgw_bucket_complete_op call leaves it at its
-// default (:918-919). A failure is logged and the completion dropped.
+// retry is one pass of process's loop
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L890-L937):
+// the bucket instance read again and the completion sent to the shard it
+// names, under the reshard guard. Unlike the first attempt, process sends
+// the request without the object locator: its cls_rgw_bucket_complete_op
+// call leaves it at its default
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L918-L919).
+// A failure is logged and the completion dropped.
 func (m *completionManager) retry(comp *completion) {
 	x := &comp.x
 	rec, err := m.s.GetBucketInstance(m.ctx, x.rec.Info.Bucket)

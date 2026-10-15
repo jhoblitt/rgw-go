@@ -19,7 +19,6 @@ import (
 // driver registers for users and buckets (driver/rados/rgw_user.cc and
 // rgw_bucket.cc) over the metadata backend's objects
 // (services/svc_meta_be_sobj.cc, svc_user_rados.cc and svc_bucket_sobj.cc).
-// A bare line number is v19.2.6's.
 const (
 	sectionUser           = "user"
 	sectionBucket         = "bucket"
@@ -27,13 +26,17 @@ const (
 )
 
 // bucketInstancePrefix is RGW_BUCKET_INSTANCE_MD_PREFIX
-// (svc_bucket_sobj.cc:20; instance_oid_prefix, v20.2.4 :23).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L20;
+// instance_oid_prefix, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L23).
 const bucketInstancePrefix = ".bucket.meta."
 
-// instanceOIDToKey is oid_to_key (svc_bucket_sobj.cc:103-122;
-// instance_oid_to_meta_key, v20.2.4 :44-62): the oid past the prefix, its
-// first ':' made a '/' when a second follows, as then the first ends the
-// tenant.
+// instanceOIDToKey is oid_to_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L103-L122;
+// instance_oid_to_meta_key, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L44-L62):
+// the oid past the prefix, its first ':' made a '/' when a second
+// follows, as then the first ends the tenant.
 func instanceOIDToKey(oid string) string {
 	key, ok := strings.CutPrefix(oid, bucketInstancePrefix)
 	if !ok {
@@ -45,10 +48,12 @@ func instanceOIDToKey(oid string) string {
 	return key
 }
 
-// parseInstanceKey is parse_bucket (driver/rados/rgw_bucket.cc:50-86;
-// v20.2.4 :51-87), which the instance handler reads a key with:
-// "[tenant/]name:id", or "tenant:name:id". A key naming no instance id is
-// ErrInvalidArgument.
+// parseInstanceKey is parse_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L50-L86;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L51-L87),
+// which the instance handler reads a key with: "[tenant/]name:id", or
+// "tenant:name:id". A key naming no instance id is ErrInvalidArgument.
 func parseInstanceKey(key string) (meta.BucketID, error) {
 	var b meta.BucketID
 	rest := key
@@ -72,8 +77,10 @@ func parseInstanceKey(key string) (meta.BucketID, error) {
 }
 
 // entryPointKey splits a bucket section key, "tenant/name" or "name", the
-// entry point's oid (svc_bucket_sobj.cc:49-57). A key whose split names
-// another oid, as an empty tenant before a '/' would, names no entry point.
+// entry point's oid
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L49-L57).
+// A key whose split names another oid, as an empty tenant before a '/'
+// would, names no entry point.
 func entryPointKey(key string) (tenant, name string, ok bool) {
 	if t, n, found := strings.Cut(key, "/"); found {
 		tenant, name = t, n
@@ -84,11 +91,12 @@ func entryPointKey(key string) (tenant, name string, ok bool) {
 }
 
 // Get implements op.MetadataStore as RGWMetadataManager::get's handler read
-// (rgw_metadata.cc:469-499): each section's document, its JSON in Data and
-// the value in Doc, at the version and mtime its object was read at. An
-// unknown section and a missing entry are ErrNoSuchKey, find_handler's and
-// the read's ENOENT. A bucket instance whose website configuration or sync
-// policy is carried opaque is meta.ErrOpaqueJSON.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L469-L499):
+// each section's document, its JSON in Data and the value in Doc, at the
+// version and mtime its object was read at. An unknown section and a
+// missing entry are ErrNoSuchKey, find_handler's and the read's ENOENT. A
+// bucket instance whose website configuration or sync policy is carried
+// opaque is meta.ErrOpaqueJSON.
 func (s *Store) Get(ctx context.Context, section, key string) (op.MetadataEntry, error) {
 	if err := op.RefuseNULKey(key); err != nil {
 		return op.MetadataEntry{}, err
@@ -112,8 +120,10 @@ func noSuchKey(err error) error {
 	return err
 }
 
-// getEntryPoint is RGWBucketMetadataHandler::do_get (rgw_bucket.cc:2158-2176;
-// get, v20.2.4 :2336-2353).
+// getEntryPoint is RGWBucketMetadataHandler::do_get
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2158-L2176;
+// get, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2336-L2353).
 func (s *Store) getEntryPoint(ctx context.Context, key string) (op.MetadataEntry, error) {
 	tenant, name, ok := entryPointKey(key)
 	if !ok {
@@ -131,7 +141,9 @@ func (s *Store) getEntryPoint(ctx context.Context, key string) (op.MetadataEntry
 }
 
 // getInstance is RGWBucketInstanceMetadataHandler::do_get
-// (rgw_bucket.cc:2685-2700; get, v20.2.4 :2843-2856).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2685-L2700;
+// get, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2843-L2856).
 func (s *Store) getInstance(ctx context.Context, key string) (op.MetadataEntry, error) {
 	b, err := parseInstanceKey(key)
 	if err != nil {
@@ -150,15 +162,18 @@ func (s *Store) getInstance(ctx context.Context, key string) (op.MetadataEntry, 
 }
 
 // Put implements op.MetadataStore as RGWMetadataManager::put's handler put
-// (rgw_metadata.cc:501-552, :129-147): e.Data decoded as the section's
-// document, a document that does not decode being ErrInvalidArgument and
-// an opaque one meta.ErrOpaqueJSON. Each section reads its object first, as
-// put_pre does (:255-278), checks opts.IfVersion against the version read,
-// and writes under that version, or exclusively when it read nothing; the
-// version written is e.Version's when it has a tag, and the mtime
-// e.Mtime's. Whether the put is applied at all, check_versions, is the
-// op's. A key holding a NUL byte is ErrInvalidArgument in every section, on
-// Get and Remove too (op.RefuseNULKey).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L501-L552,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L129-L147):
+// e.Data decoded as the section's document, a document that does not decode
+// being ErrInvalidArgument and an opaque one meta.ErrOpaqueJSON.
+// Each section reads its object first, as put_pre does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L255-L278),
+// checks opts.IfVersion against the version read, and writes under that
+// version, or exclusively when it read nothing; the version written is
+// e.Version's when it has a tag, and the mtime e.Mtime's. Whether the put
+// is applied at all, check_versions, is the op's. A key holding a NUL byte
+// is ErrInvalidArgument in every section, on Get and Remove too
+// (op.RefuseNULKey).
 func (s *Store) Put(ctx context.Context, section, key string, e op.MetadataEntry, opts op.PutMetadataOptions) error {
 	if err := op.RefuseNULKey(key); err != nil {
 		return err
@@ -233,14 +248,16 @@ func (s *Store) busyBucket(ctx context.Context, info meta.BucketInfo, attrs map[
 }
 
 // putEntryPoint is RGWMetadataHandlerPut_Bucket's put_checked and put_post
-// (rgw_bucket.cc:2265-2317; v20.2.4 RGWBucketMetadataHandler::put,
-// :2355-2401). The entry point is written with the old entry point's attrs,
-// and the owner lists follow the entry point written: its owner's list
-// names the bucket while it is linked and not while it is unlinked, and an
-// old owner's list entry naming the bucket goes. The new owner's list is
-// set from the entry point after it is written, so a put that stops between
-// is completed there by its retry; the old owner's entry is not, as the
-// retry reads the new entry point as the old one, and stays in that list.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2265-L2317;
+// v20.2.4 RGWBucketMetadataHandler::put,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2355-L2401).
+// The entry point is written with the old entry point's attrs, and the
+// owner lists follow the entry point written: its owner's list names the
+// bucket while it is linked and not while it is unlinked, and an old
+// owner's list entry naming the bucket goes. The new owner's list is set
+// from the entry point after it is written, so a put that stops between is
+// completed there by its retry; the old owner's entry is not, as the retry
+// reads the new entry point as the old one, and stays in that list.
 //
 // The bucket's claim (bucketclaim.go) is read before the instance is
 // checked and, for a claim that does not exist yet, created after; it is
@@ -442,21 +459,26 @@ func (s *Store) refuseIDElsewhere(ctx context.Context, b meta.BucketID) error {
 const listPage = 1000
 
 // putInstance is RGWMetadataHandlerPut_BucketInstance's put_check,
-// put_checked and put_post (rgw_bucket.cc:2803-2946; v20.2.4
-// RGWBucketInstanceMetadataHandler::put, put_prepare and put_post,
-// :2858-3060): the bucket's tenant,
-// name and id come from the key; a new instance's index type from its
-// placement rule, which the zone must have, as select_bucket_location_by_rule
-// requires (services/svc_zone.cc:853-886; v20.2.4 :639-672); a stored
-// instance keeps its explicit placement and placement rule, as radosgw's
-// does; then the instance is written with the document's attrs and its
-// index initialized, a shard already there counting as initialized. The
+// put_checked and put_post
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2803-L2946;
+// v20.2.4 RGWBucketInstanceMetadataHandler::put, put_prepare and put_post,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2858-L3060):
+// the bucket's tenant, name and id come from the key; a new instance's index
+// type from its placement rule, which the zone must have, as
+// select_bucket_location_by_rule requires
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L853-L886;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L639-L672);
+// a stored instance keeps its explicit placement and placement rule, as
+// radosgw's does; then the instance is written with the document's attrs and
+// its index initialized, a shard already there counting as initialized. The
 // object lock configuration a document carries is stored, as v19.2.7's put
-// stores the instance it decodes whole (driver/rados/rgw_bucket.cc:2866-2887
-// at v19.2.7), on Tentacle too, whose decode reads no obj_lock
-// (rgw_common.cc:2606-2647 at v20.2.4). The lifecycle configuration and
-// topic mappings radosgw updates after the write are not kept by rgw-go
-// yet.
+// stores the instance it decodes whole
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2887 at v19.2.7),
+// on Tentacle too, whose decode reads no obj_lock
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647 at v20.2.4).
+// The lifecycle configuration and topic mappings radosgw updates after the
+// write are not kept by rgw-go yet.
 //
 // Each refusal comes before anything is written:
 //   - an attr outside user.rgw. is ErrInvalidArgument (op.RefuseRawAttrs),
@@ -585,7 +607,8 @@ func refuseNULPlacement(b meta.BucketID) error {
 // keepInstance is put_check's existing-instance branch and rgw-go's
 // refusals for one: info takes what the stored instance old keeps, and old's
 // object lock configuration when the document carries none, where v19.2.7
-// resets it to RGWObjectLock() (common/ceph_json.h:334-346 at v19.2.7).
+// resets it to RGWObjectLock()
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346 at v19.2.7).
 func (s *Store) keepInstance(ctx context.Context, info *meta.BucketInfo, attrs map[string][]byte, old *instance) error {
 	if err := s.busyBucket(ctx, old.info, old.attrs); err != nil {
 		return err
@@ -653,9 +676,10 @@ func (s *Store) instanceOwner(ctx context.Context, info *meta.BucketInfo) error 
 }
 
 // Remove implements op.MetadataStore as RGWMetadataManager::remove's
-// handler remove (rgw_metadata.cc:554-574): each section's object read and
-// removed under the version read. An unknown section and a missing entry
-// are ErrNoSuchKey.
+// handler remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L554-L574):
+// each section's object read and removed under the version read. An
+// unknown section and a missing entry are ErrNoSuchKey.
 func (s *Store) Remove(ctx context.Context, section, key string) error {
 	if err := op.RefuseNULKey(key); err != nil {
 		return err
@@ -672,11 +696,13 @@ func (s *Store) Remove(ctx context.Context, section, key string) error {
 }
 
 // removeEntryPointEntry is RGWBucketMetadataHandler::do_remove
-// (rgw_bucket.cc:2185-2213; remove, v20.2.4 :2489-2511), which unlinks the bucket
-// from its owner and removes its entry point, logging either failure and
-// answering success. rgw-go removes only an entry point whose instance is
-// gone, a name that loads nothing: radosgw's removal of a live bucket's
-// entry point leaves the bucket without its name, its index and objects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2185-L2213;
+// remove, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2489-L2511),
+// which unlinks the bucket from its owner and removes its entry point, logging
+// either failure and answering success. rgw-go removes only an entry point whose
+// instance is gone, a name that loads nothing: radosgw's removal of a live
+// bucket's entry point leaves the bucket without its name, its index and objects
 // reachable by no request, which is ErrConcurrentModification here. The
 // owner's list entry naming the instance goes first, so a removal that
 // stops between is completed by its retry, then the entry point, through
@@ -705,16 +731,18 @@ func (s *Store) removeEntryPointEntry(ctx context.Context, key string) error {
 }
 
 // removeInstanceEntry is RGWBucketInstanceMetadataHandler::do_remove
-// (rgw_bucket.cc:2707-2725): the instance read and removed under the
-// version read; a missing one is ErrNoSuchKey. rgw-go removes only an
-// instance no entry point names, a stale one, as removing the instance a
-// bucket's name loads leaves that name loading nothing and the bucket's
-// index and objects reachable by no request: ErrConcurrentModification. A
-// bucket a live rename or a removal holds is refused too. The index is
-// left, as radosgw leaves it. Tentacle's handler reads the instance and
-// removes nothing, leaving instances to each zone's trimming
-// (RGWBucketInstanceMetadataHandler::remove, v20.2.4 :3062-3080), and so
-// does this on Tentacle.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2707-L2725):
+// the instance read and removed under the version read; a missing one is
+// ErrNoSuchKey. rgw-go removes only an instance no entry point names, a
+// stale one, as removing the instance a bucket's name loads leaves that
+// name loading nothing and the bucket's index and objects reachable by no
+// request: ErrConcurrentModification. A bucket a live rename or a removal
+// holds is refused too. The index is left, as radosgw leaves it.
+// Tentacle's handler reads the instance and removes nothing, leaving
+// instances to each zone's trimming
+// (RGWBucketInstanceMetadataHandler::remove, v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3062-L3080),
+// and so does this on Tentacle.
 func (s *Store) removeInstanceEntry(ctx context.Context, key string) error {
 	b, err := parseInstanceKey(key)
 	if err != nil {
@@ -746,20 +774,28 @@ func (s *Store) removeInstanceEntry(ctx context.Context, key string) error {
 func (s *Store) sectionListing(section string) (meta.Pool, func(oid string) (string, bool), bool) {
 	switch section {
 	case sectionUser:
-		// RGWSI_User_Module::is_valid_oid (svc_user_rados.cc:54-57;
-		// UserLister, v20.2.4 :65-81): not a user's bucket list.
+		// RGWSI_User_Module::is_valid_oid
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L54-L57;
+		// UserLister, v20.2.4
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L65-L81):
+		// not a user's bucket list.
 		return s.zone.Params.UserUIDPool, func(oid string) (string, bool) {
 			return oid, !strings.HasSuffix(oid, bucketsSuffix)
 		}, true
 	case sectionBucket:
-		// RGWSI_Bucket_SObj_Module::is_valid_oid (svc_bucket_sobj.cc:45-47;
-		// BucketEntrypointLister, v20.2.4 :95-112): not behind a '.'.
+		// RGWSI_Bucket_SObj_Module::is_valid_oid
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L45-L47;
+		// BucketEntrypointLister, v20.2.4
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L95-L112):
+		// not behind a '.'.
 		return s.zone.Params.DomainRoot, func(oid string) (string, bool) {
 			return oid, oid != "" && oid[0] != '.'
 		}, true
 	case sectionBucketInstance:
-		// is_valid_oid and oid_to_key (svc_bucket_sobj.cc:81-122;
-		// BucketInstanceLister, v20.2.4 :130-157).
+		// is_valid_oid and oid_to_key
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L81-L122;
+		// BucketInstanceLister, v20.2.4
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L130-L157).
 		return s.zone.Params.DomainRoot, func(oid string) (string, bool) {
 			if !strings.HasPrefix(oid, bucketInstancePrefix) {
 				return "", false
@@ -774,15 +810,16 @@ func (s *Store) sectionListing(section string) (meta.Pool, func(oid string) (str
 var errStopListing = errors.New("listing stopped")
 
 // List implements op.MetadataStore as list_keys_next over the section's
-// pool (rgw_list_pool, driver/rados/rgw_tools.cc:346-395 at v19.2.6): the
-// keys of the objects the section keeps after marker, a
-// token an earlier List returned, until maxEntries keys are listed; next
-// resumes after the last object read, and more says whether the pool holds
-// more objects. A token from elsewhere, radosgw's cursors among them, is
+// pool (rgw_list_pool,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L346-L395 at v19.2.6):
+// the keys of the objects the section keeps after marker, a token an
+// earlier List returned, until maxEntries keys are listed; next resumes
+// after the last object read, and more says whether the pool holds more
+// objects. A token from elsewhere, radosgw's cursors among them, is
 // ErrInvalidArgument. A maxEntries of 0 lists nothing and tells only
 // whether a key follows. An unknown section is ErrNoSuchKey, and a pool
 // that does not exist lists nothing, as the handler takes its ENOENT
-// (rgw_metadata.cc:211-227).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L211-L227).
 func (s *Store) List(ctx context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	poolName, keyOf, ok := s.sectionListing(section)
 	if !ok {

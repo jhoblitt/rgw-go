@@ -20,16 +20,18 @@ import (
 
 // An overwritten object's tails go to the GC queue, as radosgw's
 // complete_atomic_modification sends them (driver/rados/rgw_rados.cc and
-// rgw_gc.cc; a bare line number below is v19.2.6's rgw_gc.cc, which v20.2.4
-// keeps).
+// rgw_gc.cc; v20.2.4 keeps the rgw_gc.cc code the v19.2.6 links below
+// cite).
 
-// gcSeed is RGWGC::seed (rgw_gc.h:27).
+// gcSeed is RGWGC::seed
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.h#L27).
 const gcSeed = 8675309
 
-// gcShard is RGWGC::tag_index (:63-66): XXH64 of the tag's bytes, NUL
-// included, under RGWGC::seed, reduced by rgw_shards_mod. Its hval
-// parameter is an unsigned int, so the 64-bit hash reaches the modulo as
-// its low 32 bits.
+// gcShard is RGWGC::tag_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L63-L66):
+// XXH64 of the tag's bytes, NUL included, under RGWGC::seed, reduced by
+// rgw_shards_mod. Its hval parameter is an unsigned int, so the 64-bit
+// hash reaches the modulo as its low 32 bits.
 func (w *writer) gcShard(tag string) int {
 	d := xxhash.NewWithSeed(gcSeed)
 	_, _ = d.WriteString(tag) //nolint:errcheck // a Digest's writes never fail
@@ -37,11 +39,15 @@ func (w *writer) gcShard(tag string) int {
 	return int(meta.ShardsMod(hval, w.opts.gcMaxObjs))
 }
 
-// gcChain is update_gc_chain (rgw_rados.cc:5409-5421; v20.2.4 :6132-6144):
+// gcChain is update_gc_chain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5409-L5421;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6132-L6144):
 // every stripe of m by its pool, oid and locator, but the one that is the
 // head object placed by headRule. A stripe whose placement gives no pool
 // keeps an empty one, as the iterator's get_raw_obj ignores obj_to_raw's
-// failure (rgw_rados.cc:2460-2465).
+// failure
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2460-L2465).
 func (s *Store) gcChain(m *meta.Manifest, headRule meta.PlacementRule) ([]rgw.GCObj, error) {
 	stripes, err := m.Stripes()
 	if err != nil {
@@ -62,23 +68,30 @@ func (s *Store) gcChain(m *meta.Manifest, headRule meta.PlacementRule) ([]rgw.GC
 	return chain, nil
 }
 
-// gcObjSize is cls_rgw_obj::estimate_encoded_size (cls_rgw_types.h:1149-1157
-// at v19.2.6, with rgw_obj_index_key's, rgw_obj_types.h:98-104), the bytes
-// send_split_chain counts for one object of a chain.
+// gcObjSize is cls_rgw_obj::estimate_encoded_size
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1149-L1157 at v19.2.6,
+// with rgw_obj_index_key's,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L98-L104),
+// the bytes send_split_chain counts for one object of a chain.
 func gcObjSize(o rgw.GCObj) int {
 	return 6 + 4 + len(o.Pool) + 4 + len(o.Key.Name) + 4 + len(o.Loc) + 6 + 4 + len(o.Key.Name) + 4 + len(o.Key.Instance)
 }
 
 // gcBaseSize is cls_rgw_gc_set_entry_op::estimate_encoded_size
-// (cls_rgw_ops.h:995-999, cls_rgw_types.h:1203-1211 and :1254-1260 at
-// v19.2.6) with an empty chain: the request around the tag.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_ops.h#L995-L999,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1203-L1211
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1254-L1260 at v19.2.6)
+// with an empty chain: the request around the tag.
 func gcBaseSize(tag string) int { return 6 + 4 + 6 + 4 + len(tag) + 8 + 6 + 4 }
 
-// enqueueGC is complete_atomic_modification's GC half (rgw_rados.cc:5394-5405)
-// through send_split_chain (:68-118): the chain is queued under tag in
-// entries whose estimated encoding stays within rgw_max_chunk_size, and when
-// an entry is refused, the objects it and the rest of the chain hold are
-// deleted inline. It never fails the caller.
+// enqueueGC is complete_atomic_modification's GC half
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5394-L5405)
+// through send_split_chain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L68-L118):
+// the chain is queued under tag in entries whose estimated encoding stays
+// within rgw_max_chunk_size, and when an entry is refused, the objects it and
+// the rest of the chain hold are deleted inline. It never fails the caller.
 func (s *Store) enqueueGC(ctx context.Context, chain []rgw.GCObj, tag string) {
 	limit := int(min(s.w.opts.chunkSize, uint64(1<<62))) //nolint:gosec // bounded above
 	base := gcBaseSize(tag)
@@ -90,7 +103,8 @@ func (s *Store) enqueueGC(ctx context.Context, chain []rgw.GCObj, tag string) {
 			if err := s.sendGCChain(ctx, batch, tag); err != nil {
 				slog.WarnContext(ctx, "gc enqueue failed; deleting the tails inline", slog.String("tag", tag), slog.Any("error", err))
 				// The failed batch and the chain from the batch's last
-				// object on, which send_split_chain's --it repeats (:89-96).
+				// object on, which send_split_chain's --it repeats
+				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L89-L96).
 				s.deleteInline(ctx, append(slices.Clone(batch), chain[i-1:]...), tag)
 				return
 			}
@@ -108,10 +122,11 @@ func (s *Store) enqueueGC(ctx context.Context, chain []rgw.GCObj, tag string) {
 	}
 }
 
-// sendGCChain is RGWGC::send_chain (:120-138): gc_log_enqueue2, a version
-// check for a shard that moved to the rgw_gc queue and the enqueue, and on a
-// shard that has not moved (ECANCELED) or refuses (EPERM), the omap-era
-// gc_set_entry instead.
+// sendGCChain is RGWGC::send_chain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L120-L138):
+// gc_log_enqueue2, a version check for a shard that moved to the rgw_gc
+// queue and the enqueue, and on a shard that has not moved (ECANCELED) or
+// refuses (EPERM), the omap-era gc_set_entry instead.
 func (s *Store) sendGCChain(ctx context.Context, objs []rgw.GCObj, tag string) error {
 	pool, err := s.pools.get(ctx, s.ZoneParams().GCPool)
 	if err != nil {
@@ -133,8 +148,11 @@ func (s *Store) sendGCChain(ctx context.Context, objs []rgw.GCObj, tag string) e
 	return err
 }
 
-// deleteInline is delete_objs_inline (rgw_rados.cc:5432-5462; v20.2.4
-// :6155-6194): refcount put(tag, implicit) under full-try on every object,
+// deleteInline is delete_objs_inline
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5432-L5462;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6155-L6194):
+// refcount put(tag, implicit) under full-try on every object,
 // rgw_multi_obj_del_max_aio at a time, failures logged. v19.2.6 sends them
 // one at a time; the requests are the same.
 func (s *Store) deleteInline(ctx context.Context, objs []rgw.GCObj, tag string) {

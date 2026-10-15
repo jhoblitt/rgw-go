@@ -26,11 +26,12 @@ var _ = Describe("gcShard", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(driver.GCShardForTest(s, tag)).To(Equal(want))
 		},
-		// XXH64 with seed 8675309 (rgw_gc.h:27), from ceph's src/xxHash: "" 0xef287162ccb95a3a,
-		// "tx-old\x00" 0xcfbf586c12d844fb, "tx-put\x00" 0xf69706c59eddf022, the 57-byte
-		// transaction tag 0x5c08d368a6c0f208; rgw_shards_mod keeps the low 32 bits. A modulo
-		// over the whole hash gives 24, 27, 0 and 19 for the 32-shard rows, and the tag
-		// without its NUL, "tx-old", is shard 15.
+		// XXH64 with seed 8675309
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.h#L27),
+		// from ceph's src/xxHash: "" 0xef287162ccb95a3a, "tx-old\x00" 0xcfbf586c12d844fb,
+		// "tx-put\x00" 0xf69706c59eddf022, the 57-byte transaction tag 0x5c08d368a6c0f208;
+		// rgw_shards_mod keeps the low 32 bits. A modulo over the whole hash gives 24, 27, 0
+		// and 19 for the 32-shard rows, and the tag without its NUL, "tx-old", is shard 15.
 		Entry("an empty tag", "32", "", 13),
 		Entry("a write tag with its NUL", "32", "tx-old\x00", 14),
 		Entry("another write tag with its NUL", "32", "tx-put\x00", 24),
@@ -94,7 +95,8 @@ var _ = Describe("enqueueGC", func() {
 		entries := c.GCEntries(gcPoolName, gcNS, gcOID)
 		// The estimate is 45 bytes for the request around the 7-byte tag and
 		// 207 or 209 bytes for each object, as its name has one or two
-		// digits, so 19, 19 and the last 11 fit 4096 (rgw_gc.cc:72-109).
+		// digits, so 19, 19 and the last 11 fit 4096
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L72-L109).
 		Expect(entries).To(HaveLen(3))
 		sizes := []int{len(entries[0].Chain), len(entries[1].Chain), len(entries[2].Chain)}
 		Expect(sizes).To(Equal([]int{19, 19, 11}))
@@ -125,7 +127,7 @@ var _ = Describe("enqueueGC", func() {
 			want := 0
 			switch {
 			case n == 38:
-				want = 2 // rgw_gc.cc:89-96: --it leaves the batch's last object at the start of the remainder
+				want = 2 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L89-L96: --it leaves the batch's last object at the start of the remainder
 			case n > 19:
 				want = 1
 			}

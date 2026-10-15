@@ -21,11 +21,12 @@ import (
 )
 
 // The head write is RGWRados::Object::Write::write_meta over _do_write_meta
-// (driver/rados/rgw_rados.cc:3124-3440 at v19.2.6, :3234-3594 at v20.2.4; a
-// bare line number below is v19.2.6's).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3124-L3440 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3234-L3594 at v20.2.4).
 
 // errRetryGuarded is _do_write_meta's -EEXIST on the assume-no-entry pass
-// (:3305-3308): the caller reads the head and runs the guarded pass.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3305-L3308):
+// the caller reads the head and runs the guarded pass.
 var errRetryGuarded = errors.New("driver: object exists; retry guarded")
 
 // headWrite is RGWRados::Object::Write::meta for one write_meta call.
@@ -43,11 +44,15 @@ type headWrite struct {
 	modifyTail, keepTail bool
 	size, accountedSize  uint64
 	// nonAtomic takes prepare_atomic_modification's branch for an object
-	// never set atomic (rgw_rados.cc:6497-6505; v20.2.4 :7334-7343): no
-	// guard and no idtag or tail_tag, and a reset is create(false) and
-	// obj_remove whether the object exists or not. radosgw writes the
-	// multipart meta object and the part heads so, without conditions,
-	// and writeMeta refuses a non-atomic write that carries any.
+	// never set atomic
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6497-L6505;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7334-L7343):
+	// no guard and no idtag or tail_tag, and a reset is create(false)
+	// and obj_remove whether the object exists or not. radosgw writes
+	// the multipart meta object and the part heads so, without
+	// conditions, and writeMeta refuses a non-atomic write that carries
+	// any.
 	nonAtomic bool
 	// pool, oid and loc place the head where the key's oid in the bucket's
 	// data pool would not: the meta object in the data-extra pool, a part
@@ -59,7 +64,10 @@ type headWrite struct {
 	// category is the index entry's; 0 is Main.
 	category uint8
 	// completeMultipart adds no bytes to the quota cache, which the parts
-	// already added (rgw_rados.cc:3359-3366; v20.2.4 :3512-3519).
+	// already added
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3359-L3366;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3512-L3519).
 	completeMultipart bool
 	// expect is the head as the caller read it, for a write that is only
 	// safe on that head: there is no assume-no-entry pass and no read of
@@ -83,13 +91,21 @@ func (s *Store) now() time.Time { return s.sysobj.now() }
 
 // entryOwner is the owner of the ACL in attrs, decoded as set_attrs decodes
 // it for the index entry, through decode_policy, which reads the owner alone
-// (driver/rados/rgw_rados.cc:6694-6700 at v19.2.6, :7494-7500 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6694-L6700 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7494-L7500 at v20.2.4):
 // a policy whose grants do not decode still names its owner, and a missing
 // ACL or one whose owner does not decode names none. A PUT or COPY's index
 // entry takes radosgw's request owner instead (obj_op.meta.owner,
-// driver/rados/rgw_putobj_processor.cc:382, :522 and :743 at v19.2.6, :412,
-// :558 and :787 at v20.2.4), the owner the ACL the ops hand the driver is
-// built with, so both read alike.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L382,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L522
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L743 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L412,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L558
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L787 at v20.2.4),
+// the owner the ACL the ops hand the driver is built with, so both read
+// alike.
 func entryOwner(attrs map[string][]byte) (id, displayName string) {
 	o, err := policyOwner(attrs[meta.AttrACL])
 	if err != nil {
@@ -102,19 +118,24 @@ func entryOwner(attrs map[string][]byte) (id, displayName string) {
 // bufferlist::to_str keeps them; "" when absent.
 func rawTag(st *op.ObjectState, name string) string { return string(st.Attrs[name]) }
 
-// rgwBlStr is rgw_bl_str (rgw_common.h:2063-2072 at v19.2.6): the attr's
-// bytes without their trailing NULs.
+// rgwBlStr is rgw_bl_str
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L2063-L2072 at v19.2.6):
+// the attr's bytes without their trailing NULs.
 func rgwBlStr(b []byte) string { return strings.TrimRight(string(b), "\x00") }
 
 // checkPreconditions is check_preconditions for a write's If-Match and
-// If-None-Match (rgw_rados.cc:7286-7328 at v20.2.4, :6672-6714 at v19.2.7),
+// If-None-Match
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7286-L7328 at v20.2.4,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6672-L6714 at v19.2.7),
 // which both releases apply to a PutObject alike. A
 // CompleteMultipartUpload's conditions reach it on Squid too, where v19.2.7
 // reads none (docs/exclusions.md, "Write conditions are Tentacle's on Squid
 // too"). A condition is unquoted with rgw_string_unquote and matches when it
-// begins with the stored ETag, compared over the ETag's length (:7299, :7321
-// at v20.2.4). If-Match on a missing object is NoSuchKey; If-None-Match with
-// an ETag passes an object that has none.
+// begins with the stored ETag, compared over the ETag's length
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7299,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7321 at v20.2.4).
+// If-Match on a missing object is NoSuchKey; If-None-Match with an ETag
+// passes an object that has none.
 func (s *Store) checkPreconditions(st *op.ObjectState, ifMatch, ifNoneMatch string) error {
 	etag, hasETag := st.Attrs[meta.AttrETag]
 	if ifMatch != "" {
@@ -145,15 +166,19 @@ func (s *Store) checkPreconditions(st *op.ObjectState, ifMatch, ifNoneMatch stri
 	return nil
 }
 
-// writeMeta is RGWRados::Object::Write::write_meta (rgw_rados.cc:3419-3440;
-// v20.2.4 :3572-3594): without conditions an assume-no-entry pass, which
-// reads nothing and creates the head exclusively; when the head exists, one
-// read of it and the guarded pass. With conditions, the read and the guarded
-// pass alone. Both passes share x, which prepares once. The mtime is taken
-// once, as meta.set_mtime is.
+// writeMeta is RGWRados::Object::Write::write_meta
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3419-L3440;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3572-L3594):
+// without conditions an assume-no-entry pass, which reads nothing and
+// creates the head exclusively; when the head exists, one read of it and the
+// guarded pass. With conditions, the read and the guarded pass alone. Both
+// passes share x, which prepares once. The mtime is taken once, as
+// meta.set_mtime is.
 func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headResult, error) {
 	if hw.key.Name == "" {
-		// _do_write_meta's "cannot write object with empty name", -EIO (:3153-3156).
+		// _do_write_meta's "cannot write object with empty name", -EIO
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3153-L3156).
 		return headResult{}, fmt.Errorf("%w: cannot write an object with an empty name in bucket %s", op.ErrUnknown, hw.rec.Info.Bucket.Name)
 	}
 	mtime := hw.mtime
@@ -164,15 +189,17 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 		if hw.ifMatch != "" || hw.ifNoneMatch != "" {
 			// radosgw's non-atomic writers, RadosMultipartUpload::init and
 			// MultipartObjectProcessor::complete, set no conditions on Squid
-			// (rgw_putobj_processor.cc:515-529 at v19.2.6). Tentacle's
-			// complete passes UploadPart's (:563-564 at v20.2.4), which rgw-go
-			// ignores (docs/exclusions.md, "UploadPart ignores If-Match and
-			// If-None-Match"), so a caller that passes them asks for a write
-			// rgw-go never makes.
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L515-L529 at v19.2.6).
+			// Tentacle's complete passes UploadPart's
+			// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L563-L564 at v20.2.4),
+			// which rgw-go ignores (docs/exclusions.md, "UploadPart ignores
+			// If-Match and If-None-Match"), so a caller that passes them asks
+			// for a write rgw-go never makes.
 			return headResult{}, fmt.Errorf("%w: a non-atomic head write of %s carries write conditions", op.ErrInternalError, hw.key.Name)
 		}
 		// Without conditions write_meta's only pass assumes no entry
-		// (:3429-3436), and its create(false) cannot fail with EEXIST.
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3429-L3436),
+		// and its create(false) cannot fail with EEXIST.
 		return s.doWriteMeta(ctx, hw, x, &op.ObjectState{Bucket: hw.rec, Key: hw.key}, mtime, true)
 	}
 	if hw.expect != nil {
@@ -192,9 +219,11 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	return s.doWriteMeta(ctx, hw, x, st, mtime, false)
 }
 
-// doWriteMeta is one pass of _do_write_meta (rgw_rados.cc:3124-3417; v20.2.4
-// :3234-3570) over st, the head as read, or as missing on the
-// assume-no-entry pass.
+// doWriteMeta is one pass of _do_write_meta
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3124-L3417;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3234-L3570)
+// over st, the head as read, or as missing on the assume-no-entry pass.
 func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *op.ObjectState, mtime time.Time, assumeNoent bool) (headResult, error) {
 	ref, err := s.headWriteRef(ctx, hw)
 	if err != nil {
@@ -212,7 +241,8 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 		}
 		if hw.create {
 			if st.Exists {
-				// remove_rgw_head_obj keeps the olh attrs (rgw_rados.cc:5722-5727).
+				// remove_rgw_head_obj keeps the olh attrs
+				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5722-L5727).
 				w.Create(false)
 				rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
 			} else {
@@ -267,7 +297,8 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 		origSize = st.Compression.OrigSize
 	}
 	if !hw.create {
-		// A multipart part's head is immutable (:3272-3278).
+		// A multipart part's head is immutable
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3272-L3278).
 		origExists, origSize = false, 0
 	}
 	if !x.prepared {
@@ -314,11 +345,17 @@ func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error)
 }
 
 // guardHead checks the write's conditions, then adds
-// prepare_atomic_modification's guard (rgw_rados.cc:3201-3202 and :6731-6735
-// at v19.2.7, :3298-3300 and :7345-7349 at v20.2.4): a cmpxattr on the head's
-// write tag when the head has a manifest or a tag radosgw did not fake. Both
-// releases guard alike: neither compares the tag for If-None-Match: *, which
-// the exclusive create guards, or for a versioned instance.
+// prepare_atomic_modification's guard
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3202
+// and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6731-L6735 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7345-L7349 at v20.2.4):
+// a cmpxattr on the head's write tag when the head has a manifest or a tag
+// radosgw did not fake. Both releases guard alike: neither compares the tag
+// for If-None-Match: *, which the exclusive create guards, or for a versioned
+// instance.
 func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectState) error {
 	if err := s.checkPreconditions(st, hw.ifMatch, hw.ifNoneMatch); err != nil {
 		return err
@@ -335,7 +372,8 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectSt
 		return nil
 	}
 	// get_obj_state_impl fakes a tag for a head with a manifest and none
-	// (:6238-6245); a fake tag is never compared.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6238-L6245);
+	// a fake tag is never compared.
 	fake := st.Manifest != nil && st.WriteTag == ""
 	guard := (st.Manifest != nil || st.WriteTag != "") && !fake
 	if guard && hw.key.Instance == "" && hw.ifNoneMatch != "*" {
@@ -345,12 +383,14 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st *op.ObjectSt
 }
 
 // completeAtomicModification is complete_atomic_modification
-// (rgw_rados.cc:5382-5407): the overwritten head's tails go to the GC under
-// its tail_tag, or, when it has none, its object tag: its idtag, or the tag
-// radosgw fakes for a head with a manifest and no idtag. A chain that cannot
-// be built is logged and left, as radosgw logs complete_atomic_modification's
-// failure without failing the write (:3314-3317). st is key's head in rec's
-// bucket as the write or the delete read it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5382-L5407):
+// the overwritten head's tails go to the GC under its tail_tag, or, when it
+// has none, its object tag: its idtag, or the tag radosgw fakes for a head
+// with a manifest and no idtag. A chain that cannot be built is logged and
+// left, as radosgw logs complete_atomic_modification's failure without
+// failing the write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3314-L3317).
+// st is key's head in rec's bucket as the write or the delete read it.
 func (s *Store) completeAtomicModification(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, st *op.ObjectState) {
 	chain, err := s.gcChain(st.Manifest, rec.Info.PlacementRule)
 	if err != nil {
@@ -373,12 +413,15 @@ func (s *Store) completeAtomicModification(ctx context.Context, rec *op.BucketRe
 	s.enqueueGC(context.WithoutCancel(ctx), chain, tag)
 }
 
-// fakeTag is generate_fake_tag (rgw_rados.cc:6052-6083 at v19.2.6,
-// :6806-6837 at v20.2.4), the object tag get_obj_state_impl gives a head with
-// a manifest and no idtag (:6238-6245): the oid of the manifest's first
-// stripe, or of its second when it has a tail, and "_", then the hex MD5 of
-// the stored manifest attr and the etag attr, NUL-terminated. st.Manifest is
-// the manifest after set_head, as radosgw walks it.
+// fakeTag is generate_fake_tag
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6052-L6083 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6806-L6837 at v20.2.4),
+// the object tag get_obj_state_impl gives a head with a manifest and no idtag
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6238-L6245):
+// the oid of the manifest's first stripe, or of its second when it has a
+// tail, and "_", then the hex MD5 of the stored manifest attr and the etag
+// attr, NUL-terminated. st.Manifest is the manifest after set_head, as
+// radosgw walks it.
 func fakeTag(st *op.ObjectState) string {
 	var tag string
 	if it, err := st.Manifest.Seek(0); err == nil && !it.Done() {
@@ -395,7 +438,10 @@ func fakeTag(st *op.ObjectState) string {
 	return tag + hex.EncodeToString(h.Sum(nil)) + "\x00"
 }
 
-// cancelWrite is done_cancel (rgw_rados.cc:3369-3416; v20.2.4 :3522-3569):
+// cancelWrite is done_cancel
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3369-L3416;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3569):
 // the index entry is canceled unless the write timed out, which may yet
 // land, then the race is judged. Without conditions a replaced, removed or
 // created head is success; If-Match: * fails on a removed head and succeeds

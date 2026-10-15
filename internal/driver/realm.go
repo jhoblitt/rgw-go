@@ -39,9 +39,10 @@ func readSysObj[T any](ctx context.Context, s *Store, o sysObj, dec func(*denc.D
 }
 
 // GetRealm implements op.RealmStore as RGWSystemMetaObj::init for a realm
-// (rgw_zone.cc:106-145 at v19.2.6 and v20.2.4): with no id, rgw_realm_id;
-// with neither, the name, else rgw_realm, through realms_names.<name>; with
-// none of them, default.realm; then realms.<id>.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L106-L145 at v19.2.6
+// and v20.2.4): with no id, rgw_realm_id; with neither, the name, else
+// rgw_realm, through realms_names.<name>; with none of them, default.realm;
+// then realms.<id>.
 func (s *Store) GetRealm(ctx context.Context, id, name string) (meta.Realm, error) {
 	r, err := s.initRealm(ctx, id, name)
 	return r, op.FromRADOS(err, op.ScopeService)
@@ -71,21 +72,26 @@ func (s *Store) initRealm(ctx context.Context, id, name string) (meta.Realm, err
 }
 
 // defaultRealmID is RGWSystemMetaObj::read_default_id for a realm
-// (rgw_zone.cc:1092-1105 at v19.2.6, :1132-1145 at v20.2.4): default.realm's
-// id.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L1092-L1105 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1132-L1145 at v20.2.4):
+// default.realm's id.
 func (s *Store) defaultRealmID(ctx context.Context) (string, error) {
 	v, err := readSysObj(ctx, s, rootObj(s.roots.realm, meta.DefaultRealmOID()), meta.DecodeDefaultSystemMetaObjInfo)
 	return v.DefaultID, err
 }
 
 // ListRealms implements op.RealmStore as RGWOp_Realm_List::execute
-// (driver/rados/rgw_rest_realm.cc:322-332 at v19.2.6, :343-353 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L322-L332 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L343-L353 at v20.2.4):
 // the default id, "" whatever keeps it from being read, as radosgw ignores
 // read_default_id's result, then RGWSI_Zone::list_realms
-// (services/svc_zone.cc:421-427 at v19.2.6, :257-263 at v20.2.4): the names
-// after "realms_names." of the realm root pool's objects in the pool's
-// listing order, as pool_list_prefixed_objs walks it, skipping a name that
-// is the prefix alone (svc_sys_obj_core.cc:579-607 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L421-L427 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L257-L263 at v20.2.4):
+// the names after "realms_names." of the realm root pool's objects in the
+// pool's listing order, as pool_list_prefixed_objs walks it, skipping a
+// name that is the prefix alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L579-L607 at v19.2.6
+// and v20.2.4).
 func (s *Store) ListRealms(ctx context.Context) (defaultID string, names []string, err error) {
 	defaultID, _ = s.defaultRealmID(ctx) //nolint:errcheck // radosgw ignores the read's result
 	err = s.roots.realm.ListObjects(ctx, func(oid, _ string) error {
@@ -103,9 +109,10 @@ func (s *Store) ListRealms(ctx context.Context) (defaultID string, names []strin
 	return defaultID, names, nil
 }
 
-// GetPeriod implements op.RealmStore as RGWPeriod::init (rgw_period.cc:14-60
-// at v19.2.6 and v20.2.4): with no period id, the current period of the
-// realm initRealm resolves, under that realm's id; with no epoch,
+// GetPeriod implements op.RealmStore as RGWPeriod::init
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_period.cc#L14-L60 at
+// v19.2.6 and v20.2.4): with no period id, the current period of the realm
+// initRealm resolves, under that realm's id; with no epoch,
 // periods.<id>.latest_epoch's; then the period object, named as
 // meta.RealmPeriodOID names it.
 func (s *Store) GetPeriod(ctx context.Context, realmID, periodID string, epoch uint32) (meta.Period, error) {
@@ -132,7 +139,8 @@ func (s *Store) initPeriod(ctx context.Context, realmID, periodID string, epoch 
 }
 
 // GetPeriodConfig implements op.RealmStore as RGWPeriodConfig::read
-// (rgw_zone.cc:616-636 at v19.2.6, :624-644 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L616-L636 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L624-L644 at v20.2.4):
 // period_config.<realm id> in the period root pool. A missing object is
 // ErrNotFound, which the callers take as the zero config, as radosgw's do
 // its -ENOENT.
@@ -148,9 +156,10 @@ func (s *Store) GetPeriodConfig(ctx context.Context, realmID string) (meta.Perio
 }
 
 // PutPeriodConfig implements op.RealmStore as RGWPeriodConfig::write
-// (rgw_zone.cc:638-651 at v19.2.6, :646-659 at v20.2.4): the config encoded
-// at the cluster's release, written whole, not exclusively and unversioned,
-// through the metadata cache.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L638-L651 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L646-L659 at v20.2.4):
+// the config encoded at the cluster's release, written whole, not
+// exclusively and unversioned, through the metadata cache.
 func (s *Store) PutPeriodConfig(ctx context.Context, realmID string, cfg meta.PeriodConfig) error {
 	e := denc.NewEncoder()
 	cfg.Encode(e, s.release)

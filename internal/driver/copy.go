@@ -23,8 +23,12 @@ import (
 )
 
 // A copy is RGWRados::copy_obj's local branch (driver/rados/rgw_rados.cc
-// :4667-5031 at v19.2.6, :4916-5291 at v20.2.4; a bare line number below is
-// v19.2.6's) with copy_obj_data (:5034-5115, v20.2.4 :5294-5386).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4667-L5031 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L4916-L5291 at v20.2.4)
+// with copy_obj_data
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5034-L5115,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386).
 
 var (
 	// errCopyStreamDone ends a copy's source read once the destination
@@ -39,16 +43,19 @@ var (
 // refcount reference under the copy's tag, the head's own bytes are copied,
 // and a new head names the source's tails; a copy onto itself rewrites the
 // head alone and keeps its tails. Anything else streams the source's stored
-// bytes into a new object (:4847-4879). src is the state the op read with
-// PrefetchObject, as radosgw's object context holds it from
-// read_obj_policy, so the head's bytes come from its Head without a second
-// read.
+// bytes into a new object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4879).
+// src is the state the op read with PrefetchObject, as radosgw's object
+// context holds it from read_obj_policy, so the head's bytes come from its
+// Head without a second read.
 //
 // A copy that fails after taking references drops them again, as done_ret
-// does (:4990-5031), except where its head write timed out and may yet land
-// on the shared tails, and it also drops them when its head write loses a
-// race, which radosgw answers as success without dropping them
-// (docs/exclusions.md, "Object write differences").
+// does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4990-L5031),
+// except where its head write timed out and may yet land on the shared
+// tails, and it also drops them when its head write loses a race, which
+// radosgw answers as success without dropping them (docs/exclusions.md,
+// "Object write differences").
 func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, p op.CopyParams) (*op.PutResult, error) {
 	if !src.Exists {
 		return nil, fmt.Errorf("copy source %s: %w", objName(src), op.ErrNoSuchKey)
@@ -57,7 +64,8 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	if err != nil {
 		return nil, err
 	}
-	// get_max_chunk_size of the destination bucket's head pool (:4814-4818).
+	// get_max_chunk_size of the destination bucket's head pool
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4814-L4818).
 	headPool, _, err := s.dataPoolHandle(ctx, dst.Info.PlacementRule, dst.Info.Bucket)
 	if err != nil {
 		return nil, err
@@ -77,7 +85,8 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 		return nil, fmt.Errorf("%w: no data pool for placement %q of copy source %s", op.ErrUnknown, srcRule, objName(src))
 	}
 	// s->dest_placement: the request's storage class on the bucket's
-	// placement (rgw_op.cc:577-578).
+	// placement
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L577-L578).
 	destRule := meta.PlacementRule{StorageClass: p.StorageClass}.InheritFrom(dst.Info.PlacementRule)
 	dstPool, ok := s.dataPool(destRule, dst.Info.Bucket)
 	if !ok {
@@ -85,7 +94,8 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	}
 	// "refcounting tail wouldn't work here, just copy the data": a source
 	// without a manifest or tails, one whose tails lie under another rule or
-	// in another pool, or one whose head holds more than a chunk (:4847-4866).
+	// in another pool, or one whose head holds more than a chunk
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4866).
 	copyData := m == nil || srcRule != destRule || srcPool != dstPool
 	copyFirst := false
 	if m != nil {
@@ -109,26 +119,40 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	return s.shareTails(ctx, src, dst, dstKey, attrs, tag, p.Mtime, copyFirst)
 }
 
-// copyAttrs is copy_obj's attr rewrite (:4755-4794; v20.2.4 :5010-5049, with
-// set_copy_attrs at :3673-3700 and v20.2.4 :3858-3885): the source's attrs
-// with the request's ACL, without delete_at, the object-lock attrs other than
-// the request's, the OLH attrs in a bucket without versioning, the storage
-// class and the replication attrs; then the source's attrs whole for COPY, or
-// the request's with the source's etag and tail tag where it has none for
-// REPLACE; then without idtag, pg_ver and source_zone, and with the source's
-// compression info.
+// copyAttrs is copy_obj's attr rewrite
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4755-L4794;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5010-L5049,
+// with set_copy_attrs at
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3673-L3700
+// and v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3858-L3885):
+// the source's attrs with the request's ACL, without delete_at, the
+// object-lock attrs other than the request's, the OLH attrs in a bucket
+// without versioning, the storage class and the replication attrs; then the
+// source's attrs whole for COPY, or the request's with the source's etag and
+// tail tag where it has none for REPLACE; then without idtag, pg_ver and
+// source_zone, and with the source's compression info.
 //
 // The storage class is dropped on both releases, as v20.2.4 drops it
-// (:5028), so the head write labels the copy from its destination placement
-// alone. A Squid radosgw keeps it, and its head write overrides it only with
-// a non-empty class (:3258-3262), so a copy into a placement's default class
-// keeps its source's label (docs/ceph-upstream-bugs.md).
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5028),
+// so the head write labels the copy from its destination placement alone. A
+// Squid radosgw keeps it, and its head write overrides it only with a
+// non-empty class
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3258-L3262),
+// so a copy into a placement's default class keeps its source's label
+// (docs/ceph-upstream-bugs.md).
 //
 // An encrypted source is NotImplemented on both releases. A Squid radosgw
-// refuses it (:4755-4763); a Tentacle one decrypts it and encrypts the copy
-// as the request asks (v20.2.4 rgw_op.cc:5793-5805 and :5813-5819), which
-// needs decryption rgw-go does not implement, and copying its ciphertext
-// under a head without its crypt attrs would make it unreadable.
+// refuses it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4755-L4763);
+// a Tentacle one decrypts it and encrypts the copy as the request asks
+// (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5793-L5805
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5813-L5819),
+// which needs decryption rgw-go does not implement, and copying its
+// ciphertext under a head without its crypt attrs would make it unreadable.
 func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[string][]byte, replace bool) (map[string][]byte, error) {
 	if _, ok := src.Attrs[meta.AttrCryptMode]; ok {
 		return nil, fmt.Errorf("%w: copy source %s is encrypted", op.ErrNotImplemented, objName(src))
@@ -177,15 +201,18 @@ func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[str
 	return attrs, nil
 }
 
-// shareTails is copy_obj from its refcount loop on (:4881-4988): a reference
-// under tag on every tail stripe of the source, unless the copy is onto
-// itself; the head's bytes when the source's head holds data; then the head,
-// written under tag with the source's manifest placed at the destination.
-// Once the references are taken the copy runs to its end whether or not its
-// client stays, as radosgw's does.
+// shareTails is copy_obj from its refcount loop on
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4881-L4988):
+// a reference under tag on every tail stripe of the source, unless the copy
+// is onto itself; the head's bytes when the source's head holds data; then
+// the head, written under tag with the source's manifest placed at the
+// destination. Once the references are taken the copy runs to its end
+// whether or not its client stays, as radosgw's does.
 func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, attrs map[string][]byte, tag string, mtime time.Time, copyFirst bool) (*op.PutResult, error) {
 	// rgw_obj's ==: rgw_bucket's and rgw_obj_key's, which compares the name
-	// and instance only (rgw_obj_types.h:256-259 at v19.2.6 and v20.2.4).
+	// and instance only
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L256-L259 at v19.2.6
+	// and v20.2.4).
 	itself := sameBucketID(src.Bucket.Info.Bucket, dst.Info.Bucket) && src.Key.Name == dstKey.Name && src.Key.Instance == dstKey.Instance
 	m := cloneManifest(src.Manifest)
 	var refs []objRef
@@ -231,8 +258,9 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	case errors.Is(err, radosclient.ErrTimedOut):
 		// The head may yet land and name these tails, so their references
 		// stay, as writer.clear_written leaves a PUT's tails
-		// (rgw_putobj_processor.cc:395-401); done_ret drops them, which lets
-		// the tails go with their source (docs/ceph-upstream-bugs.md).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L395-L401);
+		// done_ret drops them, which lets the tails go with their source
+		// (docs/ceph-upstream-bugs.md).
 	case err != nil, res.canceled:
 		// No head names the tails under tag. radosgw keeps the references
 		// of a write that lost its race, leaking the tails.
@@ -244,8 +272,10 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	return &op.PutResult{ETag: rgwBlStr(attrs[meta.AttrETag]), Size: src.Size, Mtime: res.mtime, Epoch: res.epoch}, nil
 }
 
-// versioningEnabled is RGWBucketInfo::versioning_enabled (rgw_common.h:1076
-// at v19.2.6, :1118 at v20.2.4): versioned and not suspended.
+// versioningEnabled is RGWBucketInfo::versioning_enabled
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1076 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1118 at v20.2.4):
+// versioned and not suspended.
 func versioningEnabled(info meta.BucketInfo) bool {
 	return info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended) == meta.BucketVersioned
 }
@@ -263,10 +293,12 @@ func cloneManifest(m *meta.Manifest) meta.Manifest {
 	return c
 }
 
-// headData is copy_first's read of the source head's bytes (:4959-4965):
+// headData is copy_first's read of the source head's bytes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4959-L4965):
 // Read::read serves them from the prefetch and reads only what it lacks
-// (:7283-7312), and they are the stored bytes, compressed where the source
-// is, as are the tails the copy shares.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7283-L7312),
+// and they are the stored bytes, compressed where the source is, as are
+// the tails the copy shares.
 func (s *Store) headData(ctx context.Context, src *op.ObjectState) ([]byte, error) {
 	n := src.Manifest.HeadSize
 	if uint64(len(src.Head)) >= n {
@@ -293,15 +325,17 @@ func (s *Store) copyLimit() int64 {
 	return 1
 }
 
-// refTails is copy_obj's refcount loop (:4906-4952): refcount get(tag + NUL,
-// implicit) on every stripe of src's manifest from obj_begin, the first
-// skipped when the head's bytes are copied, rgw_max_copy_obj_concurrent_io at
-// a time. Each get runs under the driver's lifetime context, so whether it
-// took its reference is known; the client leaving stops further gets. On a
-// failure the references taken are dropped again and the first error
-// returned. The gets are not an errgroup: one failing must not cancel the
-// others in flight, whose outcome the rollback needs, and the dispatch waits
-// on the request's context, which errgroup's limit cannot.
+// refTails is copy_obj's refcount loop
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4906-L4952):
+// refcount get(tag + NUL, implicit) on every stripe of src's manifest from
+// obj_begin, the first skipped when the head's bytes are copied,
+// rgw_max_copy_obj_concurrent_io at a time. Each get runs under the driver's
+// lifetime context, so whether it took its reference is known; the client
+// leaving stops further gets. On a failure the references taken are dropped
+// again and the first error returned. The gets are not an errgroup: one
+// failing must not cancel the others in flight, whose outcome the rollback
+// needs, and the dispatch waits on the request's context, which errgroup's
+// limit cannot.
 func (s *Store) refTails(ctx context.Context, src *op.ObjectState, skipFirst bool, tag string) ([]objRef, error) {
 	sem := semaphore.NewWeighted(s.copyLimit())
 	var (
@@ -390,12 +424,13 @@ func (s *Store) walkTails(src *op.ObjectState, skipFirst bool, fn func(meta.Obj,
 	return nil
 }
 
-// unrefTails is done_ret's rollback (:4990-5031): refcount put(tag + NUL,
-// implicit) under full-try on each object whose get succeeded, at the same
-// concurrency, under the driver's lifetime context; a failure is logged and
-// leaks the reference. An object whose get failed is left alone, which keeps
-// a put of a tag never taken from dropping the implicit reference of the
-// tail's writer.
+// unrefTails is done_ret's rollback
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4990-L5031):
+// refcount put(tag + NUL, implicit) under full-try on each object whose get
+// succeeded, at the same concurrency, under the driver's lifetime context; a
+// failure is logged and leaks the reference. An object whose get failed is
+// left alone, which keeps a put of a tag never taken from dropping the
+// implicit reference of the tail's writer.
 func (s *Store) unrefTails(refs []objRef, tag string) {
 	if len(refs) == 0 {
 		return
@@ -421,13 +456,20 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 	wg.Wait()
 }
 
-// copyData is copy_obj_data (:5034-5115; v20.2.4 :5294-5386): the source's
-// stored bytes, read as Read::read hands them over (:5067), without
-// decompressing, streamed through AtomicObjectProcessor into a new object
-// under storageClass with a random tag (:5051) and without conditions. attrs
-// keep the source's etag and a compressed source's compression info, block
-// map included, from which putStream takes the accounted size
-// (:5098-5108). The destination placement's compression is not consulted.
+// copyData is copy_obj_data
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5034-L5115;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386):
+// the source's stored bytes, read as Read::read hands them over
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5067),
+// without decompressing, streamed through AtomicObjectProcessor into a new
+// object under storageClass with a random tag
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5051)
+// and without conditions. attrs keep the source's etag and a compressed
+// source's compression info, block map included, from which putStream takes
+// the accounted size
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5098-L5108).
+// The destination placement's compression is not consulted.
 func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time) (*op.PutResult, error) {
 	l, err := s.planPut(ctx, dst, dstKey, storageClass)
 	if err != nil {

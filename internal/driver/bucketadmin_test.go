@@ -729,7 +729,7 @@ var _ = Describe("BucketAdminStore", func() {
 		// bob leaves: dst's instance with the new owner, and, when
 		// atLastWrite, dst's entry point and bob's link with src's entry
 		// point gone, its instance left with the old owner
-		// (rgw_bucket.cc:1136-1183 at v19.2.6).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1136-L1183 at v19.2.6).
 		radosgwRename := func(ctx context.Context, rec *op.BucketRecord, atLastWrite bool) {
 			GinkgoHelper()
 			info := rec.Info

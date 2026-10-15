@@ -20,13 +20,16 @@ import (
 )
 
 // PutObject implements op.ObjectStore as RGWPutObj::execute and
-// AtomicObjectProcessor write an object (rgw_op.cc:4237-4565 and
-// driver/rados/rgw_putobj_processor.cc:268-411 at v19.2.6, rgw_op.cc
-// :4469-4800 at v20.2.4): the tails while the body streams, then the checks
-// on what arrived (its length, the quota on the bytes received, the
-// Content-MD5), then the head write. A write that fails or loses a race
-// deletes the tails it wrote, unless the head write timed out and may yet
-// land.
+// AtomicObjectProcessor write an object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4237-L4565
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L268-L411 at v19.2.6,
+// rgw_op.cc
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4469-L4800 at v20.2.4):
+// the tails while the body streams, then the checks on what arrived (its
+// length, the quota on the bytes received, the Content-MD5), then the head
+// write. A write that fails or loses a race deletes the tails it wrote,
+// unless the head write timed out and may yet land.
 func (s *Store) PutObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams) (*op.PutResult, error) {
 	tag := p.Tag
 	if tag == "" {
@@ -65,8 +68,10 @@ type streamWrite struct {
 // which planPut is: the tails streamed from body, the head through
 // writeMeta. The index entry's accounted size is the orig_size of attrs'
 // user.rgw.compression when its type is not none, as copy_obj_data passes
-// it (rgw_rados.cc:5098-5108 at v19.2.6, :5368-5379 at v20.2.4), and the
-// bytes streamed otherwise.
+// it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5098-L5108 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5368-L5379 at v20.2.4),
+// and the bytes streamed otherwise.
 func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, l layout, w streamWrite) (*op.PutResult, error) {
 	orig, compressed, err := origSize(w.attrs)
 	if err != nil {
@@ -133,7 +138,8 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {
 		// A head write that timed out may yet land on these tails, so they
-		// stay, as writer.clear_written leaves them (rgw_putobj_processor.cc:395-401).
+		// stay, as writer.clear_written leaves them
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L395-L401).
 		if !errors.Is(err, radosclient.ErrTimedOut) {
 			tw.discard()
 		}
@@ -145,10 +151,11 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	return &op.PutResult{ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch}, nil
 }
 
-// origSize is rgw_compression_info_from_attrset (rgw_compression.cc:10-40 at
-// v19.2.6 and v20.2.4) over attrs: the orig_size of a user.rgw.compression
-// whose type is not none, and compressed false without one. An attr that does
-// not decode, or that lists no blocks, is radosgw's -EIO.
+// origSize is rgw_compression_info_from_attrset
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L10-L40 at v19.2.6
+// and v20.2.4) over attrs: the orig_size of a user.rgw.compression whose type
+// is not none, and compressed false without one. An attr that does not
+// decode, or that lists no blocks, is radosgw's -EIO.
 func origSize(attrs map[string][]byte) (size uint64, compressed bool, err error) {
 	b, ok := attrs[meta.AttrCompression]
 	if !ok {

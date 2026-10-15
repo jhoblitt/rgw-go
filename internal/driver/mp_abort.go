@@ -14,10 +14,12 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// AbortMultipartUpload is RGWAbortMultipart::execute (rgw_op.cc:6614-6650 at
-// v19.2.6, :7538-7574 at v20.2.4) over RadosMultipartUpload::abort
-// (driver/rados/rgw_sal_rados.cc:3151-3263 at v19.2.6, :3995-4107 at
-// v20.2.4); a bare line number below is v19.2.6's rgw_sal_rados.cc.
+// AbortMultipartUpload is RGWAbortMultipart::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6614-L6650 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7538-L7574 at v20.2.4)
+// over RadosMultipartUpload::abort
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3151-L3263 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3995-L4107 at v20.2.4).
 
 // Abort implements op.MultipartStore as AbortMultipartUpload aborts an
 // upload:
@@ -69,7 +71,9 @@ func (s *Store) Abort(ctx context.Context, up *op.Upload) error {
 // asked for its lock and the cookie it holds it under, and the parts'
 // accounted size and the prefixes it was counted for, processed_prefixes,
 // so a part counted in an earlier round is not counted again, as abort's
-// `continue` skips it (:3196-3201, :3218).
+// `continue` skips it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3196-L3201,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3218).
 type abortState struct {
 	lockedAt  time.Time
 	cookie    string
@@ -119,9 +123,10 @@ func (a *abortState) count(p meta.UploadPartInfo) {
 //   - when the meta object carries a completion record whose head carries the
 //     recorded tag, the upload was completed and its parts are that object's:
 //     the meta object alone is removed, as ceph/ceph#72103's abort does
-//     (rgw_sal_rados.cc:4236-4263 at its head 2c1db8239cc), and no part is
-//     listed or queued. A record naming a version other than the key's own
-//     head is 501, as rgw-go reads no version;
+//     (https://github.com/ceph/ceph/blob/2c1db8239cc/src/rgw/driver/rados/rgw_sal_rados.cc#L4236-L4263
+//     at its head 2c1db8239cc), and no part is listed or queued. A record
+//     naming a version other than the key's own head is 501, as rgw-go
+//     reads no version;
 //   - otherwise, when the head names an object of the upload, an earlier
 //     completion left its meta object behind without a record (tracker
 //     #80896): NoSuchUpload, with nothing changed, where v19.2.6 and v20.2.4
@@ -210,8 +215,9 @@ func (s *Store) abortRound(ctx context.Context, up *op.Upload, ref mpRef, a *abo
 var errUploadStands = errors.New("the upload's parts back the key's object")
 
 // abortErr is abort's answer to a failed removal of the meta object: a meta
-// object already gone is NoSuchUpload (:3262); ECANCELED stays as it is for
-// the caller's retry.
+// object already gone is NoSuchUpload
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3262);
+// ECANCELED stays as it is for the caller's retry.
 func abortErr(up *op.Upload, err error) error {
 	if errors.Is(err, radosclient.ErrNotFound) {
 		return fmt.Errorf("%w: the meta object of upload %s is gone", op.ErrNoSuchUpload, up.ID)
@@ -223,24 +229,27 @@ func abortErr(up *op.Upload, err error) error {
 // returns.
 const abortMultipartsPage = 1000
 
-// abortMultiparts is RadosBucket::abort_multiparts (rgw_sal_rados.cc:958-1013
-// at v19.2.6, :978-1033 at v20.2.4), which RadosBucket::remove runs for its
-// own zonegroup's bucket after the emptiness check (:395-400 at v19.2.6,
-// :412-417 at v20.2.4): the multipart namespace listed by meta object name,
-// MultipartMetaFilter, in pages of 1000 without a prefix or a delimiter,
-// each upload aborted through Abort. NoSuchUpload, which radosgw's -ENOENT
-// and -ERR_NO_SUCH_UPLOAD both reach here as, is logged and skipped; an
-// upload refused because its parts back the key's object is skipped with a
-// warning, and counted, as radosgw counts the abort it makes of it; any
-// other error is returned, and the bucket delete fails with it. aborted is
-// num_deleted, which counts the skipped uploads too. Each upload is aborted
-// once, where radosgw, whose list_multiparts appends each page to the one
-// vector, aborts every earlier page's uploads again on each later page
-// (docs/ceph-upstream-bugs.md, "radosgw's bucket delete aborts each page of
-// multipart uploads again on every later page"), and under the
-// RGWCompleteMultipart lock, which abort_multiparts does not take
-// (docs/exclusions.md, "A bucket delete aborts its multipart uploads under
-// their completion lock").
+// abortMultiparts is RadosBucket::abort_multiparts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L958-L1013 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L978-L1033 at v20.2.4),
+// which RadosBucket::remove runs for its own zonegroup's bucket after the
+// emptiness check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L395-L400 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L412-L417 at v20.2.4):
+// the multipart namespace listed by meta object name, MultipartMetaFilter, in
+// pages of 1000 without a prefix or a delimiter, each upload aborted through
+// Abort. NoSuchUpload, which radosgw's -ENOENT and -ERR_NO_SUCH_UPLOAD both
+// reach here as, is logged and skipped; an upload refused because its parts
+// back the key's object is skipped with a warning, and counted, as radosgw
+// counts the abort it makes of it; any other error is returned, and the
+// bucket delete fails with it. aborted is num_deleted, which counts the
+// skipped uploads too. Each upload is aborted once, where radosgw, whose
+// list_multiparts appends each page to the one vector, aborts every earlier
+// page's uploads again on each later page (docs/ceph-upstream-bugs.md,
+// "radosgw's bucket delete aborts each page of multipart uploads again on
+// every later page"), and under the RGWCompleteMultipart lock, which
+// abort_multiparts does not take (docs/exclusions.md, "A bucket delete aborts
+// its multipart uploads under their completion lock").
 func (s *Store) abortMultiparts(ctx context.Context, rec *op.BucketRecord) (aborted int, err error) {
 	var marker string
 	for {

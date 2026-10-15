@@ -16,7 +16,8 @@
 //
 // The driver never creates a pool. radosgw's rgw_init_ioctx creates a
 // missing pool and enables the rgw application on it
-// (src/rgw/driver/rados/rgw_tools.cc:30-49 at v19.2.6, :31-50 at v20.2.4);
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L30-L49 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L31-L50 at v20.2.4);
 // under Rook every pool exists before the gateway starts, and the seam has
 // no pool create, so here a missing pool is a configuration error.
 //

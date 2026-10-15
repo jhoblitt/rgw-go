@@ -24,8 +24,9 @@ type zoneNames struct {
 
 // readZoneNames reads the options that name the zone. radosgw's startup
 // gives an unset rgw_zonegroup the legacy rgw_region
-// (AppMain::init_frontends1, rgw_appmain.cc:164-168 at v19.2.6, :166-170 at
-// v20.2.4).
+// (AppMain::init_frontends1,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L164-L168 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L166-L170 at v20.2.4).
 func readZoneNames(conf *cephconf.Options) (zoneNames, error) {
 	var n zoneNames
 	var region string
@@ -59,14 +60,16 @@ func readZoneNames(conf *cephconf.Options) (zoneNames, error) {
 type rootPools struct{ realm, zonegroup, zone, period radosclient.Pool }
 
 // emptyRootPool is the pool radosgw uses for a root pool option set empty
-// (RGW_DEFAULT_ZONE_ROOT_POOL and its siblings, rgw_zone.cc:33-35 at
-// v19.2.6; config/impl.cc:25-28 at v20.2.4).
+// (RGW_DEFAULT_ZONE_ROOT_POOL and its siblings,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L33-L35 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/config/impl.cc#L25-L28 at v20.2.4).
 const emptyRootPool = "rgw.root"
 
 // openRootPools reads the four root pool options and opens their pools.
 // radosgw's startup gives an empty realm, zonegroup or period option the
 // legacy rgw_region_root_pool (AppMain::init_frontends1,
-// rgw_appmain.cc:150-162 at v19.2.6, :152-164 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L150-L162 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L152-L164 at v20.2.4).
 func openRootPools(ctx context.Context, conf *cephconf.Options, pools *poolCache) (rootPools, error) {
 	region, err := conf.String("rgw_region_root_pool")
 	if err != nil {
@@ -118,8 +121,8 @@ type zoneConfig struct {
 var ErrNoZone = errors.New("driver: zone not found in the root pool")
 
 // defaultName is the name radosgw gives the zone and zonegroup it would
-// create (default_zone_name, default_zonegroup_name, rgw_zone.cc:30-31 at
-// v19.2.6).
+// create (default_zone_name, default_zonegroup_name,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L30-L31 at v19.2.6).
 const defaultName = "default"
 
 // rootObjectMax bounds a root-object read. radosgw reads these objects whole
@@ -192,13 +195,16 @@ func noZone(err error) error {
 
 // resolveZone reads the realm, zone, period and zonegroup the gateway
 // serves as radosgw's startup does: rgw::SiteConfig::load, which both
-// releases run first (driver/rados/rgw_zone.cc:1172-1334 at v19.2.6,
-// :1166-1328 at v20.2.4), then Squid's zone service, RGWSI_Zone::do_start
-// (services/svc_zone.cc:128-297 at v19.2.6). It only reads: where radosgw
-// would create a missing zonegroup or zone, resolveZone fails with
-// ErrNoZone, and the master zone radosgw writes into a zonegroup lacking one
-// it sets in memory alone. It does not search the other realms for the
-// zone, as Squid's zone service does, because a Rook cluster has one.
+// releases run first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_zone.cc#L1172-L1334 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.cc#L1166-L1328 at v20.2.4),
+// then Squid's zone service, RGWSI_Zone::do_start
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L128-L297 at v19.2.6).
+// It only reads: where radosgw would create a missing zonegroup or zone,
+// resolveZone fails with ErrNoZone, and the master zone radosgw writes into
+// a zonegroup lacking one it sets in memory alone. It does not search the
+// other realms for the zone, as Squid's zone service does, because a Rook
+// cluster has one.
 func resolveZone(ctx context.Context, pools rootPools, names zoneNames, rel denc.Release) (*zoneConfig, error) {
 	zc := &zoneConfig{}
 	if err := readRealm(ctx, pools.realm, names, zc); err != nil {
@@ -224,9 +230,11 @@ func resolveZone(ctx context.Context, pools rootPools, names zoneNames, rel denc
 	if !zc.HasPeriod || !zc.zoneGroupFromPeriod() {
 		if rel >= denc.Tentacle {
 			// Tentacle's zone service takes the period from SiteConfig,
-			// which drops one that lacks the zone (rgw_zone.cc:1285 and
-			// svc_zone.cc:98-100 at v20.2.4); Squid's keeps the realm's
-			// current period.
+			// which drops one that lacks the zone
+			// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.cc#L1285
+			// and
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L98-L100 at v20.2.4);
+			// Squid's keeps the realm's current period.
 			zc.Period, zc.HasPeriod = meta.Period{}, false
 		}
 		if err := readLocalZoneGroup(ctx, pools, names, zc); err != nil {
@@ -234,8 +242,10 @@ func resolveZone(ctx context.Context, pools rootPools, names zoneNames, rel denc
 		}
 	}
 	// Squid's zone service refuses a zonegroup other than the one
-	// rgw_zonegroup names (svc_zone.cc:228-232 at v19.2.6); Tentacle's,
-	// which takes the zonegroup from SiteConfig, has no such check.
+	// rgw_zonegroup names
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L228-L232 at v19.2.6);
+	// Tentacle's, which takes the zonegroup from SiteConfig, has no
+	// such check.
 	if rel < denc.Tentacle && names.ZoneGroup != "" && zc.ZoneGroup.Name != names.ZoneGroup {
 		return nil, fmt.Errorf("driver: zonegroup %q is not %q (rgw_zonegroup)", zc.ZoneGroup.Name, names.ZoneGroup)
 	}
@@ -251,9 +261,10 @@ func resolveZone(ctx context.Context, pools rootPools, names zoneNames, rel denc
 }
 
 // readRealm reads the realm rgw_realm_id, rgw_realm or default.realm names,
-// in that order, as RGWSystemMetaObj::init picks it (rgw_zone.cc:106-145 at
-// v19.2.6). A missing realm is no realm, as both zone services take it,
-// unless rgw_realm names it, which SiteConfig::load refuses.
+// in that order, as RGWSystemMetaObj::init picks it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L106-L145 at v19.2.6).
+// A missing realm is no realm, as both zone services take it, unless
+// rgw_realm names it, which SiteConfig::load refuses.
 func readRealm(ctx context.Context, p radosclient.Pool, names zoneNames, zc *zoneConfig) error {
 	id := names.RealmID
 	if id == "" {
@@ -315,9 +326,9 @@ func readZoneParams(ctx context.Context, p radosclient.Pool, names zoneNames, zc
 }
 
 // readPeriod reads the realm's current period at its latest epoch, as
-// read_period without an epoch does (driver/rados/config/period.cc:156-174
-// at v19.2.6). A missing period is none: radosgw then takes the local
-// zonegroup.
+// read_period without an epoch does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/config/period.cc#L156-L174 at v19.2.6).
+// A missing period is none: radosgw then takes the local zonegroup.
 func readPeriod(ctx context.Context, p radosclient.Pool, zc *zoneConfig) error {
 	id := zc.Realm.CurrentPeriod
 	latest, err := readRoot(ctx, p, meta.PeriodLatestEpochOID(id), meta.DecodePeriodLatestEpochInfo)
@@ -380,7 +391,8 @@ func readLocalZoneGroup(ctx context.Context, pools rootPools, names zoneNames, z
 	zc.ZoneGroup = zg
 	// The zone service reads the period config of the zonegroup's realm
 	// over the current period's, which it keeps when there is none
-	// (svc_zone.cc:287-294 at v19.2.6, :123-130 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L287-L294 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L123-L130 at v20.2.4).
 	if zc.HasPeriod {
 		zc.PeriodConfig = zc.Period.PeriodConfig
 	}
@@ -395,12 +407,18 @@ func readLocalZoneGroup(ctx context.Context, pools rootPools, names zoneNames, z
 }
 
 // checkMasterZones checks the master zones as init_zg_from_period and
-// init_zg_from_local do (svc_zone.cc:488-554 and :588-617 at v19.2.6,
-// :324-390 and :392-421 at v20.2.4): every zonegroup of the period, or the
-// local zonegroup when it is the master, must have its master zone among
-// its zones. A single-zone zonegroup without a master zone is the
-// exception: radosgw makes its zone the master and writes the zonegroup
-// back, and rgw-go does the first only.
+// init_zg_from_local do
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L488-L554
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L588-L617 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L324-L390
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L392-L421 at v20.2.4):
+// every zonegroup of the period, or the local zonegroup when it is the
+// master, must have its master zone among its zones. A single-zone
+// zonegroup without a master zone is the exception: radosgw makes its zone
+// the master and writes the zonegroup back, and rgw-go does the first
+// only.
 func (zc *zoneConfig) checkMasterZones(ctx context.Context) error {
 	if !zc.FromPeriod {
 		if zc.ZoneGroup.IsMaster {
@@ -440,7 +458,8 @@ func (zc *zoneConfig) checkMasterZone(ctx context.Context, zg meta.ZoneGroup) er
 }
 
 // log logs the zone, as radosgw logs its Realm, ZoneGroup, Zone and period
-// lines (svc_zone.cc:271-276 at v19.2.6).
+// lines
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone.cc#L271-L276 at v19.2.6).
 func (zc *zoneConfig) log(ctx context.Context) {
 	slog.InfoContext(ctx, "zone resolved",
 		slog.String("realm", zc.Realm.Name), slog.String("realm_id", zc.Realm.ID),
@@ -454,11 +473,13 @@ func (zc *zoneConfig) log(ctx context.Context) {
 // zonegroup's default placement, and its storage class when the rule has
 // none either. The rule must then name a placement of the zone and a
 // storage class it has, as find_zone_placement requires
-// (driver/rados/rgw_zone.cc:1090-1110 at v19.2.6, :1084-1104 at v20.2.4),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_zone.cc#L1090-L1110 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.cc#L1084-L1104 at v20.2.4),
 // the empty class being STANDARD, which every placement has. The pools are
-// RGWZonePlacementInfo's (rgw_zone_types.h:274-303 at both tags): the
-// class's data pool, else STANDARD's; the data-extra pool, else STANDARD's
-// data pool; the class's compression.
+// RGWZonePlacementInfo's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone_types.h#L274-L303 at both tags):
+// the class's data pool, else STANDARD's; the data-extra pool, else
+// STANDARD's data pool; the class's compression.
 func (s *Store) Placement(rule meta.PlacementRule) (op.Placement, error) {
 	if rule.Name == "" {
 		def := s.zone.ZoneGroup.DefaultPlacement

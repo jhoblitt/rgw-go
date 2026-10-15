@@ -23,12 +23,17 @@ import (
 
 // What a completion or an abort retires, as RadosMultipartUpload's
 // complete, cleanup_orphaned_parts, cleanup_part_history and abort do
-// (driver/rados/rgw_sal_rados.cc:3038-3263 and :3433-3640 at v19.2.6,
-// :3882-4107 and :4279-4490 at v20.2.4; a bare line number below is
-// v19.2.6's).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3038-L3263
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3433-L3640 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3882-L4107
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4).
 
 // completeLockName is the cls_lock lock RGWCompleteMultipart takes on an
-// upload's meta object (rgw_op.cc:6434 at v19.2.6, :7248 at v20.2.4).
+// upload's meta object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6434 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7248 at v20.2.4).
 const completeLockName = "RGWCompleteMultipart"
 
 // mpOptions are the multipart tunables, read once at Open. The defaults in
@@ -36,7 +41,7 @@ const completeLockName = "RGWCompleteMultipart"
 type mpOptions struct {
 	// lockMaxTime is rgw_mp_lock_max_time, 10 min, an int of seconds that
 	// RGWCompleteMultipart narrows to an int and utime_t to a u32
-	// (rgw_op.cc:6430-6432 at v19.2.6).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6430-L6432 at v19.2.6).
 	lockMaxTime time.Duration
 	minPartSize uint64 // rgw_multipart_min_part_size, 5 MiB
 }
@@ -57,29 +62,41 @@ func readMPOptions(conf *cephconf.Options) (mpOptions, error) {
 // newLockCookie is the cookie one completion or abort takes the
 // RGWCompleteMultipart lock under, which no other hold shares: 128 random
 // bits in hex. A cls_lock locker is the request's entity and its cookie
-// (cls_lock.cc:174-178, and locker_id_t's ordering, cls_lock_types.h:80-86,
-// at v19.2.6 and v20.2.4), and every request of this gateway is one entity,
-// so only the cookie tells one attempt's hold from another's on this
-// gateway: an unlock releases the hold of its own cookie alone, and answers
-// ENOENT for any other (remove_lock, cls_lock.cc:282-304); a renewal under
-// LOCK_FLAG_MUST_RENEW fails once its own hold is gone (lock_obj, :190-199);
-// and an abort's assert_locked fails on the OSD then too (:507-519). The
-// exclusive lock refuses a second holder whatever its cookie (:201-212).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L174-L178,
+// and locker_id_t's ordering,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock_types.h#L80-L86, at v19.2.6
+// and v20.2.4), and every request of this gateway is one entity, so only the
+// cookie tells one attempt's hold from another's on this gateway: an unlock
+// releases the hold of its own cookie alone, and answers ENOENT for any other
+// (remove_lock,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L282-L304);
+// a renewal under LOCK_FLAG_MUST_RENEW fails once its own hold is gone
+// (lock_obj,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L190-L199);
+// and an abort's assert_locked fails on the OSD then too
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L507-L519).
+// The exclusive lock refuses a second holder whatever its cookie
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L201-L212).
 // radosgw's serializer never sets a cookie and locks under ""
-// (cls_lock_client.h:79; MPRadosSerializer, driver/rados/rgw_sal_rados.h:848-860
-// at v19.2.6, :905-916 at v20.2.4), which is safe there because it unlocks
-// only a hold its lock's reply confirmed; a radosgw gateway is another
-// entity, so the cookie changes nothing in how its locks and these exclude
-// each other.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock_client.h#L79;
+// MPRadosSerializer,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.h#L848-L860 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.h#L905-L916 at v20.2.4),
+// which is safe there because it unlocks only a hold its lock's reply confirmed;
+// a radosgw gateway is another entity, so the cookie changes nothing in how its
+// locks and these exclude each other.
 func newLockCookie() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b) //nolint:errcheck // crypto/rand.Read never fails
 	return hex.EncodeToString(b)
 }
 
-// lockMeta is MPRadosSerializer::try_lock (:3750-3760; v20.2.4
-// :4613-4624): one write op on the meta object, assert_exists then an
-// exclusive lock under cookie, the attempt's own (newLockCookie), for
+// lockMeta is MPRadosSerializer::try_lock
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3750-L3760;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4613-L4624):
+// one write op on the meta object, assert_exists then an exclusive
+// lock under cookie, the attempt's own (newLockCookie), for
 // rgw_mp_lock_max_time. The seam's error comes back for the caller's
 // mapping: ENOENT for a missing meta object, EBUSY for another holder.
 //
@@ -87,9 +104,10 @@ func newLockCookie() string {
 // lock possibly landed, which would refuse every completion and abort of the
 // upload for rgw_mp_lock_max_time; radosgw waits for the lock's reply
 // whatever the client does (rgw_rados_operate,
-// driver/rados/rgw_tools.cc:235-248 at v19.2.6, :260-274 at v20.2.4), so it
-// never leaves one it did not see. That hold is released under the same
-// cookie (unlockMeta), which, being the attempt's own, releases nothing
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L235-L248 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L260-L274 at v20.2.4),
+// so it never leaves one it did not see. That hold is released under the
+// same cookie (unlockMeta), which, being the attempt's own, releases nothing
 // another request of this gateway holds; its ENOENT, for a lock that did
 // not land, is ignored. A context already ended sends neither.
 func (s *Store) lockMeta(ctx context.Context, ref mpRef, cookie string) error {
@@ -154,10 +172,11 @@ func (s *Store) clearRecord(ctx context.Context, ref mpRef) {
 
 // unlockMeta is the serializer's unlock (Lock::unlock) of this client's
 // hold under cookie, which RGWCompleteMultipart::complete sends whenever the
-// lock was not released with the meta object (rgw_op.cc:6582-6593 at
-// v19.2.6, :7506-7517 at v20.2.4). It runs to its end whatever the client
-// does, and a failure is logged; a lock no longer held answers ENOENT, which
-// is not.
+// lock was not released with the meta object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6582-L6593 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7506-L7517 at v20.2.4).
+// It runs to its end whatever the client does, and a failure is logged; a
+// lock no longer held answers ENOENT, which is not.
 func (s *Store) unlockMeta(ctx context.Context, ref mpRef, cookie string) {
 	ctx = context.WithoutCancel(ctx)
 	w := radosclient.NewWriteOp()
@@ -168,7 +187,10 @@ func (s *Store) unlockMeta(ctx context.Context, ref mpRef, cookie string) {
 }
 
 // listPartsChunk is the page complete, cleanup_orphaned_parts and abort list
-// the parts by (:3046, :3177, :3456).
+// the parts by
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3046,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3177,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3456).
 const listPartsChunk = 1000
 
 // listAllParts drains listPartsPage in pages of listPartsChunk. A page that
@@ -214,10 +236,11 @@ func (c *partCleanup) seen(part uint32, prefix string) bool {
 
 // stripesOf is every stripe of the part manifest m under prefix, as GC
 // chain entries: the pool as rgw_pool::to_str renders it, the oid and the
-// locator, as cleanup_part_history pushes them (:3123-3130), and the index
-// key of its first stripe, the part head. A rule's override prefix is
-// dropped, so only prefix's objects are named: radosgw writes none on a
-// part, and one would name another upload of the part.
+// locator, as cleanup_part_history pushes them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3123-L3130),
+// and the index key of its first stripe, the part head. A rule's override
+// prefix is dropped, so only prefix's objects are named: radosgw writes
+// none on a part, and one would name another upload of the part.
 func (s *Store) stripesOf(m meta.Manifest, prefix string) (chain []rgw.GCObj, headKey string, err error) {
 	m.Prefix = prefix
 	m.Rules = maps.Clone(m.Rules)
@@ -240,12 +263,15 @@ func (s *Store) stripesOf(m meta.Manifest, prefix string) (chain []rgw.GCObj, he
 	return chain, headKey, nil
 }
 
-// retirePart is cleanup_part_history (:3103-3148; v20.2.4 :3947-3993) for
-// one part: each past prefix not yet handled has its part head's entry,
-// "<prefix>.<n>" in the multipart namespace, removed from the index, and
-// every stripe of the part's manifest under it joins the chain. radosgw
-// sends each part's chain to the GC on its own; the caller sends the
-// whole chain once.
+// retirePart is cleanup_part_history
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3103-L3148;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3947-L3993)
+// for one part: each past prefix not yet handled has its part head's
+// entry, "<prefix>.<n>" in the multipart namespace, removed from the
+// index, and every stripe of the part's manifest under it joins the
+// chain. radosgw sends each part's chain to the GC on its own; the caller
+// sends the whole chain once.
 func (s *Store) retirePart(p meta.UploadPartInfo, c *partCleanup) error {
 	for _, pp := range p.PastPrefixes {
 		if c.seen(p.Num, pp) {
@@ -262,11 +288,13 @@ func (s *Store) retirePart(p meta.UploadPartInfo, c *partCleanup) error {
 }
 
 // retireCurrentPart adds what cleanup_orphaned_parts and abort retire of a
-// part's current upload (:3061-3078, :3194-3214): every stripe of its
-// manifest, the part head included, as update_gc_chain with the meta
-// object as the head walks it, and the part head's index entry. A part
-// without a manifest or a prefix, or whose prefix was handled, adds
-// nothing.
+// part's current upload
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3061-L3078,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3194-L3214):
+// every stripe of its manifest, the part head included, as update_gc_chain
+// with the meta object as the head walks it, and the part head's index
+// entry. A part without a manifest or a prefix, or whose prefix was
+// handled, adds nothing.
 func (s *Store) retireCurrentPart(p meta.UploadPartInfo, c *partCleanup) error {
 	prefix := p.Manifest.Prefix
 	if partManifestEmpty(p.Manifest) || prefix == "" || c.seen(p.Num, prefix) {
@@ -284,7 +312,8 @@ func (s *Store) retireCurrentPart(p meta.UploadPartInfo, c *partCleanup) error {
 }
 
 // partManifestEmpty is RGWObjManifest::empty
-// (driver/rados/rgw_obj_manifest.h:384-388 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.h#L384-L388 at v19.2.6
+// and v20.2.4).
 func partManifestEmpty(m meta.Manifest) bool {
 	if m.ExplicitObjs {
 		return len(m.Objs) == 0
@@ -390,14 +419,19 @@ type metaDelete struct {
 	// RGWCompleteMultipart lock this client holds under cookie, so the OSD
 	// fails it with EBUSY, however late it runs, once that hold lapsed or
 	// was broken, whoever holds the lock since: a cls_lock locker is the
-	// request's entity and its cookie (cls_lock.cc:174-178 and :507-519 at
+	// request's entity and its cookie
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L174-L178
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L507-L519 at
 	// v19.2.6 and v20.2.4), so a completion of this gateway, the same
 	// entity under a cookie of its own, does not pass for an abort's hold
 	// under the abort's; a cancel retires none of removeObjs, where
-	// delete_obj's cancel retires them (:5969) from an upload that stands;
-	// and a meta object already gone comes back as radosclient.ErrNotFound
-	// without the quota cache change, as delete_obj returns -ENOENT before
-	// it (:5979-5984).
+	// delete_obj's cancel retires them
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5969)
+	// from an upload that stands; and a meta object already gone comes back
+	// as radosclient.ErrNotFound without the quota cache change, as
+	// delete_obj returns -ENOENT before it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5979-L5984).
 	abort bool
 	// cookie is the abort's lock cookie, which the assertion names.
 	cookie string
@@ -406,20 +440,26 @@ type metaDelete struct {
 	deadline time.Duration
 }
 
-// deleteMeta is Delete::delete_obj on the meta object (rgw_rados.cc:5757-5987;
-// v20.2.4 :6445-6739) as delete_object(FLAG_PREVENT_VERSIONING) reaches it,
-// so without a bucket index log entry (rgw_sal_rados.cc:2924-2945): the
-// index prepare DEL under a random tag on the shard of the upload's key,
+// deleteMeta is Delete::delete_obj on the meta object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5757-L5987;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6445-L6739)
+// as delete_object(FLAG_PREVENT_VERSIONING) reaches it, so without a bucket
+// index log entry
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2924-L2945):
+// the index prepare DEL under a random tag on the shard of the upload's key,
 // obj_remove keeping the olh attrs, cls_version_check EQ when a version was
-// read (RGWObjVersionTracker::version_for_check, rgw_common.h:950-955 at
-// v19.2.6), under pool_full_try. A removal that worked, or found no object,
-// completes the DEL with d.removeObjs and drops one object and d.accounted
-// bytes from the quota cache; ETIMEDOUT leaves the pending entry for a
-// listing to reconcile and answers ErrRequestTimedOut, as does a reply not in
-// by d.deadline; anything else cancels
-// with d.removeObjs, as radosgw does (:5969), or without them for an abort
-// (metaDelete.abort). ECANCELED, a part registered since the version was
-// read, comes back as radosclient.ErrCanceled for the caller's retry.
+// read (RGWObjVersionTracker::version_for_check,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L950-L955 at v19.2.6),
+// under pool_full_try. A removal that worked, or found no object, completes
+// the DEL with d.removeObjs and drops one object and d.accounted bytes from
+// the quota cache; ETIMEDOUT leaves the pending entry for a listing to
+// reconcile and answers ErrRequestTimedOut, as does a reply not in by
+// d.deadline; anything else cancels with d.removeObjs, as radosgw does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5969),
+// or without them for an abort (metaDelete.abort). ECANCELED, a part
+// registered since the version was read, comes back as radosclient.ErrCanceled
+// for the caller's retry.
 func (s *Store) deleteMeta(ctx context.Context, d metaDelete) error {
 	ctx = context.WithoutCancel(ctx)
 	x := s.newIndexOp(d.rec, d.ref.key, "")

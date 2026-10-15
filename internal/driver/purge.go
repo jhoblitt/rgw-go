@@ -19,13 +19,16 @@ import (
 const purgeListPage = 1000
 
 // PurgeBypassGC implements op.BucketAdminStore as RadosBucket::remove_bypass_gc's
-// data pass (driver/rados/rgw_sal_rados.cc:470-595 at v19.2.6, :491-616 at
-// v20.2.4; a bare line number below is v19.2.6's, v20.2.4's lying 21 lines
-// on): the index shard headers read as read_stats reads them, the in-flight
-// uploads aborted, then every listed object's tail stripes released directly
-// and its head and index entry removed, instead of queueing the tails for
-// GC. The bucket read it starts with is the caller's, and the bucket removal
-// it ends with the ordinary purge the caller runs next (:601).
+// data pass
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L470-L595 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L491-L616 at v20.2.4;
+// the remove_bypass_gc lines the v19.2.6 links below cite lie 21 lines on
+// at v20.2.4): the index shard headers read as read_stats reads them, the
+// in-flight uploads aborted, then every listed object's tail stripes released
+// directly and its head and index entry removed, instead of queueing the
+// tails for GC. The bucket read it starts with is the caller's, and the
+// bucket removal it ends with the ordinary purge the caller runs next
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L601).
 //
 // The deletes run with at most rgw_gc_max_concurrent_io in flight, where
 // the admin op's zero budget leaves the first object's tails in place and
@@ -38,20 +41,23 @@ const purgeListPage = 1000
 // release leaves the object for a retry instead of orphaning its tails
 // (docs/exclusions.md, "The admin bucket removal with bypass-gc").
 func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
-	// read_stats over the current index (:487-490). radosgw names the shard
-	// objects from num_shards whatever the layout, so a bucket without index
-	// objects fails here with ENOENT.
+	// read_stats over the current index
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L487-L490).
+	// radosgw names the shard objects from num_shards whatever the layout,
+	// so a bucket without index objects fails here with ENOENT.
 	if _, err := s.readShardHeaders(ctx, &rec.Info); err != nil {
 		return op.FromRADOS(err, op.ScopeBucket)
 	}
-	// abort_multiparts (:492-495): the ordinary abort, whose parts the
-	// garbage collector takes under the upload id.
+	// abort_multiparts
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L492-L495):
+	// the ordinary abort, whose parts the garbage collector takes
+	// under the upload id.
 	if _, err := s.abortMultiparts(ctx, rec); err != nil {
 		return err
 	}
 	p := &bypassPurge{s: s, rec: rec, sem: semaphore.NewWeighted(int64(max(s.w.opts.gcMaxConcurrentIO, 1)))}
 	// Every entry of the plain namespace, versions included, unordered
-	// (:497-509).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L497-L509).
 	params := op.ListObjectsParams{ListVersions: true, AllowUnordered: true, MaxKeys: purgeListPage}
 	for {
 		res, err := s.ListObjects(ctx, rec, params)
@@ -72,7 +78,7 @@ func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 		return err
 	}
 	// sync_owner_stats, whose failure radosgw means to log and goes on past
-	// (:591-594).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L591-L594).
 	if _, err := s.syncOwnerStats(ctx, rec.Info.Owner, &rec.Info); err != nil {
 		slog.WarnContext(ctx, "failed to sync owner stats before the bucket delete",
 			slog.String("bucket", rec.Info.Bucket.Name), slog.Any("error", err))
@@ -83,12 +89,18 @@ func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 // bypassPurge issues remove_bypass_gc's deletes with at most
 // rgw_gc_max_concurrent_io of them in flight across tails and heads,
 // floored at one. The garbage collector reads the same option
-// (rgw_gc.cc:371 at v19.2.6, :385 at v20.2.4) but issues a delete while no
-// more than that many are in flight, so it runs one more (:384, v20.2.4
-// :399). The first failed delete stops
-// new ones, and the purge returns it once the deletes in flight have ended,
-// as drain_aio returns a failed completion's result (rgw_sal_rados.cc:98-112
-// at v19.2.6, :107-121 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L371 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L385 at v20.2.4)
+// but issues a delete while no more than that many are in flight, so it runs
+// one more
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L384,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L399).
+// The first failed delete stops new ones, and the purge returns it once the
+// deletes in flight have ended, as drain_aio returns a failed completion's
+// result
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L98-L112 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L107-L121 at v20.2.4).
 type bypassPurge struct {
 	s   *Store
 	rec *op.BucketRecord
@@ -105,7 +117,8 @@ func (p *bypassPurge) failed() error {
 }
 
 // fail records the first failed delete, mapped as the admin op maps the
-// errno radosgw's drain returns (rgw_rest_bucket.cc:245-247).
+// errno radosgw's drain returns
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L245-L247).
 func (p *bypassPurge) fail(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -144,11 +157,14 @@ func (p *bypassPurge) stop(err error) error {
 	return p.failed()
 }
 
-// object is one listed entry (:510-582): its head read as get_obj_state
-// reads it, without following an olh; a missing head is skipped
-// (:522-525); with a manifest, every stripe but the head is released under
-// the refcount tag, then the head and its index entry removed; without one,
-// nothing is done here and the ordinary purge deletes the object.
+// object is one listed entry
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L510-L582):
+// its head read as get_obj_state reads it, without following an olh; a
+// missing head is skipped
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L522-L525);
+// with a manifest, every stripe but the head is released under the refcount
+// tag, then the head and its index entry removed; without one, nothing is
+// done here and the ordinary purge deletes the object.
 func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 	st, err := p.s.readHead(ctx, p.rec, key, false)
 	if err != nil {
@@ -163,17 +179,22 @@ func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 		return nil
 	}
 	// The stripe that is the head object as the manifest's head placement
-	// rule places it is skipped (:533-536, :552-556).
+	// rule places it is skipped
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L533-L536,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L552-L556).
 	chain, err := p.s.gcChain(st.Manifest, st.Manifest.HeadPlacementRule)
 	if err != nil {
 		return err
 	}
-	// The tail tag, else the object tag (:538-541), which get_obj_state fakes
-	// for a head with a manifest and no idtag (rgw_rados.cc:6238-6245 at
-	// v19.2.6, :6992-6999 at v20.2.4). A copy's refcount reference is held
-	// under the copy's own tag, so the release drops this object's
-	// reference, or the implicit one, and the stripe stays while another
-	// object holds it (cls_refcount.cc:88-139).
+	// The tail tag, else the object tag
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L538-L541),
+	// which get_obj_state fakes for a head with a manifest and no idtag
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6238-L6245 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6992-L6999 at v20.2.4).
+	// A copy's refcount reference is held under the copy's own tag, so the
+	// release drops this object's reference, or the implicit one, and the
+	// stripe stays while another object holds it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/refcount/cls_refcount.cc#L88-L139).
 	tag := rawTag(st, meta.AttrTailTag)
 	if tag == "" {
 		tag = rawTag(st, meta.AttrIDTag)
@@ -201,11 +222,17 @@ func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 }
 
 // tail is the garbage collector's delete of one chain object
-// (rgw_gc.cc:676-686 at v19.2.6, :688-698 at v20.2.4): a refcount put under
-// tag with the implicit reference, the locator set, allowed into a full
-// pool's reserve, and ENOENT counted as done (:413-415, v20.2.4 :428-430).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L676-L686 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L688-L698 at v20.2.4):
+// a refcount put under tag with the implicit reference, the locator set,
+// allowed into a full pool's reserve, and ENOENT counted as done
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L413-L415,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L428-L430).
 // remove_bypass_gc's delete_tail_obj_aio sends the same put without
-// full-try (rgw_rados.cc:10659-10685 at v19.2.6, :11596-11622 at v20.2.4).
+// full-try
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10659-L10685 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11596-L11622 at v20.2.4).
 func (p *bypassPurge) tail(ctx context.Context, o rgw.GCObj, tag string) error {
 	pool, err := p.s.pools.get(ctx, meta.ParsePool(o.Pool))
 	if err != nil {
@@ -222,17 +249,20 @@ func (p *bypassPurge) tail(ctx context.Context, o rgw.GCObj, tag string) error {
 	return nil
 }
 
-// head is delete_obj_aio with keep_index_consistent (rgw_rados.cc:10687-10732
-// at v19.2.6, :11624-11669 at v20.2.4): an index prepare DEL under a fresh
-// tag, since a state get_obj_state read carries no write tag
-// (UpdateIndex::prepare, :7087-7093); obj_remove without a kept prefix, a
-// guard or flags; then delete_obj_index's unprepared complete_del
-// (:6033-6050). A head already gone counts as removed, as a tail does,
-// where radosgw's drain returns its ENOENT. A removal that fails otherwise
-// than by ENOENT or a timeout cancels the prepare and keeps the entry, where
-// radosgw completes the delete without waiting for the removal; a timed-out
-// one leaves the pending entry for a listing's check, as an object delete
-// does.
+// head is delete_obj_aio with keep_index_consistent
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10687-L10732 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11624-L11669 at v20.2.4):
+// an index prepare DEL under a fresh tag, since a state get_obj_state read
+// carries no write tag (UpdateIndex::prepare,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7087-L7093);
+// obj_remove without a kept prefix, a guard or flags; then delete_obj_index's
+// unprepared complete_del
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6033-L6050).
+// A head already gone counts as removed, as a tail does, where radosgw's
+// drain returns its ENOENT. A removal that fails otherwise than by ENOENT or
+// a timeout cancels the prepare and keeps the entry, where radosgw completes
+// the delete without waiting for the removal; a timed-out one leaves the
+// pending entry for a listing's check, as an object delete does.
 func (p *bypassPurge) head(ctx context.Context, key meta.ObjKey, st *op.ObjectState) error {
 	ref, err := p.s.headRef(ctx, p.rec, key)
 	if err != nil {

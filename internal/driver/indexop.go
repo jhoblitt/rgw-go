@@ -18,11 +18,13 @@ import (
 // An object write keeps the bucket index in step through
 // RGWRados::Bucket::UpdateIndex (driver/rados/rgw_rados.cc): a prepare
 // before the head is written records the change as pending under a tag, and
-// a completion or a cancel after it applies or drops it. A bare line number
-// is v19.2.6's rgw_rados.cc.
+// a completion or a cancel after it applies or drops it.
 
-// reshardRetries is NUM_RESHARD_RETRIES (:7030) and block_while_resharding's
-// num_retries (:7818), the same at v20.2.4.
+// reshardRetries is NUM_RESHARD_RETRIES
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7030)
+// and block_while_resharding's num_retries
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7818),
+// the same at v20.2.4.
 const reshardRetries = 10
 
 // indexShard is RGWRados::BucketShard: one index shard object, the pool
@@ -34,12 +36,16 @@ type indexShard struct {
 }
 
 // indexShardFor is BucketShard::init through
-// RGWSI_BucketIndex_RADOS::open_bucket_index_shard (svc_bi_rados.cc:275-300
-// and get_bucket_index_object, :240-273, at v19.2.6): the shard of info's
-// current index generation that holds key. The key hashes by its name,
-// rgw_obj::get_hash_object. A bucket without an id is open_bucket_index_base's
-// EIO (:83-86), and a hash type other than Mod its ENOTSUP; no row of the
-// S3 error table names either, so both answer UnknownError.
+// RGWSI_BucketIndex_RADOS::open_bucket_index_shard
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L275-L300
+// and get_bucket_index_object,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L240-L273, at v19.2.6):
+// the shard of info's current index generation that holds key. The key hashes
+// by its name, rgw_obj::get_hash_object. A bucket without an id is
+// open_bucket_index_base's EIO
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L83-L86),
+// and a hash type other than Mod its ENOTSUP; no row of the S3 error table
+// names either, so both answer UnknownError.
 func (s *Store) indexShardFor(ctx context.Context, info *meta.BucketInfo, key meta.ObjKey) (indexShard, error) {
 	pool, err := s.indexPool(ctx, info)
 	if err != nil {
@@ -72,12 +78,14 @@ type indexOp struct {
 	blind bool // an indexless bucket: every method does nothing
 	shard *indexShard
 	// prepared is UpdateIndex::is_prepared: the prepare succeeded, so a
-	// second write pass does not send another (_do_write_meta, :3289-3294).
+	// second write pass does not send another (_do_write_meta,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3289-L3294).
 	prepared bool
 	// hashName replaces the key's name as the shard's hash source,
-	// rgw_obj::index_hash_source (rgw_obj_types.h:540-541): the multipart
-	// meta object and the part heads are indexed on their upload key's
-	// shard.
+	// rgw_obj::index_hash_source
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L540-L541):
+	// the multipart meta object and the part heads are indexed on their
+	// upload key's shard.
 	hashName string
 	// removeObjs are the entries the completion or cancel closing this op
 	// retires in the same class call, rgw_cls_obj_complete_op::remove_objs.
@@ -85,13 +93,15 @@ type indexOp struct {
 	// noLog is a write_meta caller's log_op false, which keeps the change
 	// out of the bucket index log whatever the zone's log_data: what
 	// RadosMultipartUpload::init passes for the meta object
-	// (rgw_sal_rados.cc:3323; v20.2.4 :4169).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3323;
+	// v20.2.4
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4169).
 	noLog bool
 }
 
 // newIndexOp starts the index change of key in rec's bucket under tag, or,
 // when tag is empty, under the random tag UpdateIndex::prepare makes
-// (:7086-7093).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7086-L7093).
 func (s *Store) newIndexOp(rec *op.BucketRecord, key meta.ObjKey, tag string) *indexOp {
 	if tag == "" {
 		tag = s.w.randTag()
@@ -124,14 +134,20 @@ func (x *indexOp) clsKey() rgw.ObjKey {
 }
 
 // zonesTrace is the zone set a prepare and a completion carry:
-// zones_trace.insert(zone id, bucket.get_key()) (:9468, :9505).
+// zones_trace.insert(zone id, bucket.get_key())
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9468,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9505).
 func (x *indexOp) zonesTrace() []string {
 	return []string{x.s.w.zoneID + ":" + x.obj.Bucket.Key()}
 }
 
-// prepareOp is cls_obj_prepare_op's write op (:9456-9479; v20.2.4
-// :10395-10411). Tentacle's cls_rgw_bucket_prepare_op takes no log_op,
-// bilog flags or zones_trace (cls_rgw_client.cc:164-175 at v20.2.4).
+// prepareOp is cls_obj_prepare_op's write op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9456-L9479;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10395-L10411).
+// Tentacle's cls_rgw_bucket_prepare_op takes no log_op, bilog flags or
+// zones_trace
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_client.cc#L164-L175 at v20.2.4).
 func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
@@ -145,8 +161,10 @@ func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
 	return w
 }
 
-// completeOp is cls_obj_complete_op's write op (:9481-9523; v20.2.4
-// :10413-10455).
+// completeOp is cls_obj_complete_op's write op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9481-L9523;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10413-L10455).
 func (x *indexOp) completeOp(c rgw.CompleteOp) *radosclient.WriteOp {
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
@@ -164,13 +182,22 @@ func (x *indexOp) completion(mod rgw.ModifyOp, ver rgw.EntryVer, m rgw.DirEntryM
 }
 
 // logOp is add_log: the caller's log_op and the zone's need_to_log_data
-// (:7095, :7147, :7177, :7201).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7095,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7147,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7177,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7201).
 func (x *indexOp) logOp() bool { return x.s.w.logData && !x.noLog }
 
-// prepare is UpdateIndex::prepare (:7079-7106; v20.2.4 :7932-7957): the
-// prepare, behind the reshard guard, before the caller writes the head. Only
-// a prepare that was sent and succeeded marks the op prepared (:7104;
-// v20.2.4 :7955); an indexless bucket's never is.
+// prepare is UpdateIndex::prepare
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7079-L7106;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7932-L7957):
+// the prepare, behind the reshard guard, before the caller writes the head.
+// Only a prepare that was sent and succeeded marks the op prepared
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7104;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7955);
+// an indexless bucket's never is.
 func (x *indexOp) prepare(ctx context.Context, mod rgw.ModifyOp) error {
 	if x.blind {
 		return nil
@@ -186,8 +213,10 @@ func (x *indexOp) prepare(ctx context.Context, mod rgw.ModifyOp) error {
 	return nil
 }
 
-// complete is UpdateIndex::complete (:7108-7156): the entry m describes,
-// under the category m names, sent without waiting for it.
+// complete is UpdateIndex::complete
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7108-L7156):
+// the entry m describes, under the category m names, sent without
+// waiting for it.
 func (x *indexOp) complete(ver rgw.EntryVer, m rgw.DirEntryMeta) {
 	if x.blind {
 		return
@@ -195,9 +224,12 @@ func (x *indexOp) complete(ver rgw.EntryVer, m rgw.DirEntryMeta) {
 	x.s.w.completions.submit(x, x.completion(rgw.OpAdd, ver, m))
 }
 
-// completeDel is UpdateIndex::complete_del (:7158-7188) through
-// cls_obj_complete_del (:9536-9551): a removal stamped with the removed
-// object's mtime under category None, sent without waiting for it.
+// completeDel is UpdateIndex::complete_del
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7158-L7188)
+// through cls_obj_complete_del
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9536-L9551):
+// a removal stamped with the removed object's mtime under category
+// None, sent without waiting for it.
 func (x *indexOp) completeDel(ver rgw.EntryVer, removedMtime time.Time) {
 	if x.blind {
 		return
@@ -205,12 +237,15 @@ func (x *indexOp) completeDel(ver rgw.EntryVer, removedMtime time.Time) {
 	x.s.w.completions.submit(x, x.completion(rgw.OpDel, ver, rgw.DirEntryMeta{Category: rgw.CategoryNone, Mtime: removedMtime}))
 }
 
-// cancel is UpdateIndex::cancel (:7190-7218) through
-// cls_obj_complete_cancel, which sends pool -1 and epoch 0 whatever the
-// object's state (:9553-9563 at v19.2.6, :10485-10495 at v20.2.4), sent
-// without waiting for it. The class copies that version onto the entry
-// before it writes the cancel back, so the next completion applies at any
-// epoch (tracker #80894), as it does behind radosgw.
+// cancel is UpdateIndex::cancel
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7190-L7218)
+// through cls_obj_complete_cancel, which sends pool -1 and epoch 0
+// whatever the object's state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9553-L9563 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10485-L10495 at v20.2.4),
+// sent without waiting for it. The class copies that version onto the
+// entry before it writes the cancel back, so the next completion applies
+// at any epoch (tracker #80894), as it does behind radosgw.
 func (x *indexOp) cancel() {
 	if x.blind {
 		return
@@ -218,19 +253,22 @@ func (x *indexOp) cancel() {
 	x.s.w.completions.submit(x, x.completion(rgw.OpCancel, rgw.EntryVer{Pool: -1, Epoch: 0}, rgw.DirEntryMeta{Category: rgw.CategoryNone}))
 }
 
-// guardReshard is UpdateIndex::guard_reshard (:7024-7077; v19.2.7
-// :7210-7269): call on the current shard, at most ten times. On a
-// busy-resharding answer it waits the reshard out with blockWhileResharding
-// and calls again. The count starts over when the wait ended with the
-// instance moving the object to another shard; a shard that keeps refusing
-// the guard while its status reads as finished uses up the ten calls and
-// answers ErrBusyResharding. An ErrNotFound means that a reshard committed
-// since the shard was found may have removed it: it reads the instance
-// again, as v19.2.7 does (v19.2.7 :7225-7230) and v20.2.4 does not, and
-// calls again within the same ten only when the instance now puts the object
-// on another shard. A re-read that names the same shard returns the
-// ErrNotFound at once, where v19.2.7 sends the call ten times
-// (docs/exclusions.md, "Dynamic resharding worker").
+// guardReshard is UpdateIndex::guard_reshard
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7024-L7077;
+// v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7210-L7269):
+// call on the current shard, at most ten times. On a busy-resharding answer
+// it waits the reshard out with blockWhileResharding and calls again. The
+// count starts over when the wait ended with the instance moving the object
+// to another shard; a shard that keeps refusing the guard while its status
+// reads as finished uses up the ten calls and answers ErrBusyResharding. An
+// ErrNotFound means that a reshard committed since the shard was found may
+// have removed it: it reads the instance again, as v19.2.7 does (v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7225-L7230)
+// and v20.2.4 does not, and calls again within the same ten only when the
+// instance now puts the object on another shard. A re-read that names the
+// same shard returns the ErrNotFound at once, where v19.2.7 sends the call
+// ten times (docs/exclusions.md, "Dynamic resharding worker").
 func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) error) error {
 	var err error
 	for i := 0; i < reshardRetries; i++ {
@@ -242,7 +280,9 @@ func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) err
 		if errors.Is(err, radosclient.ErrNotFound) {
 			// No call is left to use a re-read, so a failed one cannot
 			// replace this answer; v19.2.7 leaves its loop here too
-			// (v19.2.7 :7226-7229, :7258-7261).
+			// (v19.2.7
+			// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7226-L7229,
+			// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7258-L7261).
 			if i == reshardRetries-1 {
 				return err
 			}
@@ -280,8 +320,11 @@ func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) err
 }
 
 // reshardBusy is how the release reads a shard's reshard status while it
-// waits: resharding_in_progress() on Squid (:7837), resharding() on
-// Tentacle (v20.2.4 :8779; cls_rgw_types.h:800-810).
+// waits: resharding_in_progress() on Squid
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7837),
+// resharding() on Tentacle (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8779;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L800-L810).
 func (s *Store) reshardBusy(e rgw.InstanceEntry) bool {
 	if s.release < denc.Tentacle {
 		return e.ReshardStatus == rgw.ReshardInProgress
@@ -289,9 +332,15 @@ func (s *Store) reshardBusy(e rgw.InstanceEntry) bool {
 	return e.ReshardStatus != rgw.ReshardNone
 }
 
-// blockWhileResharding is RGWRados::block_while_resharding (:7773-7935;
-// v20.2.4 :8715-8873) without its reshard-lock recovery and the bucket
-// re-read each failed lock attempt makes (:7854-7919; v20.2.4 :8796-8861;
+// blockWhileResharding is RGWRados::block_while_resharding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7773-L7935;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8715-L8873)
+// without its reshard-lock recovery and the bucket re-read each failed
+// lock attempt makes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7854-L7919;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8796-L8861;
 // docs/exclusions.md, "Dynamic resharding worker"): up to ten reads of the
 // shard's reshard status, reshardWait apart. A status that is no longer
 // busy, or a shard that is gone, re-reads the bucket instance into x and
@@ -333,14 +382,29 @@ func (s *Store) blockWhileResharding(ctx context.Context, x *indexOp, sh indexSh
 // generation, the one part of the instance a reshard changes. It is
 // block_while_resharding's fetch_new_bucket_info after a wait, and after a
 // missing shard v19.2.7's init_bs, which reads the instance into the
-// target's bucket info (v19.2.7 rgw_rados.h:947-955, rgw_rados.cc:2804-2830).
+// target's bucket info (v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L947-L955,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2804-L2830).
 // The read skips the metadata cache that radosgw's reads go through, since
-// the reshard's notify may not have reached it (docs/exclusions.md, "Dynamic
-// resharding worker"). A bucket deleted meanwhile answers 404 NoSuchKey, as
-// radosgw does: its re-read fails with -ENOENT, which reaches the request
-// unchanged (:7822-7844, :7054-7058, :7100-7101, :3293-3294; v20.2.4
-// :8764-8786, :7903-7907, :7951-7953, :3446-3447; after a missing shard
-// v19.2.7 :7218-7222) and rgw_common.cc:97 (v20.2.4 :98) names NoSuchKey.
+// the reshard's notify may not have reached it (docs/exclusions.md,
+// "Dynamic resharding worker"). A bucket deleted meanwhile answers 404
+// NoSuchKey, as radosgw does: its re-read fails with -ENOENT, which reaches
+// the request unchanged
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7822-L7844,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7054-L7058,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7100-L7101,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3293-L3294;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8764-L8786,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7903-L7907,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7951-L7953,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3446-L3447;
+// after a missing shard v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7218-L7222)
+// and https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97
+// (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98) names
+// NoSuchKey.
 func (s *Store) refreshIndexOp(ctx context.Context, x *indexOp) error {
 	o := s.instanceObj(x.rec.Info.Bucket)
 	s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))

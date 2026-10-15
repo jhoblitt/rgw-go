@@ -12,15 +12,18 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The bucket index is RGWSI_BucketIndex_RADOS (services/svc_bi_rados.cc). A
-// bare line number is v19.2.6's.
+// The bucket index is RGWSI_BucketIndex_RADOS (services/svc_bi_rados.cc).
 
-// indexPool is open_bucket_index_pool (:43-71; v20.2.4 :51-79): the bucket's
-// explicit index pool when it has one, else the index pool of the zone
-// placement its rule names. Only a rule with neither a name nor a storage
-// class takes the zonegroup default placement's name
-// (rgw_placement_rule::empty, rgw_placement_types.h:29-31 at both tags). A
-// rule with a class and no name is looked up by its empty name, as radosgw
+// indexPool is open_bucket_index_pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L43-L71;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L51-L79):
+// the bucket's explicit index pool when it has one, else the index pool of
+// the zone placement its rule names. Only a rule with neither a name nor a
+// storage class takes the zonegroup default placement's name
+// (rgw_placement_rule::empty,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_placement_types.h#L29-L31 at both tags).
+// A rule with a class and no name is looked up by its empty name, as radosgw
 // looks it up. No storage class plays a part, the rule's or the default's,
 // so a bucket whose class the zone lacks still opens its index. A
 // placement the zone lacks is radosgw's -EINVAL. The lookup reads the map
@@ -44,8 +47,11 @@ func (s *Store) indexPool(ctx context.Context, info *meta.BucketInfo) (radosclie
 	return s.pools.get(ctx, pi.IndexPool)
 }
 
-// shardOIDs is get_bucket_index_objects (:130-163; v20.2.4 :138-171) for
-// the index generation gen: ".dir.<id>" alone for an unsharded index,
+// shardOIDs is get_bucket_index_objects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L130-L163;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L138-L171)
+// for the index generation gen: ".dir.<id>" alone for an unsharded index,
 // ".dir.<id>.<shard>" for generation 0 and ".dir.<id>.<gen>.<shard>" after,
 // in shard order.
 func shardOIDs(info *meta.BucketInfo, gen meta.IndexLayoutGen) []string {
@@ -60,11 +66,16 @@ func shardOIDs(info *meta.BucketInfo, gen meta.IndexLayoutGen) []string {
 	return oids
 }
 
-// readShardHeaders is cls_bucket_head (:323-352) for the current index
-// generation: one bucket_list of no entries per shard, at most
-// rgw_bucket_index_max_aio in flight, the headers in shard order. A bucket
-// without a bucket id is radosgw's -EIO (open_bucket_index_base, :83-86;
-// v20.2.4 :91-94). The first shard read that fails stops further reads, as
+// readShardHeaders is cls_bucket_head
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L323-L352)
+// for the current index generation: one bucket_list of no entries per
+// shard, at most rgw_bucket_index_max_aio in flight, the headers in shard
+// order. A bucket without a bucket id is radosgw's -EIO
+// (open_bucket_index_base,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L83-L86;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L91-L94).
+// The first shard read that fails stops further reads, as
 // CLSRGWConcurrentIO stops issuing them, and its error, naming the shard,
 // is the one returned. Tentacle's radosgw reads the omap headers directly
 // instead, and answers -EIO where this answers a missing shard's ENOENT or
@@ -108,10 +119,13 @@ func (s *Store) readShardHeaders(ctx context.Context, info *meta.BucketInfo) ([]
 	return headers, nil
 }
 
-// readIndexStats is read_stats (:395-427; v20.2.4 :560-592): the Main
-// category's totals summed over the current generation's shards, as the
-// bucket's entry with its placement rule. radosgw leaves the entry's
-// creation time to its caller; this takes the bucket's.
+// readIndexStats is read_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L395-L427;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L560-L592):
+// the Main category's totals summed over the current generation's
+// shards, as the bucket's entry with its placement rule. radosgw leaves
+// the entry's creation time to its caller; this takes the bucket's.
 func (s *Store) readIndexStats(ctx context.Context, info *meta.BucketInfo) (meta.BucketEnt, error) {
 	headers, err := s.readShardHeaders(ctx, info)
 	if err != nil {

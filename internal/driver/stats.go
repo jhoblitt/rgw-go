@@ -23,12 +23,16 @@ import (
 // line number is rgw_quota.cc's at v19.2.6; the code is the same at v20.2.4
 // unless noted.
 
-// roundedObjSize is rgw_rounded_objsize (rgw_common.h:1635-1638 at v19.2.6,
-// :1637-1640 at v20.2.4): b rounded up to 4 KiB.
+// roundedObjSize is rgw_rounded_objsize
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1635-L1638 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1637-L1640 at v20.2.4):
+// b rounded up to 4 KiB.
 func roundedObjSize(b uint64) uint64 { return (b + 4095) &^ 4095 }
 
-// quotaEntry is RGWQuotaCacheStats (:41-45). A zero asyncRefresh means a
-// refresh is under way, or failed and left the entry to expire.
+// quotaEntry is RGWQuotaCacheStats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L41-L45).
+// A zero asyncRefresh means a refresh is under way, or failed and left
+// the entry to expire.
 type quotaEntry[K comparable] struct {
 	key          K
 	stats        op.Stats
@@ -37,7 +41,8 @@ type quotaEntry[K comparable] struct {
 	elem         *list.Element
 }
 
-// quotaCache is RGWQuotaCache<T> over lru_map (:47-223,
+// quotaCache is RGWQuotaCache<T> over lru_map
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L47-L223,
 // common/lru_map.h): at most size entries, a negative size meaning no limit
 // as lru_map's size_t reads it, each trusted for ttl after it is set and
 // refreshed in the background once half the ttl has passed. A find moves an
@@ -55,7 +60,8 @@ type quotaCache[K comparable] struct {
 }
 
 // newQuotaCache returns a cache of size entries trusted for ttl. radosgw
-// halves rgw_bucket_quota_ttl as an integer count of seconds (:139).
+// halves rgw_bucket_quota_ttl as an integer count of seconds
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L139).
 func newQuotaCache[K comparable](size int, ttl time.Duration, now func() time.Time) *quotaCache[K] {
 	return &quotaCache[K]{
 		entries: map[K]*quotaEntry[K]{}, lru: list.New(), size: size,
@@ -64,11 +70,13 @@ func newQuotaCache[K comparable](size int, ttl time.Duration, now func() time.Ti
 	}
 }
 
-// get is get_stats (:145-171): a held entry whose refresh time has passed
-// starts a refresh in the background, one per entry until it sets the entry
-// again; a held entry before its expiration is served; otherwise fetch runs
-// now, ENOENT being zero stats, and its stats are set. One call can both
-// start a refresh and fetch.
+// get is get_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L145-L171):
+// a held entry whose refresh time has passed starts a refresh in the
+// background, one per entry until it sets the entry again; a held entry
+// before its expiration is served; otherwise fetch runs now, ENOENT being
+// zero stats, and its stats are set. One call can both start a refresh and
+// fetch.
 func (c *quotaCache[K]) get(ctx context.Context, key K, fetch func(context.Context) (op.Stats, error)) (op.Stats, error) {
 	c.mu.Lock()
 	now := c.now()
@@ -99,9 +107,10 @@ func (c *quotaCache[K]) get(ctx context.Context, key K, fetch func(context.Conte
 	return st, nil
 }
 
-// refresh is the async refresh's completion (:114-130): a fetched result
-// sets the entry, held or not, and a failure is only logged, leaving the
-// entry without a refresh time until it expires.
+// refresh is the async refresh's completion
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L114-L130):
+// a fetched result sets the entry, held or not, and a failure is only
+// logged, leaving the entry without a refresh time until it expires.
 func (c *quotaCache[K]) refresh(ctx context.Context, key K, fetch func(context.Context) (op.Stats, error)) {
 	defer c.refreshes.Done()
 	ctx, cancel := context.WithCancel(ctx)
@@ -122,7 +131,9 @@ func (c *quotaCache[K]) refresh(ctx context.Context, key K, fetch func(context.C
 	c.set(key, st)
 }
 
-// set is set_stats (:133-142) and lru_map::add.
+// set is set_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L133-L142)
+// and lru_map::add.
 func (c *quotaCache[K]) set(key K, st op.Stats) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -143,10 +154,11 @@ func (c *quotaCache[K]) set(key K, st op.Stats) {
 	}
 }
 
-// adjust is adjust_stats with RGWQuotaStatsUpdate (:174-223): a held
-// entry's fields move by the deltas, each computed in 64-bit unsigned
-// arithmetic and floored at zero when it reads as negative. It reports
-// whether the cache held the entry.
+// adjust is adjust_stats with RGWQuotaStatsUpdate
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L174-L223):
+// a held entry's fields move by the deltas, each computed in 64-bit
+// unsigned arithmetic and floored at zero when it reads as negative.
+// It reports whether the cache held the entry.
 func (c *quotaCache[K]) adjust(key K, objs, added, removed int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -177,7 +189,8 @@ func flooredSum(v, add, sub uint64) uint64 {
 func (c *quotaCache[K]) wait() { c.refreshes.Wait() }
 
 // close cancels the refreshes under way and waits for them, so that none
-// outlives the pools it reads, as ~RGWQuotaCache waits for its own (:82-84);
+// outlives the pools it reads, as ~RGWQuotaCache waits for its own
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L82-L84);
 // radosgw lets them finish where rgw-go cancels them. No refresh starts
 // after it.
 func (c *quotaCache[K]) close() {
@@ -211,7 +224,7 @@ func (c *quotaCache[K]) peek(key K) (op.Stats, bool) {
 }
 
 // bucketKey is the part of rgw_bucket its ordering compares
-// (rgw_bucket_types.h:168-183 at both tags).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_bucket_types.h#L168-L183 at both tags).
 type bucketKey struct{ tenant, name, id string }
 
 func bucketStatsKey(b meta.BucketID) bucketKey { return bucketKey{b.Tenant, b.Name, b.ID} }
@@ -243,7 +256,9 @@ type statsCaches struct {
 }
 
 // newStatsCaches returns the caches, both sized and timed by the bucket
-// options as radosgw's are (:242, :486).
+// options as radosgw's are
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L242,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L486).
 func newStatsCaches(o options, now func() time.Time) statsCaches {
 	return statsCaches{
 		bucket:   newQuotaCache[bucketKey](o.bucketQuotaCacheSize, o.bucketQuotaTTL, now),
@@ -259,10 +274,11 @@ func (q *statsCaches) close() {
 }
 
 // openQuota makes the stats caches and, with rgw_enable_quota_threads, adds
-// the three RGWOwnerStatsCache workers (:488-495). A sync interval that is
-// not positive is used as one second (positiveInterval): radosgw's sync
-// threads then loop without pause, except that v20.2.4's bucket sync waits
-// a second on 0.
+// the three RGWOwnerStatsCache workers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L488-L495).
+// A sync interval that is not positive is used as one second
+// (positiveInterval): radosgw's sync threads then loop without pause,
+// except that v20.2.4's bucket sync waits a second on 0.
 func (s *Store) openQuota(ctx context.Context) {
 	s.quota = newStatsCaches(s.opts, s.clock)
 	if !s.opts.quotaThreads {
@@ -279,11 +295,13 @@ func (s *Store) openQuota(ctx context.Context) {
 func (s *Store) clock() time.Time { return s.sysobj.now() }
 
 // effectiveQuotas is RGWOp::init_quota over get_owner_quota_info
-// (rgw_op.cc:1383-1449 at v19.2.6, :1620-1686 at v20.2.4): the period's
-// quotas (RadosStore::get_quota, svc_quota.cc:9-17), then the bucket's own
-// bucket quota or else the owner's when enabled, and the owner's user quota
-// when enabled. An owner that does not load fails it, a missing one with
-// radosgw's bare ENOENT, NoSuchKey.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1383-L1449 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1620-L1686 at v20.2.4):
+// the period's quotas (RadosStore::get_quota,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_quota.cc#L9-L17),
+// then the bucket's own bucket quota or else the owner's when enabled, and
+// the owner's user quota when enabled. An owner that does not load fails
+// it, a missing one with radosgw's bare ENOENT, NoSuchKey.
 func (s *Store) effectiveQuotas(ctx context.Context, rec *op.BucketRecord, owner meta.Owner) (bucket, user meta.Quota, err error) {
 	var ownerBucket, ownerUser meta.Quota
 	if owner.User != nil {
@@ -315,11 +333,14 @@ func (s *Store) effectiveQuotas(ctx context.Context, rec *op.BucketRecord, owner
 	return bucket, user, nil
 }
 
-// exceeded is check_quota for one quota (:877-906) through the applier it
-// selects (:769-869): the objects first, then the size, which the default
-// applier takes as size_rounded plus the rounded addition and check_on_raw's
-// as the raw size plus the raw addition. A negative limit is none.
-// radosgw's additions are unsigned, so a negative one counts as none.
+// exceeded is check_quota for one quota
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L877-L906)
+// through the applier it selects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L769-L869):
+// the objects first, then the size, which the default applier takes as
+// size_rounded plus the rounded addition and check_on_raw's as the raw size
+// plus the raw addition. A negative limit is none. radosgw's additions are
+// unsigned, so a negative one counts as none.
 func exceeded(q meta.Quota, st op.Stats, addBytes, addObjs int64) bool {
 	if !q.Enabled {
 		return false
@@ -338,10 +359,12 @@ func exceeded(q meta.Quota, st op.Stats, addBytes, addObjs int64) bool {
 }
 
 // fetchBucketQuotaStats is RGWBucketStatsCache::fetch_stats_from_storage
-// (:249-287) and init_refresh (:311-340): the bucket instance read again,
-// then every category of its current index summed, zero for an indexless
-// bucket. A bucket that is gone is ENOENT, which the cache takes as zero
-// stats.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L249-L287)
+// and init_refresh
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L311-L340):
+// the bucket instance read again, then every category of its current
+// index summed, zero for an indexless bucket. A bucket that is gone is
+// ENOENT, which the cache takes as zero stats.
 func (s *Store) fetchBucketQuotaStats(b meta.BucketID) func(context.Context) (op.Stats, error) {
 	return func(ctx context.Context) (op.Stats, error) {
 		rec, err := s.loadBucket(ctx, b)
@@ -368,7 +391,8 @@ func (s *Store) fetchBucketQuotaStats(b meta.BucketID) func(context.Context) (op
 }
 
 // fetchOwnerQuotaStats is RGWOwnerStatsCache::fetch_stats_from_storage
-// (:561-576): load_stats.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L561-L576):
+// load_stats.
 func (s *Store) fetchOwnerQuotaStats(owner meta.Owner) func(context.Context) (op.Stats, error) {
 	return func(ctx context.Context) (op.Stats, error) {
 		st, _, _, err := s.readOwnerStats(ctx, owner)
@@ -377,8 +401,10 @@ func (s *Store) fetchOwnerQuotaStats(owner meta.Owner) func(context.Context) (op
 }
 
 // BucketStats implements op.StatsStore as load_bucket_stats
-// (rgw_op.cc:3003-3016 at v19.2.6, :3235-3248 at v20.2.4): the Main
-// category of the current index, zero for an indexless bucket.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3003-L3016 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3235-L3248 at v20.2.4):
+// the Main category of the current index, zero for an indexless
+// bucket.
 func (s *Store) BucketStats(ctx context.Context, rec *op.BucketRecord) (op.Stats, error) {
 	if rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless {
 		return op.Stats{}, nil
@@ -401,10 +427,11 @@ func (s *Store) UserStats(ctx context.Context, owner meta.Owner) (op.Stats, erro
 }
 
 // CheckQuota implements op.StatsStore as init_quota followed by
-// RGWQuotaHandlerImpl::check_quota (:912-955): nothing is read when neither
-// quota is enabled; the bucket quota is checked against the bucket cache,
-// then the user quota against the owner cache. The error names the quota
-// exceeded.
+// RGWQuotaHandlerImpl::check_quota
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L912-L955):
+// nothing is read when neither quota is enabled; the bucket quota is
+// checked against the bucket cache, then the user quota against the owner
+// cache. The error names the quota exceeded.
 func (s *Store) CheckQuota(ctx context.Context, rec *op.BucketRecord, owner meta.Owner, addBytes, addObjs int64) error {
 	bq, uq, err := s.effectiveQuotas(ctx, rec, owner)
 	if err != nil {
@@ -431,13 +458,15 @@ func (s *Store) CheckQuota(ctx context.Context, rec *op.BucketRecord, owner meta
 	return nil
 }
 
-// AdjustStats implements op.StatsStore as update_stats (:957-960): both
-// caches' entries move by the deltas, and the bucket joins the modified set
-// with its owner unless already there (data_modified, :704-715). radosgw
-// fills that set without rgw_enable_quota_threads too, though only the
-// bucket sync thread ever empties it; rgw-go keeps it only for its worker
-// (docs/ceph-upstream-bugs.md, "radosgw keeps every modified bucket for
-// good when its quota threads are off").
+// AdjustStats implements op.StatsStore as update_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L957-L960):
+// both caches' entries move by the deltas, and the bucket joins the
+// modified set with its owner unless already there (data_modified,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L704-L715).
+// radosgw fills that set without rgw_enable_quota_threads too, though only
+// the bucket sync thread ever empties it; rgw-go keeps it only for its
+// worker (docs/ceph-upstream-bugs.md, "radosgw keeps every modified bucket
+// for good when its quota threads are off").
 func (s *Store) AdjustStats(_ context.Context, rec *op.BucketRecord, owner meta.Owner, objs, addBytes, removedBytes int64) error {
 	key := bucketStatsKey(rec.Info.Bucket)
 	s.quota.bucket.adjust(key, objs, addBytes, removedBytes)
@@ -453,11 +482,12 @@ func (s *Store) AdjustStats(_ context.Context, rec *op.BucketRecord, owner meta.
 	return nil
 }
 
-// runBucketsSync is BucketsSyncThread (:349-392): at start and then every
-// sync interval it takes the modified buckets and writes each one's index
-// stats to its owner, logging a bucket that fails. radosgw's sync_bucket
-// then checks the bucket for dynamic resharding, which rgw-go does not run
-// (docs/exclusions.md).
+// runBucketsSync is BucketsSyncThread
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L349-L392):
+// at start and then every sync interval it takes the modified buckets and
+// writes each one's index stats to its owner, logging a bucket that fails.
+// radosgw's sync_bucket then checks the bucket for dynamic resharding,
+// which rgw-go does not run (docs/exclusions.md).
 func (s *Store) runBucketsSync(ctx context.Context) error {
 	s.syncModifiedBuckets(ctx)
 	t := s.newTicker(s.quota.bucketSyncEvery)
@@ -492,10 +522,13 @@ func (s *Store) syncModifiedBuckets(ctx context.Context) {
 	}
 }
 
-// syncBucket is sync_bucket (:578-597) without check_bucket_shards: the
-// bucket as load_bucket reads it, then its stats written to the owner its
-// info names (RadosBucket::sync_owner_stats, rgw_sal_rados.cc:655-660 at
-// v19.2.6, :673-678 at v20.2.4).
+// syncBucket is sync_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L578-L597)
+// without check_bucket_shards: the bucket as load_bucket reads it, then
+// its stats written to the owner its info names
+// (RadosBucket::sync_owner_stats,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L655-L660 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L673-L678 at v20.2.4).
 func (s *Store) syncBucket(ctx context.Context, b meta.BucketID) error {
 	rec, err := s.loadBucket(ctx, b)
 	if err != nil {
@@ -505,9 +538,15 @@ func (s *Store) syncBucket(ctx context.Context, b meta.BucketID) error {
 	return err
 }
 
-// loadBucket is RadosStore::load_bucket (rgw_sal_rados.cc:1595-1600 and
-// :610-637 at v19.2.6, :2135-2140 and :631-655 at v20.2.4): the instance b
-// names, or, without a bucket id, the one its entry point names.
+// loadBucket is RadosStore::load_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L1595-L1600
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L610-L637 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2135-L2140
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L631-L655 at v20.2.4):
+// the instance b names, or, without a bucket id, the one its entry point
+// names.
 func (s *Store) loadBucket(ctx context.Context, b meta.BucketID) (*op.BucketRecord, error) {
 	if b.ID == "" {
 		return s.GetBucket(ctx, b.Tenant, b.Name)
@@ -524,11 +563,14 @@ const (
 	accountOwners
 )
 
-// ownerListPage is the page sync_all_owners lists keys in (:676).
+// ownerListPage is the page sync_all_owners lists keys in
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L676).
 const ownerListPage = 1000
 
-// runOwnerSync is OwnerSyncThread (:401-439): a full pass over the
-// section's owners at start and then every rgw_user_quota_sync_interval.
+// runOwnerSync is OwnerSyncThread
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L401-L439):
+// a full pass over the section's owners at start and then every
+// rgw_user_quota_sync_interval.
 func (s *Store) runOwnerSync(ctx context.Context, section ownerSection) error {
 	s.syncAllOwners(ctx, section)
 	t := s.newTicker(s.quota.ownerSyncEvery)
@@ -543,9 +585,10 @@ func (s *Store) runOwnerSync(ctx context.Context, section ownerSection) error {
 	}
 }
 
-// syncAllOwners is sync_all_owners (:665-702): every owner forEachOwner
-// lists goes through syncOwner, whose failure is logged and skipped; a
-// listing failure ends the pass.
+// syncAllOwners is sync_all_owners
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L665-L702):
+// every owner forEachOwner lists goes through syncOwner, whose failure
+// is logged and skipped; a listing failure ends the pass.
 func (s *Store) syncAllOwners(ctx context.Context, section ownerSection) {
 	err := s.forEachOwner(ctx, section, func(owner meta.Owner) {
 		if err := s.syncOwner(ctx, owner); err != nil {
@@ -561,9 +604,12 @@ func (s *Store) syncAllOwners(ctx context.Context, section ownerSection) {
 // page of ownerListPage objects at a time, and calls fn with each key's
 // owner (parse_owner) once its page is listed, until ctx ends. The user
 // section is the users.uid pool without the ".buckets" objects
-// (svc_user_rados.cc:54-57 at v19.2.6, :71-80 at v20.2.4); the account
-// section is the account pool's "account." objects (account.cc:518-533 and
-// :636-645 at both tags).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L54-L57 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L71-L80 at v20.2.4);
+// the account section is the account pool's "account." objects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L518-L533
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L636-L645 at both tags).
 func (s *Store) forEachOwner(ctx context.Context, section ownerSection, fn func(meta.Owner)) error {
 	pool := s.zone.Params.UserUIDPool
 	if section == accountOwners {
@@ -605,13 +651,16 @@ func (s *Store) forEachOwner(ctx context.Context, section ownerSection, fn func(
 	}
 }
 
-// accountOIDPrefix is account_oid_prefix (account.cc:40 at both tags).
+// accountOIDPrefix is account_oid_prefix
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L40 at both tags).
 const accountOIDPrefix = "account."
 
-// syncOwner is sync_owner (:623-663): nothing for an owner idle since its
-// last full sync, unless rgw_user_quota_sync_idle_users, nor for one synced
-// within rgw_user_quota_sync_wait_time; otherwise the owner's tenant, which
-// an account owner's must load for, and a full sync.
+// syncOwner is sync_owner
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L623-L663):
+// nothing for an owner idle since its last full sync, unless
+// rgw_user_quota_sync_idle_users, nor for one synced within
+// rgw_user_quota_sync_wait_time; otherwise the owner's tenant, which an
+// account owner's must load for, and a full sync.
 func (s *Store) syncOwner(ctx context.Context, owner meta.Owner) error {
 	_, lastSync, lastUpdate, err := s.readOwnerStats(ctx, owner)
 	if err != nil {
@@ -629,11 +678,12 @@ func (s *Store) syncOwner(ctx context.Context, owner meta.Owner) error {
 	return s.syncAllStats(ctx, owner)
 }
 
-// syncAllStats is rgw_sync_all_stats (rgw_user.cc:16-55 at both tags): the
-// owner's buckets rgw_list_buckets_max_chunk at a time, each written to its
-// owner's entry, a bucket that does not load being skipped and a write that
-// fails ending the sync; then the owner's last full sync is stamped. As in
-// syncBucket, check_bucket_shards is not run.
+// syncAllStats is rgw_sync_all_stats
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_user.cc#L16-L55 at both tags):
+// the owner's buckets rgw_list_buckets_max_chunk at a time, each written to
+// its owner's entry, a bucket that does not load being skipped and a write
+// that fails ending the sync; then the owner's last full sync is stamped.
+// As in syncBucket, check_bucket_shards is not run.
 func (s *Store) syncAllStats(ctx context.Context, owner meta.Owner) error {
 	chunk := s.opts.listBucketsChunk
 	marker := ""
