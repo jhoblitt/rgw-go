@@ -21,3 +21,23 @@
 
 # Tentacle's x-amz-expected-bucket-owner check, served on Squid too; Squid's radosgw ignores the header (exclusions: "Squid clusters get Tentacle's checks outside the policy language")
 ^s3tests\.functional\.test_s3::test_expected_bucket_owner$
+
+# An X-Goog- header read as an ordinary header: rgw-go refuses a signed SigV2 copy source moved under it and stores no metadata from an unsigned one; radosgw files both under their x-amz- names (exclusions: "The S3 API reads X-Amz- headers only")
+^s3tests\.functional\.test_headers::test_sigv2_signed_copy_source_moved_to_xgoog$
+^s3tests\.functional\.test_headers::test_sigv4_presigned_put_xgoog_meta_unsigned$
+
+# A presigned SigV2 request's meta signed in its query, stored by a CreateMultipartUpload and a REPLACE CopyObject; radosgw stores the headers' meta alone (exclusions: "A presigned SigV2 request's signed meta and session token mean the same in its headers and its query")
+^s3tests\.functional\.test_headers::test_sigv2_presigned_multipart_meta_moved_to_query$
+^s3tests\.functional\.test_headers::test_sigv2_presigned_copy_replace_meta_in_query$
+
+# A presigned SigV2 query meta value holding a line break, refused; radosgw stores one attr where two were signed (exclusions: "A presigned SigV2 request is refused when its query meta or session token holds a line break")
+^s3tests\.functional\.test_headers::test_sigv2_presigned_meta_lines_packed_into_one_query_value$
+
+# A presigned SigV2 Expires holding a line break, refused; radosgw serves the CopyObject it hides as a PutObject (exclusions: "A presigned SigV2 request is refused when its Expires holds a line break")
+^s3tests\.functional\.test_headers::test_sigv2_presigned_copy_source_moved_to_expires$
+
+# A presigned SigV2 query meta name holding a colon, refused; radosgw stores it under another name (exclusions: "A presigned SigV2 request is refused when a query meta name holds a colon")
+^s3tests\.functional\.test_headers::test_sigv2_presigned_meta_name_with_colon$
+
+# A header-signed SigV2 PutObject's unsigned query meta, not stored; radosgw stores it beside the signed meta (exclusions: "A SigV2 request's unsigned query meta and encryption settings are not read")
+^s3tests\.functional\.test_headers::test_sigv2_header_put_unsigned_meta_in_query$
