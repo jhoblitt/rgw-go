@@ -47,6 +47,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's presigned SigV2 date line takes a line break in Expires for a line of its own](#radosgws-presigned-sigv2-date-line-takes-a-line-break-in-expires-for-a-line-of-its-own) | pending | pending | ✓ |
 | [radosgw's presigned SigV2 string to sign takes a colon in a query meta name for the end of the name](#radosgws-presigned-sigv2-string-to-sign-takes-a-colon-in-a-query-meta-name-for-the-end-of-the-name) | pending | pending | ✓ |
 | [radosgw's SigV2 canonical resource takes an ampersand in a sub-resource value for the next sub-resource](#radosgws-sigv2-canonical-resource-takes-an-ampersand-in-a-sub-resource-value-for-the-next-sub-resource) | pending | pending | ✓ |
+| [radosgw takes query meta and encryption settings a SigV2 request does not sign](#radosgw-takes-query-meta-and-encryption-settings-a-sigv2-request-does-not-sign) | pending | pending | ✓ |
 | [radosgw's SigV4 signing key is undefined for a secret byte above 0x7f](#radosgws-sigv4-signing-key-is-undefined-for-a-secret-byte-above-0x7f) | none | none | ✓ |
 | [radosgw checks a copy source with inputs from the destination bucket](#radosgw-checks-a-copy-source-with-inputs-from-the-destination-bucket) | [#81248](https://tracker.ceph.com/issues/81248) | [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) | ✓ |
 | [radosgw terminates on a copy source or system request whose bucket policy does not parse](#radosgw-terminates-on-a-copy-source-or-system-request-whose-bucket-policy-does-not-parse) | [#81253](https://tracker.ceph.com/issues/81253) | [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) | ✓ |
@@ -1717,6 +1718,110 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit F, task F17, 2026-10-14, in the audit of the
   separators the SigV2 string to sign carries; derived from the source,
   not reproduced.
+
+## radosgw takes query meta and encryption settings a SigV2 request does not sign
+
+- **Kind:** defect, possibly security-relevant, found by us. Unfixed at
+  v19.2.7 and v20.2.4. Reproduced for a header-signed PutObject's metadata
+  on running radosgw at both tags, 2026-10-14 (s3-tests, below); the
+  encryption half is derived from the source.
+- **Evidence:**
+  - The SigV2 string to sign takes a query map only on the presigned route
+    ([rgw_auth_s3.cc:215-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L215-L216),
+    [rgw_auth_s3.cc:217-218](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L217-L218)),
+    so a request signed in its Authorization header signs nothing of its
+    query but the canonical resource's sub-resources. The presigned route's
+    map holds the parameters whose lower-cased name starts `x-amz-meta-` or
+    is `x-amz-security-token` alone
+    ([rgw_auth_s3.cc:175-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187),
+    [rgw_auth_s3.cc:176-188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188)),
+    so neither route signs a query `x-amz-server-side-encryption*`.
+  - `map_qs_metadata` reads no auth route. It adds each query parameter
+    whose lower-cased name starts `x-amz-meta-` to `x_meta_map`, joined
+    after a header's value, and, when called with `crypto_too`, sets each
+    starting `x-amz-server-side-encryption` in `crypt_attribute_map` with
+    `OVERWRITE`, which replaces a header's value
+    ([rgw_rest_s3.cc:2589-2603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603),
+    [rgw_rest_s3.cc:2742-2756](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756);
+    [rgw_common.cc:489-516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L489-L516),
+    [rgw_common.cc:502-529](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L502-L529)).
+  - PutObject's `get_params`, which also serves UploadPart, calls it with
+    `crypto_too` on every route
+    ([rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619),
+    [rgw_rest_s3.cc:2772](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772)).
+    `RGWPutObj::init_processing` runs it before `verify_permission` adds
+    `crypt_attribute_map` to the policy environment
+    ([rgw_op.cc:3911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3911) and
+    [rgw_op.cc:3975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3975),
+    [rgw_op.cc:4120](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4120) and
+    [rgw_op.cc:4184](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4184)),
+    the encryption filter reads that map
+    ([rgw_rest_s3.cc:2880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2880),
+    [rgw_rest_s3.cc:3006](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3006)),
+    and `RGWPutObj::execute` stores `x_meta_map`
+    ([rgw_op.cc:4526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4526),
+    [rgw_op.cc:4794](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4794)).
+  - CompleteMultipartUpload calls it with `crypto_too` as well
+    ([rgw_rest_s3.cc:4101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4101),
+    [rgw_rest_s3.cc:4575](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4575)),
+    but from `execute`, after `verify_permission` has read
+    `crypt_attribute_map`
+    ([rgw_op.cc:6355](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6355) and
+    [rgw_op.cc:6378](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6378),
+    [rgw_op.cc:7028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7028) and
+    [rgw_op.cc:7171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7171)),
+    and it stores no `x_meta_map`, so no effect of its merge was found.
+  - A header-signed request is held only to the 15-minute skew window
+    ([rgw_auth_s3.h:30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L30),
+    [rgw_auth_s3.h:30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L30)),
+    within which it can be resent with any query parameters added; a
+    presigned URL can be resent with them until it expires.
+- **Impact:** the holder of a SigV2 PutObject or UploadPart can resend it
+  with query parameters its signer never signed.
+  - On the header route, any `x-amz-meta-*` parameter is stored as the
+    object's or the part's metadata, and one naming a signed meta header
+    joins its value to the signed one after a comma. The presigned route
+    signs the query's meta, and SigV4 signs its whole canonical query, so
+    neither carries unsigned query meta.
+  - On either SigV2 route, an `x-amz-server-side-encryption*` parameter
+    replaces the signed header's value, or adds a setting the signer never
+    asked for, so the write is encrypted as the holder chooses rather than
+    as signed, and the policy's `s3:x-amz-server-side-encryption*`
+    condition keys see the holder's value (rgw-bug-reproduction's triage
+    note on the header route, 2026-10-14).
+- **Releases:** v19.2.7 and v20.2.4, by source reading and, for the
+  header route's metadata, on running clusters; earlier releases were not
+  checked.
+- **rgw-go:** works around it, on both releases (`docs/exclusions.md`, "A
+  SigV2 request's unsigned query meta and encryption settings are not
+  read"). The verifier names the route a request authenticated on,
+  `op.AuthResult.Route` (`internal/auth/verifier.go`), and `s3.ApplyAuth`
+  copies it onto the request. On SigV2's header route `requestAttrs`
+  (`internal/s3/requestattrs.go`) stores none of the query's
+  `x-amz-meta-*`, and on both SigV2 routes `cryptAttr`
+  (`internal/authz/env.go`) takes no condition key from its
+  `x-amz-server-side-encryption*` (`op.AuthRoute.ReadsQueryMeta` and
+  `ReadsQueryEncryption`). Both name the routes that read, so a result that
+  names no route reads neither. A write naming encryption in the query is
+  still answered 501, as every write that asks for encryption is in phase
+  1, so nothing is stored in the clear. A presigned SigV2 request's signed
+  query meta is read as before, and SigV4 and anonymous requests are
+  unchanged.
+  Specs in `internal/auth/headerquery_test.go` store none of a
+  header-signed PutObject's or UploadPart's query meta, take no condition
+  key from either SigV2 route's query encryption, and keep the other
+  routes' behaviour. s3-tests' `test_sigv2_header_put_unsigned_meta_in_query`
+  ([jhoblitt/ceph#9](https://github.com/jhoblitt/ceph/pull/9)) resends a
+  header-signed PutObject with `?x-amz-meta-x=1`. Run against the clusters
+  of both releases on 2026-10-14, rgw-go stored the signed `foo` alone, and
+  radosgw answered 200 and stored `x` beside it.
+- **Upstream:** pending: rgw-bug-reproduction confirmed it in triage on
+  2026-10-14.
+- **Found:** phase 2 unit F, task F17, 2026-10-14, while checking which
+  reads take the query's meta, and its presigned half in task F19's
+  review; derived from the source, and the header route's metadata
+  reproduced on running radosgw v19.2.7 and v20.2.4 on 2026-10-14 (task
+  F19).
 
 ## radosgw's SigV4 signing key is undefined for a secret byte above 0x7f
 

@@ -37,11 +37,18 @@ var uploadIDPattern = regexp.MustCompile(`<UploadId>([^<]+)</UploadId>`)
 // and returns its id.
 func (w *writeWorld) initUpload(who *op.UserRecord, target string, hdr ...string) string {
 	GinkgoHelper()
+	return initUploadOn(w.handler(who), target, hdr...)
+}
+
+// initUploadOn creates an upload of target, which may carry a query,
+// through h and returns its id.
+func initUploadOn(h http.Handler, target string, hdr ...string) string {
+	GinkgoHelper()
 	sep := "?"
 	if strings.Contains(target, "?") {
 		sep = "&"
 	}
-	rec := w.send(who, http.MethodPost, target+sep+"uploads", "", hdr...)
+	rec := serveReq(h, http.MethodPost, target+sep+"uploads", nil, hdr...)
 	Expect(rec.Code).To(Equal(200), rec.Body.String())
 	m := uploadIDPattern.FindStringSubmatch(rec.Body.String())
 	Expect(m).To(HaveLen(2), rec.Body.String())
@@ -343,7 +350,8 @@ var _ = Describe("multipart handlers", func() {
 		var params []op.PutParams
 		w.env.Multipart = capturedParts{MultipartStore: w.store, params: &params}
 		id := w.initUpload(w.alice, "/plain/k")
-		rec := w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1&x-amz-meta-q=qv", "x",
+		sigV4 := s3.NewHandler(w.env, authAsOn(w.alice, op.RouteSigV4Header), testConfig(s3.Config{}))
+		rec := serveReq(sigV4, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1&x-amz-meta-q=qv", strings.NewReader("x"),
 			"Content-Type", "text/plain", "X-Amz-Meta-Color", "blue", "X-Amz-Tagging", "a=b")
 		Expect(rec.Code).To(Equal(200), rec.Body.String())
 		Expect(params).To(HaveLen(1))
@@ -358,8 +366,9 @@ var _ = Describe("multipart handlers", func() {
 		Expect(params[0].Tag).NotTo(BeEmpty(), "the request id")
 	})
 
-	It("stores the upload's request attrs, tags and ACL, but not the query's metadata", func(ctx SpecContext) {
-		id := w.initUpload(w.alice, "/plain/k?x-amz-meta-q=qv",
+	It("stores the upload's request attrs, tags and ACL, but not the query's metadata, on a route that reads it", func(ctx SpecContext) {
+		sigV4 := s3.NewHandler(w.env, authAsOn(w.alice, op.RouteSigV4Header), testConfig(s3.Config{}))
+		id := initUploadOn(sigV4, "/plain/k?x-amz-meta-q=qv",
 			"Content-Type", "text/plain", "X-Amz-Meta-Color", "blue", "X-Amz-Tagging", "a=b", "X-Amz-Acl", "public-read")
 		up, err := w.upload(ctx, "k", id)
 		Expect(err).NotTo(HaveOccurred())

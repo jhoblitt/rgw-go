@@ -23,8 +23,8 @@ const (
 )
 
 // Request is the protocol-neutral request the ops see. The protocol layer
-// fills everything above Identity from the HTTP request, auth fills Identity,
-// and the ops fill the rest.
+// fills everything above Identity from the HTTP request, auth fills Identity
+// and AuthRoute, and the ops fill the rest.
 type Request struct {
 	// ID is radosgw's transaction id, the x-amz-request-id.
 	ID   string
@@ -77,7 +77,10 @@ type Request struct {
 	SrcTenant, SrcBucket string
 
 	Identity Identity
-	Env      *Env
+	// AuthRoute is AuthResult.Route, which says what of the query a read
+	// may take.
+	AuthRoute AuthRoute
+	Env       *Env
 
 	// BucketRec and ObjState are loaded by the op's Init.
 	BucketRec *BucketRecord

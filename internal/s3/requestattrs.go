@@ -199,8 +199,11 @@ func isCryptName(name string) bool {
 // v19.2.6, :3535-3544 at v20.2.4) and rgw_get_request_metadata (rgw_op.h
 // :2171-2233 at v19.2.6, :2338-2408 at v20.2.4) over the x_meta_map that
 // headerMeta builds from the headers and, when query is set, map_qs_metadata
-// adds from the query string (rgw_rest_s3.cc:2581-2595 at v19.2.6, :2742-2756
-// at v20.2.4), which PutObject calls and CopyObject does not:
+// adds from the query string (rgw_rest_s3.cc:2589-2603 at v19.2.7, :2742-2756
+// at v20.2.4), which PutObject calls and CopyObject does not. radosgw adds
+// the query's on every route; rgw-go adds them only where the route reads
+// them (op.AuthRoute.ReadsQueryMeta): an anonymous request's, and a signed
+// one's whose signature covers them (docs/exclusions.md):
 //   - each generic header present, an empty one included, is its attr;
 //   - each X-Amz- header is its name, lowercased, and so is each
 //     x-amz-meta-* query parameter; a name reached twice joins its values
@@ -225,7 +228,7 @@ func requestAttrs(r *op.Request, generic []genericAttr, query bool) (map[string]
 		}
 	}
 	xmeta := headerMeta(r.Header)
-	if query {
+	if query && r.AuthRoute.ReadsQueryMeta() {
 		for _, k := range slices.Sorted(maps.Keys(r.Query)) {
 			if low := lowerASCIIString(k); strings.HasPrefix(low, "x-amz-meta-") {
 				addMeta(xmeta, low, r.Query.Get(k))

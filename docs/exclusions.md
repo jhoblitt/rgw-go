@@ -3526,10 +3526,12 @@ does the following.
     on every method among them ("X-Rgw-Auth"). A header SignedHeaders
     lists is signed whatever its name;
   - the stored `x-amz-` attrs and user metadata come from `X-Amz-` headers,
-    and on a PutObject also from the query's `x-amz-meta-*` as radosgw's
-    `map_qs_metadata` does, never from a header under the six
-    (`headerMeta`, `requestAttrs`), so an `X-Goog-Meta-*` header stores
-    nothing and GET and HEAD send nothing for it;
+    and on a PutObject or an UploadPart also from the query's `x-amz-meta-*`
+    as radosgw's `map_qs_metadata` does, but for SigV2's header route ("A
+    SigV2 request's unsigned query meta and encryption settings are not
+    read"), never from a header under the six (`headerMeta`,
+    `requestAttrs`), so an `X-Goog-Meta-*` header stores nothing and GET and
+    HEAD send nothing for it;
   - a write asks for encryption only by an `X-Amz-` header or the query
     ("Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
     phase 2 and SSE-C until phase 4"), and the authorizer's encryption
@@ -3636,8 +3638,10 @@ does the following.
   reads the session token to authenticate a request; one that does, an STS
   engine among them, must take a presigned request's token from this one
   set too, never from its query or its headers alone. The header route,
-  whose string to sign carries no query, is unchanged, and so is SigV4,
-  whose canonical query names each parameter. s3-tests'
+  whose string to sign carries no query, folds nothing, and its query meta
+  is not read at all ("A SigV2 request's unsigned query meta and
+  encryption settings are not read"); SigV4, whose canonical query names
+  each parameter, is unchanged. s3-tests'
   `test_sigv2_presigned_multipart_meta_moved_to_query` and
   `test_sigv2_presigned_copy_replace_meta_in_query`
   ([jhoblitt/ceph#6](https://github.com/jhoblitt/ceph/pull/6))
@@ -3758,6 +3762,63 @@ does the following.
   `uploadId` into its `partNumber`. Run against both releases' clusters on
   2026-10-14, radosgw answered it 400, as its PutObject reads the part
   number whenever one is present, and rgw-go 403.
+- **A SigV2 request's unsigned query meta and encryption settings are not
+  read.** The SigV2 string to sign takes a query map only on the presigned
+  route
+  ([rgw_auth_s3.cc:215-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L215-L216),
+  [rgw_auth_s3.cc:217-218](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L217-L218)),
+  and that map holds the query's `x-amz-meta-*` and `x-amz-security-token`
+  alone
+  ([rgw_auth_s3.cc:175-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187),
+  [rgw_auth_s3.cc:176-188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188)).
+  So a request signed in its Authorization header signs nothing of its
+  query but the sub-resources, and neither route signs a query
+  `x-amz-server-side-encryption*`. radosgw's PutObject, which also serves
+  UploadPart, still runs `map_qs_metadata` with its encryption half on
+  every route
+  ([rgw_rest_s3.cc:2589-2603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603) and
+  [rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619),
+  [rgw_rest_s3.cc:2742-2756](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756) and
+  [rgw_rest_s3.cc:2772](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772)):
+  it merges the query's `x-amz-meta-*` into the stored metadata and sets
+  its `x-amz-server-side-encryption*` over the headers' with `OVERWRITE`.
+  A header-signed request resent within its skew window, or a presigned
+  URL resent before it expires, so gains what the holder adds there
+  (`docs/ceph-upstream-bugs.md`, "[radosgw takes query meta and encryption
+  settings a SigV2 request does not
+  sign](ceph-upstream-bugs.md#radosgw-takes-query-meta-and-encryption-settings-a-sigv2-request-does-not-sign)").
+  rgw-go, on both releases, reads none of the query meta or encryption
+  settings the route's signature leaves out (`op.AuthResult.Route`,
+  `op.AuthRoute.ReadsQueryMeta` and `ReadsQueryEncryption`), and a result
+  that names no route reads neither:
+  - on SigV2's header route a PutObject or an UploadPart stores none of the
+    query's `x-amz-meta-*` (`requestAttrs`), where radosgw stores them and
+    joins one naming a header's meta after the header's value;
+  - on either SigV2 route the query's `x-amz-server-side-encryption*` sets
+    none of the `s3:x-amz-server-side-encryption*` condition keys
+    (`cryptAttr`), where radosgw's replaces the header's.
+
+  A write naming encryption in the query is still answered 501, as every
+  write that asks for encryption is in phase 1 ("Writes that ask for
+  encryption answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until
+  phase 4"), so nothing a client may have asked to have encrypted is
+  stored in the clear; the phase that serves encryption must take a SigV2
+  write's settings from its headers alone, as the condition keys already
+  are. A presigned SigV2 request's query meta, which it signs and rgw-go
+  folds into the headers ("A presigned SigV2 request's signed meta and
+  session token mean the same in its headers and its query"), is read as
+  before. SigV4, whose canonical query names each parameter, and anonymous
+  requests, which sign nothing and may send the same names as headers,
+  read the query as radosgw does. The cost: a client that signs a SigV2
+  request in its header and sends its metadata in the query loses that
+  metadata, with no error, and one that sends a SigV2 write's encryption
+  settings in the query is answered 501, and later has the headers'
+  settings alone applied. s3-tests'
+  `test_sigv2_header_put_unsigned_meta_in_query`
+  ([jhoblitt/ceph#9](https://github.com/jhoblitt/ceph/pull/9)) resends a
+  header-signed PutObject with `?x-amz-meta-x=1`. Run against both
+  releases' clusters on 2026-10-14, rgw-go stored the signed metadata
+  alone, and radosgw stored `x` as well.
 
 ### Authorization differences
 

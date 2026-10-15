@@ -73,20 +73,36 @@ var _ = Describe("requestAttrs", func() {
 		Expect(attrs).To(Equal(map[string][]byte{"user.rgw.x-amz-meta-q": []byte("2\x00")}))
 	})
 	It("joins the values of names that meet, header before query, trimming the earlier value's trailing white space", func() {
-		attrs, err := s3.RequestAttrsForTest(req(
+		r := req(
 			http.Header{"X-Amz-Meta-Foo": {"a "}, "X-Goog-Meta-Foo": {"b\t"}, "X-Account-Meta-Foo": {"z"}},
 			url.Values{"x-amz-meta-foo": {"c"}, "X-AMZ-META-Q": {"v"}, "other": {"x"}},
-		), true)
+		)
+		r.AuthRoute = op.RouteSigV4Header
+		attrs, err := s3.RequestAttrsForTest(r, true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(Equal(map[string][]byte{
 			"user.rgw.x-amz-meta-foo": []byte("a,c\x00"), "user.rgw.x-amz-meta-q": []byte("v\x00"),
 		}), "map_qs_metadata's join, rgw_rest_s3.cc:2581-2595, with no other meta prefix's value, which radosgw joins first")
 	})
-	It("leaves the query string out for a copy, which reads no map_qs_metadata", func() {
-		attrs, err := s3.RequestAttrsForTest(req(http.Header{}, url.Values{"x-amz-meta-q": {"v"}}), false)
+	It("leaves the query string out for a copy, which reads no map_qs_metadata, on a route that reads it", func() {
+		r := req(http.Header{}, url.Values{"x-amz-meta-q": {"v"}})
+		r.AuthRoute = op.RouteSigV4Header
+		attrs, err := s3.RequestAttrsForTest(r, false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(BeEmpty())
 	})
+	DescribeTable("leaves the query string out where the route may not have signed it, where radosgw merges it",
+		func(route op.AuthRoute) {
+			r := req(http.Header{"X-Amz-Meta-Foo": {"h"}}, url.Values{"x-amz-meta-foo": {"q"}, "X-AMZ-META-X": {"1"}})
+			r.AuthRoute = route
+			attrs, err := s3.RequestAttrsForTest(r, true)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(attrs).To(Equal(map[string][]byte{"user.rgw.x-amz-meta-foo": []byte("h\x00")}),
+				"map_qs_metadata, rgw_rest_s3.cc:2589-2603 at v19.2.7, would add x-amz-meta-x and join foo's values")
+		},
+		Entry("SigV2's header route, which signs none of it", op.RouteSigV2Header),
+		Entry("a request that names no route", op.RouteUnknown),
+	)
 	It("keeps a name's underscores and stores a generic header sent empty", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{"X-Amz-Meta-A_b": {"v"}, "Content-Type": {""}}, nil), true)
 		Expect(err).NotTo(HaveOccurred())

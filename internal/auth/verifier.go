@@ -50,9 +50,11 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 // (packedSubresourceV2), and a presigned one if its Expires holds a line
 // break (expiresLineBreak) or its signed meta does not make one set across
 // its headers and its query (queryMetaV2), rgw-go refusals radosgw does not
-// make; the query's part of that set is the result's QueryMeta. Every result
-// carries ContentLength; a Body is the payload's verifying reader, which
-// reports the payload's verdict on the Read that ends it.
+// make; the query's part of that set is the result's QueryMeta. A signed
+// result names its Route, which says what of the query the signature
+// covers. Every result carries ContentLength; a Body is the payload's
+// verifying reader, which reports the payload's verdict on the Read that
+// ends it.
 func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	// Without Keystone and LDAP, rgw_s3_auth_use_rados off leaves radosgw no
 	// backend, and it denies every request, anonymous ones included
@@ -65,7 +67,9 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	// S3AnonymousEngine::is_applicable (rgw_rest_s3.cc:6614-6628 at v19.2.6,
 	// :7222-7236 at v20.2.4).
 	if ver == versionUnknown && (rt == routeQuery || req.Method == http.MethodOptions) {
-		return &op.AuthResult{Identity: op.Anonymous(), ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload}, nil
+		return &op.AuthResult{
+			Identity: op.Anonymous(), ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Route: op.RouteAnonymous,
+		}, nil
 	}
 	// get_auth_data refuses every signed request before it reads one, and
 	// Strategy::apply gives the refusal its message (rgw_rest_s3.cc:5607-5610
@@ -110,7 +114,10 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 			// s3.ApplyAuth has folded it into the headers. An engine that
 			// reads a presigned request's session token, an STS engine
 			// among them, must take it from the set as well, never from
-			// the query or the headers alone (docs/exclusions.md).
+			// the query or the headers alone (docs/exclusions.md). Such an
+			// engine must also set its result's Route, which an unset one
+			// leaves RouteUnknown, reading nothing of the query a signature
+			// may leave out.
 			qm, refused := queryMetaV2(rv)
 			if refused != nil {
 				return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, refused)
@@ -119,8 +126,8 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 		}
 	}
 	res := &op.AuthResult{
-		Identity: id, ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, Presigned: d.presigned,
-		QueryMeta: queryMeta,
+		Identity: id, ContentLength: req.ContentLength, PayloadSHA256: unsignedPayload, QueryMeta: queryMeta,
+		Route: authRoute(ver, d.presigned),
 	}
 	if d.v4 != nil {
 		res.PayloadSHA256 = d.payloadHash
@@ -133,6 +140,20 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 		}
 	}
 	return res, nil
+}
+
+// authRoute is the route a signed request of version ver authenticated on.
+func authRoute(ver version, presigned bool) op.AuthRoute {
+	switch {
+	case ver == versionV2 && presigned:
+		return op.RouteSigV2Query
+	case ver == versionV2:
+		return op.RouteSigV2Header
+	case presigned:
+		return op.RouteSigV4Query
+	default:
+		return op.RouteSigV4Header
+	}
 }
 
 // parseAuthData is get_auth_data's choice of abstractor

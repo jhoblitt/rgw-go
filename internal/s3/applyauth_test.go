@@ -35,5 +35,13 @@ var _ = Describe("ApplyAuth", func() {
 		s3.ApplyAuth(r, &op.AuthResult{})
 		Expect(r.Header).To(Equal(http.Header{"X-Amz-Meta-A": {"1"}}))
 		Expect(r.Query).To(Equal(url.Values{"x-amz-meta-b": {"2"}}))
+		Expect(r.AuthRoute).To(Equal(op.RouteUnknown), "a result that names no route")
+	})
+
+	It("gives the request its route, and leaves a header-signed SigV2 request's query as it is", func() {
+		r := &op.Request{Query: url.Values{"x-amz-meta-b": {"2"}}}
+		s3.ApplyAuth(r, &op.AuthResult{Route: op.RouteSigV2Header})
+		Expect(r.AuthRoute).To(Equal(op.RouteSigV2Header))
+		Expect(r.Query).To(Equal(url.Values{"x-amz-meta-b": {"2"}}), "the reads skip it; ApplyAuth drops none of it")
 	})
 })
