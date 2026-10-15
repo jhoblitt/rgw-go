@@ -64,8 +64,10 @@ type goItem struct {
 	name     string
 	mark     string
 	from, to int
-	// link is a linkItem's citation.
-	link Citation
+	// link is a linkItem's citation, and label a markdown link's text, the
+	// brackets left out.
+	link  Citation
+	label string
 
 	// ref and path are what the citation resolves to: a link's own, or
 	// those a plain citation is found to mean; either may be "".

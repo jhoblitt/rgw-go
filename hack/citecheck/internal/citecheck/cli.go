@@ -21,11 +21,13 @@ import (
 // neither --ceph, CITECHECK_CEPH nor the config file names one.
 const defaultCeph = "/home/jhoblitt/github/ceph"
 
-// errFailed is Run's error when a citation does not hold, and errStale when
-// the list of ceph's files differs from the clone's.
+// errFailed is Run's error when a citation does not hold, errLinksFailed
+// --content's when a link fails, and errStale when the list of ceph's
+// files differs from the clone's.
 var (
-	errFailed = errors.New("citations failed")
-	errStale  = errors.New("is stale")
+	errFailed      = errors.New("citations failed")
+	errLinksFailed = errors.New("links failed")
+	errStale       = errors.New("is stale")
 )
 
 // ExitStatus returns the exit status for an error Run returned: 0 for none,
@@ -36,7 +38,7 @@ func ExitStatus(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, errFailed), errors.Is(err, errStale):
+	case errors.Is(err, errFailed), errors.Is(err, errLinksFailed), errors.Is(err, errStale):
 		return 1
 	default:
 		return 2
@@ -76,9 +78,20 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 			if v.GetBool("fix") && v.GetBool("form-only") {
 				return errors.New("--fix and --form-only cannot be combined: --fix checks every citation against the clone")
 			}
+			if v.GetBool("content") {
+				for _, other := range []string{"fix", "form-only", "markdown-plain"} {
+					if v.GetBool(other) {
+						return fmt.Errorf("--content and --%s cannot be combined: --content checks the links alone, "+
+							"against the clone", other)
+					}
+				}
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, files []string) error {
+			if v.GetBool("content") {
+				return checkLinks(cmd.Context(), v.GetString("ceph"), files, cmd.OutOrStdout())
+			}
 			m := checkAll
 			switch {
 			case v.GetBool("fix"):
@@ -104,6 +117,8 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	f.Bool("form-only", false, "check only the citations' form, without a clone (CITECHECK_FORM_ONLY)")
 	f.Bool("markdown-plain", false, "read the plain citations in markdown too, a code span or prose naming a file and lines: "+
 		"fail each of ceph's as not a link, or under --fix resolve and rewrite it (CITECHECK_MARKDOWN_PLAIN)")
+	f.Bool("content", false, "check only the links, each as a link is checked and then that its lines hold what its text "+
+		"names: the release its text ties to it, and an identifier named beside it (CITECHECK_CONTENT)")
 	cmd.AddCommand(newFilesCmd(v))
 	return cmd
 }
@@ -181,7 +196,7 @@ func configure(cmd *cobra.Command, v *viper.Viper, stderr io.Writer) error {
 	if err := v.BindPFlags(cmd.Root().PersistentFlags()); err != nil {
 		return fmt.Errorf("binding flags: %w", err)
 	}
-	for _, name := range []string{"ceph", "fix", "form-only", "markdown-plain"} {
+	for _, name := range []string{"ceph", "fix", "form-only", "markdown-plain", "content"} {
 		f := cmd.Flags().Lookup(name)
 		if f == nil {
 			continue
