@@ -625,13 +625,78 @@ Found by F13's adversarial review (Minor 5), and numbered here before F13 merged
   the registry entry's "rgw-go:" line.
 - **Depends on:** F13. **PR:** its own. **Brief:** about 45 lines.
 
+### Task F16: s3, CreateBucket reads its object lock header from the renamed map
+
+Found by F15's work (its report's concern 4), and numbered here before F15 merged (PP-12).
+
+- **Layer:** s3. **Cluster:** no.
+- **Files:** modify internal/s3/bucket.go and its specs; F15's refused set and its pin spec;
+  docs/exclusions.md (F15's exclusion).
+- **Behaviour:**
+  1. radosgw's CreateBucket reads `x-amz-bucket-object-lock-enabled` from `x_meta_map`, so under any
+     prefix `init_meta_info` renames, and answers EINVAL for a value other than `true` or `false`
+     compared without case
+     ([rgw_rest_s3.cc:2542-2548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542-L2548),
+     [rgw_rest_s3.cc:2695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695)). rgw-go reads the raw header alone
+     (internal/s3/bucket.go:116), so it ignores a signed `X-Goog-Bucket-Object-Lock-Enabled: true`
+     that radosgw honours.
+  2. rgw-go reads it from the renamed map on both releases, with radosgw's value check. SigV2's
+     string to sign uses that same map, so the name leaves F15's refused set, and F15's pin spec
+     counts the read as a renamed-map read.
+  3. Two forms of the header combine as `init_meta_info` combines them, joined by a comma
+     ([rgw_common.cc:445-450](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L445-L450)), so an `X-Amz-` and an `X-Goog-`
+     form together fail the value check, as radosgw's do.
+- **Specs:** the X-Goog- and X-Amz- forms each enable object lock; `TRUE` accepted; `yes` refused;
+  both forms together refused; SigV2 with the X-Goog- form accepted.
+- **s3-tests:** a SigV4 CreateBucket with a signed `X-Goog-Bucket-Object-Lock-Enabled: true` has an
+  object lock configuration afterwards, on both gateways.
+- **Exclusions:** F15's exclusion loses this case.
+- **Depends on:** F15. **PR:** its own. **Brief:** about 30 lines.
+
+### Task F17: auth, a SigV2 presigned request means the same wherever its header/query split falls
+
+Found by F15's work (its report's concern 5), and numbered here before F15 merged (PP-12).
+
+- **Layer:** auth, op. **Cluster:** no.
+- **Files:** modify internal/auth/sigv2.go and its specs, and the read sites the task finds;
+  docs/ceph-upstream-bugs.md (a new entry); docs/exclusions.md.
+- **Behaviour:**
+  1. On the presigned route, SigV2's string to sign is the canonical header map followed by the
+     canonical query map with nothing between them
+     ([rgw_auth_s3.cc:164-165](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L164-L165),
+     [rgw_auth_s3.cc:165-166](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L165-L166)), and the query map holds only
+     `x-amz-meta-*` and `x-amz-security-token`
+     ([rgw_auth_s3.cc:175-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187)). Each map is sorted on its own, so
+     a run of those names at the end of the headers can move to the front of the query, or back,
+     with the string unchanged. radosgw then gives the two forms different meanings: only
+     PutObject, PostObject and CompleteMultipartUpload map a query's metadata into the attributes
+     (`map_qs_metadata`, [rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619),
+     [rgw_rest_s3.cc:2921](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2921),
+     [rgw_rest_s3.cc:4101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4101)), and `sts:authentication` reads the session
+     token from the header alone ([rgw_op.cc:904-909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904-L909)). rgw-go builds
+     the same string (F15's report).
+  2. The registry gains the entry, with evidence at both tags, unreproduced (PP-11). It went to
+     the rgw-bug-reproduction session on 2026-10-14 as F15-2.
+  3. Decision: rgw-go makes the meaning independent of the split rather than refusing either side,
+     because a legitimate signer puts these names on both: a presigned PUT's signed `x-amz-meta-*`
+     headers, and an STS client's token in the query. On the SigV2 presigned route every read of an
+     `x-amz-meta-*` name or the session token sees the header and query forms as one set, and a name
+     on both sides is refused with AccessDenied. Each difference this makes from radosgw goes into
+     docs/exclusions.md.
+- **Specs:** the header, query and split forms of the same metadata store the same attributes on
+  PutObject and CopyObject; the token in the query or the header gives the same
+  `sts:authentication`; a name on both sides refused; SigV4 and the SigV2 header route unchanged.
+- **s3-tests:** a presigned SigV2 CopyObject whose signed metadata header is moved into the query
+  stores that metadata, if s3-tests can presign SigV2 that way; otherwise the report says why not.
+- **Depends on:** F15. **PR:** its own. **Brief:** about 40 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F16, F17 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F16 and F17 after F15) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
@@ -662,3 +727,4 @@ running cluster for the tests it reasons.
 | FX-12 | UploadPart fails with If-None-Match: * (registry) | v20.2.4; v19.2.7 still ignores the conditions | as recorded | as recorded | unchanged | F2 |
 | FX-13 | radosgw faults on a zero `rgw_gc_max_objs` (registry): its runtime-change crash | now kept from happening at both floors by the `startup` flag | as recorded | as recorded | unchanged; #75958 not asserted closed | F2 |
 | FX-14 | DeleteObjects reports another key's result (conditional, 41984610868, #76960) | v19.2.6 only | S3-correctness | added only if F11's re-record shows a flip it explains | each key's own result, phase 1's | F11, then a docs PR |
+| FX-15 | A SigV2 presigned request's x-amz-meta-* and session token can move between its headers and its query with the signature kept (new, F15-2) | v19.2.7, v20.2.4 | security | unreproduced | one meaning wherever the split falls; a name on both sides refused; exclusions | F17 |
