@@ -61,6 +61,8 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-15 | Large shell scripts were written where Go commands were due | Major | global CLAUDE.md; writing-plans | fixed |
 | PP-16 | An instructed action was turned into a question at its trigger | Major | subagent-driven-development; project CLAUDE.md | fixed |
 | PP-17 | Phase 2 planning cited Ceph in a form the owner never agreed | Major | writing-plans; project CLAUDE.md; hack/citecheck | open |
+| PP-18 | The controller stopped at a failed step of an unattended run | Major | subagent-driven-development; the benchmark run procedure | open |
+| PP-19 | A change the plan called "its own" had no task, so notes piled up instead | Minor | writing-plans | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -263,3 +265,55 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - A checker enforces the agreed form; building one does not settle a new form.
 - **Fix:** unit CL (`docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md`). The project CLAUDE.md states the rule (#295). citecheck fails a `path:lines@ref` code span as "not a link" and rewrites one into a link (CL1, #297). CL2 rewrites every `path:lines@ref` code span citation in the Markdown into a link, and `make check` and CI run the clone-free form check over every tracked `.md`. CL3 and CL4 carry the rule, which the owner extended to code on 2026-10-14, into Go comments. CL5 (planned in #301) sweeps the docs-era plain citations in the Markdown, `<basename>:<lines>` with the tag in the prose, which citecheck's grammar does not see.
 - **Candidate home:** writing-plans (a notation in a plan is the owner's agreed one); the project CLAUDE.md (done, #295); `hack/citecheck` (done, CL1).
+
+## PP-18: The controller stopped at a failed step of an unattended run
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - On 2026-10-15 the owner was away for ten hours. The controller started the deferred benchmark run at 02:55
+    local, in a quiet window, from a fresh checkout of main, as PP-16's fix says.
+  - The first attempt failed in three seconds at Squid's gate: the fresh checkout had no population manifest,
+    which `make populate` writes. Populate became a step of the run, and the second attempt started.
+  - Squid's two gateway comparisons ran from 02:57 to 04:08 local. The rgw-go one measured every profile, but
+    rendering its report failed: rgw-go's JSON log and the Go runtime's gctrace share its stderr, and one record
+    landed in the middle of a gctrace line, which the report's parser refused.
+  - The controller read that failure and ended its turn without deciding anything. Nothing ran for four hours,
+    until the owner wrote "continue" at about 08:05.
+  - By then the owner was back. The controller continued with the run, and the owner stopped it: "the system
+    isn't currently quiet".
+- **Cost:**
+  - Tentacle's gateway comparisons and both releases' seam limiter cells wait for another quiet window. Phase 2's
+    S1 to S3 wait behind them, since the spec runs the benchmarks before phase 2's tasks.
+  - A fix task (B1, #326) so that the report renders from a torn gctrace log, and its review rounds.
+- **Improvement:**
+  - A failed step of an unattended run gets a decision in the turn that reads it: continue, retry, or stop with
+    the reason recorded. Ending a turn on a failure read is a stall.
+  - A step whose failure leaves the measurement intact, such as rendering a report, does not stop the run. The run
+    script marks it soft, and the next step starts.
+  - A run's prerequisites in a fresh checkout, such as the population manifest and the elbencho build, are the run
+    script's own steps, not knowledge the controller must remember.
+- **Candidate home:** subagent-driven-development (the controller's loop); the benchmark run procedure.
+
+## PP-19: A change the plan called "its own" had no task, so notes piled up instead
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - Phase 2's plan says every rgw-go fix carries an s3-test merged into jhoblitt/ceph's `rgw-go-s3tests` branch,
+    and "the pin bump is its own change". No task owned that change.
+  - Nine fork PRs merged past the pin, f6f2529. Instead of bumping it, the controller wrote a note into the plan's
+    index listing the known-differences lines the next bump would need (#317), and revised the note as tests
+    landed. It never covered X38's and F5's tests, which as it turned out needed no line.
+  - On 2026-10-15 the owner asked: "Why are we making a note to bump the pin instead of just bumping the pin?"
+  - The bump (PB1, #325) found that `make s3tests-pin` refused this move as not additive: it adds module-level
+    imports and X38's helpers to test_headers.py, and T5 changes a helper in test_s3.py. So both ledgers were
+    recorded in full, on both releases.
+- **Cost:**
+  - #317 was written, revised and closed unmerged, and the owner had to step in.
+  - CI's s3-tests parity did not run the 39 new tests until #325, so the fixes they cover had no regression test in
+    CI in that time.
+- **Improvement:**
+  - Work that a rule calls its own change gets a task at plan time, with its trigger, such as a pin bump at the end
+    of each unit. A note describing future work does not replace the work.
+  - A pin move is planned as a full record unless `make s3tests-pin` proves it additive, and a full record is a
+    cluster task on both releases.
+- **Candidate home:** writing-plans; phase 2's plan.
