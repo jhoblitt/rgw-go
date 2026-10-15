@@ -13,15 +13,18 @@ import (
 // Deadlines wraps h so each read of the request body and each write or flush
 // of the response must finish within timeout, beast's per-operation
 // request_timeout_ms, while the http.Server itself keeps zero timeouts. As
-// with beast's timer (rgw_asio_frontend_timer.h:45-56 at v19.2.6 and
-// v20.2.4), a deadline is armed when an operation starts and cleared when it
-// returns, a timeout of zero arms nothing, and an operation that times out
-// ends the connection, which timeout_handler shuts down (:20-26).
+// with beast's timer
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend_timer.h#L45-L56 at v19.2.6
+// and v20.2.4), a deadline is armed when an operation starts and cleared when
+// it returns, a timeout of zero arms nothing, and an operation that times out
+// ends the connection, which timeout_handler shuts down
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend_timer.h#L20-L26).
 //
 // Whatever the timeout, the response goes out before net/http reads what h
 // left of the body, as beast answers before it discards the rest
-// (rgw_asio_frontend.cc:362-389 at v19.2.6, :372-399 at v20.2.4). The
-// deadlines bound that read and net/http's final flush too.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L362-L389 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L372-L399 at v20.2.4).
+// The deadlines bound that read and net/http's final flush too.
 func Deadlines(h http.Handler, timeout time.Duration) http.Handler {
 	return deadlines{h: h, timeout: timeout}
 }

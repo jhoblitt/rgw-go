@@ -130,7 +130,9 @@ var _ = Describe("cls rgw against the populated cluster", Label("integration"), 
 			Expect(ok).To(BeTrue(), "index key %q is namespaced", k)
 			Expect(en.Exists).To(BeTrue(), "%s exists", name)
 			Expect(en.Meta.ETag).To(MatchRegexp(etagRE.String()), "%s etag", name)
-			// radosgw indexes the bytes it stored, after any compression, as size and the client's length as accounted_size (src/rgw/driver/rados/rgw_putobj_processor.cc:393 at v19.2.6, :427 at v20.2.4).
+			// radosgw indexes the bytes it stored, after any compression, as size and the client's length as accounted_size
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L393 at v19.2.6,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L427 at v20.2.4).
 			got[name] = en.Meta.AccountedSize
 			stored[name] = en.Meta.Size
 		}

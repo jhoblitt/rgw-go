@@ -10,9 +10,10 @@ import (
 )
 
 // fakeIdentity answers acl.Identity as rgw::auth::LocalApplier does
-// (rgw_auth.cc:1032-1056 at v19.2.6, :1052-1076 at v20.2.4): a user, matched
-// by its id, and the account it belongs to when account is set. Ids are
-// compared in their to_string form.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1032-L1056 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1076 at v20.2.4):
+// a user, matched by its id, and the account it belongs to when account is
+// set. Ids are compared in their to_string form.
 type fakeIdentity struct {
 	uid     string
 	account string
@@ -98,8 +99,10 @@ var _ = Describe("PermFor", func() {
 		Entry("the first action past the s3 block", policy.S3All+1, acl.PermInvalid),
 	)
 	It("maps every s3 action as op_to_perm does at v20.2.4", func() {
-		// rgw_iam_policy.h:247-334 at v20.2.4, row for row; v19.2.6's table
-		// (:237-317) is the same less the seven actions only Tentacle knows.
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L334 at v20.2.4,
+		// row for row; v19.2.6's table
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L237-L317)
+		// is the same less the seven actions only Tentacle knows.
 		table := map[acl.Permission][]policy.Action{
 			acl.PermRead: {
 				policy.S3GetObject,
@@ -406,7 +409,8 @@ var _ = Describe("Policy.Verify", func() {
 	)
 	It("lets a matching referer grant replace even the owner's own grant, as radosgw does", func() {
 		// A Swift .r: read grant carries READ_OBJS, and the bucket path passes
-		// perm as the mask (rgw_common.cc:1420-1423).
+		// perm as the mask
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1420-L1423).
 		p := alicesPolicy(userGrant("alice", acl.PermFullControl), refererGrant("example.com", acl.PermReadObjs))
 		Expect(p.Verify(alice, acl.PermWrite, acl.PermWrite, "http://example.com/page", false)).
 			To(BeFalse(), "with a matching Referer")

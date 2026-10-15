@@ -15,7 +15,8 @@ type Formatter interface {
 	DumpString(name, s string)
 	// DumpStream is dump_stream(name) << s, which the C++ uses for times and
 	// the index type: a string, except that XMLFormatter writes the element
-	// name without get_xml_name (Formatter.cc:536-542).
+	// name without get_xml_name
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L536-L542).
 	DumpStream(name, s string)
 	// DumpUnquoted is dump_format_unquoted(name, "%s", s): bare in JSON, and
 	// cut at its first NUL, where vsnprintf's "%s" stops.
@@ -27,7 +28,9 @@ type Formatter interface {
 	DumpBool(name string, v bool)
 	DumpNull(name string)
 	// SetStatus, OutputHeader and OutputFooter are the calls radosgw's REST
-	// layer makes around a body (rgw_rest.cc:289-314, :571-577 at v19.2.6).
+	// layer makes around a body
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L289-L314,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L571-L577 at v19.2.6).
 	// Only HTMLFormatter uses the status.
 	SetStatus(code int, name string)
 	OutputHeader()
@@ -37,17 +40,20 @@ type Formatter interface {
 	Fail(err error)
 	Err() error
 	// Bytes is what has been written since the last Reset: what flush writes,
-	// without the line break a pretty XMLFormatter adds (Formatter.cc:388-401).
+	// without the line break a pretty XMLFormatter adds
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L388-L401).
 	Bytes() []byte
 	// Reset is reset: the output, the open sections, XMLFormatter's header
 	// flag and HTMLFormatter's status are cleared, and so is the failure.
 	Reset()
 }
 
-// EscapeJSON is json_stream_escaper (escape.cc:254-286 at v19.2.6): '"',
-// '\\', tab and newline take their short escapes; other bytes below 0x20 and
-// 0x7f become \u00xx in lower-case hex; every other byte, UTF-8 included, is
-// copied. XML and HTML text goes through xmltext.Escape, xml_stream_escaper.
+// EscapeJSON is json_stream_escaper
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L254-L286 at v19.2.6):
+// '"', '\\', tab and newline take their short escapes; other bytes below
+// 0x20 and 0x7f become \u00xx in lower-case hex; every other byte, UTF-8
+// included, is copied. XML and HTML text goes through xmltext.Escape,
+// xml_stream_escaper.
 func EscapeJSON(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

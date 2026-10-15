@@ -43,11 +43,14 @@ const (
 	// radosgw by alice.
 	mpBucket = "mp-oracle"
 	// completeLockName is the cls_lock lock RGWCompleteMultipart::execute
-	// takes on the meta object (rgw_op.cc:6434 at v19.2.6, :7248 at
-	// v20.2.4).
+	// takes on the meta object
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6434 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7248 at v20.2.4).
 	completeLockName = "RGWCompleteMultipart"
 	// completionInProgress is the message radosgw answers a completion
-	// whose lock is held with (rgw_op.cc:6444 at v19.2.6, :7258 at v20.2.4).
+	// whose lock is held with
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6444 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7258 at v20.2.4).
 	completionInProgress = "This multipart completion is already in progress"
 	// uploadIDShape is a v2 upload id: "2~" and 31 characters of
 	// gen_rand_alphanumeric's alphabet.
@@ -89,17 +92,20 @@ func serveRGWGo(ctx context.Context) rgwgoGateway {
 }
 
 // errNoSuchBucket is how radosgw-admin reports ERR_NO_SUCH_BUCKET
-// (rgw_common.h:254 at v19.2.6, :276 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L254 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L276 at v20.2.4).
 const errNoSuchBucket = "(2002)"
 
 // removeLeftoverBucket removes bucket with its objects, its uploads and
 // their garbage when a run that died before its cleanup left it. radosgw
 // answers its owner's CreateBucket of a bucket that exists with 200
-// (rgw_rest_s3.cc:2546 at v19.2.6, :2707 at v20.2.4), so the oracle would
-// otherwise go on in a dirty bucket, and radosgw-admin bucket rm exits 0
-// whether or not it removed anything (docs/ceph-upstream-bugs.md,
-// "radosgw-admin bucket rm exits 0 when it removes nothing"), so bucket
-// stats tells whether there is one and whether it went.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2546 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2707 at v20.2.4),
+// so the oracle would otherwise go on in a dirty bucket, and
+// radosgw-admin bucket rm exits 0 whether or not it removed anything
+// (docs/ceph-upstream-bugs.md, "radosgw-admin bucket rm exits 0 when it
+// removes nothing"), so bucket stats tells whether there is one and
+// whether it went.
 func removeLeftoverBucket(ctx context.Context, bucket string) {
 	GinkgoHelper()
 	out, err := cephtest.RadosgwAdmin(ctx, conf, "bucket", "stats", "--bucket", bucket)

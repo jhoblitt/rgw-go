@@ -14,14 +14,19 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
-// Attr is RGW_ATTR_TAGS (rgw_common.h:115 at v19.2.6, :126 at v20.2.4), the
-// attr an object's or a bucket's tag set is stored under.
+// Attr is RGW_ATTR_TAGS
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L126 at v20.2.4),
+// the attr an object's or a bucket's tag set is stored under.
 const Attr = meta.AttrPrefix + "x-amz-tagging"
 
-// The limits of check_and_add_tag (rgw_tag.h:18-20): an object's tag set holds
-// at most MaxObjectTags tags, and RGWPutBucketTags_ObjStore_S3::get_params
-// (rgw_rest_s3.cc:898 at v19.2.6, :980 at v20.2.4) allows a bucket
-// MaxBucketTags. Lengths are in bytes.
+// The limits of check_and_add_tag
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.h#L18-L20): an
+// object's tag set holds at most MaxObjectTags tags, and
+// RGWPutBucketTags_ObjStore_S3::get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L898 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L980 at v20.2.4)
+// allows a bucket MaxBucketTags. Lengths are in bytes.
 const (
 	MaxObjectTags = 10
 	MaxBucketTags = 50
@@ -44,10 +49,12 @@ type Set struct { //nolint:recvcheck // Add mutates the set, while it encodes an
 // refuses.
 var ErrInvalidTag = errors.New("tags: invalid tag")
 
-// Add is check_and_add_tag (rgw_tag.cc:23-34) with limit as max_obj_tags: an
-// empty key, a key over MaxKeyLen, a value over MaxValueLen or a set already
-// holding limit tags is ErrInvalidTag. radosgw compares the size for equality;
-// a set built only through Add never exceeds its limit, so the two agree.
+// Add is check_and_add_tag
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L23-L34) with
+// limit as max_obj_tags: an empty key, a key over MaxKeyLen, a value over
+// MaxValueLen or a set already holding limit tags is ErrInvalidTag. radosgw
+// compares the size for equality; a set built only through Add never exceeds
+// its limit, so the two agree.
 func (s *Set) Add(key, value string, limit int) error {
 	switch {
 	case len(s.Tags) >= limit:
@@ -94,8 +101,10 @@ func (s Set) ordered() []Tag {
 	return t
 }
 
-// Encode is RGWObjTags::encode (rgw_tag.h:26-30): ENCODE_START(1, 1) around
-// the multimap, a u32 count then each key and value.
+// Encode is RGWObjTags::encode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.h#L26-L30):
+// ENCODE_START(1, 1) around the multimap, a u32 count then each key and
+// value.
 func (s Set) Encode(e *denc.Encoder, _ denc.Release) {
 	f := e.BeginStruct(1, 1)
 	denc.EncodeSlice(e, s.ordered(), func(e *denc.Encoder, t Tag) {
@@ -105,7 +114,8 @@ func (s Set) Encode(e *denc.Encoder, _ denc.Release) {
 	e.EndStruct(f)
 }
 
-// Decode is RGWObjTags::decode (rgw_tag.h:32-62):
+// Decode is RGWObjTags::decode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.h#L32-L62):
 // DECODE_START_LEGACY_COMPAT_LEN(1, 1, 1) around the multimap. When that
 // fails, radosgw rewinds to where the decode began and reads every byte left
 // in the buffer, trailing NULs stripped, as the URL-encoded "k=v&k2=v2" text
@@ -153,20 +163,26 @@ func decodeBinary(d *denc.Decoder) Set {
 	return Set{Tags: t}
 }
 
-// MarshalJSON is RGWObjTags::dump (rgw_tag.cc:59-66), the form ceph-dencoder
-// prints: {"tagset": {key: value, ...}}, a key that occurs twice written
-// twice. JSONFormatter writes each value through json_stream_escaper
-// (Formatter.cc:195 at v19.2.6, :204 at v20.2.4; escape.cc:254-286 at both),
+// MarshalJSON is RGWObjTags::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L59-L66), the form
+// ceph-dencoder prints: {"tagset": {key: value, ...}}, a key that occurs twice
+// written twice. JSONFormatter writes each value through json_stream_escaper
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L195 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L204 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L254-L286 at both),
 // and like it this leaves <, > and & as they are; json.Marshal escapes them
 // again in what it returns unless the caller's Encoder turns HTML escaping
 // off.
 //
 // The parity is semantic, not byte for byte:
 //   - JSONFormatter writes a key raw and cut at its first NUL
-//     (dump_string(tag.first.c_str(), ...), rgw_tag.cc:63; print_name,
-//     Formatter.cc:210 at v19.2.6, :219 at v20.2.4), so its output is not
-//     JSON for a key holding '"', '\' or a control byte, where this escapes
-//     the key as it does a value.
+//     (dump_string(tag.first.c_str(), ...),
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L63;
+//     print_name,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L210 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L219 at v20.2.4),
+//     so its output is not JSON for a key holding '"', '\' or a control
+//     byte, where this escapes the key as it does a value.
 //   - encoding/json writes invalid UTF-8 as U+FFFD, where json_stream_escaper
 //     copies the bytes.
 //   - Some characters take another form that parses to the same string:
@@ -202,11 +218,12 @@ func (s Set) MarshalJSON() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// ParseHeader is set_from_string (rgw_tag.cc:36-57), the x-amz-tagging
-// header: "&"-separated items, each "key=value" split at its first "=" or a
-// bare key with an empty value, each side through url_decode, each tag
-// through Add with limit. An empty item, a trailing "&" included, is an empty
-// key and so ErrInvalidTag. An empty header is the empty set.
+// ParseHeader is set_from_string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L36-L57), the
+// x-amz-tagging header: "&"-separated items, each "key=value" split at its
+// first "=" or a bare key with an empty value, each side through url_decode,
+// each tag through Add with limit. An empty item, a trailing "&" included, is
+// an empty key and so ErrInvalidTag. An empty header is the empty set.
 func ParseHeader(h string, limit int) (Set, error) {
 	var s Set
 	if err := s.addString(h, limit); err != nil {

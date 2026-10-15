@@ -10,8 +10,9 @@ import (
 )
 
 // VersionWriteMethods are the methods of the version class registered with
-// CLS_METHOD_WR (cls_version.cc:230-234 at v19.2.6 and v20.2.4), which
-// RegisterClass takes with VersionClass.
+// CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version.cc#L230-L234 at v19.2.6
+// and v20.2.4), which RegisterClass takes with VersionClass.
 var VersionWriteMethods = []string{"set", "inc", "inc_conds"}
 
 // VersionClass emulates cls_version (src/cls/version/cls_version.cc at
@@ -101,7 +102,8 @@ func setVersion(call *ClassCall, v version.ObjVersion) int32 {
 
 // incVersion is cls_version_inc: read_version with implicit creation, which
 // initializes a missing xattr only, so a stored version 0 keeps its tag
-// (cls_version.cc:58-66), then the conditions and the increment.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version.cc#L58-L66),
+// then the conditions and the increment.
 func incVersion(call *ClassCall, conds []version.Condition) int32 {
 	cur, present, rval := storedVersion(call)
 	if rval < 0 {

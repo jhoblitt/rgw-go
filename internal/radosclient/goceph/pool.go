@@ -103,8 +103,9 @@ func (s *poolState) open() (*rados.IOContext, error) {
 	ioctx.SetNamespace(s.namespace)
 	// radosgw's rgw_init_ioctx sets full-try on every I/O context so that, at
 	// a full pool or its quota, an op that adds data fails at once with ENOSPC
-	// or EDQUOT instead of waiting in the Objecter for space (src/rgw/driver/
-	// rados/rgw_tools.cc:97-98 at v19.2.6, :98-99 at v20.2.4).
+	// or EDQUOT instead of waiting in the Objecter for space
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L97-L98 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L98-L99 at v20.2.4).
 	if err := ioctx.SetPoolFullTry(); err != nil {
 		ioctx.Destroy()
 		return nil, toSeamError(op, err)

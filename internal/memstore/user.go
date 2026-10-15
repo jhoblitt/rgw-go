@@ -52,7 +52,8 @@ func (s *Store) GetUserByAccessKey(_ context.Context, key string) (*op.UserRecor
 
 // GetUserByEmail implements op.UserStore. radosgw keys its email index by
 // the lowercased email and lowercases the one it looks up
-// (svc_user_rados.cc:318-320, :737-738 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L318-L320,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L737-L738 at v19.2.6).
 func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -63,19 +64,24 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*op.UserRecord,
 	return s.user(id)
 }
 
-// PutUser implements op.UserStore as RGWSI_User_RADOS's PutOperation writes
-// a user (svc_user_rados.cc:229-351 at v19.2.6). An active access key that
-// another user's index holds, and that the stored record (read unless
-// Exclusive) did not already hold active, is ErrKeyExists before anything is
-// written (:257-270), and so is a key the write gains, one the stored record
-// lacks or one it makes active, whose id another user holds, active or not,
-// as the RADOS driver's key holder index refuses it. A new email an account
-// holds is ErrEmailExists, and so is one another user holds unless
-// opts.SharedEmail, as the driver's claim of the email index refuses it. IfVersion is checked unless its Ver is 0, and the
-// version written is IfVersion's plus one under its tag, or a fresh one
-// without IfVersion or its tag, unless WriteVersion has a tag, which is
-// written as given (:234-241; rgw_common.h:950-955). The mtime
-// stored is opts.Mtime, or the clock's time when that is zero.
+// PutUser implements op.UserStore as RGWSI_User_RADOS's PutOperation writes a
+// user
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L229-L351 at v19.2.6).
+// An active access key that another user's index holds, and that the stored
+// record (read unless Exclusive) did not already hold active, is ErrKeyExists
+// before anything is written
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L257-L270),
+// and so is a key the write gains, one the stored record lacks or one it makes
+// active, whose id another user holds, active or not, as the RADOS driver's
+// key holder index refuses it. A new email an account holds is ErrEmailExists,
+// and so is one another user holds unless opts.SharedEmail, as the driver's
+// claim of the email index refuses it. IfVersion is checked unless its Ver is
+// 0, and the version written is IfVersion's plus one under its tag, or a fresh
+// one without IfVersion or its tag, unless WriteVersion has a tag, which is
+// written as given
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L234-L241;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L950-L955).
+// The mtime stored is opts.Mtime, or the clock's time when that is zero.
 func (s *Store) PutUser(_ context.Context, rec *op.UserRecord, opts op.PutUserOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,9 +175,10 @@ func (s *Store) FindKeyHolder(_ context.Context, key string) (meta.UserID, error
 }
 
 // ListUserBuckets implements op.UserStore over the owner's buckets in name
-// order, as cls_user keys a user's bucket list by name (cls_user.cc:45-48 at
-// v19.2.6). Each entry carries the bucket's creation time, placement and
-// current totals.
+// order, as cls_user keys a user's bucket list by name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L45-L48 at v19.2.6).
+// Each entry carries the bucket's creation time, placement and current
+// totals.
 func (s *Store) ListUserBuckets(_ context.Context, owner meta.Owner, marker string, maxEntries int) (ents []meta.BucketEnt, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -209,13 +216,15 @@ func (s *Store) user(id string) (*op.UserRecord, error) {
 
 // storeUser stores rec, which the store now owns, and rewrites its index
 // entries: the access keys that are active, as PutOperation indexes only
-// those (svc_user_rados.cc:328-339, :424-432 at v19.2.6), every access
-// key's holder, an id another user already holds keeping that user, as the
-// RADOS driver never takes a holder entry from a user, and the email's
-// entry only when the email changes, as the RADOS driver's PutUser claims
-// a new email alone: the old email's entry goes while it names the user,
-// and the new one is taken when free or the user's, or, with shared, from
-// another user, never from an account.
+// those
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L328-L339,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L424-L432 at v19.2.6),
+// every access key's holder, an id another user already holds keeping that
+// user, as the RADOS driver never takes a holder entry from a user, and
+// the email's entry only when the email changes, as the RADOS driver's
+// PutUser claims a new email alone: the old email's entry goes while it
+// names the user, and the new one is taken when free or the user's, or,
+// with shared, from another user, never from an account.
 func (s *Store) storeUser(rec *op.UserRecord, shared bool) {
 	id := rec.Info.UserID.String()
 	var oldEmail string

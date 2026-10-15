@@ -9,8 +9,10 @@ import (
 )
 
 // publicAccessBytes writes PublicAccessBlockConfiguration as its encode body
-// does (rgw_public_access.h:45-52): ENCODE_START(v, compat) around the four
-// flags in declaration order, then whatever a later version appends.
+// does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_public_access.h#L45-L52):
+// ENCODE_START(v, compat) around the four flags in declaration order, then
+// whatever a later version appends.
 func publicAccessBytes(v, compat uint8, flags [4]bool, appended ...byte) []byte {
 	e := denc.NewEncoder()
 	f := e.BeginStruct(v, compat)

@@ -11,8 +11,9 @@ import (
 )
 
 // UserWriteMethods are the methods UserClass emulates that the user class
-// registers with CLS_METHOD_WR (cls_user.cc:739-762 at v19.2.6 and
-// v20.2.4), which RegisterClass takes with UserClass.
+// registers with CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L739-L762 at v19.2.6
+// and v20.2.4), which RegisterClass takes with UserClass.
 var UserWriteMethods = []string{
 	"set_buckets_info", "complete_stats_sync", "remove_bucket", "reset_user_stats2",
 	"account_resource_add", "account_resource_rm",
@@ -144,7 +145,8 @@ func decStats(s *user.Stats, e user.BucketEntry) {
 	s.TotalEntries -= e.Count
 }
 
-// userSetBucketsInfo is cls_user_set_buckets_info (cls_user.cc:122-204).
+// userSetBucketsInfo is cls_user_set_buckets_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L122-L204).
 // With add, a missing entry is created from the request and an existing one
 // keeps its stats and marker but takes the request's bucket id and creation
 // time; without add, a missing entry is skipped as a racing removal and an
@@ -192,9 +194,10 @@ func userSetBucketsInfo(call *ClassCall) int32 {
 	return 0
 }
 
-// userRemoveBucket is cls_user_remove_bucket (cls_user.cc:239-289): a
-// missing entry is no failure and writes nothing, and the header loses the
-// entry's stats only when they were synced.
+// userRemoveBucket is cls_user_remove_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L239-L289):
+// a missing entry is no failure and writes nothing, and the header loses
+// the entry's stats only when they were synced.
 func userRemoveBucket(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, user.DecodeRemoveBucketOp)
 	if rval < 0 {
@@ -230,11 +233,12 @@ func userPageMax(n int32) uint64 {
 	return uint64(n)
 }
 
-// userListBuckets is cls_user_list_buckets (cls_user.cc:291-358): the
-// entries after the marker, at most min(max, 1000), stopping before the end
-// marker when there is one, which also clears the truncation. An entry that
-// does not decode is dropped. The reply's marker is the last name read, and
-// only when the reply is truncated.
+// userListBuckets is cls_user_list_buckets
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L291-L358):
+// the entries after the marker, at most min(max, 1000), stopping before the
+// end marker when there is one, which also clears the truncation. An entry
+// that does not decode is dropped. The reply's marker is the last name
+// read, and only when the reply is truncated.
 func userListBuckets(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, user.DecodeListBucketsOp)
 	if rval < 0 {
@@ -264,11 +268,12 @@ func userListBuckets(call *ClassCall) (out []byte, rval int32) {
 	return encodeSquid(ret), 0
 }
 
-// userResetStats2 is cls_user_reset_stats2 (cls_user.cc:444-506): it sums
-// up to 1000 entries after the marker and, on the last page, writes a fresh
-// header holding that sum and the op time. Each call sums from zero: the
-// class ignores the stats the request carries, so the header holds the last
-// page's sum alone (docs/ceph-upstream-bugs.md).
+// userResetStats2 is cls_user_reset_stats2
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L444-L506):
+// it sums up to 1000 entries after the marker and, on the last page, writes
+// a fresh header holding that sum and the op time. Each call sums from
+// zero: the class ignores the stats the request carries, so the header
+// holds the last page's sum alone (docs/ceph-upstream-bugs.md).
 func userResetStats2(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, user.DecodeResetStats2Op)
 	if rval < 0 {
@@ -300,12 +305,13 @@ func userResetStats2(call *ClassCall) (out []byte, rval int32) {
 }
 
 // accountMaxEntries is account_resource_list's cap on the entries one call
-// reads (cls_user.cc:678).
+// reads (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L678).
 const accountMaxEntries = 1000
 
-// resourceKey is resource_key (cls_user.cc:509-518): the name with each byte
-// through std::tolower in the C locale, which lower-cases ASCII letters
-// alone.
+// resourceKey is resource_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L509-L518):
+// the name with each byte through std::tolower in the C locale, which
+// lower-cases ASCII letters alone.
 func resourceKey(name string) string {
 	b := []byte(name)
 	for i, c := range b {
@@ -340,8 +346,9 @@ func storedEntry(call *ClassCall, key string) ([]byte, bool) {
 	return b, ok
 }
 
-// accountResourceAdd is cls_account_resource_add (cls_user.cc:520-579): an
-// existing entry is overwritten, or EEXIST with exclusive; a new one is
+// accountResourceAdd is cls_account_resource_add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L520-L579):
+// an existing entry is overwritten, or EEXIST with exclusive; a new one is
 // EUSERS once the header counts limit entries, and otherwise raises the
 // count.
 func accountResourceAdd(call *ClassCall) int32 {
@@ -374,7 +381,8 @@ func accountResourceAdd(call *ClassCall) int32 {
 	return 0
 }
 
-// accountResourceGet is cls_account_resource_get (cls_user.cc:581-614):
+// accountResourceGet is cls_account_resource_get
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L581-L614):
 // ENOENT for a name the index lacks, EIO for an entry that does not decode.
 func accountResourceGet(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, user.DecodeAccountResourceGetOp)
@@ -393,7 +401,8 @@ func accountResourceGet(call *ClassCall) (out []byte, rval int32) {
 	return encodeSquid(user.AccountResourceGetRet{Entry: entry}), 0
 }
 
-// accountResourceRm is cls_account_resource_rm (cls_user.cc:616-661):
+// accountResourceRm is cls_account_resource_rm
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L616-L661):
 // ENOENT for a name the index lacks; otherwise the entry goes and the
 // header's count drops by one, never below zero.
 func accountResourceRm(call *ClassCall) int32 {
@@ -418,7 +427,8 @@ func accountResourceRm(call *ClassCall) int32 {
 	return 0
 }
 
-// accountResourceList is cls_account_resource_list (cls_user.cc:663-720):
+// accountResourceList is cls_account_resource_list
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L663-L720):
 // at most min(max, 1000) raw entries after the marker, those whose path
 // starts with the prefix returned, an entry that does not decode failing
 // the call with EIO. The reply's marker is the last raw key read, the

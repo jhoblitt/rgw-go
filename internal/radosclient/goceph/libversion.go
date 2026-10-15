@@ -31,9 +31,10 @@ var ErrLibradosTooOld = errors.New("goceph: librados too old")
 // runs, such as "19.2.6", or "" when it cannot tell. rados.Version cannot
 // serve: it reports the librados API version, 3.0.0 on every release since
 // Luminous. ceph_version_to_str returns the ceph_debug_version_for_testing
-// environment variable instead when it is set (v19.2.6 common/version.cc
-// 26-34), so the environment can spoof the version; the version only
-// explains a failure, so that is harmless. Specs replace this function.
+// environment variable instead when it is set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/version.cc#L26-L34),
+// so the environment can spoof the version; the version only explains a
+// failure, so that is harmless. Specs replace this function.
 var libradosVersion = func() string {
 	v := C.rgw_go_ceph_version()
 	if v == nil {

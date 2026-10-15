@@ -270,8 +270,9 @@ func (s *Store) listObjects(rec *op.BucketRecord, p op.ListObjectsParams) (op.Li
 // into its index entry, and nothing for an object without one or whose
 // owner does not decode. It reads the owner alone, as RGWRados::decode_policy
 // does for the index entries check_disk_state and set_attrs write
-// (rgw_rados.cc:1754-1768 at v19.2.6, :1857-1871 at v20.2.4), so a policy
-// whose grants do not decode still names its owner.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1754-L1768 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1857-L1871 at v20.2.4),
+// so a policy whose grants do not decode still names its owner.
 func aclOwner(b []byte) (owner meta.Owner, displayName string) {
 	if b == nil {
 		return meta.Owner{}, ""
@@ -287,14 +288,16 @@ func aclOwner(b []byte) (owner meta.Owner, displayName string) {
 }
 
 // pager is the per-name logic of list_objects_ordered once a name is past
-// the marker (rgw_rados.cc:1802-2160 at v19.2.6): the prefix filter, the
-// rollup of names holding the delimiter after the prefix into one common
-// prefix each, and the count of names and prefixes against the page size.
+// the marker
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1802-L2160 at v19.2.6):
+// the prefix filter, the rollup of names holding the delimiter after the
+// prefix into one common prefix each, and the count of names and prefixes
+// against the page size.
 type pager struct {
 	prefix, delim string
 	// skip is the common prefix the marker falls inside, which a previous
 	// page returned; list_objects_ordered fast-forwards the marker past it
-	// (:1844-1854).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1844-L1854).
 	skip       string
 	room       int
 	count      int

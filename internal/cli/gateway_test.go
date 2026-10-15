@@ -21,13 +21,21 @@ import (
 
 // radosgw throttles every request, S3 or admin, through its frontend's one
 // scheduler: process_request calls schedule_request once get_op has found
-// the op (rgw_process.cc:330-338 at v19.2.6, :332-340 at v20.2.4), the beast
-// frontend holds a single scheduler (rgw_asio_frontend.cc:470 and :508-522
-// at v19.2.6, :425 and :460-474 at v20.2.4), whose default SimpleThrottler
-// answers -EAGAIN past rgw_max_concurrent_requests
-// (rgw_dmclock_async_scheduler.h:195-208 at v19.2.6, :194-209 at v20.2.4),
+// the op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L330-L338 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L332-L340 at v20.2.4),
+// the beast frontend holds a single scheduler
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L470 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L508-L522 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L425 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L460-L474 at v20.2.4),
+// whose default SimpleThrottler answers -EAGAIN past
+// rgw_max_concurrent_requests
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_dmclock_async_scheduler.h#L195-L208 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_dmclock_async_scheduler.h#L194-L209 at v20.2.4),
 // and process_request sends that as ERR_RATE_LIMITED, 503 SlowDown
-// (rgw_common.cc:135 at v19.2.6, :136 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L135 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L136 at v20.2.4).
 var _ = Describe("the gateway's request cap", func() {
 	var (
 		gw      *cli.Gateway

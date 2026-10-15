@@ -77,10 +77,11 @@ func Atoll(s string) int64 {
 	return v
 }
 
-// StringToLL is stringtoll (rgw_string.h:38-52 at v19.2.6 and v20.2.4):
-// strtoll on s as a C string. ok is false for LLONG_MAX, which an overflow
-// saturates to, and for any byte after the digits, so for a non-empty string
-// with none; an empty string is 0.
+// StringToLL is stringtoll
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L38-L52 at v19.2.6
+// and v20.2.4): strtoll on s as a C string. ok is false for LLONG_MAX, which
+// an overflow saturates to, and for any byte after the digits, so for a
+// non-empty string with none; an empty string is 0.
 func StringToLL(s string) (v int64, ok bool) {
 	s = CString(s)
 	v, end, _ := Strtoll(s)
@@ -90,17 +91,20 @@ func StringToLL(s string) (v int64, ok bool) {
 	return v, true
 }
 
-// StringToL is stringtol (rgw_string.h:70-84 at v19.2.6 and v20.2.4):
-// stringtoll's checks on strtol's 64-bit long, then a cast to int32_t.
+// StringToL is stringtol
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L70-L84 at v19.2.6
+// and v20.2.4): stringtoll's checks on strtol's 64-bit long, then a
+// cast to int32_t.
 func StringToL(s string) (v int32, ok bool) {
 	n, ok := StringToLL(s)
 	return int32(n), ok //nolint:gosec // stringtol casts its long to int32_t
 }
 
-// StringToULL is stringtoull (rgw_string.h:54-68 at v19.2.6 and v20.2.4):
-// strtoull on s as a C string. ok is false for ULLONG_MAX, which an overflow
-// saturates to and "-1" negates to, and for any byte after the digits, so
-// for a non-empty string with none; an empty string is 0.
+// StringToULL is stringtoull
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L54-L68 at v19.2.6
+// and v20.2.4): strtoull on s as a C string. ok is false for ULLONG_MAX,
+// which an overflow saturates to and "-1" negates to, and for any byte after
+// the digits, so for a non-empty string with none; an empty string is 0.
 func StringToULL(s string) (v uint64, ok bool) {
 	s = CString(s)
 	v, end, _ := Strtoull(s)
@@ -110,17 +114,19 @@ func StringToULL(s string) (v uint64, ok bool) {
 	return v, true
 }
 
-// StringToUL is stringtoul (rgw_string.h:86-100 at v19.2.6 and v20.2.4):
-// stringtoull's checks on strtoul's 64-bit unsigned long, then a cast to
-// uint32_t.
+// StringToUL is stringtoul
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_string.h#L86-L100 at v19.2.6
+// and v20.2.4): stringtoull's checks on strtoul's 64-bit unsigned long,
+// then a cast to uint32_t.
 func StringToUL(s string) (v uint32, ok bool) {
 	n, ok := StringToULL(s)
 	return uint32(n), ok //nolint:gosec // stringtoul casts its unsigned long to uint32_t
 }
 
-// StrictStrtoll is ceph's strict_strtoll in base 10 (common/strtol.cc:42-59
-// at v19.2.6 and v20.2.4): strtoll over all of s, refused when it reads no
-// digits, leaves any byte after them, or sets ERANGE.
+// StrictStrtoll is ceph's strict_strtoll in base 10
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/strtol.cc#L42-L59 at v19.2.6
+// and v20.2.4): strtoll over all of s, refused when it reads no digits,
+// leaves any byte after them, or sets ERANGE.
 func StrictStrtoll(s string) (v int64, ok bool) {
 	v, end, erange := Strtoll(s)
 	if end == 0 || end != len(s) || erange {

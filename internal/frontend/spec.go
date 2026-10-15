@@ -11,11 +11,14 @@ import (
 	"time"
 )
 
-// DefaultRequestTimeout is beast's REQUEST_TIMEOUT (rgw_asio_frontend.h:11).
+// DefaultRequestTimeout is beast's REQUEST_TIMEOUT
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_asio_frontend.h#L11).
 const DefaultRequestTimeout = 65 * time.Second
 
 // DefaultMaxHeaderSize and MaxHeaderSizeCap are beast's header_limit default
-// and its parse-buffer ceiling (rgw_asio_frontend.cc:420, rgw_asio_frontend_connection.h:17).
+// and its parse-buffer ceiling
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_asio_frontend.cc#L420,
+// https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_asio_frontend_connection.h#L17).
 const (
 	DefaultMaxHeaderSize = 16384
 	MaxHeaderSizeCap     = 65536
@@ -59,16 +62,18 @@ type Spec struct {
 }
 
 // ParseBeast parses one frontend entry ("beast port=80 ssl_port=443 ...") as
-// RGWFrontendConfig::parse_config splits it (rgw_frontend.cc:17-48 at
-// v19.2.6): space-separated tokens, the first the framework name, each other
-// "key=value" split at its first '=' with both sides trimmed, or a bare key
-// with an empty value; a key may repeat. The keys are AsioFrontend::init's
-// and ssl_init's (rgw_asio_frontend.cc:592-740, 916-1045). A framework other
-// than beast is ErrNotBeast, and an unparsable port or endpoint is an error
-// naming the key, as radosgw refuses them; an unusable request_timeout_ms,
-// max_header_size or max_connection_backlog keeps its default and is reported
-// in Unknown. Where a key radosgw reads once repeats, the first value wins, as
-// std::multimap::find returns it.
+// RGWFrontendConfig::parse_config splits it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_frontend.cc#L17-L48 at v19.2.6):
+// space-separated tokens, the first the framework name, each other "key=value"
+// split at its first '=' with both sides trimmed, or a bare key with an empty
+// value; a key may repeat. The keys are AsioFrontend::init's and ssl_init's
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_asio_frontend.cc#L592-L740,
+// https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_asio_frontend.cc#L916-L1045).
+// A framework other than beast is ErrNotBeast, and an unparsable port or
+// endpoint is an error naming the key, as radosgw refuses them; an unusable
+// request_timeout_ms, max_header_size or max_connection_backlog keeps its
+// default and is reported in Unknown. Where a key radosgw reads once repeats,
+// the first value wins, as std::multimap::find returns it.
 func ParseBeast(entry string) (Spec, error) {
 	framework, kvs := parseConfig(entry)
 	if framework != "beast" {
@@ -172,10 +177,11 @@ func (s *Spec) unknown(kv keyValue) {
 }
 
 // ParseFrontends parses an rgw_frontends value, split on commas into entries
-// as rgw::AppMain::init_frontends1 splits it (rgw_appmain.cc:195 at main): the
-// beast entry is returned and every other entry's framework name is listed in
-// others for the caller to log. An empty value is a bare beast, as
-// init_frontends1 pushes when the list is empty, with no listener. A second
+// as rgw::AppMain::init_frontends1 splits it
+// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_appmain.cc#L195
+// at main): the beast entry is returned and every other entry's framework name
+// is listed in others for the caller to log. An empty value is a bare beast,
+// as init_frontends1 pushes when the list is empty, with no listener. A second
 // beast entry is an error, since one Spec cannot hold two frontends.
 func ParseFrontends(value string) (spec Spec, others []string, err error) {
 	entries := strings.FieldsFunc(value, func(r rune) bool { return r == ',' })

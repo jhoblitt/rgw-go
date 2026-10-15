@@ -261,7 +261,7 @@ var _ = Describe("a write op", func() {
 			stored("obj").Xattrs[version.XattrName] = encodeVersion(storedVer)
 		})
 		// overwrite is radosgw's non-exclusive system-object write
-		// (svc_sys_obj_core.cc:496-502 at v19.2.6).
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L496-L502 at v19.2.6).
 		overwrite := func(op *radosclient.WriteOp) {
 			op.Remove()
 			op.SetStepFlags(radosclient.StepFlagFailOK)

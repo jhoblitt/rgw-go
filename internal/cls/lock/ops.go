@@ -8,9 +8,10 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The class and the methods its CLS_INIT registers (cls_lock.cc:611-648 at
-// v19.2.6; the file is identical at v20.2.4). set_cookie and list_locks are
-// not bound: radosgw never calls them.
+// The class and the methods its CLS_INIT registers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L611-L648 at v19.2.6;
+// the file is identical at v20.2.4). set_cookie and list_locks are not
+// bound: radosgw never calls them.
 const (
 	Class              = "lock"
 	methodLock         = "lock"
@@ -23,24 +24,28 @@ const (
 // Lock adds lock.lock: it takes p.Name for the request's client identity
 // under p.Cookie, failing with EEXIST when that identity already holds it
 // without MayRenew, EBUSY when another holder or tag stands in the way, ENOENT
-// with MustRenew when it does not hold it (lock_obj, cls_lock.cc:134-244). A
-// lock on a missing object CREATES the object; callers that need the object
+// with MustRenew when it does not hold it (lock_obj,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L134-L244).
+// A lock on a missing object CREATES the object; callers that need the object
 // to exist use LockExisting.
 func Lock(op radosclient.Execer, p LockOp, r denc.Release) {
 	op.Exec(Class, methodLock, clsutil.Encode(p, r))
 }
 
 // LockExisting is MPRadosSerializer::try_lock's composition
-// (rgw_sal_rados.cc:3750-3760 at v19.2.6, :4613 at v20.2.4): assert_exists,
-// then lock.lock for an exclusive lock, in the one write op, so a vanished
-// object answers ENOENT rather than being recreated as a bare lock holder.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3750-L3760 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4613 at v20.2.4):
+// assert_exists, then lock.lock for an exclusive lock, in the one write op,
+// so a vanished object answers ENOENT rather than being recreated as a bare
+// lock holder.
 func LockExisting(op *radosclient.WriteOp, name, cookie, description string, duration time.Duration, r denc.Release) { //nolint:revive // Lock's variant, read beside it
 	op.AssertExists()
 	Lock(op, LockOp{Name: name, Type: TypeExclusive, Cookie: cookie, Description: description, Duration: duration}, r)
 }
 
 // Unlock adds lock.unlock for this client's hold under cookie; ENOENT when it
-// holds none (remove_lock, cls_lock.cc:282-315).
+// holds none (remove_lock,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L282-L315).
 func Unlock(op radosclient.Execer, name, cookie string, r denc.Release) {
 	op.Exec(Class, methodUnlock, clsutil.Encode(UnlockOp{Name: name, Cookie: cookie}, r))
 }

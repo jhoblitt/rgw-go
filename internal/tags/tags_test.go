@@ -21,7 +21,8 @@ func multimap(e *denc.Encoder, kv ...string) {
 	}
 }
 
-// tagsBytes writes RGWObjTags as its encode does (rgw_tag.h:26-30):
+// tagsBytes writes RGWObjTags as its encode does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.h#L26-L30):
 // ENCODE_START(v, compat) around the multimap.
 func tagsBytes(v, compat uint8, kv ...string) []byte {
 	e := denc.NewEncoder()

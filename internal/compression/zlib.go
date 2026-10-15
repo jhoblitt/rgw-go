@@ -88,9 +88,12 @@ var errPastLimit = errors.New("decodes past the limit")
 
 // zlibFailure classifies an inflate failure. inflate takes a stream that
 // ends early for one awaiting more input, so radosgw's decompress returns
-// what it inflated as success (ZlibCompressor.cc:249-277 at v19.2.6,
-// :269-297 at v20.2.4), and it has no limit; every other failure is its -1
-// (:261-266 at v19.2.6, :281-286 at v20.2.4).
+// what it inflated as success
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/zlib/ZlibCompressor.cc#L249-L277 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L269-L297 at v20.2.4),
+// and it has no limit; every other failure is its -1
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/zlib/ZlibCompressor.cc#L261-L266 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L281-L286 at v20.2.4).
 func zlibFailure(err error) error {
 	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, errPastLimit) {
 		return corrupt("zlib", err)

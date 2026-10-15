@@ -17,7 +17,8 @@ import (
 
 // AddUsage seeds the usage log ReadUsage and TrimUsage work on; Log feeds a
 // separate log. A record without a User is filed under its payer, else its
-// owner, as rgw_user_usage_log_add files it (cls_rgw.cc:3583 at v19.2.6).
+// owner, as rgw_user_usage_log_add files it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3583 at v19.2.6).
 func (s *Store) AddUsage(rec op.UsageRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -34,7 +35,8 @@ func usageMatches(rec *op.UsageRecord, user, bucket string, start, end uint64) b
 }
 
 // maxUsageEntries is user_usage_log_read's limit when the caller gives none
-// (cls_rgw.cc:3739-3740 at v19.2.6, :4141-4142 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3739-L3740 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4141-L4142 at v20.2.4).
 const maxUsageEntries = 1000
 
 // ReadUsage implements op.UsageReader over the seeded records in (User,
@@ -257,15 +259,16 @@ func (s *Store) RemoveIndexEntries(_ context.Context, rec *op.BucketRecord, keys
 }
 
 // ChownBucket implements op.BucketAdminStore as RadosBucket::chown
-// (rgw_sal_rados.cc:699-751 at v19.2.6): the bucket's instance and entry
-// point move to owner, so the old owner's list drops it and the new
-// owner's lists it, and its ACL, when it has one that decodes, loses every
-// grant keyed by the old owner and gains FULL_CONTROL for the new one, who
-// becomes its owner. A memstore write cannot race, so the stored instance
-// is rewritten whatever version rec holds, as adopt_user_bucket's retries
-// end; rec is left at the stored state. A name that now loads an instance
-// other than rec's, or rec's instance under an owner other than rec's, is
-// ErrNoSuchBucket, as the driver refuses them.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L699-L751 at v19.2.6):
+// the bucket's instance and entry point move to owner, so the old owner's
+// list drops it and the new owner's lists it, and its ACL, when it has one
+// that decodes, loses every grant keyed by the old owner and gains
+// FULL_CONTROL for the new one, who becomes its owner. A memstore write
+// cannot race, so the stored instance is rewritten whatever version rec
+// holds, as adopt_user_bucket's retries end; rec is left at the stored
+// state. A name that now loads an instance other than rec's, or rec's
+// instance under an owner other than rec's, is ErrNoSuchBucket, as the
+// driver refuses them.
 func (s *Store) ChownBucket(_ context.Context, rec *op.BucketRecord, owner meta.Owner, displayName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

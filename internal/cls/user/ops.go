@@ -92,8 +92,10 @@ type ResetResult struct {
 // fresh header holding that page's sum and t: its LastStatsSync is zero
 // until the next CompleteStatsSync. The class ignores acc, the running total
 // radosgw sends, so the header holds the last page's sum alone
-// (cls_user.cc:459 and :482 at v19.2.6 and v20.2.4; docs/ceph-upstream-bugs.md,
-// "cls_user reset_user_stats2 drops the stats of every page but the last").
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L459 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L482 at v19.2.6
+// and v20.2.4; docs/ceph-upstream-bugs.md, "cls_user reset_user_stats2 drops
+// the stats of every page but the last").
 // An entry that does not decode fails the op with EIO. The method writes,
 // and its reply only comes back when the op runs with OpFlagReturnVec, so it
 // takes a ReadOp; loop, passing the returned marker and stats on, while the

@@ -20,7 +20,8 @@ type jsonFormatter struct {
 	stack  []jsonSection
 }
 
-// NewJSON is JSONFormatter(pretty) (Formatter.cc:153-375 at v19.2.6).
+// NewJSON is JSONFormatter(pretty)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L153-L375 at v19.2.6).
 func NewJSON(pretty bool) Formatter { return &jsonFormatter{pretty: pretty} }
 
 // indent writes four spaces for each open section after the first.
@@ -30,7 +31,8 @@ func (j *jsonFormatter) indent() {
 	}
 }
 
-// printComma is print_comma (Formatter.cc:172-190).
+// printComma is print_comma
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L172-L190).
 func (j *jsonFormatter) printComma(s *jsonSection) {
 	switch {
 	case s.size > 0 && j.pretty:
@@ -47,8 +49,9 @@ func (j *jsonFormatter) printComma(s *jsonSection) {
 	}
 }
 
-// printName is print_name (:198-217): nothing at the top level, and no name
-// inside an array.
+// printName is print_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L198-L217):
+// nothing at the top level, and no name inside an array.
 func (j *jsonFormatter) printName(name string) {
 	if len(j.stack) == 0 {
 		return
@@ -71,7 +74,8 @@ func (j *jsonFormatter) printName(name string) {
 	s.size++
 }
 
-// open is open_section (:219-240).
+// open is open_section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L219-L240).
 func (j *jsonFormatter) open(name string, isArray bool) {
 	j.printName(name)
 	if isArray {
@@ -85,7 +89,8 @@ func (j *jsonFormatter) open(name string, isArray bool) {
 func (j *jsonFormatter) OpenObjectSection(name string) { j.open(name, false) }
 func (j *jsonFormatter) OpenArraySection(name string)  { j.open(name, true) }
 
-// CloseSection is close_section (:262-281).
+// CloseSection is close_section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L262-L281).
 func (j *jsonFormatter) CloseSection() {
 	s := j.stack[len(j.stack)-1]
 	if j.pretty && s.size > 0 {
@@ -103,14 +108,15 @@ func (j *jsonFormatter) CloseSection() {
 	}
 }
 
-// value is add_value(name, val, quoted=false) (:301-313).
+// value is add_value(name, val, quoted=false)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L301-L313).
 func (j *jsonFormatter) value(name, v string) {
 	j.printName(name)
 	j.buf.WriteString(v)
 }
 
 // quoted is add_value(name, val, quoted=true) with print_quoted_string
-// (:192-196).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L192-L196).
 func (j *jsonFormatter) quoted(name, v string) {
 	j.printName(name)
 	j.buf.WriteByte('"')

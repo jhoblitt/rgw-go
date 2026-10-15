@@ -34,9 +34,10 @@ func DecodeGuardOp(d *denc.Decoder) GuardOp {
 // let the guarded method run. On every release radosgw adds it before
 // bucket_prepare_op, bucket_complete_op and the OLH methods link_olh,
 // unlink_instance, trim_olh_log and clear_olh. From Tentacle on it also adds
-// it before dir_suggest_changes, in both listing paths (v20.2.4
-// rgw_rados.cc 10823, 11061); Squid sends that unguarded. It guards no other
-// index method.
+// it before dir_suggest_changes, in both listing paths
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10823,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11061);
+// Squid sends that unguarded. It guards no other index method.
 func GuardBucketResharding(op radosclient.Execer, r denc.Release) {
 	op.Exec(Class, methodGuardBucketResharding, clsutil.Encode(GuardOp{RetErr: -ErrBusyResharding}, r))
 }

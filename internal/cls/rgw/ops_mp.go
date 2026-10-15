@@ -7,9 +7,10 @@ import (
 )
 
 // MPUploadPartInfoUpdateOp is cls_rgw_mp_upload_part_info_update_op
-// (cls/rgw/cls_rgw_ops.h:1457-1480 at v19.2.6, :1495-1518 at v20.2.4), the
-// input of mp_upload_part_info_update: the meta object's omap key for a
-// part and the part's RGWUploadPartInfo. ceph-dencoder does not register
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_ops.h#L1457-L1480 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_ops.h#L1495-L1518 at v20.2.4),
+// the input of mp_upload_part_info_update: the meta object's omap key for
+// a part and the part's RGWUploadPartInfo. ceph-dencoder does not register
 // it.
 type MPUploadPartInfoUpdateOp struct {
 	PartKey string
@@ -40,14 +41,15 @@ func DecodeMPUploadPartInfoUpdateOp(d *denc.Decoder) MPUploadPartInfoUpdateOp {
 }
 
 // MPUploadPartInfoUpdate adds mp_upload_part_info_update, which registers a
-// part with its upload (cls/rgw/cls_rgw.cc:4360-4400 at v19.2.6,
-// :4762-4802 at v20.2.4). The class reads the part info stored under
-// partKey, adds that info's manifest prefix, when its manifest is not
-// empty, and its past prefixes to info's past prefixes, and fails with
-// EEXIST when info's own manifest prefix is among them; otherwise it stores
-// the merged info under partKey, re-encoded at the OSD's release. info is
-// the part's RGWUploadPartInfo encoded at r. Both releases register the
-// method RD|WR.
+// part with its upload
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4360-L4400 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4762-L4802 at v20.2.4).
+// The class reads the part info stored under partKey, adds that info's
+// manifest prefix, when its manifest is not empty, and its past prefixes to
+// info's past prefixes, and fails with EEXIST when info's own manifest prefix
+// is among them; otherwise it stores the merged info under partKey, re-encoded
+// at the OSD's release. info is the part's RGWUploadPartInfo encoded at r.
+// Both releases register the method RD|WR.
 func MPUploadPartInfoUpdate(op radosclient.Execer, partKey string, info []byte, r denc.Release) {
 	op.Exec(Class, methodMPUploadPartInfoUpdate, clsutil.Encode(MPUploadPartInfoUpdateOp{PartKey: partKey, Info: info}, r))
 }

@@ -10,7 +10,8 @@ import (
 )
 
 // The rjenkins vectors were printed by ceph_str_hash_rjenkins compiled from
-// src/common/ceph_hash.cc:22-78, identical at v19.2.6 and v20.2.4.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_hash.cc#L22-L78,
+// identical at v19.2.6 and v20.2.4.
 var _ = Describe("list tokens", func() {
 	DescribeTable("RJenkins matches ceph_str_hash_rjenkins",
 		func(in string, want uint32) { Expect(radosclient.RJenkins([]byte(in))).To(Equal(want)) },

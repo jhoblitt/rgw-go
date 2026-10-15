@@ -229,7 +229,8 @@ func objectStat(ctx context.Context, bucket, key string) adminObject {
 
 // prefixShape is a write's tail prefix: "." and 31 characters of
 // gen_rand_alphanumeric's alphabet, then "_" (RGWObjManifest::generator::
-// create_begin, driver/rados/rgw_obj_manifest.cc:239-246 at v19.2.6).
+// create_begin,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L239-L246 at v19.2.6).
 const prefixShape = `^\.[A-Za-z0-9_-]{31}_$`
 
 // expectBucketCheckClean requires radosgw-admin bucket check to find no
@@ -320,8 +321,8 @@ func bucketList(ctx context.Context, bucket string) map[string]adminEntry {
 	return byName
 }
 
-// gcEntry is one entry radosgw-admin gc list prints (rgw_admin.cc:8797-8811
-// at v19.2.6).
+// gcEntry is one entry radosgw-admin gc list prints
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_admin.cc#L8797-L8811 at v19.2.6).
 type gcEntry struct {
 	Tag  string `json:"tag"`
 	Objs []struct {

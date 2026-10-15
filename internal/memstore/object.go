@@ -113,8 +113,9 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	o := s.newObject(k, data, cmp.Or(p.ETag, hex.EncodeToString(sum[:])), cloneAttrs(p.Attrs), p.Mtime, p.StorageClass)
 	o.state.WriteTag = p.Tag
 	if p.Tag == "" {
-		// append_rand_alpha(cct, "", tag, 32), rgw_common.h:1621-1628 at
-		// v19.2.6, :1623-1630 at v20.2.4.
+		// append_rand_alpha(cct, "", tag, 32),
+		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1621-L1628 at v19.2.6,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1623-L1630 at v20.2.4.
 		o.state.WriteTag = "_" + randomAlphanumeric(31)
 	}
 	b.objects[k] = o
@@ -124,11 +125,12 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 // DeleteObject implements op.ObjectStore. A bucket whose versioning is or
 // was enabled or that has object lock is refused, as the RADOS store
 // refuses it. The conditions are checked as Tentacle's Delete::delete_obj
-// checks them, on both releases (driver/rados/rgw_rados.cc:6609-6671 at
-// v20.2.4): the mtime must not be after UnmodifiedSince, the size must
-// equal IfMatchSize, the mtime must equal IfMatchLastModified, both in
-// whole seconds, and If-Match "*" passes any object while an ETag must
-// match the object's.
+// checks them, on both releases
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6671 at v20.2.4):
+// the mtime must not be after UnmodifiedSince, the size must equal
+// IfMatchSize, the mtime must equal IfMatchLastModified, both in whole
+// seconds, and If-Match "*" passes any object while an ETag must match
+// the object's.
 func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
 	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
 		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
@@ -170,7 +172,8 @@ func deleteAllowed(st *op.ObjectState, p op.DeleteParams) bool {
 
 // CopyObject implements op.ObjectStore. IfMatch and IfNoneMatch are checked
 // against the source as RGWRados::Object::Read::prepare checks a copy
-// source (rgw_rados.cc:6970-6990 at v19.2.6).
+// source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6970-L6990 at v19.2.6).
 func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, p op.CopyParams) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,7 +266,7 @@ func putResult(o *object) *op.PutResult {
 // readBody reads a write's body. A body longer than its declared size is
 // EntityTooLarge; a shorter one is RequestTimeout, as RGWPutObj::execute
 // answers when the bytes read fall short of the content length
-// (rgw_op.cc:4430-4431 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4430-L4431 at v19.2.6).
 func readBody(body io.Reader, size int64) ([]byte, error) {
 	if size < 0 {
 		data, err := io.ReadAll(body)
@@ -286,10 +289,11 @@ func readBody(body io.Reader, size int64) ([]byte, error) {
 }
 
 // checkWrite is v20.2.4's check_preconditions for a write's If-Match and
-// If-None-Match against the object it replaces (rgw_rados.cc:7286-7328 at
-// v20.2.4), which rgw-go applies on Squid too: "*" asks whether an object
-// exists, an ETag condition is unquoted and must start with the object's
-// ETag, If-Match on no object is NoSuchKey, and If-None-Match with an ETag
+// If-None-Match against the object it replaces
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7286-L7328 at v20.2.4),
+// which rgw-go applies on Squid too: "*" asks whether an object exists, an
+// ETag condition is unquoted and must start with the object's ETag,
+// If-Match on no object is NoSuchKey, and If-None-Match with an ETag
 // passes when there is no object.
 func checkWrite(o *object, ifMatch, ifNoneMatch string) error {
 	if ifMatch != "" {
@@ -311,9 +315,10 @@ func checkWrite(o *object, ifMatch, ifNoneMatch string) error {
 // as if_match_str.compare(0, etag.length(), etag) tests it.
 func etagMatches(cond, etag string) bool { return strings.HasPrefix(unquote(cond), etag) }
 
-// unquote is rgw_string_unquote (rgw_common.cc:518-533 at v19.2.6): a value
-// that opens with a quote loses it and, past any trailing spaces, its
-// closing one.
+// unquote is rgw_string_unquote
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L518-L533 at v19.2.6):
+// a value that opens with a quote loses it and, past any trailing spaces,
+// its closing one.
 func unquote(s string) string {
 	if len(s) < 2 || s[0] != '"' {
 		return s

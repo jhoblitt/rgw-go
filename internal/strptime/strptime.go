@@ -31,11 +31,12 @@ func daysFrom0(year int) int {
 	return 365*year + year/400 - year/100 + year/4
 }
 
-// Timegm is internal_timegm (include/timegm.h:24-77 at v19.2.6 and v20.2.4):
-// a month outside 0-11 carries into the year, and every other field is
-// calendar arithmetic that is never checked against the month, so the 31st
-// of April is the 1st of May and second 60 the next minute. It ignores
-// Gmtoff, as internal_timegm does.
+// Timegm is internal_timegm
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/timegm.h#L24-L77 at v19.2.6
+// and v20.2.4): a month outside 0-11 carries into the year, and every other
+// field is calendar arithmetic that is never checked against the month, so
+// the 31st of April is the 1st of May and second 60 the next minute. It
+// ignores Gmtoff, as internal_timegm does.
 func (t Tm) Timegm() time.Time {
 	year, mon := t.Year, t.Mon
 	if mon > 11 {

@@ -413,11 +413,13 @@ func (s *Store) removeInstance(key string) error {
 // at most maxEntries of them; next is the last key returned. The user
 // section is the stored users, each keyed by its users.uid object's name,
 // the user id's string form, as RGWSI_User_Module lists them
-// (svc_user_rados.cc:32-66 at v19.2.6); the bucket section is the stored
-// buckets, each keyed by its entry point's metadata key, the name or
-// "tenant/name" (RGWSI_Bucket::get_entrypoint_meta_key, svc_bucket.cc:9-19
-// at both tags); the bucket.instance section is the stored instances,
-// "[tenant/]name:id". Another section is ErrNoSuchKey.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L32-L66 at v19.2.6);
+// the bucket section is the stored buckets, each keyed by its entry point's
+// metadata key, the name or "tenant/name"
+// (RGWSI_Bucket::get_entrypoint_meta_key,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket.cc#L9-L19 at both tags);
+// the bucket.instance section is the stored instances, "[tenant/]name:id".
+// Another section is ErrNoSuchKey.
 func (s *Store) List(_ context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

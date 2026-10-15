@@ -43,7 +43,8 @@ type Store struct {
 	holders map[string]string
 	// emails maps a lowercased email to the user id string or account id
 	// holding it: radosgw keeps both in one object per email, so an email is
-	// unique across users and accounts (account.cc:102-114 at v19.2.6).
+	// unique across users and accounts
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L102-L114 at v19.2.6).
 	emails         map[string]string
 	buckets        map[string]*bucket // "tenant/name" -> bucket
 	instances      map[string]*bucket // bucket id -> bucket
@@ -252,8 +253,11 @@ func (s *Store) nextEpoch() uint64 {
 // newTag is RGWObjVersionTracker::generate_new_write_ver's tag:
 // append_rand_alpha with TAG_LEN 24 writes an underscore, then the 23
 // characters gen_rand_alphanumeric fills a 24-byte buffer with before its
-// terminator (rgw_common.cc:3204-3211, rgw_common.h:1621-1628 at v19.2.6;
-// :3266-3273, :1623-1630 at v20.2.4).
+// terminator
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3204-L3211,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1621-L1628 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3266-L3273,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1623-L1630 at v20.2.4).
 func (s *Store) newTag() string { return "_" + randomAlphanumeric(23) }
 
 // alphanumeric is gen_rand_alphanumeric's table (src/common/random_string.cc),

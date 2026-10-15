@@ -27,11 +27,14 @@ func (s *Store) UserStats(_ context.Context, owner meta.Owner) (op.Stats, error)
 }
 
 // CheckQuota implements op.StatsStore as RGWOp::init_quota and
-// RGWQuotaHandlerImpl::check_quota check a write (rgw_op.cc:1383-1449 and
-// rgw_quota.cc:912-955 at v19.2.6): the effective bucket quota against the
-// bucket's totals, then the effective user quota against the owner's,
-// without the driver's caches. An owner it does not hold fails the check
-// with radosgw's bare ENOENT, NoSuchKey.
+// RGWQuotaHandlerImpl::check_quota check a write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1383-L1449
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L912-L955 at v19.2.6):
+// the effective bucket quota against the bucket's totals, then the
+// effective user quota against the owner's, without the driver's caches.
+// An owner it does not hold fails the check with radosgw's bare ENOENT,
+// NoSuchKey.
 func (s *Store) CheckQuota(_ context.Context, rec *op.BucketRecord, owner meta.Owner, addBytes, addObjs int64) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -120,12 +123,14 @@ func (s *Store) ownerStats(owner meta.Owner) op.Stats {
 // roundedObjSize is rgw_rounded_objsize: bytes rounded up to 4 KiB.
 func roundedObjSize(bytes uint64) uint64 { return (bytes + 4095) &^ 4095 }
 
-// exceeds is check_quota for one quota (rgw_quota.cc:877-904 at v19.2.6)
-// through the applier the quota selects (:769-866): the objects, then the
-// size, which the default applier takes as size_rounded plus the rounded
-// addition and CheckOnRaw's as the raw size plus the raw addition. A
-// negative limit is none. radosgw's additions are unsigned, so a negative
-// one counts as none.
+// exceeds is check_quota for one quota
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L877-L904 at v19.2.6)
+// through the applier the quota selects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L769-L866):
+// the objects, then the size, which the default applier takes as size_rounded
+// plus the rounded addition and CheckOnRaw's as the raw size plus the raw
+// addition. A negative limit is none. radosgw's additions are unsigned, so a
+// negative one counts as none.
 func exceeds(q meta.Quota, st op.Stats, addBytes, addObjs int64) bool {
 	if !q.Enabled {
 		return false
