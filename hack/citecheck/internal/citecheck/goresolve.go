@@ -201,14 +201,12 @@ func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 		it.rule = "at <tag>"
 		return t
 	}
-	if g.md != nil {
-		if w := atOther(norm, it.pos+1); w != "" {
-			it.rule, it.why = w, fmt.Sprintf("no ref: it is cited %s, which is no tag: link it by hand", w)
-			if prep, ref, _ := strings.Cut(w, " "); isCommitWord(strings.ToLower(ref)) || isBranchRef(prep, ref) {
-				it.atRef = ref
-			}
-			return ""
+	if w := atOther(norm, it.pos+1); w != "" && (g.md != nil || commitOrBranch(w)) {
+		it.rule, it.why = w, fmt.Sprintf("no ref: it is cited %s, which is no tag: link it by hand", w)
+		if prep, ref, _ := strings.Cut(w, " "); isCommitWord(strings.ToLower(ref)) || isBranchRef(prep, ref) {
+			it.atRef = ref
 		}
+		return ""
 	}
 	if it.mark != "" {
 		it.rule = "its marker"

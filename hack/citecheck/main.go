@@ -352,23 +352,27 @@
 //	A bare line number is rgw_op.cc's at v19.2.6.
 //	A bare rgw_op.cc line is v19.2.6's.
 //
-// A citation is unresolved, left as it is and listed with why, when it is in
-// a code block, is a line reference in prose, or is a continuation whose file
-// only a comment above its own names, none of which --fix rewrites; when it has
-// no ref, or only a header's that names another file, or only a clause's
-// that names two releases; when its ref names no commit in the clone; when
-// its paragraph names rook, go-ceph or s3-tests, whose files the clone does
-// not hold; when only the header convention gives its ref and the words that
-// lead to it, back to the last citation, ". ", ";" or ",", name another
-// release, by tag, marker or codename; when it is cited at both tags and its
-// lines differ between them; when it is a continuation with no candidate
-// file, or with no identifier beside it in a clause that names two files;
-// when its file is no file at the ref, or several that no identifier tells
-// apart; when the lines hold no identifier named beside it; when its link
-// fails a check a link must pass, such as lines past the file's end; and when
-// godoc would link the text right after it as part of the URL, as it does a
-// "'s", "-" or "*", which go/doc/comment's linking of a doc comment's URL
-// decides.
+// A citation is unresolved, left as it is and listed with why, when it is in a
+// code block, is a line reference in prose, or is a continuation whose file
+// only a comment above its own names, none of which --fix rewrites; when it
+// has no ref, or only a header's that names another file, or only a clause's
+// that names two releases; when an "at", "on" or "in" and a commit id after
+// it, or an "at" or "on" and main, master, origin/main or upstream, name a ref
+// that is no tag, which no other rule's tag stands in for, an "its head",
+// "their head", "the head" or "commit" before the ref aside, as "at its head
+// 2c1db8239cc" and "at commit 2c1db8239cc" name a commit; when its ref names
+// no commit in the clone; when its paragraph names rook, go-ceph or s3-tests,
+// whose files the clone does not hold; when only the header convention gives
+// its ref and the words that lead to it, back to the last citation, ". ", ";"
+// or ",", name another release, by tag, marker or codename; when it is cited
+// at both tags and its lines differ between them; when it is a continuation
+// with no candidate file, or with no identifier beside it in a clause that
+// names two files; when its file is no file at the ref, or several that no
+// identifier tells apart; when the lines hold no identifier named beside it;
+// when its link fails a check a link must pass, such as lines past the file's
+// end; and when godoc would link the text right after it as part of the URL,
+// as it does a "'s", "-" or "*", which go/doc/comment's linking of a doc
+// comment's URL decides.
 //
 // The text around a link is kept, an "at <tag>" after it included, but a
 // marker that gave citations their ref, with the blanks after it, is dropped
@@ -509,7 +513,8 @@
 // And a citation is unresolved, besides as Go comments lists:
 //
 //   - when it is cited at, on or in a ref that is no tag: at, on or in a
-//     branch or a commit id; at a version that is no tag, "all", or a ref
+//     branch or a commit id, an "its head", "their head", "the head" or
+//     "commit" before it aside; at a version that is no tag, "all", or a ref
 //     holding a "/"; or in a version or Boost;
 //   - when the clause rule or the "(" rule finds a release not right before
 //     it, and the words before it, back to its sentence's start, the last
