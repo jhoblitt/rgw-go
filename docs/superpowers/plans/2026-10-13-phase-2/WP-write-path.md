@@ -792,7 +792,7 @@ client's `otp_check`.
 - **Specs:** each method; a set that preserves a device's replay state; `get_all` against named
   ids; each EINVAL; the write list; a duplicate name panicking.
 - **Exclusions and registry:** none.
-- **Depends on:** WP-16. **PR:** one. **Brief:** about 140 lines.
+- **Depends on:** WP-16, S1, S4. **PR:** one. **Brief:** about 140 lines.
 
 ### Task WP-18: metadata sections as tables
 

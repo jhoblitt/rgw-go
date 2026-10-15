@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S3 | 3 |
+| `00-index.md` | this index, and the shared tasks S1 to S4 | 4 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V15c |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
@@ -185,9 +185,27 @@ The controller's rulings on the research's open questions, under the owner's rul
 - **Consumers:** BC-18 (the block ops) and BC-20 (policy status); `internal/authz`'s public-bucket checks.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 120 lines.
 
+### Task S4: fakerados refuses an unregistered class method at op setup
+
+- **Layer:** emulator. **Files:** modify `internal/testutil/fakerados/cluster.go`, `steps.go` and `cls_rgw.go`, and the specs that register the rgw class. **Cluster:** no.
+- **Why:** S1's review found that the fake checks only an op's class before its steps run, and refuses an unregistered method only when that method's own step runs. The OSD refuses the whole op first. `PrimaryLogPG::do_op` calls `maybe_init_op_info` ([PrimaryLogPG.cc:2008](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L2008), [PrimaryLogPG.cc:2051](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L2051)), and `OpInfo::set_from_op` answers EOPNOTSUPP for a method its class does not register ([osd_op_util.cc:189-196](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L189-L196), [osd_op_util.cc:189-196](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L189-L196)). That happens before the object is looked up and before any step runs, whatever the call's position or `FailOK` flag. The gap predates S1 and applies to every emulated class.
+- **Produces:**
+  - `(*Cluster).RegisterClassMethods(name string, fn ClassFunc, methods, writes []string)`; `RegisterClass` keeps today's behaviour, every name reaching `fn`;
+  - `fakerados.RGWMethods`, every name the merged rgw tables hold, sorted, derived as `RGWWriteMethods` is.
+- **Behaviour:**
+  1. An op calling a method that its class registered through `RegisterClassMethods` without listing it fails with EOPNOTSUPP before any step runs, and changes nothing.
+  2. A class registered through `RegisterClass` behaves as today.
+  3. Every registration of the rgw class, including the specs' wrapping registrations, lists `RGWMethods` and `RGWWriteMethods`. A wrapper keeps the class's method set.
+- **Specs:**
+  - a table over the four shapes the review probed, each answering EOPNOTSUPP: a read op of the call alone on a missing object; a write op of the call alone on a missing object; a read op whose earlier `CmpXattr` fails; and `WriteFull` then the call flagged `FailOK` on a stored object, whose data stays unchanged;
+  - a `RegisterClass` class still reaches its function for any name;
+  - `RGWMethods` holds exactly the merged tables' names.
+- **Consumers:** WP-17's otp class registers its method set from the start.
+- **Depends on:** S1. **PR:** one. **Brief:** about 70 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, and S4 once S1 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T unit starts at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
