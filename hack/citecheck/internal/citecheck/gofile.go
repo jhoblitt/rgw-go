@@ -33,7 +33,9 @@ type goResult struct {
 // link its plain citation resolves to. When marked, the [S] or [T] at mark
 // that gave the citation its ref, and the blanks after it, go with it, lead
 // being what else stood between them, a "(" or nothing, unless one of group,
-// the citations the marker gives a ref, is not rewritten.
+// the citations the marker gives a ref, is not rewritten. When named, the
+// file's name or the directories at nameAt, which a blank or a line break
+// alone splits from the citation and which the link names too, go with it.
 type textEdit struct {
 	start, end int
 	text       string
@@ -42,6 +44,8 @@ type textEdit struct {
 	mark       int
 	lead       string
 	group      []*goItem
+	named      bool
+	nameAt     int
 }
 
 // withMarker returns the edit that also drops its marker, when it has one.
@@ -50,6 +54,35 @@ func (e textEdit) withMarker() textEdit {
 		e.start, e.text = e.mark, e.lead+e.text
 	}
 	return e
+}
+
+// withName returns the edit that also drops the name before it, when it has
+// one.
+func (e textEdit) withName() textEdit {
+	if e.named {
+		e.start = e.nameAt
+	}
+	return e
+}
+
+// nameBefore returns where the name that a blank or a line break alone
+// splits from the plain citation ps.items[ii] starts, now that it resolves to
+// its link, and whether the link names it too, so that it goes with the
+// citation: the directories a file's citation continues from the line before,
+// or the file named right before a continuation.
+func nameBefore(ps *paraScan, ii int) (int, bool) {
+	it := ps.items[ii]
+	switch {
+	case it.dir != "":
+		return it.dirAt, strings.HasSuffix("/"+it.path, "/"+it.dir+it.name)
+	case it.kind != contItem || it.marked || ii == 0:
+		return 0, false
+	}
+	o := ps.items[ii-1]
+	if o.kind != mentionItem || strings.TrimSpace(ps.para.text[o.end:it.start]) != "" {
+		return 0, false
+	}
+	return o.start, it.path == o.name || strings.HasSuffix(it.path, "/"+o.name)
 }
 
 // markKey names the marker at a norm offset of a paragraph.
@@ -116,7 +149,9 @@ func checkGo(ctx context.Context, c *Checker, m mode, name string, src []byte) (
 					if _, ok := edits[ps.para]; !ok {
 						touched = append(touched, ps.para)
 					}
-					edits[ps.para] = append(edits[ps.para], textEdit{start: it.start, end: it.end, text: it.url, item: it})
+					te := textEdit{start: it.start, end: it.end, text: it.url, item: it}
+					te.nameAt, te.named = nameBefore(ps, ii)
+					edits[ps.para] = append(edits[ps.para], te)
 				}
 			}
 		}
@@ -308,7 +343,7 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 		if wrap {
 			marked := make([]textEdit, len(edits[p]))
 			for i, te := range edits[p] {
-				marked[i] = te.withMarker()
+				marked[i] = te.withName().withMarker()
 			}
 			if e, ok := rewrapped(src, p, marked); ok {
 				es = append(es, e)
@@ -326,9 +361,11 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 // inPlace returns the edits that write each paragraph's links where its
 // citations stand, each with the marker that gave it its ref when the marker
 // is on its line and none of the citations the marker governs is refused,
-// and records in refused why each edit it cannot make is refused: one
-// refused already, or, by broken's reason, one that runs across a line
-// break.
+// and with the name before it that goes with it: on its line, in the same
+// edit, and ending the line before, by an edit of its own that drops it and
+// the blanks before it, unless nothing else is on that line. It records in
+// refused why each edit it cannot make is refused: one refused already, or,
+// by broken's reason, one that runs across a line break.
 func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused map[*goItem]string,
 	broken func(*goItem) string,
 ) []edit {
@@ -347,12 +384,43 @@ func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused ma
 				!slices.ContainsFunc(te.group, func(it *goItem) bool { _, no := refused[it]; return no }) {
 				te = m
 			}
+			if te.named {
+				if j := p.lineAt(te.nameAt); j == p.lineAt(te.start) {
+					te = te.withName()
+				} else if e, paren, ok := dropName(p, te.nameAt); ok {
+					es = append(es, e)
+					if paren {
+						te.text = "(" + te.text
+					}
+				}
+			}
 			i := p.lineAt(te.start)
 			s := p.lines[i].start + te.start - p.at[i]
 			es = append(es, edit{start: s, end: s + te.end - te.start, text: te.text})
 		}
 	}
 	return es
+}
+
+// dropName returns the edit that drops the name at the offset at in a
+// paragraph's text, which ends its line, with the blanks before it and a "("
+// right before it, which paren reports, for the link to open instead; and
+// false when nothing but blanks comes before them on its line, which dropping
+// them would leave empty.
+func dropName(p *commentPara, at int) (e edit, paren, ok bool) {
+	j := p.lineAt(at)
+	s := at
+	if s > p.at[j] && p.text[s-1] == '(' {
+		s, paren = s-1, true
+	}
+	for s > p.at[j] && p.text[s-1] == ' ' {
+		s--
+	}
+	if s == p.at[j] {
+		return edit{}, false, false
+	}
+	l := p.lines[j]
+	return edit{start: l.start + s - p.at[j], end: l.end, text: ""}, paren, true
 }
 
 // rewrapped returns the edit that makes a paragraph's edits and rewraps it

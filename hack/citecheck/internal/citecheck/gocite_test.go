@@ -351,6 +351,15 @@ var _ = Describe("Go comments", func() {
 					"// (rgw_gofix.cc:4-11, :13-28, at v19.2.6), each returning r.\nfunc prepare() {}\n",
 				"package fix\n\n// prepare and complete are, in order, the fixture's two functions\n// ("+prepareS+",\n// "+
 					completeS+", at v19.2.6),\n// each returning r.\nfunc prepare() {}\n"),
+			Entry("the file named before a continuation, a line break between them, dropped with it",
+				"package fix\n\n// prepare is in the fixture's (rgw_gofix.cc\n// :4-11 at v19.2.6), as RGWGoFix::prepare.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare is in the fixture's\n// ("+prepareS+" at v19.2.6),\n// as RGWGoFix::prepare.\nfunc prepare() {}\n"),
+			Entry("the directories that end the line before a file's citation, dropped with it",
+				"package fix\n\n// prepare opens the pool (src/rgw/\n// rgw_gofix.cc:4-11 at v19.2.6), as radosgw.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens the pool\n// ("+prepareS+" at v19.2.6),\n// as radosgw.\nfunc prepare() {}\n"),
+			Entry("the directories before a file's citation kept, when the link's path does not end in them",
+				"package fix\n\n// prepare reads docs/\n// rgw_gofix.cc:4-11 at v19.2.6 first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare reads docs/\n// "+prepareS+" at v19.2.6\n// first.\nfunc prepare() {}\n"),
 			Entry("an indented comment, its prefix kept",
 				"package fix\n\nfunc prepare() {\n\t// open_bucket_index_pool first (rgw_gofix.cc:6 at v19.2.6), as\n"+
 					"\t// radosgw does.\n}\n",
@@ -378,6 +387,24 @@ var _ = Describe("Go comments", func() {
 			Entry("in a paragraph whose lines hold two blanks running",
 				"package fix\n\n// prepare opens.  Then it\n// returns (rgw_gofix.cc:6 at v19.2.6).\nfunc prepare() {}\n",
 				"package fix\n\n// prepare opens.  Then it\n// returns ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6).\n"+
+					"func prepare() {}\n"),
+			Entry("the file named before a continuation, ending the line before, dropped with the blanks before it",
+				"package fix\n\n// prepare opens.  Then the pool in rgw_gofix.cc\n// :6 at v19.2.6 opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool in\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 opens.\n"+
+					"func prepare() {}\n"),
+			Entry(`the "(" before the file named before a continuation moved onto the link's line`,
+				"package fix\n\n// prepare opens.  Then the pool (rgw_gofix.cc\n// :6 at v19.2.6) opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool\n// ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6) opens.\n"+
+					"func prepare() {}\n"),
+			Entry("the name of another file than the link's kept before the continuation it links",
+				"package fix\n\n// prepare opens.  Then the pool (rgw_gofix.cc:4-11 at v19.2.6) calls\n"+
+					"// open_bucket_index_pool after rgw_side.cc\n// :6 at v19.2.6 first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool ("+prepareS+" at v19.2.6) calls\n"+
+					"// open_bucket_index_pool after rgw_side.cc\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 first.\n"+
+					"func prepare() {}\n"),
+			Entry("the file named before a continuation kept, alone on the line before",
+				"package fix\n\n// prepare opens.  Then\n// rgw_gofix.cc\n// :6 at v19.2.6 opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then\n// rgw_gofix.cc\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 opens.\n"+
 					"func prepare() {}\n"),
 		)
 
