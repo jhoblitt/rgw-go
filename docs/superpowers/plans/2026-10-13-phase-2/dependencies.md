@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 461e57e. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at a2018dc. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -12,7 +12,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 
 ```mermaid
 flowchart LR
-  u_S["Shared<br/>3 tasks"]
+  u_S["Shared<br/>4 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
@@ -25,7 +25,7 @@ flowchart LR
   u_S -->|2| u_L
   u_S -->|3| u_C
   u_S -->|11| u_B
-  u_S -->|1| u_WP
+  u_S -->|3| u_WP
   u_V -->|9| u_L
   u_V -->|8| u_C
   u_V -->|1| u_B
@@ -53,14 +53,18 @@ flowchart LR
   t_S1["S1"]
   t_S2["S2"]
   t_S3["S3"]
+  t_S4["S4"]
+  t_S1 --> t_S4
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
+  click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
 ```
 
 - [S1](00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables): fakerados's rgw class as method tables
 - [S2](00-index.md#task-s2-route-sets-per-feature-and-the-env-slots): route sets per feature and the Env slots
 - [S3](00-index.md#task-s3-one-aws-correct-ispublic): one AWS-correct IsPublic
+- [S4](00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup): fakerados refuses an unregistered class method at op setup
 
 ### F: floor 19.2.7
 
@@ -757,7 +761,9 @@ flowchart LR
   t_WP_20["WP-20"]
   t_WP_21["WP-21"]
   t_WP_24["WP-24"]
+  t_S1["S1"]:::ext
   t_S2["S2"]:::ext
+  t_S4["S4"]:::ext
   t_V6["V6"]:::ext
   t_V11["V11"]:::ext
   t_V14a["V14a"]:::ext
@@ -803,6 +809,8 @@ flowchart LR
   t_WP_10 --> t_WP_15
   t_WP_11 --> t_WP_15
   t_WP_13 --> t_WP_15
+  t_S1 --> t_WP_17
+  t_S4 --> t_WP_17
   t_WP_16 --> t_WP_17
   t_WP_16 --> t_WP_19
   t_WP_17 --> t_WP_19
@@ -834,7 +842,9 @@ flowchart LR
   click t_WP_20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-20-object-layout" "WP-20: object layout"
   click t_WP_21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-21-get-layout" "WP-21: GET `?layout`"
   click t_WP_24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-24-layout-and-otp-gate" "WP-24: `?layout` and otp gate"
+  click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
+  click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
   click t_V6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v6-driver-reads-follow-the-olh-attrs-on-a-version" "V6: driver, reads follow the OLH; attrs on a version"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
   click t_V14a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v14a-op-and-s3-versioned-reads" "V14a: op and s3, versioned reads"
