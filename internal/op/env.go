@@ -21,6 +21,9 @@ type Env struct {
 	Stats       StatsStore
 	Usage       UsageLogger
 	Metadata    MetadataStore
+	MFA         MFAVerifier
+	Lifecycle   LifecycleStore
+	Layout      LayoutStore
 	Authz       Authorizer
 	Conf        *cephconf.Options
 	Metrics     Metrics
