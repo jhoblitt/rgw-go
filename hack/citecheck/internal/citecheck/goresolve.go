@@ -25,11 +25,15 @@ var (
 	// and the file when it names one.
 	reHeader = regexp.MustCompile(`(?i)\ba bare (?:(` + goPath + `) )?line(?: number)?s?(?: below)? (?:is|are|being) ` +
 		`(?:(` + goPath + `)'s at (` + tagForm + `)|(` + tagForm + `)'s(?: (` + goPath + `))?)`)
-	reIdent   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{2,}`)
-	reSpan    = regexp.MustCompile("`[^`]+`")
-	reCamel   = regexp.MustCompile(`[a-z][A-Z]`)
-	reAcronym = regexp.MustCompile(`^[A-Z]{2,}[a-z]`)
-	reNumber  = regexp.MustCompile(`^(?:v\d+|\d+)$`)
+	// reCitedHeader is the other wording of a header convention, which names
+	// the file and the tag the lines its comment goes on to cite are at:
+	// "cited in rgw_op.cc at v19.2.6 unless noted".
+	reCitedHeader = regexp.MustCompile(`(?i)\bcited in (` + goPath + `) at (` + tagForm + `),? unless (?:noted|stated)\b`)
+	reIdent       = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{2,}`)
+	reSpan        = regexp.MustCompile("`[^`]+`")
+	reCamel       = regexp.MustCompile(`[a-z][A-Z]`)
+	reAcronym     = regexp.MustCompile(`^[A-Z]{2,}[a-z]`)
+	reNumber      = regexp.MustCompile(`^(?:v\d+|\d+)$`)
 )
 
 // markTags are the releases the [S] and [T] markers name, at which a
@@ -122,6 +126,11 @@ func headersIn(ps *paraScan) []header {
 		}
 		hs = append(hs, h)
 	}
+	for _, m := range reCitedHeader.FindAllStringSubmatchIndex(ps.masked, -1) {
+		name := ps.masked[m[2]:m[3]]
+		hs = append(hs, header{off: ps.para.offset(m[0]), tag: ps.masked[m[4]:m[5]], named: name, names: []string{name}})
+	}
+	slices.SortFunc(hs, func(a, b header) int { return a.off - b.off })
 	return hs
 }
 

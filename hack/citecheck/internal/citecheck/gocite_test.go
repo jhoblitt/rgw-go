@@ -101,6 +101,10 @@ var _ = Describe("Go comments", func() {
 				"// A bare line number is rgw_gofix.cc's at v19.2.6.\n\n// prepare is RGWGoFix::prepare (:4-11).\n", prepareS),
 			Entry("a header convention naming a file's bare lines",
 				"// A bare rgw_gofix.cc line is v19.2.6's.\n\n// prepare is RGWGoFix::prepare (rgw_gofix.cc:4-11).\n", prepareS),
+			Entry(`a header convention saying a comment's citations are "cited in <file> at <tag> unless noted"`,
+				"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\nfunc cases() {\n\t// prepare is RGWGoFix::prepare\n"+
+					"\t// (:4-11), and complete RGWGoFix::complete (:23-38 at v20.2.4).\n\tprepare()\n}\n",
+				prepareS, completeT),
 			Entry(`a header convention, past an "in main" after it, which names no branch`,
 				"// A bare rgw_gofix.cc line is v19.2.6's.\n\n// prepare is RGWGoFix::prepare (rgw_gofix.cc:4-11 in main).\n", prepareS),
 			Entry("a header convention naming the tag, the file its paragraph names",
@@ -245,6 +249,10 @@ var _ = Describe("Go comments", func() {
 		Entry(`a continuation after another citation's own "at <tag>"`,
 			"// prepare ("+prepareS+" at v19.2.6, :14-21).\n", 3, ":14-21",
 			`no ref: no "at <tag>" follows it, no [S] or [T] marks it, and no comment above says what a bare line number means`),
+		Entry(`a continuation under "cited in <file> at <tag>" with no "unless noted", which states no header convention`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6.\nfunc cases() {\n\t// prepare (:4-11).\n\tprepare()\n}\n", 5, ":4-11",
+			"its file, rgw_gofix.cc, is named only in a comment before its own, which --fix does not read a continuation's "+
+				"file from: link it by hand"),
 		Entry(`"at its head <commit>" after it, which a header convention's tag does not override`,
 			"// A bare line number below is v19.2.6's.\n\n// as the fix does (rgw_gofix.cc:4-11 at its head 2c1db8239cc).\n", 5,
 			"rgw_gofix.cc:4-11", "no ref: it is cited at 2c1db8239cc, which is no tag: link it by hand"),
@@ -258,6 +266,14 @@ var _ = Describe("Go comments", func() {
 			"// A bare line number below is v19.2.6's.\n\n// The pool opens at rgw_gofix.cc:6's call.\n", 5, "rgw_gofix.cc:6",
 			`godoc would link the "'s" after it as part of the URL: reword it so that a blank, or a "." or "," that `+
 				`ends the clause, follows the citation`),
+		Entry(`a "cited in <file> at <tag> unless noted" header, for another file's citation`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\n\n// The side is rgw_side.cc:2.\n", 5, "rgw_side.cc:2",
+			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
+				`rgw_side.cc's: write "at <tag>" after it`),
+		Entry(`a "cited in <file> at <tag> unless noted" header, for another file's continuation`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\n\n// The side is rgw_side.cc\n// (:2).\n", 6, ":2",
+			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
+				`rgw_side.cc's: write "at <tag>" after it`),
 		Entry("a continuation whose nearest file is too short",
 			"// prepare ("+prepareS+") and write_meta (:20-30 at v19.2.6).\n", 3, ":20-30",
 			"line 30 is past the end of src/rgw/rgw_gofix.cc, which has 28 lines at v19.2.6"),

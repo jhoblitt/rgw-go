@@ -351,6 +351,7 @@
 //	A bare line number below is v19.2.6's rgw_op.cc.
 //	A bare line number is rgw_op.cc's at v19.2.6.
 //	A bare rgw_op.cc line is v19.2.6's.
+//	Each case is cited in rgw_op.cc at v19.2.6 unless noted.
 //
 // A citation is unresolved, left as it is and listed with why, when it is in a
 // code block, is a line reference in prose, or is a continuation whose file
