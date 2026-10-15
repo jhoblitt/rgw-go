@@ -75,11 +75,11 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // (refuseEncryption); x-amz-tagging that set_from_string refuses is
 // InvalidArgument, as radosgw answers any such refusal on a PUT (:2626-2637,
 // [T] :2787-2798); the object-lock headers' values are checked
-// (objectLockHeaders); a Content-MD5 that ceph_unarmor does not decode to 16
-// bytes is InvalidDigest (rgw_op.cc:4184-4198 at v19.2.6, :4393-4407 at
-// v20.2.4); and the attrs are requestAttrs'. radosgw checks the last two
-// after authorizing, and the attrs once the body is stored
-// (docs/exclusions.md).
+// (objectLockHeaders); a partNumber is read as for a part (partNumberArg); a
+// Content-MD5 that ceph_unarmor does not decode to 16 bytes is InvalidDigest
+// (rgw_op.cc:4184-4198 at v19.2.6, :4393-4407 at v20.2.4); and the attrs are
+// requestAttrs'. radosgw checks the last two after authorizing, and the
+// attrs once the body is stored (docs/exclusions.md).
 func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return op.ErrMissingContentLength
@@ -97,6 +97,9 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if err := objectLockHeaders(r, false); err != nil {
 		return err
 	}
+	if _, err := partNumberArg(r); err != nil {
+		return err
+	}
 	if v, ok := op.HeaderValue(r.Header, "Content-MD5"); ok {
 		sum, ok := cephUnarmor(rgwtext.CString(v))
 		if !ok || len(sum) != md5.Size {
@@ -107,6 +110,30 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	var err error
 	o.Attrs, err = requestAttrs(r, wr.generic, true)
 	return err
+}
+
+// partNumberArg is get_params' read of partNumber beside uploadId
+// (rgw_rest_s3.cc:2682-2694 at v19.2.7, :2835-2847 at v20.2.4), which every
+// request put_obj serves makes, a part or not. A value that is not empty is
+// strict_strtol's in base 10, read as the C string get_params passes it, and
+// one it refuses is InvalidArgument. An empty or absent one is
+// InvalidArgument beside an upload id that is not empty, and otherwise 0, no
+// part number. A number without an upload id is no part: RGWPutObj::execute
+// takes the request for a PutObject (rgw_op.cc:4214 at v19.2.7, :4423 at
+// v20.2.4) and reads the number only for a part.
+func partNumberArg(r *op.Request) (int, error) {
+	v := r.Query.Get("partNumber")
+	if v == "" {
+		if r.Query.Get("uploadId") != "" {
+			return 0, fmt.Errorf("%w: an upload id without a part number", op.ErrInvalidArgument)
+		}
+		return 0, nil
+	}
+	n, err := parseInt(rgwtext.CString(v))
+	if err != nil {
+		return 0, fmt.Errorf("%w: part number %q: %w", op.ErrInvalidArgument, v, err)
+	}
+	return n, nil
 }
 
 // putObjectChecks is the rest of get_params in its order, once the requester

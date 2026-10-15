@@ -269,6 +269,78 @@ var _ = Describe("put_obj", func() {
 			expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Legal-Hold", "ON"), 501, "NotImplemented")
 		})
 	})
+	// get_params reads partNumber on every put_obj request, a part or not
+	// (rgw_rest_s3.cc:2682-2694 at v19.2.7, :2835-2847 at v20.2.4), through
+	// strict_strtol (strtol.cc:42-78 at v19.2.7 and v20.2.4).
+	Describe("partNumber", func() {
+		DescribeTable("without an upload id, refuses one strict_strtol refuses as InvalidArgument and stores nothing",
+			func(ctx SpecContext, query string) {
+				expectError(w.send(w.alice, http.MethodPut, "/plain/k?"+query, "hello"), 400, "InvalidArgument")
+				Expect(w.stat(ctx, "k").Exists).To(BeFalse())
+			},
+			Entry("no digits", "partNumber=x"),
+			Entry("a byte after the digits", "partNumber=1x"),
+			Entry("a space after the digits", "partNumber=1%20"),
+			Entry("a sign alone", "partNumber=-"),
+			Entry("white space alone", "partNumber=%20%20"),
+			Entry("a hexadecimal number, read in base 10", "partNumber=0x1"),
+			Entry("one past int's largest", "partNumber=2147483648"),
+			Entry("one below int's smallest", "partNumber=-2147483649"),
+			Entry("an overflow of long long, ERANGE", "partNumber=99999999999999999999"),
+			Entry("an empty upload id, which is none", "uploadId=&partNumber=x"),
+		)
+		DescribeTable("without an upload id, stores a PutObject for one strict_strtol reads, or none",
+			func(ctx SpecContext, query string) {
+				rec := w.send(w.alice, http.MethodPut, "/plain/k?"+query, "hello")
+				Expect(rec.Code).To(Equal(200), rec.Body.String())
+				Expect(exactHeader(rec.Header(), "ETag")).To(Equal(`"` + md5Hex("hello") + `"`))
+				Expect(w.stat(ctx, "k").ETag).To(Equal(md5Hex("hello")))
+				Expect(w.uploads(ctx)).To(BeEmpty())
+			},
+			Entry("an empty value, which get_params skips", "partNumber="),
+			Entry("the bare argument", "partNumber"),
+			Entry("leading white space, which strtoll skips", "partNumber=%20%09%201"),
+			Entry("a plus sign", "partNumber=%2B1"),
+			Entry("a negative number", "partNumber=-1"),
+			Entry("int's largest", "partNumber=2147483647"),
+			Entry("int's smallest", "partNumber=-2147483648"),
+			Entry("a NUL, where the C string strict_strtol reads ends", "partNumber=1%00x"),
+			Entry("an empty upload id, which is none", "uploadId=&partNumber=1"),
+			Entry("an empty upload id without a part number, which is none", "uploadId="),
+			Entry("an empty upload id and an empty part number", "uploadId=&partNumber="),
+		)
+		DescribeTable("with an upload id, refuses an empty one or one strict_strtol refuses as InvalidArgument",
+			func(ctx SpecContext, value string) {
+				id := w.initUpload(w.alice, "/plain/k")
+				expectError(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber="+value, "hello"), 400, "InvalidArgument")
+				Expect(w.parts(ctx, "k", id)).To(BeEmpty())
+			},
+			Entry("no digits", "x"),
+			Entry("an empty value", ""),
+			Entry("a sign alone", "%2B"),
+			Entry("an overflow of long long, ERANGE", "99999999999999999999"),
+		)
+		DescribeTable("with an upload id, stores the part strict_strtol numbers",
+			func(ctx SpecContext, value string, want int) {
+				id := w.initUpload(w.alice, "/plain/k")
+				rec := w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber="+value, "hello")
+				Expect(rec.Code).To(Equal(200), rec.Body.String())
+				Expect(w.parts(ctx, "k", id)).To(ConsistOf(HaveField("Number", want)))
+				Expect(w.stat(ctx, "k").Exists).To(BeFalse())
+			},
+			Entry("leading white space", "%20%201", 1),
+			Entry("a plus sign", "%2B2", 2),
+		)
+		It("is refused before the permission check, as get_params runs in init_processing", func(ctx SpecContext) {
+			expectError(w.send(w.bob, http.MethodPut, "/plain/k?partNumber=x", "hello"), 400, "InvalidArgument")
+			expectError(w.send(w.bob, http.MethodPut, "/plain/k?partNumber=1", "hello"), 403, "AccessDenied")
+			Expect(w.stat(ctx, "k").Exists).To(BeFalse())
+		})
+		It("is read after the length and before Content-MD5, which execute reads", func() {
+			expectError(w.send(w.alice, http.MethodPut, "/plain/k?partNumber=x", ""), 411, "MissingContentLength")
+			expectError(w.send(w.alice, http.MethodPut, "/plain/k?partNumber=x", "hello", "Content-MD5", "nope"), 400, "InvalidArgument")
+		})
+	})
 	DescribeTable("refuses a write that would be encrypted with NotImplemented, storing nothing",
 		func(ctx SpecContext, target string, hdr ...string) {
 			expectError(w.send(w.alice, http.MethodPut, target, "x", hdr...), 501, "NotImplemented")
