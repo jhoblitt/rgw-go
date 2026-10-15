@@ -93,6 +93,36 @@ Found in CL2's work (its report's concern 2), and numbered here before CL2 merge
      ceph paths at each pinned ref) and pins that choice with a spec.
 - **PR:** the tool, then the sweep with the owner's LGTM, as CL2's. **Depends on:** CL2, CL3.
 
+### Task CL6: hack/citecheck, an existing link's lines hold what its text names
+
+Found in CL5's work (its report's second round), and numbered here before CL5 merged (PP-12).
+
+- **Layer:** hack, docs. **Cluster:** no.
+- **Behaviour:**
+  1. citecheck checks a link's form, and that its file and lines exist at its ref, but not that the
+     lines hold what the citation is about. CL5's by-hand reads found two wrong links among the
+     existing ones:
+     - phase 1's P-multipart.md pins delete_obj's `index_op.cancel` to
+       [rgw_rados.cc:6723](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6723) at v19.2.6. That line is
+       `index_op.complete` in `RGWRados::set_attrs`. The cancel is at
+       [rgw_rados.cc:5969](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5969) at v19.2.6 and at
+       [rgw_rados.cc:6723](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6723) at v20.2.4.
+     - Z-authorization.md:45's `rgw_op.cc [T]:424` link lands on a parameter line at v20.2.4
+       ([rgw_op.cc:424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L424)).
+  2. citecheck applies CL5's content check to every existing Ceph link in tracked Markdown and to
+     every raw URL in Go comments. An identifier named beside the link, whether a whole code token
+     or a whole literal, must appear in the linked lines. A link with nothing beside it that counts
+     is listed, not failed.
+  3. The task reports the counts, reads every failing link against the source, and fixes the wrong
+     ones by hand in their own commit:
+     - a link whose ref is right and whose lines are wrong moves to the right lines at the same ref
+       (CL-D3);
+     - one whose ref is wrong moves to the ref its text names.
+  4. Whether CI runs the content check is the task's call, and it states the reason: the check needs
+     a ceph clone, which CI's form check does not have.
+- **PR:** the tool, then the fixes. **Depends on:** CL5, its sweep included, since the fixes edit the
+  Markdown the sweep rewrites.
+
 ## Order
 
 | Wave | Tasks | Waits for |
@@ -100,3 +130,4 @@ Found in CL2's work (its report's concern 2), and numbered here before CL2 merge
 | 1 | CL1 | nothing |
 | 2, in parallel | CL2, CL3 | CL1 |
 | 3, in parallel | CL4, CL5 | CL3; CL4 also unit F's code tasks, CL5 also CL2 |
+| 4 | CL6 | CL5 and its sweep |
