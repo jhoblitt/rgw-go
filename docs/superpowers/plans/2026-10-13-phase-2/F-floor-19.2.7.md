@@ -627,31 +627,8 @@ Found by F13's adversarial review (Minor 5), and numbered here before F13 merged
 
 ### Task F16: s3, CreateBucket reads its object lock header from the renamed map
 
-Found by F15's work (its report's concern 4), and numbered here before F15 merged (PP-12).
-
-- **Layer:** s3. **Cluster:** no.
-- **Files:** modify internal/s3/bucket.go and its specs; F15's refused set and its pin spec;
-  docs/exclusions.md (F15's exclusion).
-- **Behaviour:**
-  1. radosgw's CreateBucket reads `x-amz-bucket-object-lock-enabled` from `x_meta_map`, so under any
-     prefix `init_meta_info` renames, and answers EINVAL for a value other than `true` or `false`
-     compared without case
-     ([rgw_rest_s3.cc:2542-2548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542-L2548),
-     [rgw_rest_s3.cc:2695](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695)). rgw-go reads the raw header alone
-     (internal/s3/bucket.go:116), so it ignores a signed `X-Goog-Bucket-Object-Lock-Enabled: true`
-     that radosgw honours.
-  2. rgw-go reads it from the renamed map on both releases, with radosgw's value check. SigV2's
-     string to sign uses that same map, so the name leaves F15's refused set, and F15's pin spec
-     counts the read as a renamed-map read.
-  3. Two forms of the header combine as `init_meta_info` combines them, joined by a comma
-     ([rgw_common.cc:445-450](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L445-L450)), so an `X-Amz-` and an `X-Goog-`
-     form together fail the value check, as radosgw's do.
-- **Specs:** the X-Goog- and X-Amz- forms each enable object lock; `TRUE` accepted; `yes` refused;
-  both forms together refused; SigV2 with the X-Goog- form accepted.
-- **s3-tests:** a SigV4 CreateBucket with a signed `X-Goog-Bucket-Object-Lock-Enabled: true` has an
-  object lock configuration afterwards, on both gateways.
-- **Exclusions:** F15's exclusion loses this case.
-- **Depends on:** F15. **PR:** its own. **Brief:** about 30 lines.
+Superseded by F18 (the owner, 2026-10-14). rgw-go no longer reproduces the renamed map, so CreateBucket
+keeps reading the `X-Amz-` header alone, as it does today.
 
 ### Task F17: auth, a SigV2 presigned request means the same wherever its header/query split falls
 
@@ -690,13 +667,74 @@ Found by F15's work (its report's concern 5), and numbered here before F15 merge
   stores that metadata, if s3-tests can presign SigV2 that way; otherwise the report says why not.
 - **Depends on:** F15. **PR:** its own. **Brief:** about 40 lines.
 
+### Task F18: auth, authz and s3, the S3 API reads X-Amz- headers only
+
+Decided by the owner on 2026-10-14, in place of F16: rgw-go does not reproduce radosgw's renaming of
+six other header prefixes onto `x-amz-`.
+
+- **Layer:** auth, authz, s3. **Cluster:** for the s3-tests run only.
+- **Files:** internal/auth (request.go, sigv2.go, sigv4.go, the verifier, their specs, the v2
+  vectors, rawdirectives_test.go), internal/authz/env.go and internal/s3/requestattrs.go, with their
+  specs; docs/exclusions.md; the "rgw-go:" lines of docs/ceph-upstream-bugs.md; F13's s3-test on
+  jhoblitt/ceph's `rgw-go-s3tests`.
+- **Behaviour:**
+  1. radosgw's `init_meta_info` files every header under `X-Amz-`, `X-Goog-`, `X-Dho-`, `X-Rgw-`,
+     `X-Object-`, `X-Container-` and `X-Account-` into `x_meta_map` under its `x-amz-` name
+     ([rgw_common.cc:413-464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464),
+     [rgw_common.cc:426-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477)). SigV2's string to sign, the stored
+     metadata and attrs, and the encryption settings read that map, while most directives read the
+     raw header. F13 and F15 closed the gaps this opens, by requiring signatures and by refusing
+     relabels.
+  2. Decision (the owner, 2026-10-14): rgw-go does not rename. On the S3 API a header under the six
+     other prefixes is an ordinary header, as on AWS. The prefixes serve GCS interop, DreamHost and
+     Swift's namespace, none of which rgw-go's S3 API offers, and the renaming is what makes a signed
+     directive movable.
+  3. rgw-go reads, signs and stores `X-Amz-` names alone:
+     - SigV2's amz lines name `x-amz-` headers only;
+     - SigV4's must-sign rule covers `x-amz-` alone, as radosgw's own check does;
+     - stored metadata and attrs come from `X-Amz-` headers only;
+     - the authorizer's encryption settings read `X-Amz-` only.
+
+     A header under the six prefixes is never read or stored, signed or not.
+  4. Nothing reads those headers any more, so F15's refusal, its refused set and its pin spec go,
+     as does F13's six-prefix rule with its `x-rgw-auth` exemption. A relabelled SigV2 request then
+     fails its signature with 403 SignatureDoesNotMatch, as on AWS, and an unsigned `X-Goog-Meta-*` is
+     ignored.
+  5. A Swift API, if one is added later, reads its own namespace (`X-Object-Meta-*` and the rest) by
+     name into the same stored attributes, as radosgw's Swift handlers already do for containers and
+     accounts ([rgw_rest_swift.cc:750-781](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_swift.cc#L750-L781)). This task builds none
+     of it.
+- **Specs:** each of the six prefixes:
+  - an unsigned header ignored under SigV4 and SigV2;
+  - a signed SigV2 relabel of the copy source, the ACL and the tagging failing its signature;
+  - `X-Goog-Meta-*` storing no metadata;
+  - `X-Amz-` behaviour unchanged, with F13's and F15's `X-Amz-` specs kept.
+- **Exclusions,** complete, as the owner asked:
+  - one entry, "The S3 API reads X-Amz- headers only", saying what radosgw does with the six
+    prefixes, what rgw-go does instead (ignores them: no metadata, attr, signature or directive),
+    and the cost: a client that relied on radosgw storing `X-Goog-Meta-*` loses that metadata;
+  - it replaces F13's "SigV4 refuses an unsigned header that radosgw renames to `x-amz-*`" and
+    F15's "SigV2 refuses a directive under another meta prefix";
+  - every other entry that describes the renaming as rgw-go's behaviour changes to match. Today
+    that is the SSE 501 entry and "Request headers stored as attrs". The task greps for the rest
+    (meta prefix, `x_meta_map`, `X-Goog-`, `init_meta_info`, `X-Rgw-`) and lists each entry it
+    changes in its report.
+- **Registry:** the "rgw-go:" lines of F13's and F15's entries say rgw-go does not rename.
+- **s3-tests:**
+  - F15's `test_sigv2_signed_copy_source_moved_to_xgoog` passes unchanged, with 403.
+  - F13's `test_sigv4_presigned_put_xgoog_meta_unsigned` asserts a refusal. It is revised to assert
+    the property instead, that the presigned PUT stores no metadata from the unsigned header.
+  - The next pin bump's known-differences note for that test follows.
+- **Depends on:** F17, since both change sigv2.go and the verifier. **PR:** its own. **Brief:**
+  about 50 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
 |---|---|---|
 | 1, in parallel | F1, F2, F10 | nothing |
 | 2 | F3 | F2 |
-| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F16, F17 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F16 and F17 after F15) |
+| 3, in parallel | F4, F5 with F6, F7, F8, F12, F13, F14, F15, F17, F18 | F2 and F3 (F5 and F6 only F2; F13 after F4; F14 nothing; F15 after F13; F17 after F15; F18 after F17; F16 superseded by F18) |
 | 4 | F9 | F8 |
 | cluster, one at a time | F11 | F1, F3, F4, F10; after F5 to F7 |
 | then | the deferred benchmark run (spec §9), then phase 2's S1 to S3 | every F task merged |
