@@ -17,10 +17,10 @@ import (
 // by tenant and name, which names the bucket's current instance, and that
 // instance, which holds the RGWBucketInfo and the bucket's attrs. The store
 // is RGWBucketCtl (driver/rados/rgw_bucket.cc) over RGWSI_Bucket_SObj
-// (services/svc_bucket_sobj.cc). A bare line number is v19.2.6's, and each
-// fact cited holds at v20.2.4 too. radosgw also logs each write and removal
-// of these objects in the metadata log, which it keeps only for multisite
-// (docs/exclusions.md, "Multisite").
+// (services/svc_bucket_sobj.cc). Each fact a v19.2.6 link cites holds at
+// v20.2.4 too. radosgw also logs each write and removal of these objects in
+// the metadata log, which it keeps only for multisite (docs/exclusions.md,
+// "Multisite").
 
 // epObj is a bucket's entry point object, named by get_entrypoint_meta_key
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket.cc#L9-L19 at both tags).
@@ -31,7 +31,8 @@ func (s *Store) epObj(tenant, name string) sysObj {
 // instanceObj is a bucket's instance object, named by get_bi_meta_key
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket.cc#L21-L24)
 // as the instance module turns a key into an oid
-// (svc_bucket_sobj.cc:88-98; v20.2.4 :28-39).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L88-L98 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L28-L39 at v20.2.4).
 func (s *Store) instanceObj(b meta.BucketID) sysObj {
 	return sysObj{pool: s.zone.Params.DomainRoot, oid: b.InstanceOID()}
 }

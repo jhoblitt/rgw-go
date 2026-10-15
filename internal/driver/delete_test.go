@@ -399,11 +399,12 @@ var _ = Describe("checkDiskState's multipart-part sweep", func() {
 	// seedMultipartHead writes head, then gives it an explicit manifest with
 	// one piece in the head and one in the multipart namespace, the shortest
 	// way to name a part head (get_implicit_location puts a part's first
-	// stripe there, rgw_obj_manifest.cc:236-239). The head's entry is left
-	// pending, as when the completion's complete did not land, and the
-	// part's entry sits where the part writer put it: on the shard the
-	// HEAD's name hashes to, accounted in its header. It returns the head's
-	// mtime.
+	// stripe there,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_manifest.cc#L236-L239).
+	// The head's entry is left pending, as when the completion's complete
+	// did not land, and the part's entry sits where the part writer put it:
+	// on the shard the HEAD's name hashes to, accounted in its header. It
+	// returns the head's mtime.
 	seedMultipartHead := func(ctx context.Context, head, part string) time.Time {
 		GinkgoHelper()
 		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: head}, bytes.NewReader(bytes.Repeat([]byte("h"), 1<<20)), op.PutParams{

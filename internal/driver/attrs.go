@@ -20,10 +20,9 @@ const restoreTemporary = 1
 
 // SetObjectAttrs is RGWRados::set_attrs
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6593-L6757 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7393-L7593 at v20.2.4;
-// a bare line number below is v19.2.6's) as RadosObject::set_obj_attrs calls
-// it with FLAG_LOG_OP, which modify_obj_attrs and delete_obj_attrs always
-// pass
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7393-L7593 at v20.2.4)
+// as RadosObject::set_obj_attrs calls it with FLAG_LOG_OP, which
+// modify_obj_attrs and delete_obj_attrs always pass
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2378-L2429 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2971-L3022 at v20.2.4).
 // st is the state the op's Init read, as radosgw's object context holds it;

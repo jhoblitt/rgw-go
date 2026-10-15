@@ -19,8 +19,9 @@ import (
 
 var _ = Describe("UserStore", func() {
 	// writeTag is generate_new_write_ver's tag: an underscore and 23
-	// characters of gen_rand_alphanumeric's table (rgw_common.h:1621-1628,
-	// random_string.cc:45-51).
+	// characters of gen_rand_alphanumeric's table
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1621-L1628,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L45-L51).
 	const writeTag = `^_[A-Za-z0-9_-]{23}$`
 	var (
 		c *fakerados.Cluster

@@ -28,8 +28,7 @@ import (
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3433-L3640 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3882-L4107
 // and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4;
-// a bare line number below is v19.2.6's).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4).
 
 // completeLockName is the cls_lock lock RGWCompleteMultipart takes on an
 // upload's meta object
@@ -79,7 +78,8 @@ func readMPOptions(conf *cephconf.Options) (mpOptions, error) {
 // The exclusive lock refuses a second holder whatever its cookie
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L201-L212).
 // radosgw's serializer never sets a cookie and locks under ""
-// (cls_lock_client.h:79; MPRadosSerializer,
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock_client.h#L79;
+// MPRadosSerializer,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.h#L848-L860 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.h#L905-L916 at v20.2.4),
 // which is safe there because it unlocks only a hold its lock's reply confirmed;
@@ -189,7 +189,8 @@ func (s *Store) unlockMeta(ctx context.Context, ref mpRef, cookie string) {
 // listPartsChunk is the page complete, cleanup_orphaned_parts and abort list
 // the parts by
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3046,
-// :3177, :3456).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3177,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3456).
 const listPartsChunk = 1000
 
 // listAllParts drains listPartsPage in pages of listPartsChunk. A page that
@@ -418,14 +419,19 @@ type metaDelete struct {
 	// RGWCompleteMultipart lock this client holds under cookie, so the OSD
 	// fails it with EBUSY, however late it runs, once that hold lapsed or
 	// was broken, whoever holds the lock since: a cls_lock locker is the
-	// request's entity and its cookie (cls_lock.cc:174-178 and :507-519 at
+	// request's entity and its cookie
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L174-L178
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L507-L519 at
 	// v19.2.6 and v20.2.4), so a completion of this gateway, the same
 	// entity under a cookie of its own, does not pass for an abort's hold
 	// under the abort's; a cancel retires none of removeObjs, where
-	// delete_obj's cancel retires them (:5969) from an upload that stands;
-	// and a meta object already gone comes back as radosclient.ErrNotFound
-	// without the quota cache change, as delete_obj returns -ENOENT before
-	// it (:5979-5984).
+	// delete_obj's cancel retires them
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5969)
+	// from an upload that stands; and a meta object already gone comes back
+	// as radosclient.ErrNotFound without the quota cache change, as
+	// delete_obj returns -ENOENT before it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5979-L5984).
 	abort bool
 	// cookie is the abort's lock cookie, which the assertion names.
 	cookie string
@@ -450,7 +456,8 @@ type metaDelete struct {
 // the quota cache; ETIMEDOUT leaves the pending entry for a listing to
 // reconcile and answers ErrRequestTimedOut, as does a reply not in by
 // d.deadline; anything else cancels with d.removeObjs, as radosgw does
-// (:5969), or without them for an abort (metaDelete.abort). ECANCELED, a part
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5969),
+// or without them for an abort (metaDelete.abort). ECANCELED, a part
 // registered since the version was read, comes back as radosclient.ErrCanceled
 // for the caller's retry.
 func (s *Store) deleteMeta(ctx context.Context, d metaDelete) error {

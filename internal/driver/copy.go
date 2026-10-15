@@ -24,8 +24,8 @@ import (
 
 // A copy is RGWRados::copy_obj's local branch (driver/rados/rgw_rados.cc
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4667-L5031 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L4916-L5291 at v20.2.4;
-// a bare line number below is v19.2.6's) with copy_obj_data
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L4916-L5291 at v20.2.4)
+// with copy_obj_data
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5034-L5115,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386).
@@ -43,10 +43,11 @@ var (
 // refcount reference under the copy's tag, the head's own bytes are copied,
 // and a new head names the source's tails; a copy onto itself rewrites the
 // head alone and keeps its tails. Anything else streams the source's stored
-// bytes into a new object (:4847-4879). src is the state the op read with
-// PrefetchObject, as radosgw's object context holds it from
-// read_obj_policy, so the head's bytes come from its Head without a second
-// read.
+// bytes into a new object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4879).
+// src is the state the op read with PrefetchObject, as radosgw's object
+// context holds it from read_obj_policy, so the head's bytes come from its
+// Head without a second read.
 //
 // A copy that fails after taking references drops them again, as done_ret
 // does
@@ -143,10 +144,15 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // (docs/ceph-upstream-bugs.md).
 //
 // An encrypted source is NotImplemented on both releases. A Squid radosgw
-// refuses it (:4755-4763); a Tentacle one decrypts it and encrypts the copy
-// as the request asks (v20.2.4 rgw_op.cc:5793-5805 and :5813-5819), which
-// needs decryption rgw-go does not implement, and copying its ciphertext
-// under a head without its crypt attrs would make it unreadable.
+// refuses it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4755-L4763);
+// a Tentacle one decrypts it and encrypts the copy as the request asks
+// (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5793-L5805
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5813-L5819),
+// which needs decryption rgw-go does not implement, and copying its
+// ciphertext under a head without its crypt attrs would make it unreadable.
 func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[string][]byte, replace bool) (map[string][]byte, error) {
 	if _, ok := src.Attrs[meta.AttrCryptMode]; ok {
 		return nil, fmt.Errorf("%w: copy source %s is encrypted", op.ErrNotImplemented, objName(src))
@@ -290,8 +296,9 @@ func cloneManifest(m *meta.Manifest) meta.Manifest {
 // headData is copy_first's read of the source head's bytes
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4959-L4965):
 // Read::read serves them from the prefetch and reads only what it lacks
-// (:7283-7312), and they are the stored bytes, compressed where the source
-// is, as are the tails the copy shares.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7283-L7312),
+// and they are the stored bytes, compressed where the source is, as are
+// the tails the copy shares.
 func (s *Store) headData(ctx context.Context, src *op.ObjectState) ([]byte, error) {
 	n := src.Manifest.HeadSize
 	if uint64(len(src.Head)) >= n {

@@ -109,9 +109,10 @@ func (s *Store) ListRealms(ctx context.Context) (defaultID string, names []strin
 	return defaultID, names, nil
 }
 
-// GetPeriod implements op.RealmStore as RGWPeriod::init (rgw_period.cc:14-60
-// at v19.2.6 and v20.2.4): with no period id, the current period of the
-// realm initRealm resolves, under that realm's id; with no epoch,
+// GetPeriod implements op.RealmStore as RGWPeriod::init
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_period.cc#L14-L60 at
+// v19.2.6 and v20.2.4): with no period id, the current period of the realm
+// initRealm resolves, under that realm's id; with no epoch,
 // periods.<id>.latest_epoch's; then the period object, named as
 // meta.RealmPeriodOID names it.
 func (s *Store) GetPeriod(ctx context.Context, realmID, periodID string, epoch uint32) (meta.Period, error) {

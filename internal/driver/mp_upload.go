@@ -10,13 +10,15 @@ import (
 
 // uploadIDLen is the random part of an upload id: gen_rand_alphanumeric
 // given 32 bytes of buffer writes 31 characters and the NUL
-// (rgw_sal_rados.cc:3278-3283; v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3278-L3283;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4122-L4127;
 // common/random_string.cc).
 const uploadIDLen = 31
 
 // CreateUpload implements op.MultipartStore as RadosMultipartUpload::init
-// (rgw_sal_rados.cc:3270-3327; v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3270-L3327;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4114-L4173):
 // a v2 upload id, and the meta object written as write_meta writes a head,
 // but never set atomic and with log_op false: in the data-extra pool,

@@ -12,7 +12,8 @@ import (
 )
 
 // lcHashPrime is HASH_PRIME, the most lifecycle shards radosgw uses
-// (rgw_lc.h:27; RGWLC::initialize caps rgw_lc_max_objs at it,
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.h#L27;
+// RGWLC::initialize caps rgw_lc_max_objs at it,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_lc.cc#L237-L239, at v19.2.6
 // and v20.2.4).
 const lcHashPrime = 7877

@@ -14,8 +14,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// A multipart upload is RadosMultipartUpload (driver/rados/rgw_sal_rados.cc;
-// a bare line number below is v19.2.6's, with v20.2.4's where it differs).
+// A multipart upload is RadosMultipartUpload (driver/rados/rgw_sal_rados.cc).
 
 // mpRef locates one object of an upload in RADOS: the meta object in the
 // bucket placement's data-extra pool, or a part head or stripe in its tail
@@ -109,7 +108,8 @@ type metaState struct {
 // cls_version_read, getxattrs, stat2 and a read of rgw_max_chunk_size at 0
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8827-L8870),
 // whose bytes decode as the multipart_upload_info. A missing object or an
-// empty one is NoSuchUpload (:3673-3676,
+// empty one is NoSuchUpload
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3673-L3676,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3700-L3702);
 // an info that does not decode is radosgw's -EIO
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3706-L3711),

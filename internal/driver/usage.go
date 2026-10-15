@@ -26,8 +26,8 @@ const usageObjPrefix = "usage."
 
 // usageFinalFlushTimeout is how long the usage worker goes on flushing once
 // its context has ended: radosgw's ~UsageLogger waits for a flush without
-// bound (rgw_log.cc:128-133), which would hold rgw-go's shutdown on a stuck
-// write (docs/exclusions.md).
+// bound (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L128-L133),
+// which would hold rgw-go's shutdown on a stuck write (docs/exclusions.md).
 const usageFinalFlushTimeout = 10 * time.Second
 
 // ticker is the part of a time.Ticker a worker uses, so that a spec can
@@ -82,7 +82,8 @@ type usageLogger struct {
 }
 
 // reset empties the log and puts its round timestamp at the start of now's
-// hour in loc, as UsageLogger's constructor does (rgw_log.cc:120-126).
+// hour in loc, as UsageLogger's constructor does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L120-L126).
 func (u *usageLogger) reset(now time.Time, loc *time.Location) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -130,11 +131,12 @@ func (s *Store) usageOID(user string, index uint32) string {
 }
 
 // Log implements op.UsageLogger. It is UsageLogger::insert and insert_user
-// (rgw_log.cc:139-165): the entry is filed under its payer, or its owner when
-// it has none, and its bucket, and merged into that key's entry for the hour
-// the round timestamp starts. An entry filed under no user is kept, and
-// counted, until the flush skips it. Once more than
-// rgw_usage_log_flush_threshold entries are held, the caller flushes them.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L139-L165):
+// the entry is filed under its payer, or its owner when it has none, and its
+// bucket, and merged into that key's entry for the hour the round timestamp
+// starts. An entry filed under no user is kept, and counted, until the
+// flush skips it. Once more than rgw_usage_log_flush_threshold entries are
+// held, the caller flushes them.
 // It does nothing unless rgw_enable_usage_log is set.
 func (s *Store) Log(ctx context.Context, e op.UsageEntry) {
 	if !s.opts.usageLogEnabled {
@@ -201,10 +203,12 @@ func addUsage(a, b rgwcls.UsageData) rgwcls.UsageData {
 	}
 }
 
-// flushUsage is UsageLogger::flush (rgw_log.cc:167-175): it takes every entry
-// out of the log and writes them. Entries logged meanwhile wait for the next
-// flush, and a failed write loses the entries taken out, as radosgw's does.
-// It waits for a flush under way, unless ctx ends first.
+// flushUsage is UsageLogger::flush
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L167-L175):
+// it takes every entry out of the log and writes them. Entries logged
+// meanwhile wait for the next flush, and a failed write loses the entries
+// taken out, as radosgw's does. It waits for a flush under way, unless ctx
+// ends first.
 func (s *Store) flushUsage(ctx context.Context) error {
 	u := &s.usage
 	slot := u.flushSlot()
@@ -285,13 +289,16 @@ func (s *Store) logUsage(ctx context.Context, batches map[usageKey]usageBatch) e
 	return nil
 }
 
-// runUsageFlush is UsageLogger's timer (rgw_log.cc:105-117): it flushes on
-// every tick of rgw_usage_log_tick_interval, and once more as ctx ends, as
-// ~UsageLogger does (:128-133), returning that flush's failure. Its flushes
-// run on a context that outlives ctx by the final-flush timeout, so a tick
-// flush under way as ctx ends can finish its write; once the timeout has
-// passed, the flush under way and the last one give up, whether writing or
-// waiting for a threshold flush that holds the semaphore.
+// runUsageFlush is UsageLogger's timer
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L105-L117):
+// it flushes on every tick of rgw_usage_log_tick_interval, and once more as
+// ctx ends, as ~UsageLogger does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L128-L133),
+// returning that flush's failure. Its flushes run on a context that
+// outlives ctx by the final-flush timeout, so a tick flush under way as ctx
+// ends can finish its write; once the timeout has passed, the flush under
+// way and the last one give up, whether writing or waiting for a threshold
+// flush that holds the semaphore.
 func (s *Store) runUsageFlush(ctx context.Context) error {
 	t := s.newTicker(s.usage.tick)
 	defer t.Stop()

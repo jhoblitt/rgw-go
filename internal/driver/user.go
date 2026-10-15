@@ -21,7 +21,8 @@ import (
 // userObj is a user's info object in users.uid, named by the user id
 // (RGWSI_User_Module,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L41-L48;
-// v20.2.4 :112-113).
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L113-L114).
 func (s *Store) userObj(id meta.UserID) sysObj {
 	return sysObj{pool: s.zone.Params.UserUIDPool, oid: id.String()}
 }

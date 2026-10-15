@@ -172,7 +172,8 @@ func newWriter(ctx context.Context, s *Store, opts writeOptions) *writer {
 		body:        newBodyBudget(bodyBudgetSize(s.cluster, opts)),
 		rand:        randAlnum,
 	}
-	// RGWGC::initialize names the shards "gc.0" to "gc.<n-1>" (rgw_gc.cc:39-44).
+	// RGWGC::initialize names the shards "gc.0" to "gc.<n-1>"
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L39-L44).
 	for i := range opts.gcMaxObjs {
 		w.gcShards = append(w.gcShards, gc.ShardOID(int(i)))
 	}

@@ -16,11 +16,11 @@ import (
 )
 
 // A PUT streams its body as radosgw's AtomicObjectProcessor does
-// (driver/rados/rgw_putobj_processor.cc; a bare line number below is
-// v19.2.6's, whose processor v20.2.4 keeps): the first head chunk stays in
-// memory for the head write, and the rest goes to tail objects, stripe by
-// stripe and chunk by chunk, with at most rgw_put_obj_min_window_size bytes
-// of writes in flight.
+// (driver/rados/rgw_putobj_processor.cc; v20.2.4 keeps the processor the
+// v19.2.6 links below cite): the first head chunk stays in memory for the
+// head write, and the rest goes to tail objects, stripe by stripe and chunk
+// by chunk, with at most rgw_put_obj_min_window_size bytes of writes in
+// flight.
 
 // alignedSize is RGWRados::get_max_aligned_size
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L695-L708 at v19.2.6,
@@ -73,11 +73,12 @@ type layout struct {
 }
 
 // planPut resolves the pools and sizes for a PUT of key under storageClass
-// (rgw_putobj_processor.cc:268-341). The tail rule is the request's class
-// on the bucket's placement, as
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L268-L341).
+// The tail rule is the request's class on the bucket's placement, as
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L577-L578
 // builds s->dest_placement. The stripe is aligned to the head pool's
-// alignment, even when the tails live in another pool (:314-317).
+// alignment, even when the tails live in another pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L314-L317).
 func (s *Store) planPut(ctx context.Context, rec *op.BucketRecord, _ meta.ObjKey, storageClass string) (layout, error) {
 	bucket := rec.Info.Bucket
 	l := layout{headRule: rec.Info.PlacementRule}
@@ -399,8 +400,9 @@ func (t *tailWriter) readHead(r io.Reader, declared int64) (head []byte, done bo
 // issued only when data for it arrives, and no empty write is sent. A body
 // error is returned as it is, except io.ErrUnexpectedEOF, which is
 // ErrRequestTimeout; a body past maxSize is EntityTooLarge
-// (rgw_rest.cc:1096-1098 at v19.2.6, :1101-1103 at v20.2.4). declared is the
-// body's length, -1 when unknown.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1096-L1098 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1101-L1103 at v20.2.4).
+// declared is the body's length, -1 when unknown.
 //
 // With exclusiveFirst there is no head: the first stripe is read whole and
 // written by writeFirst before anything else is read, and the rest follows
@@ -429,12 +431,13 @@ func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64
 
 // consumeFirst is consume for a part: HeadObjectProcessor holds the first
 // stripe, a part's head chunk being the stripe size
-// (rgw_putobj_processor.cc:476-478 at v19.2.6, :510-512 at v20.2.4), until it
-// is whole or the body ends, then hands it to process_first_chunk. The
-// stripe takes its room in the put window and its share of the body budget
-// before it is read, and is read into a buffer sized as readHead sizes the
-// head, so a small part costs no whole stripe and no part holds more than the
-// window and one byte.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L476-L478 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L510-L512 at v20.2.4),
+// until it is whole or the body ends, then hands it to process_first_chunk.
+// The stripe takes its room in the put window and its share of the body
+// budget before it is read, and is read into a buffer sized as readHead sizes
+// the head, so a small part costs no whole stripe and no part holds more than
+// the window and one byte.
 func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int64) (uint64, error) {
 	window := t.s.w.opts.putWindow
 	limit := min(t.m.Rules[0].StripeMaxSize, window+1)

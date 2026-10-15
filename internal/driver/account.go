@@ -17,8 +17,8 @@ import (
 )
 
 // The account store is rgwrados::account (driver/rados/account.cc) and
-// rgwrados::users (driver/rados/users.cc). A bare line number is
-// account.cc's at v19.2.6, and each fact cited holds at v20.2.4 too.
+// rgwrados::users (driver/rados/users.cc). Each fact a v19.2.6 link
+// cites holds at v20.2.4 too.
 //
 // radosgw finds an account by name or email through a redirect object
 // holding the account's id (RGWUID). This store claims a write's name and
@@ -325,8 +325,9 @@ const claimTries = 3
 // a missing one is created exclusively under a fresh version
 // (write_redirect,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L148-L160).
-// One naming a user, whose ids the email index shares (:108-114), or
-// another account that holds what o indexes, read past the cache under
+// One naming a user, whose ids the email index shares
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L108-L114),
+// or another account that holds what o indexes, read past the cache under
 // its version, is ErrAccountAlreadyExists. One naming an account that is
 // gone or holds something else is stale and taken over: that account's
 // object is first written again unchanged under the version that showed
@@ -467,18 +468,20 @@ func redirectFailed(ctx context.Context, step, kind, id string, err error) {
 		slog.String("step", step), slog.String("redirect", kind), slog.String("account", id), slog.String("code", op.AsError(err).Code))
 }
 
-// RemoveAccount implements op.AccountStore as remove (:394-438), first
-// refusing an account that still has a role, a group, an OpenID Connect
-// provider or a topic, as rgw::account::remove does before it
-// (rgw_account.cc:366-456; accountResources). Then the account object
-// under rec's version, then its name and email redirects and its users
-// index, a failure of each logged and ignored. The redirects are read past
-// the metadata cache before the account object is removed, a failed read
-// refusing the removal, and each is then removed only when it named the
-// account, under the version read then: a create of the same id that
-// claims one meanwhile writes it again, so the removal leaves it. radosgw
-// removes both unread and unchecked (:409-426), so it can remove a name or
-// email another account or a user now holds.
+// RemoveAccount implements op.AccountStore as remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L394-L438),
+// first refusing an account that still has a role, a group, an OpenID
+// Connect provider or a topic, as rgw::account::remove does before it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L366-L456;
+// accountResources). Then the account object under rec's version, then its
+// name and email redirects and its users index, a failure of each logged
+// and ignored. The redirects are read past the metadata cache before the
+// account object is removed, a failed read refusing the removal, and each
+// is then removed only when it named the account, under the version read
+// then: a create of the same id that claims one meanwhile writes it again,
+// so the removal leaves it. radosgw removes both unread and unchecked
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L409-L426),
+// so it can remove a name or email another account or a user now holds.
 //
 // A zero rec.Version, which a stored account always has a version past, is
 // ErrConcurrentModification: the removal is never unchecked. The account
@@ -537,16 +540,19 @@ const oidcProviderPrefix = "oidc_url."
 var errResourceFound = errors.New("driver: an account resource remains")
 
 // accountResources is rgw::account::remove's checks past its users and
-// buckets (rgw_account.cc:366-456): one entry of the account's roles,
-// groups and topics indexes, "roles.<id>", "groups.<id>" and "topics.<id>"
-// in the account pool (account.cc:60-81), each a cls_user account resource
-// index, and the oidc pool's objects for an OpenID Connect provider of the
-// account. Any one refuses the removal with radosgw's -ENOTEMPTY, the
-// BucketNotEmpty row, and its message. A missing index or pool holds none;
-// any other failure to read one refuses the removal. radosgw lists the
-// topics of the account's tenant instead (docs/ceph-upstream-bugs.md,
-// "radosgw's account removal never sees the account's topics"), so it
-// removes an account with topics that rgw-go refuses.
+// buckets
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L366-L456):
+// one entry of the account's roles, groups and topics indexes,
+// "roles.<id>", "groups.<id>" and "topics.<id>" in the account pool
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L60-L81),
+// each a cls_user account resource index, and the oidc pool's objects for
+// an OpenID Connect provider of the account. Any one refuses the removal
+// with radosgw's -ENOTEMPTY, the BucketNotEmpty row, and its message. A
+// missing index or pool holds none; any other failure to read one refuses
+// the removal. radosgw lists the topics of the account's tenant instead
+// (docs/ceph-upstream-bugs.md, "radosgw's account removal never sees the
+// account's topics"), so it removes an account with topics that rgw-go
+// refuses.
 func (s *Store) accountResources(ctx context.Context, id string) error {
 	for _, ix := range []struct{ prefix, what string }{
 		{"roles.", "roles"}, {"groups.", "groups"},
@@ -628,10 +634,11 @@ func (s *Store) accountUsersPool(ctx context.Context, accountID string) (radoscl
 	return p, o.oid, err
 }
 
-// AddAccountUser implements op.AccountStore as users::add (users.cc:27-51)
+// AddAccountUser implements op.AccountStore as users::add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/users.cc#L27-L51)
 // the way PutOperation calls it, not exclusive and with no limit
-// (svc_user_rados.cc:365-366): the entry under the display name holds the
-// path and the user's id.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L365-L366):
+// the entry under the display name holds the path and the user's id.
 func (s *Store) AddAccountUser(ctx context.Context, accountID string, info meta.UserInfo) error {
 	pool, oid, err := s.accountUsersPool(ctx, accountID)
 	if err != nil {
@@ -650,8 +657,8 @@ func (s *Store) AddAccountUser(ctx context.Context, accountID string, info meta.
 }
 
 // RemoveAccountUser implements op.AccountStore as users::remove
-// (users.cc:91-106): a display name the index lacks is the class's ENOENT,
-// ErrNoSuchKey.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/users.cc#L91-L106):
+// a display name the index lacks is the class's ENOENT, ErrNoSuchKey.
 func (s *Store) RemoveAccountUser(ctx context.Context, accountID, displayName string) error {
 	pool, oid, err := s.accountUsersPool(ctx, accountID)
 	if err != nil {
@@ -666,8 +673,9 @@ func (s *Store) RemoveAccountUser(ctx context.Context, accountID, displayName st
 }
 
 // ListAccountUsers implements op.AccountStore as users::list
-// (users.cc:108-158) with no path prefix: a missing index lists nothing,
-// and next is the class's marker only when it truncated the page.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/users.cc#L108-L158)
+// with no path prefix: a missing index lists nothing, and next is the
+// class's marker only when it truncated the page.
 func (s *Store) ListAccountUsers(ctx context.Context, accountID, marker string, maxIDs uint32) (ids []string, next string, err error) {
 	pool, oid, err := s.accountUsersPool(ctx, accountID)
 	if err != nil {

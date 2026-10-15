@@ -12,8 +12,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The bucket index is RGWSI_BucketIndex_RADOS (services/svc_bi_rados.cc). A
-// bare line number is v19.2.6's.
+// The bucket index is RGWSI_BucketIndex_RADOS (services/svc_bi_rados.cc).
 
 // indexPool is open_bucket_index_pool
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L43-L71;

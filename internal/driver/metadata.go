@@ -19,7 +19,6 @@ import (
 // driver registers for users and buckets (driver/rados/rgw_user.cc and
 // rgw_bucket.cc) over the metadata backend's objects
 // (services/svc_meta_be_sobj.cc, svc_user_rados.cc and svc_bucket_sobj.cc).
-// A bare line number is v19.2.6's.
 const (
 	sectionUser           = "user"
 	sectionBucket         = "bucket"
@@ -164,8 +163,9 @@ func (s *Store) getInstance(ctx context.Context, key string) (op.MetadataEntry, 
 
 // Put implements op.MetadataStore as RGWMetadataManager::put's handler put
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L501-L552,
-// :129-147): e.Data decoded as the section's document, a document that does
-// not decode being ErrInvalidArgument and an opaque one meta.ErrOpaqueJSON.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L129-L147):
+// e.Data decoded as the section's document, a document that does not decode
+// being ErrInvalidArgument and an opaque one meta.ErrOpaqueJSON.
 // Each section reads its object first, as put_pre does
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L255-L278),
 // checks opts.IfVersion against the version read, and writes under that
@@ -473,11 +473,12 @@ const listPage = 1000
 // radosgw's does; then the instance is written with the document's attrs and
 // its index initialized, a shard already there counting as initialized. The
 // object lock configuration a document carries is stored, as v19.2.7's put
-// stores the instance it decodes whole (driver/rados/rgw_bucket.cc:2866-2887
-// at v19.2.7), on Tentacle too, whose decode reads no obj_lock
-// (rgw_common.cc:2606-2647 at v20.2.4). The lifecycle configuration and
-// topic mappings radosgw updates after the write are not kept by rgw-go
-// yet.
+// stores the instance it decodes whole
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2887 at v19.2.7),
+// on Tentacle too, whose decode reads no obj_lock
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647 at v20.2.4).
+// The lifecycle configuration and topic mappings radosgw updates after the
+// write are not kept by rgw-go yet.
 //
 // Each refusal comes before anything is written:
 //   - an attr outside user.rgw. is ErrInvalidArgument (op.RefuseRawAttrs),
@@ -606,7 +607,8 @@ func refuseNULPlacement(b meta.BucketID) error {
 // keepInstance is put_check's existing-instance branch and rgw-go's
 // refusals for one: info takes what the stored instance old keeps, and old's
 // object lock configuration when the document carries none, where v19.2.7
-// resets it to RGWObjectLock() (common/ceph_json.h:334-346 at v19.2.7).
+// resets it to RGWObjectLock()
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346 at v19.2.7).
 func (s *Store) keepInstance(ctx context.Context, info *meta.BucketInfo, attrs map[string][]byte, old *instance) error {
 	if err := s.busyBucket(ctx, old.info, old.attrs); err != nil {
 		return err
@@ -817,7 +819,7 @@ var errStopListing = errors.New("listing stopped")
 // ErrInvalidArgument. A maxEntries of 0 lists nothing and tells only
 // whether a key follows. An unknown section is ErrNoSuchKey, and a pool
 // that does not exist lists nothing, as the handler takes its ENOENT
-// (rgw_metadata.cc:211-227).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L211-L227).
 func (s *Store) List(ctx context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	poolName, keyOf, ok := s.sectionListing(section)
 	if !ok {

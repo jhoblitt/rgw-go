@@ -62,8 +62,9 @@ func (s *Store) metaOmap(ctx context.Context, ref mpRef, startAfter string, coun
 }
 
 // decodePartInfo decodes the part info stored under omap key k; one that
-// does not decode is list_parts' -EIO (:3378-3384), which radosgw's error
-// table lacks, so UnknownError.
+// does not decode is list_parts' -EIO
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3378-L3384),
+// which radosgw's error table lacks, so UnknownError.
 func decodePartInfo(k string, b []byte) (meta.UploadPartInfo, error) {
 	d := denc.NewDecoder(b)
 	info := meta.DecodeUploadPartInfo(d)
@@ -127,7 +128,9 @@ func (s *Store) listPartsPage(ctx context.Context, ref mpRef, uploadID string, m
 	return parts, lastPartNumber(parts), truncated, nil
 }
 
-// sortedPartsPage is list_parts' sorted attempt (:3350-3359, :3372-3407):
+// sortedPartsPage is list_parts' sorted attempt
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3350-L3359,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3372-L3407):
 // inOrder is false when a value of the page is not the number expected.
 func (s *Store) sortedPartsPage(ctx context.Context, ref mpRef, marker, limit int) (parts []meta.UploadPartInfo, truncated, inOrder bool, err error) {
 	vals, err := s.metaOmap(ctx, ref, fmt.Sprintf("part.%08d", int32(marker)), uint64(limit)+1, false) //nolint:gosec // marker is an int

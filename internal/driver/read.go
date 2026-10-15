@@ -17,15 +17,21 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The radosgw functions this file transcribes, in driver/rados/rgw_rados.cc
-// unless named otherwise; each is the same at both tags.
-//
-//	                       v19.2.6       v20.2.4
-//	Read::iterate          :7444-7464    :8295-8319
-//	iterate_obj            :7466-7536    :8321-8391
-//	get_obj_iterate_cb     :7391-7442    :8242-8293
-//	get_obj_data::flush    :7345-7379    :8196-8230
-//	RGWGetObj_Decompress   rgw_compression.cc:107-218 at both
+// The radosgw functions this file transcribes, each the same at both tags:
+//   - Read::iterate,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7444-L7464 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8295-L8319 at v20.2.4;
+//   - iterate_obj,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7466-L7536 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8321-L8391 at v20.2.4;
+//   - get_obj_iterate_cb,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7391-L7442 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8242-L8293 at v20.2.4;
+//   - get_obj_data::flush,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7345-L7379 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8196-L8230 at v20.2.4;
+//   - RGWGetObj_Decompress,
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L107-L218 at both tags.
 
 // ReadObject implements op.ObjectStore: it streams rng of st to sink in offset
 // order. rng is in the object's logical bytes, decompressed bytes for a
@@ -119,14 +125,18 @@ func decodeErr(st *op.ObjectState, err error) error {
 }
 
 // readStored streams the stored bytes [ofs, ofs+n) of st to w in offset order
-// and does not decompress them: the bytes Read::read (:7224-7343 at v19.2.6,
-// :8075-8194 at v20.2.4) and Read::iterate take from the object's stripes,
-// under ReadObject's piece walk, window and buffers. ofs and n are stored
-// offsets, which for a compressed object are not the logical ones; n == 0
-// writes nothing. ReadObject serves an uncompressed object, and a compressed
-// one's widened block range, through it; CopyObject's data copy streams a
-// source's stored stripes with it, as copy_obj_data does (Read::read at
-// v19.2.6 :5067, Read::iterate at v20.2.4 :5338).
+// and does not decompress them: the bytes Read::read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7224-L7343 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8075-L8194 at v20.2.4)
+// and Read::iterate take from the object's stripes, under ReadObject's piece
+// walk, window and buffers. ofs and n are stored offsets, which for a
+// compressed object are not the logical ones; n == 0 writes nothing.
+// ReadObject serves an uncompressed object, and a compressed one's widened
+// block range, through it; CopyObject's data copy streams a source's stored
+// stripes with it, as copy_obj_data does (Read::read at v19.2.6
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5067,
+// Read::iterate at v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5338).
 func (s *Store) readStored(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
 	if n == 0 {
 		return nil

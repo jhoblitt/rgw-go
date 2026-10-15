@@ -138,7 +138,8 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {
 		// A head write that timed out may yet land on these tails, so they
-		// stay, as writer.clear_written leaves them (rgw_putobj_processor.cc:395-401).
+		// stay, as writer.clear_written leaves them
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L395-L401).
 		if !errors.Is(err, radosclient.ErrTimedOut) {
 			tw.discard()
 		}

@@ -18,12 +18,12 @@ type completion struct {
 	c rgw.CompleteOp
 }
 
-// completionManager is RGWIndexCompletionManager (driver/rados/rgw_rados.cc,
-// a bare line number below being v19.2.6's): bucket_complete_op writes sent
-// off the request path, and the worker that sends again the ones a reshard
-// refused. Each submitted write runs in its own goroutine under the
-// manager's context, which Run's context ending cancels; the worker runs as
-// the Store's index-completions worker.
+// completionManager is RGWIndexCompletionManager
+// (driver/rados/rgw_rados.cc): bucket_complete_op writes sent off the
+// request path, and the worker that sends again the ones a reshard refused.
+// Each submitted write runs in its own goroutine under the manager's
+// context, which Run's context ending cancels; the worker runs as the
+// Store's index-completions worker.
 type completionManager struct {
 	s      *Store
 	ctx    context.Context

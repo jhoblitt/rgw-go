@@ -15,9 +15,9 @@ import (
 
 // An owner's bucket list is the cls_user omap of its buckets object, which
 // rgwrados::buckets (driver/rados/buckets.cc) reads and writes straight
-// through RADOS, past the metadata cache. A bare line number is
-// buckets.cc's at v19.2.6, and it is the same at v20.2.4. An op that
-// carries a time carries the gateway's clock, as cls_user_set_buckets and
+// through RADOS, past the metadata cache. The buckets.cc lines the v19.2.6
+// links below cite are the same lines at v20.2.4. An op that carries a time
+// carries the gateway's clock, as cls_user_set_buckets and
 // cls_user_complete_stats_sync stamp radosgw's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_client.cc#L25
 // and
@@ -175,13 +175,17 @@ func (s *Store) ownerTenant(ctx context.Context, owner meta.Owner) (string, erro
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sal.h#L244-L249
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2604 at v19.2.6,
-// :229-234 and :2836 at v20.2.4), so a truncation without a marker is not
-// more. A maxEntries of 0, which radosgw is asked for when
-// rgw_list_buckets_max_chunk is 0, is one class call of 0 entries, which
-// the OSD truncates before the first key (osd/PrimaryLogPG.cc:7744 at
-// v19.2.6, :7821 at v20.2.4) and the class answers with no marker.
-// radosgw's maximum is unsigned (:83), so a negative maxEntries is a
-// caller's bug and an InternalError.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.h#L229-L234
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2836 at v20.2.4),
+// so a truncation without a marker is not more. A maxEntries of 0, which
+// radosgw is asked for when rgw_list_buckets_max_chunk is 0, is one class
+// call of 0 entries, which the OSD truncates before the first key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/osd/PrimaryLogPG.cc#L7744 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7821 at v20.2.4)
+// and the class answers with no marker. radosgw's maximum is unsigned
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L83),
+// so a negative maxEntries is a caller's bug and an InternalError.
 func (s *Store) ListUserBuckets(ctx context.Context, owner meta.Owner, marker string, maxEntries int) (ents []meta.BucketEnt, next string, more bool, err error) {
 	if maxEntries < 0 {
 		return nil, "", false, fmt.Errorf("%w: listing the buckets of %s with a negative maximum %d", op.ErrInternalError, owner, maxEntries)

@@ -173,7 +173,9 @@ var usageTrimCapFactor = 10
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11121-L11135 at v20.2.4)
 // on one usage object, which repeats user_usage_log_trim until ENODATA, or
 // ENOENT for a shard without a usage object. Each call walks its window
-// from the range's start (cls_rgw.cc:3791 at v19.2.6, :4193 at v20.2.4),
+// from the range's start
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3791 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4193 at v20.2.4),
 // so records it skips pile up at the window's front and each round removes
 // fewer; on Squid and Tentacle the class may never answer ENODATA at all,
 // for a record filed under its payer (tracker #72593) or a bucket filter

@@ -100,8 +100,10 @@ type objectCache struct {
 func newObjectCache(maxSize int, expiry time.Duration, domainRoot meta.Pool, now func() time.Time) *objectCache {
 	// touch_lru compares the size with (size_t)rgw_cache_lru_size, and
 	// set_ctx keeps half the option in the unsigned lru_window
-	// (rgw_cache.cc:246, rgw_cache.h:209). Go's conversions wrap a negative
-	// size as C++'s do: it never evicts, and below -1 a hit never promotes.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L246,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.h#L209 at v19.2.6).
+	// Go's conversions wrap a negative size as C++'s do: it never evicts,
+	// and below -1 a hit never promotes.
 	return &objectCache{
 		entries: map[string]*cacheEntry{},
 		limit:   uint64(maxSize),     //nolint:gosec // wraps as radosgw's size_t cast does
@@ -125,12 +127,14 @@ func (c *objectCache) lookup(name string) (e *cacheEntry, expired, promote bool)
 	return e, false, c.counter-e.promoted > c.window
 }
 
-// get is ObjectCache::get (rgw_cache.cc:13-96): it misses while disabled,
-// on an absent or expired entry, which it erases, and on an entry lacking
-// one of mask's flags, and it returns a negative entry as errNegativeEntry.
-// It takes the write lock only to erase or to promote an entry the LRU has
-// moved more than lru_window touches past: half the cache until the first
-// flush, and 0 after it (rgw_cache.cc:321-328).
+// get is ObjectCache::get
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L13-L96):
+// it misses while disabled, on an absent or expired entry, which it erases,
+// and on an entry lacking one of mask's flags, and it returns a negative
+// entry as errNegativeEntry. It takes the write lock only to erase or to
+// promote an entry the LRU has moved more than lru_window touches past: half
+// the cache until the first flush, and 0 after it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L321-L328).
 func (c *objectCache) get(name string, mask uint32) (cacheInfo, error) {
 	c.mu.RLock()
 	e, expired, promote := c.lookup(name)
@@ -169,9 +173,10 @@ func serve(info cacheInfo, mask uint32) (cacheInfo, error) {
 	return info.clone(), nil
 }
 
-// put is ObjectCache::put (rgw_cache.cc:142-215): it restarts the entry's
-// expiry and moves it to the LRU's back, then merges info into it by
-// info.flags.
+// put is ObjectCache::put
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L142-L215):
+// it restarts the entry's expiry and moves it to the LRU's back, then merges
+// info into it by info.flags.
 func (c *objectCache) put(name string, info cacheInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -221,10 +226,11 @@ func (c *objectCache) put(name string, info cacheInfo) {
 	}
 }
 
-// touch is touch_lru (rgw_cache.cc:243-281): it evicts from the front while
-// the cache holds more than its limit, stopping at e itself, then moves e to
-// the back. Evicting before inserting leaves the cache one entry past its
-// limit.
+// touch is touch_lru
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L243-L281):
+// it evicts from the front while the cache holds more than its limit,
+// stopping at e itself, then moves e to the back. Evicting before inserting
+// leaves the cache one entry past its limit.
 func (c *objectCache) touch(e *cacheEntry) {
 	for c.lru.len > c.limit && c.lru.head != e {
 		c.erase(c.lru.head)
@@ -241,7 +247,8 @@ func (c *objectCache) erase(e *cacheEntry) {
 	delete(c.entries, e.name)
 }
 
-// invalidateRemove is ObjectCache::invalidate_remove (rgw_cache.cc:217-241):
+// invalidateRemove is ObjectCache::invalidate_remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L217-L241):
 // it removes name's entry and reports whether there was one, and never
 // leaves a negative entry behind.
 func (c *objectCache) invalidateRemove(name string) bool {
@@ -258,9 +265,12 @@ func (c *objectCache) invalidateRemove(name string) bool {
 	return true
 }
 
-// setEnabled is ObjectCache::set_enabled (rgw_cache.cc:303-312); disabling
-// flushes every entry. The flush zeroes lru_window as do_invalidate_all
-// does (:321-328), so from then on a hit promotes any entry touched since.
+// setEnabled is ObjectCache::set_enabled
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L303-L312);
+// disabling flushes every entry. The flush zeroes lru_window as
+// do_invalidate_all does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_cache.cc#L321-L328),
+// so from then on a hit promotes any entry touched since.
 func (c *objectCache) setEnabled(on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -279,7 +289,8 @@ func (c *objectCache) setEnabled(on bool) {
 // and v20.2.4; docs/ceph-upstream-bugs.md, "radosgw caches any
 // control-pool UPDATE_OBJ notify payload unchecked"). An object without
 // an oid names the pool's entry in the domain root, as
-// normalize_pool_and_obj does (:74-83).
+// normalize_pool_and_obj does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L74-L83).
 func (c *objectCache) onNotify(info meta.CacheNotifyInfo) {
 	if info.Op != meta.CacheUpdateObj && info.Op != meta.CacheInvalidateObj {
 		slog.Warn("invalidating for a control notify of an unknown op",

@@ -15,23 +15,25 @@ import (
 
 // DeleteObject is the unversioned path of RGWRados::Object::Delete::delete_obj
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5845-L5986 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6584-L6735 at v20.2.4;
-// a bare line number below is v19.2.6's): one head stat, the conditions, the
-// index prepare DEL under a fresh tag, the head's guarded obj_remove under
-// full-try, then complete_del, not awaited, the GC enqueue of the old tails,
-// synchronous as send_split_chain is
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6584-L6735 at v20.2.4):
+// one head stat, the conditions, the index prepare DEL under a fresh tag,
+// the head's guarded obj_remove under full-try, then complete_del, not
+// awaited, the GC enqueue of the old tails, synchronous as send_split_chain
+// is
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L68-L118),
 // and the quota adjustment. The conditions are v20.2.4's on both releases, and
 // the guard is v19.2.6's on both (docs/exclusions.md, "Delete conditions are
 // Tentacle's, and a delete is guarded, on both releases"). A missing key is
 // ErrNoSuchKey; a lost race is ErrConcurrentModification, which the op answers
-// 204 as radosgw does (rgw_op.cc:5302-5304).
+// 204 as radosgw does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304).
 //
 // A bucket whose versioning is or was enabled or that has object lock is
 // answered NotImplemented before the store is touched, so that no caller
 // takes this path there: radosgw takes the versioned one, which writes a
-// delete marker for a key with no instance (:5774-5812), where this one
-// would remove the object outright.
+// delete marker for a key with no instance
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812),
+// where this one would remove the object outright.
 func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
 	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
 		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
@@ -133,7 +135,7 @@ func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.O
 // not awaited. The index op is built here because newIndexOp substitutes a
 // random tag for an empty one, as UpdateIndex::prepare does, and cls_rgw
 // refuses a tag the entry's pending map does not hold
-// (cls_rgw.cc:1066-1072).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L1066-L1072).
 func (s *Store) deleteObjIndex(rec *op.BucketRecord, key meta.ObjKey, mtime time.Time) {
 	x := &indexOp{
 		s:     s,
@@ -146,8 +148,10 @@ func (s *Store) deleteObjIndex(rec *op.BucketRecord, key meta.ObjKey, mtime time
 
 // deleteConditions checks a delete's conditions against st and appends the
 // checks the OSD repeats, in radosgw's order: x-amz-delete-if-unmodified-since
-// first, on both releases (:5860-5875; v20.2.4 :6609-6624), then v20.2.4's
-// check_preconditions and its obj_check_mtime for
+// first, on both releases
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5860-L5875 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6624 at v20.2.4),
+// then v20.2.4's check_preconditions and its obj_check_mtime for
 // x-amz-if-match-last-modified-time (v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6663-L6671,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7260-L7329).

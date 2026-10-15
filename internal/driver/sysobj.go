@@ -97,11 +97,12 @@ type readResult struct {
 }
 
 // read is RGWSI_SysObj_Cache::read over RGWSI_SysObj_Core::read
-// (svc_sys_obj_cache.cc:113-240, svc_sys_obj_core.cc:129-203): a hit
-// serves the entry, a cached negative is ENOENT, and a miss reads RADOS and
-// caches what it read, ENOENT as a negative entry. A miss asks RADOS for the
-// stat and every xattr whatever p asks for, so the entry serves a later
-// read of them too.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L113-L240,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L129-L203):
+// a hit serves the entry, a cached negative is ENOENT, and a miss reads
+// RADOS and caches what it read, ENOENT as a negative entry. A miss asks
+// RADOS for the stat and every xattr whatever p asks for, so the entry
+// serves a later read of them too.
 func (s *sysobjs) read(ctx context.Context, o sysObj, p readParams) (readResult, error) {
 	name := normalName(o.pool, o.oid)
 	var mask uint32
@@ -148,7 +149,7 @@ func (s *sysobjs) read(ctx context.Context, o sysObj, p readParams) (readResult,
 
 // readMiss reads o from RADOS and caches what it read, a missing object as
 // a negative entry; radosgw caches no other failure
-// (svc_sys_obj_cache.cc:200-205).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L200-L205).
 func (s *sysobjs) readMiss(ctx context.Context, o sysObj, name string, p readParams) (cacheInfo, error) {
 	pool, err := s.pools.get(ctx, o.pool)
 	if err != nil {
@@ -232,11 +233,13 @@ func filterRGWAttrs(attrs map[string][]byte) map[string][]byte {
 }
 
 // write is RGWSI_SysObj_Cache::write over RGWSI_SysObj_Core::write
-// (svc_sys_obj_cache.cc:312-354, svc_sys_obj_core.cc:477-542): an exclusive
-// create, or a remove that may fail and a create, then v's version steps,
-// the mtime, the data and each attr with a value, in one op. It returns the
-// mtime stored, which is now when mtime is zero. A failed write invalidates
-// the entry (see failed); a written one is cached and distributed.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L312-L354,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L477-L542):
+// an exclusive create, or a remove that may fail and a create, then v's
+// version steps, the mtime, the data and each attr with a value, in one op.
+// It returns the mtime stored, which is now when mtime is zero. A failed
+// write invalidates the entry (see failed); a written one is cached and
+// distributed.
 func (s *sysobjs) write(ctx context.Context, o sysObj, data []byte, attrs map[string][]byte, exclusive bool, mtime time.Time, v *objv) (time.Time, error) {
 	name := normalName(o.pool, o.oid)
 	if mtime.IsZero() {
@@ -276,11 +279,12 @@ func (s *sysobjs) write(ctx context.Context, o sysObj, data []byte, attrs map[st
 }
 
 // setAttrs is RGWSI_SysObj_Cache::set_attrs over RGWSI_SysObj_Core::set_attrs
-// (svc_sys_obj_cache.cc:277-310, svc_sys_obj_core.cc:237-291): an exclusive
-// create when asked, v's version steps, the removals, then each attr with a
-// value, in one op that is not sent when it holds no step. A failed change
-// invalidates the entry (see failed); an applied one is merged into it and
-// distributed.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L277-L310,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L237-L291):
+// an exclusive create when asked, v's version steps, the removals, then
+// each attr with a value, in one op that is not sent when it holds no step.
+// A failed change invalidates the entry (see failed); an applied one is
+// merged into it and distributed.
 func (s *sysobjs) setAttrs(ctx context.Context, o sysObj, set map[string][]byte, rm []string, exclusive bool, v *objv) error {
 	name := normalName(o.pool, o.oid)
 	wop := radosclient.NewWriteOp()
@@ -317,11 +321,12 @@ func (s *sysobjs) setAttrs(ctx context.Context, o sysObj, set map[string][]byte,
 }
 
 // remove is RGWSI_SysObj_Cache::remove over RGWSI_SysObj_Core::remove
-// (svc_sys_obj_cache.cc:86-111, svc_sys_obj_core.cc:451-475): v's version
-// steps and the removal in one op; once it succeeds the entry is
-// invalidated here and on every gateway. radosgw leaves the entry alone
-// when the removal fails, and so does remove, unless the removal may have
-// applied (see failed).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L86-L111,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L451-L475):
+// v's version steps and the removal in one op; once it succeeds the entry
+// is invalidated here and on every gateway. radosgw leaves the entry
+// alone when the removal fails, and so does remove, unless the removal
+// may have applied (see failed).
 func (s *sysobjs) remove(ctx context.Context, o sysObj, v *objv) error {
 	wop := radosclient.NewWriteOp()
 	if v != nil {
@@ -351,7 +356,8 @@ func (s *sysobjs) run(ctx context.Context, o sysObj, wop *radosclient.WriteOp) e
 
 // setXattrs adds a SetXattr for each attr with a value, in name order as
 // radosgw's map holds them; radosgw skips an empty one
-// (svc_sys_obj_core.cc:518-526, :268-276).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L518-L526,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L268-L276).
 func setXattrs(wop *radosclient.WriteOp, attrs map[string][]byte) {
 	for _, k := range slices.Sorted(maps.Keys(attrs)) {
 		if len(attrs[k]) > 0 {
@@ -361,9 +367,11 @@ func setXattrs(wop *radosclient.WriteOp, attrs map[string][]byte) {
 }
 
 // update merges info into the local entry, then distributes it as an
-// UPDATE_OBJ record, in radosgw's order (svc_sys_obj_cache.cc:301-302,
-// :345-346), so a newer record announced meanwhile invalidates this one
-// rather than being overwritten by it. This gateway's own watch receives
+// UPDATE_OBJ record, in radosgw's order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L301-L302,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L345-L346),
+// so a newer record announced meanwhile invalidates this one rather than
+// being overwritten by it. This gateway's own watch receives
 // the record too and, since a notify of either op invalidates here, drops
 // the entry; the next lookup reads RADOS.
 func (s *sysobjs) update(ctx context.Context, o sysObj, name string, info cacheInfo) {
@@ -381,10 +389,11 @@ func (s *sysobjs) invalidate(ctx context.Context, o sysObj, name string) {
 }
 
 // failed handles a change that failed. radosgw invalidates the local entry
-// (svc_sys_obj_cache.cc:305-307, :349-351). A change whose context ended may
-// have applied all the same, since ending the context stops only the client
-// (docs/cgo-limitations.md, "Cancellation stops only the client"), so every
-// gateway is told to drop the entry too.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L305-L307,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L349-L351).
+// A change whose context ended may have applied all the same, since ending
+// the context stops only the client (docs/cgo-limitations.md, "Cancellation
+// stops only the client"), so every gateway is told to drop the entry too.
 func (s *sysobjs) failed(ctx context.Context, o sysObj, name string, err error) {
 	if contextEnded(err) {
 		s.invalidate(ctx, o, name)
@@ -399,11 +408,14 @@ func contextEnded(err error) bool {
 }
 
 // distribute sends info to every gateway. A failure is logged and does not
-// fail the change, as radosgw's is not (svc_sys_obj_cache.cc:105-108,
-// :302-304, :346-348). The notify follows a change that has applied, or
-// may have, so it does not end with the caller's context, which ends when
-// a client disconnects; radosgw never cancels it. It is bounded by
-// librados's notify timeout and rgw_max_notify_retries.
+// fail the change, as radosgw's is not
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L105-L108,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L302-L304,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_cache.cc#L346-L348).
+// The notify follows a change that has applied, or may have, so it does
+// not end with the caller's context, which ends when a client disconnects;
+// radosgw never cancels it. It is bounded by librados's notify timeout and
+// rgw_max_notify_retries.
 func (s *sysobjs) distribute(ctx context.Context, o sysObj, name string, info meta.CacheNotifyInfo) {
 	if err := s.notify.distribute(context.WithoutCancel(ctx), name, info); err != nil {
 		slog.ErrorContext(ctx, "distributing a cache notify",

@@ -18,8 +18,7 @@ import (
 // An object write keeps the bucket index in step through
 // RGWRados::Bucket::UpdateIndex (driver/rados/rgw_rados.cc): a prepare
 // before the head is written records the change as pending under a tag, and
-// a completion or a cancel after it applies or drops it. A bare line number
-// is v19.2.6's rgw_rados.cc.
+// a completion or a cancel after it applies or drops it.
 
 // reshardRetries is NUM_RESHARD_RETRIES
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7030)
@@ -37,14 +36,16 @@ type indexShard struct {
 }
 
 // indexShardFor is BucketShard::init through
-// RGWSI_BucketIndex_RADOS::open_bucket_index_shard (svc_bi_rados.cc:275-300
+// RGWSI_BucketIndex_RADOS::open_bucket_index_shard
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L275-L300
 // and get_bucket_index_object,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L240-L273, at v19.2.6):
 // the shard of info's current index generation that holds key. The key hashes
 // by its name, rgw_obj::get_hash_object. A bucket without an id is
-// open_bucket_index_base's EIO (:83-86), and a hash type other than Mod its
-// ENOTSUP; no row of the S3 error table names either, so both answer
-// UnknownError.
+// open_bucket_index_base's EIO
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L83-L86),
+// and a hash type other than Mod its ENOTSUP; no row of the S3 error table
+// names either, so both answer UnknownError.
 func (s *Store) indexShardFor(ctx context.Context, info *meta.BucketInfo, key meta.ObjKey) (indexShard, error) {
 	pool, err := s.indexPool(ctx, info)
 	if err != nil {
@@ -81,9 +82,10 @@ type indexOp struct {
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3289-L3294).
 	prepared bool
 	// hashName replaces the key's name as the shard's hash source,
-	// rgw_obj::index_hash_source (rgw_obj_types.h:540-541): the multipart
-	// meta object and the part heads are indexed on their upload key's
-	// shard.
+	// rgw_obj::index_hash_source
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L540-L541):
+	// the multipart meta object and the part heads are indexed on their
+	// upload key's shard.
 	hashName string
 	// removeObjs are the entries the completion or cancel closing this op
 	// retires in the same class call, rgw_cls_obj_complete_op::remove_objs.
@@ -91,7 +93,8 @@ type indexOp struct {
 	// noLog is a write_meta caller's log_op false, which keeps the change
 	// out of the bucket index log whatever the zone's log_data: what
 	// RadosMultipartUpload::init passes for the meta object
-	// (rgw_sal_rados.cc:3323; v20.2.4
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3323;
+	// v20.2.4
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4169).
 	noLog bool
 }
@@ -319,7 +322,9 @@ func (x *indexOp) guardReshard(ctx context.Context, call func(sh indexShard) err
 // reshardBusy is how the release reads a shard's reshard status while it
 // waits: resharding_in_progress() on Squid
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7837),
-// resharding() on Tentacle (v20.2.4 :8779; cls_rgw_types.h:800-810).
+// resharding() on Tentacle (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8779;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L800-L810).
 func (s *Store) reshardBusy(e rgw.InstanceEntry) bool {
 	if s.release < denc.Tentacle {
 		return e.ReshardStatus == rgw.ReshardInProgress
@@ -379,13 +384,24 @@ func (s *Store) blockWhileResharding(ctx context.Context, x *indexOp, sh indexSh
 // missing shard v19.2.7's init_bs, which reads the instance into the
 // target's bucket info (v19.2.7
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L947-L955,
-// rgw_rados.cc:2804-2830). The read skips the metadata cache that radosgw's
-// reads go through, since the reshard's notify may not have reached it
-// (docs/exclusions.md, "Dynamic resharding worker"). A bucket deleted
-// meanwhile answers 404 NoSuchKey, as radosgw does: its re-read fails with
-// -ENOENT, which reaches the request unchanged (:7822-7844, :7054-7058,
-// :7100-7101, :3293-3294; v20.2.4 :8764-8786, :7903-7907, :7951-7953,
-// :3446-3447; after a missing shard v19.2.7 :7218-7222) and rgw_common.cc:97
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2804-L2830).
+// The read skips the metadata cache that radosgw's reads go through, since
+// the reshard's notify may not have reached it (docs/exclusions.md,
+// "Dynamic resharding worker"). A bucket deleted meanwhile answers 404
+// NoSuchKey, as radosgw does: its re-read fails with -ENOENT, which reaches
+// the request unchanged
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7822-L7844,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7054-L7058,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7100-L7101,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3293-L3294;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8764-L8786,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7903-L7907,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7951-L7953,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3446-L3447;
+// after a missing shard v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7218-L7222)
+// and https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97
 // (v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98) names
 // NoSuchKey.

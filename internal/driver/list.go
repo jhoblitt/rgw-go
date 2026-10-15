@@ -23,8 +23,8 @@ import (
 )
 
 // The bucket listing is RGWRados::Bucket::List and the cls_bucket_list
-// helpers under it (driver/rados/rgw_rados.cc). A bare line number is
-// v19.2.6's rgw_rados.cc; v20.2.4 carries the same code.
+// helpers under it (driver/rados/rgw_rados.cc). v20.2.4 carries the
+// same code as the v19.2.6 rgw_rados.cc links below cite.
 
 //go:generate go tool counterfeiter -generate
 
@@ -210,8 +210,9 @@ rounds:
 
 // pastDelimiter is the marker past the common prefix name falls in: name up
 // to the first delimiter after prefix, then cls_rgw_after_delim(delim), the
-// delimiter and 0xFF (cls_rgw_types.h:139-142). ok is false when name holds
-// no delimiter there.
+// delimiter and 0xFF
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L139-L142).
+// ok is false when name holds no delimiter there.
 func pastDelimiter(name, prefix, delim string) (string, bool) {
 	if len(prefix) > len(name) {
 		return "", false
@@ -228,7 +229,8 @@ func keyLess(a, b rgwcls.ObjKey) bool {
 	return a.Name < b.Name || (a.Name == b.Name && a.Instance < b.Instance)
 }
 
-// current is rgw_bucket_dir_entry::is_current (cls_rgw_types.h:446-451):
+// current is rgw_bucket_dir_entry::is_current
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L446-L451):
 // an entry of an unversioned object always is.
 func current(e *rgwcls.DirEntry) bool {
 	both := rgwcls.FlagVer | rgwcls.FlagCurrent
@@ -405,9 +407,11 @@ func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfte
 }
 
 // needsDiskCheck is the test both shard listings make before
-// check_disk_state (:9823-9827, :10083-10084): an entry with a pending op,
-// or one that is not there and is not a delete marker, nor, in the ordered
-// listing, a common prefix.
+// check_disk_state
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9823-L9827,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10083-L10084):
+// an entry with a pending op, or one that is not there and is not a delete
+// marker, nor, in the ordered listing, a common prefix.
 func needsDiskCheck(e *rgwcls.DirEntry, ordered bool) bool {
 	absent := !e.Exists && e.Flags&rgwcls.FlagDeleteMarker == 0
 	if ordered {
@@ -418,7 +422,9 @@ func needsDiskCheck(e *rgwcls.DirEntry, ordered bool) bool {
 
 // indexShards opens the bucket's index pool and names the shards of its
 // current index generation, as open_bucket_index does; a bucket without an
-// id is radosgw's -EIO (svc_bi_rados.cc:83-86 at v19.2.6, :91-94 at v20.2.4).
+// id is radosgw's -EIO
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.cc#L83-L86 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L91-L94 at v20.2.4).
 func (s *Store) indexShards(ctx context.Context, rec *op.BucketRecord) (radosclient.Pool, []string, error) {
 	pool, err := s.indexPool(ctx, &rec.Info)
 	if err != nil {
@@ -534,12 +540,13 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11337-L11353):
 // every stripe in the multipart namespace, a part's head, has its index
 // entry completed as deleted with delete_obj_index, hashed on the part's own
-// name as raw_obj_to_obj leaves it (svc_tier_rados.h:131-143), though the
-// part writer indexed it under the upload's (docs/ceph-upstream-bugs.md,
-// "check_disk_state removes a multipart part's index entry from the wrong
-// shard"). The walk stops with denc.ErrMalformed at a step that does not
-// move forward and with meta.ErrTooManyStripes past meta.MaxWalkStripes
-// stripes, where radosgw's never ends.
+// name as raw_obj_to_obj leaves it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_tier_rados.h#L131-L143),
+// though the part writer indexed it under the upload's
+// (docs/ceph-upstream-bugs.md, "check_disk_state removes a multipart part's
+// index entry from the wrong shard"). The walk stops with denc.ErrMalformed
+// at a step that does not move forward and with meta.ErrTooManyStripes past
+// meta.MaxWalkStripes stripes, where radosgw's never ends.
 func (s *Store) sweepParts(rec *op.BucketRecord, st *op.ObjectState) error {
 	limit := cmp.Or(s.sweepLimit, meta.MaxWalkStripes)
 	it, err := st.Manifest.Seek(0)

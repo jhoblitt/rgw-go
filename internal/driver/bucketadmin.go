@@ -24,8 +24,8 @@ import (
 
 // The admin bucket ops' storage steps are RGWBucketAdminOp's and
 // RGWBucketCtl's (driver/rados/rgw_bucket.cc) and RadosBucket's
-// (driver/rados/rgw_sal_rados.cc). A bare rgw_bucket.cc line is v19.2.6's;
-// each fact cited holds at v20.2.4 too.
+// (driver/rados/rgw_sal_rados.cc). Each fact a v19.2.6 link cites holds at
+// v20.2.4 too.
 
 // categoryName is to_string(RGWObjCategory)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.cc#L133-L143 at v19.2.6
@@ -61,8 +61,9 @@ func shardString(values []string) string {
 // over every shard
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8872-L8914 at v19.2.6):
 // each header's categories summed as accumulate_raw_stats sums them
-// (:5464-5479), and the headers' versions, master versions and max markers
-// in shard order. An unsharded index is its one header at shard 0.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5464-L5479),
+// and the headers' versions, master versions and max markers in shard
+// order. An unsharded index is its one header at shard 0.
 // Categories radosgw keys apart but names alike, every value past
 // CloudTiered, are summed under "unknown". An indexless bucket has no
 // headers to read.
@@ -129,8 +130,10 @@ func (s *Store) eachShard(ctx context.Context, rec *op.BucketRecord, fn func(ctx
 // CheckIndex implements op.BucketAdminStore as RGWRados::bucket_check_index
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5481-L5514 at v19.2.6;
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6213-L6237
-// and svc_bi_rados.cc:851-882 at v20.2.4): one bucket_check_index on every
-// shard, both headers each returns summed per category. A shard the OSD
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L851-L882 at v20.2.4):
+// one bucket_check_index on every shard, both headers each returns summed
+// per category. A shard the OSD
 // does not find is radosgw's -ENOENT, NoSuchKey, and a reply that does not
 // decode its -EIO.
 func (s *Store) CheckIndex(ctx context.Context, rec *op.BucketRecord) (existing, calculated map[string]op.CategoryStats, err error) {
@@ -162,9 +165,9 @@ func (s *Store) CheckIndex(ctx context.Context, rec *op.BucketRecord) (existing,
 // RebuildIndex implements op.BucketAdminStore as
 // RGWRados::bucket_rebuild_index
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5516-L5527 at v19.2.6;
-// svc_bi_rados.cc:894-925 at v20.2.4): one bucket_rebuild_index on every
-// shard, which writes the header its entries make in place of the stored
-// one.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L894-L925 at v20.2.4):
+// one bucket_rebuild_index on every shard, which writes the header its
+// entries make in place of the stored one.
 func (s *Store) RebuildIndex(ctx context.Context, rec *op.BucketRecord) error {
 	return s.eachShard(ctx, rec, func(ctx context.Context, pool radosclient.Pool, _ int, oid string) error {
 		wop := radosclient.NewWriteOp()
@@ -183,10 +186,11 @@ func (s *Store) RebuildIndex(ctx context.Context, rec *op.BucketRecord) error {
 // which removes the omap keys directly, without cls_rgw, so the shard
 // headers keep counting what it removes. An indexless layout is EINVAL.
 // Each key goes to the shard bucket_shard_index names
-// (svc_bi_rados.h:109-122 at both tags): by the object name for a
-// multipart entry, the name with its last two "."-components removed as
-// RGWMPObj::from_meta splits it, and the empty key when it cannot; by the
-// name itself otherwise. The key removed is
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bi_rados.h#L109-L122 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.h#L110-L123 at v20.2.4):
+// by the object name for a multipart entry, the name with its last two
+// "."-components removed as RGWMPObj::from_meta splits it, and the empty
+// key when it cannot; by the name itself otherwise. The key removed is
 // rgw_obj_key(name, instance, ns).get_oid(); the shard's keys go in one
 // omap_rm_keys, in order, the shards one after another.
 func (s *Store) RemoveIndexEntries(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey) error {
@@ -352,7 +356,8 @@ func (s *Store) claimName(ctx context.Context, b meta.BucketID) (epv *objv, excl
 // unlinkOwners removes, under name b, the list entries naming rec's
 // instance of its ACL owner and of its instance owner when they differ.
 // radosgw removes the ACL owner's entry by name and logs a failure
-// (rgw_bucket.cc:1118-1122); rgw-go returns it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1118-L1122);
+// rgw-go returns it.
 func (s *Store) unlinkOwners(ctx context.Context, rec *op.BucketRecord, pol acl.Policy, b meta.BucketID) error {
 	owners := []meta.Owner{rec.Info.Owner}
 	if o, ok := ownerOf(pol.Owner.ID); ok && o.String() != rec.Info.Owner.String() {
@@ -594,9 +599,11 @@ func (s *Store) removeSource(ctx context.Context, cur *op.BucketRecord, src meta
 // was written through its name; the retry then refuses until both names
 // hold the same configuration (retryable). An instance already gone when it
 // is read again counts as removed. radosgw removes the old instance
-// unchecked (rgw_bucket.cc:1175-1179; v20.2.4 :1326-1330), losing such a
-// write (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a
-// bucket config write made through the old name").
+// unchecked
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1175-L1179 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1326-L1330 at v20.2.4),
+// losing such a write (docs/ceph-upstream-bugs.md, "radosgw's bucket rename
+// loses a bucket config write made through the old name").
 func (s *Store) dropSource(ctx context.Context, cur *op.BucketRecord, src meta.BucketID, srcv meta.ObjVersion, intent op.RenameIntent) error {
 	for range maxRemoveRetries {
 		err := s.removeInstance(ctx, src, &objv{read: srcv})
@@ -649,7 +656,9 @@ func (s *Store) markSource(ctx context.Context, cur, old, prev *op.BucketRecord,
 // through the new name since that read fails it rather than being
 // overwritten, and so does an instance another attempt of the rename
 // created since, where radosgw's exclusive write of the new instance takes
-// that instance as its own (svc_bucket_sobj.cc:548-557; v20.2.4
+// that instance as its own
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L548-L557 at v19.2.6;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L488-L497).
 func (s *Store) writeCopy(ctx context.Context, cur, prev *op.BucketRecord, srcv meta.ObjVersion, intent op.RenameIntent) error {
 	var oldv *meta.ObjVersion
@@ -715,7 +724,12 @@ func versionOf(rec *op.BucketRecord) *meta.ObjVersion {
 // ConcurrentModification before anything is written; the read drops the
 // cached copy, so a retry loads the instance afresh. radosgw's link loads
 // the bucket through its cache and writes nothing under its version
-// (rgw_bucket.cc:1044 and :1138-1144; v20.2.4 :1195 and :1289-1295).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1044
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1138-L1144 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1195
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1289-L1295 at v20.2.4).
 func (s *Store) readCopies(ctx context.Context, rec *op.BucketRecord, src, dst meta.BucketID) (old, prev *op.BucketRecord, err error) {
 	read := func(b meta.BucketID) (*op.BucketRecord, error) {
 		r, rerr := s.rereadInstance(ctx, b)
@@ -758,11 +772,16 @@ func (s *Store) readCopies(ctx context.Context, rec *op.BucketRecord, src, dst m
 // through either name or a concurrent retry's write, is refused, so no
 // write acknowledged through one name is overwritten by the other's. radosgw
 // checks nothing: its retry writes the new instance exclusively and, finding
-// it, leaves it as it is (rgw_bucket.cc:1138-1144, svc_bucket_sobj.cc:548-557;
-// v20.2.4 :1289-1295 and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L488-L497),
-// then removes the old one unchecked (rgw_bucket.cc:1175-1179; v20.2.4
-// :1326-1330), losing a write made through the old name between the attempts
+// it, leaves it as it is
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1138-L1144,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket_sobj.cc#L548-L557 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1289-L1295
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L488-L497 at v20.2.4),
+// then removes the old one unchecked
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1175-L1179 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1326-L1330 at v20.2.4),
+// losing a write made through the old name between the attempts
 // (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket config
 // write made through the old name").
 func retryable(old, prev *op.BucketRecord) error {
@@ -984,7 +1003,8 @@ func (s *Store) UnlinkBucketOwner(ctx context.Context, rec *op.BucketRecord, own
 const maxChownRounds = 10
 
 // ChownBucket implements op.BucketAdminStore as RadosBucket::chown
-// (rgw_sal_rados.cc:699-751; v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L699-L751 at v19.2.6;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L717-L769)
 // under adopt_user_bucket's retries: each round loads the bucket by name,
 // unlinks its owner, links owner and writes the entry point naming it, then
@@ -997,7 +1017,9 @@ const maxChownRounds = 10
 // now loads an instance other than rec's, or rec's instance under an owner
 // other than rec's; radosgw's adopt_user_bucket loads that instance by its
 // id in each round and chowns it from whoever holds it, pointing the name
-// at it (driver/rados/buckets.cc:119-130 and
+// at it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/buckets.cc#L119-L130
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1681-L1742 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1687-L1748 at v20.2.4).
 // The entry point is written under the version the round read, where

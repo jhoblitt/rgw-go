@@ -38,10 +38,13 @@ import (
 // (pg_pool_t::requires_aligned_append,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.h#L1754-L1757 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.h#L1791-L1794 at v20.2.4,
-// as RGWRados::get_required_alignment asks it, rgw_rados.cc:659-693 and
-// :694-728): on such a pool with a stripe width over 4 MiB a chunk or stripe
-// exceeds its option, a slow client holds more than its piece's room, and
-// stalled clients there can hold back another PUT.
+// as RGWRados::get_required_alignment asks it,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L659-L693 at v19.2.6
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L694-L728 at v20.2.4):
+// on such a pool with a stripe width over 4 MiB a chunk or stripe exceeds
+// its option, a slow client holds more than its piece's room, and stalled
+// clients there can hold back another PUT.
 //
 // The head a PUT keeps for its head write takes no share: it is held for the
 // whole request, so a request would hold it while its tail waited on the

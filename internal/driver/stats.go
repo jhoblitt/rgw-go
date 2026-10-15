@@ -297,10 +297,11 @@ func (s *Store) clock() time.Time { return s.sysobj.now() }
 // effectiveQuotas is RGWOp::init_quota over get_owner_quota_info
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1383-L1449 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1620-L1686 at v20.2.4):
-// the period's quotas (RadosStore::get_quota, svc_quota.cc:9-17), then the
-// bucket's own bucket quota or else the owner's when enabled, and the
-// owner's user quota when enabled. An owner that does not load fails it, a
-// missing one with radosgw's bare ENOENT, NoSuchKey.
+// the period's quotas (RadosStore::get_quota,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_quota.cc#L9-L17),
+// then the bucket's own bucket quota or else the owner's when enabled, and
+// the owner's user quota when enabled. An owner that does not load fails
+// it, a missing one with radosgw's bare ENOENT, NoSuchKey.
 func (s *Store) effectiveQuotas(ctx context.Context, rec *op.BucketRecord, owner meta.Owner) (bucket, user meta.Quota, err error) {
 	var ownerBucket, ownerUser meta.Quota
 	if owner.User != nil {
@@ -603,9 +604,12 @@ func (s *Store) syncAllOwners(ctx context.Context, section ownerSection) {
 // page of ownerListPage objects at a time, and calls fn with each key's
 // owner (parse_owner) once its page is listed, until ctx ends. The user
 // section is the users.uid pool without the ".buckets" objects
-// (svc_user_rados.cc:54-57 at v19.2.6, :71-80 at v20.2.4); the account
-// section is the account pool's "account." objects (account.cc:518-533 and
-// :636-645 at both tags).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L54-L57 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L71-L80 at v20.2.4);
+// the account section is the account pool's "account." objects
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L518-L533
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L636-L645 at both tags).
 func (s *Store) forEachOwner(ctx context.Context, section ownerSection, fn func(meta.Owner)) error {
 	pool := s.zone.Params.UserUIDPool
 	if section == accountOwners {

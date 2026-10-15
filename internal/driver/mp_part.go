@@ -27,8 +27,7 @@ import (
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L610 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4374-L4834
 // and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L650 at v20.2.4;
-// a bare line number below is v19.2.6's rgw_putobj_processor.cc).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L650 at v20.2.4).
 
 // partLayout is the layout of a part, which
 // MultipartObjectProcessor::prepare_head computes for the tail rule alone
@@ -47,7 +46,7 @@ type partLayout struct {
 // partLayout resolves the layout of a part of an upload whose destination
 // placement is dest, which the part's tails inherit what it leaves empty
 // from the bucket's rule, as generator::create_begin makes them
-// (driver/rados/rgw_obj_manifest.cc:221-236).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_obj_manifest.cc#L221-L236).
 func (s *Store) partLayout(ctx context.Context, rec *op.BucketRecord, dest meta.PlacementRule) (partLayout, error) {
 	bucket := rec.Info.Bucket
 	l := layout{headRule: rec.Info.PlacementRule}
@@ -88,10 +87,15 @@ type partResult struct {
 // does for a part number uploaded before, the prefix becomes
 // "<key>.<32 random characters>" and the stripe is sent again, once
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439).
-// Then the body's length (rgw_op.cc:4430-4433), the quota on the bytes
-// received (:4444-4448), the Content-MD5 (:4483-4486) and the drain that
-// MultipartObjectProcessor::complete starts with. It returns with every
-// stripe drained, or with what it wrote removed, as ~RadosWriter removes it.
+// Then the body's length
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4430-L4433),
+// the quota on the bytes received
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4444-L4448),
+// the Content-MD5
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4483-L4486)
+// and the drain that MultipartObjectProcessor::complete starts with. It
+// returns with every stripe drained, or with what it wrote removed, as
+// ~RadosWriter removes it.
 func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte) (partResult, error) {
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
 	h := md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
@@ -149,8 +153,10 @@ func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32) *tailWrite
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L539-L576).
 // It returns the part head's mtime. On a failure the part's objects are
 // removed, as ~RadosWriter removes them, except when the meta object's op
-// timed out and may yet land (:596-602); a missing meta object is
-// NoSuchUpload, the upload completed or aborted under the part.
+// timed out and may yet land
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L596-L602);
+// a missing meta object is NoSuchUpload, the upload completed or aborted
+// under the part.
 //
 // Unlike radosgw, which registers the part and then removes its objects
 // when the head write lost a race, rgw-go removes them and registers
@@ -261,13 +267,14 @@ func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key me
 
 // PutPart implements op.MultipartStore as RGWPutObj::execute writes part n
 // of an upload: the meta object read for the destination placement before
-// the body, as get_info reads it (rgw_op.cc:4244-4264), so an unknown upload
-// is NoSuchUpload with the body unread; the part streamed (streamPart) and
-// registered (registerPart). p.Attrs are the part head's attrs; p.Mtime its
-// mtime, zero for now. A part takes no write conditions: Squid's
-// MultipartObjectProcessor sets none, while Tentacle's checks them against
-// the part head the request has just created (docs/exclusions.md,
-// "UploadPart ignores If-Match and If-None-Match").
+// the body, as get_info reads it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4244-L4264),
+// so an unknown upload is NoSuchUpload with the body unread; the part
+// streamed (streamPart) and registered (registerPart). p.Attrs are the part
+// head's attrs; p.Mtime its mtime, zero for now. A part takes no write
+// conditions: Squid's MultipartObjectProcessor sets none, while Tentacle's
+// checks them against the part head the request has just created
+// (docs/exclusions.md, "UploadPart ignores If-Match and If-None-Match").
 func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams) (*op.PartResult, error) {
 	rec, key := up.Bucket, up.Key
 	ref, err := s.metaRef(ctx, rec, key, up.ID)
@@ -296,13 +303,15 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 }
 
 // CopyPart implements op.MultipartStore as RGWPutObj::execute copies a part
-// from a source object (rgw_op.cc:4297-4400): rng of src read through
-// ReadObject, decompressed, into PutPart, with up.Attrs as the part head's
-// attrs and the range's length as the body's, so a source that ends short
-// fails as a body cut short does. The source is read once the upload is
-// known, and from the one state src holds, where radosgw prepares a read of
-// the source again for each rgw_max_chunk_size of the range
-// (docs/exclusions.md, "UploadPartCopy reads one version of its source").
+// from a source object
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4297-L4400):
+// rng of src read through ReadObject, decompressed, into PutPart, with
+// up.Attrs as the part head's attrs and the range's length as the body's,
+// so a source that ends short fails as a body cut short does. The source is
+// read once the upload is known, and from the one state src holds, where
+// radosgw prepares a read of the source again for each rgw_max_chunk_size
+// of the range (docs/exclusions.md, "UploadPartCopy reads one version of
+// its source").
 func (s *Store) CopyPart(ctx context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
 	cs := &copySource{read: func(w io.Writer) error { return s.ReadObject(ctx, src, rng, w) }}
 	res, err := s.PutPart(ctx, up, n, cs, op.PutParams{Attrs: up.Attrs, Size: int64(rng.Length)}) //nolint:gosec // a range length is far below 2^63

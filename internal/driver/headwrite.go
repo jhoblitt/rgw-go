@@ -22,8 +22,7 @@ import (
 
 // The head write is RGWRados::Object::Write::write_meta over _do_write_meta
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3124-L3440 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3234-L3594 at v20.2.4;
-// a bare line number below is v19.2.6's).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3234-L3594 at v20.2.4).
 
 // errRetryGuarded is _do_write_meta's -EEXIST on the assume-no-entry pass
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L3305-L3308):

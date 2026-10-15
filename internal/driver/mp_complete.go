@@ -22,8 +22,7 @@ import (
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7431 at v20.2.4)
 // over RadosMultipartUpload::complete
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3433-L3640 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4);
-// a bare line number below is v19.2.6's rgw_op.cc.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4279-L4490 at v20.2.4).
 
 // maxMetaDeleteRetries is MAX_DELETE_RETRIES, the removals of the meta
 // object a completion tries while parts keep racing it
@@ -34,11 +33,11 @@ const maxMetaDeleteRetries = 15
 const partHeadStats = 16
 
 // mergeCompression is complete's cs_info handling for the handled-th part
-// (rgw_sal_rados.cc:3531-3566): after the first part, one that differs from
-// the parts before in being compressed, in its compressor, or in its
-// compressor message when the object has one, is ErrInvalidPart; a
-// compressed part's blocks are appended, shifted past the original and the
-// stored bytes before them.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3531-L3566):
+// after the first part, one that differs from the parts before in being
+// compressed, in its compressor, or in its compressor message when the
+// object has one, is ErrInvalidPart; a compressed part's blocks are
+// appended, shifted past the original and the stored bytes before them.
 func mergeCompression(cs *meta.CompressionInfo, compressed *bool, part meta.CompressionInfo, handled int) error {
 	partCompressed := part.Type != "none"
 	if handled > 0 && (partCompressed != *compressed || cs.Type != part.Type ||
@@ -88,7 +87,8 @@ type assembly struct {
 	cleanup    partCleanup
 }
 
-// assemble is complete's validation and assembly (rgw_sal_rados.cc:3462-3590)
+// assemble is complete's validation and assembly
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3462-L3590)
 // of parts, sorted, against stored, the parts listed for upload uploadID of
 // key, page by page as list_parts returns them: on the last page the counts
 // must agree; each part, in lockstep, must be at least minPartSize unless it
@@ -127,7 +127,8 @@ func (s *Store) assemble(key meta.ObjKey, uploadID string, stored []meta.UploadP
 	return a, nil
 }
 
-// assemblePart is one step of complete's loop (rgw_sal_rados.cc:3478-3577)
+// assemblePart is one step of complete's loop
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3478-L3577)
 // for part p, the i-th of n requested, against st, the i-th stored.
 func (s *Store) assemblePart(a *assembly, key meta.ObjKey, uploadID string, st meta.UploadPartInfo, p op.CompletePart, i, n int) error {
 	if i < n-1 && st.AccountedSize < s.mp.minPartSize {
@@ -229,14 +230,21 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 // an upload:
 //   - a bucket whose writes take a versioned path, versioning enabled or
 //     suspended or object lock, is answered 501 before the store is
-//     touched: radosgw writes a version there (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6459-L6466), and the plain
-//     key's head written here would stand beside the bucket's olh;
+//     touched: radosgw writes a version there
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6459-L6466),
+//     and the plain key's head written here would stand beside the
+//     bucket's olh;
 //   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
 //     cookie of this completion's own (newLockCookie), whose ENOENT, when
 //     the key already carries the parts' ETag (checkPreviouslyCompleted), is
 //     radosgw's re-sent completion, answered with that stored ETag
-//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6438-L6441; v19.2.7 https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584, v20.2.4 https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472); any other refusal is 500
-//     "This multipart completion is already in progress";
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6438-L6441;
+//     v19.2.7
+//     https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584,
+//     v20.2.4
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472);
+//     any other refusal is 500 "This multipart completion is already in
+//     progress";
 //   - the meta object's attrs and version (readMeta). A completion record
 //     there is an earlier completion's whose meta object outlived its head
 //     write (replayRecorded);
@@ -249,10 +257,11 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //   - the lock renewed with the completion record written (renewAndRecord),
 //     or 500 as for a held lock;
 //   - the head written as write_meta writes it for complete
-//     (rgw_sal_rados.cc:3588-3637): the meta object's attrs with the ETag,
-//     the compression info and the object lock settings, under up.WriteTag
-//     or a random tag, created, atomic, its tail modified, with no bytes
-//     added to the quota cache, and with up's conditions. A write that
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3588-L3637):
+//     the meta object's attrs with the ETag, the compression info and the
+//     object lock settings, under up.WriteTag or a random tag, created,
+//     atomic, its tail modified, with no bytes added to the quota cache,
+//     and with up's conditions. A write that
 //     certainly failed takes the record back (clearRecord). A lost race
 //     without conditions is success, as radosgw answers it, and the parts'
 //     current objects then leak (docs/ceph-upstream-bugs.md, "A
@@ -425,9 +434,9 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 // retireUpload is what follows a completion's head write: the chain of
 // cleanup, the parts' history, to the GC under the upload id,
 // synchronously, as cleanup_part_history sends it
-// (rgw_sal_rados.cc:3132-3146), then the meta object's removal with
-// cleanup's index entries, retried up to maxMetaDeleteRetries times while
-// parts race it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3132-L3146),
+// then the meta object's removal with cleanup's index entries, retried up
+// to maxMetaDeleteRetries times while parts race it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6493-L6530):
 // after each ECANCELED the meta object is read again and
 // cleanup_orphaned_parts runs, whose parts were registered after the
@@ -468,7 +477,8 @@ func (s *Store) retireUpload(ctx context.Context, up *op.Upload, ref mpRef, ms *
 }
 
 // cleanupOrphanedParts is RadosMultipartUpload::cleanup_orphaned_parts
-// (rgw_sal_rados.cc:3038-3101; v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3038-L3101;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3882-L3945):
 // every part the meta object lists whose current prefix c has not handled
 // goes to the GC under the upload id, its stripes and head, with its head's

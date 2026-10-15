@@ -20,7 +20,6 @@ import (
 // Bucket creation and removal are RGWRados::create_bucket and
 // RGWRados::delete_bucket (driver/rados/rgw_rados.cc) under
 // RadosBucket::create and RadosBucket::remove (driver/rados/rgw_sal_rados.cc).
-// A bare line number is v19.2.6's.
 
 // maxCreateRetries is MAX_CREATE_RETRIES
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2371;
@@ -215,15 +214,16 @@ func (s *Store) discardInstance(ctx context.Context, info *meta.BucketInfo) {
 // point exists, the bucket is read by name: when that finds none, the try is
 // abandoned and another made with a new id, and after twenty tries the create
 // fails with radosgw's -ENOENT, NoSuchKey with no message
-// (rgw_rados.cc:2455-2457; v20.2.4 :2563-2565); otherwise this try's instance
-// and index are removed and the existing record is returned with
-// ErrBucketAlreadyExists. That existing bucket is linked to p.Owner when it
-// is p.Owner's, repairing a creation that died before its link, and never
-// when it is another owner's. A new bucket is linked to its owner, and a
-// link that fails unlinks it again and is returned. After a link the entry
-// point is read again, and when a concurrent delete has removed it, or it
-// names another instance, the bucket is unlinked once more. Every unlink
-// removes only an owner's entry naming the bucket's own instance.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2455-L2457 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2563-L2565 at v20.2.4);
+// otherwise this try's instance and index are removed and the existing record
+// is returned with ErrBucketAlreadyExists. That existing bucket is linked to
+// p.Owner when it is p.Owner's, repairing a creation that died before its
+// link, and never when it is another owner's. A new bucket is linked to its
+// owner, and a link that fails unlinks it again and is returned. After a link
+// the entry point is read again, and when a concurrent delete has removed it,
+// or it names another instance, the bucket is unlinked once more. Every
+// unlink removes only an owner's entry naming the bucket's own instance.
 //
 // radosgw leaves an abandoned try's instance and index behind and carries
 // its layout's log into the next try, and it reports a new bucket whose link
@@ -401,9 +401,11 @@ const maxRemoveRetries = 20
 // there. A bucket of another zonegroup, as RGWZoneGroup::equals tells it, is
 // PermanentRedirect before the index is read or anything removed. radosgw
 // reaches its delete with another zonegroup's bucket only for a system
-// request to the master zonegroup (rgw_op.cc:565; v20.2.4 :595): the delete
-// the owning zonegroup's zone forwarded to the metadata master after
-// checking emptiness itself
+// request to the master zonegroup
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L565 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L595 at v20.2.4):
+// the delete the owning zonegroup's zone forwarded to the metadata master
+// after checking emptiness itself
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3759-L3783
 // and rgw_forward_request_to_master,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L126-L134;

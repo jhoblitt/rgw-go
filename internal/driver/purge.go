@@ -22,12 +22,12 @@ const purgeListPage = 1000
 // data pass
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L470-L595 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L491-L616 at v20.2.4;
-// a bare line number below is v19.2.6's, v20.2.4's lying 21 lines on): the index
-// shard headers read as read_stats reads them, the in-flight uploads aborted,
-// then every listed object's tail stripes released directly and its head and
-// index entry removed, instead of queueing the tails for GC. The bucket read it
-// starts with is the caller's, and the bucket removal it ends with the ordinary
-// purge the caller runs next
+// the remove_bypass_gc lines the v19.2.6 links below cite lie 21 lines on
+// at v20.2.4): the index shard headers read as read_stats reads them, the
+// in-flight uploads aborted, then every listed object's tail stripes released
+// directly and its head and index entry removed, instead of queueing the
+// tails for GC. The bucket read it starts with is the caller's, and the
+// bucket removal it ends with the ordinary purge the caller runs next
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L601).
 //
 // The deletes run with at most rgw_gc_max_concurrent_io in flight, where
@@ -92,7 +92,9 @@ func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L371 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L385 at v20.2.4)
 // but issues a delete while no more than that many are in flight, so it runs
-// one more (:384, v20.2.4
+// one more
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L384,
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L399).
 // The first failed delete stops new ones, and the purge returns it once the
 // deletes in flight have ended, as drain_aio returns a failed completion's
@@ -184,12 +186,14 @@ func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 	if err != nil {
 		return err
 	}
-	// The tail tag, else the object tag (:538-541), which get_obj_state fakes
-	// for a head with a manifest and no idtag (rgw_rados.cc:6238-6245 at
-	// v19.2.6, :6992-6999 at v20.2.4). A copy's refcount reference is held
-	// under the copy's own tag, so the release drops this object's
-	// reference, or the implicit one, and the stripe stays while another
-	// object holds it
+	// The tail tag, else the object tag
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L538-L541),
+	// which get_obj_state fakes for a head with a manifest and no idtag
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6238-L6245 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6992-L6999 at v20.2.4).
+	// A copy's refcount reference is held under the copy's own tag, so the
+	// release drops this object's reference, or the implicit one, and the
+	// stripe stays while another object holds it
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/refcount/cls_refcount.cc#L88-L139).
 	tag := rawTag(st, meta.AttrTailTag)
 	if tag == "" {
@@ -221,9 +225,12 @@ func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L676-L686 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L688-L698 at v20.2.4):
 // a refcount put under tag with the implicit reference, the locator set,
-// allowed into a full pool's reserve, and ENOENT counted as done (:413-415,
-// v20.2.4 :428-430). remove_bypass_gc's delete_tail_obj_aio sends the same
-// put without full-try
+// allowed into a full pool's reserve, and ENOENT counted as done
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L413-L415,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_gc.cc#L428-L430).
+// remove_bypass_gc's delete_tail_obj_aio sends the same put without
+// full-try
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10659-L10685 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11596-L11622 at v20.2.4).
 func (p *bypassPurge) tail(ctx context.Context, o rgw.GCObj, tag string) error {

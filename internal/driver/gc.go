@@ -18,8 +18,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The GC worker is radosgw's RGWGC processor (driver/rados/rgw_gc.cc). A
-// bare line number below is v19.2.6's; v20.2.4 has the same code, from
+// The GC worker is radosgw's RGWGC processor (driver/rados/rgw_gc.cc).
+// v20.2.4 has the same code as the v19.2.6 rgw_gc.cc links below cite, from
 // RGWGC::list
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L247)
 // on 12 to 15 lines later.
@@ -155,10 +155,11 @@ func (g *gcWorker) process(ctx context.Context, expiredOnly bool) error {
 	return nil
 }
 
-// processShard is RGWGC::process(int, ...) (:550-727): under the shard's
-// gc_process lock, held for budget, it frees the objects of each listed
-// entry, a page of gcListMax at a time, until the listing ends or the budget
-// is spent. A shard another gateway holds is skipped.
+// processShard is RGWGC::process(int, ...)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L550-L727):
+// under the shard's gc_process lock, held for budget, it frees the objects
+// of each listed entry, a page of gcListMax at a time, until the listing
+// ends or the budget is spent. A shard another gateway holds is skipped.
 func (g *gcWorker) processShard(ctx context.Context, idx int, budget time.Duration, expiredOnly bool, io *gcIO) error {
 	if budget <= 0 {
 		return errGCNoTime
@@ -396,7 +397,7 @@ func newGCIO(g *gcWorker) *gcIO {
 	io := &gcIO{
 		g:          g,
 		maxAIO:     uint64(int64(g.s.w.opts.gcMaxConcurrentIO)), //nolint:gosec // size_t max_aio, as radosgw converts it
-		trimChunk:  uint64(int64(g.s.w.opts.gcMaxTrimChunk)),    //nolint:gosec // the size_t cast at :462
+		trimChunk:  uint64(int64(g.s.w.opts.gcMaxTrimChunk)),    //nolint:gosec // the size_t cast at https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L462
 		tagLeft:    make([]map[string]int, n),
 		removeTags: make([][]string, n),
 	}
@@ -425,8 +426,9 @@ func (io *gcIO) wait() { io.wg.Wait() }
 // while more than maxAIO operations are in flight it completes the oldest,
 // failing on a failure only when shard idx has moved to the queue, then
 // starts the refcount put of the tail oid under tag, at pool full too, as
-// radosgw's ioctx sets pool_full_try (:677). ctx's end stops the wait without
-// starting the put.
+// radosgw's ioctx sets pool_full_try
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L677).
+// ctx's end stops the wait without starting the put.
 func (io *gcIO) scheduleIO(ctx context.Context, pool radosclient.Pool, oid string, idx int, tag string) error {
 	for uint64(len(io.ios)) > io.maxAIO {
 		if goingDown(ctx) {
