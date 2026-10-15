@@ -54,5 +54,5 @@ func (AnonymousOnly) Authenticate(_ context.Context, r *http.Request, _ op.Paylo
 			}
 		}
 	}
-	return &op.AuthResult{Identity: op.Anonymous(), PayloadSHA256: "UNSIGNED-PAYLOAD"}, nil
+	return &op.AuthResult{Identity: op.Anonymous(), PayloadSHA256: "UNSIGNED-PAYLOAD", Route: op.RouteAnonymous}, nil
 }

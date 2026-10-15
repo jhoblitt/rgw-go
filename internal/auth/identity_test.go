@@ -174,7 +174,7 @@ var _ = Describe("Verifier identities", func() {
 		Expect(res.Identity.Attrs).To(Equal(rec.Attrs))
 		Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
 		Expect(res.Body).To(BeNil())
-		Expect(res.Presigned).To(BeFalse())
+		Expect(res.Route).To(Equal(op.RouteSigV4Header))
 	})
 
 	It("carries the tenant, the subuser, and admin as admin-or-system", func(ctx SpecContext) {

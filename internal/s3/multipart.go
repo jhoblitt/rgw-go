@@ -220,7 +220,8 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 // what the bucket holds (multipartObjectLock); a Content-MD5 that
 // ceph_unarmor does not decode to 16 bytes, InvalidDigest (:4184-4198,
 // :4393-4407); then the attrs, requestAttrs' with the query's x-amz-meta-*
-// included, as map_qs_metadata adds them for put_obj, and the tag set, as
+// included where the route reads them (op.AuthRoute.ReadsQueryMeta), as
+// map_qs_metadata adds them for put_obj on every route, and the tag set, as
 // encode_obj_tags_attr stores it on the part's head (:4531, :4799). radosgw
 // builds the ACL and checks the object lock in get_params, before
 // verify_permission, and the attrs once the part is stored

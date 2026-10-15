@@ -51,10 +51,13 @@ func newHandler(store *memstore.Store, auth s3.Authenticator, cfg s3.Config) *s3
 	return s3.NewHandler(testEnv(store), auth, testConfig(cfg))
 }
 
-// authAs authenticates every request as rec's user.
-func authAs(rec *op.UserRecord) s3.Authenticator {
+// authAs authenticates every request as rec's user, on no named route.
+func authAs(rec *op.UserRecord) s3.Authenticator { return authAsOn(rec, op.RouteUnknown) }
+
+// authAsOn authenticates every request as rec's user on route.
+func authAsOn(rec *op.UserRecord, route op.AuthRoute) s3.Authenticator {
 	return s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
-		return &op.AuthResult{Identity: op.Identity{User: &rec.Info, Owner: meta.UserOwner(rec.Info.UserID), OpMask: rec.Info.OpMask}}, nil
+		return &op.AuthResult{Identity: op.Identity{User: &rec.Info, Owner: meta.UserOwner(rec.Info.UserID), OpMask: rec.Info.OpMask}, Route: route}, nil
 	})
 }
 
@@ -1040,6 +1043,7 @@ var _ = Describe("AnonymousOnly", func() {
 		Expect(res.Identity).To(Equal(op.Anonymous()))
 		Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
 		Expect(res.Body).To(BeNil(), "the request keeps its own body")
+		Expect(res.Route).To(Equal(op.RouteAnonymous), "an unset route would read nothing of the query")
 	})
 	It("refuses credentials however the query spells their names", func(ctx SpecContext) {
 		for _, target := range []string{"/?X-AMZ-CREDENTIAL=a", "/?awsaccesskeyid=a", "/?signature=a"} {

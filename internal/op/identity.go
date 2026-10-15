@@ -76,8 +76,6 @@ type AuthResult struct {
 	// the header is absent, as radosgw takes it (get_v4_exp_payload_hash,
 	// rgw_auth_s3.h:638-661 at v19.2.6, :641-664 at v20.2.4).
 	PayloadSHA256 string
-	// Presigned is set when the credentials came in the query string.
-	Presigned bool
 	// QueryMeta is the x-amz-meta-* parameters and x-amz-security-token a
 	// SigV2 presigned request signs in its query, by lower-case name, each
 	// value joined as the string to sign joins it. That string runs the
@@ -86,6 +84,68 @@ type AuthResult struct {
 	// request's headers and out of its query, so that every read takes the
 	// two as one set (docs/exclusions.md). Empty for every other request.
 	QueryMeta map[string]string
+	// Route is the route the request authenticated on, which says what of
+	// its query its signature covers. An authenticator sets it on every
+	// result; one left unset is RouteUnknown, which reads nothing from the
+	// query that a signature may leave out.
+	Route AuthRoute
+}
+
+// AuthRoute is the signature route a request authenticated on. Its zero
+// value is RouteUnknown, so that a result naming no route fails closed.
+type AuthRoute uint8
+
+// The routes.
+const (
+	// RouteUnknown is a result that names no route. It reads neither the
+	// query's meta nor its encryption settings.
+	RouteUnknown AuthRoute = iota
+	// RouteAnonymous is an unsigned request, which signs nothing and may
+	// send the same names as headers.
+	RouteAnonymous
+	// RouteSigV2Header is SigV2 in the Authorization header, whose string to
+	// sign takes nothing from the query but the sub-resources
+	// (rgw_auth_s3.cc:215-216 at v19.2.7, :217-218 at v20.2.4).
+	RouteSigV2Header
+	// RouteSigV2Query is presigned SigV2, whose string to sign takes the
+	// query's x-amz-meta-* and x-amz-security-token alone (get_v2_qs_map,
+	// rgw_auth_s3.cc:175-187 at v19.2.7, :176-188 at v20.2.4).
+	RouteSigV2Query
+	// RouteSigV4Header and RouteSigV4Query are SigV4, whose canonical query
+	// names every parameter.
+	RouteSigV4Header
+	RouteSigV4Query
+
+	numAuthRoutes
+)
+
+// ReadsQueryMeta reports whether a request on the route has its query's
+// x-amz-meta-* parameters stored, as radosgw's map_qs_metadata merges them
+// on every route (rgw_rest_s3.cc:2589-2603 at v19.2.7, :2742-2756 at
+// v20.2.4): the routes that sign them, and an anonymous request. SigV2's
+// header route signs none of them (docs/exclusions.md), and any other
+// route reads none.
+func (rt AuthRoute) ReadsQueryMeta() bool {
+	switch rt {
+	case RouteAnonymous, RouteSigV2Query, RouteSigV4Header, RouteSigV4Query:
+		return true
+	default:
+		return false
+	}
+}
+
+// ReadsQueryEncryption reports whether a request on the route takes
+// encryption settings from its query's x-amz-server-side-encryption*
+// parameters, which map_qs_metadata sets over the headers' on every route:
+// SigV4, which signs them, and an anonymous request. Neither SigV2 route
+// signs them (docs/exclusions.md), and any other route reads none.
+func (rt AuthRoute) ReadsQueryEncryption() bool {
+	switch rt {
+	case RouteAnonymous, RouteSigV4Header, RouteSigV4Query:
+		return true
+	default:
+		return false
+	}
 }
 
 // PayloadForms is the set of signed payload forms an op accepts. radosgw's

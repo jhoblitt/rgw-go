@@ -355,10 +355,15 @@ func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 // when withQuery, a query parameter of that name in any case, the last in
 // name order winning. radosgw's crypt attributes also take the header under
 // six other meta prefixes (rgw_common.cc:413-464 at v19.2.7, :426-477 at
-// v20.2.4), which rgw-go's S3 API does not read (docs/exclusions.md).
+// v20.2.4), which rgw-go's S3 API does not read (docs/exclusions.md). The
+// query's overwrites the header's on every route in radosgw
+// (rgw_rest_s3.cc:2599-2601 at v19.2.7, :2752-2754 at v20.2.4); rgw-go
+// takes no query encryption parameter on either SigV2 route, neither of
+// which signs it, nor on a route a result does not name
+// (op.AuthRoute.ReadsQueryEncryption, docs/exclusions.md).
 func cryptAttr(r *op.Request, name string, withQuery bool) (string, bool) {
 	val, found := op.HeaderValue(r.Header, "X-Amz-"+name)
-	if !withQuery {
+	if !withQuery || !r.AuthRoute.ReadsQueryEncryption() {
 		return val, found
 	}
 	for _, k := range slices.Sorted(maps.Keys(r.Query)) {

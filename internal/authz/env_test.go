@@ -312,7 +312,7 @@ var _ = Describe("BuildEnv", func() {
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-acl", "")))
 		})
 
-		It("adds the encryption keys, from headers and then the query", func() {
+		It("adds the encryption keys, from headers and then a SigV4 request's query", func() {
 			r := envRequest(http.MethodPut, "b", "o", "",
 				"X-Amz-Server-Side-Encryption", "AES256",
 				"X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id", "key1",
@@ -329,11 +329,37 @@ var _ = Describe("BuildEnv", func() {
 
 			r = envRequest(http.MethodPut, "b", "o", "x-amz-server-side-encryption=aws:kms",
 				"X-Amz-Server-Side-Encryption", "AES256")
+			r.AuthRoute = op.RouteSigV4Header
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
 				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "aws:kms")), "query")
 			r = envRequest(http.MethodPut, "b", "o", "X-AMZ-SERVER-SIDE-ENCRYPTION=aws:kms")
+			r.AuthRoute = op.RouteSigV4Header
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
 				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "aws:kms")), "query in capitals")
+		})
+
+		DescribeTable("takes no encryption key from the query where the route may not have signed it",
+			func(route op.AuthRoute) {
+				r := envRequest(http.MethodPut, "b", "o", "x-amz-server-side-encryption=aws:kms&x-amz-server-side-encryption-aws-kms-key-id=q",
+					"X-Amz-Server-Side-Encryption", "AES256")
+				r.AuthRoute = route
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+					"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "AES256")),
+					"the signed header's, which radosgw's query overwrites (rgw_rest_s3.cc:2599-2601 at v19.2.7)")
+				r = envRequest(http.MethodPut, "b", "o", "X-AMZ-SERVER-SIDE-ENCRYPTION=aws:kms")
+				r.AuthRoute = route
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-acl", "")), "the query alone")
+			},
+			Entry("SigV2's header route", op.RouteSigV2Header),
+			Entry("SigV2's presigned route, whose string to sign takes the query's meta and token alone", op.RouteSigV2Query),
+			Entry("a request that names no route", op.RouteUnknown),
+		)
+
+		It("takes the encryption keys from a presigned SigV4 request's query, which its canonical query signs", func() {
+			r := envRequest(http.MethodPut, "b", "o", "x-amz-server-side-encryption=aws:kms", "X-Amz-Server-Side-Encryption", "AES256")
+			r.AuthRoute = op.RouteSigV4Query
+			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "aws:kms")))
 		})
 
 		It("reads the encryption headers from X-Amz- alone, under none of radosgw's other meta prefixes", func() {
@@ -388,10 +414,11 @@ var _ = Describe("BuildEnv", func() {
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-copy-source", "/src/k")), "no directive")
 		})
 
-		It("adds only the encryption headers for CreateMultipartUpload and CompleteMultipartUpload, after the tags", func() {
+		It("adds only the encryption headers for CreateMultipartUpload and CompleteMultipartUpload, after the tags, on a route that reads the query", func() {
 			for _, q := range []string{"uploads", "uploadId=u"} {
 				r := envRequest(http.MethodPost, "b", "o", q+"&x-amz-server-side-encryption=aws:kms",
 					"X-Amz-Acl", "public-read", "X-Amz-Tagging", "k=v", "X-Amz-Server-Side-Encryption", "AES256")
+				r.AuthRoute = op.RouteSigV4Header
 				pairs, tagsFirst := authz.EnvPairs(cfg, r, policy.S3PutObject)
 				Expect(pairs).To(Equal(with(baseFor(""), "s3:x-amz-server-side-encryption", "AES256")), q)
 				Expect(tagsFirst).To(BeTrue(), q)

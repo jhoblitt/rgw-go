@@ -155,7 +155,7 @@ var _ = Describe("Verifier", func() {
 		Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
 		Expect(res.Body).To(BeNil())
 		Expect(res.ContentLength).To(BeEquivalentTo(5))
-		Expect(res.Presigned).To(BeFalse())
+		Expect(res.Route).To(Equal(op.RouteAnonymous))
 	})
 
 	It("authenticates an OPTIONS request without a known signature scheme as anonymous", func(ctx SpecContext) {
@@ -269,7 +269,7 @@ var _ = Describe("Verifier", func() {
 		res, err := v.Authenticate(ctx, req, anyPayload)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
-		Expect(res.Presigned).To(BeFalse())
+		Expect(res.Route).To(Equal(op.RouteSigV2Header))
 		Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
 		Expect(res.Body).To(BeNil())
 
@@ -279,7 +279,7 @@ var _ = Describe("Verifier", func() {
 		res, err = v.Authenticate(ctx, pre, anyPayload)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Identity.AccessKey).To(Equal("AKALICE"))
-		Expect(res.Presigned).To(BeTrue())
+		Expect(res.Route).To(Equal(op.RouteSigV2Query))
 
 		h = hmac.New(sha1.New, []byte("not-the-secret"))
 		h.Write([]byte("GET\n\n\n1441000000\n/b/k"))
