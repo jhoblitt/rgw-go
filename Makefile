@@ -138,6 +138,16 @@ citecheck-links: ## Check, without a ceph clone, that every citation in markdown
 	@test -n "$(CITECHECK_FILES)" || { echo "set FILES to the markdown files whose citations to check" >&2; exit 1; }
 	go run ./hack/citecheck --form-only $(CITECHECK_FILES)
 
+# The content check reads every link's lines in the clone and lists the links
+# it cannot judge for a person to read, so it is opt-in: neither check nor CI
+# runs it. Without FILES it reads every tracked markdown and Go file outside
+# testdata.
+CITECHECK_CONTENT_FILES = $(or $(CITECHECK_FILES),$(shell git ls-files '*.md' '*.go' | grep -v '/testdata/'))
+
+.PHONY: citecheck-content
+citecheck-content: ## Check that each Ceph link's lines hold what its text names, in FILES or every tracked markdown and Go file: make citecheck-content [FILES="docs/x.md ..."]
+	go run ./hack/citecheck --content $(CITECHECK_CONTENT_FILES)
+
 # The form check needs no ceph clone, so the gate and CI can run it.
 MARKDOWN = $(shell git ls-files '*.md')
 

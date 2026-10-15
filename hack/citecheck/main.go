@@ -3,13 +3,16 @@
 // ceph/ceph at the revision each names, so that a line range that points at
 // the wrong file or the wrong lines is found before work is planned on it,
 // and rewrites the code spans and plain file:line citations that once cited
-// Ceph into links.
+// Ceph into links. On request it also checks that each link's lines hold
+// what its text names.
 //
 //	go run ./hack/citecheck [--ceph DIR] [--fix | --form-only] [--markdown-plain] FILE...
+//	go run ./hack/citecheck --content [--ceph DIR] FILE...
 //	go run ./hack/citecheck files [--ceph DIR] (--out FILE | --check FILE) REF...
 //	make citecheck FILES="FILE..."
 //	make citecheck-fix FILES="FILE..."
 //	make citecheck-links FILES="FILE..."
+//	make citecheck-content [FILES="FILE..."]
 //	make citecheck-go PKGS="DIR..."
 //	make citecheck-go-fix PKGS="DIR..."
 //	make citecheck-files
@@ -31,7 +34,9 @@
 // clone, so that CI can run it; it cannot be combined with --fix.
 // --markdown-plain (CITECHECK_MARKDOWN_PLAIN) reads the plain citations in
 // markdown too, as Plain citations in markdown says; without it they are not
-// read at all.
+// read at all. --content (CITECHECK_CONTENT; make citecheck-content) checks
+// the links alone, each as Checks says and then as The content of links
+// says; it cannot be combined with --fix, --form-only or --markdown-plain.
 // The --log-level (debug, info, warn or error; info by default;
 // CITECHECK_LOG_LEVEL) and --log-format (json or text; json by default;
 // CITECHECK_LOG_FORMAT) flags set the logger, which writes to stderr. The
@@ -482,6 +487,72 @@
 // tag the list was not made at, while the markers' releases are not among its
 // refs, or when the pattern that chose its names is not citecheck's.
 //
+// # The content of links
+//
+// --content reads every link, in markdown and in Go comments, and checks,
+// after the checks a link must pass and in this order, that:
+//
+//   - no release its text ties to it is another commit than its ref's: a
+//     marker or a tag in its text, unless the text names two releases; a
+//     marker or a tag right before it; an "at", "in" or "on" and a tag after
+//     it or after the citations listed with it, unless "and", "or", "/" or ","
+//     and another tag follow that tag; an "at", "in" or "on" and [S] or [T]
+//     right after it; and, when none of those ties it, an "at <tag>", "in
+//     <tag>", "all at <tag>" or "all in <tag>" after the ";" or "," that
+//     closes the parenthesis it stands in, unless a citation between it and
+//     the ")" carries a tie of its own. "At both tags" after it ties it to
+//     neither release. So a clause that names two releases ties neither;
+//   - when nothing ties a release to it, it links no lines at v20.2.4 while
+//     another citation of its paragraph carries a [T], since a paragraph
+//     that marks its Tentacle citations so leaves its Squid ones unmarked;
+//     unless a citation before it in its run carries the [T], which marks
+//     the run, or the words named beside it, below, name Tentacle, by its
+//     tag or its codename, and no other release;
+//   - its text names no file but the one it links;
+//   - its lines hold an identifier its text, or else the words beside it,
+//     name.
+//
+// The identifiers are those its own text names, past the file and lines it
+// writes, or, when it names none, those named beside it: the words that lead
+// to the run of citations it is listed in, back to its sentence's start, the
+// citation before the run or 220 bytes, and those that follow the run, up to
+// its sentence's end, the first ")" or ";" or 100 bytes, unless they run on to
+// the next citation, which they then lead to. A run is citations with nothing
+// but blanks, commas, semicolons, parentheses, "and", "or", markers, tags and
+// "at <tag>" between them, and in a table a link's words stay in its cell. So
+// a neighboring citation's names are not its, and a list's lead-in names are
+// each of its citations'. Both are read as Plain citations in markdown reads a
+// citation's, whole code tokens only, with markdown's backslash escapes
+// dropped, a code span's name with a "*", as `HTTP_X_AMZ_GRANT_*`, kept whole,
+// and in a Go file the names that are rgw-go's left out; and the words beside
+// it with each file's name blanked. A name from beside it that its file does
+// not hold at all is left out too, since such a name is as often an error
+// table's, a neighboring citation's or rgw-go's own as the link's.
+//
+// An identifier stands in text as a whole word; a name of words joined by "_"
+// also as a run of the words of a longer one, write_meta in _do_write_meta; a
+// name with a "*" as a pattern, each "*" any run of letters, digits, "_" and
+// "-"; and a header's name also in its CGI form, as radosgw reads a request's
+// headers, x-amz-acl as HTTP_X_AMZ_ACL. A link's lines hold one when it stands
+// in them, the link's lines exactly and none either side, or in the header of
+// a block that encloses them, as a function's does its body.
+//
+// A link whose own text names identifiers fails when its lines hold none of
+// them. One whose identifiers are named beside it fails when its lines hold
+// none of those its file holds. When its file holds none, it fails when the
+// same lines of another file at its ref hold one: a file its paragraph links
+// or names, or, for a qualified name none of whose parts is generic, one the
+// rest of its section does; and it is listed otherwise. A file that holds one
+// on other lines is no evidence. A link beside which nothing counts as an
+// identifier is listed too, not failed. A link that would be listed fails
+// instead when its text writes lines alone, as a continuation does, and the
+// nearest link, citation or file name before it in its section is of another
+// file. A failure for its lines names the nearest line that holds one, and
+// whether the same lines at v19.2.6 or v20.2.4 do.
+//
+// The check is opt-in: neither make check nor CI runs it, since it needs the
+// clone and its lists are for a person to read.
+//
 // # Output
 //
 // citecheck prints a line for each citation that fails,
@@ -490,11 +561,17 @@
 //
 // where FILE is as given, LINE is the line the citation starts on and the
 // citation is as written, then citations checked: N, failed: M, and under
-// --fix rewritten: K, the code span and plain citations it rewrote. With
+// --fix rewritten: K, the code span and plain citations it rewrote. Under
+// --content it prints a line in that form for each link that fails or is
+// listed, a listed one's reason starting "listed: ", then links checked: N,
+// held: H, failed: F, listed: L; a listed link fails no run. With
 // --log-level debug, each plain citation --fix resolves is logged with its
 // file and line, its ref and the rule or scope that gave it, its path, the
 // identifiers its lines were checked for, and the files and releases its
-// clause names. It exits 0 when none fails, 1 when one does or the files
+// clause names; and under --content each link that holds, with its file and
+// line, the identifiers its lines were checked for and whether its own text
+// names them.
+// It exits 0 when none fails, 1 when one does or the files
 // command finds the list stale, and 2 for a refused command line, a file
 // it cannot read or, under --fix, write, a clone that is not a git
 // repository or is a partial one, or a git that cannot answer. go run

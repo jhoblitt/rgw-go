@@ -192,10 +192,11 @@ func (d *mdDoc) scanPara(p *commentPara, kind mdKind) *paraScan {
 			if end < 0 {
 				break
 			}
+			label := text[open+1 : i]
 			if open > 0 && text[open-1] == '!' {
 				open--
 			}
-			it := &goItem{kind: urlItem, start: open, end: end, text: text[open:end]}
+			it := &goItem{kind: urlItem, start: open, end: end, text: text[open:end], label: label}
 			if cs, _ := links(text[i+1:end], 0); len(cs) > 0 && text[open] == '[' {
 				it.kind, it.link = linkItem, cs[0]
 				it.text, it.ref, it.path, it.from, it.to = cs[0].Text, cs[0].Ref, cs[0].Path, cs[0].From, cs[0].To

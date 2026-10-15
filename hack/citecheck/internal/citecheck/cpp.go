@@ -16,6 +16,9 @@ type file struct {
 	code   string
 	blocks []block
 	opens  map[int]int
+	// holds caches whether each identifier the content check asked for
+	// stands in the text.
+	holds map[string]bool
 }
 
 // block is a pair of braces in a file's code: the offsets of its header's
