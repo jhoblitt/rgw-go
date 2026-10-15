@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 9eb8119. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at e8c83df. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -20,7 +20,7 @@ flowchart LR
   u_B["B: bucket config<br/>38 tasks"]
   u_WP["WP: write path<br/>22 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
-  u_CL["CL: citation links<br/>5 tasks"]
+  u_CL["CL: citation links<br/>6 tasks"]
   u_S -->|4| u_V
   u_S -->|2| u_L
   u_S -->|3| u_C
@@ -922,16 +922,19 @@ flowchart LR
   t_CL3["CL3"]
   t_CL4["CL4"]
   t_CL5["CL5"]
+  t_CL6["CL6"]
   t_CL1 --> t_CL2
   t_CL1 --> t_CL3
   t_CL3 --> t_CL4
   t_CL2 --> t_CL5
   t_CL3 --> t_CL5
+  t_CL5 --> t_CL6
   click t_CL1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl1-hackcitecheck-links-are-the-only-citation-form" "CL1: hack/citecheck, links are the only citation form"
   click t_CL2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl2-the-markdown-sweep" "CL2: the Markdown sweep"
   click t_CL3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl3-hackcitecheck-ceph-citations-in-go-comments" "CL3: hack/citecheck, Ceph citations in Go comments"
   click t_CL4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl4-the-go-comment-sweep" "CL4: the Go-comment sweep"
   click t_CL5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl5-hackcitecheck-plain-ceph-citations-in-markdown" "CL5: hack/citecheck, plain Ceph citations in Markdown"
+  click t_CL6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl6-hackcitecheck-an-existing-links-lines-hold-what-its-text-names" "CL6: hack/citecheck, an existing link's lines hold what its text names"
 ```
 
 - [CL1](CL-citation-links.md#task-cl1-hackcitecheck-links-are-the-only-citation-form): hack/citecheck, links are the only citation form
@@ -939,4 +942,5 @@ flowchart LR
 - [CL3](CL-citation-links.md#task-cl3-hackcitecheck-ceph-citations-in-go-comments): hack/citecheck, Ceph citations in Go comments
 - [CL4](CL-citation-links.md#task-cl4-the-go-comment-sweep): the Go-comment sweep
 - [CL5](CL-citation-links.md#task-cl5-hackcitecheck-plain-ceph-citations-in-markdown): hack/citecheck, plain Ceph citations in Markdown
+- [CL6](CL-citation-links.md#task-cl6-hackcitecheck-an-existing-links-lines-hold-what-its-text-names): hack/citecheck, an existing link's lines hold what its text names
 
