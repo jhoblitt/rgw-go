@@ -13,12 +13,12 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-// metaPrefixes is req_info::init_meta_info's meta_prefixes (rgw_common.cc
-// :413-420 at v19.2.6, :426-433 at v20.2.4): the environment names of the
-// headers that become x_meta_map entries.
-var metaPrefixes = [...]string{
-	"HTTP_X_AMZ_", "HTTP_X_GOOG_", "HTTP_X_DHO_", "HTTP_X_RGW_", "HTTP_X_OBJECT_", "HTTP_X_CONTAINER_", "HTTP_X_ACCOUNT_",
-}
+// amzEnvPrefix is the first of req_info::init_meta_info's meta_prefixes
+// (rgw_common.cc:413-420 at v19.2.7, :426-433 at v20.2.4), the environment
+// name prefix of the headers that become x_meta_map entries. rgw-go's S3 API
+// reads no header under the other six, so none is stored
+// (docs/exclusions.md).
+const amzEnvPrefix = "HTTP_X_AMZ_"
 
 // metaBlocklist is the x_meta_map entries rgw_get_request_metadata does not
 // store: v20.2.4's list (rgw_op.h:2344-2357), which adds the copy-source
@@ -165,18 +165,16 @@ func addMeta(xmeta map[string]string, name, v string) {
 }
 
 // headerMeta is the x_meta_map req_info::init_meta_info builds from the
-// headers (rgw_common.cc:413-464 at v19.2.6, :426-477 at v20.2.4): each
-// header whose environment name starts with a meta prefix, under x-amz- and
-// the rest of its name lowercased with each underscore a dash, a name
-// reached twice joining its values with a comma.
+// headers (rgw_common.cc:413-464 at v19.2.7, :426-477 at v20.2.4) under
+// amzEnvPrefix: each header whose environment name starts with it, under
+// that name after HTTP_, lowercased with each underscore a dash and each dash
+// an underscore (lowercaseDash), which gives back the header's own name.
 func headerMeta(h http.Header) map[string]string {
 	names, vals := requestEnv(h)
 	xmeta := map[string]string{}
 	for _, name := range names {
-		for _, p := range metaPrefixes {
-			if rest, ok := strings.CutPrefix(name, p); ok {
-				addMeta(xmeta, lowercaseDash("X_AMZ_"+rest), vals[name])
-			}
+		if strings.HasPrefix(name, amzEnvPrefix) {
+			xmeta[lowercaseDash(strings.TrimPrefix(name, "HTTP_"))] = vals[name]
 		}
 	}
 	return xmeta
@@ -200,14 +198,13 @@ func isCryptName(name string) bool {
 // requestAttrs is populate_with_generic_attrs (rgw_op.cc:3307-3316 at
 // v19.2.6, :3535-3544 at v20.2.4) and rgw_get_request_metadata (rgw_op.h
 // :2171-2233 at v19.2.6, :2338-2408 at v20.2.4) over the x_meta_map that
-// req_info::init_meta_info builds from the headers (rgw_common.cc:422-464 at
-// v19.2.6, :435-477 at v20.2.4) and, when query is set, map_qs_metadata adds
-// from the query string (rgw_rest_s3.cc:2581-2595 at v19.2.6, :2742-2756 at
-// v20.2.4), which PutObject calls and CopyObject does not:
+// headerMeta builds from the headers and, when query is set, map_qs_metadata
+// adds from the query string (rgw_rest_s3.cc:2581-2595 at v19.2.6, :2742-2756
+// at v20.2.4), which PutObject calls and CopyObject does not:
 //   - each generic header present, an empty one included, is its attr;
-//   - each header named under a meta prefix is x-amz- and the rest of its
-//     name, lowercased, and so is each x-amz-meta-* query parameter; a name
-//     reached twice joins its values with a comma;
+//   - each X-Amz- header is its name, lowercased, and so is each
+//     x-amz-meta-* query parameter; a name reached twice joins its values
+//     with a comma;
 //   - each such name metaBlocklist does not list is the attr user.rgw. and
 //     the name, its value through formatXattr; a name that asks for
 //     encryption is never stored, as refuseEncryption refuses every write

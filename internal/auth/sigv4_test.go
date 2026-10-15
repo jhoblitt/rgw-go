@@ -170,8 +170,9 @@ func attackHeaderEntries() []TableEntry {
 	return entries
 }
 
-// renamedPrefixes are the meta prefixes beside X-Amz- that init_meta_info
-// files under x-amz- names (rgw_common.cc:413-464 at v19.2.7).
+// renamedPrefixes are the meta prefixes beside X-Amz- that radosgw's
+// init_meta_info files under x-amz- names (rgw_common.cc:413-464 at v19.2.7)
+// and rgw-go reads as ordinary headers.
 var renamedPrefixes = []string{"X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"}
 
 func renamedPrefixEntries() []TableEntry {
@@ -218,12 +219,6 @@ type routed struct {
 // presigned.
 func onBothRoutes(ctx context.Context, method string, hdr map[string]string) []routed {
 	return []routed{{false, signedReq(ctx, method, hdr)}, {true, presignedReq(ctx, method, hdr)}}
-}
-
-// notSigned matches canonicalHeadersV4's refusal of the unsigned header
-// name, rather than any refusal.
-func notSigned(name string) OmegaMatcher {
-	return SatisfyAll(MatchError(op.ErrAccessDenied), MatchError(ContainSubstring(asciiLower(name)+" is not signed")))
 }
 
 // helloHash is sha256("hello").
@@ -341,28 +336,25 @@ var _ = Describe("the signed-header rule", func() {
 		attackHeaderEntries(),
 	)
 
-	// radosgw accepts these, and files each under its x-amz- name beside the
-	// signed header, overriding or joining its value.
-	DescribeTable("refuses an unsigned header under a prefix init_meta_info renames to x-amz-, beside the signed x-amz- one, on both routes",
+	// radosgw files each under its x-amz- name beside the signed header,
+	// overriding or joining its value; rgw-go reads none of them.
+	DescribeTable("accepts an unsigned header under a prefix radosgw renames to x-amz-, beside the signed x-amz- one, on both routes",
 		func(ctx SpecContext, prefix string) {
-			insecure := cfg
-			insecure.Insecure = true
-			for _, suffix := range []string{"Meta-Foo", "Server-Side-Encryption"} {
+			for _, suffix := range []string{"Meta-Foo", "Server-Side-Encryption", "Acl", "Copy-Source", "Tagging"} {
 				name, amz := prefix+suffix, "X-Amz-"+suffix
 				for _, c := range onBothRoutes(ctx, http.MethodPut, map[string]string{amz: "signed"}) {
 					c.req.Header.Set(name, "unsigned")
-					_, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
-					Expect(err).To(notSigned(name), "presigned %t", c.presigned)
-					d, err := authDataV4(newRequestView(c.req), c.presigned, &insecure, signingTime)
-					Expect(err).NotTo(HaveOccurred(), "%s unsigned under rgw_sigv4_insecure, presigned %t", name, c.presigned)
-					Expect(d.verify(testSecret)).To(BeTrue(), "%s unsigned under rgw_sigv4_insecure, presigned %t", name, c.presigned)
+					d, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
+					Expect(err).NotTo(HaveOccurred(), "%s unsigned, presigned %t", name, c.presigned)
+					Expect(d.canonicalRequest).NotTo(ContainSubstring(asciiLower(name)), "%s is no canonical header, presigned %t", name, c.presigned)
+					Expect(d.verify(testSecret)).To(BeTrue(), "%s unsigned, presigned %t", name, c.presigned)
 				}
 			}
 		},
 		renamedPrefixEntries(),
 	)
 
-	DescribeTable("accepts a header under a prefix init_meta_info renames to x-amz- once it is signed, on both routes",
+	DescribeTable("signs a header under a prefix radosgw renames to x-amz- that SignedHeaders lists, as any other, on both routes",
 		func(ctx SpecContext, prefix string) {
 			for _, suffix := range []string{"Meta-Foo", "Server-Side-Encryption"} {
 				name := prefix + suffix
@@ -371,13 +363,17 @@ var _ = Describe("the signed-header rule", func() {
 					Expect(err).NotTo(HaveOccurred(), "%s signed, presigned %t", name, c.presigned)
 					Expect(d.canonicalRequest).To(ContainSubstring("\n"+asciiLower(name)+":signed\n"), "presigned %t", c.presigned)
 					Expect(d.verify(testSecret)).To(BeTrue(), "%s signed, presigned %t", name, c.presigned)
+					c.req.Header.Set(name, "changed")
+					d, err = authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
+					Expect(err).NotTo(HaveOccurred(), "%s changed, presigned %t", name, c.presigned)
+					Expect(d.verify(testSecret)).To(BeFalse(), "%s changed after signing, presigned %t", name, c.presigned)
 				}
 			}
 		},
 		renamedPrefixEntries(),
 	)
 
-	It("exempts x-amz-content-sha256 by that name alone, under none of the renamed prefixes", func(ctx SpecContext) {
+	It("takes the payload hash from x-amz-content-sha256 alone, under none of the renamed prefixes", func(ctx SpecContext) {
 		for _, prefix := range renamedPrefixes {
 			name := prefix + "Content-Sha256"
 			hdr := httptest.NewRequestWithContext(ctx, http.MethodPut, "http://s3.example.com/bucket/key", strings.NewReader("hello"))
@@ -386,58 +382,34 @@ var _ = Describe("the signed-header rule", func() {
 			pre := presignedReq(ctx, http.MethodPut, nil)
 			pre.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
 			for _, c := range []routed{{false, hdr}, {true, pre}} {
-				_, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
-				Expect(err).NotTo(HaveOccurred(), "an unsigned x-amz-content-sha256, presigned %t", c.presigned)
-				c.req.Header.Set(name, helloHash)
-				_, err = authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
-				Expect(err).To(notSigned(name), "presigned %t", c.presigned)
+				want := c.req.Header.Get("X-Amz-Content-Sha256")
+				c.req.Header.Set(name, sha256Hex("jello"))
+				d, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
+				Expect(err).NotTo(HaveOccurred(), "%s unsigned, presigned %t", name, c.presigned)
+				Expect(d.payloadHash).To(Equal(want), "%s, presigned %t", name, c.presigned)
+				Expect(d.verify(testSecret)).To(BeTrue(), "%s, presigned %t", name, c.presigned)
 			}
 		}
 	})
 
 	// rgw-cache adds X-Rgw-Auth unsigned to the authentication subrequest it
-	// sends for a client's GET, which radosgw's check does not look at.
-	DescribeTable("accepts rgw-cache's unsigned x-rgw-auth on a read, in any case, on both routes",
+	// sends for a client's GET. radosgw would store it on a write as
+	// user.rgw.x-amz-auth; rgw-go reads it on no method.
+	DescribeTable("accepts an unsigned x-rgw-auth, in any case, on both routes",
 		func(ctx SpecContext, method string) {
 			for _, spelling := range []string{"X-Rgw-Auth", "x-rgw-auth", "X-RGW-AUTH"} {
 				for _, c := range onBothRoutes(ctx, method, nil) {
 					c.req.Header[spelling] = []string{"yes"}
 					d, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
 					Expect(err).NotTo(HaveOccurred(), "%s, presigned %t", spelling, c.presigned)
-					Expect(d.canonicalRequest).NotTo(ContainSubstring(rgwAuthHeader), "it is not a canonical header")
+					Expect(d.canonicalRequest).NotTo(ContainSubstring("x-rgw-auth"), "it is not a canonical header")
 					Expect(d.verify(testSecret)).To(BeTrue(), "%s, presigned %t", spelling, c.presigned)
 				}
 			}
 		},
 		Entry("GET, which rgw-cache sends it on", http.MethodGet),
-		Entry("HEAD, which stores nothing either", http.MethodHead),
+		Entry("PUT, a write", http.MethodPut),
 	)
-
-	DescribeTable("refuses an unsigned x-rgw-auth on a write, which would store it, on both routes",
-		func(ctx SpecContext, method string) {
-			for _, c := range onBothRoutes(ctx, method, nil) {
-				c.req.Header.Set("X-Rgw-Auth", "yes")
-				_, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
-				Expect(err).To(notSigned(rgwAuthHeader), "presigned %t", c.presigned)
-			}
-		},
-		Entry("PUT", http.MethodPut),
-		Entry("POST", http.MethodPost),
-		Entry("DELETE", http.MethodDelete),
-	)
-
-	It("exempts x-rgw-auth by that name alone, on a read too", func(ctx SpecContext) {
-		for _, name := range []string{
-			"X-Rgw-Auth-Extra", "X-Rgw-Authx", "X-Rgw-Authorization", "X-Rgw-Meta-Auth",
-			"X-Amz-Auth", "X-Goog-Auth", "X-Account-Auth",
-		} {
-			for _, c := range onBothRoutes(ctx, http.MethodGet, nil) {
-				c.req.Header.Set(name, "yes")
-				_, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
-				Expect(err).To(notSigned(name), "presigned %t", c.presigned)
-			}
-		}
-	})
 
 	It("is the boto2 fallback's rule too", func(ctx SpecContext) {
 		signed := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://example.com:8080/bucket/key", nil)

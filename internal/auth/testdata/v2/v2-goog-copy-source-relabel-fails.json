@@ -1,0 +1,28 @@
+{
+  "name": "v2-goog-copy-source-relabel-fails",
+  "method": "PUT",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "X-Goog-Copy-Source": [
+      "b/src"
+    ],
+    "Date": [
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+    ]
+  },
+  "presigned": false,
+  "expires": "",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-30T12:36:00Z",
+  "signature": "GRC+8cXnmyLQEA2p5cqOKhqP6AM=",
+  "note": "the signature is over the string to sign of the same PUT with X-Amz-Copy-Source, PUT\\n\\n\\nSun, 30 Aug 2015 12:36:00 GMT\\nx-amz-copy-source:b/src\\n/b/k, computed with Python's hmac and hashlib; radosgw signs the moved header under its x-amz- name and verifies it, then drops the copy, while rgw-go signs no line for it, so the signature fails",
+  "expect": {
+    "string_to_sign": "PUT\n\n\nSun, 30 Aug 2015 12:36:00 GMT\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": "",
+    "verify_false": true
+  }
+}

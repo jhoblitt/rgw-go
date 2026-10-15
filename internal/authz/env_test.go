@@ -336,12 +336,18 @@ var _ = Describe("BuildEnv", func() {
 				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "aws:kms")), "query in capitals")
 		})
 
-		It("reads the encryption header under radosgw's other metadata prefixes, the last in its order winning", func() {
+		It("reads the encryption headers from X-Amz- alone, under none of radosgw's other meta prefixes", func() {
 			r := envRequest(http.MethodPut, "b", "o", "",
 				"X-Rgw-Server-Side-Encryption", "rgw", "X-Amz-Server-Side-Encryption", "amz",
 				"X-Account-Server-Side-Encryption", "account")
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
-				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "rgw")))
+				"s3:x-amz-acl", "", "s3:x-amz-server-side-encryption", "amz")), "beside an X-Amz- one")
+			for _, p := range []string{"X-Goog-", "X-Dho-", "X-Rgw-", "X-Object-", "X-Container-", "X-Account-"} {
+				r = envRequest(http.MethodPut, "b", "o", "",
+					p+"Server-Side-Encryption", "AES256", p+"Server-Side-Encryption-Aws-Kms-Key-Id", "key1",
+					p+"Server-Side-Encryption-Customer-Algorithm", "AES256")
+				Expect(pairsOf(envConfig(denc.Tentacle), r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-acl", "")), "%s alone", p)
+			}
 		})
 
 		It("refuses an UploadPart under a Deny on any canned ACL but bucket-owner-full-control", func() {

@@ -1,5 +1,5 @@
 {
-  "name": "unsigned-renamed-header-rejected",
+  "name": "unsigned-renamed-header-ignored",
   "method": "PUT",
   "target": "/b/k",
   "host": "example.amazonaws.com",
@@ -21,10 +21,11 @@
   "now": "2015-08-30T12:36:00Z",
   "insecure": false,
   "signature": "",
+  "note": "radosgw lets the unsigned header override the signed SSE value; rgw-go's S3 API reads X-Amz- headers alone, so it is an ordinary header, which need not be signed",
   "expect": {
-    "canonical_request": "",
-    "date": "",
+    "canonical_request": "PUT\n/b/k\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\nx-amz-server-side-encryption:AES256\n\nhost;x-amz-date;x-amz-server-side-encryption\nUNSIGNED-PAYLOAD",
+    "date": "20150830T123600Z",
     "access_key": "AKIDEXAMPLE",
-    "error": "AccessDenied"
+    "error": ""
   }
 }

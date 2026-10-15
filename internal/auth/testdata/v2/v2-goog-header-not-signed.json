@@ -1,5 +1,5 @@
 {
-  "name": "v2-goog-header-remapped",
+  "name": "v2-goog-header-not-signed",
   "method": "GET",
   "target": "/b/k",
   "host": "s3.example.com",
@@ -18,8 +18,9 @@
   "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
   "now": "2015-08-30T12:36:00Z",
   "signature": "",
+  "note": "radosgw signs the header as x-amz-meta-q:1; rgw-go's S3 API reads X-Amz- headers alone, so the string to sign carries no line for it",
   "expect": {
-    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\nx-amz-meta-q:1\n/b/k",
+    "string_to_sign": "GET\n\n\nSun, 30 Aug 2015 12:36:00 GMT\n/b/k",
     "access_key": "AKIDEXAMPLE",
     "error": ""
   }

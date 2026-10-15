@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -278,50 +277,19 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 	return b.String()
 }
 
-// rgwAuthHeader is the header radosgw's nginx cache front end, rgw-cache,
-// adds unsigned to the authentication subrequest it sends with a client's
-// Authorization before it serves the client's GET from its cache, so that
-// radosgw answers with the status and headers alone
-// (examples/rgw/rgw-cache/nginx-default.conf:13-56 at v19.2.7 and v20.2.4).
-const rgwAuthHeader = "x-rgw-auth"
-
-func hasAmzHeaderPrefix(lower string) bool {
-	return slices.ContainsFunc(amzHeaderPrefixes, func(p string) bool { return strings.HasPrefix(lower, p) })
-}
-
-// mayGoUnsigned reports whether lower, a lower-case header name under
-// amzHeaderPrefixes, may be left out of the signed headers of a request
-// with method: payloadHashHeader always, and rgwAuthHeader on a GET or HEAD
-// alone, which store nothing. A write would store it as an attr, as
-// init_meta_info files it as x-amz-auth.
-func mayGoUnsigned(method, lower string) bool {
-	switch lower {
-	case payloadHashHeader:
-		return true
-	case rgwAuthHeader:
-		return method == http.MethodGet || method == http.MethodHead
-	}
-	return false
-}
-
 // canonicalHeadersV4 is get_v4_canonical_headers (rgw_auth_s3.cc:734-856 at
 // v19.2.7, :711-811 at v20.2.4). A signed header the request lacks is
 // skipped, and each one present is keyed by its token as sent. A non-empty
 // hostPort is appended to the host token's value, as the boto2 fallback
-// does. Unless insecure (rgw_sigv4_insecure), host and every header the
-// request carries under one of amzHeaderPrefixes must be signed. radosgw's
-// CVE-2026-54330 check refuses an unsigned x-amz-* header alone (:819-841 at
-// v19.2.7, :780-796 at v20.2.4), but init_meta_info files a header under any
-// of the other six under its x-amz- name too, overwriting an SSE value it
-// meets there and joining a meta value (rgw_common.cc:445-457 at v19.2.7,
-// :458-470 at v20.2.4), so unsigned, it would set or alter what a signed
-// x-amz-* header says. rgw-go refuses those too, on both releases
-// (docs/exclusions.md), but for what mayGoUnsigned lets through: rgw-cache's
-// rgwAuthHeader on a read, and payloadHashHeader, by that name only. The
-// canonical request ends with that one's value as the payload hash, which
-// the body is then held to, so the signature fixes it whether it is signed
-// or not. That holds only while rgw-go routes no op that takes its payload
-// hash from elsewhere, as radosgw's STS, IAM and topic ops take it from the
+// does. Unless insecure (rgw_sigv4_insecure), host and every x-amz-* header
+// the request carries must be signed, radosgw's CVE-2026-54330 check
+// (:819-841 at v19.2.7, :780-796 at v20.2.4). No other header need be: one
+// under the six other meta prefixes init_meta_info renames to x-amz- is
+// never read (docs/exclusions.md). payloadHashHeader is exempt: the
+// canonical request ends with its value as the payload hash, which the body
+// is then held to, so the signature fixes it whether it is signed or not.
+// That holds only while rgw-go routes no op that takes its payload hash from
+// elsewhere, as radosgw's STS, IAM and topic ops take it from the
 // PayloadHash parameter (rgw_rest_s3.cc:5854 at v19.2.7) while the exemption
 // still applies to them (its TODO, rgw_auth_s3.cc:832). A Content-Type need
 // not be signed. v20.2.4 also refuses an unsigned Content-Type or
@@ -352,7 +320,7 @@ func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, ho
 		}
 		for _, name := range slices.Sorted(maps.Keys(rv.req.Header)) {
 			lower := asciiLower(name)
-			if _, ok := m[lower]; hasAmzHeaderPrefix(lower) && !mayGoUnsigned(rv.req.Method, lower) && !ok {
+			if _, ok := m[lower]; strings.HasPrefix(lower, "x-amz-") && lower != payloadHashHeader && !ok {
 				return "", fmt.Errorf("%w: %s is not signed", op.ErrAccessDenied, lower)
 			}
 		}

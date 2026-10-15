@@ -150,22 +150,19 @@ var _ = Describe("SigV2", func() {
 			map[string][]string{"X-Amz-Date": {"garbage"}, "Date": {v2TestDate}}, time.Time{}),
 	)
 
-	DescribeTable("amzHeadersV2 is init_meta_info's x_meta_map",
+	DescribeTable("amzHeadersV2 is init_meta_info's x_meta_map of the X-Amz- headers alone",
 		func(ctx SpecContext, hdr map[string][]string, want map[string]string) {
 			Expect(amzHeadersV2(newRequestView(rawRequest(ctx, http.MethodGet, "/b/k", hdr)))).To(Equal(want))
 		},
-		Entry("every meta prefix files under x-amz-",
+		Entry("no other meta prefix files under x-amz-",
 			map[string][]string{
 				"X-Goog-A": {"1"}, "X-Dho-B": {"2"}, "X-Rgw-C": {"3"}, "X-Object-D": {"4"},
 				"X-Container-E": {"5"}, "X-Account-F": {"6"}, "X-Amz-G": {"7"},
 			},
-			map[string]string{
-				"x-amz-a": "1", "x-amz-b": "2", "x-amz-c": "3", "x-amz-d": "4",
-				"x-amz-e": "5", "x-amz-f": "6", "x-amz-g": "7",
-			}),
-		Entry("names that meet join in HTTP_ name order, the earlier right-trimmed",
+			map[string]string{"x-amz-g": "7"}),
+		Entry("a name under another prefix leaves the X-Amz- value of its x-amz- name alone",
 			map[string][]string{"X-Goog-Meta-Q": {"3"}, "X-Amz-Meta-Q": {"2 \t"}, "X-Account-Meta-Q": {"1 "}},
-			map[string]string{"x-amz-meta-q": "1,2,3"}),
+			map[string]string{"x-amz-meta-q": "2 \t"}),
 		Entry("an underscore after the prefix keeps its place",
 			map[string][]string{"X-Amz-Meta-A_b": {"1"}},
 			map[string]string{"x-amz-meta-a_b": "1"}),
@@ -173,6 +170,15 @@ var _ = Describe("SigV2", func() {
 			map[string][]string{"X_amz_meta": {"1"}, "X-Amzmeta": {"2"}, "Content-Md5": {"3"}},
 			map[string]string{}),
 	)
+
+	// internal/s3's requestattrs_test.go stores "2" for the same map, so the
+	// line signed is the value stored.
+	It("keeps one value of spellings of one x-amz- name that the header map keeps apart, the last in byte order", func(ctx SpecContext) {
+		req := rawRequest(ctx, http.MethodGet, "/b/k", nil)
+		req.Header["x-amz-meta-q"] = []string{"2"}
+		req.Header["X-Amz-Meta-Q"] = []string{"0", "1 "}
+		Expect(amzHeadersV2(newRequestView(req))).To(Equal(map[string]string{"x-amz-meta-q": "2"}))
+	})
 
 	DescribeTable("canonicalResourceV2 puts the Host's bucket in front of the target",
 		func(ctx SpecContext, method, target, host, want string) {
@@ -239,26 +245,19 @@ func moveHeader(from, to string) func(http.Header) {
 	}
 }
 
-// relabelled matches relabelledDirective's refusal of the header name,
-// rather than any refusal.
-func relabelled(name string) OmegaMatcher {
-	return MatchError(ContainSubstring(asciiLower(name) + " names x-amz-"))
-}
-
-// refusedOnceSigned is relabelledDirective's answer to c, once its auth data
-// parse and its signer's signature holds, which is when Verifier.Authenticate
-// asks it.
-func refusedOnceSigned(c v2Routed, cfg *Config) error {
-	rv := newRequestView(c.req)
-	d, err := authDataV2(rv, cfg, signingTime)
+// verifiesV2 reports whether the signer's signature holds for c, once its
+// auth data parse.
+func verifiesV2(c v2Routed, cfg *Config) bool {
+	d, err := authDataV2(newRequestView(c.req), cfg, signingTime)
 	Expect(err).NotTo(HaveOccurred(), "presigned %t", c.presigned)
-	Expect(d.verify(testSecret)).To(BeTrue(), "the signer's signature holds, presigned %t", c.presigned)
-	return relabelledDirective(rv)
+	ok, err := d.verify(testSecret)
+	Expect(err).NotTo(HaveOccurred(), "presigned %t", c.presigned)
+	return ok
 }
 
-// rawDirectiveSuffixes are directives the handlers read from X-Amz- alone,
-// the name after the prefix and a value a signer might send.
-var rawDirectiveSuffixes = [][2]string{
+// directiveSuffixes are directives the handlers read from X-Amz-, the name
+// after the prefix and a value a signer might send.
+var directiveSuffixes = [][2]string{
 	{"Copy-Source", "b/src"},
 	{"Copy-Source-If-Match", `"etag"`},
 	{"Metadata-Directive", "REPLACE"},
@@ -269,13 +268,15 @@ var rawDirectiveSuffixes = [][2]string{
 	{"Object-Lock-Mode", "GOVERNANCE"},
 	{"Object-Lock-Retain-Until-Date", "2030-01-01T00:00:00Z"},
 	{"Object-Lock-Legal-Hold", "ON"},
+	{"Server-Side-Encryption-Customer-Key", "a2V5"},
+	{"Meta-Foo", "bar"},
 }
 
-// The handlers read these directives from X-Amz- alone while the string to
-// sign carries a header under any meta prefix under its x-amz- name, so a
-// signature would survive the header's move between prefixes
+// radosgw's string to sign carries a header under any meta prefix under its
+// x-amz- name, so its signature survives the header's move between prefixes
 // (docs/ceph-upstream-bugs.md, "radosgw's SigV2 signature survives moving a
-// signed x-amz directive under another meta prefix").
+// signed x-amz directive under another meta prefix"). rgw-go's names the
+// X-Amz- headers alone.
 var _ = Describe("SigV2 under the meta prefixes", func() {
 	var cfg Config
 
@@ -283,118 +284,89 @@ var _ = Describe("SigV2 under the meta prefixes", func() {
 		cfg = DefaultConfig()
 	})
 
-	It("signs a header under any meta prefix under its x-amz- name, as init_meta_info files it", func(ctx SpecContext) {
-		for _, prefix := range renamedPrefixes {
-			amz := v2OnBothRoutes(ctx, map[string][]string{"X-Amz-Copy-Source": {"b/src"}}, nil)
-			moved := v2OnBothRoutes(ctx, map[string][]string{prefix + "Copy-Source": {"b/src"}}, nil)
-			for i := range amz {
-				Expect(moved[i].sts).To(Equal(amz[i].sts), "%sCopy-Source, presigned %t", prefix, amz[i].presigned)
-				Expect(moved[i].sts).To(ContainSubstring("\nx-amz-copy-source:b/src\n"), "presigned %t", amz[i].presigned)
-			}
-		}
-	})
-
-	DescribeTable("refuses a signed directive moved off X-Amz-, whose signature still holds, on both routes",
+	DescribeTable("ignores an unsigned header under another meta prefix, beside the signed X-Amz- one, on both routes",
 		func(ctx SpecContext, prefix string) {
-			for _, d := range rawDirectiveSuffixes {
-				amz, moved := "X-Amz-"+d[0], prefix+d[0]
-				for _, c := range v2OnBothRoutes(ctx, map[string][]string{amz: {d[1]}}, moveHeader(amz, moved)) {
+			for _, d := range directiveSuffixes {
+				amz, other := "X-Amz-"+d[0], prefix+d[0]
+				add := func(h http.Header) { h.Set(other, "unsigned") }
+				for _, c := range v2OnBothRoutes(ctx, map[string][]string{amz: {d[1]}}, add) {
 					sts, _, err := canonicalStringV2(newRequestView(c.req), c.presigned, nil)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(sts).To(Equal(c.sts), "%s keeps the signer's string to sign, presigned %t", moved, c.presigned)
-					err = refusedOnceSigned(c, &cfg)
-					Expect(err).To(relabelled(moved), "%s, presigned %t", moved, c.presigned)
+					Expect(sts).To(Equal(c.sts), "%s adds no line, presigned %t", other, c.presigned)
+					Expect(verifiesV2(c, &cfg)).To(BeTrue(), "%s unsigned, presigned %t", other, c.presigned)
 				}
 			}
 		},
 		renamedPrefixEntries(),
 	)
 
-	// A holder resending the signer's header under X-Amz- sends what a signer
-	// of the X-Amz- header sends, so the signer's request is the one refused.
-	DescribeTable("refuses a directive the signer sent under another prefix, which a holder would resend under X-Amz-, beside an X-Amz- one or not, on both routes",
+	DescribeTable("fails the signature of a signed directive moved off X-Amz-, on both routes",
 		func(ctx SpecContext, prefix string) {
-			name := prefix + "Acl"
-			signer := map[string][]string{name: {"public-read"}}
-			resent := v2OnBothRoutes(ctx, signer, moveHeader(name, "X-Amz-Acl"))
-			for i, c := range v2OnBothRoutes(ctx, signer, nil) {
-				sts, _, err := canonicalStringV2(newRequestView(resent[i].req), c.presigned, nil)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(sts).To(Equal(c.sts), "X-Amz-Acl resent keeps the signer's string to sign, presigned %t", c.presigned)
-				err = refusedOnceSigned(c, &cfg)
-				Expect(err).To(relabelled(name), "the signer's %s, presigned %t", name, c.presigned)
-			}
-			for _, c := range v2OnBothRoutes(ctx, map[string][]string{"X-Amz-Acl": {"private"}, name: {"public-read"}}, nil) {
-				err := refusedOnceSigned(c, &cfg)
-				Expect(err).To(relabelled(name), "%s beside X-Amz-Acl, presigned %t", name, c.presigned)
+			for _, d := range directiveSuffixes {
+				amz, moved := "X-Amz-"+d[0], prefix+d[0]
+				for _, c := range v2OnBothRoutes(ctx, map[string][]string{amz: {d[1]}}, moveHeader(amz, moved)) {
+					Expect(c.sts).To(ContainSubstring("\n"+asciiLower(amz)+":"), "the signer's line, presigned %t", c.presigned)
+					Expect(verifiesV2(c, &cfg)).To(BeFalse(), "%s, presigned %t", moved, c.presigned)
+				}
 			}
 		},
 		renamedPrefixEntries(),
 	)
 
-	// X-Account- sorts before X-Amz-, so moving the two values across the
-	// prefixes keeps the joined line and swaps the raw directive.
-	It("refuses both requests of a swap that keeps the joined value, on both routes", func(ctx SpecContext) {
+	// The signer's header under another prefix signs nothing, so the request
+	// that carries it under X-Amz- signs a line the signer never signed.
+	DescribeTable("fails the signature of a header the signer sent under another prefix, resent under X-Amz-, beside an X-Amz- one or not, on both routes",
+		func(ctx SpecContext, prefix string) {
+			for _, d := range directiveSuffixes {
+				name, amz := prefix+d[0], "X-Amz-"+d[0]
+				line := "\n" + asciiLower(amz) + ":"
+				for _, c := range v2OnBothRoutes(ctx, map[string][]string{name: {d[1]}}, moveHeader(name, amz)) {
+					Expect(c.sts).NotTo(ContainSubstring(line), "the signer's string to sign, %s, presigned %t", name, c.presigned)
+					Expect(verifiesV2(c, &cfg)).To(BeFalse(), "%s resent as %s, presigned %t", name, amz, c.presigned)
+				}
+				resend := func(h http.Header) {
+					h.Set(amz, h.Get(name))
+					h.Del(name)
+				}
+				for _, c := range v2OnBothRoutes(ctx, map[string][]string{amz: {"signed"}, name: {d[1]}}, resend) {
+					Expect(c.sts).To(ContainSubstring(line+"signed\n"), "the signer's %s alone, presigned %t", amz, c.presigned)
+					Expect(verifiesV2(c, &cfg)).To(BeFalse(), "%s resent over %s, presigned %t", name, amz, c.presigned)
+				}
+			}
+		},
+		renamedPrefixEntries(),
+	)
+
+	// X-Account- sorts before X-Amz-, so radosgw signs both requests as the
+	// joined line x-amz-acl:private,public-read.
+	It("fails the signature of the swap that keeps radosgw's joined value, on both routes", func(ctx SpecContext) {
 		signer := map[string][]string{"X-Amz-Acl": {"private"}, "X-Goog-Acl": {"public-read"}}
 		swap := func(h http.Header) {
 			h.Del("X-Goog-Acl")
 			h.Set("X-Account-Acl", "private")
 			h.Set("X-Amz-Acl", "public-read")
 		}
-		swapped := v2OnBothRoutes(ctx, signer, swap)
-		for i, c := range v2OnBothRoutes(ctx, signer, nil) {
-			Expect(c.sts).To(ContainSubstring("\nx-amz-acl:private,public-read\n"), "presigned %t", c.presigned)
-			sts, _, err := canonicalStringV2(newRequestView(swapped[i].req), c.presigned, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(sts).To(Equal(c.sts), "the swap keeps the signer's string to sign, presigned %t", c.presigned)
-			err = refusedOnceSigned(c, &cfg)
-			Expect(err).To(relabelled("X-Goog-Acl"), "the signer's, presigned %t", c.presigned)
-			err = refusedOnceSigned(swapped[i], &cfg)
-			Expect(err).To(relabelled("X-Account-Acl"), "the swap, presigned %t", c.presigned)
+		for _, c := range v2OnBothRoutes(ctx, signer, swap) {
+			Expect(c.sts).To(ContainSubstring("\nx-amz-acl:private\n"), "the signer's X-Amz-Acl alone, presigned %t", c.presigned)
+			Expect(verifiesV2(c, &cfg)).To(BeFalse(), "the swap, presigned %t", c.presigned)
 		}
 	})
 
-	DescribeTable("accepts meta under another prefix, filed under x-amz-meta-, on both routes",
-		func(ctx SpecContext, prefix string) {
-			for _, c := range v2OnBothRoutes(ctx, map[string][]string{prefix + "Meta-Foo": {"bar"}}, nil) {
-				Expect(c.sts).To(ContainSubstring("\nx-amz-meta-foo:bar\n"), "presigned %t", c.presigned)
-				Expect(refusedOnceSigned(c, &cfg)).To(Succeed(), "%sMeta-Foo, presigned %t", prefix, c.presigned)
-			}
-		},
-		renamedPrefixEntries(),
-	)
-
-	It("accepts each directive under X-Amz-, on both routes", func(ctx SpecContext) {
-		for _, d := range rawDirectiveSuffixes {
+	It("verifies each directive under X-Amz-, beside a header under another prefix, on both routes", func(ctx SpecContext) {
+		for _, d := range directiveSuffixes {
 			name := "X-Amz-" + d[0]
-			for _, c := range v2OnBothRoutes(ctx, map[string][]string{name: {d[1]}, "X-Goog-Meta-Foo": {"bar"}}, nil) {
-				Expect(refusedOnceSigned(c, &cfg)).To(Succeed(), "%s, presigned %t", name, c.presigned)
+			for _, c := range v2OnBothRoutes(ctx, map[string][]string{name: {d[1]}, "X-Goog-Meta-Foo": {"baz"}}, nil) {
+				Expect(c.sts).To(ContainSubstring("\n"+asciiLower(name)+":"+d[1]+"\n"), "presigned %t", c.presigned)
+				Expect(c.sts).NotTo(ContainSubstring("baz"), "presigned %t", c.presigned)
+				Expect(verifiesV2(c, &cfg)).To(BeTrue(), "%s, presigned %t", name, c.presigned)
 			}
 		}
 	})
 
-	It("accepts a header under another prefix whose x-amz- name the handlers do not read raw, as radosgw does", func(ctx SpecContext) {
-		for _, name := range []string{"X-Goog-Foo", "X-Rgw-Auth", "X-Dho-Date", "X-Goog-Copy_source", "X-Object-Manifest"} {
-			for _, c := range v2OnBothRoutes(ctx, map[string][]string{name: {"v"}}, nil) {
-				Expect(refusedOnceSigned(c, &cfg)).To(Succeed(), "%s, presigned %t", name, c.presigned)
-			}
-		}
-	})
-
-	It("refuses a name that begins with a directive's, as a grant header begins with has_acl_header's prefix", func(ctx SpecContext) {
-		for _, name := range []string{"X-Goog-Grant", "X-Goog-Grantee", "X-Goog-Copy-Source-Range", "X-Goog-Server-Side-Encryption-Customer-Key"} {
-			for _, c := range v2OnBothRoutes(ctx, map[string][]string{name: {"v"}}, nil) {
-				err := refusedOnceSigned(c, &cfg)
-				Expect(err).To(relabelled(name), "%s, presigned %t", name, c.presigned)
-			}
-		}
-	})
-
-	It("refuses a directive's name in any case", func(ctx SpecContext) {
+	It("fails the signature of a directive moved under another prefix in any case", func(ctx SpecContext) {
 		for _, spelling := range []string{"x-goog-copy-source", "X-GOOG-COPY-SOURCE", "x-Account-copy-SOURCE"} {
 			for _, c := range v2OnBothRoutes(ctx, map[string][]string{"X-Amz-Copy-Source": {"b/src"}}, moveHeader("X-Amz-Copy-Source", spelling)) {
-				err := refusedOnceSigned(c, &cfg)
-				Expect(err).To(relabelled(spelling), "%s, presigned %t", spelling, c.presigned)
+				Expect(verifiesV2(c, &cfg)).To(BeFalse(), "%s, presigned %t", spelling, c.presigned)
 			}
 		}
 	})

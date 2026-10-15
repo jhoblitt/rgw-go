@@ -1,0 +1,28 @@
+{
+  "name": "v2-presigned-account-acl-swap-fails",
+  "method": "PUT",
+  "target": "/b/k",
+  "host": "s3.example.com",
+  "headers": {
+    "X-Account-Acl": [
+      "private"
+    ],
+    "X-Amz-Acl": [
+      "public-read"
+    ]
+  },
+  "presigned": true,
+  "expires": "1441000000",
+  "query_extra": "",
+  "dns_names": [],
+  "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  "now": "2015-08-31T05:46:39Z",
+  "signature": "WuNIaaWISPxquKP6VtF3pVx2IaE=",
+  "note": "the signature is over the string to sign of a URL used with X-Amz-Acl: private and X-Goog-Acl: public-read, which rgw-go signs as PUT\\n\\n\\n1441000000\\nx-amz-acl:private\\n/b/k, computed with Python's hmac and hashlib; radosgw signs both requests as the joined line x-amz-acl:private,public-read, so the swap verifies there and its canned ACL becomes public-read, while rgw-go signs the swapped X-Amz-Acl alone, so the signature fails",
+  "expect": {
+    "string_to_sign": "PUT\n\n\n1441000000\nx-amz-acl:public-read\n/b/k",
+    "access_key": "AKIDEXAMPLE",
+    "error": "",
+    "verify_false": true
+  }
+}
