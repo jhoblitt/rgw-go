@@ -1,7 +1,8 @@
 package policy
 
-// PrincipalKind is rgw::auth::Principal::types (src/rgw/rgw_basic_types.h:144
-// at v19.2.6, :146 at v20.2.4).
+// PrincipalKind is rgw::auth::Principal::types
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L144 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L146 at v20.2.4).
 type PrincipalKind uint8
 
 // The principal kinds, in rgw::auth::Principal::types order.
@@ -12,8 +13,9 @@ const (
 	PrincipalWildcard
 	PrincipalOIDCProvider
 	PrincipalAssumedRole
-	// PrincipalService exists from v20.2.4 (src/rgw/rgw_basic_types.h:146,
-	// :187-191).
+	// PrincipalService exists from v20.2.4
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L146,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L187-L191).
 	PrincipalService
 )
 

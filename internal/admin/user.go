@@ -26,10 +26,12 @@ func newUserHandlers() map[string]HandlerFunc {
 	}
 }
 
-// listUser is RGWOp_User_List::execute (driver/rados/rgw_rest_user.cc:58-70
-// at v19.2.6 and v20.2.4): max-entries through get_uint32 and the marker
-// through get_string, neither checked. RGWUser::list starts the flusher
-// (driver/rados/rgw_user.cc:2293 at v19.2.6, :2299 at v20.2.4).
+// listUser is RGWOp_User_List::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L58-L70 at v19.2.6
+// and v20.2.4): max-entries through get_uint32 and the marker through
+// get_string, neither checked. RGWUser::list starts the flusher
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2293 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2299 at v20.2.4).
 func listUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewListUsers()
 	if v, _, err := q.Args.Uint32("max-entries", o.MaxEntries); err == nil {
@@ -42,9 +44,10 @@ func listUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Reque
 	return WriteBody(w, r, q, func(f formatter.Formatter) { dumpUserList(f, o) })
 }
 
-// dumpUserList is RGWUser::list's document (driver/rados/rgw_user.cc:2295-2323
-// at v19.2.6, :2301-2329 at v20.2.4): count through dump_int, and the
-// marker as the lister returns it, unwrapped.
+// dumpUserList is RGWUser::list's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2295-L2323 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2301-L2329 at v20.2.4):
+// count through dump_int, and the marker as the lister returns it, unwrapped.
 func dumpUserList(f formatter.Formatter, o *op.ListUsers) {
 	f.OpenObjectSection("result")
 	f.OpenArraySection("keys")
@@ -72,12 +75,14 @@ func boolArg(a Args, name string, def bool) bool {
 
 // flags reads the boolean arguments of a route that changes something.
 // radosgw's RESTArgs::get_bool takes a value it cannot parse as its default
-// and the bodies never check it (rgw_rest.cc:1002-1032 at v19.2.6, :1007-1037
-// at v20.2.4), so "active=flase" reactivates a key and "suspended=ture"
-// lifts a suspension (docs/ceph-upstream-bugs.md, "radosgw's admin API takes
-// an unparsable boolean argument as its default"). flags records the first
-// such argument instead, which the route answers with ErrInvalidArgument
-// after the op's permission check (runChecked).
+// and the bodies never check it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1002-L1032 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1007-L1037 at v20.2.4),
+// so "active=flase" reactivates a key and "suspended=ture" lifts a suspension
+// (docs/ceph-upstream-bugs.md, "radosgw's admin API takes an unparsable
+// boolean argument as its default"). flags records the first such argument
+// instead, which the route answers with ErrInvalidArgument after the op's
+// permission check (runChecked).
 type flags struct {
 	a   Args
 	err error
@@ -135,7 +140,8 @@ func int32Arg(a Args, name string, def int32) (v int32, present bool) {
 }
 
 // createUser is RGWOp_User_Create::execute's argument handling
-// (driver/rados/rgw_rest_user.cc:147-284 at v19.2.6, :147-290 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L147-L284 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L147-L290 at v20.2.4).
 // The body's own refusals, the system flag and the placement, run in the
 // op after the cap check, as they run in execute after verify_permission.
 func createUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
@@ -172,7 +178,8 @@ func createUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 }
 
 // modifyUser is RGWOp_User_Modify::execute's argument handling
-// (driver/rados/rgw_rest_user.cc:301-438 at v19.2.6, :306-449 at v20.2.4):
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L301-L438 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L306-L449 at v20.2.4):
 // max-buckets and email apply when the request names them, and
 // generate-key defaults to false.
 func modifyUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
@@ -204,8 +211,9 @@ func modifyUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 	return WriteBody(w, r, q, func(f formatter.Formatter) { dumpUserInfo(f, o.Result, true, nil, rel) })
 }
 
-// getUserInfo is RGWOp_User_Info::execute (driver/rados/rgw_rest_user.cc:90-131
-// at v19.2.6 and v20.2.4).
+// getUserInfo is RGWOp_User_Info::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L90-L131 at v19.2.6
+// and v20.2.4).
 func getUserInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewGetUserInfo()
@@ -221,8 +229,10 @@ func getUserInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Re
 	return WriteBody(w, r, q, func(f formatter.Formatter) { dumpUserInfo(f, o.Result, o.DumpKeys, o.Stats, rel) })
 }
 
-// removeUser is RGWOp_User_Remove::execute (driver/rados/rgw_rest_user.cc:454-479
-// at v19.2.6, :464-489 at v20.2.4), which sends no body.
+// removeUser is RGWOp_User_Remove::execute
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L454-L479 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L464-L489 at v20.2.4),
+// which sends no body.
 func removeUser(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := op.NewRemoveUser()
 	uid, _ := q.Args.String("uid", "")
@@ -259,7 +269,8 @@ func opMask(a Args) *uint32 {
 
 // placement is the default-placement argument when non-empty: Squid's
 // rgw_placement_rule::from_str, "name/storage-class", and Tentacle's name
-// with default-storage-class (rgw_rest_user.cc:254-263 at v20.2.4).
+// with default-storage-class
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L254-L263 at v20.2.4).
 func placement(a Args, rel denc.Release) *meta.PlacementRule {
 	s, _ := a.String("default-placement", "")
 	if s == "" {
@@ -286,11 +297,12 @@ func placementTags(a Args) []string {
 	return tags
 }
 
-// dumpUserInfo is dump_user_info (driver/rados/rgw_user.cc:132-196 at
-// v19.2.6, :133-201 at v20.2.4), the admin API's user document: the keys
-// only with dumpKeys, the stats only when given. Tentacle adds
-// full_user_id first and a namespace after the tenant when the user has
-// one.
+// dumpUserInfo is dump_user_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L132-L196 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L133-L201 at v20.2.4),
+// the admin API's user document: the keys only with dumpKeys, the stats
+// only when given. Tentacle adds full_user_id first and a namespace
+// after the tenant when the user has one.
 func dumpUserInfo(f formatter.Formatter, info meta.UserInfo, dumpKeys bool, stats *op.Stats, rel denc.Release) {
 	f.OpenObjectSection("user_info")
 	if rel >= denc.Tentacle {
@@ -352,11 +364,13 @@ func dumpUserInfo(f formatter.Formatter, info meta.UserInfo, dumpKeys bool, stat
 }
 
 // dumpTempURLKeys is encode_json("temp_url_keys", ...), a std::map's
-// "entry" sections of "key" and "val" (ceph_json.h:596-607 at v19.2.6).
+// "entry" sections of "key" and "val"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L596-L607 at v19.2.6).
 // They are the Swift TempURL signing secrets, which radosgw dumps whether
-// or not the caller may see keys (rgw_user.cc:162 at v19.2.6, :167 at
-// v20.2.4; docs/ceph-upstream-bugs.md); rgw-go withholds them with the
-// other keys.
+// or not the caller may see keys
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L162 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L167 at v20.2.4;
+// docs/ceph-upstream-bugs.md); rgw-go withholds them with the other keys.
 func dumpTempURLKeys(f formatter.Formatter, info meta.UserInfo) {
 	f.OpenArraySection("temp_url_keys")
 	for _, k := range slices.Sorted(maps.Keys(info.TempURLKeys)) {
@@ -369,7 +383,8 @@ func dumpTempURLKeys(f formatter.Formatter, info meta.UserInfo) {
 }
 
 // dumpObjs is encode_json of a list, vector or set of strings: entries named
-// "obj" (ceph_json.h:534-594 at v19.2.6).
+// "obj"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L534-L594 at v19.2.6).
 func dumpObjs(f formatter.Formatter, name string, v []string) {
 	f.OpenArraySection(name)
 	for _, s := range v {
@@ -378,8 +393,10 @@ func dumpObjs(f formatter.Formatter, name string, v []string) {
 	f.CloseSection()
 }
 
-// dumpSubusers is dump_subusers_info (driver/rados/rgw_user.cc:74-91 at
-// v19.2.6, :75-92 at v20.2.4): "user" sections in std::map order.
+// dumpSubusers is dump_subusers_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L74-L91 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L75-L92 at v20.2.4):
+// "user" sections in std::map order.
 func dumpSubusers(f formatter.Formatter, info meta.UserInfo) {
 	f.OpenArraySection("subusers")
 	for _, name := range slices.Sorted(maps.Keys(info.SubUsers)) {
@@ -392,7 +409,7 @@ func dumpSubusers(f formatter.Formatter, info meta.UserInfo) {
 }
 
 // keyUser is dump_format("user", "%s%s%s", uid, sep, subuser)
-// (driver/rados/rgw_user.cc:99-104 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L99-L104 at v19.2.6).
 func keyUser(info meta.UserInfo, k meta.AccessKey) string {
 	if k.Subuser == "" {
 		return info.UserID.String()
@@ -431,8 +448,9 @@ func dumpSwiftKeys(f formatter.Formatter, info meta.UserInfo) {
 }
 
 // dumpStats is RGWStorageStats::dump with dump_utilized true
-// (rgw_common.cc:3102-3115 at v19.2.6, :3164-3177 at v20.2.4); a user's
-// stats carry no utilized size, which load_stats leaves 0.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3102-L3115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177 at v20.2.4);
+// a user's stats carry no utilized size, which load_stats leaves 0.
 func dumpStats(f formatter.Formatter, s op.Stats) {
 	f.DumpUnsigned("size", s.Size)
 	f.DumpUnsigned("size_actual", s.SizeRounded)

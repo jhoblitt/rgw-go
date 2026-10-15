@@ -9,9 +9,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
-// Dump is RGWRealm::dump (rgw_realm.cc:251-256 at v19.2.6 and v20.2.4) over
-// RGWSystemMetaObj::dump (rgw_zone.cc:812-816 at v19.2.6, :822-826 at
-// v20.2.4).
+// Dump is RGWRealm::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_realm.cc#L251-L256 at v19.2.6
+// and v20.2.4) over RGWSystemMetaObj::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L812-L816 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L822-L826 at v20.2.4).
 func (r Realm) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("id", r.ID)
 	f.DumpString("name", r.Name)
@@ -33,8 +35,9 @@ func (p Period) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpUnsigned("realm_epoch", uint64(p.RealmEpoch))
 }
 
-// Dump is RGWPeriodMap::dump (rgw_zone.cc:1000-1005 at v19.2.6, :1040-1045
-// at v20.2.4).
+// Dump is RGWPeriodMap::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L1000-L1005 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1040-L1045 at v20.2.4).
 func (m PeriodMap) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("id", m.ID)
 	dumpValues(f, "zonegroups", m.ZoneGroups, rel)
@@ -53,8 +56,9 @@ func dumpValues[V Dumper](f formatter.Formatter, name string, m map[string]V, re
 	f.CloseSection()
 }
 
-// Dump is RGWPeriodConfig::dump (rgw_zone.cc:662-669 at v19.2.6, :670-677
-// at v20.2.4).
+// Dump is RGWPeriodConfig::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L662-L669 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L670-L677 at v20.2.4).
 func (c PeriodConfig) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "bucket_quota", c.BucketQuota, rel)
 	dumpSection(f, "user_quota", c.UserQuota, rel)
@@ -63,8 +67,10 @@ func (c PeriodConfig) Dump(f formatter.Formatter, rel denc.Release) {
 	dumpSection(f, "anonymous_ratelimit", c.AnonRateLimit, rel)
 }
 
-// Dump is RGWRateLimitInfo::dump (rgw_common.cc:2766-2773 at v19.2.6,
-// :2828-2835 at v20.2.4); neither release has main's list and delete limits.
+// Dump is RGWRateLimitInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2766-L2773 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2828-L2835 at v20.2.4);
+// neither release has main's list and delete limits.
 func (l RateLimitInfo) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpInt("max_read_ops", l.MaxReadOps)
 	f.DumpInt("max_write_ops", l.MaxWriteOps)
@@ -73,11 +79,14 @@ func (l RateLimitInfo) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpBool("enabled", l.Enabled)
 }
 
-// Dump is RGWZoneGroup::dump (rgw_zone.cc:735-750 at v19.2.6, :743-758 at
-// v20.2.4). A sync policy with groups is carried opaque, so it fails the
-// formatter as MarshalJSON fails; an empty one is rgw_sync_policy_info::dump's
-// empty "groups" array (rgw_sync_policy.cc:777-783 at v19.2.6, :784-790 at
-// v20.2.4).
+// Dump is RGWZoneGroup::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L735-L750 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L743-L758 at v20.2.4).
+// A sync policy with groups is carried opaque, so it fails the formatter as
+// MarshalJSON fails; an empty one is rgw_sync_policy_info::dump's empty
+// "groups" array
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sync_policy.cc#L777-L783 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sync_policy.cc#L784-L790 at v20.2.4).
 func (g ZoneGroup) Dump(f formatter.Formatter, rel denc.Release) {
 	if !g.SyncPolicy.Empty() {
 		f.Fail(fmt.Errorf("%w: zonegroup %s sync policy groups", ErrOpaqueJSON, g.ID))
@@ -118,8 +127,10 @@ func (z Zone) Dump(f formatter.Formatter, _ denc.Release) {
 	dumpStrings(f, "supported_features", z.SupportedFeatures)
 }
 
-// Dump is RGWZoneGroupPlacementTarget::dump (rgw_zone.cc:848-856 at
-// v19.2.6, :858-866 at v20.2.4), tier_targets only when there are any.
+// Dump is RGWZoneGroupPlacementTarget::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L848-L856 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L858-L866 at v20.2.4),
+// tier_targets only when there are any.
 func (t ZoneGroupPlacementTarget) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("name", t.Name)
 	dumpStrings(f, "tags", t.Tags)
@@ -132,9 +143,11 @@ func (t ZoneGroupPlacementTarget) Dump(f formatter.Formatter, rel denc.Release) 
 }
 
 // Dump is RGWZoneGroupPlacementTier::dump. Squid writes the S3 config for
-// cloud-s3 alone (rgw_zone.cc:895-904 at v19.2.6); Tentacle writes it for
-// either cloud type, then the read-through fields and, for
-// cloud-s3-glacier, the glacier config (:929-944 at v20.2.4).
+// cloud-s3 alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L895-L904 at v19.2.6);
+// Tentacle writes it for either cloud type, then the read-through fields
+// and, for cloud-s3-glacier, the glacier config
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L929-L944 at v20.2.4).
 func (t ZoneGroupPlacementTier) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("tier_type", t.TierType)
 	f.DumpString("storage_class", t.StorageClass)
@@ -156,8 +169,10 @@ func (t ZoneGroupPlacementTier) Dump(f formatter.Formatter, rel denc.Release) {
 	}
 }
 
-// Dump is RGWZoneGroupPlacementTierS3::dump (rgw_zone.cc:966-979 at
-// v19.2.6, :1006-1019 at v20.2.4), which writes the tier's secret key.
+// Dump is RGWZoneGroupPlacementTierS3::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L966-L979 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019 at v20.2.4),
+// which writes the tier's secret key.
 func (s ZoneGroupPlacementTierS3) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("endpoint", s.Endpoint)
 	f.DumpString("access_key", s.Key.ID)
@@ -177,8 +192,9 @@ func (s ZoneGroupPlacementTierS3) Dump(f formatter.Formatter, rel denc.Release) 
 	f.DumpUnsigned("multipart_min_part_size", s.MultipartMinPartSize)
 }
 
-// Dump is RGWTierACLMapping::dump (rgw_zone.cc:981-998 at v19.2.6,
-// :1021-1038 at v20.2.4).
+// Dump is RGWTierACLMapping::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L981-L998 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1021-L1038 at v20.2.4).
 func (m TierACLMapping) Dump(f formatter.Formatter, _ denc.Release) {
 	typ := "id"
 	switch m.Type {
@@ -192,7 +208,8 @@ func (m TierACLMapping) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("dest_id", m.DestID)
 }
 
-// Dump is RGWZoneGroupTierS3Glacier::dump (rgw_zone.cc:910-915 at v20.2.4),
+// Dump is RGWZoneGroupTierS3Glacier::dump
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L910-L915 at v20.2.4),
 // Expedited for any tier type but Standard's 0.
 func (g ZoneGroupTierS3Glacier) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpUnsigned("glacier_restore_days", g.RestoreDays)

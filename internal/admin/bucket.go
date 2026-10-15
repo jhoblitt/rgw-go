@@ -39,7 +39,8 @@ func (f *flags) destructive(name string) bool {
 // getBucketInfo is RGWOp_Bucket_Info::execute (rgw_rest_bucket.cc:33-62):
 // uid, bucket, stats, max-entries and marker, the readers unchecked as
 // radosgw's are, so a value they refuse is the default. The body is
-// RGWBucketAdminOp::info's, its flusher started (rgw_bucket.cc:1649-1650).
+// RGWBucketAdminOp::info's, its flusher started
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1649-L1650).
 func getBucketInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewBucketInfo()
@@ -61,7 +62,8 @@ func getBucketInfo(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 // dumpBucketInfo is info's document: one bucket's stats; or a "buckets"
 // array of stats or of "bucket" names, inside a "result" section with
 // truncated, count and, when truncated, marker for a user's listing given
-// max-entries (list_owner_bucket_info, rgw_bucket.cc:1582-1626).
+// max-entries (list_owner_bucket_info,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1582-L1626).
 func dumpBucketInfo(f formatter.Formatter, o *op.BucketInfo, rel denc.Release) {
 	if o.Single != nil {
 		dumpBucketStats(f, *o.Single, rel)
@@ -89,12 +91,15 @@ func dumpBucketInfo(f formatter.Formatter, o *op.BucketInfo, rel denc.Release) {
 }
 
 // bucketCategories is RGWObjCategory's enum order under to_string's names
-// (cls_rgw_types.cc:133-143 at v19.2.6 and v20.2.4), the order the stats
-// std::map iterates in.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.cc#L133-L143 at v19.2.6
+// and v20.2.4), the order the stats std::map iterates in.
 var bucketCategories = []string{"rgw.none", "rgw.main", "rgw.shadow", "rgw.multimeta", "rgw.cloudtiered", "unknown"}
 
-// dumpBucketUsage is dump_bucket_usage (rgw_bucket.cc:298-310; v20.2.4
-// :299-311): one section per category present.
+// dumpBucketUsage is dump_bucket_usage
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L298-L310;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L299-L311):
+// one section per category present.
 func dumpBucketUsage(f formatter.Formatter, cats map[string]op.CategoryStats) {
 	f.OpenObjectSection("usage")
 	for _, name := range bucketCategories {
@@ -108,7 +113,8 @@ func dumpBucketUsage(f formatter.Formatter, cats map[string]op.CategoryStats) {
 }
 
 // dumpCategoryStats is RGWStorageStats::dump with dump_utilized true
-// (rgw_common.cc:3102-3115 at v19.2.6, :3164-3177 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3102-L3115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177 at v20.2.4).
 func dumpCategoryStats(f formatter.Formatter, s op.CategoryStats) {
 	f.DumpUnsigned("size", s.Size)
 	f.DumpUnsigned("size_actual", s.SizeRounded)
@@ -119,9 +125,11 @@ func dumpCategoryStats(f formatter.Formatter, s op.CategoryStats) {
 	f.DumpUnsigned("num_objects", s.NumObjects)
 }
 
-// dumpBucketStats is bucket_stats' "stats" section (rgw_bucket.cc:1351-1436;
-// v20.2.4 :1514-1602, which adds reshard_status, judge_reshard_lock_time
-// and read_tracker).
+// dumpBucketStats is bucket_stats' "stats" section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1351-L1436;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1514-L1602,
+// which adds reshard_status, judge_reshard_lock_time and read_tracker).
 func dumpBucketStats(f formatter.Formatter, d op.BucketStatsData, rel denc.Release) {
 	info := d.Rec.Info
 	current := info.Layout.Current

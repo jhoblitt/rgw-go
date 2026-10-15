@@ -8,7 +8,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 )
 
-// ObjectRetention is RGWObjectRetention (rgw_object_lock.h:151-197 at v19.2.6
+// ObjectRetention is RGWObjectRetention
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L151-L197 at v19.2.6
 // and v20.2.4): an object's retention mode and the date it is retained until.
 type ObjectRetention struct {
 	Mode        string
@@ -17,9 +18,10 @@ type ObjectRetention struct {
 
 // Encode mirrors RGWObjectRetention::encode, ENCODE_START(2, 1): the mode,
 // the date as a real_time, and the date again through round_trip_encode,
-// which writes its u64 nanosecond count (include/encoding.h:393-420 at
-// v19.2.6, :394-421 at v20.2.4) and so keeps the seconds past 2106 that the
-// first form's u32 drops.
+// which writes its u64 nanosecond count
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/encoding.h#L393-L420 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L394-L421 at v20.2.4)
+// and so keeps the seconds past 2106 that the first form's u32 drops.
 func (o ObjectRetention) Encode(e *denc.Encoder, _ denc.Release) {
 	f := e.BeginStruct(2, 1)
 	e.String(o.Mode)
@@ -62,8 +64,9 @@ func realTimeFromNanos(n uint64) time.Time {
 	return time.Unix(int64(sec), int64(n-sec*uint64(time.Second))).UTC() //nolint:gosec // seconds of a u64 nanosecond count fit an int64
 }
 
-// ObjectLegalHold is RGWObjectLegalHold (rgw_object_lock.h:199-230 at
-// v19.2.6 and v20.2.4): an object's legal hold status.
+// ObjectLegalHold is RGWObjectLegalHold
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L199-L230 at v19.2.6
+// and v20.2.4): an object's legal hold status.
 type ObjectLegalHold struct{ Status string }
 
 // Encode mirrors RGWObjectLegalHold::encode, ENCODE_START(1, 1).
@@ -81,9 +84,11 @@ func DecodeObjectLegalHold(d *denc.Decoder) ObjectLegalHold {
 	return l
 }
 
-// DefaultRetention is DefaultRetention (rgw_object_lock.h:12-55 at v19.2.7,
-// :11-52 at v20.2.4): the retention mode and period a bucket's object lock
-// rule gives the objects written to it, in days or in years.
+// DefaultRetention is DefaultRetention
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L12-L55 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L11-L52 at v20.2.4):
+// the retention mode and period a bucket's object lock rule gives the
+// objects written to it, in days or in years.
 type DefaultRetention struct {
 	Mode  string
 	Days  int32
@@ -125,8 +130,8 @@ func (r DefaultRetention) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON is DefaultRetention::decode_json at v19.2.7
-// (rgw_object_lock.cc:8-12): mode, days and years, an absent one its zero
-// value.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8-L12):
+// mode, days and years, an absent one its zero value.
 func (r *DefaultRetention) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
 	if err != nil {
@@ -143,8 +148,10 @@ func (r *DefaultRetention) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ObjectLockRule is ObjectLockRule (rgw_object_lock.h:57-92 at v19.2.7,
-// :54-88 at v20.2.4): a bucket's default retention.
+// ObjectLockRule is ObjectLockRule
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L57-L92 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L54-L88 at v20.2.4):
+// a bucket's default retention.
 type ObjectLockRule struct{ DefaultRetention DefaultRetention }
 
 // Encode mirrors ObjectLockRule::encode, ENCODE_START(1, 1).
@@ -170,7 +177,7 @@ func (r ObjectLockRule) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON is ObjectLockRule::decode_json at v19.2.7
-// (rgw_object_lock.cc:44-46).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L44-L46).
 func (r *ObjectLockRule) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
 	if err != nil {
@@ -185,10 +192,12 @@ func (r *ObjectLockRule) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ObjectLock is RGWObjectLock (rgw_object_lock.h:94-154 at v19.2.7, :90-149
-// at v20.2.4), a bucket's object lock configuration, whose Rule is nil when
-// rule_exist is false. The zero value is disabled; RGWObjectLock() is
-// enabled with no rule.
+// ObjectLock is RGWObjectLock
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L94-L154 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L90-L149 at v20.2.4),
+// a bucket's object lock configuration, whose Rule is nil when rule_exist
+// is false. The zero value is disabled; RGWObjectLock() is enabled with no
+// rule.
 type ObjectLock struct {
 	Enabled bool
 	Rule    *ObjectLockRule
@@ -228,8 +237,9 @@ func (l ObjectLock) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON is RGWObjectLock::decode_json at v19.2.7
-// (rgw_object_lock.cc:65-71): the rule only when rule_exist. An absent
-// enabled is false, unlike RGWObjectLock()'s.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L65-L71):
+// the rule only when rule_exist. An absent enabled is false, unlike
+// RGWObjectLock()'s.
 func (l *ObjectLock) UnmarshalJSON(data []byte) error {
 	f, err := newJSONFields(data)
 	if err != nil {

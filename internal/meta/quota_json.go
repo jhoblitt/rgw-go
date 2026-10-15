@@ -15,12 +15,16 @@ import (
 // text is not the number or boolean the field holds.
 var ErrBadJSONValue = errors.New("meta: bad JSON value")
 
-// UnmarshalJSON is RGWQuotaInfo::decode_json (rgw_quota.cc:1054-1067 at
-// v19.2.6, :1052-1065 at v20.2.4): max_size, or max_size_kb * 1024 when
-// max_size is absent; max_objects; check_on_raw; enabled. JSONDecoder's
-// decode_json resets an absent member's field to its type's zero value
-// (ceph_json.h:334-357 at v19.2.6, :339-362 at v20.2.4), so every field is
-// the body's: an object without max_size or max_size_kb has a max_size of
+// UnmarshalJSON is RGWQuotaInfo::decode_json
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L1054-L1067 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_quota.cc#L1052-L1065 at v20.2.4):
+// max_size, or max_size_kb * 1024 when max_size is absent; max_objects;
+// check_on_raw; enabled. JSONDecoder's decode_json resets an absent
+// member's field to its type's zero value
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L334-L357 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.h#L339-L362 at v20.2.4),
+// so every field is the body's: an object without max_size or max_size_kb
+// has a max_size of
 // 0. A value other than an object has no named members. A max_size_kb
 // whose size in bytes overflows int64 is refused with ErrBadJSONValue:
 // radosgw's multiplication is then undefined behavior, which in practice
@@ -119,9 +123,9 @@ func JSONMembers(b []byte) (map[string]JSONMember, error) {
 }
 
 // jsonInt64 is decode_json_obj(long&), which int64_t selects on LP64
-// (src/common/ceph_json.cc:306-330 at v19.2.6 and v20.2.4): strtol over the
-// text as a C string, refused when it reads no digits, saturates with
-// ERANGE, or leaves anything but white space.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L306-L330 at v19.2.6
+// and v20.2.4): strtol over the text as a C string, refused when it reads
+// no digits, saturates with ERANGE, or leaves anything but white space.
 func jsonInt64(name string, v JSONMember) (int64, error) {
 	s := rgwtext.CString(v.Text)
 	n, end, erange := rgwtext.Strtoll(s)

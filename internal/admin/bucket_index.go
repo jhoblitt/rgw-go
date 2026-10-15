@@ -14,14 +14,15 @@ func newBucketIndexHandlers() map[string]HandlerFunc {
 }
 
 // checkBucketIndex is RGWOp_Check_Bucket_Index::execute
-// (rgw_rest_bucket.cc:108-126 at v19.2.6 and v20.2.4): bucket, fix and
-// check-objects. fix removes index entries and rewrites the shard headers,
-// so a value get_bool cannot parse, which radosgw takes as false, and an
-// empty one, which it takes as true, are refused after the cap check
-// (docs/exclusions.md, "The admin bucket routes refuse a boolean argument
-// they cannot parse"); check-objects is read as radosgw reads it. The body
-// is check_index's, its flusher started (rgw_bucket.cc:1255-1256 at v19.2.6,
-// :1408-1409 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L108-L126 at v19.2.6
+// and v20.2.4): bucket, fix and check-objects. fix removes index entries and
+// rewrites the shard headers, so a value get_bool cannot parse, which
+// radosgw takes as false, and an empty one, which it takes as true, are
+// refused after the cap check (docs/exclusions.md, "The admin bucket routes
+// refuse a boolean argument they cannot parse"); check-objects is read as
+// radosgw reads it. The body is check_index's, its flusher started
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1255-L1256 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1408-L1409 at v20.2.4).
 func checkBucketIndex(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args
 	o := op.NewCheckBucketIndex()
@@ -37,11 +38,14 @@ func checkBucketIndex(ctx context.Context, w http.ResponseWriter, r *op.Request,
 	return WriteBody(w, r, q, func(f formatter.Formatter) { dumpBucketCheck(f, o) })
 }
 
-// dumpBucketCheck is check_index's document (rgw_bucket.cc:1258-1276 at
-// v19.2.6, :1411-1438 at v20.2.4): every entry of both checks is a string
-// named "object" (dump_mulipart_index_results, :88-94 at v19.2.6, and
-// dump_bucket_index, :291-296), so the objects section repeats that key;
-// then dump_index_check (:312-324).
+// dumpBucketCheck is check_index's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1258-L1276 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1411-L1438 at v20.2.4):
+// every entry of both checks is a string named "object"
+// (dump_mulipart_index_results,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L88-L94 at v19.2.6,
+// and dump_bucket_index, :291-296), so the objects section repeats that
+// key; then dump_index_check (:312-324).
 func dumpBucketCheck(f formatter.Formatter, o *op.CheckBucketIndex) {
 	f.OpenObjectSection("bucket_check")
 	f.OpenArraySection("invalid_multipart_entries")

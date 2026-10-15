@@ -33,15 +33,18 @@ func accountIdentity(a Args) op.AccountParams {
 }
 
 // accountParams is what RGWOp_Account_Create and RGWOp_Account_Modify read
-// (rgw_rest_account.cc:31-72 and :125-164 at v20.2.4): the identity, the
-// email, and each limit present. radosgw reads the limits with get_int32
-// and checks none: a value stringtol refuses stores the 0 the body starts
-// from, which for max-buckets is no limit, and one past int32 wraps, a
-// negative max-users, max-roles, max-groups or max-access-keys being no
-// limit either (docs/ceph-upstream-bugs.md, "radosgw's account create and
-// modify store an unparsable or wrapped limit, which can mean no limit").
-// rgw-go records such a value in fl, which the route answers with
-// ErrInvalidArgument after the permission check.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L31-L72
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L125-L164 at v20.2.4):
+// the identity, the email, and each limit present. radosgw reads the
+// limits with get_int32 and checks none: a value stringtol refuses stores
+// the 0 the body starts from, which for max-buckets is no limit, and one
+// past int32 wraps, a negative max-users, max-roles, max-groups or
+// max-access-keys being no limit either (docs/ceph-upstream-bugs.md,
+// "radosgw's account create and modify store an unparsable or wrapped
+// limit, which can mean no limit"). rgw-go records such a value in fl,
+// which the route answers with ErrInvalidArgument after the permission
+// check.
 func accountParams(a Args, fl *flags) op.AccountParams {
 	p := accountIdentity(a)
 	p.Email, _ = a.String("email", "")
@@ -63,8 +66,11 @@ func accountParams(a Args, fl *flags) op.AccountParams {
 }
 
 // writeAccountInfo is encode_json("AccountInfo", info) in the body create,
-// modify and info start their flusher for (rgw_account.cc:172-174,
-// :267-269 and :491-493 at v19.2.6).
+// modify and info start their flusher for
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L172-L174,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L267-L269
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L491-L493 at v19.2.6).
 func writeAccountInfo(w http.ResponseWriter, r *op.Request, q Request, info meta.AccountInfo) error {
 	rel := r.Env.Zone.Release()
 	return WriteBody(w, r, q, func(f formatter.Formatter) {
@@ -117,9 +123,9 @@ func deleteAccount(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 }
 
 // setAccountQuota is Tentacle's RGWOp_Account_Quota_Set::execute
-// (rgw_rest_account.cc:255-299 at v20.2.4): id and quota-type must be
-// present and the type "account" or "bucket", or EINVAL; then max-size,
-// max-objects and enabled when present.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L255-L299 at v20.2.4):
+// id and quota-type must be present and the type "account" or "bucket",
+// or EINVAL; then max-size, max-objects and enabled when present.
 //
 // radosgw reads max-size and max-objects with get_int32 and enabled with
 // get_bool, checking neither: a value stringtol refuses stores 0, one past

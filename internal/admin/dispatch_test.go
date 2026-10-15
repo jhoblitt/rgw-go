@@ -15,7 +15,9 @@ import (
 // rgw_rest_usage.cc:123-131, rgw_rest_info.cc:46-49,
 // rgw_rest_config.cc:49-57, driver/rados/rgw_rest_realm.cc:246-247 and
 // :355-358, rgw_rest_ratelimit.cc:344-351 and rgw_rest_account.cc:223-241
-// (v20.2.4 :301-321), at v19.2.6's line numbers unless given.
+// (v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L301-L321),
+// at v19.2.6's line numbers unless given.
 var _ = Describe("Dispatch", func() {
 	dispatch := func(method, path, query string, rel denc.Release) (admin.Route, error) {
 		GinkgoHelper()

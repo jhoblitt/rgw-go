@@ -108,11 +108,18 @@ var _ = Describe("BucketInfo.UnmarshalJSON", func() {
 
 // No corpus instance enables object lock, so the obj_lock forms below are
 // built by hand from RGWBucketInfo::dump and decode_json
-// (rgw_common.cc:2542-2544 and :2588-2590 at v19.2.7), RGWObjectLock's,
-// ObjectLockRule's and DefaultRetention's (rgw_object_lock.cc:93-101,
-// :56-58, :26-33 and :65-71, :44-46, :8-12 at v19.2.7), and
-// JSONDecoder::decode_json, which gives an absent member T()
-// (ceph_json.h:334-346 at v19.2.7).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2542-L2544
+// and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2588-L2590 at v19.2.7),
+// RGWObjectLock's, ObjectLockRule's and DefaultRetention's
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L93-L101,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L56-L58,
+// :26-33 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L65-L71,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L44-L46,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8-L12 at v19.2.7),
+// and JSONDecoder::decode_json, which gives an absent member T()
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.h#L334-L346 at v19.2.7).
 var _ = Describe("BucketInfo obj_lock", func() {
 	dump := func(b meta.BucketInfo, rel denc.Release) (string, error) {
 		f := formatter.NewJSON(false)

@@ -5,8 +5,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
-// Dump is RGWAccountInfo::dump (rgw_common.cc:3026-3039 at v19.2.6,
-// :3088-3101 at v20.2.4).
+// Dump is RGWAccountInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L3026-L3039 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3088-L3101 at v20.2.4).
 func (a AccountInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpString("id", a.ID)
 	f.DumpString("tenant", a.Tenant)

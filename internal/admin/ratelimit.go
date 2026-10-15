@@ -11,7 +11,8 @@ import (
 )
 
 // newRateLimitHandlers are RGWHandler_Ratelimit's routes
-// (rgw_rest_ratelimit.cc:344-351 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L344-L351 at v19.2.6
+// and v20.2.4).
 func newRateLimitHandlers() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		"get_ratelimit_info": getRateLimitInfo,

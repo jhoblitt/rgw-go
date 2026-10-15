@@ -127,17 +127,19 @@ func (h *Handler) Register(name string, fn HandlerFunc) {
 func (h *Handler) InFlight() int64 { return h.inflight.Load() }
 
 // ServeHTTP runs radosgw's process_request for an admin request
-// (rgw_process.cc:298-463 at v19.2.6, :280-470 at v20.2.4). It gives the
-// request its transaction id, drawn at random as radosgw draws it
-// (StoreDriver::get_new_req_id, rgw_sal_store.h:27-29 at v19.2.6), and sends
-// x-amz-request-id and Server on every response. Once the response is
-// written it observes the request; it logs no usage, as radosgw registers
-// the admin managers without set_logging (rgw_appmain.cc:354-361 at
-// v19.2.6). A panic before anything was written is answered 500; one after
-// it ends the connection, as does a request whose authentication or route
-// fails because its client went away (op.EndForGoneClient), with nothing
-// more written. Every line logged
-// under the request's context carries its transaction id.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L298-L463 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L280-L470 at v20.2.4).
+// It gives the request its transaction id, drawn at random as radosgw draws
+// it (StoreDriver::get_new_req_id,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sal_store.h#L27-L29 at v19.2.6),
+// and sends x-amz-request-id and Server on every response. Once the response
+// is written it observes the request; it logs no usage, as radosgw registers
+// the admin managers without set_logging
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L354-L361 at v19.2.6).
+// A panic before anything was written is answered 500; one after it ends the
+// connection, as does a request whose authentication or route fails because
+// its client went away (op.EndForGoneClient), with nothing more written.
+// Every line logged under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	h.metrics.InFlight(1)
@@ -215,12 +217,13 @@ type served struct {
 // serve is process_request's order for an admin request: preprocess's
 // refusal of a NUL in the decoded URI and the manager lookup, both answered
 // in JSON because no handler has allocated a formatter yet (abort_early,
-// rgw_rest.cc:676-683 at v19.2.6); the handler's format; get_op; the
-// refusal of a NUL in an argument that names a RADOS object
-// (Args.RefuseNUL), which radosgw does not make, before authentication
-// reads any object; schedule_request; verify_requester; the suspended-user
-// check; then the op (rgw_process.cc:310-405 at v19.2.6). The admin handlers' postauth_init,
-// RGWHandler_Auth_S3's, does nothing (rgw_rest_s3.h:646 at v19.2.6).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L676-L683 at v19.2.6); the
+// handler's format; get_op; the refusal of a NUL in an argument that names a RADOS object
+// (Args.RefuseNUL), which radosgw does not make, before authentication reads any object;
+// schedule_request; verify_requester; the suspended-user check; then the op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L310-L405 at v19.2.6).
+// The admin handlers' postauth_init, RGWHandler_Auth_S3's, does nothing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L646 at v19.2.6).
 func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Request, r *op.Request, st *served) {
 	uri := s3.DecodedURI(req, s3.Config{DNSNames: h.cfg.DNSNames})
 	if strings.IndexByte(uri, 0) >= 0 {
@@ -249,7 +252,8 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 
 	// radosgw's scheduler counts a request it refuses until that request is
 	// answered, and answers -EAGAIN, which process_request sends as
-	// ERR_RATE_LIMITED (rgw_process.cc:330-338 at v19.2.6).
+	// ERR_RATE_LIMITED
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L330-L338 at v19.2.6).
 	n := h.inflight.Add(1)
 	defer h.inflight.Add(-1)
 	if h.cfg.MaxConcurrent > 0 && n > int64(h.cfg.MaxConcurrent) {
@@ -322,7 +326,8 @@ func (w *responseWriter) WriteHeader(status int) {
 }
 
 // Write counts nothing for a HEAD, whose body net/http discards and radosgw
-// never sends (rgw_flush_formatter, rgw_rest.cc:316-324 at v19.2.6).
+// never sends (rgw_flush_formatter,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L316-L324 at v19.2.6).
 func (w *responseWriter) Write(p []byte) (int, error) {
 	w.WriteHeader(http.StatusOK)
 	n, err := w.ResponseWriter.Write(p)

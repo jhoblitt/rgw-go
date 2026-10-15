@@ -15,8 +15,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-// newUsageHandlers are RGWHandler_Usage's routes (rgw_rest_usage.cc:123-131
-// at v19.2.6 and v20.2.4).
+// newUsageHandlers are RGWHandler_Usage's routes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L123-L131 at v19.2.6
+// and v20.2.4).
 func newUsageHandlers() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		"get_usage":  getUsage,
@@ -96,7 +97,8 @@ func trimUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Requ
 	return nil
 }
 
-// dumpUsage is RGWUsage::show's document (rgw_usage.cc:50-160 at v19.2.6
+// dumpUsage is RGWUsage::show's document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L50-L160 at v19.2.6
 // and v20.2.4), which it writes after starting the flusher (:48): the
 // entries when shown, the summary when shown. A bucket's time is
 // utime_t(epoch, 0)'s gmtime and its epoch dump_int's; its s3select

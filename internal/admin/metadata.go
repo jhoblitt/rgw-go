@@ -49,8 +49,9 @@ func frameMetadataKey(q Request, key string) string {
 }
 
 // splitMetadataKey is RGWMetadataManager::parse_metadata_key
-// (rgw_metadata.cc:437-446 at v19.2.6, :232-241 at v20.2.4): the section
-// before the first ':', the entry after it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L437-L446 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L232-L241 at v20.2.4):
+// the section before the first ':', the entry after it.
 func splitMetadataKey(framed string) (section, entry string) {
 	section, entry, _ = strings.Cut(framed, ":")
 	return section, entry
@@ -80,8 +81,9 @@ func serveMetadataGet(ctx context.Context, w http.ResponseWriter, r *op.Request,
 }
 
 // dumpMetadataInfo is RGWMetadataManager::get's document
-// (rgw_metadata.cc:485-494 at v19.2.6, :280-289 at v20.2.4), which the op
-// writes without starting the flusher.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L485-L494 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L280-L289 at v20.2.4),
+// which the op writes without starting the flusher.
 func dumpMetadataInfo(f formatter.Formatter, key string, e op.MetadataEntry, rel denc.Release) {
 	f.OpenObjectSection("metadata_info")
 	f.DumpString("key", key)
@@ -125,8 +127,8 @@ func listMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 }
 
 // strictStrtol is ceph's strict_strtol in base 10 over a C string
-// (common/strtol.cc:61-73 at v19.2.6 and v20.2.4): strict_strtoll, refused
-// outside int's range.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/strtol.cc#L61-L73 at v19.2.6
+// and v20.2.4): strict_strtoll, refused outside int's range.
 func strictStrtol(s string) (int32, bool) {
 	v, ok := rgwtext.StrictStrtoll(rgwtext.CString(s))
 	if !ok || v < math.MinInt32 || v > math.MaxInt32 {

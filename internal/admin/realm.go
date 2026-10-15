@@ -16,8 +16,14 @@ const realmContentType = "application/json"
 // routes. Each dumps its body without starting the flusher and names
 // application/json and the length itself, end_header(s, NULL,
 // "application/json", s->formatter->get_len())
-// (driver/rados/rgw_rest_realm.cc:48-49, :301-302 and :344-348 at v19.2.6,
-// :49-50, :322-323 and :365-369 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L48-L49,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L301-L302
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L344-L348 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L49-L50,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L322-L323
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_realm.cc#L365-L369 at v20.2.4).
 func newRealmHandlers() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
 		"get_realm":   getRealm,

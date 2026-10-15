@@ -29,9 +29,10 @@ type ZoneGroup struct {
 	EnabledFeatures    []string                            `json:"enabled_features"`
 }
 
-// Equals is RGWZoneGroup::equals (driver/rados/rgw_zone.cc:115-121 at
-// v19.2.6 and v20.2.4): id names g, and an empty id, a bucket instance's
-// that records no zonegroup, names the master zonegroup.
+// Equals is RGWZoneGroup::equals
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_zone.cc#L115-L121 at v19.2.6
+// and v20.2.4): id names g, and an empty id, a bucket instance's that
+// records no zonegroup, names the master zonegroup.
 func (g ZoneGroup) Equals(id string) bool {
 	if g.IsMaster && id == "" {
 		return true

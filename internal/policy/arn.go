@@ -2,8 +2,9 @@ package policy
 
 import "regexp"
 
-// Partition is rgw::Partition (src/rgw/rgw_arn.h:13-19 at v19.2.6 and
-// v20.2.4).
+// Partition is rgw::Partition
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.h#L13-L19 at v19.2.6
+// and v20.2.4).
 type Partition uint8
 
 // The partitions, in rgw::Partition order.
@@ -22,9 +23,10 @@ var partitionNames = [PartitionWildcard]string{
 	PartitionAWSUSGov: "aws-us-gov",
 }
 
-// Service is rgw::Service (src/rgw/rgw_arn.h:21-36 at v19.2.6 and v20.2.4),
-// numbered in that enum's order, which is not the order of the name tables in
-// rgw_arn.cc.
+// Service is rgw::Service
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.h#L21-L36 at v19.2.6
+// and v20.2.4), numbered in that enum's order, which is not the order of the
+// name tables in rgw_arn.cc.
 type Service uint8
 
 // The services, in rgw::Service order.
@@ -240,11 +242,11 @@ func IAMARN(name, typ, tenant string, hasPath bool) ARN {
 	return ARN{Partition: PartitionAWS, Service: ServiceIAM, Account: tenant, Resource: resource + name}
 }
 
-// The regular expressions of ARN::parse (src/rgw/rgw_arn.cc:166-172 at
-// v19.2.6 and v20.2.4), which std::regex_match anchors at both ends.
-// libstdc++'s ECMAScript '.' matches neither '\n' nor '\r', so the resource
-// of an ARN parsed without wildcards may hold neither; Go's '.' would admit
-// '\r'.
+// The regular expressions of ARN::parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_arn.cc#L166-L172 at v19.2.6
+// and v20.2.4), which std::regex_match anchors at both ends. libstdc++'s
+// ECMAScript '.' matches neither '\n' nor '\r', so the resource of an ARN
+// parsed without wildcards may hold neither; Go's '.' would admit '\r'.
 var (
 	arnWildcards   = regexp.MustCompile(`\Aarn:([^:]*):([^:]*):([^:]*):([^:]*):([^:]*)\z`)
 	arnNoWildcards = regexp.MustCompile(`\Aarn:([^:*]*):([^:*]*):([^:*]*):([^:*]*):([^\n\r]*)\z`)

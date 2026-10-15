@@ -13,8 +13,8 @@ import (
 )
 
 // The managed-policy cases are ManagedPolicyTest's
-// (src/test/rgw/test_rgw_iam_policy.cc:792-923 at v19.2.6, :804-938 at
-// v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/test/rgw/test_rgw_iam_policy.cc#L792-L923 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/test/rgw/test_rgw_iam_policy.cc#L804-L938 at v20.2.4).
 
 const (
 	iamFullAccess           = "arn:aws:iam::aws:policy/IAMFullAccess"

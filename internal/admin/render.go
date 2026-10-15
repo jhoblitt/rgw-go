@@ -14,7 +14,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/s3"
 )
 
-// mimeType is to_mime_type (rgw_common.h:189-207 at v19.2.6).
+// mimeType is to_mime_type
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L189-L207 at v19.2.6).
 func (f Format) mimeType() string {
 	switch f {
 	case FormatXML:
@@ -27,9 +28,10 @@ func (f Format) mimeType() string {
 }
 
 // newFormatter is reallocate_formatter for the admin handlers
-// (rgw_rest.cc:1766-1804 at v19.2.6): XML lowercases names for a bulk-delete
-// or multipart-manifest=delete query; HTML is pretty only for the website
-// endpoint, which an admin request never is.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1766-L1804 at v19.2.6):
+// XML lowercases names for a bulk-delete or multipart-manifest=delete query;
+// HTML is pretty only for the website endpoint, which an admin request never
+// is.
 func (q Request) newFormatter() formatter.Formatter {
 	switch q.Format {
 	case FormatXML:
@@ -42,8 +44,10 @@ func (q Request) newFormatter() formatter.Formatter {
 	}
 }
 
-// statusNames is http_codes (rgw_rest.cc:44-88 at v19.2.6 and v20.2.4), the
-// text dump_errno hands the formatter, which HTMLFormatter prints.
+// statusNames is http_codes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L44-L88 at v19.2.6
+// and v20.2.4), the text dump_errno hands the formatter, which
+// HTMLFormatter prints.
 var statusNames = map[int]string{
 	100: "Continue", 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
 	205: "Reset Content", 206: "Partial Content", 207: "Multi Status", 208: "Already Reported",
@@ -62,8 +66,10 @@ var statusNames = map[int]string{
 // WriteBody writes a body an op's flusher started: RGWRESTFlusher::do_start's
 // dump_errno and dump_start, flushed with the headers by end_header, whose
 // output_footer closes HTML's status page, then the op's dump
-// (rgw_rest.cc:1035-1042, :589-655 and :303-314 at v19.2.6). A dump that
-// calls Fail writes nothing, and WriteBody returns the failure.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1035-L1042,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L655 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L303-L314 at v19.2.6).
+// A dump that calls Fail writes nothing, and WriteBody returns the failure.
 func WriteBody(w http.ResponseWriter, r *op.Request, q Request, dump func(formatter.Formatter)) error {
 	f := q.newFormatter()
 	f.SetStatus(http.StatusOK, statusNames[http.StatusOK])
@@ -113,15 +119,17 @@ func WriteEmpty(w http.ResponseWriter, r *op.Request, status int) {
 	w.WriteHeader(status)
 }
 
-// WriteError is end_header's error branch in q's format (rgw_rest.cc:620-624
-// at v19.2.6, :625-629 at v20.2.4): dump_start, the error document
-// dump(req_state*) writes (rgw_common.cc:381-404 at v19.2.6), output_footer,
-// and the length through dump_content_length, with Accept-Ranges. An admin
-// request names no bucket, so BucketName never appears. A failure to render
-// a record rgw-go carries opaque is NotImplemented; an InternalError or
-// UnknownError is logged with its code and cause, so err must carry no
-// request header value: an authentication failure is answered by
-// refuseAuth instead.
+// WriteError is end_header's error branch in q's format
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L620-L624 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629 at v20.2.4):
+// dump_start, the error document dump(req_state*) writes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L381-L404 at v19.2.6),
+// output_footer, and the length through dump_content_length, with
+// Accept-Ranges. An admin request names no bucket, so BucketName never
+// appears. A failure to render a record rgw-go carries opaque is
+// NotImplemented; an InternalError or UnknownError is logged with its code
+// and cause, so err must carry no request header value: an authentication
+// failure is answered by refuseAuth instead.
 func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request, err error) {
 	e := op.AsError(err)
 	if errors.Is(err, meta.ErrOpaqueJSON) {

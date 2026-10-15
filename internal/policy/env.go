@@ -2,8 +2,10 @@ package policy
 
 import "slices"
 
-// Env is rgw::IAM::Environment (src/rgw/rgw_iam_policy.h:326 at v19.2.6, :345
-// at v20.2.4), the condition keys of a request and their values. It is a
+// Env is rgw::IAM::Environment
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L326 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L345 at v20.2.4),
+// the condition keys of a request and their values. It is a
 // std::unordered_multimap, so a key may hold several values, equal ones
 // included, and a key with no values is absent, which is what the Null
 // operator and IfExists test. The zero value is an empty Env. A copy shares
@@ -99,8 +101,10 @@ func (e *Env) Find(key string, sem Semantics) (value string, ok bool) {
 }
 
 // Remove erases every pair equal to (key, value), as rgw_iam_remove_objtags
-// erases a copy source's tags (src/rgw/rgw_op.cc:651-699 at v19.2.6,
-// :681-729 at v20.2.4); a key left with no values is removed.
+// erases a copy source's tags
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L651-L699 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L681-L729 at v20.2.4);
+// a key left with no values is removed.
 func (e *Env) Remove(key, value string) {
 	v := e.keys[key]
 	if v == nil {

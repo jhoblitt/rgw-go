@@ -516,7 +516,8 @@ var _ = Describe("Condition", func() {
 	// radosgw's typed operators read one value through env.find, and its
 	// string and ARN operators every value through equal_range; Null reads
 	// only whether the key is absent
-	// (rgw_iam_policy.cc:856-1006 at v19.2.6, :875-1010 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L856-L1006 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875-L1010 at v20.2.4).
 	DescribeTable("reads a key holding several values as each release does",
 		func(c policy.Condition, kv []string, wantSquid, wantTentacle bool) {
 			env := envOf(kv...)

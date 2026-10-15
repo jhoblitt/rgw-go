@@ -16,10 +16,12 @@ import (
 
 // jsonFields is a JSON object's members as JSONObj finds them, read through
 // decode_json_obj's conversions. JSONDecoder::decode_json resets an absent
-// member's field to its type's default (ceph_json.h:334-357 at v19.2.6,
-// :339-362 at v20.2.4), so each reader returns that default for a member
-// the object lacks. The first member that does not convert is kept in err,
-// and later reads return defaults.
+// member's field to its type's default
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L334-L357 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.h#L339-L362 at v20.2.4),
+// so each reader returns that default for a member the object lacks. The
+// first member that does not convert is kept in err, and later reads return
+// defaults.
 //
 // Where decode_json_obj would take a value it cannot mean, the readers
 // refuse it: a string field given null, an object or an array; a container
@@ -98,7 +100,8 @@ func (f *jsonFields) boolean(name string) bool {
 }
 
 // int32v is decode_json_obj(int&): strtol, then refused outside int's range
-// (ceph_json.cc:418-429 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L418-L429 at v19.2.6
+// and v20.2.4).
 func (f *jsonFields) int32v(name string) int32 {
 	v, ok := f.member(name)
 	if !ok {
@@ -117,7 +120,8 @@ func (f *jsonFields) int32v(name string) int32 {
 }
 
 // uint32v is decode_json_obj(unsigned&): strtoul, refused above UINT_MAX
-// (ceph_json.cc:431-442 at v19.2.6 and v20.2.4), and refused negative.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L431-L442 at v19.2.6
+// and v20.2.4), and refused negative.
 func (f *jsonFields) uint32v(name string) uint32 {
 	v, ok := f.member(name)
 	if !ok {
@@ -132,10 +136,11 @@ func (f *jsonFields) uint32v(name string) uint32 {
 }
 
 // jsonUnsigned is decode_json_obj(unsigned long&)'s strtoul over the text
-// as a C string (ceph_json.cc:334-360 at v19.2.6 and v20.2.4), refused when
-// it reads no digits, saturates, or leaves anything but white space. A
-// minus sign negates in unsigned arithmetic, which lifts any negative but
-// -0 above UINT_MAX.
+// as a C string
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L334-L360 at v19.2.6
+// and v20.2.4), refused when it reads no digits, saturates, or leaves
+// anything but white space. A minus sign negates in unsigned arithmetic,
+// which lifts any negative but -0 above UINT_MAX.
 func jsonUnsigned(text string) (uint64, bool) {
 	s := rgwtext.CString(text)
 	n, end, erange := rgwtext.Strtoull(s)
@@ -246,8 +251,10 @@ func (f *jsonFields) decode(name string, v json.Unmarshaler) bool {
 }
 
 // time is decode_json_obj(utime_t&) and of ceph::real_time&: the member's
-// text through utime_t::parse_date (utime.h:397-502 at v19.2.6), here only
-// in the two forms encode_json writes, "<sec>.<usec>" and the ISO date.
+// text through utime_t::parse_date
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L397-L502 at v19.2.6),
+// here only in the two forms encode_json writes, "<sec>.<usec>" and the
+// ISO date.
 func (f *jsonFields) time(name string) Time {
 	v, ok := f.member(name)
 	if !ok {
@@ -280,13 +287,15 @@ func (f *jsonFields) quota(name string) Quota {
 }
 
 // decodeAccessKey is RGWAccessKey::decode_json over an RGWAccessKey's
-// defaults, an active key. The S3 form (rgw_common.cc:2990-3005 at v19.2.6,
-// :3052-3067 at v20.2.4) needs access_key and secret_key, takes the subuser
-// from "subuser", else from what follows the ':' of "user", and changes
-// active only when present. The Swift form (:3007-3023; :3069-3085) takes
-// the id from "user", which it needs, unless "subuser" is present, in which
-// case radosgw leaves the id empty; a key without an id is refused here,
-// which refuses a Swift key without its user too. It reads "active" as
+// defaults, an active key. The S3 form
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2990-L3005 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3052-L3067 at v20.2.4)
+// needs access_key and secret_key, takes the subuser from "subuser", else
+// from what follows the ':' of "user", and changes active only when
+// present. The Swift form (:3007-3023; :3069-3085) takes the id from
+// "user", which it needs, unless "subuser" is present, in which case
+// radosgw leaves the id empty; a key without an id is refused here, which
+// refuses a Swift key without its user too. It reads "active" as
 // decode_json reads any member, so a Swift key without one is inactive.
 func decodeAccessKey(f *jsonFields, swift bool) (AccessKey, error) {
 	k := NewAccessKey()
@@ -327,9 +336,11 @@ func decodeAccessKey(f *jsonFields, swift bool) (AccessKey, error) {
 	return k, nil
 }
 
-// UnmarshalJSON is RGWUserCaps::decode_json (rgw_common.cc:2045-2069 at
-// v19.2.6, :2108-2132 at v20.2.4): a list of {"type", "perm"}, perm parsed
-// by parse_cap_perm, each type's last entry kept.
+// UnmarshalJSON is RGWUserCaps::decode_json
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2045-L2069 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2108-L2132 at v20.2.4):
+// a list of {"type", "perm"}, perm parsed by parse_cap_perm, each type's
+// last entry kept.
 func (c *Caps) UnmarshalJSON(b []byte) error {
 	f := &jsonFields{m: map[string]JSONMember{"caps": {Raw: b}}}
 	out := Caps{}
@@ -347,9 +358,11 @@ func (c *Caps) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// strToPerm is str_to_perm (rgw_common.cc:2924-2935 at v19.2.6, :2986-2997
-// at v20.2.4), what RGWSubUser::decode_json reads permissions with: four
-// words, anything else none.
+// strToPerm is str_to_perm
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2924-L2935 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2986-L2997 at v20.2.4),
+// what RGWSubUser::decode_json reads permissions with: four words,
+// anything else none.
 func strToPerm(s string) uint32 {
 	switch s {
 	case "read":
@@ -370,12 +383,14 @@ var identityTypes = map[string]IdentityType{
 	"rgw": IdentityRGW, "keystone": IdentityKeystone, "ldap": IdentityLDAP, "root": IdentityRoot, "none": IdentityNone,
 }
 
-// UnmarshalJSON is RGWUserInfo::decode_json (rgw_common.cc:2837-2893 at
-// v19.2.6, :2899-2955 at v20.2.4) over RGWUserInfo's defaults: user_id is
-// mandatory and parsed as rgw_user::from_str; the keys, Swift keys and
-// subusers come from their dump's arrays, each keyed by its own id; op_mask
-// is parsed by rgw_parse_op_type_list. Every other absent member is its
-// type's default: a max_buckets of 0, an op mask of none, a path of "".
+// UnmarshalJSON is RGWUserInfo::decode_json
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2837-L2893 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2899-L2955 at v20.2.4)
+// over RGWUserInfo's defaults: user_id is mandatory and parsed as
+// rgw_user::from_str; the keys, Swift keys and subusers come from their
+// dump's arrays, each keyed by its own id; op_mask is parsed by
+// rgw_parse_op_type_list. Every other absent member is its type's default:
+// a max_buckets of 0, an op mask of none, a path of "".
 func (u *UserInfo) UnmarshalJSON(b []byte) error {
 	f, err := newJSONFields(b)
 	if err != nil {
@@ -467,7 +482,9 @@ func boolByte(b bool) uint8 {
 type AttrsJSON map[string][]byte
 
 // MarshalJSON is encode_json of the map: entries in key order, each value
-// base64 with padding (ceph_json.cc:592-603 at v19.2.6 and v20.2.4).
+// base64 with padding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L592-L603 at v19.2.6
+// and v20.2.4).
 func (a AttrsJSON) MarshalJSON() ([]byte, error) {
 	out := make([]jsonEntry[string, string], 0, len(a))
 	for _, k := range slices.Sorted(maps.Keys(a)) {
@@ -477,8 +494,10 @@ func (a AttrsJSON) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON is decode_json_obj of the map, each value through
-// decode_base64 (ceph_json.cc:460-471 at v19.2.6 and v20.2.4), here read as
-// padded standard base64; an empty array is an empty map.
+// decode_base64
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L460-L471 at v19.2.6
+// and v20.2.4), here read as padded standard base64; an empty array is an
+// empty map.
 func (a *AttrsJSON) UnmarshalJSON(b []byte) error {
 	f := &jsonFields{m: map[string]JSONMember{"attrs": {Raw: b}}}
 	out := AttrsJSON{}
@@ -499,8 +518,10 @@ func (a *AttrsJSON) UnmarshalJSON(b []byte) error {
 }
 
 // UserCompleteInfo is RGWUserCompleteInfo, the "user" metadata section's
-// document (driver/rados/rgw_user.h:731-745 at v19.2.6, rgw_user.cc:2725-2739
-// at v20.2.4). HasAttrs is has_attrs: whether decoded JSON carried "attrs".
+// document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L731-L745 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2725-L2739 at v20.2.4).
+// HasAttrs is has_attrs: whether decoded JSON carried "attrs".
 type UserCompleteInfo struct {
 	Info     UserInfo
 	Attrs    AttrsJSON

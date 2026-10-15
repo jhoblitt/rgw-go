@@ -230,7 +230,7 @@ const (
 
 // DumpName is the user_source_type RGWUserInfo::dump and the admin API's
 // dump_user_info write, which name only some types and call the rest "none"
-// (driver/rados/rgw_user.cc:164-185 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L164-L185 at v19.2.6).
 func (t IdentityType) DumpName() string {
 	switch t {
 	case IdentityRGW:

@@ -37,12 +37,13 @@ func (k ObjKey) IndexKeyName() string {
 	return "_" + k.NS + "_" + k.Name
 }
 
-// ParseIndexKeyName is rgw_obj_key::parse_raw_oid (rgw_obj_types.h:285-310 at
-// v19.2.6 and v20.2.4), the inverse of IndexKeyName: a name not starting with
-// "_" is itself, "__" unescapes to one underscore, and "_<ns>_<name>" splits
-// at the first underscore from the third byte, with a namespace of
-// "<ns>:<instance>" split as parse_ns_field splits it. ok is false for a
-// namespaced name shorter than "_x_" or without its closing underscore.
+// ParseIndexKeyName is rgw_obj_key::parse_raw_oid
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L285-L310 at v19.2.6
+// and v20.2.4), the inverse of IndexKeyName: a name not starting with "_" is
+// itself, "__" unescapes to one underscore, and "_<ns>_<name>" splits at the
+// first underscore from the third byte, with a namespace of "<ns>:<instance>"
+// split as parse_ns_field splits it. ok is false for a namespaced name
+// shorter than "_x_" or without its closing underscore.
 func ParseIndexKeyName(name string) (k ObjKey, ok bool) {
 	if !strings.HasPrefix(name, "_") {
 		return ObjKey{Name: name}, true

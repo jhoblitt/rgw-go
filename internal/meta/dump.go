@@ -17,11 +17,13 @@ type Dumper interface {
 }
 
 // dumpPool is encode_json(name, rgw_pool): its string form
-// (rgw_common.cc:2441-2444 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2441-L2444 at v19.2.6).
 func dumpPool(f formatter.Formatter, name string, p Pool) { f.DumpString(name, p.String()) }
 
 // dumpMap is encode_json of a std::map: an array of "entry" sections, each
-// with a "key" and a "val" (ceph_json.h:596-607 at v19.2.6), in key order.
+// with a "key" and a "val"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L596-L607 at v19.2.6),
+// in key order.
 func dumpMap[K cmp.Ordered, V any](f formatter.Formatter, name string, m map[K]V, key func(formatter.Formatter, K), val func(formatter.Formatter, V)) {
 	f.OpenArraySection(name)
 	for _, k := range slices.Sorted(maps.Keys(m)) {
@@ -34,15 +36,18 @@ func dumpMap[K cmp.Ordered, V any](f formatter.Formatter, name string, m map[K]V
 }
 
 // dumpSection is encode_json(name, T) for a struct: its dump() inside an
-// object section (ceph_json.h:496-502 at v19.2.6).
+// object section
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L496-L502 at v19.2.6).
 func dumpSection(f formatter.Formatter, name string, v Dumper, rel denc.Release) {
 	f.OpenObjectSection(name)
 	v.Dump(f, rel)
 	f.CloseSection()
 }
 
-// Dump is RGWQuotaInfo::dump (rgw_quota.cc:1034-1042 at v19.2.6, :1032-1040
-// at v20.2.4): max_size_kb rounds the signed size, unlike the encoded field.
+// Dump is RGWQuotaInfo::dump
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_quota.cc#L1034-L1042 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_quota.cc#L1032-L1040 at v20.2.4):
+// max_size_kb rounds the signed size, unlike the encoded field.
 func (q Quota) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpBool("enabled", q.Enabled)
 	f.DumpBool("check_on_raw", q.CheckOnRaw)
@@ -52,9 +57,14 @@ func (q Quota) Dump(f formatter.Formatter, _ denc.Release) {
 }
 
 // DumpAs is encode_json(name, RGWUserCaps), RGWUserCaps::dump(f, name)
-// (rgw_common.cc:2446-2449 and :2016-2043 at v19.2.6, :2508-2511 and
-// :2079-2106 at v20.2.4): an array of "cap" sections in type order, each
-// the type and its permission words.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2446-L2449
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2016-L2043 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2508-L2511
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2079-L2106 at v20.2.4):
+// an array of "cap" sections in type order, each the type and its
+// permission words.
 func (c Caps) DumpAs(f formatter.Formatter, name string) {
 	f.OpenArraySection(name)
 	for _, typ := range slices.Sorted(maps.Keys(c)) {
@@ -67,15 +77,19 @@ func (c Caps) DumpAs(f formatter.Formatter, name string) {
 }
 
 // Dump is RGWUserCaps::dump(f), which names the array "caps"
-// (rgw_common.cc:2002-2005 at v19.2.6, :2065-2068 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2002-L2005 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2065-L2068 at v20.2.4).
 func (c Caps) Dump(f formatter.Formatter, _ denc.Release) { c.DumpAs(f, "caps") }
 
 // dumpTime is encode_json of a utime_t or ceph::real_time: utime_t::gmtime
-// through dump_stream (ceph_json.cc:577-590 at v19.2.6 and v20.2.4).
+// through dump_stream
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L577-L590 at v19.2.6
+// and v20.2.4).
 func dumpTime(f formatter.Formatter, name string, t Time) { f.DumpStream(name, t.Gmtime()) }
 
 // dumpStrings is encode_json of a std::list, std::set or flat_set of
-// strings: an array of "obj" strings (ceph_json.h:533-573 at v19.2.6).
+// strings: an array of "obj" strings
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L533-L573 at v19.2.6).
 func dumpStrings(f formatter.Formatter, name string, ss []string) {
 	f.OpenArraySection(name)
 	for _, s := range ss {
@@ -85,8 +99,10 @@ func dumpStrings(f formatter.Formatter, name string, ss []string) {
 }
 
 // dumpAttrs is encode_json of a std::map<std::string, bufferlist>: "entry"
-// sections of "key" and "val" (ceph_json.h:596-607 at v19.2.6), each value
-// base64 with padding and no line breaks (ceph_json.cc:592-603 at v19.2.6
+// sections of "key" and "val"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.h#L596-L607 at v19.2.6),
+// each value base64 with padding and no line breaks
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_json.cc#L592-L603 at v19.2.6
 // and v20.2.4).
 func dumpAttrs(f formatter.Formatter, name string, attrs map[string][]byte) {
 	dumpMap(f, name, attrs,
@@ -94,8 +110,9 @@ func dumpAttrs(f formatter.Formatter, name string, attrs map[string][]byte) {
 		func(f formatter.Formatter, v []byte) { f.DumpString("val", base64.StdEncoding.EncodeToString(v)) })
 }
 
-// Dump is the body of encode_json(name, obj_version) (rgw_metadata.cc:41-47
-// at v19.2.6, :37-43 at v20.2.4).
+// Dump is the body of encode_json(name, obj_version)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L41-L47 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L37-L43 at v20.2.4).
 func (v ObjVersion) Dump(f formatter.Formatter, _ denc.Release) {
 	f.DumpString("tag", v.Tag)
 	f.DumpUnsigned("ver", v.Ver)

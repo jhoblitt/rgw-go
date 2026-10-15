@@ -37,8 +37,11 @@ func MultipartMetaName(key, uploadID string) string {
 // sets: "<key>.<unique>", where unique is the upload id, or the 32-character
 // random string process_first_chunk falls back to when the part head already
 // exists, as it does for a part uploaded again
-// (driver/rados/rgw_putobj_processor.cc:414-439 and :484-489 at v19.2.6,
-// :448-473 and :518-523 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L484-L489 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L448-L473
+// and :518-523 at v20.2.4).
 func MultipartPrefix(key, unique string) string { return key + "." + unique }
 
 // MultipartPartName is RGWMPObj::get_part: "<prefix>.<n>", the part head's
@@ -49,22 +52,23 @@ func MultipartPartName(prefix string, n uint32) string {
 
 // MultipartPartKey is the meta object's omap key for part n of an upload
 // whose id IsV2UploadID: "part." and n as %08d
-// (driver/rados/rgw_putobj_processor.cc:534-543 and
-// driver/rados/rgw_sal_rados.cc:3352-3356 at v19.2.6, :572-581 and
-// :4198-4202 at v20.2.4). An older upload keys its parts by the part number
-// as the request spelled it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L534-L543
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3352-L3356 at v19.2.6,
+// :572-581 and :4198-4202 at v20.2.4). An older upload keys its parts by
+// the part number as the request spelled it.
 func MultipartPartKey(n uint32) string {
 	return fmt.Sprintf("part.%08d", int32(n)) //nolint:gosec // MultipartObjectProcessor's part_num is an int
 }
 
 // ParseMultipartMeta is RGWMPObj::from_meta
-// (services/svc_tier_rados.h:76-87 at v19.2.6 and v20.2.4): the key and
-// upload id of a meta object's name, split at its last two dots, and false
-// when the name has no dot, or none before its last one. A name whose only
-// dot leads it, as ".meta"'s does, is the exception: from_meta's second
-// rfind starts from npos and finds that dot again. A split that leaves the
-// key empty succeeds with both parts empty, as RGWMPObj::init clears an
-// object without a key.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_tier_rados.h#L76-L87 at v19.2.6
+// and v20.2.4): the key and upload id of a meta object's name, split at
+// its last two dots, and false when the name has no dot, or none before
+// its last one. A name whose only dot leads it, as ".meta"'s does, is the
+// exception: from_meta's second rfind starts from npos and finds that dot
+// again. A split that leaves the key empty succeeds with both parts empty,
+// as RGWMPObj::init clears an object without a key.
 func ParseMultipartMeta(name string) (key, uploadID string, ok bool) {
 	end := strings.LastIndexByte(name, '.')
 	if end < 0 {
@@ -95,9 +99,11 @@ func IsV2UploadID(id string) bool {
 	return strings.HasPrefix(id, MultipartUploadIDPrefix) || strings.HasPrefix(id, MultipartUploadIDPrefixLegacy)
 }
 
-// UploadPartInfo is RGWUploadPartInfo (rgw_basic_types.h:253 at v19.2.6,
-// :270 at v20.2.4): one registered part, stored under MultipartPartKey in
-// the meta object's omap. The zero value lacks the C++ member defaults;
+// UploadPartInfo is RGWUploadPartInfo
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L253 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L270 at v20.2.4):
+// one registered part, stored under MultipartPartKey in the meta object's
+// omap. The zero value lacks the C++ member defaults;
 // DecodeUploadPartInfo fills them for the fields an older version lacks.
 type UploadPartInfo struct {
 	Num           uint32
@@ -119,7 +125,8 @@ type UploadPartInfo struct {
 
 // Encode mirrors RGWUploadPartInfo::encode, ENCODE_START(5, 2) on Squid and
 // ENCODE_START(6, 2) with the checksum on Tentacle
-// (rgw_basic_types.h:268 at v19.2.6, :286 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_basic_types.h#L268 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L286 at v20.2.4).
 func (p UploadPartInfo) Encode(e *denc.Encoder, r denc.Release) {
 	v := uint8(5)
 	if r >= denc.Tentacle {
@@ -189,9 +196,11 @@ func decodeCksum(d *denc.Decoder) []byte {
 	return append(out, body...)
 }
 
-// MultipartUploadInfo is multipart_upload_info (rgw_common.h:1508 at
-// v19.2.6, :1552 at v20.2.4), the meta object's data: the upload's
-// destination placement and the object lock settings its initiation gave.
+// MultipartUploadInfo is multipart_upload_info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1508 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1552 at v20.2.4),
+// the meta object's data: the upload's destination placement and the
+// object lock settings its initiation gave.
 type MultipartUploadInfo struct {
 	DestPlacement PlacementRule
 	// Retention is nil when obj_retention_exist is false.

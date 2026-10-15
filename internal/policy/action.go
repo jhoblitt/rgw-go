@@ -101,9 +101,10 @@ const (
 
 // ActionNone is the action of an op radosgw's IAM never evaluates: the admin
 // API's ops, which radosgw authorizes by user caps (RGWRESTOp::verify_permission,
-// rgw_rest.cc:1687-1690 at v19.2.6, :1691-1694 at v20.2.4). It lies past
-// ActionCount, so String renders it as "", ParseAction never returns it,
-// Known is false for it and no ActionSet holds it.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1687-L1690 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1691-L1694 at v20.2.4).
+// It lies past ActionCount, so String renders it as "", ParseAction never returns
+// it, Known is false for it and no ActionSet holds it.
 const ActionNone Action = 0xFFFF
 
 // actionNames is actpairs (rgw_iam_policy.cc) inverted. An s3 action's name is

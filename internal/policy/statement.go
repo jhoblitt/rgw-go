@@ -8,7 +8,8 @@ import (
 )
 
 // Identity is what Statement::eval_principal asks of rgw::auth::Identity
-// (src/rgw/rgw_iam_policy.cc:1244-1276 at v19.2.6, :1248-1280 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1244-L1276 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1248-L1280 at v20.2.4).
 type Identity interface {
 	// IsIdentity is Identity::is_identity: whether p names this identity.
 	IsIdentity(p Principal) bool
@@ -17,10 +18,13 @@ type Identity interface {
 	IdentityType() meta.IdentityType
 }
 
-// Effect is rgw::IAM::Effect (src/rgw/rgw_iam_policy_keywords.h:123-127 at
-// v19.2.6, :124-128 at v20.2.4). Deny is numbered first, unlike radosgw's
-// enum, so that the zero value is the effect radosgw gives a statement that
-// names none (rgw_iam_policy.h:541 at v19.2.6, :594 at v20.2.4).
+// Effect is rgw::IAM::Effect
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy_keywords.h#L123-L127 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy_keywords.h#L124-L128 at v20.2.4).
+// Deny is numbered first, unlike radosgw's enum, so that the zero value is
+// the effect radosgw gives a statement that names none
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L594 at v20.2.4).
 type Effect uint8
 
 // The effects.
@@ -46,10 +50,12 @@ func (e Effect) String() string {
 	return "Effect(" + strconv.Itoa(int(e)) + ")"
 }
 
-// Statement is rgw::IAM::Statement (src/rgw/rgw_iam_policy.h:533-559 at
-// v19.2.6, :586-612 at v20.2.4). radosgw keeps the principals and resources
-// in flat sets; evaluation only asks whether some entry matches, so their
-// order and repeats do not matter here.
+// Statement is rgw::IAM::Statement
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L533-L559 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L586-L612 at v20.2.4).
+// radosgw keeps the principals and resources in flat sets; evaluation only
+// asks whether some entry matches, so their order and repeats do not matter
+// here.
 type Statement struct {
 	Sid           *string
 	Principals    []Principal
@@ -64,15 +70,18 @@ type Statement struct {
 	Conditions   []Condition
 }
 
-// Eval is Statement::eval (src/rgw/rgw_iam_policy.cc:1192-1233 at v19.2.6,
-// :1196-1237 at v20.2.4): the statement's Effect when it applies to id, a and
-// res and every condition holds in env under sem, and Pass otherwise. A nil id
-// is a request evaluated without an identity, as radosgw evaluates identity
-// policies (src/rgw/rgw_common.cc:1153 at v19.2.6, :1166 at v20.2.4); a nil
-// res is a request without a resource. A statement applies to a resource only
-// when it names Resource or NotResource, and to a request without a resource
-// only when it names neither. When it names Resource, NotResource is not
-// consulted.
+// Eval is Statement::eval
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1192-L1233 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1196-L1237 at v20.2.4):
+// the statement's Effect when it applies to id, a and res and every condition
+// holds in env under sem, and Pass otherwise. A nil id is a request evaluated
+// without an identity, as radosgw evaluates identity policies
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1153 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1166 at v20.2.4);
+// a nil res is a request without a resource. A statement applies to a resource
+// only when it names Resource or NotResource, and to a request without a
+// resource only when it names neither. When it names Resource, NotResource is
+// not consulted.
 func (s *Statement) Eval(env Env, id Identity, a Action, res *ARN, sem Semantics) Effect {
 	if s.EvalPrincipal(id) == Deny {
 		return Pass
@@ -145,8 +154,9 @@ func matchesAny(patterns []ARN, res ARN) bool {
 	return slices.ContainsFunc(patterns, func(p ARN) bool { return p.Match(res) })
 }
 
-// namesIdentity is is_identity (src/rgw/rgw_iam_policy.cc:1235-1242 at
-// v19.2.6, :1239-1246 at v20.2.4).
+// namesIdentity is is_identity
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1235-L1242 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1239-L1246 at v20.2.4).
 func namesIdentity(ps []Principal, id Identity) bool {
 	return slices.ContainsFunc(ps, id.IsIdentity)
 }
