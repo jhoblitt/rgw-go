@@ -17,111 +17,93 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
+// rgwTables are the rgw class's area tables, each added by rgwTable as it is
+// declared, whatever file declares it.
+var rgwTables []methodTable
+
+// rgwTable adds t to the rgw class's tables and returns it: declaring an
+// area's table as `var _ = rgwTable(methodTable{...})` is what puts its
+// methods in RGWClass and its write flags in RGWWriteMethods.
+func rgwTable(t methodTable) methodTable { //nolint:unparam // the result lets the call initialize a package variable, which runs before init
+	rgwTables = append(rgwTables, t)
+	return t
+}
+
+// rgwClassMethods is every method RGWClass emulates, the area tables merged.
+var rgwClassMethods methodTable
+
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4691-L4698,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4705-L4706,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4716,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4722,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4724-L4725,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4728,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4731,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4743
-// and
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4752 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5107-L5115,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5122-L5123,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5135,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5141,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5143-L5144,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5147,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5150,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5162
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5171 at v20.2.4),
-// which RegisterClass takes with RGWClass.
-var RGWWriteMethods = []string{
-	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
-	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
-	"user_usage_log_add", "dir_suggest_changes",
-	"bucket_rebuild_index",
-	"user_usage_log_trim", "usage_log_clear",
+// registers with CLS_METHOD_WR, in name order, which RegisterClass takes with
+// RGWClass.
+var RGWWriteMethods []string
+
+// init assembles the class: Go initializes every package variable before any
+// init runs, so every area's table is registered, whatever file declares it.
+func init() { rgwClassMethods, RGWWriteMethods = assembleRGWClass(rgwTables) }
+
+// assembleRGWClass is the class the tables make: their methods merged, and
+// the write list their write flags derive.
+func assembleRGWClass(tables []methodTable) (methods methodTable, writes []string) {
+	methods = mergeMethodTables(tables...)
+	return methods, methods.writeMethods()
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
-// v20.2.4) over a bucket index shard's omap: one entry per index key, and
-// the rgw_bucket_dir_header in the omap header. It runs bucket_init_index;
-// bucket_list asking for no entries, which is how radosgw reads a shard's
-// header; the index transaction, bucket_prepare_op and bucket_complete_op;
-// guard_bucket_resharding, get_bucket_resharding and
-// set_bucket_resharding, with which a spec stages a reshard;
-// mp_upload_part_info_update on a multipart meta object; obj_remove,
-// obj_store_pg_ver and obj_check_mtime on a head object; on a gc shard the
-// omap-era log, gc_set_entry, gc_list and gc_remove; user_usage_log_add
-// on a usage log object, with user_usage_log_read, user_usage_log_trim
-// and usage_log_clear; and on an index shard bucket_check_index and
-// bucket_rebuild_index, as rgwCheckIndex says. Every other
-// method is EOPNOTSUPP. A bucket_list asking for entries and
-// dir_suggest_changes are emulated as rgwBucketListEntries and
-// rgwDirSuggestChanges say. It reads the header and entries from the stored
-// object, as cls_cxx_map_read_header and cls_cxx_map_get_val do, and encodes
-// what it stores and replies at the Squid release, whose
-// rgw_bucket_dir_header lacks only Tentacle's reshard log count.
+// v20.2.4): it runs the methods of the area tables merged into
+// rgwClassMethods, and every other method is EOPNOTSUPP.
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
 // a reshard log, as Tentacle's do. It keeps no bucket index log, and it does
 // not emulate versioned keys: a prepare or complete naming an instance is
 // EOPNOTSUPP.
-func RGWClass() ClassFunc {
-	return func(call *ClassCall) ([]byte, int32) {
-		switch call.Method {
-		case "bucket_init_index":
-			return nil, rgwBucketInitIndex(call)
-		case "bucket_list":
-			return rgwBucketList(call)
-		case "bucket_prepare_op":
-			return nil, rgwBucketPrepareOp(call)
-		case "bucket_complete_op":
-			return nil, rgwBucketCompleteOp(call)
-		case "guard_bucket_resharding":
-			return nil, rgwGuardBucketResharding(call)
-		case "get_bucket_resharding":
-			return rgwGetBucketResharding(call)
-		case "set_bucket_resharding":
-			return nil, rgwSetBucketResharding(call)
-		case "mp_upload_part_info_update":
-			return nil, rgwMPUploadPartInfoUpdate(call)
-		case "obj_remove":
-			return nil, rgwObjRemove(call)
-		case "obj_store_pg_ver":
-			return nil, rgwObjStorePGVer(call)
-		case "obj_check_mtime":
-			return nil, rgwObjCheckMtime(call)
-		case "gc_set_entry":
-			return nil, rgwGCSetEntry(call)
-		case "gc_list":
-			return rgwGCList(call)
-		case "gc_remove":
-			return nil, rgwGCRemove(call)
-		case "user_usage_log_add":
-			return nil, rgwUserUsageLogAdd(call)
-		case "user_usage_log_read":
-			return rgwUserUsageLogRead(call)
-		case "user_usage_log_trim":
-			return nil, rgwUserUsageLogTrim(call)
-		case "usage_log_clear":
-			return nil, rgwUsageLogClear(call)
-		case "dir_suggest_changes":
-			return nil, rgwDirSuggestChanges(call)
-		case "bucket_check_index":
-			return rgwBucketCheckIndex(call)
-		case "bucket_rebuild_index":
-			return nil, rgwBucketRebuildIndex(call)
-		}
-		return nil, -int32(syscall.EOPNOTSUPP)
-	}
-}
+func RGWClass() ClassFunc { return rgwClassMethods.dispatch() }
+
+// The bucket index, reshard status, head object, gc, usage log and multipart
+// methods RGWClass emulates. The bucket index methods work over a shard's
+// omap: one entry per index key, and the rgw_bucket_dir_header in the omap
+// header. The methods are bucket_init_index; bucket_list asking for no
+// entries, which is how radosgw reads a shard's header; the index
+// transaction, bucket_prepare_op and bucket_complete_op;
+// guard_bucket_resharding, get_bucket_resharding and set_bucket_resharding,
+// with which a spec stages a reshard; mp_upload_part_info_update on a
+// multipart meta object; obj_remove, obj_store_pg_ver and obj_check_mtime on
+// a head object; on a gc shard the omap-era log, gc_set_entry, gc_list and
+// gc_remove; user_usage_log_add on a usage log object, with
+// user_usage_log_read, user_usage_log_trim and usage_log_clear; and on an
+// index shard bucket_check_index and bucket_rebuild_index, as rgwCheckIndex
+// says. A bucket_list asking for entries and dir_suggest_changes are emulated
+// as rgwBucketListEntries and rgwDirSuggestChanges say. The bucket index
+// methods read the header and entries from the stored object, as
+// cls_cxx_map_read_header and cls_cxx_map_get_val do, and encode what they
+// store and reply at the Squid release, whose rgw_bucket_dir_header lacks
+// only Tentacle's reshard log count. Each write flag is the method's
+// CLS_METHOD_WR in the class's registrations
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4691-L4759 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5107-L5178 at v20.2.4).
+var _ = rgwTable(methodTable{
+	"bucket_init_index":          {fn: noOutput(rgwBucketInitIndex), write: true},
+	"bucket_list":                {fn: rgwBucketList},
+	"bucket_prepare_op":          {fn: noOutput(rgwBucketPrepareOp), write: true},
+	"bucket_complete_op":         {fn: noOutput(rgwBucketCompleteOp), write: true},
+	"guard_bucket_resharding":    {fn: noOutput(rgwGuardBucketResharding)},
+	"get_bucket_resharding":      {fn: rgwGetBucketResharding},
+	"set_bucket_resharding":      {fn: noOutput(rgwSetBucketResharding), write: true},
+	"mp_upload_part_info_update": {fn: noOutput(rgwMPUploadPartInfoUpdate), write: true},
+	"obj_remove":                 {fn: noOutput(rgwObjRemove), write: true},
+	"obj_store_pg_ver":           {fn: noOutput(rgwObjStorePGVer), write: true},
+	"obj_check_mtime":            {fn: noOutput(rgwObjCheckMtime)},
+	"gc_set_entry":               {fn: noOutput(rgwGCSetEntry), write: true},
+	"gc_list":                    {fn: rgwGCList},
+	"gc_remove":                  {fn: noOutput(rgwGCRemove), write: true},
+	"user_usage_log_add":         {fn: noOutput(rgwUserUsageLogAdd), write: true},
+	"user_usage_log_read":        {fn: rgwUserUsageLogRead},
+	"user_usage_log_trim":        {fn: noOutput(rgwUserUsageLogTrim), write: true},
+	"usage_log_clear":            {fn: noOutput(rgwUsageLogClear), write: true},
+	"dir_suggest_changes":        {fn: noOutput(rgwDirSuggestChanges), write: true},
+	"bucket_check_index":         {fn: rgwBucketCheckIndex},
+	"bucket_rebuild_index":       {fn: noOutput(rgwBucketRebuildIndex), write: true},
+})
 
 // rgwObjRemove is rgw_obj_remove
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2410-L2482 at v19.2.6):
