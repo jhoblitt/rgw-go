@@ -47,7 +47,10 @@
 //   - samples-<profile>.csv, the gateway command's sampler's, for the CPU,
 //     threads and RSS.
 //   - gctrace-<profile>.log, rgw-go's GODEBUG=gctrace=1 lines, for its GC
-//     cycles and pauses, and config.json, the parity options.
+//     cycles and pauses; a line its JSON log tore, and a cycle missing from
+//     the lines' numbers, count as cycles whose pauses are unknown, and the
+//     report says how many lines were torn.
+//   - config.json, the parity options.
 //
 // One run's report is written to its REPORT.md, several runs' to stdout, and
 // either to --out when it is given; the command prints the file it wrote and

@@ -80,6 +80,8 @@ writes the same data and manifest again.
   `cluster-down` removes it with the disk image, so both need root;
   `rooket sudoers install` removes the prompt.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
+- `jq`, for `rgw-go-up.sh` and `rgw-go-down.sh`, and for `make test`, whose
+  specs run their reads of `rgw-go.log`.
 - `git`, `curl` and `python3` with `venv`, with access to GitHub and PyPI,
   for `hack/s3tests/run.sh`.
 - `git`, `curl`, `jq` and Go with cgo and the librados headers below, with

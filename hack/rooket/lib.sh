@@ -68,6 +68,27 @@ pinned_version() {
 	echo "${BASH_REMATCH[1]}"
 }
 
+# rgw-go's log holds its JSON log's records and main's closing error, each
+# written whole with its newline, and under GODEBUG=gctrace=1 the Go
+# runtime's GC lines, written a piece at a time and unordered with the rest:
+# a record, or main's error, can land after a GC line's first pieces, on its
+# line. No GC line holds a "{", so what stands before a line's first one is GC
+# output.
+
+# serving_records prints, one per line, the records of what rgw-go serves in
+# its log $1, each read from its line's first "{".
+serving_records() {
+	jq -R -c 'sub("^[^{]*"; "") | fromjson? | select(.msg == "serving")' "$1"
+}
+
+# exit_error prints the error main ended the run with, as the log $1 holds
+# it: "rgw-go: " and the rest of its line, after nothing but GC output. GC
+# lines, whole or torn, may follow it. It prints nothing for a run that ended
+# without one.
+exit_error() {
+	jq -R -r 'capture("^[^{]*?(?<error>rgw-go: .*)$").error' "$1" | tail -n 1
+}
+
 k() {
 	"${rooket}" kubectl "$@"
 }

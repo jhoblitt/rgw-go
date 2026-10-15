@@ -140,8 +140,15 @@ func completeLines(path string) (int64, error) {
 }
 
 // keepGCTrace writes the GC lines rgw-go logged past offset of its log to
-// path. GODEBUG=gctrace=1 prints them to rgw-go's stderr, which its log
-// holds beside the JSON log.
+// path, every line that starts as one. GODEBUG=gctrace=1 prints them to
+// rgw-go's stderr, which its log holds beside the JSON log, and nothing
+// orders the two writers: the runtime writes a GC line in pieces, a write
+// each, and slog a record in one write, so a record can land between two
+// pieces, ending the GC line early and leaving its rest at the start of a
+// later line. Such a torn line is kept as it is, for hack/bench/report to
+// tell from a whole one; its rest, and a line torn before its "@", do not
+// start as a GC line and are not kept. The report still sees the cycle of a
+// line torn before its "@", through the gap it leaves in the cycles' numbers.
 func keepGCTrace(log string, offset int64, path string) error {
 	f, err := os.Open(log) //nolint:gosec // the path is the release's rooket output
 	if err != nil {

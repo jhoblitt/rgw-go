@@ -1,7 +1,6 @@
 package report
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -88,9 +87,12 @@ type gwPhase struct {
 	command                 string
 }
 
-// gcStats is what a gctrace log says about the GC cycles of one profile.
+// gcStats is what a gctrace log says about the GC cycles of one profile. A
+// torn line, kept or known from a gap in the cycles' numbers, counts among the
+// cycles and adds nothing to the pauses.
 type gcStats struct {
 	cycles       int
+	torn         int
 	maxPauseUs   float64
 	totalPauseUs float64
 }
@@ -674,10 +676,22 @@ func interpolate(samples []sample, t float64) float64 {
 
 // gcLine is a GODEBUG=gctrace=1 line: its wall-clock phases are the sweep
 // termination's stop-the-world pause, the concurrent mark and the mark
-// termination's stop-the-world pause, in ms.
-var gcLine = regexp.MustCompile(`^gc \d+ @[0-9.]+s \d+%: ([0-9.]+)\+[0-9.]+\+([0-9.]+) ms clock`)
+// termination's stop-the-world pause, in ms. The cycle of a goroutine leak
+// check, which a fetch of /debug/pprof/goroutineleak runs, says so before the
+// colon.
+var gcLine = regexp.MustCompile(`^gc \d+ @[0-9.]+s \d+%(?: \(checking for goroutine leaks\))?: ([0-9.]+)\+[0-9.]+\+([0-9.]+) ms clock`)
 
-// readGCTrace reads gctrace-<profile>.log, when the run has one.
+// gcStart is how a GC line begins, with its cycle's number, the rule
+// hack/bench/gateway's keepGCTrace keeps a line of rgw-go's log by.
+var gcStart = regexp.MustCompile(`^gc (\d+) @`)
+
+// readGCTrace reads gctrace-<profile>.log, when the run has one. A line that
+// begins as a GC line but is not a whole one is torn, ended early by a record
+// of rgw-go's JSON log, as keepGCTrace's doc tells, or by the end of the log
+// it read: it counts as a cycle whose pauses are unknown. The cycles are
+// counted from their numbers, consecutive in one rgw-go's log, from the first
+// line's on: a gap is the cycles of lines torn too early for keepGCTrace to
+// keep, each counted as a torn line.
 func (r *gwRun) readGCTrace(profile string) error {
 	path := filepath.Join(r.dir, "gctrace-"+profile+".log")
 	data, err := os.ReadFile(path) //nolint:gosec // a result in the directory the command line names
@@ -688,24 +702,43 @@ func (r *gwRun) readGCTrace(profile string) error {
 		return err
 	}
 	var g gcStats
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for n := 1; sc.Scan(); n++ {
-		m := gcLine.FindStringSubmatch(sc.Text())
-		if m == nil {
+	// Not a bufio.Scanner: a torn line holds a whole JSON record, which may
+	// be longer than the longest token a Scanner takes.
+	n, prev := 0, 0
+	for line := range bytes.Lines(data) {
+		n++
+		line = bytes.TrimSuffix(line, []byte("\n"))
+		start := gcStart.FindSubmatch(line)
+		if start == nil {
 			return fmt.Errorf("%s line %d is not a gctrace line", path, n)
 		}
-		g.cycles++
+		cycle, err := strconv.Atoi(string(start[1]))
+		if err != nil {
+			return fmt.Errorf("%s line %d: %w", path, n, err)
+		}
+		switch {
+		case n == 1:
+			g.cycles = 1
+		case cycle <= prev:
+			return fmt.Errorf("%s line %d is cycle %d, which does not follow cycle %d", path, n, cycle, prev)
+		default:
+			g.cycles += cycle - prev
+			g.torn += cycle - prev - 1
+		}
+		prev = cycle
+		m := gcLine.FindSubmatch(line)
+		if m == nil {
+			g.torn++
+			continue
+		}
 		for _, s := range m[1:] {
-			ms, err := strconv.ParseFloat(s, 64)
+			ms, err := strconv.ParseFloat(string(s), 64)
 			if err != nil {
 				return fmt.Errorf("%s line %d: %w", path, n, err)
 			}
 			g.maxPauseUs = max(g.maxPauseUs, ms*1000)
 			g.totalPauseUs += ms * 1000
 		}
-	}
-	if err := sc.Err(); err != nil {
-		return err
 	}
 	r.gc[profile] = g
 	return nil

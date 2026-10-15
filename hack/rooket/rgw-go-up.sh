@@ -183,7 +183,7 @@ done
 # is the one rgw-go reports serving on.
 metrics=
 for _ in 1 2 3 4 5; do
-	if line=$(jq -R -c 'fromjson? | select(.msg == "serving")' "${log}") && [[ -n "${line}" ]]; then
+	if line=$(serving_records "${log}") && [[ -n "${line}" ]]; then
 		metrics=$(jq -r '.metrics_addr // empty' <<<"${line}" | tail -n 1)
 		break
 	fi
