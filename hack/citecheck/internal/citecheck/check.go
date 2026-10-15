@@ -63,17 +63,9 @@ func NewChecker(ctx context.Context, dir string) (*Checker, error) {
 // or a base name, names: name itself, and every path that ends in "/" and
 // name.
 func (c *Checker) filesNamed(ctx context.Context, commit, name string) ([]string, error) {
-	byBase, ok := c.trees[commit]
-	if !ok {
-		out, err := git(ctx, c.dir, nil, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", commit)
-		if err != nil {
-			return nil, err
-		}
-		byBase = map[string][]string{}
-		for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
-			byBase[path.Base(p)] = append(byBase[path.Base(p)], p)
-		}
-		c.trees[commit] = byBase
+	byBase, err := c.tree(ctx, commit)
+	if err != nil {
+		return nil, err
 	}
 	var paths []string
 	for _, p := range byBase[path.Base(name)] {
@@ -82,6 +74,23 @@ func (c *Checker) filesNamed(ctx context.Context, commit, name string) ([]string
 		}
 	}
 	return paths, nil
+}
+
+// tree returns commit's file paths by base name, listing its tree once.
+func (c *Checker) tree(ctx context.Context, commit string) (map[string][]string, error) {
+	if byBase, ok := c.trees[commit]; ok {
+		return byBase, nil
+	}
+	out, err := git(ctx, c.dir, nil, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", commit)
+	if err != nil {
+		return nil, err
+	}
+	byBase := map[string][]string{}
+	for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
+		byBase[path.Base(p)] = append(byBase[path.Base(p)], p)
+	}
+	c.trees[commit] = byBase
+	return byBase, nil
 }
 
 // partialClone returns which setting makes dir a partial clone, or "".
@@ -212,6 +221,25 @@ func (c *Checker) classify(ctx context.Context, ref string) (resolved, error) {
 		return resolved{problem: fmt.Sprintf("ref %s names no commit in %s", ref, c.dir)}, nil
 	}
 	return resolved{commit: commit}, nil
+}
+
+// branchTip returns the commit the clone's main branch is at, for "main"
+// its local branch or else origin's, and for "origin/main" the other way
+// round, or "" when it has neither. Only the check that tells ceph's plain
+// markdown citations from rgw-go's reads it: no link is made at a branch,
+// which moves.
+func (c *Checker) branchTip(ctx context.Context, branch string) (string, error) {
+	refs := []string{"refs/heads/main", "refs/remotes/origin/main"}
+	if branch == "origin/main" {
+		refs = []string{"refs/remotes/origin/main", "refs/heads/main"}
+	}
+	for _, ref := range refs {
+		commit, found, err := c.revParse(ctx, ref+"^{commit}")
+		if err != nil || found {
+			return commit, err
+		}
+	}
+	return "", nil
 }
 
 // revParse runs git rev-parse --verify --quiet on rev with flags and returns

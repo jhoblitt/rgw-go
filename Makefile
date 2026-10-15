@@ -145,6 +145,23 @@ MARKDOWN = $(shell git ls-files '*.md')
 citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
 	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
+# The list of ceph's citable files, which tells a plain markdown citation of
+# ceph from one of rgw-go's without a clone, is made at the releases the docs
+# cite: those citecheck's [S] and [T] markers name, every tag .goreleaser.yaml
+# has pinned, and v19.2.7. A pin bump adds its tag here and runs make
+# citecheck-files; a spec fails while .goreleaser.yaml pins a tag the list was
+# not made at.
+CITECHECK_FILES_REFS = v19.2.6 v19.2.7 v20.2.4
+CITECHECK_FILES_LIST = hack/citecheck/internal/citecheck/cephfiles.txt
+
+.PHONY: citecheck-files
+citecheck-files: ## Write the list of ceph's citable files at CITECHECK_FILES_REFS from the clone (CITECHECK_CEPH)
+	go run ./hack/citecheck files --out $(CITECHECK_FILES_LIST) $(CITECHECK_FILES_REFS)
+
+.PHONY: citecheck-files-check
+citecheck-files-check: ## Fail when the list of ceph's citable files is not the clone's at CITECHECK_FILES_REFS
+	@go run ./hack/citecheck files --check $(CITECHECK_FILES_LIST) $(CITECHECK_FILES_REFS)
+
 # The Go files under the PKGS directories, at any depth, outside testdata.
 CITECHECK_GO_FILES = $(if $(PKGS),$(shell find $(PKGS) -name '*.go' -not -path '*/testdata/*' | sort))
 
@@ -159,7 +176,7 @@ citecheck-go-fix: ## Rewrite the plain Ceph citations in the Go comments under t
 	go run ./hack/citecheck --fix $(CITECHECK_GO_FILES)
 
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citecheck-files-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is

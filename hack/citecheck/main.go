@@ -5,16 +5,21 @@
 // and rewrites the code spans and plain file:line citations that once cited
 // Ceph into links.
 //
-//	go run ./hack/citecheck [--ceph DIR] [--fix | --form-only] FILE...
+//	go run ./hack/citecheck [--ceph DIR] [--fix | --form-only] [--markdown-plain] FILE...
+//	go run ./hack/citecheck files [--ceph DIR] (--out FILE | --check FILE) REF...
 //	make citecheck FILES="FILE..."
 //	make citecheck-fix FILES="FILE..."
 //	make citecheck-links FILES="FILE..."
 //	make citecheck-go PKGS="DIR..."
 //	make citecheck-go-fix PKGS="DIR..."
+//	make citecheck-files
+//	make citecheck-files-check
 //
 // A FILE whose name ends in .go is read as Go source, as Go comments below
 // says; every other is read as markdown. The Go targets read every .go file
-// under each DIR, at any depth, outside testdata directories.
+// under each DIR, at any depth, outside testdata directories. The files
+// command and its targets keep the list of ceph's files, as The list of
+// ceph's files below says.
 //
 // --ceph names the clone, /home/jhoblitt/github/ceph by default; it can also
 // come from CITECHECK_CEPH, or from the config file --config (CITECHECK_CONFIG)
@@ -24,6 +29,9 @@
 // plain citations in Go comments, as Go comments says. --form-only
 // (CITECHECK_FORM_ONLY; make citecheck-links) checks only what needs no
 // clone, so that CI can run it; it cannot be combined with --fix.
+// --markdown-plain (CITECHECK_MARKDOWN_PLAIN) reads the plain citations in
+// markdown too, as Plain citations in markdown says; without it they are not
+// read at all.
 // The --log-level (debug, info, warn or error; info by default;
 // CITECHECK_LOG_LEVEL) and --log-format (json or text; json by default;
 // CITECHECK_LOG_FORMAT) flags set the logger, which writes to stderr. The
@@ -203,40 +211,41 @@
 //	:6884-6890
 //
 // A file is a path whose last segment ends in .cc, .h, .hpp, .c, .py, .go,
-// .yaml.in, .yaml, .yml, .sh, .txt, .json, .cmake or .proto, and neither it
-// nor a continuation touches a path or identifier byte, or a bracket for a
-// continuation, so that a slice expression is none. It cites ceph when its
-// file, or a continuation's nearest candidate file (below), is a file in the
-// clone at its ref or at v19.2.6 or v20.2.4, the releases [S] and [T] name,
+// .yaml.in, .yaml, .yml, .sh, .txt, .json, .cmake, .proto, .gperf or .in, and
+// neither it nor a continuation touches a path or identifier byte, or a bracket
+// for a continuation, so that a slice expression is none. It cites ceph when
+// its file, or a continuation's nearest candidate file (below), is a file in
+// the clone at its ref or at v19.2.6 or v20.2.4, the releases [S] and [T] name,
 // and so does a continuation that follows no file but follows a header
 // convention (below). Any other, such as rgw-go's own bucketops.go or
 // internal/driver/put.go, a Go standard library file, or a port written as a
 // line number, is not a citation and is left alone. Without --fix a plain
-// citation of ceph fails as not a link. Under --form-only, which has no
-// clone, one fails so when its file is not a Go file and the rules below
-// give it a ref; one with no ref is not judged.
+// citation of ceph fails as not a link. Under --form-only, which has no clone,
+// one fails so when its file is not a Go file and the rules below give it a
+// ref; one with no ref is not judged.
 //
 // --fix resolves each into the raw link to its lines at its ref, which it
 // writes in the citation's place. A comment is a run of // lines with nothing
 // else on them, or a single comment after code, and a paragraph of one is
 // read with its lines joined by single blanks:
 //
-//   - ref, the first rule that gives one: an "at", "in" or "on" and a tag
-//     after it, past any citations listed with it by blanks, commas, "and"
-//     or "or", or after the comma that closes them; "at both tags", which is
-//     v19.2.6 when the cited lines are the same at v19.2.6 and v20.2.4; its
-//     own [S] or [T]; the last marker or tag in its clause before it, the
-//     clause cut at the last "(", ";" or ". " and an "at <tag>" that leads it
-//     left to the citation before, unless the clause names another release
-//     too, by tag, marker or codename, and the last is not right before it,
-//     which leaves it with none; the one release, by tag, marker or codename
-//     (Squid, Tentacle), the words before the "(" it opens name, back to the
-//     last citation, "(", ")", ". ", ";" or ","; for a continuation, the ref
-//     of the citation it is listed after, though not past that citation's
-//     own "at <tag>"; and the file's header convention, the nearest comment
-//     above it saying what a bare line number means. A header that names a
-//     file gives its tag only to a citation that turns out to be of that
-//     file. With none it is unresolved: there is no default ref.
+//   - ref, the first rule that gives one: an "at", "in" or "on" and a tag after
+//     it, past any citations listed with it by blanks, commas, "and" or "or",
+//     or after the comma that closes them, but not past them to a citation with
+//     its own tag or marker right before it; "at both tags", which is v19.2.6
+//     when the cited lines are the same at v19.2.6 and v20.2.4; its own [S] or
+//     [T]; the last marker or tag in its clause before it, the clause cut at
+//     the last "(", ";" or ". " and an "at <tag>" that leads it left to the
+//     citation before, unless the clause names another release too, by tag,
+//     marker or codename, and the last is not right before it, which leaves it
+//     with none; the one release, by tag, marker or codename (Squid, Tentacle),
+//     the words before the "(" it opens name, back to the last citation, "(",
+//     ")", ". ", ";" or ","; for a continuation, the ref of the citation it is
+//     listed after, though not past that citation's own "at <tag>"; and the
+//     file's header convention, the nearest comment above it saying what a bare
+//     line number means. A header that names a file gives its tag only to a
+//     citation that turns out to be of that file. With none it is unresolved:
+//     there is no default ref.
 //   - file: a continuation's candidates are, nearest first, the citations
 //     and the file names without lines before it in its comment, then the
 //     file the header convention names or, when it names none, those its
@@ -314,6 +323,165 @@
 // that leaves it not clean either, none is written. A second run rewrites
 // nothing.
 //
+// # Plain citations in markdown
+//
+// With --markdown-plain a markdown file's plain citations are read too: a code
+// span whose whole content, blanks around it aside, is a plain citation as Go
+// comments defines one, `rgw_op.cc:727-758`, `rgw_op.cc [T]:10` or `:757-788`,
+// and those forms in prose, outside code spans and links. A code span may also
+// hold a citation in a form --fix does not rewrite: a marker before its file,
+// `[T] rgw_op.cc:10`; a list of line ranges, `rgw_op.cc:10,20-30`; a symbol
+// after its lines, `:10-20#RGWOp::execute`; or an open range, `:10-`, `:10-...`
+// or `:10+`. Each is checked as the others are, and under --fix listed as
+// unresolved. A code span that holds more than a citation is code, and a link's
+// text, its brackets paired as Scan pairs them, is the link's. A code span
+// whose whole content is a file, `rgw_rados.cc`, names it as a file named
+// without lines does; any other code span is read for identifiers only, and
+// fenced code blocks are skipped.
+//
+// Each is read as a Go comment's is, with these differences. A paragraph is
+// one Scan pairs code spans in, the lines of a list item or of a paragraph
+// joined by single blanks, and a table row's cell is a paragraph of its own
+// to the rules Go comments lists. A section, from a heading to the next, is
+// the comment a continuation looks back through for its file. No identifier
+// named beside a citation is taken for rgw-go's.
+//
+// The identifiers a citation's lines are checked for are whole code tokens,
+// so that no common word stands in for one. A quoted string literal in a
+// code span, and a literal there of words joined by "-" or "/", such as a
+// header's name, `x-amz-expected-bucket-owner`, or a path, count only
+// whole, never by their words. A qualified name, A::B, counts whole, and
+// each of its parts of three letters or more as any other name where it
+// stands. Any other name in a code span counts when it reads as code, with
+// an "_" or a digit, a lower-case letter before a capital, or two capitals
+// first, or is no common English word, none of
+// internal/citecheck/english.txt, a fixed list, the same whatever files a
+// run is given; and when it is no generic name, such as a namespace: ceph,
+// rgw, rados, librados, std, boost, http, https, amz or aws. A name in prose
+// counts as Go comments reads one.
+// A citation beside which a name stands that Go comments would check its
+// lines for, but none that counts here, is unresolved.
+//
+// A citation whose name, or for a continuation its nearest candidate's, is
+// the path from rgw-go's root of a file rgw-go has is rgw-go's, and stays
+// plain, though ceph has the same path, as .github/dependabot.yml: rgw-go's
+// root is the nearest directory above the markdown file whose go.mod declares
+// rgw-go's module, which a checkout and a copy of its files both have.
+// Otherwise it cites ceph when the list of ceph's files below has its file,
+// or, for a continuation, its nearest candidate's; or, with a clone, when the
+// clone has it at its ref, at the commit an "at <commit>" after it names, at
+// the main branch an "on main", "at main" or "at origin/main" after it names,
+// or at v19.2.6 or v20.2.4. A continuation that follows a link cites the link's
+// file. So rgw-go's own file is cited by its path from rgw-go's root,
+// hack/admin/run.sh:12, even where ceph has a file of the same base name.
+// Without --fix each fails, under --form-only too and whatever its ref, as
+// not a link, the reason naming ceph's paths and saying how to cite rgw-go's
+// file instead. Under --form-only, a citation of a file the list lacks fails
+// too when it is tied to a tag or a commit the list was not made at, the ref
+// a rule or scope below gives it or an "at <commit>", unless its paragraph
+// names another repository, as rook or go-ceph: nothing without a clone tells
+// it is not ceph's.
+//
+// When the rules Go comments lists give no ref, the scopes around the
+// citation may, nearest first, and the first that names any release decides:
+//
+//   - its sentence, from the end of the one before, a "." and a blank, with
+//     the "*" or "_" that close an emphasis between them, or in a table its
+//     cell;
+//   - another cell of its table row, then the cell of its column in the
+//     table's header row, each only when the cell's whole text, "*", "`" and
+//     blanks aside, names the release, as v20.2.4, [T], Squid and
+//     Squid (v19.2.6) do, and another cell only in a column whose header is
+//     Release, Tag, Version or Ref;
+//   - each list item it is nested in, nearest first, and the paragraph right
+//     before its list or table when that paragraph ends with ":", a list or
+//     table ending, at its own level, at another list or table before it;
+//   - its section's heading, by a tag or a marker only, since a codename in
+//     a heading names a release's behavior rather than the tag its lines
+//     were read at; a heading above its section's is not read.
+//
+// A scope gives the one release it names, by tag, marker or codename, when
+// it names it before the citation and names no other release or ref. It
+// leaves the citation with no ref when it names two or more; or a ref that
+// is no tag, such as main, a commit id, a codename the markers do not name,
+// "both tags" or "each release"; or a release as another citation's own,
+// the "at <tag>" right after one, its comma aside, a tag or a marker right
+// before one, or a link's ref. A sentence or a heading whose release follows
+// "fixed in", "before", "until", "since" or "pre-" gives none either, and nor
+// does the clause rule or the "(" rule finding one so, since it names when a
+// behavior changed, not the release the lines were read at.
+//
+// A lead-in that states the pair convention in the words the registries
+// write it in, "each pair of lines is v19.2.6's, then v20.2.4's", "a pair of
+// line numbers is ...", "unless a pair is given, ...", "lines are given as
+// ..." or "cited at v19.2.6 and then v20.2.4", gives the citations of its
+// list their refs two by two before any other rule: the first of each pair
+// the first tag it names, the second the second. Its list is the citations
+// in its own paragraph and in each it leads in to, as the scopes above read
+// a lead-in, whose nearest lead-in that states the convention it is. The
+// convention gives refs to every citation of a regular list and to none of
+// another, whose citations the rules above then read, a lead-in inside the
+// list giving none; one a scope leaves with no ref is told why the
+// convention is not applied. A list is regular when all of these hold:
+//
+//   - the statement names two tags, and the lead-in names no other release
+//     or ref, "both tags" and the like aside;
+//   - no paragraph of the list or its lead-in holds a link, ties a release
+//     to a citation, right before it or by an "at" after it, or names a
+//     release other than the two, and none names those, or "both tags",
+//     in the sentence of a citation in the list or as a lead-in of its own
+//     to one;
+//   - no citation in it carries a marker or an "at <ref>";
+//   - its citations come in pairs: two with a ";" or a "," alone between
+//     them, nothing like that joining the pair to the next, the second a
+//     continuation or a citation of the same file name;
+//   - under --fix, every citation in it cites ceph, resolves at its tag with
+//     an identifier named beside it standing in or around its lines,
+//     resolves to the same file as the other of its pair, and can be
+//     written in place.
+//
+// And a citation is unresolved, besides as Go comments lists:
+//
+//   - when it is cited at, on or in a ref that is no tag: at, on or in a
+//     branch or a commit id; at a version that is no tag, "all", or a ref
+//     holding a "/"; or in a version or Boost;
+//   - when the clause rule or the "(" rule finds a release not right before
+//     it, and the words before it, back to its sentence's start, the last
+//     ";", or the citation before it and that one's own "at <tag>", name
+//     another, as "the same at v20.2.4, where it is unchanged from v19.2.6
+//     (" does;
+//   - when a lead-in names two releases or more, as "the same at v19.2.6
+//     and v20.2.4" does, and its own release is named only by a codename or
+//     the parenthesis around it holds a ";";
+//   - when it is a continuation listed after citations whose refs differ,
+//     back to the last "(", ";" or ". ";
+//   - when it is a continuation with no identifier beside it and no file
+//     before it in its paragraph.
+//
+// A continuation whose nearest candidate file is named in its own
+// paragraph is taken past it only to another file named before it there.
+//
+// --fix writes each that resolves in its place, its backticks included, as
+// the link Rewriting describes, and drops the marker that gave it its ref
+// as Go comments drops one. It lists instead one that runs across a line
+// break, which writing it would rewrap; one in a heading, whose anchor the
+// link could change; and one right after an unescaped "!". No paragraph is
+// rewrapped, and a second run rewrites nothing.
+//
+// # The list of ceph's files
+//
+// --form-only, which has no clone, tells ceph's plain markdown citations by the
+// list embedded from internal/citecheck/cephfiles.txt: every path of ceph/ceph
+// at each ref its header names whose base name a plain markdown citation can
+// name, a file as Go comments defines one. citecheck files --out writes it from
+// the clone at the refs given, and --check fails, exiting 1, when the list
+// differs from what it would write: other refs, another pattern for the names,
+// or other paths. make citecheck-files writes it at the Makefile's
+// CITECHECK_FILES_REFS, and make citecheck-files-check, part of make check,
+// checks it. A spec, which needs no clone, fails while .goreleaser.yaml pins a
+// tag the list was not made at, while the markers' releases are not among its
+// refs, or when the pattern that chose its names is not citecheck's.
+//
 // # Output
 //
 // citecheck prints a line for each citation that fails,
@@ -323,11 +491,11 @@
 // where FILE is as given, LINE is the line the citation starts on and the
 // citation is as written, then citations checked: N, failed: M, and under
 // --fix rewritten: K, the code span and plain citations it rewrote. With
-// --log-level debug, each plain citation --fix resolves in a Go file is
-// logged with its file and line, its ref and the rule that gave it, its
-// path, the identifiers its lines were checked for, and the files and
-// releases its clause names. It exits 0
-// when none fails, 1 when one does, and 2 for a refused command line, a file
+// --log-level debug, each plain citation --fix resolves is logged with its
+// file and line, its ref and the rule or scope that gave it, its path, the
+// identifiers its lines were checked for, and the files and releases its
+// clause names. It exits 0 when none fails, 1 when one does or the files
+// command finds the list stale, and 2 for a refused command line, a file
 // it cannot read or, under --fix, write, a clone that is not a git
 // repository or is a partial one, or a git that cannot answer. go run
 // reports any nonzero status as 1, and make any failed recipe as 2, so a
