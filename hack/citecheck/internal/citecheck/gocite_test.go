@@ -79,6 +79,12 @@ var _ = Describe("Go comments", func() {
 			Entry("each its own tag",
 				"// complete is RGWGoFix::complete (rgw_gofix.cc:13-28 at v19.2.6, :23-38 at\n// v20.2.4).\n",
 				completeS, completeT),
+			Entry(`its own tag right before it, which an "at <tag>" after a citation listed with it does not override`,
+				"// prepare is at v19.2.6 rgw_gofix.cc:4-11 and rgw_gofix.cc:14-21 at v20.2.4.\n", prepareS, prepareT),
+			Entry(`"at <tag>" closing a parenthesis, past the releases before its "(", which are not its first citation's own`,
+				"// twin_alpha at v19.2.6 and v20.2.4 (driver/rados/rgw_twin.cc:2, :2 at both tags).\n",
+				cephURL("v19.2.6", "src/rgw/driver/rados/rgw_twin.cc", "L2"),
+				cephURL("v19.2.6", "src/rgw/driver/rados/rgw_twin.cc", "L2")),
 			Entry("a [T] marker on it", "// prepare is RGWGoFix::prepare (rgw_gofix.cc [T]:14-21).\n", prepareT),
 			Entry("an [S] marker on it, and a [T] one on the continuation after it",
 				"// prepare is RGWGoFix::prepare (rgw_gofix.cc [S]:4-11, [T]:14-21).\n", prepareS, prepareT),
@@ -403,6 +409,19 @@ var _ = Describe("Go comments", func() {
 			g := markdown("fix.go", "package fix\n\n// prepare is "+prepareT+".\nfunc prepare() {}\n")
 			Expect(run(ctx, "--ceph", ceph.dir, md, g)).To(Equal(0))
 			Expect(stdout.String()).To(Equal("citations checked: 2, failed: 0\n"))
+		})
+
+		It("reads a .gperf and a .in file as it reads the others", func(ctx SpecContext) {
+			ceph.write("src/rgw/rgw_fix_keywords.gperf", "%%\nVersion, TokenKind::top\n")
+			ceph.write("src/rgw/rgw_fix.yaml.spec.in", "export CFLAGS\n")
+			ceph.commit("gperf and in")
+			ceph.git("tag", "-f", "v19.2.6")
+			f, status := fixGo(ctx, "package fix\n\n// keywords (rgw_fix_keywords.gperf:2 at v19.2.6) and the flags\n"+
+				"// (rgw_fix.yaml.spec.in:1 at v19.2.6).\nfunc prepare() {}\n")
+			Expect(stdout.String()).To(Equal("citations checked: 2, failed: 0, rewritten: 2\n"))
+			Expect(status).To(Equal(0))
+			Expect(read(f)).To(ContainSubstring(cephURL("v19.2.6", "src/rgw/rgw_fix_keywords.gperf", "L2")))
+			Expect(read(f)).To(ContainSubstring(cephURL("v19.2.6", "src/rgw/rgw_fix.yaml.spec.in", "L1")))
 		})
 
 		It("under --form-only fails, without a clone, a plain citation with a ref and a malformed link", func(ctx SpecContext) {

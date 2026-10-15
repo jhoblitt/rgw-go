@@ -11,10 +11,10 @@ import (
 // without lines. A file is a path whose last segment ends in one of the
 // extensions, and neither it nor a continuation may touch a path or
 // identifier byte on either side. RE2 has no lookaround, so the bytes on
-// either side are checked by hand, and the extensions are listed longest
-// first, since RE2 takes the first alternative that matches.
+// either side are checked by hand, and an extension is listed before any
+// that it starts with, since RE2 takes the first alternative that matches.
 const (
-	goExt   = `(?:yaml\.in|yaml|yml|hpp|cmake|proto|json|txt|cc|py|go|sh|h|c)`
+	goExt   = `(?:gperf|yaml\.in|yaml|yml|hpp|cmake|proto|json|txt|cc|py|go|sh|h|c|in)`
 	goPath  = `(?:[\w.\-]+/)*[\w.\-]*[A-Za-z_][\w\-]*\.` + goExt
 	tagForm = `v\d+\.\d+\.\d+`
 )
@@ -90,11 +90,24 @@ type goItem struct {
 	// it.
 	rule     string
 	releases []string
+	// why says why a plain citation has no ref, when a rule that reads
+	// markdown found it names one citecheck cannot use, or "".
+	why string
 	// ceph reports whether a plain citation cites ceph's code, and so is
-	// checked.
-	ceph bool
-	// url is the link --fix writes for a plain citation, or "".
+	// checked, and cephPaths are the paths of ceph's that tell so in markdown.
+	ceph      bool
+	cephPaths []string
+	// url is the link --fix writes for a plain citation, or "", and ids the
+	// identifiers its cited lines were checked for.
 	url string
+	ids []string
+	// atRef is the commit id an "at <commit>" right after a markdown
+	// citation names, or the branch an "on main", "at main" or
+	// "at origin/main" there names; form says which form a markdown code span holds a
+	// citation in that --fix does not rewrite; and offList is the ref, one
+	// the list of ceph's files was not made at, that a citation of a file
+	// the list lacks is tied to, which --form-only cannot tell is ceph's.
+	atRef, form, offList string
 }
 
 // paraScan is what a comment paragraph cites.
@@ -144,9 +157,16 @@ func scanPara(p *commentPara) *paraScan {
 	}
 	ps.masked = string(masked)
 	ps.items = append(ps.items, plainItems(ps.masked)...)
+	ps.finish(text, ps.masked)
+	return ps
+}
+
+// finish orders a paragraph's items, reads which repository other than ceph
+// hint, its text with the URLs blanked, names, and writes its norm.
+func (ps *paraScan) finish(text, hint string) {
 	slices.SortFunc(ps.items, func(a, b *goItem) int { return a.start - b.start })
 	for _, h := range hints {
-		if h.re.MatchString(ps.masked) {
+		if h.re.MatchString(hint) {
 			ps.hint = h.repo
 			break
 		}
@@ -168,7 +188,6 @@ func scanPara(p *commentPara) *paraScan {
 	}
 	b.WriteString(text[last:])
 	ps.norm = b.String()
-	return ps
 }
 
 // textOff returns the offset in the paragraph's text of the offset pos in

@@ -204,13 +204,23 @@ func (g *goChecker) plain(gi, pi, ii int) (string, error) {
 	if it.kind == contItem {
 		cands = g.candidates(gi, pi, ii, off)
 	}
-	ceph, err := g.isCeph(it, cands, off)
+	isCeph := g.isCeph
+	if g.md != nil {
+		isCeph = g.mdIsCeph
+	}
+	ceph, err := isCeph(it, cands, off)
 	if err != nil || !ceph {
 		return "", err
 	}
 	it.ceph = true
-	if g.m != fix {
-		return notALink, nil
+	switch {
+	case it.offList != "":
+		return fmt.Sprintf("cited at %s, which the list of ceph's files was not made at: link it, or add the ref to "+
+			"CITECHECK_FILES_REFS", it.offList), nil
+	case g.m != fix:
+		return g.notLink(it), nil
+	case it.form != "":
+		return "unresolved: its code span holds " + it.form + ", which --fix does not rewrite: link it by hand", nil
 	}
 	why, err := g.resolve(ps, it, cands)
 	if err != nil || why == "" {
@@ -252,6 +262,7 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 	out []byte, refused map[*goItem]string,
 ) {
 	var es []edit
+	var flat []*commentPara
 	refused = map[*goItem]string{}
 	for _, p := range touched {
 		if wrap {
@@ -264,9 +275,28 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 				continue
 			}
 		}
+		flat = append(flat, p)
+	}
+	es = append(es, inPlace(flat, edits, refused, func(*goItem) string {
+		return "it runs across a line break in a comment citecheck does not rewrap: put it on one line"
+	})...)
+	return rewrite(src, es), refused
+}
+
+// inPlace returns the edits that write each paragraph's links where its
+// citations stand, each with the marker that gave it its ref when the marker
+// is on its line and none of the citations the marker governs is refused,
+// and records in refused why each edit it cannot make is refused: one
+// refused already, or, by broken's reason, one that runs across a line
+// break.
+func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused map[*goItem]string,
+	broken func(*goItem) string,
+) []edit {
+	var es []edit
+	for _, p := range paras {
 		for _, te := range edits[p] {
-			if p.lineAt(te.end-1) != p.lineAt(te.start) {
-				refused[te.item] = "it runs across a line break in a comment citecheck does not rewrap: put it on one line"
+			if _, ok := refused[te.item]; !ok && p.lineAt(te.end-1) != p.lineAt(te.start) {
+				refused[te.item] = broken(te.item)
 			}
 		}
 		for _, te := range edits[p] {
@@ -282,7 +312,7 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 			es = append(es, edit{start: s, end: s + te.end - te.start, text: te.text})
 		}
 	}
-	return rewrite(src, es), refused
+	return es
 }
 
 // rewrapped returns the edit that makes a paragraph's edits and rewraps it

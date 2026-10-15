@@ -92,29 +92,36 @@ func readGo(src []byte) *goDoc {
 		for _, p := range g.paras {
 			ps := scanPara(p)
 			scans = append(scans, ps)
-			for _, m := range reHeader.FindAllStringSubmatchIndex(ps.masked, -1) {
-				group := func(i int) string {
-					if m[2*i] < 0 {
-						return ""
-					}
-					return ps.masked[m[2*i]:m[2*i+1]]
-				}
-				h := header{off: p.offset(m[0]), tag: cmp.Or(group(3), group(4))}
-				if name := cmp.Or(group(1), group(2), group(5)); name != "" {
-					h.named, h.names = name, []string{name}
-				} else {
-					for _, it := range slices.Backward(ps.items) {
-						if it.start < m[0] && it.kind != urlItem && it.kind != contItem {
-							h.names = append(h.names, cmp.Or(it.path, it.name))
-						}
-					}
-				}
-				d.headers = append(d.headers, h)
-			}
+			d.headers = append(d.headers, headersIn(ps)...)
 		}
 		d.groups = append(d.groups, scans)
 	}
 	return d
+}
+
+// headersIn returns the header conventions a paragraph states.
+func headersIn(ps *paraScan) []header {
+	var hs []header
+	for _, m := range reHeader.FindAllStringSubmatchIndex(ps.masked, -1) {
+		group := func(i int) string {
+			if m[2*i] < 0 {
+				return ""
+			}
+			return ps.masked[m[2*i]:m[2*i+1]]
+		}
+		h := header{off: ps.para.offset(m[0]), tag: cmp.Or(group(3), group(4))}
+		if name := cmp.Or(group(1), group(2), group(5)); name != "" {
+			h.named, h.names = name, []string{name}
+		} else {
+			for _, it := range slices.Backward(ps.items) {
+				if it.start < m[0] && it.kind != urlItem && it.kind != contItem {
+					h.names = append(h.names, cmp.Or(it.path, it.name))
+				}
+			}
+		}
+		hs = append(hs, h)
+	}
+	return hs
 }
 
 // offset returns the file's offset of the offset off in the paragraph's
@@ -136,14 +143,19 @@ func (d *goDoc) headerBefore(off int) *header {
 	return h
 }
 
-// goChecker checks and resolves the citations of one Go file, which name
-// names as given.
+// goChecker checks and resolves the plain citations of one Go file or, when
+// md is set, markdown document, which name names as given.
 type goChecker struct {
 	ctx  context.Context
 	c    *Checker
 	m    mode
 	name string
 	doc  *goDoc
+	// md is the markdown document read, whose scopes give a ref when the
+	// rules a Go comment is read by give none, and files the list of ceph's
+	// files that tells its citations of ceph from rgw-go's.
+	md    *mdDoc
+	files *cephFileList
 }
 
 // candidate is a file a continuation may cite: a path a link or a resolved
@@ -164,6 +176,14 @@ type candidate struct{ name, path string }
 // file.
 func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 	it, norm := ps.items[ii], ps.norm
+	// A markdown table's cell is read as a paragraph of its own.
+	cellLo := 0
+	if g.md != nil {
+		if ref, ok := g.md.pairRef(it); ok {
+			return ref
+		}
+		cellLo, norm = g.md.ownCell(ps, it.pos)
+	}
 	if t, both := tagAfter(norm, it.pos+1); both {
 		it.both, it.rule = true, "at both tags"
 		return markTags["S"]
@@ -171,13 +191,22 @@ func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 		it.rule = "at <tag>"
 		return t
 	}
+	if g.md != nil {
+		if w := atOther(norm, it.pos+1); w != "" {
+			it.rule, it.why = w, fmt.Sprintf("no ref: it is cited %s, which is no tag: link it by hand", w)
+			if prep, ref, _ := strings.Cut(w, " "); isCommitWord(strings.ToLower(ref)) || isBranchRef(prep, ref) {
+				it.atRef = ref
+			}
+			return ""
+		}
+	}
 	if it.mark != "" {
 		it.rule = "its marker"
 		return markTags[it.mark]
 	}
 	var prev *goItem
-	from := 0
-	for k := ii - 1; k >= 0; k-- {
+	from := cellLo
+	for k := ii - 1; k >= 0 && ps.items[k].pos >= cellLo; k-- {
 		if kind := ps.items[k].kind; kind == linkItem || kind == fileItem || kind == contItem {
 			prev, from = ps.items[k], ps.items[k].pos+1
 			break
@@ -201,24 +230,37 @@ func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 			return ""
 		}
 		if m[2] < 0 {
-			return norm[clause+m[4] : clause+m[5]]
+			return g.mdUntied(ps, it, norm[clause+m[4]:clause+m[5]], tied)
 		}
 		if tied {
 			it.marked, it.marker = true, clause+m[0]
 		}
-		return markTags[norm[clause+m[2]:clause+m[3]]]
+		return g.mdUntied(ps, it, markTags[norm[clause+m[2]:clause+m[3]]], tied)
 	}
 	if t, markAt := releaseBeforeParen(norm, it.pos); t != "" {
 		if markAt >= 0 {
 			it.marked, it.marker = true, markAt
 		}
 		it.rule = `the release before "("`
-		return t
+		return g.mdUntied(ps, it, t, markAt >= 0)
 	}
 	if it.kind == contItem && prev != nil && prev.ref != "" && !ownTag && reListed.MatchString(before) {
+		if g.md != nil {
+			if refs := clauseRefs(ps, it); len(refs) > 1 {
+				it.rule, it.releases = "clause", refs
+				it.why = fmt.Sprintf(`no ref: its clause cites lines at %s, and nothing ties one to it: write "at <tag>" `+
+					"after it", strings.Join(refs, " and "))
+				return ""
+			}
+		}
 		it.marked, it.marker, it.fromHeader, it.scope = prev.marked, prev.marker, prev.fromHeader, prev.scope
 		it.rule = "listed after " + prev.text
 		return prev.ref
+	}
+	if g.md != nil {
+		if ref, decided := g.md.scopeRef(ps, it); decided {
+			return ref
+		}
 	}
 	if h := g.doc.headerBefore(off); h != nil {
 		it.fromHeader, it.scope, it.rule = true, h.named, "header"
@@ -344,11 +386,21 @@ func otherRelease(norm string, pos int, ref string) string {
 	return ""
 }
 
+// reTiedBefore is a tag or a marker right before a citation's placeholder,
+// blanks alone between them, which is the citation's own. One before a "("
+// is not: "at v19.2.6 and v20.2.4 (" names the releases of what the
+// parenthesis holds, which an "at <tag>" closing it may tell apart.
+var reTiedBefore = regexp.MustCompile(`(?:\[[ST]\]|\b` + tagForm + `)\s*$`)
+
 // tagAfter returns the tag of an "at <tag>" at k in norm, or after the
 // citations that follow k, joined by blanks, commas, "and" or "or", or after
-// a comma that closes them, and whether it is instead "at both tags".
+// a comma that closes them, and whether it is instead "at both tags". An
+// "at <tag>" after the citations that follow does not carry back to the
+// citation that ends at k when that one has its own tag or marker right
+// before it.
 func tagAfter(norm string, k int) (tag string, both bool) {
-	for {
+	tied := reTiedBefore.MatchString(norm[:k-1])
+	for first := true; ; first = false {
 		if t, b := atTag(norm[k:]); t != "" || b {
 			return t, b
 		}
@@ -370,7 +422,7 @@ func tagAfter(norm string, k int) (tag string, both bool) {
 				break
 			}
 		}
-		if j >= len(norm) || norm[j] != citeMark {
+		if j >= len(norm) || norm[j] != citeMark || first && tied {
 			return "", false
 		}
 		k = j + 1
@@ -479,6 +531,8 @@ func (g *goChecker) isCeph(it *goItem, cands []candidate, off int) (bool, error)
 // or returns why it cannot.
 func (g *goChecker) resolve(ps *paraScan, it *goItem, cands []candidate) (string, error) {
 	switch {
+	case it.ref == "" && it.why != "":
+		return it.why, nil
 	case it.ref == "" && len(it.releases) > 1:
 		return fmt.Sprintf(`no ref: its clause names %s, and nothing ties one to it: write "at <tag>" after it`,
 			strings.Join(it.releases, " and ")), nil
@@ -499,10 +553,25 @@ func (g *goChecker) resolve(ps *paraScan, it *goItem, cands []candidate) (string
 		return r.problem, err
 	}
 	ids := g.doc.cephIdents(nearby(ps.norm, it.pos))
+	if g.md != nil {
+		loose := ids
+		ids = mdIdents(nearby(ps.norm, it.pos))
+		if len(ids) == 0 && len(loose) > 0 {
+			return fmt.Sprintf("the words beside it that may name code, %s, are English words, generic names or "+
+				"parts of a longer literal, and no whole code token stands beside it to check the cited lines by: link "+
+				"it by hand", strings.Join(loose, ", ")), nil
+		}
+	}
 	files := clauseFiles(ps, it)
 	if it.kind == contItem && len(ids) == 0 && len(files) > 1 && !namedRightBefore(ps, it) {
 		return fmt.Sprintf("its clause names %s, and no identifier beside it tells which it cites: link it by hand",
 			strings.Join(files, " and ")), nil
+	}
+	if g.md != nil {
+		if why := contGuard(ps, it, ids); why != "" {
+			return why, nil
+		}
+		cands = paraCandidates(ps, it, cands)
 	}
 	var p, why string
 	if it.kind == fileItem {
@@ -533,7 +602,7 @@ func (g *goChecker) resolve(ps *paraScan, it *goItem, cands []candidate) (string
 	if !readsBack(u, cite) {
 		return fmt.Sprintf("the link %s would read back as another citation", u), nil
 	}
-	it.path, it.url = p, u
+	it.path, it.url, it.ids = p, u, ids
 	slog.DebugContext(g.ctx, "resolved a citation", slog.String("file", g.name),
 		slog.Int("line", ps.para.lines[ps.para.lineAt(it.start)].n), slog.String("citation", it.text),
 		slog.String("ref", it.ref), slog.String("ref_from", it.rule), slog.String("path", p),
