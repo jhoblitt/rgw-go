@@ -384,19 +384,23 @@
 // ends in them; written in place, a name ending the line before goes with the
 // blanks before it and a "(" right before it, which then opens the link, and
 // stays when nothing else is on its line. A paragraph a link is written into
-// is rewrapped to the width of its widest line, in runes, a word wider than
-// that on a line of its own, where a link and the "at <tag>" or "at both tags"
-// right after it are one word; the lines before the first link are kept, and
-// so are those after the last once the new lines end where an old line did. A
-// list item, a heading, a comment after code, and a paragraph whose lines'
-// prefixes differ or that holds a tab or two blanks running are not rewrapped:
-// the link is written in place, a citation there that runs across a line break
-// is listed instead, and a marker that would run across one is kept. Nor is a
-// paragraph rewrapped when a line of the rewrap would read as a list item, a
-// heading or a link definition. When the file was gofmt-clean and the
-// rewrapping leaves it not, its links are written in place instead, and when
-// that leaves it not clean either, none is written. A second run rewrites
-// nothing.
+// is rewrapped to the width of its widest line, in runes, its prefix included,
+// a word wider than that on a line of its own, where a link and the "at <tag>"
+// or "at both tags" right after it are one word; the lines before the first
+// link are kept, and so are those after the last once the new lines end where
+// an old line did. A list item's first paragraph is rewrapped too, its first
+// line keeping its prefix and its marker and its other lines taking its second
+// line's prefix, which must be the wider, or with no second line its first's
+// and blanks as wide as its marker and the blanks after it. A heading, a
+// comment after code, and a paragraph whose lines' prefixes differ otherwise
+// or that holds a tab or two blanks running are not rewrapped: the link is
+// written in place, a citation there that runs across a line break is listed
+// instead, and a marker that would run across one is kept. Nor is a paragraph
+// rewrapped when a line of the rewrap would read as a list item, but for a
+// list item's first line, a heading or a link definition. When the file was
+// gofmt-clean and the rewrapping leaves it not, its links are written in place
+// instead, and when that leaves it not clean either, none is written. A second
+// run rewrites nothing.
 //
 // # Plain citations in markdown
 //

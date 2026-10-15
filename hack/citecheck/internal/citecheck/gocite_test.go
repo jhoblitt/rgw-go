@@ -299,11 +299,11 @@ var _ = Describe("Go comments", func() {
 			4, ":25", "line 25 is past the end of src/rgw/driver/rados/rgw_twin.cc, which has 2 lines at v19.2.6"),
 	)
 
-	It("lists a citation in a list item that runs across a line break, which it does not rewrap", func(ctx SpecContext) {
-		src := "package fix\n\n// prepare:\n//\n//   - opens the index pool, rgw_gofix.cc\n//     [S]:6, first.\nfunc prepare() {}\n"
+	It("lists a citation that runs across a line break in a paragraph it does not rewrap", func(ctx SpecContext) {
+		src := "package fix\n\n// prepare opens.  Then rgw_gofix.cc\n// [S]:6 is first.\nfunc prepare() {}\n"
 		f, status := fixGo(ctx, src)
 		Expect(status).To(Equal(1))
-		Expect(stdout.String()).To(Equal(f + ":5: rgw_gofix.cc [S]:6: it runs across a line break in a comment citecheck " +
+		Expect(stdout.String()).To(Equal(f + ":3: rgw_gofix.cc [S]:6: it runs across a line break in a comment citecheck " +
 			"does not rewrap: put it on one line\ncitations checked: 1, failed: 1, rewritten: 0\n"))
 		Expect(read(f)).To(Equal(src))
 	})
@@ -351,6 +351,28 @@ var _ = Describe("Go comments", func() {
 					"// (rgw_gofix.cc:4-11, :13-28, at v19.2.6), each returning r.\nfunc prepare() {}\n",
 				"package fix\n\n// prepare and complete are, in order, the fixture's two functions\n// ("+prepareS+",\n// "+
 					completeS+", at v19.2.6),\n// each returning r.\nfunc prepare() {}\n"),
+			Entry("the words after the link filling a line to the widest line's width, its prefix counted",
+				"package fix\n\n// aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii\n// (rgw_gofix.cc:6 at v19.2.6) jjjj\n"+
+					"// kkkk llll mmmm nnnn oooo pppp qqqq rrrr\nfunc prepare() {}\n",
+				"package fix\n\n// aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii\n// ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6)\n"+
+					"// jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr\nfunc prepare() {}\n"),
+			Entry("a list item, its marker's line keeping its prefix and its other lines the indent of its second",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool\n//     ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6),\n"+
+					"//     then returns.\nfunc prepare() {}\n"),
+			Entry(`a list item whose "at" ended a line before its tag, the two kept on the link's line`,
+				"package fix\n\n// prepare:\n//\n//   - prepare answers (rgw_gofix.cc:4-11 at\n//     v19.2.6, :14-21 at v20.2.4);\n"+
+					"//   - more.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - prepare answers\n//     ("+prepareS+" at v19.2.6,\n//     "+prepareT+
+					" at v20.2.4);\n//   - more.\nfunc prepare() {}\n"),
+			Entry("a list item of one line, its other lines indented as wide as its marker",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6) first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool\n//     ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6)\n"+
+					"//     first.\nfunc prepare() {}\n"),
+			Entry("a list item whose citation runs across a line break",
+				"package fix\n\n// prepare:\n//\n//   - opens the index pool, rgw_gofix.cc\n//     [S]:6, first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the index pool,\n//     "+cephURL("v19.2.6", gofixPath, "L6")+",\n"+
+					"//     first.\nfunc prepare() {}\n"),
 			Entry("the file named before a continuation, a line break between them, dropped with it",
 				"package fix\n\n// prepare is in the fixture's (rgw_gofix.cc\n// :4-11 at v19.2.6), as RGWGoFix::prepare.\nfunc prepare() {}\n",
 				"package fix\n\n// prepare is in the fixture's\n// ("+prepareS+" at v19.2.6),\n// as RGWGoFix::prepare.\nfunc prepare() {}\n"),
@@ -373,9 +395,13 @@ var _ = Describe("Go comments", func() {
 				Expect(status).To(Equal(0))
 				Expect(read(f)).To(Equal(after))
 			},
-			Entry("in a list item",
-				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
-				"package fix\n\n// prepare:\n//\n//   - opens the pool ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
+			Entry("in a list item whose second line is not indented past its marker",
+				"package fix\n\nfunc prepare() {\n\t// - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n\t// returns.\n}\n",
+				"package fix\n\nfunc prepare() {\n\t// - opens the pool ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
+					"\t// returns.\n}\n"),
+			Entry("in a list item whose lines hold two blanks running",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool  (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool  ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
 					"//     returns.\nfunc prepare() {}\n"),
 			Entry("in a comment after code",
 				"package fix\n\nvar x = 1 // rgw_gofix.cc:6 at v19.2.6\n",

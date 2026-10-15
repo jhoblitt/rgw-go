@@ -424,26 +424,35 @@ func dropName(p *commentPara, at int) (e edit, paren, ok bool) {
 }
 
 // rewrapped returns the edit that makes a paragraph's edits and rewraps it
-// to its widest line's width, in runes, a word wider than that, such as a
-// link and the "at <tag>" after it, on a line of its own, and false when
-// the paragraph may not be
-// rewrapped: it is not plain prose, its lines' prefixes differ, a line holds
-// a tab or two blanks running, or a line it would make reads as a list
-// item, a heading or a link definition. The lines before the first edit are
-// kept, and so are those after the last once the new lines end where an old
-// one did.
+// to its widest line's width, in runes, its prefix included, a word wider
+// than that, such as a link and the "at <tag>" after it, on a line of its
+// own, and false when the paragraph may not be rewrapped: it is neither plain
+// prose nor a list item's first paragraph, its lines' prefixes differ, a line
+// holds a tab or two blanks running, or a line it would make reads as a list
+// item, a heading or a link definition. A list item's first line keeps its
+// prefix and its marker, and its other lines take the prefix of its second,
+// or with none its first's and blanks as wide as its marker. The lines before
+// the first edit are kept, and so are those after the last once the new lines
+// end where an old one did.
 func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
-	if !p.wrap || bytes.IndexByte(src, '\r') >= 0 {
+	if !p.wrap && !p.item || bytes.IndexByte(src, '\r') >= 0 {
 		return edit{}, false
 	}
-	prefix := p.lines[0].prefix
+	head, rest, ok := p.prefixes()
+	if !ok {
+		return edit{}, false
+	}
 	width := 0
-	for _, l := range p.lines {
+	for i, l := range p.lines {
 		t := string(src[l.start:l.end])
-		if l.prefix != prefix || strings.Contains(t, "  ") || strings.ContainsRune(t, '\t') || strings.HasSuffix(t, " ") {
+		pre := rest
+		if i == 0 {
+			pre = head
+		}
+		if l.prefix != pre || strings.Contains(t, "  ") || strings.ContainsRune(t, '\t') || strings.HasSuffix(t, " ") {
 			return edit{}, false
 		}
-		width = max(width, utf8.RuneCountInString(t))
+		width = max(width, utf8.RuneCountInString(pre)+utf8.RuneCountInString(t))
 	}
 	var b strings.Builder
 	last := 0
@@ -478,10 +487,17 @@ func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
 	}
 	end := len(p.lines)
 	k0 := wordAt[moved(p.at[first])]
+	// prefixOf is the prefix of the n-th line the rewrap makes.
+	prefixOf := func(n int) string {
+		if n == 0 && first == 0 {
+			return head
+		}
+		return rest
+	}
 	var out []string
 	cur := words[k0]
 	for k := k0 + 1; k < len(words); k++ {
-		if utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(words[k]) <= width {
+		if utf8.RuneCountInString(prefixOf(len(out)))+utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(words[k]) <= width {
 			cur += " " + words[k]
 			continue
 		}
@@ -496,12 +512,35 @@ func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
 		out = append(out, cur)
 	}
 	for i, l := range out {
-		if listItem(l) || heading(l) || strings.HasPrefix(l, "[") && strings.Contains(l, "]:") {
+		marker := p.item && i == 0 && first == 0
+		if listItem(l) != marker || heading(l) || strings.HasPrefix(l, "[") && strings.Contains(l, "]:") {
 			return edit{}, false
 		}
-		out[i] = prefix + l
+		out[i] = prefixOf(i) + l
 	}
-	return edit{start: p.lines[first].start - len(prefix), end: p.lines[end-1].end, text: strings.Join(out, "\n")}, true
+	return edit{start: p.lines[first].start - len(prefixOf(0)), end: p.lines[end-1].end, text: strings.Join(out, "\n")}, true
+}
+
+// prefixes returns the prefix of a paragraph's first line, and that of the
+// lines after it: for plain prose its first line's, and for a list item its
+// second line's, which must be wider than its first's, or with no second line
+// its first's and blanks as wide as its marker and the blanks after it.
+func (p *commentPara) prefixes() (head, rest string, ok bool) {
+	head = p.lines[0].prefix
+	switch {
+	case !p.item:
+		return head, head, true
+	case len(p.lines) > 1:
+		rest = p.lines[1].prefix
+		return head, rest, len(rest) > len(head) && strings.HasPrefix(rest, strings.TrimRight(head, " "))
+	}
+	t := p.text
+	n := strings.IndexAny(t, " \t")
+	if n < 0 {
+		return "", "", false
+	}
+	n += len(t[n:]) - len(strings.TrimLeft(t[n:], " \t"))
+	return head, head + strings.Repeat(" ", utf8.RuneCountInString(t[:n])), true
 }
 
 // reLinkEnd is a word ending in a link's line anchor, or in it and the
