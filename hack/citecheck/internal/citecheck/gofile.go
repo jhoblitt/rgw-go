@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"go/format"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -62,7 +63,11 @@ type markKey struct {
 // plain citation of ceph's code as not a link, or under fix resolved and
 // rewritten into one.
 func checkGo(ctx context.Context, c *Checker, m mode, name string, src []byte) (goResult, error) {
-	g := &goChecker{ctx: ctx, c: c, m: m, name: name, doc: readGo(src)}
+	files, err := cephFiles()
+	if err != nil {
+		return goResult{}, err
+	}
+	g := &goChecker{ctx: ctx, c: c, m: m, name: name, doc: readGo(src), files: files, root: rgwgoRoot(name)}
 	var res goResult
 	lineOf := func(ps *paraScan, it *goItem) int { return ps.para.lines[ps.para.lineAt(it.start)].n }
 	fail := func(line int, it *goItem, reason string) {
@@ -79,7 +84,10 @@ func checkGo(ctx context.Context, c *Checker, m mode, name string, src []byte) (
 				var err error
 				switch it.kind {
 				case linkItem:
-					if reason = formProblem(it.link); m != formOnly && reason == "" {
+					switch reason = formProblem(it.link); {
+					case reason == "" && ps.para.code:
+						reason = notALink + ": it is in a code block, which godoc does not link: write it outside the code block"
+					case reason == "" && m != formOnly:
 						reason, err = c.Check(ctx, it.link)
 					}
 				case fileItem, contItem:
@@ -201,14 +209,38 @@ func (g *goChecker) plain(gi, pi, ii int) (string, error) {
 	off := ps.para.offset(it.start)
 	it.ref = g.refOf(ps, ii, off)
 	var cands []candidate
-	if it.kind == contItem {
+	switch {
+	case it.prose:
+		// A line reference in prose is a citation only of a file its own
+		// paragraph names before it.
+		if cands = paraFiles(ps, ii); len(cands) == 0 {
+			return "", nil
+		}
+	case it.kind == contItem:
 		cands = g.candidates(gi, pi, ii, off)
+		// A port, "listens on :8080" or "(default :8080)", is no citation, as
+		// needsShape and shaped say.
+		if g.md == nil {
+			if g.needsShape(ps, gi, pi, ii, off, it.paren) && !shaped(ps, it) {
+				return "", nil
+			}
+			// Outside its parentheses the line would be none when, the text read
+			// without them, it still needs a shape and has none but theirs.
+			out := withoutParens(ps, it)
+			it.parenOnly = it.paren && it.from == it.to && g.needsShape(out, gi, pi, ii, off, false) &&
+				!shapedBy(out, it, false)
+		}
+		if len(cands) == 0 && g.md == nil && g.doc.headerBefore(off) == nil {
+			if c, ok := g.earlier(gi); ok {
+				cands, it.far = []candidate{c}, cmp.Or(c.path, c.name)
+			}
+		}
 	}
 	isCeph := g.isCeph
 	if g.md != nil {
 		isCeph = g.mdIsCeph
 	}
-	ceph, err := isCeph(it, cands, off)
+	ceph, err := isCeph(ps, it, cands, off)
 	if err != nil || !ceph {
 		return "", err
 	}
@@ -221,6 +253,14 @@ func (g *goChecker) plain(gi, pi, ii int) (string, error) {
 		return g.notLink(it), nil
 	case it.form != "":
 		return "unresolved: its code span holds " + it.form + ", which --fix does not rewrite: link it by hand", nil
+	case ps.para.code:
+		return "unresolved: it is in a code block, which --fix does not rewrite and godoc does not link: link it by " +
+			"hand, outside the code block", nil
+	case it.prose:
+		return "unresolved: it is a line reference in prose, which --fix does not rewrite: link it by hand", nil
+	case it.far != "":
+		return fmt.Sprintf("unresolved: its file, %s, is named only in a comment before its own, which --fix does not "+
+			"read a continuation's file from: link it by hand", path.Base(it.far)), nil
 	}
 	why, err := g.resolve(ps, it, cands)
 	if err != nil || why == "" {

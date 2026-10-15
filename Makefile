@@ -155,12 +155,12 @@ MARKDOWN = $(shell git ls-files '*.md')
 citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
 	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
-# The list of ceph's citable files, which tells a plain markdown citation of
-# ceph from one of rgw-go's without a clone, is made at the releases the docs
-# cite: those citecheck's [S] and [T] markers name, every tag .goreleaser.yaml
-# has pinned, and v19.2.7. A pin bump adds its tag here and runs make
-# citecheck-files; a spec fails while .goreleaser.yaml pins a tag the list was
-# not made at.
+# The list of ceph's citable files, which tells a plain citation of ceph, in
+# markdown or in a Go comment, from one of rgw-go's without a clone, is made at
+# the releases the docs cite: those citecheck's [S] and [T] markers name, every
+# tag .goreleaser.yaml has pinned, and v19.2.7. A pin bump adds its tag here and
+# runs make citecheck-files; a spec fails while .goreleaser.yaml pins a tag the
+# list was not made at.
 CITECHECK_FILES_REFS = v19.2.6 v19.2.7 v20.2.4
 CITECHECK_FILES_LIST = hack/citecheck/internal/citecheck/cephfiles.txt
 

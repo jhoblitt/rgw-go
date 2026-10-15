@@ -204,40 +204,93 @@
 //
 // In a .go file only // comments are read, as go/scanner finds them: not a
 // string; not a cgo preamble, C code, whether a block comment or // lines
-// right above an import of "C"; not a block comment at all; not a directive
-// such as //go:build or //nolint, nor a line with no blank after its "//";
-// and not a code block, the indented lines that do not start a list item.
-// Each link in them is a citation, checked as a markdown link is. A plain
-// citation is a file and lines, or lines alone, a continuation of a file
-// named before it, either with an optional [S] or [T] marker on its lines:
+// right above an import of "C"; not a block comment at all; and not a
+// directive such as //go:build, nor a line with no blank after its "//", but
+// for the explanation of a //nolint directive, the text after its first
+// " // ". A code block, the indented lines that do not start a list item, is
+// read a line at a time. Each link in them is a citation, checked as a
+// markdown link is, and one in a code block fails as not a link, since godoc
+// links none there. A plain citation is a file and lines, or lines alone, a
+// continuation of a file named before it, either with an optional [S] or [T]
+// marker on its lines; a continuation written after its tag; a file whose
+// lines a line break splits from it, the file and a ":" ending one line and
+// its lines starting the next, a range or, inside parentheses, a line that a
+// ")" or an "at <tag>" follows right after, or the file ending one line and a
+// range starting the next, inside parentheses; and a line reference in prose
+// inside parentheses that its lines close, "line" or "lines" and a line or a
+// range, each line or range listed after it with ", ", "and" or "or" a
+// continuation too:
 //
 //	rgw_op.cc:5158-5163
 //	driver/rados/rgw_rados.cc [T]:6847
 //	:6884-6890
+//	v19.2.6:3706-3720
+//	(lines 72-78 and 89)
 //
 // A file is a path whose last segment ends in .cc, .h, .hpp, .c, .py, .go,
 // .yaml.in, .yaml, .yml, .sh, .txt, .json, .cmake, .proto, .gperf or .in, and
-// neither it nor a continuation touches a path or identifier byte, or a bracket
-// for a continuation, so that a slice expression is none. It cites ceph when
-// its file, or a continuation's nearest candidate file (below), is a file in
-// the clone at its ref or at v19.2.6 or v20.2.4, the releases [S] and [T] name,
-// and so does a continuation that follows no file but follows a header
-// convention (below). Any other, such as rgw-go's own bucketops.go or
-// internal/driver/put.go, a Go standard library file, or a port written as a
-// line number, is not a citation and is left alone. Without --fix a plain
-// citation of ceph fails as not a link. Under --form-only, which has no clone,
-// one fails so when its file is not a Go file and the rules below give it a
-// ref; one with no ref is not judged.
+// neither it nor a continuation touches a path or identifier byte, or a
+// bracket for a continuation, so that a slice expression is none. A file named
+// before a ":" that no line follows, as a code block's lead-in
+// "in rgw_rados.cc:" names one, is a file named without lines. In a code block
+// a continuation must be a range with a blank, a tab or the line's start
+// before it, so that a key's value, "runs":2 or "listen: :7480", is none
+// either. It cites ceph when its file, or a continuation's nearest candidate
+// file (below), is a file in the clone at its ref or at v19.2.6 or v20.2.4,
+// the releases [S] and [T] name, and so does a continuation that follows no
+// file but follows a header convention (below). A continuation whose comment
+// names no file before it, and that follows no header convention, is of the
+// file named nearest before it in the comments above its own, as a function's
+// body cites the file its doc comment names; a line reference in prose is a
+// citation only of a file its own paragraph names before it. But a
+// continuation whose file would be one a comment above names, or one its own
+// comment names without lines, is a citation only when its shape says so: a
+// range; a line standing bare inside parentheses, after the "(", a ", " or
+// "; ", or a tag or a marker and a blank, and before the ")", a "," or ";", or
+// " and " or " or ", as "(:101)" and "(Parse7, :751)" do; marked [S] or [T];
+// right after a file named without lines, only blanks between, as
+// "rgw_common.h :1040" is; or with an "at <tag>" or "at both tags" after it.
+// The same holds after a citation or a link in its own comment for a line
+// outside parentheses, unless the line is listed with it, or with a range or a
+// marked continuation between them, by blanks, commas, semicolons, "and" or
+// "or", with an [S] or [T] and a blank right before it allowed, past the
+// "at <tag>" of a citation before it; and for a single line inside parentheses
+// that hold no link, no file's citation and no other line shaped as one, which
+// there counts only when it stands bare, is marked or has an "at <tag>" or
+// "at both tags" after it. So a port, "listens on :8080" or "(default :8080)",
+// is none. A header convention that names no file, or names that nearest file,
+// says what a bare line number means, and under it the shape is not asked for.
+// Any other, such as rgw-go's own bucketops.go or internal/driver/put.go, a
+// file whose name is the path from rgw-go's root of one of rgw-go's, as
+// .github/dependabot.yml, though ceph has the same path, a Go standard library
+// file, or a port written as a line number with no file before it, is not a
+// citation and is left alone. rgw-go's root is the nearest directory above the
+// Go file whose go.mod declares rgw-go's module. Without --fix a plain
+// citation of ceph fails as not a link, the reason naming ceph's paths and
+// saying how to cite rgw-go's file instead, or, for a continuation of a file
+// only a comment above names, that file and how to name its own; and, for a
+// line only its parentheses make a citation, that outside them it is none: one
+// that, the "(" and ")" around it read as blanks, would still need a shape and
+// have none, a prose line reference, or a citation split from its file by a
+// line break, a single line or any with no ":". Under --form-only, which has
+// no clone, one fails so when the list of ceph's files has its file, whatever
+// its ref, and so does a continuation whose nearest candidate is a link's
+// file, or that follows no file but a header convention; one of a file the
+// list lacks fails too when the rules below give it a tag the list was not
+// made at, unless its file is a Go file or its paragraph names another
+// repository, as rook or go-ceph, since nothing without a clone tells it is
+// not ceph's.
 //
 // --fix resolves each into the raw link to its lines at its ref, which it
 // writes in the citation's place. A comment is a run of // lines with nothing
 // else on them, or a single comment after code, and a paragraph of one is
 // read with its lines joined by single blanks:
 //
-//   - ref, the first rule that gives one: an "at", "in" or "on" and a tag after
-//     it, past any citations listed with it by blanks, commas, "and" or "or",
-//     or after the comma that closes them, but not past them to a citation with
-//     its own tag or marker right before it; "at both tags", which is v19.2.6
+//   - ref, the first rule that gives one: the tag a continuation is written
+//     after; an "at", "in" or "on" and a tag after it, past any citations
+//     listed with it by blanks, commas, "and" or "or", or after the comma
+//     that closes them, but not past them to a citation with its own tag or
+//     marker right before it; "at both tags", which is v19.2.6
 //     when the cited lines are the same at v19.2.6 and v20.2.4; its own [S] or
 //     [T]; the last marker or tag in its clause before it, the clause cut at
 //     the last "(", ";" or ". " and an "at <tag>" that leads it left to the
@@ -296,7 +349,9 @@
 //	A bare line number is rgw_op.cc's at v19.2.6.
 //	A bare rgw_op.cc line is v19.2.6's.
 //
-// A citation is unresolved, left as it is and listed with why, when it has
+// A citation is unresolved, left as it is and listed with why, when it is in
+// a code block, is a line reference in prose, or is a continuation whose file
+// only a comment above its own names, none of which --fix rewrites; when it has
 // no ref, or only a header's that names another file, or only a clause's
 // that names two releases; when its ref names no commit in the clone; when
 // its paragraph names rook, go-ceph or s3-tests, whose files the clone does
@@ -475,17 +530,18 @@
 //
 // # The list of ceph's files
 //
-// --form-only, which has no clone, tells ceph's plain markdown citations by the
-// list embedded from internal/citecheck/cephfiles.txt: every path of ceph/ceph
-// at each ref its header names whose base name a plain markdown citation can
-// name, a file as Go comments defines one. citecheck files --out writes it from
-// the clone at the refs given, and --check fails, exiting 1, when the list
-// differs from what it would write: other refs, another pattern for the names,
-// or other paths. make citecheck-files writes it at the Makefile's
-// CITECHECK_FILES_REFS, and make citecheck-files-check, part of make check,
-// checks it. A spec, which needs no clone, fails while .goreleaser.yaml pins a
-// tag the list was not made at, while the markers' releases are not among its
-// refs, or when the pattern that chose its names is not citecheck's.
+// --form-only, which has no clone, tells ceph's plain citations, in markdown
+// and in Go comments, by the list embedded from
+// internal/citecheck/cephfiles.txt: every path of ceph/ceph at each ref its
+// header names whose base name a plain citation can name, a file as Go
+// comments defines one. citecheck files --out writes it from the clone at the
+// refs given, and --check fails, exiting 1, when the list differs from what it
+// would write: other refs, another pattern for the names, or other paths. make
+// citecheck-files writes it at the Makefile's CITECHECK_FILES_REFS, and make
+// citecheck-files-check, part of make check, checks it. A spec, which needs no
+// clone, fails while .goreleaser.yaml pins a tag the list was not made at,
+// while the markers' releases are not among its refs, or when the pattern that
+// chose its names is not citecheck's.
 //
 // # The content of links
 //

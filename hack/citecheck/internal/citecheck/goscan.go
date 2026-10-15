@@ -96,7 +96,7 @@ type goItem struct {
 	// markdown found it names one citecheck cannot use, or "".
 	why string
 	// ceph reports whether a plain citation cites ceph's code, and so is
-	// checked, and cephPaths are the paths of ceph's that tell so in markdown.
+	// checked, and cephPaths are the paths of ceph's that tell so.
 	ceph      bool
 	cephPaths []string
 	// url is the link --fix writes for a plain citation, or "", and ids the
@@ -110,6 +110,20 @@ type goItem struct {
 	// the list of ceph's files was not made at, that a citation of a file
 	// the list lacks is tied to, which --form-only cannot tell is ceph's.
 	atRef, form, offList string
+	// tag is the tag a Go comment's continuation is written after, as
+	// v19.2.6:3706-3720 is; prose reports whether a continuation is a line
+	// reference in prose, "line 89" or "lines 130-172"; far is the file a
+	// continuation whose own comment names none is of, named in an earlier
+	// comment; paren reports whether a Go comment's citation stands inside a
+	// "(" and the ")" that closes it, bare whether it stands there alone, as
+	// in "(:101)" or "(Parse7, :751)", and parenOnly whether only its
+	// parentheses make it a citation, so that outside them it is none.
+	tag       string
+	prose     bool
+	far       string
+	paren     bool
+	bare      bool
+	parenOnly bool
 }
 
 // paraScan is what a comment paragraph cites.
@@ -158,10 +172,261 @@ func scanPara(p *commentPara) *paraScan {
 		ps.items = append(ps.items, it)
 	}
 	ps.masked = string(masked)
-	ps.items = append(ps.items, plainItems(ps.masked)...)
+	ps.items = append(ps.items, goForms(plainItems(ps.masked), ps.masked, p)...)
 	ps.finish(text, ps.masked)
 	return ps
 }
+
+var (
+	// reTagLines is a continuation written after its tag,
+	// <tag>:<from>[-<to>].
+	reTagLines = regexp.MustCompile(`(` + tagForm + `):(\d+)(?:-(\d+))?`)
+	// reFileEnd is a file that ends a text, and reLinesStart a line number
+	// or a range that starts one, and reRangeStart a range that does.
+	reFileEnd    = regexp.MustCompile(goPath + `$`)
+	reLinesStart = regexp.MustCompile(`^(\d+)(?:-(\d+))?`)
+	reRangeStart = regexp.MustCompile(`^(\d+)-(\d+)`)
+	// reProseLines is a line reference in prose, "line <n>" or
+	// "lines <from>-<to>", and reMoreLines another line or range listed
+	// after one.
+	reProseLines = regexp.MustCompile(`[Ll]ines? (\d+)(?:-(\d+))?`)
+	reMoreLines  = regexp.MustCompile(`^(?:,? and |,? or |, )(\d+)(?:-(\d+))?`)
+)
+
+// goForms returns a Go comment paragraph's plain citations, those plainItems
+// found in its masked text ms and the forms only a Go comment is read for: a
+// continuation written after its tag, v19.2.6:3706-3720; a file whose lines a
+// line break splits from it, as "(rgw_op.cc:" ending a line and "3033-3045)"
+// starting the next, or "(version.cc" ending one and "26-34)" starting the
+// next; a line reference in prose inside parentheses, "(line 89)",
+// "(lines 130-172)" or "(lines 72-78 and 89)", each of its lines a citation;
+// and a file named before a ":" that no line follows, as a code block's
+// lead-in "in rgw_rados.cc:" names one. A split citation with a ":" must be a
+// range or inside parentheses, and one without must be inside them, so that
+// "rgw_op.cc:" and a status code, or a file and "2-3 times", is none. In a
+// code block a continuation must be a range with a blank, a tab or the line's
+// start before it, so that a key's value, "runs":2 or "listen: :7480", is
+// none.
+func goForms(items []*goItem, ms string, p *commentPara) []*goItem {
+	if p.code {
+		items = slices.DeleteFunc(items, func(it *goItem) bool {
+			return it.kind == contItem && (it.from == it.to || it.start > 0 && ms[it.start-1] != ' ' && ms[it.start-1] != '\t')
+		})
+	}
+	taken := func(s, e int) bool {
+		return slices.ContainsFunc(items, func(o *goItem) bool { return s < o.end && o.start < e })
+	}
+	contBefore := func(c byte) bool { return pathByte(c) || c == ':' || c == ']' || c == '[' }
+	contAfter := func(c byte) bool { return wordByte(c) || c == ':' || c == ']' }
+	var add []*goItem
+	for _, m := range reTagLines.FindAllStringSubmatchIndex(ms, -1) {
+		s, e, ok := bounded(ms, m, contBefore, contAfter)
+		if !ok || taken(s, e) {
+			continue
+		}
+		it := &goItem{kind: contItem, start: s, end: e, text: ms[s:e], tag: ms[m[2]:m[3]]}
+		if it.from, it.to, ok = lines(ms, m, e); ok {
+			add = append(add, it)
+		}
+	}
+	for i := 1; i < len(p.at); i++ {
+		if it := splitCite(ms, p.at[i]-1); it != nil && !taken(it.start+len(it.name)+1, it.end) {
+			items = slices.DeleteFunc(items, func(o *goItem) bool { return o.kind == mentionItem && o.start == it.start })
+			add = append(add, it)
+		}
+	}
+	for _, it := range proseLines(ms) {
+		if !taken(it.start, it.end) && parenthesized(ms, it.start, it.end) {
+			it.parenOnly = true
+			add = append(add, it)
+		}
+	}
+	items = append(items, add...)
+	for _, ix := range reMention.FindAllStringIndex(ms, -1) {
+		s, e := ix[0], ix[1]
+		if e == len(ms) || ms[e] != ':' || s > 0 && pathByte(ms[s-1]) || taken(s, e) {
+			continue
+		}
+		if rest := strings.TrimLeft(ms[e+1:], " "); rest != "" && isDigit(rest[0]) {
+			continue
+		}
+		items = append(items, &goItem{kind: mentionItem, start: s, end: e, text: ms[s:e], name: ms[s:e]})
+	}
+	for _, it := range items {
+		it.paren = parenthesized(ms, it.start, it.end)
+		it.bare = it.paren && standsBare(ms, it.start, it.end)
+	}
+	return items
+}
+
+// reTagBlank is a tag, or an [S] or [T] marker, and a blank that end a text.
+var reTagBlank = regexp.MustCompile(`(?:(?:^|[^\w.\-])` + tagForm + `|\[[ST]\]) $`)
+
+// standsBare reports whether the citation from s to e in ms stands alone
+// among the words of its parentheses: after the "(", a ", " or "; ", or a tag
+// or a marker and a blank, and before the ")", a "," or ";", or " and " or
+// " or ", as "(:101)", "(Parse7, :751)" and "(at v19.2.6 :5067, at v20.2.4
+// :5338)" do, and "(default :8080)" does not.
+func standsBare(ms string, s, e int) bool {
+	before, after := ms[:s], ms[e:]
+	if !strings.HasSuffix(before, "(") && !strings.HasSuffix(before, ", ") && !strings.HasSuffix(before, "; ") &&
+		!reTagBlank.MatchString(before) {
+		return false
+	}
+	for _, w := range []string{")", ",", ";", " and ", " or "} {
+		if strings.HasPrefix(after, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// parenthesized reports whether the text from s to e in ms stands inside a
+// "(" before it and the ")" that closes it after it.
+func parenthesized(ms string, s, e int) bool {
+	o, _ := parenSpan(ms, s, e)
+	return o >= 0
+}
+
+// parenSpan returns the "(" before the text from s to e in ms and the ")"
+// that closes it after it, or -1 and -1 when it stands inside none.
+func parenSpan(ms string, s, e int) (open, closing int) {
+	depth := 0
+	open = -1
+	for i := s - 1; i >= 0; i-- {
+		switch ms[i] {
+		case ')':
+			depth++
+		case '(':
+			if depth == 0 {
+				open = i
+			}
+			depth--
+		}
+		if open >= 0 {
+			break
+		}
+	}
+	if open < 0 {
+		return -1, -1
+	}
+	depth = 0
+	for i := e; i < len(ms); i++ {
+		switch ms[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return open, i
+			}
+			depth--
+		}
+	}
+	return -1, -1
+}
+
+// splitCite returns the citation of a file whose lines a line break, the
+// blank at j in ms that joins two lines, splits from it: a file and a ":"
+// ending the first line and a line or a range starting the next, a single
+// line only inside parentheses and with ")" or " at <tag>" right after it, or
+// a file ending the first and a range starting the next, inside parentheses;
+// or nil.
+func splitCite(ms string, j int) *goItem {
+	before, after := ms[:j], ms[j+1:]
+	colon := strings.HasSuffix(before, ":")
+	loc := reFileEnd.FindStringIndex(strings.TrimSuffix(before, ":"))
+	if len(loc) == 0 || loc[0] > 0 && pathByte(ms[loc[0]-1]) {
+		return nil
+	}
+	re := reRangeStart
+	if colon {
+		re = reLinesStart
+	}
+	m := re.FindStringSubmatchIndex(after)
+	if len(m) == 0 || m[1] < len(after) && (wordByte(after[m[1]]) || after[m[1]] == ':' || after[m[1]] == '-') {
+		return nil
+	}
+	s, e := loc[0], j+1+m[1]
+	it := &goItem{kind: fileItem, start: s, end: e, text: ms[s:e], name: ms[loc[0]:loc[1]]}
+	var err error
+	if it.from, err = strconv.Atoi(after[m[2]:m[3]]); err != nil {
+		return nil
+	}
+	it.to = it.from
+	if m[4] >= 0 {
+		if it.to, err = strconv.Atoi(after[m[4]:m[5]]); err != nil {
+			return nil
+		}
+	}
+	if (!colon || it.from == it.to) && !parenthesized(ms, s, e) {
+		return nil
+	}
+	if it.from == it.to && !strings.HasPrefix(ms[e:], ")") && !reAtTagStart.MatchString(ms[e:]) {
+		return nil
+	}
+	// Outside parentheses a single line split from its file, or any lines
+	// split from a file with no ":", are none.
+	it.parenOnly = it.from == it.to || !colon
+	return it
+}
+
+// reAtTagStart is " at <tag>" starting a text.
+var reAtTagStart = regexp.MustCompile(`^ at ` + tagForm + `\b`)
+
+// proseLines returns the line references in prose in ms: "line" or "lines"
+// and a line or a range, and each line or range listed after it, when a ")"
+// closes them right after their last, as "(lines 72-78 and 89)" does and
+// "(line 1 of the response)" does not.
+func proseLines(ms string) []*goItem {
+	var out []*goItem
+	// ends reports whether a line or a range ends at e: no word byte, ":",
+	// "-" or a "." and a digit after it.
+	ends := func(e int) bool {
+		return e == len(ms) || !wordByte(ms[e]) && ms[e] != ':' && ms[e] != '-' &&
+			(ms[e] != '.' || e+1 == len(ms) || !isDigit(ms[e+1]))
+	}
+	number := func(s string, m []int, lo, hi int) (int, bool) {
+		if m[lo] < 0 {
+			return 0, false
+		}
+		n, err := strconv.Atoi(s[m[lo]:m[hi]])
+		return n, err == nil
+	}
+	for _, m := range reProseLines.FindAllStringSubmatchIndex(ms, -1) {
+		if m[0] > 0 && pathByte(ms[m[0]-1]) || !ends(m[1]) {
+			continue
+		}
+		s, e := m[0], m[1]
+		var chain []*goItem
+		for {
+			it := &goItem{kind: contItem, start: s, end: e, text: ms[s:e], prose: true}
+			var ok bool
+			if it.from, ok = number(ms, m, 2, 3); !ok {
+				break
+			}
+			if it.to, ok = number(ms, m, 4, 5); !ok {
+				it.to = it.from
+			}
+			chain = append(chain, it)
+			next := reMoreLines.FindStringSubmatchIndex(ms[e:])
+			if len(next) == 0 || !ends(e+next[1]) {
+				break
+			}
+			for k := range next {
+				if next[k] >= 0 {
+					next[k] += e
+				}
+			}
+			m, s, e = next, next[2], next[1]
+		}
+		if len(chain) > 0 && strings.HasPrefix(ms[chain[len(chain)-1].end:], ")") {
+			out = append(out, chain...)
+		}
+	}
+	return out
+}
+
+func isDigit(c byte) bool { return '0' <= c && c <= '9' }
 
 // finish orders a paragraph's items, reads which repository other than ceph
 // hint, its text with the URLs blanked, names, and writes its norm.

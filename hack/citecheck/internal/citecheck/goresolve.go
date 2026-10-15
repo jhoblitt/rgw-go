@@ -152,10 +152,14 @@ type goChecker struct {
 	name string
 	doc  *goDoc
 	// md is the markdown document read, whose scopes give a ref when the
-	// rules a Go comment is read by give none, and files the list of ceph's
-	// files that tells its citations of ceph from rgw-go's.
+	// rules a Go comment is read by give none; files the list of ceph's files
+	// that tells, under --form-only, a plain citation of ceph's code from one
+	// of rgw-go's, in markdown and in Go comments; and root rgw-go's root
+	// above the Go file, or "", whose own files a Go comment's citation of
+	// stays plain.
 	md    *mdDoc
 	files *cephFileList
+	root  string
 }
 
 // candidate is a file a continuation may cite: a path a link or a resolved
@@ -164,7 +168,8 @@ type candidate struct{ name, path string }
 
 // refOf returns the ref of the plain citation ps.items[ii], at the offset
 // off in the file, or "" when no rule gives one, and records on the item
-// which rule did. The rules, nearest first: "at <tag>" after it, past any
+// which rule did. The rules, nearest first: the tag a continuation is
+// written after, as v19.2.6:3706-3720; "at <tag>" after it, past any
 // citations listed with it, or "at both tags", which is v19.2.6; its own
 // [S] or [T] marker; the last marker or tag in its clause before it, unless
 // the clause names another release too and that one is not right before
@@ -176,6 +181,10 @@ type candidate struct{ name, path string }
 // file.
 func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 	it, norm := ps.items[ii], ps.norm
+	if it.tag != "" {
+		it.rule = "its tag"
+		return it.tag
+	}
 	// A markdown table's cell is read as a paragraph of its own.
 	cellLo := 0
 	if g.md != nil {
@@ -484,25 +493,182 @@ func (g *goChecker) commit(ref string) (string, error) {
 	return r.commit, err
 }
 
+// earlier returns the file named nearest before the comment group gi, in
+// the comments before it: a link's path, a resolved citation's, or the name
+// a citation or a file named without lines writes.
+func (g *goChecker) earlier(gi int) (candidate, bool) {
+	for k := gi - 1; k >= 0; k-- {
+		for _, ps := range slices.Backward(g.doc.groups[k]) {
+			for _, it := range slices.Backward(ps.items) {
+				switch {
+				case it.kind == linkItem, it.path != "":
+					return candidate{path: it.path}, true
+				case it.kind == fileItem, it.kind == mentionItem:
+					return candidate{name: it.name}, true
+				}
+			}
+		}
+	}
+	return candidate{}, false
+}
+
+// shaped reports whether a Go comment's continuation reads as a citation by
+// its own shape: a range, standing bare inside parentheses, marked [S] or
+// [T], right after a file named without lines with only blanks between, as
+// "rgw_common.h :1040" is, or with an "at <tag>" or "at both tags" after it.
+func shaped(ps *paraScan, it *goItem) bool { return shapedBy(ps, it, true) }
+
+// shapedBy reports whether a continuation reads as a citation by its own
+// shape, as shaped says, its parentheses counted only with paren set.
+func shapedBy(ps *paraScan, it *goItem, paren bool) bool {
+	if it.to != it.from || paren && it.bare || it.mark != "" || namedRightBefore(ps, it) {
+		return true
+	}
+	t, both := atTag(ps.norm[it.pos+1:])
+	return t != "" || both
+}
+
+// needsShape reports whether the continuation ps.items[ii] of group gi's
+// paragraph pi, ps, at the offset off in the file, is a citation only when its
+// shape says so: after a file named in prose in its own comment; after a
+// citation or a link there, outside parentheses, as paren says it is not,
+// and not listed with it; or with no file named before it there and no
+// header convention before it; unless a header convention says what the bare
+// line numbers of its nearest file mean.
+func (g *goChecker) needsShape(ps *paraScan, gi, pi, ii, off int, paren bool) bool {
+	if o := g.ownNearest(gi, pi, ii); o != nil {
+		return !g.headerCovers(off, o) && (o.kind == mentionItem || !paren && !listedWith(ps, o, ps.items[ii]) ||
+			paren && parenAlone(ps, ps.items[ii]))
+	}
+	return g.doc.headerBefore(off) == nil
+}
+
+// ownNearest returns the item nearest before the plain citation
+// ps.items[ii] of group gi's paragraph pi, in its own comment, that a
+// continuation's candidates are read from: a link, a resolved citation, a
+// file's citation or a file named without lines; or nil.
+func (g *goChecker) ownNearest(gi, pi, ii int) *goItem {
+	for p := pi; p >= 0; p-- {
+		items := g.doc.groups[gi][p].items
+		end := len(items)
+		if p == pi {
+			end = ii
+		}
+		for _, it := range slices.Backward(items[:end]) {
+			if it.kind == linkItem || it.path != "" || it.kind == fileItem || it.kind == mentionItem {
+				return it
+			}
+		}
+	}
+	return nil
+}
+
+// listedWith reports whether the continuation it is listed with the citation
+// or link o in its paragraph, or with a range or a marked continuation
+// between them, through the citations between, each after the one before
+// with blanks, commas, semicolons, "and" or "or" and an [S] or [T] marker and
+// a blank alone between, past an "at <tag>" that ends the one before. o is
+// the nearest link or citation before it, so no other stands between them.
+func listedWith(ps *paraScan, o, it *goItem) bool {
+	i := slices.Index(ps.items, it)
+	for k := i - 1; k >= 0; k-- {
+		p := ps.items[k]
+		if p.kind != linkItem && p.kind != fileItem && p.kind != contItem {
+			return false
+		}
+		sep := ps.norm[p.pos+1 : ps.items[k+1].pos]
+		if loc := reAtTag.FindStringIndex(sep); loc != nil {
+			sep = sep[loc[1]:]
+		}
+		if !reListedWith.MatchString(sep) {
+			return false
+		}
+		if p == o || p.to != p.from || p.mark != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutParens returns ps with the "(" that opens the parentheses around
+// it and the ")" that closes them read as blanks, as the text would read
+// were it written outside them, or ps when it stands inside none.
+func withoutParens(ps *paraScan, it *goItem) *paraScan {
+	o, c := parenSpan(ps.norm, it.pos, it.pos+1)
+	if o < 0 {
+		return ps
+	}
+	b := []byte(ps.norm)
+	b[o], b[c] = ' ', ' '
+	q := *ps
+	q.norm = string(b)
+	return &q
+}
+
+// reListedWith is what may stand between a continuation and the citation
+// it is listed after in a Go comment: reListed's, a ";" too, and an [S] or
+// [T] marker and a blank right before the continuation.
+var reListedWith = regexp.MustCompile(`^[\s,;]*(?:(?:and|or)[\s,]+)?(?:\[[ST]\] )?$`)
+
+// parenAlone reports whether the parentheses around the continuation it
+// hold no link, no file's citation and no other continuation shaped as one.
+func parenAlone(ps *paraScan, it *goItem) bool {
+	o, c := parenSpan(ps.masked, it.start, it.end)
+	return !slices.ContainsFunc(ps.items, func(x *goItem) bool {
+		return x != it && o < x.start && x.end <= c &&
+			(x.kind == linkItem || x.kind == fileItem || x.kind == contItem && shaped(ps, x))
+	})
+}
+
+// headerCovers reports whether a header convention before the offset off
+// says what a bare line number of o's file means: one that names no file, or
+// names o's.
+func (g *goChecker) headerCovers(off int, o *goItem) bool {
+	h := g.doc.headerBefore(off)
+	return h != nil && (h.named == "" || path.Base(h.named) == path.Base(cmp.Or(o.path, o.name)))
+}
+
+// paraFiles returns the files a line reference in prose, ps.items[ii], may
+// cite: those named before it in its own paragraph, nearest first.
+func paraFiles(ps *paraScan, ii int) []candidate {
+	var out []candidate
+	for _, it := range slices.Backward(ps.items[:ii]) {
+		switch {
+		case it.kind == linkItem, it.path != "":
+			out = append(out, candidate{path: it.path})
+		case it.kind == fileItem, it.kind == mentionItem:
+			out = append(out, candidate{name: it.name})
+		}
+	}
+	return out
+}
+
 // isCeph reports whether a plain citation cites ceph: whether the file it
 // names, or for a continuation the nearest candidate, is a file in the clone
 // at its ref or at a release a marker names. A continuation no candidate
 // precedes cites ceph when a header convention says what a bare line number
-// means. Without a clone, under --form-only, a file is ceph's when it is not
-// a Go file and the citation has a ref.
-func (g *goChecker) isCeph(it *goItem, cands []candidate, off int) (bool, error) {
+// means, and one whose nearest candidate is a link's file always does. A
+// file whose name is the path from rgw-go's root of one of rgw-go's is
+// rgw-go's, never ceph's. Without a clone, under --form-only, a file is
+// ceph's when the list of ceph's files has it, as listed says. It records the
+// paths of ceph's it found, which the reason it fails by names.
+func (g *goChecker) isCeph(ps *paraScan, it *goItem, cands []candidate, off int) (bool, error) {
 	name := it.name
 	if it.kind == contItem {
 		switch {
 		case len(cands) == 0:
-			return g.doc.headerBefore(off) != nil && (g.m != formOnly || it.ref != ""), nil
-		case cands[0].path != "" && g.m != formOnly:
+			return g.doc.headerBefore(off) != nil, nil
+		case cands[0].path != "":
+			it.cephPaths = []string{cands[0].path}
 			return true, nil
 		}
-		name = cmp.Or(cands[0].path, cands[0].name)
+		name = cands[0].name
+	}
+	if ownFile(g.root, name) {
+		return false, nil
 	}
 	if g.m == formOnly {
-		return it.ref != "" && path.Ext(name) != ".go", nil
+		return g.listed(ps, it, name), nil
 	}
 	refs := []string{markTags["S"], markTags["T"]}
 	if it.ref != "" {
@@ -521,10 +687,29 @@ func (g *goChecker) isCeph(it *goItem, cands []candidate, off int) (bool, error)
 			return false, err
 		}
 		if len(paths) > 0 {
+			it.cephPaths = paths
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// listed reports, for --form-only, which has no clone, whether a plain
+// citation in a Go comment of the file name cites ceph: whether the list of
+// ceph's files has that file, whatever the citation's ref; or else whether
+// the citation is tied to a tag the list was not made at, recorded in
+// offList, since nothing without a clone tells such a file is not ceph's,
+// unless the file is a Go file or its paragraph names another repository, as
+// rook or go-ceph.
+func (g *goChecker) listed(ps *paraScan, it *goItem, name string) bool {
+	if it.cephPaths = g.files.named(name); len(it.cephPaths) > 0 {
+		return true
+	}
+	if it.ref != "" && !slices.Contains(g.files.refs, it.ref) && path.Ext(name) != ".go" && ps.hint == "" {
+		it.offList = it.ref
+		return true
+	}
+	return false
 }
 
 // resolve finds the path and ref a plain citation means and sets its link,

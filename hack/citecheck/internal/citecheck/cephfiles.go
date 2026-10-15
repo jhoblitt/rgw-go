@@ -15,8 +15,8 @@ import (
 )
 
 // cephFilesText is the generated list of ceph's citable files, by which
-// --form-only, which has no clone, tells a plain markdown citation of ceph's
-// code from one of rgw-go's.
+// --form-only, which has no clone, tells a plain citation of ceph's code, in
+// markdown or in a Go comment, from one of rgw-go's.
 //
 //go:embed cephfiles.txt
 var cephFilesText string

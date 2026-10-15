@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	// remedy ends the line a failing plain citation of a file of ceph's prints.
+	remedy    = notLinkTail + "\n"
 	gofixPath = "src/rgw/rgw_gofix.cc"
 	// prepareS and prepareT link RGWGoFix::prepare at each release, and
 	// completeS and completeT RGWGoFix::complete.
@@ -258,7 +260,7 @@ var _ = Describe("Go comments", func() {
 			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
 				`rgw_side.cc's: write "at <tag>" after it`),
 		Entry("a header naming one file, for another file's continuation",
-			"// A bare line number is v19.2.6's rgw_gofix.cc.\n\n// The side is rgw_side.cc\n// :2.\n", 6, ":2",
+			"// A bare line number is v19.2.6's rgw_gofix.cc.\n\n// The side is rgw_side.cc\n// (:2).\n", 6, ":2",
 			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
 				`rgw_side.cc's: write "at <tag>" after it`),
 		Entry("a continuation after words, not listed with the citation whose ref it would take",
@@ -304,10 +306,8 @@ var _ = Describe("Go comments", func() {
 		Entry("a line number with no file before it and no header",
 			"package fix\n\n// It listens on :8080 by default.\nvar x = 1\n"),
 		Entry("a slice expression", "package fix\n\n// In rgw_gofix.cc, b[:4] is the magic.\nvar x = 1\n"),
-		Entry("a code block", "package fix\n\n// prepare, for example:\n//\n//\trgw_gofix.cc:4-11 at v19.2.6\n//\n// and no more.\n"+
-			"func prepare() {}\n"),
-		Entry("a directive", "package fix\n\n//go:generate echo rgw_gofix.cc:4-11 at v19.2.6\n\n"+
-			"var x = 1 //nolint:gochecknoglobals // rgw_gofix.cc:4-11 at v19.2.6\n"),
+		Entry("a directive other than //nolint", "package fix\n\n//go:generate echo rgw_gofix.cc:4-11 at v19.2.6\n\n"+
+			"var x = 1 //lint:ignore U1000 // rgw_gofix.cc:4-11 at v19.2.6\n"),
 		Entry("a string", "package fix\n\nvar x = \"rgw_gofix.cc:4-11 at v19.2.6\"\n"),
 		Entry("a block comment", "package fix\n\n/* rgw_gofix.cc:4-11 at v19.2.6 */\nvar x = 1\n"),
 		Entry("a cgo preamble of // lines", "package fix\n\n// #include <stdlib.h>\n// rgw_gofix.cc:4-11 at v19.2.6\nimport \"C\"\n"),
@@ -397,7 +397,7 @@ var _ = Describe("Go comments", func() {
 			f := markdown("check.go", src)
 			Expect(run(ctx, "--ceph", ceph.dir, f)).To(Equal(1))
 			Expect(stdout.String()).To(Equal(
-				f + ":3: rgw_gofix.cc:4-11: not a link\n" +
+				f + ":3: rgw_gofix.cc:4-11: not a link: ceph has src/rgw/rgw_gofix.cc" + remedy +
 					f + ":4: " + cephURL("v19.2.6", gofixPath, "L40") + ": line 40 is past the end of src/rgw/rgw_gofix.cc, " +
 					"which has 28 lines at v19.2.6\n" +
 					"citations checked: 3, failed: 2\n"))
@@ -424,15 +424,18 @@ var _ = Describe("Go comments", func() {
 			Expect(read(f)).To(ContainSubstring(cephURL("v19.2.6", "src/rgw/rgw_fix.yaml.spec.in", "L1")))
 		})
 
-		It("under --form-only fails, without a clone, a plain citation with a ref and a malformed link", func(ctx SpecContext) {
-			src := "package fix\n\n// prepare (rgw_gofix.cc:4-11 at v19.2.6), (rgw_gofix.cc:4) and bucketops.go:9 at v19.2.6;\n" +
+		It("under --form-only fails, without a clone, a plain citation of a file the list of ceph's files has, with a "+
+			"ref or none, and a malformed link", func(ctx SpecContext) {
+			src := "package fix\n\n// prepare (rgw_op.cc:4-11 at v19.2.6), (rgw_op.cc:4, :9) and bucketops.go:9 at v19.2.6;\n" +
 				"// " + cephURL("v19.2.6", gofixPath, "L11-L4") + ".\nfunc prepare() {}\n"
 			f := markdown("form.go", src)
 			Expect(run(ctx, "--form-only", "--ceph", GinkgoT().TempDir(), f)).To(Equal(1))
 			Expect(stdout.String()).To(Equal(
-				f + ":3: rgw_gofix.cc:4-11: not a link\n" +
+				f + ":3: rgw_op.cc:4-11: not a link: ceph has src/rgw/rgw_op.cc" + remedy +
+					f + ":3: rgw_op.cc:4: not a link: ceph has src/rgw/rgw_op.cc" + remedy +
+					f + ":3: :9: not a link: ceph has src/rgw/rgw_op.cc" + remedy +
 					f + ":4: " + cephURL("v19.2.6", gofixPath, "L11-L4") + ": lines 11-4 run backwards\n" +
-					"citations checked: 2, failed: 2\n"))
+					"citations checked: 4, failed: 4\n"))
 		})
 	})
 })
