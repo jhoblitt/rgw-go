@@ -143,6 +143,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw re-reads a resharding bucket by name, so a write can land in a bucket recreated under that name](#radosgw-re-reads-a-resharding-bucket-by-name-so-a-write-can-land-in-a-bucket-recreated-under-that-name) | pending | pending |  |
 | [radosgw turns a negative rgw_gc_max_concurrent_io or rgw_gc_max_trim_chunk into a huge unsigned limit](#radosgw-turns-a-negative-rgw_gc_max_concurrent_io-or-rgw_gc_max_trim_chunk-into-a-huge-unsigned-limit) | pending | pending |  |
 | [Squid's is_public counts every Allow statement whose NotPrincipal is not the wildcard](#squids-is_public-counts-every-allow-statement-whose-notprincipal-is-not-the-wildcard) | [#67047](https://tracker.ceph.com/issues/67047), [#67048](https://tracker.ceph.com/issues/67048), [#67176](https://tracker.ceph.com/issues/67176), [#67177](https://tracker.ceph.com/issues/67177) | [ceph/ceph#58686](https://github.com/ceph/ceph/pull/58686) |  |
+| [Tentacle's is_public misses a fixed principal that admits the anonymous requester](#tentacles-is_public-misses-a-fixed-principal-that-admits-the-anonymous-requester) | pending | pending | ✓ |
 | [radosgw ignores NotResource in a statement that also names Resource](#radosgw-ignores-notresource-in-a-statement-that-also-names-resource) | none | none | ✓ |
 | [radosgw's princ_type after Policy::eval reflects the last statement evaluated, not the one that matched](#radosgws-princ_type-after-policyeval-reflects-the-last-statement-evaluated-not-the-one-that-matched) | none | none | ✓ |
 | [radosgw accepts a policy statement with no Effect and evaluates it as Deny](#radosgw-accepts-a-policy-statement-with-no-effect-and-evaluates-it-as-deny) | none | none | ✓ |
@@ -5944,30 +5945,46 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, security-relevant: a public-access-block bypass with a
   common, valid policy, such as `Principal: *` under
-  `aws:SecureTransport`; unfixed through main. Unreproduced: derived from
-  the source.
-- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
-  then v20.2.4's.
+  `aws:SecureTransport`; unfixed through main. Reproduced on v19.2.7 and
+  v20.2.4 on 2026-10-15 by two s3-tests in jhoblitt/ceph 52de0d67ba8,
+  which is pending its merge into `rgw-go-s3tests`. Under
+  BlockPublicPolicy both releases store a grant to every principal under
+  `Bool aws:SecureTransport true`
+  (`test_block_public_condition_on_unlisted_key`), and both report a grant
+  to every principal from `1.1.1.1/32` alone as public
+  (`test_get_fixed_source_ip_bucket_policy_status`).
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `is_public` evaluates an Allow statement whose Principal holds the
     wildcard with `eval_conditions(iam_all_env)`
-    (`rgw_iam_policy.cc:1904-1907`, `:1939-1942`). `iam_all_env` holds
-    only aws:SourceIp `1.1.1.1`, aws:UserId `anonymous` and
-    s3:x-amz-server-side-encryption-aws-kms-key-id `secret`
-    (`:1894-1898`, `:1929-1933`), as it has since ff972d69567 ("rgw:
-    initial implementation of a public policy tester", 2019).
+    ([rgw_iam_policy.cc:1904-1907](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1904-L1907),
+    [rgw_iam_policy.cc:1939-1942](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1939-L1942)).
+    `iam_all_env` holds only aws:SourceIp `1.1.1.1`, aws:UserId `anonymous`
+    and s3:x-amz-server-side-encryption-aws-kms-key-id `secret`
+    ([rgw_iam_policy.cc:1894-1898](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1894-L1898),
+    [rgw_iam_policy.cc:1929-1933](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1929-L1933)),
+    as it has since ff972d69567 ("rgw: initial implementation of a public
+    policy tester", 2019).
   - Apart from `Null`, a condition on any other key fails unless it uses
     IfExists or a ForAllValues operator (`Condition::eval`,
-    `rgw_iam_policy.cc:857-869`, `:875-889`). So a statement granting every
-    principal under, say, `Bool aws:SecureTransport true`,
-    `StringLike aws:Referer …` or `StringEquals s3:prefix …` is judged not
-    public, although every requester meeting the condition is granted. A
-    condition 1.1.1.1 meets, such as `IpAddress aws:SourceIp 1.1.1.1/32`,
-    makes a statement public that admits one address.
+    [rgw_iam_policy.cc:857-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L857-L869),
+    [rgw_iam_policy.cc:875-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875-L889)).
+    So a statement granting every principal under, say,
+    `Bool aws:SecureTransport true`, `StringLike aws:Referer …` or
+    `StringEquals s3:prefix …` is judged not public, although every
+    requester meeting the condition is granted. A condition 1.1.1.1 meets,
+    such as `IpAddress aws:SourceIp 1.1.1.1/32`, makes a statement public
+    that admits one address.
   - The verdict decides PutBucketPolicy's BlockPublicPolicy refusal
-    (`rgw_op.cc:8103-8108`, `:9029-9034`), GetBucketPolicyStatus's IsPublic
-    (`:8597`, `:9578`) and, on v20.2.4 only, RestrictPublicBuckets for
-    buckets and for objects (`rgw_common.cc:1377` and `:1544`, both
-    v20.2.4).
+    (`block_public_policy`,
+    [rgw_op.cc:8116-8121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8116-L8121),
+    [rgw_op.cc:9029-9034](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9029-L9034)),
+    GetBucketPolicyStatus's IsPublic (`isPublic`,
+    [rgw_op.cc:8610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8610),
+    [rgw_op.cc:9578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9578))
+    and, on v20.2.4 only, RestrictPublicBuckets for buckets and for objects
+    (`restrict_public_buckets`,
+    [rgw_common.cc:1377](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1377),
+    [rgw_common.cc:1544](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1544)).
 - **Impact:** a bucket policy that opens a bucket to everyone behind a
   condition on any other key passes BlockPublicPolicy, is reported not
   public, and on Tentacle escapes RestrictPublicBuckets. The guardrails
@@ -5976,12 +5993,22 @@ Every new entry adds its row to this table, in document order.
   the bucket owner writes the policy, but it defeats the block that is
   meant to stop that owner, or an administrator's account-wide setting,
   from publishing the bucket.
-- **Releases:** v19.2.6, v20.2.4, and main (06adccc25d6, 2026-10-01), whose
-  `IsPublicStatement` still evaluates `iam_all_env`
-  (`rgw_iam_policy.cc:2174-2178` and `:2193`).
-- **rgw-go:** reproduces it: `Policy.IsPublic` evaluates the statement's
-  conditions through `Statement.EvalConditions` in the same three-key
-  environment (`internal/policy/policy.go`).
+- **Releases:** v19.2.6, v19.2.7, v20.2.4, and main (06adccc25d6,
+  2026-10-01), whose `IsPublicStatement` still evaluates `iam_all_env`
+  ([rgw_iam_policy.cc:2174-2178](https://github.com/ceph/ceph/blob/06adccc25d64c2ba433b642ca82c9be880b8692d/src/rgw/rgw_iam_policy.cc#L2174-L2178)
+  and
+  [rgw_iam_policy.cc:2193](https://github.com/ceph/ceph/blob/06adccc25d64c2ba433b642ca82c9be880b8692d/src/rgw/rgw_iam_policy.cc#L2193)).
+- **rgw-go:** does not reproduce it, on either release. `Policy.IsPublic`
+  (`internal/policy/policy.go`) evaluates no condition: it judges a policy
+  as Amazon S3's "The meaning of "public""
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status)
+  does, so a grant to every principal is public unless a condition limits
+  it to fixed values of a key that page lists. `Bool aws:SecureTransport
+  true` leaves such a grant public, and `IpAddress aws:SourceIp 1.1.1.1/32`
+  makes it non-public. PutBucketPolicy's BlockPublicPolicy refusal and
+  RestrictPublicBuckets take that judgment (`docs/exclusions.md`, "A bucket
+  policy is public as Amazon S3 judges it"); rgw-go does not serve
+  GetBucketPolicyStatus yet.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search on 2026-10-04 found no
   report or fix PR. Related, in the opposite direction: Squid's false
@@ -5994,7 +6021,7 @@ Every new entry adds its row to this table, in document order.
   [#67176](https://tracker.ceph.com/issues/67176), has no PR yet. This
   defect is unfiled while filing is paused.
 - **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing `is_public`;
-  derived from the source, not reproduced.
+  derived from the source, and reproduced on 2026-10-15 in phase 2 task S3.
 
 ## radosgw's SigV2 date check wraps the request time to 32 bits
 
@@ -6810,23 +6837,32 @@ Every new entry adds its row to this table, in document order.
 
 ## Squid's is_public counts every Allow statement whose NotPrincipal is not the wildcard
 
-- **Kind:** defect, fixed in Tentacle and unfixed on squid. Unreproduced:
-  derived from the source.
-- **Evidence:** paths are under `src/rgw/`.
-  - At v19.2.6, `IsPublicStatement` returns the wildcard statement's
-    condition result when a Principal entry is the wildcard, and otherwise,
-    for every other Allow statement, `std::none_of` over its NotPrincipal
-    entries for the wildcard (`rgw_iam_policy.cc:1900-1916`). `none_of` over
-    an empty set is true, so an Allow statement that names a specific
-    Principal, or names none, counts as public whatever its conditions.
+- **Kind:** defect, fixed in Tentacle and unfixed on squid. Reproduced on
+  v19.2.7 on 2026-10-15: under BlockPublicPolicy it refuses with 403
+  AccessDenied a policy granting one account
+  (`test_block_public_policy_with_principal`), and reports that policy
+  public (`test_get_nonpublicpolicy_principal_bucket_policy_status`);
+  v20.2.4 passes both.
+- **Evidence:**
+  - At v19.2.6 and v19.2.7, `IsPublicStatement` returns the wildcard
+    statement's condition result when a Principal entry is the wildcard, and
+    otherwise, for every other Allow statement, `std::none_of` over its
+    NotPrincipal entries for the wildcard
+    ([rgw_iam_policy.cc:1900-1916](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1900-L1916)).
+    `none_of` over an empty set is true, so an Allow statement that names a
+    specific Principal, or names none, counts as public whatever its
+    conditions.
   - v20.2.4 counts an Allow statement only when a Principal entry is the
     wildcard and its conditions hold in `iam_all_env`
-    (`rgw_iam_policy.cc:1935-1947`). The change is 019aaa4d101 ("rgw: donot
-    check for NotPrincipal in IsPublicStatement", 2024-07-19), whose message
-    names the empty-NotPrincipal case.
+    ([rgw_iam_policy.cc:1935-1947](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1935-L1947)).
+    The change is 019aaa4d101 ("rgw: donot check for NotPrincipal in
+    IsPublicStatement", 2024-07-19), whose message names the
+    empty-NotPrincipal case.
   - `is_public` decides PutBucketPolicy's BlockPublicPolicy refusal
-    (`rgw_op.cc:8103-8108` at v19.2.6) and GetBucketPolicyStatus's IsPublic
-    (`rgw_op.cc:8597`).
+    (`block_public_policy`,
+    [rgw_op.cc:8116-8121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8116-L8121))
+    and GetBucketPolicyStatus's IsPublic (`isPublic`,
+    [rgw_op.cc:8610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8610)).
 - **Impact:** on Squid, a bucket whose public-access block sets
   BlockPublicPolicy refuses, with 403, any bucket policy holding an Allow
   statement for a named principal, such as a grant to one user;
@@ -6836,9 +6872,14 @@ Every new entry adds its row to this table, in document order.
   ([rgw_iam_policy.cc:1900-1916](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1900-L1916)). The
   first tag carrying the fix is v20.0.0,
   released v20.2.0; checked at v20.2.4. Older squid releases not checked.
-- **rgw-go:** follows the zone's release: `policy.Semantics`'s
-  `PublicNeedsWildcardPrincipal` selects v19.2.6's rule on Squid and
-  v20.2.4's on Tentacle (`internal/policy/policy.go`, `Policy.IsPublic`).
+- **rgw-go:** does not reproduce it, on either release: `Policy.IsPublic`
+  (`internal/policy/policy.go`) judges a policy as Amazon S3 does, so an
+  Allow statement whose Principal names principals by fixed values, holding
+  no wildcard or policy variable, is not public, whatever its conditions.
+  An Allow statement whose NotPrincipal names principals but not the
+  wildcard, which only Squid parses, grants every other principal and is
+  public unless a condition limits it (`docs/exclusions.md`, "A bucket
+  policy is public as Amazon S3 judges it").
 - **Upstream:** [#67047](https://tracker.ceph.com/issues/67047), with its
   duplicate [#67048](https://tracker.ceph.com/issues/67048), reported it;
   the fix 019aaa4d101 came with
@@ -6852,7 +6893,81 @@ Every new entry adds its row to this table, in document order.
   `iam_all_env`, is "radosgw's is_public judges a wildcard-principal
   statement against a fixed three-key environment".
 - **Found:** phase 1 unit Z, Task 4, 2026-10-04, transcribing `is_public`
-  at both tags; derived from the source, not reproduced.
+  at both tags; derived from the source, and reproduced on 2026-10-15 in
+  phase 2 task S3.
+
+## Tentacle's is_public misses a fixed principal that admits the anonymous requester
+
+- **Kind:** defect, security-relevant: a public-access-block bypass. A
+  bucket policy that grants the default tenant's account, as
+  `{"AWS": "arn:aws:iam:::root"}` or `{"AWS": ""}`, or the anonymous user,
+  as `{"AWS": "arn:aws:iam:::user/anonymous"}`, grants every
+  unauthenticated request. Tentacle's is_public calls it not public, so
+  BlockPublicPolicy stores it and RestrictPublicBuckets lets anonymous
+  requests through. Unfixed through main. Reproduced on v20.2.4 on
+  2026-10-15 by two s3-tests in jhoblitt/ceph 5a0d460976c, pending its
+  merge into `rgw-go-s3tests`:
+  - under BlockPublicPolicy it stores a grant of s3:GetObject to
+    `arn:aws:iam:::root` (`test_block_public_anonymous_root_principal`);
+  - with RestrictPublicBuckets set it still serves an anonymous GetObject
+    through that grant (`test_restrict_public_anonymous_root_principal`).
+
+  On v19.2.7 the first test passes, and the second shows the grant serving
+  an anonymous GetObject before failing on the unenforced block.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - An unauthenticated request runs as `rgw_get_anon_user`'s user,
+    "anonymous" in the default tenant
+    ([rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_user.cc#L106-L111),
+    [rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_user.cc#L106-L111)),
+    through a LocalApplier (`AnonymousEngine::authenticate`,
+    [rgw_auth.cc:1274-1281](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1274-L1281),
+    [rgw_auth.cc:1316-1324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1316-L1324)).
+  - `parse_principal` reads a `root` ARN and a bare tenant name, the empty
+    one included, as an account principal of that tenant
+    ([rgw_iam_policy.cc:534-536](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L534-L536)
+    and
+    [rgw_iam_policy.cc:561-568](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L561-L568),
+    [rgw_iam_policy.cc:544-546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L544-L546)
+    and
+    [rgw_iam_policy.cc:571-578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L571-L578)).
+  - `LocalApplier::is_identity` matches an account principal naming the
+    user's tenant, and a user principal of that tenant naming the user
+    ([rgw_auth.cc:1058-1076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1058-L1076),
+    [rgw_auth.cc:1086-1104](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1086-L1104);
+    `match_account_or_tenant`,
+    [rgw_auth.cc:77-83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L77-L83),
+    [rgw_auth.cc:77-83](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L77-L83)),
+    so all three principals match the anonymous user.
+  - v20.2.4's `IsPublicStatement` counts an Allow statement only when a
+    Principal entry is the wildcard
+    ([rgw_iam_policy.cc:1935-1947](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1935-L1947)),
+    and main's does too (`is_wildcard`,
+    [rgw_iam_policy.cc:2188-2198](https://github.com/ceph/ceph/blob/06adccc25d64c2ba433b642ca82c9be880b8692d/src/rgw/rgw_iam_policy.cc#L2188-L2198)
+    at 06adccc25d6). v19.2.7's counts every Allow statement whose
+    NotPrincipal holds no wildcard (`IsPublicStatement`,
+    [rgw_iam_policy.cc:1900-1916](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1900-L1916)),
+    so it calls these public, through "Squid's is_public counts every
+    Allow statement whose NotPrincipal is not the wildcard".
+  - On v20.2.4, RestrictPublicBuckets refuses a requester outside the
+    owner's account only when is_public holds (`restrict_public_buckets`,
+    [rgw_common.cc:1377](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1377),
+    [rgw_common.cc:1544](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1544)).
+- **Impact:** on Tentacle, a bucket that blocks public policies still
+  stores a policy that serves every anonymous request. RestrictPublicBuckets
+  does not restrict it, and GetBucketPolicyStatus calls it not public.
+  Squid's BlockPublicPolicy refuses it, through its over-block, and Squid
+  never enforces RestrictPublicBuckets.
+- **Releases:** v20.2.4 and main (06adccc25d6, 2026-10-01). v19.2.7 judges
+  these policies public through the other defect.
+- **rgw-go:** does not reproduce it, on either release: `Policy.IsPublic`
+  counts a principal that admits the anonymous requester as every
+  principal (`admitsAnonymous`, `internal/policy/policy.go`;
+  `docs/exclusions.md`, "A bucket policy is public as Amazon S3 judges
+  it").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** review of phase 2 task S3, 2026-10-15, in an adversarial pass
+  over rgw-go's judgment; derived from the source, and reproduced the same
+  day.
 
 ## radosgw ignores NotResource in a statement that also names Resource
 
