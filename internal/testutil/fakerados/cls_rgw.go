@@ -23,7 +23,7 @@ var rgwTables []methodTable
 
 // rgwTable adds t to the rgw class's tables and returns it: declaring an
 // area's table as `var _ = rgwTable(methodTable{...})` is what puts its
-// methods in RGWClass and its write flags in RGWWriteMethods.
+// methods in RGWClass and RGWMethods and its write flags in RGWWriteMethods.
 func rgwTable(t methodTable) methodTable { //nolint:unparam // the result lets the call initialize a package variable, which runs before init
 	rgwTables = append(rgwTables, t)
 	return t
@@ -32,20 +32,27 @@ func rgwTable(t methodTable) methodTable { //nolint:unparam // the result lets t
 // rgwClassMethods is every method RGWClass emulates, the area tables merged.
 var rgwClassMethods methodTable
 
+// RGWMethods are every method RGWClass emulates, in name order, which
+// RegisterClassMethods takes with RGWClass and RGWWriteMethods.
+var RGWMethods []string
+
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR, in name order, which RegisterClass takes with
-// RGWClass.
+// registers with CLS_METHOD_WR, in name order, which RegisterClassMethods
+// takes with RGWClass and RGWMethods.
 var RGWWriteMethods []string
 
 // init assembles the class: Go initializes every package variable before any
 // init runs, so every area's table is registered, whatever file declares it.
-func init() { rgwClassMethods, RGWWriteMethods = assembleRGWClass(rgwTables) }
+func init() {
+	rgwClassMethods, RGWMethods, RGWWriteMethods = assembleRGWClass(rgwTables)
+	tableClasses["rgw"] = true
+}
 
 // assembleRGWClass is the class the tables make: their methods merged, and
-// the write list their write flags derive.
-func assembleRGWClass(tables []methodTable) (methods methodTable, writes []string) {
+// the method and write lists those derive.
+func assembleRGWClass(tables []methodTable) (methods methodTable, names, writes []string) {
 	methods = mergeMethodTables(tables...)
-	return methods, methods.writeMethods()
+	return methods, methods.names(), methods.writeMethods()
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and

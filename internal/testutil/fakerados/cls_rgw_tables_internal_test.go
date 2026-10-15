@@ -4,9 +4,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -77,7 +79,7 @@ func tableDecls(fset *token.FileSet, f *ast.File) (registers bool, bare []string
 var _ = Describe("RGWClass's method tables", func() {
 	It("answers EOPNOTSUPP for a method no table holds, as the OSD refuses a method the class does not register", func(ctx SpecContext) {
 		c := New()
-		c.RegisterClass("rgw", RGWClass(), RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", RGWClass(), RGWMethods, RGWWriteMethods)
 		c.Put("index", "", "shard", []byte("d"))
 		p, err := c.Pool(ctx, "index", "")
 		Expect(err).NotTo(HaveOccurred())
@@ -90,6 +92,8 @@ var _ = Describe("RGWClass's method tables", func() {
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L189-L196 at v20.2.4).
 		Expect(err).To(MatchError(radosclient.ErrNotSupported), "OpInfo::set_from_op, osd_op_util.cc:189-196 at v19.2.7 and v20.2.4")
 		Expect(c.Object("index", "", "shard").Data).To(Equal([]byte("d")))
+		_, rval := RGWClass()(&ClassCall{Method: "no_such_method"})
+		Expect(rval).To(Equal(-int32(syscall.EOPNOTSUPP)), "the class itself, for a name a registration lists and no table holds")
 	})
 
 	It("serves a table rgwTable declares in another file, merged once every package variable is set", func() {
@@ -101,8 +105,18 @@ var _ = Describe("RGWClass's method tables", func() {
 
 	It("derives the class's write list from the write flags of every registered table", func() {
 		tables := append(slices.Clip(rgwTables), methodTable{"spec_area_write": {fn: nopClassMethod, write: true}})
-		_, writes := assembleRGWClass(tables)
+		_, _, writes := assembleRGWClass(tables)
 		Expect(writes).To(ConsistOf(append(slices.Clone(RGWWriteMethods), "spec_area_write")))
+	})
+
+	It("lists exactly the merged tables' methods, reads and writes, in name order", func() {
+		Expect(RGWMethods).To(Equal(slices.Sorted(maps.Keys(rgwClassMethods))))
+		Expect(RGWMethods).To(ContainElements("bucket_list", "spec_area_read"), "a read of cls_rgw.go's table and of another file's")
+		Expect(RGWMethods).To(ContainElements(RGWWriteMethods))
+		Expect(RGWMethods).To(HaveCap(len(RGWMethods)), "a caller's append copies the list rather than writing into it")
+		tables := append(slices.Clip(rgwTables), methodTable{"a_spec_area_read": {fn: nopClassMethod}})
+		_, names, _ := assembleRGWClass(tables)
+		Expect(names).To(Equal(append([]string{"a_spec_area_read"}, RGWMethods...)))
 	})
 
 	It("declares every rgw method table through rgwTable, so none is left out of RGWClass", func() {
@@ -123,6 +137,6 @@ var _ = Describe("RGWClass's method tables", func() {
 			bare = append(bare, b...)
 		}
 		Expect(registering).To(ContainElements("cls_rgw.go", "cls_rgw_olh.go", "cls_rgw_lc.go"))
-		Expect(bare).To(BeEmpty(), "a method table declared without rgwTable is in neither RGWClass nor RGWWriteMethods")
+		Expect(bare).To(BeEmpty(), "a method table declared without rgwTable is in none of RGWClass, RGWMethods and RGWWriteMethods")
 	})
 })

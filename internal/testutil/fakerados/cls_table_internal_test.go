@@ -22,6 +22,15 @@ var _ = Describe("method tables", func() {
 		Expect(writes).To(HaveCap(len(writes)), "a caller's append copies the list rather than writing into it")
 	})
 
+	It("lists every method of the merged tables, reads and writes, in name order", func() {
+		// Five names, so a list grown by appends has spare capacity.
+		t := mergeMethodTables(methodTable{"read": {fn: nopClassMethod}, "c": {fn: nopClassMethod, write: true}},
+			methodTable{"a": {fn: nopClassMethod}, "d": {fn: nopClassMethod}, "b": {fn: nopClassMethod, write: true}})
+		names := t.names()
+		Expect(names).To(Equal([]string{"a", "b", "c", "d", "read"}))
+		Expect(names).To(HaveCap(len(names)), "a caller's append copies the list rather than writing into it")
+	})
+
 	It("panics at assembly on a method two tables hold, since a class registers each name once", func() {
 		Expect(func() {
 			mergeMethodTables(methodTable{"m": {fn: nopClassMethod}}, methodTable{"m": {fn: nopClassMethod, write: true}})

@@ -125,7 +125,7 @@ func newIndexCluster() *fakerados.Cluster {
 	c := fakerados.New()
 	c.RegisterClass("version", fakerados.VersionClass(), fakerados.VersionWriteMethods...)
 	c.RegisterClass("user", fakerados.UserClass(), fakerados.UserWriteMethods...)
-	c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+	c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 	seedRookZone(c, "ceph-objectstore", true)
 	return c
 }
@@ -557,7 +557,7 @@ var _ = Describe("indexOp", func() {
 
 		It("answers UnknownError for a reshard status that does not decode", func(ctx SpecContext) {
 			rgw := fakerados.RGWClass()
-			c.RegisterClass("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
+			c.RegisterClassMethods("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
 				switch call.Method {
 				case "guard_bucket_resharding":
 					return nil, -rgwcls.ErrBusyResharding
@@ -565,7 +565,7 @@ var _ = Describe("indexOp", func() {
 					return []byte{1, 1, 9, 0, 0, 0}, 0
 				}
 				return rgw(call)
-			}, fakerados.RGWWriteMethods...)
+			}, fakerados.RGWMethods, fakerados.RGWWriteMethods)
 			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
 			Expect(err).To(MatchError(op.ErrUnknown), "cls_rgw_get_bucket_resharding's EIO")
 			Expect(err).To(MatchError(ContainSubstring(oid)))
@@ -592,12 +592,12 @@ var _ = Describe("indexOp", func() {
 		It("answers NoSuchKey when the bucket is gone although its shard reads as no longer resharding", func(ctx SpecContext) {
 			s.SetReshardWaitForTest(0)
 			c.Remove(rookMetaPool, rookRoot, rec.Info.Bucket.InstanceOID())
-			c.RegisterClass("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
+			c.RegisterClassMethods("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
 				if call.Method == "guard_bucket_resharding" {
 					return nil, -rgwcls.ErrBusyResharding
 				}
 				return fakerados.RGWClass()(call)
-			}, fakerados.RGWWriteMethods...)
+			}, fakerados.RGWMethods, fakerados.RGWWriteMethods)
 			err := s.NewIndexOpForTest(rec, key, "tag").Prepare(ctx, rgwcls.OpAdd)
 			Expect(err).To(MatchError(op.ErrNoSuchKey), "rgw_rados.cc:7837-7844 at v19.2.6, :8779-8786 at v20.2.4")
 		})

@@ -39,7 +39,7 @@ var _ = Describe("RGWClass's index transaction", func() {
 	}
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		now = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 		c.SetClock(func() time.Time { return now })
 		var err error
@@ -295,7 +295,7 @@ var _ = Describe("RGWClass's mp_upload_part_info_update", func() {
 	)
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		var err error
 		p, err = c.Pool(ctx, extra, "")
 		Expect(err).NotTo(HaveOccurred())
@@ -405,7 +405,7 @@ var _ = Describe("RGWClass on a head object", func() {
 	)
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		var err error
 		p, err = c.Pool(ctx, data, "")
 		Expect(err).NotTo(HaveOccurred())
@@ -495,7 +495,7 @@ var _ = Describe("RGWClass on a gc shard", func() {
 	)
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		now = time.Date(2026, 10, 4, 12, 0, 0, 5, time.UTC)
 		c.SetClock(func() time.Time { return now })
 		var err error
@@ -620,7 +620,7 @@ var _ = Describe("RGWClass's user_usage_log_add", func() {
 	)
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		var err error
 		p, err = c.Pool(ctx, logPool, usageNS)
 		Expect(err).NotTo(HaveOccurred())

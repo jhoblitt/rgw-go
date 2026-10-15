@@ -46,10 +46,22 @@ var _ radosclient.Cluster = (*Cluster)(nil)
 
 type storeKey struct{ pool, ns string }
 
-// class is a registered class emulator and the methods it gives the WR flag.
+// class is a registered class emulator, the methods it registers, nil when
+// every name reaches fn, and the methods it gives the WR flag.
 type class struct {
-	fn     ClassFunc
-	writes map[string]bool
+	fn      ClassFunc
+	methods map[string]bool
+	writes  map[string]bool
+}
+
+func (c *class) registers(method string) bool { return c.methods == nil || c.methods[method] }
+
+func nameSet(names []string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
 }
 
 // store is one namespace of one pool: its objects, the watches on them and
@@ -169,14 +181,35 @@ func (c *Cluster) SetClock(now func() time.Time) {
 // RegisterClass makes fn the emulator of every method of name, replacing
 // any earlier one, and gives the methods writes names the WR flag
 // (CLS_METHOD_WR). An op calling a class without an emulator fails with
-// EOPNOTSUPP, as the OSD answers a class it cannot load.
+// EOPNOTSUPP, as the OSD answers a class it cannot load. It panics for a
+// class fakerados emulates from method tables, such as rgw, whose method set
+// only RegisterClassMethods takes: without it, the fake would refuse a method
+// the class lacks only when the call's step ran, not at op setup.
 func (c *Cluster) RegisterClass(name string, fn ClassFunc, writes ...string) {
+	if tableClasses[name] {
+		panic(fmt.Sprintf("fakerados: class %q has a method set: register it with RegisterClassMethods", name))
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	cls := &class{fn: fn, writes: map[string]bool{}}
+	c.classes[name] = &class{fn: fn, writes: nameSet(writes)}
+}
+
+// RegisterClassMethods makes fn the emulator of the class name, replacing
+// any earlier one, as a class whose methods are those methods names and
+// which gives the methods writes names the WR flag. An op calling any other
+// method of the class fails with EOPNOTSUPP before any step runs, as the OSD
+// refuses it at op setup (OpInfo::set_from_op). It panics on a write that is
+// not one of methods, since a class gives the WR flag only to a method it
+// registers.
+func (c *Cluster) RegisterClassMethods(name string, fn ClassFunc, methods, writes []string) {
+	cls := &class{fn: fn, methods: nameSet(methods), writes: nameSet(writes)}
 	for _, m := range writes {
-		cls.writes[m] = true
+		if !cls.methods[m] {
+			panic(fmt.Sprintf("fakerados: class %q: write method %q is not one of its methods", name, m))
+		}
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.classes[name] = cls
 }
 

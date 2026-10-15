@@ -32,7 +32,7 @@ var _ = Describe("RGWClass's usage read, trim and clear", func() {
 	)
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		var err error
 		p, err = c.Pool(ctx, logPool, usageNS)
 		Expect(err).NotTo(HaveOccurred())
