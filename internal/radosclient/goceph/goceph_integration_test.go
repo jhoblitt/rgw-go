@@ -1246,8 +1246,13 @@ func poolPGNum(ctx context.Context, c radosclient.Cluster, pool string) uint32 {
 
 // stableMod is the placement group of hash h in a pool of pgNum groups:
 // pg_pool_t::raw_hash_to_pg, ceph_stable_mod over pg_num_mask
-// (include/rados.h:96-102; osd_types.cc:1662-1665 and :1798-1801 at
-// v19.2.6, :1671-1673 and :1807-1810 at v20.2.4).
+// (include/rados.h:96-102;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.cc#L1662-L1665
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.cc#L1798-L1801 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.cc#L1671-L1673
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.cc#L1807-L1810 at v20.2.4).
 func stableMod(h, pgNum uint32) uint32 {
 	mask := uint32(1)<<bits.Len32(pgNum-1) - 1
 	if h&mask < pgNum {

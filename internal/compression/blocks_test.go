@@ -218,11 +218,14 @@ var _ = Describe("Stream", func() {
 	})
 
 	// RGWPutObj_Compress::process records each block at the logical offset
-	// its input started at (rgw_compression.cc:44-87 at v19.2.6 and
-	// v20.2.4), and RGWPutObj::execute stores orig_size as the bytes it took
-	// in (rgw_op.cc:4459 at v19.2.6, :4691 at v20.2.4), so a block decodes to
-	// the distance to the next block's old_ofs, and the last one to
-	// orig_size.
+	// its input started at
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L44-L87 at v19.2.6
+	// and v20.2.4), and RGWPutObj::execute stores orig_size as the bytes it
+	// took in
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4459 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4691 at v20.2.4),
+	// so a block decodes to the distance to the next block's old_ofs, and the
+	// last one to orig_size.
 	Describe("each block's decoded length, from the block map", func() {
 		whole := func(origSize uint64, w io.Writer) *compression.Stream {
 			GinkgoHelper()

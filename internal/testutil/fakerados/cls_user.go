@@ -11,8 +11,9 @@ import (
 )
 
 // UserWriteMethods are the methods UserClass emulates that the user class
-// registers with CLS_METHOD_WR (cls_user.cc:739-762 at v19.2.6 and
-// v20.2.4), which RegisterClass takes with UserClass.
+// registers with CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L739-L762 at v19.2.6
+// and v20.2.4), which RegisterClass takes with UserClass.
 var UserWriteMethods = []string{
 	"set_buckets_info", "complete_stats_sync", "remove_bucket", "reset_user_stats2",
 	"account_resource_add", "account_resource_rm",

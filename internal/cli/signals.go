@@ -9,9 +9,11 @@ import (
 )
 
 // NotifyContext returns a copy of ctx that ends on SIGINT or SIGTERM, which
-// stop radosgw (rgw_main.cc:134-135, rgw_signal.cc:84-85 at v19.2.6 and
-// v20.2.4), and takes SIGHUP and SIGUSR1 without ending. radosgw reopens its
-// log files on SIGHUP (rgw_main.cc:127, rgw_signal.cc:40-45), and rgw-go
+// stop radosgw
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L134-L135,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_signal.cc#L84-L85 at v19.2.6
+// and v20.2.4), and takes SIGHUP and SIGUSR1 without ending. radosgw reopens
+// its log files on SIGHUP (rgw_main.cc:127, rgw_signal.cc:40-45), and rgw-go
 // writes only to stderr. radosgw sends SIGUSR1 to its own frontend threads to
 // wake them (rgw_frontend.cc:104), so its SIGTERM handler, which it also
 // registers for SIGUSR1 (rgw_main.cc:136), skips the shutdown for that signal

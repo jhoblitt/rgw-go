@@ -47,9 +47,15 @@ func (c Config) withDefaults() Config {
 	// radosgw's parse_config_files, which runs whether or not a file is
 	// read, names the cluster "ceph" when no -c was given, and otherwise
 	// after the first file of the list it reads, leaving it empty when it
-	// reads none (config.cc:355-357 and :382-384 at v19.2.6, :356-358 and
-	// :383-385 at v20.2.4). librados names a cluster it was created without
-	// only when it reads a file, so the first case is set here.
+	// reads none
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/config.cc#L355-L357
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/common/config.cc#L382-L384 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/common/config.cc#L356-L358
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/common/config.cc#L383-L385 at v20.2.4).
+	// librados names a cluster it was created without only when it reads a
+	// file, so the first case is set here.
 	if c.Cluster == "" && c.ConfigFile == "" {
 		c.Cluster = "ceph"
 	}
@@ -183,14 +189,16 @@ func Connect(ctx context.Context, cfg Config) (radosclient.Cluster, error) {
 }
 
 // configure reads the config file, CEPH_ARGS and Args into conn in
-// global_pre_init's order (global_init.cc:133-168 at v19.2.6 and v20.2.4).
-// Given no path, rados_conf_read_file reads the files CEPH_CONF names, or
-// else the default list, which --no-config-file skips (config.cc:428-435 at
-// v19.2.6, :429-436 at v20.2.4). A list none of whose files can be read is
-// an error only for -c without --no-config-file: without -c,
-// global_pre_init warns "did not load config file, using default settings"
-// and goes on, and under --no-config-file it goes on silently. configure
-// logs to log.
+// global_pre_init's order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/global/global_init.cc#L133-L168 at v19.2.6
+// and v20.2.4). Given no path, rados_conf_read_file reads the files
+// CEPH_CONF names, or else the default list, which --no-config-file skips
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/config.cc#L428-L435 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/config.cc#L429-L436 at v20.2.4).
+// A list none of whose files can be read is an error only for -c without
+// --no-config-file: without -c, global_pre_init warns "did not load config
+// file, using default settings" and goes on, and under --no-config-file it
+// goes on silently. configure logs to log.
 func configure(ctx context.Context, conn *rados.Conn, cfg Config, log *slog.Logger) error {
 	var err error
 	switch {

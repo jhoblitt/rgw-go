@@ -9,7 +9,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
-// xmlDeclaration is XMLFormatter::XML_1_DTD (Formatter.cc:377-378 at v19.2.6).
+// xmlDeclaration is XMLFormatter::XML_1_DTD
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L377-L378 at v19.2.6).
 const xmlDeclaration = `<?xml version="1.0" encoding="UTF-8"?>`
 
 type xmlFormatter struct {
@@ -26,8 +27,9 @@ type xmlFormatter struct {
 }
 
 // NewXML is XMLFormatter(pretty, lowercased, underscored=true)
-// (Formatter.cc:377-654 at v19.2.6); radosgw never builds one that keeps
-// spaces in element names (rgw_rest.cc:1796).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L377-L654 at v19.2.6);
+// radosgw never builds one that keeps spaces in element names
+// (rgw_rest.cc:1796).
 func NewXML(pretty, lowercased bool) Formatter {
 	return &xmlFormatter{pretty: pretty, lowercased: lowercased}
 }

@@ -20,7 +20,8 @@ type jsonFormatter struct {
 	stack  []jsonSection
 }
 
-// NewJSON is JSONFormatter(pretty) (Formatter.cc:153-375 at v19.2.6).
+// NewJSON is JSONFormatter(pretty)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L153-L375 at v19.2.6).
 func NewJSON(pretty bool) Formatter { return &jsonFormatter{pretty: pretty} }
 
 // indent writes four spaces for each open section after the first.

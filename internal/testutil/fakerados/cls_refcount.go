@@ -10,8 +10,9 @@ import (
 )
 
 // RefcountWriteMethods are the methods of the refcount class registered with
-// CLS_METHOD_WR (cls_refcount.cc:210-212 at v19.2.6 and v20.2.4), which
-// RegisterClass takes with RefcountClass.
+// CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/refcount/cls_refcount.cc#L210-L212 at v19.2.6
+// and v20.2.4), which RegisterClass takes with RefcountClass.
 var RefcountWriteMethods = []string{"get", "put", "set"}
 
 // wildcardTag is the class's wildcard_tag, the empty tag an object without

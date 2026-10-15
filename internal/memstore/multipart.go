@@ -34,8 +34,8 @@ func copyUpload(u *upload, rec *op.BucketRecord) *op.Upload {
 }
 
 // CreateUpload implements op.MultipartStore. The id is radosgw's v2 form,
-// "2~" and 31 characters of gen_rand_alphanumeric (rgw_sal_rados.cc:3278-3283
-// at v19.2.6).
+// "2~" and 31 characters of gen_rand_alphanumeric
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3278-L3283 at v19.2.6).
 func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.UploadParams) (*op.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,8 +137,8 @@ func (s *Store) storePart(u *upload, n int, data []byte) *op.PartResult {
 
 // ListParts implements op.MultipartStore: the parts numbered past marker, in
 // order, at most maxParts of them; NextMarker is the last number returned,
-// and 0 when none is, as ListParts renders cur_max (rgw_rest_s3.cc:4135-4149
-// at v19.2.6).
+// and 0 when none is, as ListParts renders cur_max
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4135-L4149 at v19.2.6).
 func (s *Store) ListParts(_ context.Context, up *op.Upload, marker, maxParts int) (op.ListPartsResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -175,7 +175,8 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 }
 
 // Complete implements op.MultipartStore as RadosMultipartUpload::complete
-// checks and assembles a completion (rgw_sal_rados.cc:3433-3640 at v19.2.6):
+// checks and assembles a completion
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3433-L3640 at v19.2.6):
 // the listed parts, sorted by op.SortCompleteParts, must be the
 // uploaded ones, in lockstep, each with its ETag, every one but the last at
 // least minPartSize; the object's ETag is the MD5 of the parts' binary MD5s,
@@ -241,11 +242,19 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 }
 
 // previouslyCompleted is RGWCompleteMultipart::check_previously_completed
-// and the answer to its success (rgw_op.cc:6441-6444 and :6546-6586 at
-// v19.2.7; :7252-7255 and :7433-7504 at v20.2.4): the key's current object
-// carries the ETag the parts make, and the retried completion is a 200 for
-// that object with its stored ETag, which the check sets (:6584 at v19.2.7,
-// :7472 at v20.2.4). The caller holds s.mu.
+// and the answer to its success
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6441-L6444
+// and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6546-L6586 at v19.2.7;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7252-L7255
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504 at v20.2.4):
+// the key's current object carries the ETag the parts make, and the retried
+// completion is a 200 for that object with its stored ETag, which the check
+// sets
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472 at v20.2.4).
+// The caller holds s.mu.
 func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op.PutResult, bool) {
 	if up.Bucket == nil {
 		return nil, false

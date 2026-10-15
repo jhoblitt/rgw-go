@@ -73,12 +73,14 @@ var (
 	// account fails with.
 	ErrGranteeNotFound = errors.New("acl: grantee not found")
 	// ErrOwnerMismatch is RGWPutACLs::execute's -EPERM for a new policy
-	// whose owner is not the existing policy's (rgw_op.cc:5859-5864 at
-	// v19.2.6, :6505-6510 at v20.2.4).
+	// whose owner is not the existing policy's
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5859-L5864 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6505-L6510 at v20.2.4).
 	ErrOwnerMismatch = errors.New("acl: owner mismatch")
 	// ErrTooManyGrants is RGWPutACLs::execute's -ERR_LIMIT_EXCEEDED for a
 	// policy with more grants than rgw_acl_grants_max_num
-	// (rgw_op.cc:5866-5883 at v19.2.6, :6512-6529 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5866-L5883 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6512-L6529 at v20.2.4).
 	ErrTooManyGrants = errors.New("acl: too many grants")
 )
 
@@ -332,8 +334,9 @@ func s3GranteeType(name string) GranteeType {
 	return GranteeUnknown
 }
 
-// s3XMLNS is XMLNS_AWS_S3 (driver/rados/rgw_user.h:27 at v19.2.6, :26 at
-// v20.2.4).
+// s3XMLNS is XMLNS_AWS_S3
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.h#L27 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.h#L26 at v20.2.4).
 const s3XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 
 // MarshalS3XML is rgw::s3::write_policy_xml (rgw_acl_s3.cc:672-676) over the
@@ -493,9 +496,11 @@ func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (
 
 // parseGrantee is parse_grantee_str (rgw_acl_s3.cc:339-383). The item splits
 // at its first "=" with both sides trimmed, as parse_key_value does
-// (rgw_common.cc:661-679 at v19.2.6, :674-692 at v20.2.4), the value then
-// losing a quote at each end only when it has both (rgw_trim_quotes,
-// :1854-1876, :1917-1939); keys compare case-insensitively.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L661-L679 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L674-L692 at v20.2.4),
+// the value then losing a quote at each end only when it has both
+// (rgw_trim_quotes, :1854-1876, :1917-1939); keys compare
+// case-insensitively.
 func parseGrantee(ctx context.Context, r Resolver, item string, perm Permission) (Grant, error) {
 	key, value, ok := strings.Cut(item, "=")
 	if !ok {
@@ -536,8 +541,9 @@ func lookupError(item string, err error) error {
 // cSpace is the set C's isspace accepts in the C locale.
 const cSpace = " \t\n\v\f\r"
 
-// trimSpace is rgw_trim_whitespace (rgw_common.cc:1816-1839 at v19.2.6,
-// :1879-1902 at v20.2.4).
+// trimSpace is rgw_trim_whitespace
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1816-L1839 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1879-L1902 at v20.2.4).
 func trimSpace(s string) string { return strings.Trim(s, cSpace) }
 
 // trimQuotes is rgw_trim_quotes: s trimmed, then without its enclosing

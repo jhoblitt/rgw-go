@@ -7,9 +7,10 @@ import (
 )
 
 // MPUploadPartInfoUpdateOp is cls_rgw_mp_upload_part_info_update_op
-// (cls/rgw/cls_rgw_ops.h:1457-1480 at v19.2.6, :1495-1518 at v20.2.4), the
-// input of mp_upload_part_info_update: the meta object's omap key for a
-// part and the part's RGWUploadPartInfo. ceph-dencoder does not register
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_ops.h#L1457-L1480 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_ops.h#L1495-L1518 at v20.2.4),
+// the input of mp_upload_part_info_update: the meta object's omap key for
+// a part and the part's RGWUploadPartInfo. ceph-dencoder does not register
 // it.
 type MPUploadPartInfoUpdateOp struct {
 	PartKey string

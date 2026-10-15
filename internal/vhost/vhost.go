@@ -14,7 +14,9 @@ import (
 // RequestTarget is req_info's request_uri and request_params: REQUEST_URI is
 // the target as sent; get_abs_path reduces an absolute-form one before the
 // split at its first '?', so a query without one falls back to beast's
-// QUERY_STRING (rgw_common.cc:209-245 at v19.2.6, :209-255 at v20.2.4;
+// QUERY_STRING
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L209-L245 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L209-L255 at v20.2.4;
 // rgw_asio_client.cc:74-84). The path is what RGWREST::preprocess then puts
 // a virtual-hosted bucket in front of.
 func RequestTarget(req *http.Request) (path, query string) {
@@ -49,15 +51,18 @@ func absPath(uri string) string {
 	return uri
 }
 
-// maxBucketNameLen is RGWHandler_REST's MAX_BUCKET_NAME_LEN (rgw_rest.h:555
-// at v19.2.6, :567 at v20.2.4).
+// maxBucketNameLen is RGWHandler_REST's MAX_BUCKET_NAME_LEN
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L555 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L567 at v20.2.4).
 const maxBucketNameLen = 255
 
 // Hostname is the Host header as RGWREST::preprocess leaves it. req_info first
-// drops a trailing ':' and the digits after it (rgw_common.cc:246-261 at
-// v19.2.6, :256-271 at v20.2.4); preprocess then keeps what a leading '[' and
-// the first ']' enclose, or cuts at the first ':' (rgw_rest.cc:2048-2060 at
-// v19.2.6, :2065-2077 at v20.2.4). radosgw keeps the case the client sent.
+// drops a trailing ':' and the digits after it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L246-L261 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L256-L271 at v20.2.4);
+// preprocess then keeps what a leading '[' and the first ']' enclose, or cuts
+// at the first ':' (rgw_rest.cc:2048-2060 at v19.2.6, :2065-2077 at v20.2.4).
+// radosgw keeps the case the client sent.
 func Hostname(h string) string {
 	if i := strings.LastIndexByte(h, ':'); i >= 0 && isDigits(h[i+1:]) {
 		h = h[:i]
@@ -104,18 +109,21 @@ func Bucket(host string, names []string) string {
 
 // Domain is the configured name RGWREST::preprocess finds host in, a Host as
 // Hostname leaves it, as cut from host with the client's case: the domain
-// preprocess makes s->info.domain (rgw_rest.cc:2163-2165 at v19.2.6,
-// :2180-2182 at v20.2.4). "" when host is in no configured name.
+// preprocess makes s->info.domain
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2163-L2165 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2180-L2182 at v20.2.4).
+// "" when host is in no configured name.
 func Domain(host string, names []string) string {
 	domain, _ := findHostInDomains(host, names)
 	return domain
 }
 
-// findHostInDomains is rgw_find_host_in_domains (rgw_rest.cc:260-287 at
-// v19.2.6 and v20.2.4). radosgw walks its hostname set in sorted order and
-// stops at the first name host equals or ends in after a ".", comparing
-// without regard to ASCII case; that first match is the least matching name.
-// The domain and subdomain are cut from host, so they keep the client's case.
+// findHostInDomains is rgw_find_host_in_domains
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L260-L287 at v19.2.6
+// and v20.2.4). radosgw walks its hostname set in sorted order and stops at
+// the first name host equals or ends in after a ".", comparing without regard
+// to ASCII case; that first match is the least matching name. The domain and
+// subdomain are cut from host, so they keep the client's case.
 func findHostInDomains(host string, names []string) (domain, subdomain string) {
 	found := ""
 	for _, name := range names {
@@ -167,10 +175,11 @@ func lowerASCII(c byte) byte {
 	return c
 }
 
-// LooksLikeIPAddress is looks_like_ip_address (rgw_rest_s3.h:801-826 at
-// v19.2.6, :831-856 at v20.2.4): an address inet_pton(AF_INET6) accepts, or
-// digits split by exactly three dots with none leading or doubled, whatever
-// the digits' values.
+// LooksLikeIPAddress is looks_like_ip_address
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L801-L826 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L831-L856 at v20.2.4):
+// an address inet_pton(AF_INET6) accepts, or digits split by exactly three
+// dots with none leading or doubled, whatever the digits' values.
 func LooksLikeIPAddress(s string) bool {
 	if strings.IndexByte(s, ':') >= 0 && net.ParseIP(s) != nil {
 		return true
@@ -198,10 +207,11 @@ func LooksLikeIPAddress(s string) bool {
 }
 
 // validBucketName is RGWHandler_REST::validate_bucket_name (rgw_rest.cc
-// :1815-1840 at v19.2.6, :1819-1844 at v20.2.4), which radosgw applies only to
-// a Host it might take as a bucket: empty, which names no bucket, or 3 to 255
-// bytes with no '/' and no 0xff byte. A bucket in the path is left to the
-// bucket lookup and to CreateBucket's own check.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1815-L1840 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1819-L1844 at v20.2.4),
+// which radosgw applies only to a Host it might take as a bucket: empty, which
+// names no bucket, or 3 to 255 bytes with no '/' and no 0xff byte. A bucket in
+// the path is left to the bucket lookup and to CreateBucket's own check.
 func validBucketName(name string) bool {
 	if name == "" {
 		return true

@@ -14,8 +14,9 @@ import (
 )
 
 // GCQueueWriteMethods are the methods of the rgw_gc class registered with
-// CLS_METHOD_WR (cls_rgw_gc.cc:551-555 at v19.2.6 and v20.2.4), which
-// RegisterClass takes with GCQueueClass.
+// CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L551-L555 at v19.2.6
+// and v20.2.4), which RegisterClass takes with GCQueueClass.
 var GCQueueWriteMethods = []string{
 	"rgw_gc_queue_init", "rgw_gc_queue_enqueue", "rgw_gc_queue_remove_entries", "rgw_gc_queue_update_entry",
 }

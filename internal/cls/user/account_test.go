@@ -13,8 +13,10 @@ import (
 
 // The corpus holds no account type of the user class, so each fixture is
 // built field by field from its ENCODE_START(1, 1) framing
-// (cls_user_types.h:219-264 and cls_user_ops.h:267-397 at v19.2.6 and
-// v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_types.h#L219-L264
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user_ops.h#L267-L397 at v19.2.6
+// and v20.2.4).
 
 // resourceBytes is cls_user_account_resource as the class stores it.
 func resourceBytes(name, path string, metadata []byte) []byte {

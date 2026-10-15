@@ -41,7 +41,8 @@ func (s *Store) GetAccount(_ context.Context, id string) (*op.AccountRecord, err
 }
 
 // GetAccountByName implements op.AccountStore through the "name.<tenant>$<name>"
-// index (account.cc:92-100 at v19.2.6).
+// index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L92-L100 at v19.2.6).
 func (s *Store) GetAccountByName(_ context.Context, tenant, name string) (*op.AccountRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -54,7 +55,8 @@ func (s *Store) GetAccountByName(_ context.Context, tenant, name string) (*op.Ac
 
 // GetAccountByEmail implements op.AccountStore through the email index users
 // share. An entry a user holds names no account, as read_by_email answers
-// ENOENT for an id that is not an account's (account.cc:219-240 at v19.2.6).
+// ENOENT for an id that is not an account's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L219-L240 at v19.2.6).
 func (s *Store) GetAccountByEmail(_ context.Context, email string) (*op.AccountRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -66,13 +68,13 @@ func (s *Store) GetAccountByEmail(_ context.Context, email string) (*op.AccountR
 }
 
 // PutAccount implements op.AccountStore as rgwrados::account::write
-// (account.cc:242-392 at v19.2.6). A name or email that differs from old's
-// and that any index entry holds, this account's included, is
-// ErrAccountAlreadyExists before anything is written. A write over a stored
-// account bumps its version count under its tag and a create starts at 1
-// with a fresh tag, as cls_version_inc does; a non-zero rec.Version must
-// match the stored one. Old's index entries are dropped only where they
-// still name this account.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L242-L392 at v19.2.6).
+// A name or email that differs from old's and that any index entry holds,
+// this account's included, is ErrAccountAlreadyExists before anything is
+// written. A write over a stored account bumps its version count under its
+// tag and a create starts at 1 with a fresh tag, as cls_version_inc does; a
+// non-zero rec.Version must match the stored one. Old's index entries are
+// dropped only where they still name this account.
 func (s *Store) PutAccount(_ context.Context, rec *op.AccountRecord, old *meta.AccountInfo, opts op.PutAccountOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,9 +137,10 @@ func (s *Store) PutAccount(_ context.Context, rec *op.AccountRecord, old *meta.A
 }
 
 // RemoveAccount implements op.AccountStore as rgwrados::account::remove
-// (account.cc:394-438 at v19.2.6): the account, guarded by a non-zero
-// rec.Version, then the name and email entries of rec.Info and the users
-// index, whoever those entries name.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L394-L438 at v19.2.6):
+// the account, guarded by a non-zero rec.Version, then the name and
+// email entries of rec.Info and the users index, whoever those entries
+// name.
 func (s *Store) RemoveAccount(_ context.Context, rec *op.AccountRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

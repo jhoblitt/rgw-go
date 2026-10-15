@@ -15,8 +15,10 @@ type htmlFormatter struct {
 	statusName string
 }
 
-// NewHTML is HTMLFormatter(pretty) (HTMLFormatter.cc:34-168 at v19.2.6), an
-// XMLFormatter that neither lowercases nor keeps spaces in section names.
+// NewHTML is HTMLFormatter(pretty)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/HTMLFormatter.cc#L34-L168 at v19.2.6),
+// an XMLFormatter that neither lowercases nor keeps spaces in section
+// names.
 func NewHTML(pretty bool) Formatter {
 	return &htmlFormatter{pretty: pretty}
 }

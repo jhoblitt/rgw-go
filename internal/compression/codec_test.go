@@ -60,8 +60,9 @@ func deflateMember(src []byte, winBits int) []byte {
 }
 
 // cephZlib is ZlibCompressor's block: the prefix byte zlib_compress writes
-// (ZlibCompressor.cc:119 at v19.2.6, :131 at v20.2.4), then the members back
-// to back, as QatAccel writes one per input buffer.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/zlib/ZlibCompressor.cc#L119 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L131 at v20.2.4),
+// then the members back to back, as QatAccel writes one per input buffer.
 func cephZlib(winBits int, members ...[]byte) []byte {
 	out := []byte{0}
 	for _, m := range members {
@@ -395,8 +396,9 @@ var _ = Describe("Decoder", func() {
 	})
 
 	// ZlibCompressor::decompress inflates nothing from a block of no bytes
-	// or of the prefix byte alone, and returns 0 (ZlibCompressor.cc:247-277
-	// at v19.2.6, :267-297 at v20.2.4).
+	// or of the prefix byte alone, and returns 0
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/compressor/zlib/ZlibCompressor.cc#L247-L277 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L267-L297 at v20.2.4).
 	DescribeTable("decodes an empty zlib block to nothing, as radosgw does",
 		func(block []byte) {
 			dec, err := compression.NewDecoder(compression.Zlib)

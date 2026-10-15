@@ -50,11 +50,13 @@
 //
 // Both gateways run with TCP_NODELAY on, and the run refuses a gateway whose
 // frontends leave it off: radosgw's beast sets it only for tcp_nodelay=1
-// (rgw_asio_frontend.cc:702-706, :1165 at v19.2.6; :643-647, :1083 at
-// v20.2.4), which the chart values give it, and rgw-go keeps Go's unless its
-// frontend sets tcp_nodelay to anything else (docs/exclusions.md, "TCP
-// options"). env.json records the gateway's frontends and the TCP_NODELAY they
-// give.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L702-L706,
+// :1165 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L643-L647,
+// :1083 at v20.2.4), which the chart values give it, and rgw-go keeps Go's
+// unless its frontend sets tcp_nodelay to anything else (docs/exclusions.md,
+// "TCP options"). env.json records the gateway's frontends and the TCP_NODELAY
+// they give.
 //
 // elbencho signs as the user bench, whose keys are fixed, so that every run
 // writes the same commands; it is created through radosgw-admin and removed

@@ -14,14 +14,17 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
-// Attr is RGW_ATTR_TAGS (rgw_common.h:115 at v19.2.6, :126 at v20.2.4), the
-// attr an object's or a bucket's tag set is stored under.
+// Attr is RGW_ATTR_TAGS
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L115 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L126 at v20.2.4),
+// the attr an object's or a bucket's tag set is stored under.
 const Attr = meta.AttrPrefix + "x-amz-tagging"
 
 // The limits of check_and_add_tag (rgw_tag.h:18-20): an object's tag set holds
 // at most MaxObjectTags tags, and RGWPutBucketTags_ObjStore_S3::get_params
-// (rgw_rest_s3.cc:898 at v19.2.6, :980 at v20.2.4) allows a bucket
-// MaxBucketTags. Lengths are in bytes.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L898 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L980 at v20.2.4)
+// allows a bucket MaxBucketTags. Lengths are in bytes.
 const (
 	MaxObjectTags = 10
 	MaxBucketTags = 50
@@ -156,7 +159,9 @@ func decodeBinary(d *denc.Decoder) Set {
 // MarshalJSON is RGWObjTags::dump (rgw_tag.cc:59-66), the form ceph-dencoder
 // prints: {"tagset": {key: value, ...}}, a key that occurs twice written
 // twice. JSONFormatter writes each value through json_stream_escaper
-// (Formatter.cc:195 at v19.2.6, :204 at v20.2.4; escape.cc:254-286 at both),
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L195 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L204 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L254-L286 at both),
 // and like it this leaves <, > and & as they are; json.Marshal escapes them
 // again in what it returns unless the caller's Encoder turns HTML escaping
 // off.
@@ -164,7 +169,7 @@ func decodeBinary(d *denc.Decoder) Set {
 // The parity is semantic, not byte for byte:
 //   - JSONFormatter writes a key raw and cut at its first NUL
 //     (dump_string(tag.first.c_str(), ...), rgw_tag.cc:63; print_name,
-//     Formatter.cc:210 at v19.2.6, :219 at v20.2.4), so its output is not
+//     https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L210 at v19.2.6, https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L219 at v20.2.4), so its output is not
 //     JSON for a key holding '"', '\' or a control byte, where this escapes
 //     the key as it does a value.
 //   - encoding/json writes invalid UTF-8 as U+FFFD, where json_stream_escaper

@@ -14,8 +14,13 @@ import (
 // sort_bitwise false, so its first fetch takes the cluster's bitwise sort as
 // a change of order and restarts at the start of the hash's placement group
 // (Objecter::list_nobjects_seek and list_nobjects, src/osdc/Objecter.cc
-// :3761-3773 and :3828-3835 at v19.2.6, :3934-3946 and :4001-4008 at
-// v20.2.4). ListPage skips what that replays.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3761-L3773
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L3828-L3835 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3934-L3946
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L4001-L4008 at v20.2.4).
+// ListPage skips what that replays.
 func (p *pool) ListObjectsFrom(ctx context.Context, token string, limit int, fn func(oid, locator string) error) (next string, more bool, err error) {
 	h, err := p.state.acquire("list objects", "")
 	if err != nil {

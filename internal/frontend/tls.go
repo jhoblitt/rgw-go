@@ -25,10 +25,13 @@ var openSSLSuites = map[string]uint16{
 const configKeyPrefix = "config://"
 
 // TLSConfig builds crypto/tls's configuration from the spec's ssl_* keys, as
-// AsioFrontend::init_ssl builds its ssl context (rgw_asio_frontend.cc:889-1048
-// at v20.2.4, ssl_reload :981-1094 at v19.2.6), and loads the certificate.
-// It needs ssl_certificate to name a file: radosgw, given none, reads the
-// config:// certificate rgw_frontend_defaults names, which rgw-go does not.
+// AsioFrontend::init_ssl builds its ssl context
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L889-L1048 at v20.2.4,
+// ssl_reload
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L981-L1094 at v19.2.6),
+// and loads the certificate. It needs ssl_certificate to name a file: radosgw,
+// given none, reads the config:// certificate rgw_frontend_defaults names,
+// which rgw-go does not.
 func TLSConfig(spec Spec) (*tls.Config, error) {
 	if spec.SSLCertificate == "" {
 		return nil, errNoCertificate(spec)

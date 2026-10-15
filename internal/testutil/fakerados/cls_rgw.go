@@ -18,10 +18,28 @@ import (
 )
 
 // RGWWriteMethods are the methods RGWClass emulates that the rgw class
-// registers with CLS_METHOD_WR (cls_rgw.cc:4691-4698, :4705-4706, :4716,
-// :4722, :4724-4725, :4728, :4731, :4743 and :4752 at v19.2.6, :5107-5115,
-// :5122-5123, :5135, :5141, :5143-5144, :5147, :5150, :5162 and :5171 at
-// v20.2.4), which RegisterClass takes with RGWClass.
+// registers with CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4691-L4698,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4705-L4706,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4716,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4722,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4724-L4725,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4728,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4731,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4743
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4752 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5107-L5115,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5122-L5123,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5135,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5141,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5143-L5144,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5147,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5150,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5162
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5171 at v20.2.4),
+// which RegisterClass takes with RGWClass.
 var RGWWriteMethods = []string{
 	"bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 	"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
@@ -105,8 +123,9 @@ func RGWClass() ClassFunc {
 	}
 }
 
-// rgwObjRemove is rgw_obj_remove (cls_rgw.cc:2410-2482 at v19.2.6): the
-// object is removed, and when it held xattrs under one of the request's
+// rgwObjRemove is rgw_obj_remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2410-L2482 at v19.2.6):
+// the object is removed, and when it held xattrs under one of the request's
 // prefixes it is created again, empty, with only those. It reads the xattrs
 // from the stored object, as cls_cxx_getxattrs does, and a missing object is
 // cls_cxx_remove's ENOENT. radosgw sends it after a create, so the steps that
@@ -133,11 +152,11 @@ func rgwObjRemove(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwObjStorePGVer is rgw_obj_store_pg_ver (cls_rgw.cc:2484-2507 at
-// v19.2.6): the named xattr takes cls_current_version, the placement group's
-// last user version, as 8 little-endian bytes. The fake has no placement
-// group and stores the version the object had before the op, 0 for a new
-// one.
+// rgwObjStorePGVer is rgw_obj_store_pg_ver
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2484-L2507 at v19.2.6):
+// the named xattr takes cls_current_version, the placement group's last user
+// version, as 8 little-endian bytes. The fake has no placement group and
+// stores the version the object had before the op, 0 for a new one.
 func rgwObjStorePGVer(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeStorePGVerOp)
 	if rval < 0 {
@@ -151,12 +170,14 @@ func rgwObjStorePGVer(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwObjCheckMtime is rgw_obj_check_mtime (cls_rgw.cc:2553-2615 at v19.2.6,
-// :2721-2783 at v20.2.4, the same code): the object's mtime, the zero
-// real_time when it does not exist, compared with the request's under its
-// type, both cut to whole seconds unless the request asks for high
-// precision; a comparison that fails is ECANCELED, and an unknown type
-// EINVAL. cls_cxx_stat2 sees the object as the op has left it so far.
+// rgwObjCheckMtime is rgw_obj_check_mtime
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2553-L2615 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2721-L2783 at v20.2.4,
+// the same code): the object's mtime, the zero real_time when it does not
+// exist, compared with the request's under its type, both cut to whole
+// seconds unless the request asks for high precision; a comparison that
+// fails is ECANCELED, and an unknown type EINVAL. cls_cxx_stat2 sees the
+// object as the op has left it so far.
 func rgwObjCheckMtime(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeCheckMtimeOp)
 	if rval < 0 {
@@ -191,24 +212,28 @@ func rgwObjCheckMtime(call *ClassCall) int32 {
 }
 
 // The omap key prefixes of the omap-era gc queue, gc_index_prefixes
-// (cls_rgw.cc:3838-3842 at v19.2.6): the entry under its tag, and again
-// under its due time.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3838-L3842 at v19.2.6):
+// the entry under its tag, and again under its due time.
 const (
 	gcNameIndex = "0_"
 	gcTimeIndex = "1_"
 )
 
-// gcTimeKey is get_time_key (cls_rgw.cc:119-125 at v19.2.6): seconds and
-// nanoseconds, zero-padded to 11 and 9 digits, the seconds the 32 bits
-// ceph_timespec keeps.
+// gcTimeKey is get_time_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L119-L125 at v19.2.6):
+// seconds and nanoseconds, zero-padded to 11 and 9 digits, the seconds
+// the 32 bits ceph_timespec keeps.
 func gcTimeKey(t time.Time) string {
 	return fmt.Sprintf("%011d.%09d", uint32(t.Unix()), t.Nanosecond()) //nolint:gosec // ceph_timespec's tv_sec is 32 bits
 }
 
 // rgwGCSetEntry is rgw_cls_gc_set_entry through gc_update_entry
-// (cls_rgw.cc:3896-3941 and :3964-3978 at v19.2.6): an entry already under
-// the tag loses its time-index key, and the entry, due ExpirationSecs from
-// the class's clock, is stored under the tag and under its time.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3896-L3941
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3964-L3978 at v19.2.6):
+// an entry already under the tag loses its time-index key, and the entry,
+// due ExpirationSecs from the class's clock, is stored under the tag and
+// under its time.
 func rgwGCSetEntry(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGCSetEntryOp)
 	if rval < 0 {
@@ -235,17 +260,20 @@ func rgwGCSetEntry(call *ClassCall) int32 {
 }
 
 // gcListDefaultMax is GC_LIST_ENTRIES_DEFAULT, what gc_list lists for a max
-// of 0 (cls_rgw.cc:4117 at v19.2.6, :4519 at v20.2.4).
+// of 0
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4117 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4519 at v20.2.4).
 const gcListDefaultMax = 128
 
 // rgwGCList is rgw_cls_gc_list through gc_iterate_entries
-// (cls_rgw.cc:3996-4126 at v19.2.6, :4398-4528 at v20.2.4): the time index
-// after the marker, or from its start, in key order, so earliest due first,
-// one omap read of max keys (128 for 0); a key outside the time index ends
-// the listing, as does, when only the expired are asked for, a key at or
-// past the class's clock. The next marker is the last key returned, set
-// only while the read was truncated. It reads the stored omap, as
-// cls_cxx_map_get_vals does.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3996-L4126 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4398-L4528 at v20.2.4):
+// the time index after the marker, or from its start, in key order, so
+// earliest due first, one omap read of max keys (128 for 0); a key outside
+// the time index ends the listing, as does, when only the expired are asked
+// for, a key at or past the class's clock. The next marker is the last key
+// returned, set only while the read was truncated. It reads the stored
+// omap, as cls_cxx_map_get_vals does.
 func rgwGCList(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGCListOp)
 	if rval < 0 {
@@ -288,11 +316,12 @@ func rgwGCList(call *ClassCall) (out []byte, rval int32) {
 	return encodeSquid(ret), 0
 }
 
-// rgwGCRemove is rgw_cls_gc_remove through gc_remove (cls_rgw.cc:4128-4173
-// at v19.2.6, :4530-4575 at v20.2.4): each tag's name-index entry, and the
-// time-index key of the due time it records, go; a tag the shard does not
-// hold is skipped. It reads each entry from the stored omap, as
-// cls_cxx_map_get_val does.
+// rgwGCRemove is rgw_cls_gc_remove through gc_remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4128-L4173 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4530-L4575 at v20.2.4):
+// each tag's name-index entry, and the time-index key of the due time it
+// records, go; a tag the shard does not hold is skipped. It reads each
+// entry from the stored omap, as cls_cxx_map_get_val does.
 func rgwGCRemove(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGCRemoveOp)
 	if rval < 0 {
@@ -319,9 +348,11 @@ func rgwGCRemove(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwDirHeader is read_bucket_header (cls_rgw.cc:464-485 at v19.2.6,
-// :514-535 at v20.2.4): the stored header, the zero header when the shard
-// has none, and EIO when it does not decode.
+// rgwDirHeader is read_bucket_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L464-L485 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L514-L535 at v20.2.4):
+// the stored header, the zero header when the shard has none, and EIO
+// when it does not decode.
 func rgwDirHeader(call *ClassCall) (h rgwcls.DirHeader, rval int32) {
 	if call.Stored == nil || len(call.Stored.OmapHdr) == 0 {
 		return rgwcls.DirHeader{}, 0
@@ -334,12 +365,13 @@ func rgwDirHeader(call *ClassCall) (h rgwcls.DirHeader, rval int32) {
 	return h, 0
 }
 
-// rgwBucketInitIndex is rgw_bucket_init_index (cls_rgw.cc:741-764 at
-// v19.2.6, :837-860 at v20.2.4): a shard that already has a header is
-// EINVAL, "index already initialized", and any other gets an empty header
-// at version 1, as write_bucket_header counts the write. radosgw precedes
-// the call with an exclusive create, so it meets EEXIST from the create
-// first.
+// rgwBucketInitIndex is rgw_bucket_init_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L741-L764 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L837-L860 at v20.2.4):
+// a shard that already has a header is EINVAL, "index already
+// initialized", and any other gets an empty header at version 1, as
+// write_bucket_header counts the write. radosgw precedes the call with an
+// exclusive create, so it meets EEXIST from the create first.
 func rgwBucketInitIndex(call *ClassCall) int32 {
 	if call.Stored != nil && len(call.Stored.OmapHdr) != 0 {
 		return -int32(syscall.EINVAL)
@@ -348,9 +380,11 @@ func rgwBucketInitIndex(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwBucketList is rgw_bucket_list (cls_rgw.cc:487-694 at v19.2.6,
-// :537-744 at v20.2.4): for a request of no entries the shard's header,
-// untruncated, and otherwise rgwBucketListEntries.
+// rgwBucketList is rgw_bucket_list
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L487-L694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L537-L744 at v20.2.4):
+// for a request of no entries the shard's header, untruncated, and
+// otherwise rgwBucketListEntries.
 func rgwBucketList(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeListOp)
 	if rval < 0 {
@@ -367,9 +401,10 @@ func rgwBucketList(call *ClassCall) (out []byte, rval int32) {
 }
 
 // rgwStoredEntry is read_key_entry for a key without an instance
-// (cls_rgw.cc:946-978 at v19.2.6): the stored entry under idx, whether it
-// is there, and EIO when it does not decode. An entry flagged as a version
-// marker is EOPNOTSUPP, since the class would follow it to a versioned key.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L946-L978 at v19.2.6):
+// the stored entry under idx, whether it is there, and EIO when it does not
+// decode. An entry flagged as a version marker is EOPNOTSUPP, since the
+// class would follow it to a versioned key.
 func rgwStoredEntry(call *ClassCall, idx string) (en rgwcls.DirEntry, found bool, rval int32) {
 	if call.Stored == nil {
 		return rgwcls.DirEntry{}, false, 0
@@ -406,8 +441,10 @@ func rgwRemoveEntry(call *ClassCall, idx string) {
 // rgwRoundedSize is cls_rgw_get_rounded_size: up to the next 4 KiB.
 func rgwRoundedSize(n uint64) uint64 { return (n + 4095) &^ 4095 }
 
-// rgwUnaccount is unaccount_entry (cls_rgw.cc:887-898 at v19.2.6, :1017-1028
-// at v20.2.4): an existing entry's size leaves its category's stats.
+// rgwUnaccount is unaccount_entry
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L887-L898 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1017-L1028 at v20.2.4):
+// an existing entry's size leaves its category's stats.
 func rgwUnaccount(h *rgwcls.DirHeader, en rgwcls.DirEntry) {
 	if !en.Exists {
 		return
@@ -423,12 +460,14 @@ func rgwUnaccount(h *rgwcls.DirHeader, en rgwcls.DirEntry) {
 	h.Stats[en.Meta.Category] = st
 }
 
-// rgwBucketPrepareOp is rgw_bucket_prepare_op (cls_rgw.cc:803-885 at
-// v19.2.6): a request without a tag is EINVAL; a key with no entry gets an
-// unset one carrying the request's locator; the tag joins the entry's
-// pending_map in state PENDING_MODIFY with the op and the time. Tentacle's
-// (:923-1015) also guards itself, which the guard call radosgw sends ahead
-// of it already does here.
+// rgwBucketPrepareOp is rgw_bucket_prepare_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L803-L885 at v19.2.6):
+// a request without a tag is EINVAL; a key with no entry gets an unset one
+// carrying the request's locator; the tag joins the entry's pending_map in
+// state PENDING_MODIFY with the op and the time. Tentacle's
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L923-L1015)
+// also guards itself, which the guard call radosgw sends ahead of it
+// already does here.
 func rgwBucketPrepareOp(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodePrepareOp)
 	if rval < 0 {
@@ -456,18 +495,19 @@ func rgwBucketPrepareOp(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwBucketCompleteOp is rgw_bucket_complete_op (cls_rgw.cc:1006-1241 at
-// v19.2.6, :1136-1372 at v20.2.4). A header that cannot be read is EINVAL,
-// and a tag that is not pending is EINVAL. A completion whose epoch is not
-// above the entry's on the same pool becomes a cancel, but the request's
-// version is copied onto the entry first, so a cancel writes it back
-// (tracker #80894, reproduced on purpose). A cancel drops the tag and
-// removes an entry left neither existing nor pending; a DEL unaccounts the
-// entry and removes it, or keeps it as not existing while another tag is
-// pending; an ADD replaces the entry's meta and accounts it. Every
-// completion then removes and unaccounts the entries remove_objs names,
-// skipping one it cannot read, and writes the header with its version
-// counted.
+// rgwBucketCompleteOp is rgw_bucket_complete_op
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L1006-L1241 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1136-L1372 at v20.2.4).
+// A header that cannot be read is EINVAL, and a tag that is not pending is
+// EINVAL. A completion whose epoch is not above the entry's on the same
+// pool becomes a cancel, but the request's version is copied onto the
+// entry first, so a cancel writes it back (tracker #80894, reproduced on
+// purpose). A cancel drops the tag and removes an entry left neither
+// existing nor pending; a DEL unaccounts the entry and removes it, or
+// keeps it as not existing while another tag is pending; an ADD replaces
+// the entry's meta and accounts it. Every completion then removes and
+// unaccounts the entries remove_objs names, skipping one it cannot read,
+// and writes the header with its version counted.
 func rgwBucketCompleteOp(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeCompleteOp)
 	if rval < 0 {
@@ -554,11 +594,14 @@ func rgwBucketCompleteOp(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwGuardBucketResharding is rgw_guard_bucket_resharding (cls_rgw.cc:4577-4602
-// at v19.2.6): ret_err, verbatim, when the header's reshard status is
-// anything but not-resharding. Tentacle's (:4995-5016, through
-// guard_bucket_resharding at :906-921) refuses only an in-progress reshard,
-// and a log-record one whose reshard log has reached rgw_reshardlog_threshold.
+// rgwGuardBucketResharding is rgw_guard_bucket_resharding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4577-L4602 at v19.2.6):
+// ret_err, verbatim, when the header's reshard status is anything but
+// not-resharding. Tentacle's
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4995-L5016,
+// through guard_bucket_resharding at :906-921) refuses only an in-progress
+// reshard, and a log-record one whose reshard log has reached
+// rgw_reshardlog_threshold.
 func rgwGuardBucketResharding(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeGuardOp)
 	if rval < 0 {
@@ -574,9 +617,10 @@ func rgwGuardBucketResharding(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwGetBucketResharding is rgw_get_bucket_resharding (cls_rgw.cc:4604-4631
-// at v19.2.6, :5018-5045 at v20.2.4): the header's reshard entry, framed as
-// cls_rgw_get_bucket_resharding_ret.
+// rgwGetBucketResharding is rgw_get_bucket_resharding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4604-L4631 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5018-L5045 at v20.2.4):
+// the header's reshard entry, framed as cls_rgw_get_bucket_resharding_ret.
 func rgwGetBucketResharding(call *ClassCall) (out []byte, rval int32) {
 	d := denc.NewDecoder(call.In)
 	d.EndStruct(d.BeginStruct(1))
@@ -594,9 +638,11 @@ func rgwGetBucketResharding(call *ClassCall) (out []byte, rval int32) {
 	return e.Bytes(), 0
 }
 
-// rgwSetBucketResharding is rgw_set_bucket_resharding (cls_rgw.cc:4528-4551
-// at v19.2.6, :4946-4969 at v20.2.4): the header takes the request's reshard
-// status and is written with its version counted.
+// rgwSetBucketResharding is rgw_set_bucket_resharding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4528-L4551 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4946-L4969 at v20.2.4):
+// the header takes the request's reshard status and is written with its
+// version counted.
 func rgwSetBucketResharding(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeSetReshardingOp)
 	if rval < 0 {
@@ -652,11 +698,14 @@ func (c *Cluster) Header(pool, ns, oid string) rgwcls.DirHeader {
 	return h
 }
 
-// rgwMPUploadPartInfoUpdate is rgw_mp_upload_part_info_update (cls_rgw.cc:4360-4400
-// at v19.2.6, :4762-4802 at v20.2.4). A request that does not decode is
-// EINVAL. The part info stored under the request's key, read as
-// read_omap_entry does (:915-932 at v19.2.6, :1045-1062 at v20.2.4), is EIO
-// when it does not decode and a default one when the key or the object is
+// rgwMPUploadPartInfoUpdate is rgw_mp_upload_part_info_update
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4360-L4400 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4762-L4802 at v20.2.4).
+// A request that does not decode is EINVAL. The part info stored under the
+// request's key, read as read_omap_entry does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L915-L932 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1045-L1062 at v20.2.4),
+// is EIO when it does not decode and a default one when the key or the object is
 // missing. Its manifest's prefix, when the manifest is not empty, and its
 // past prefixes join the new info's past prefixes; a new prefix among them
 // is EEXIST; otherwise the merged info is stored under the key, creating the
@@ -706,14 +755,16 @@ func manifestEmpty(m meta.Manifest) bool {
 	return len(m.Rules) == 0
 }
 
-// rgwUserUsageLogAdd is rgw_user_usage_log_add (cls_rgw.cc:3563-3618 at
-// v19.2.6, :3965-4020 at v20.2.4). A request or a stored record that does
-// not decode is EINVAL. Each entry is filed under its payer, or its owner
-// when it has none, merged into the record already stored for its hour,
-// that user and its bucket, and stored under both the by-time and the
-// by-user key, creating the object. The stored record is read from the
-// store, so of two entries of one request with the same key the second
-// overwrites the first; radosgw never sends two.
+// rgwUserUsageLogAdd is rgw_user_usage_log_add
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3563-L3618 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3965-L4020 at v20.2.4).
+// A request or a stored record that does not decode is EINVAL. Each entry
+// is filed under its payer, or its owner when it has none, merged into
+// the record already stored for its hour, that user and its bucket, and
+// stored under both the by-time and the by-user key, creating the object.
+// The stored record is read from the store, so of two entries of one
+// request with the same key the second overwrites the first; radosgw
+// never sends two.
 func rgwUserUsageLogAdd(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeUsageAddOp)
 	if rval < 0 {
@@ -758,22 +809,26 @@ func usageRecordUser(en rgwcls.UsageLogEntry) string {
 	return en.Payer
 }
 
-// usageKeyByTime is usage_record_name_by_time (cls_rgw.cc:3536-3541 at
-// v19.2.6, :3938-3943 at v20.2.4).
+// usageKeyByTime is usage_record_name_by_time
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3536-L3541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3938-L3943 at v20.2.4).
 func usageKeyByTime(epoch uint64, user, bucket string) string {
 	return fmt.Sprintf("%011d_%s_%s", epoch, user, bucket)
 }
 
-// usageKeyByUser is usage_record_name_by_user (cls_rgw.cc:3543-3548 at
-// v19.2.6, :3945-3950 at v20.2.4).
+// usageKeyByUser is usage_record_name_by_user
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3543-L3548 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3945-L3950 at v20.2.4).
 func usageKeyByUser(user string, epoch uint64, bucket string) string {
 	return fmt.Sprintf("%s_%011d_%s", user, epoch, bucket)
 }
 
-// aggregateUsage is rgw_usage_log_entry::aggregate (cls_rgw_types.h:1005-1023
-// at v19.2.6, :1044-1062 at v20.2.4) of e into en: en takes e's owner,
-// payer, bucket and epoch only when its own owner is empty, and every
-// category of e is added to en's category and to its total.
+// aggregateUsage is rgw_usage_log_entry::aggregate
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1005-L1023 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1044-L1062 at v20.2.4)
+// of e into en: en takes e's owner, payer, bucket and epoch only when its own
+// owner is empty, and every category of e is added to en's category and to
+// its total.
 func aggregateUsage(en, e rgwcls.UsageLogEntry) rgwcls.UsageLogEntry {
 	if usageUserEmpty(en.Owner) {
 		en.Owner, en.Payer, en.Bucket, en.Epoch = e.Owner, e.Payer, e.Bucket, e.Epoch
@@ -804,23 +859,29 @@ func addUsageData(a, b rgwcls.UsageData) rgwcls.UsageData {
 
 // usageMaxEntries is both MAX_ENTRIES, the window user_usage_log_read
 // reads when the request names none, and MAX_USAGE_TRIM_ENTRIES, the window
-// of every user_usage_log_trim (cls_rgw.cc:3739 and :3794 at v19.2.6,
-// :4141 and :4196 at v20.2.4).
+// of every user_usage_log_trim
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3739
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3794 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4141
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4196 at v20.2.4).
 const usageMaxEntries = 1000
 
-// usageIterateRange is usage_iterate_range (cls_rgw.cc:3620-3704 at
-// v19.2.6, :4022-4106 at v20.2.4): one omap read of maxEntries keys after
-// *iter, or, when *iter is empty, after the user's by-user prefix at start,
-// or without a user the by-time prefix at start. Each key read moves *iter;
-// a key without the user's prefix, or without a user one at or past the
-// by-time prefix of end, ends the walk untruncated. Each record is decoded,
-// EINVAL when it does not decode, and skipped unless of bucket when one is
-// named and at or after start; one at or past end ends the walk
-// untruncated. The prefix test lets in the by-user keys of another user
-// whose id begins with user and "_", and the by-time walk any by-user key
-// that sorts below end's key (docs/ceph-upstream-bugs.md). The callback
-// sees every other record. truncated is the omap read's, unless the walk
-// ended.
+// usageIterateRange is usage_iterate_range
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3620-L3704 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4022-L4106 at v20.2.4):
+// one omap read of maxEntries keys after *iter, or, when *iter is empty,
+// after the user's by-user prefix at start, or without a user the by-time
+// prefix at start. Each key read moves *iter; a key without the user's
+// prefix, or without a user one at or past the by-time prefix of end, ends
+// the walk untruncated. Each record is decoded, EINVAL when it does not
+// decode, and skipped unless of bucket when one is named and at or after
+// start; one at or past end ends the walk untruncated. The prefix test lets
+// in the by-user keys of another user whose id begins with user and "_",
+// and the by-time walk any by-user key that sorts below end's key
+// (docs/ceph-upstream-bugs.md). The callback sees every other record.
+// truncated is the omap read's, unless the walk ended.
 func usageIterateRange(call *ClassCall, start, end uint64, user, bucket string, iter *string, maxEntries uint32, cb func(e rgwcls.UsageLogEntry)) (truncated bool, rval int32) {
 	byUser := user != ""
 	var startKey, endKey, userKey string
@@ -862,11 +923,12 @@ func usageIterateRange(call *ClassCall, start, end uint64, user, bucket string, 
 }
 
 // rgwUserUsageLogRead is rgw_user_usage_log_read with usage_log_read_cb
-// (cls_rgw.cc:3706-3750 at v19.2.6, :4108-4152 at v20.2.4): the records
-// usageIterateRange walks, merged per payer, or owner when there is none,
-// and bucket by aggregateUsage, with the last key walked as the next
-// iterator when the read was truncated. A request that does not decode is
-// EINVAL.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3706-L3750 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4108-L4152 at v20.2.4):
+// the records usageIterateRange walks, merged per payer, or owner when
+// there is none, and bucket by aggregateUsage, with the last key walked
+// as the next iterator when the read was truncated. A request that does
+// not decode is EINVAL.
 func rgwUserUsageLogRead(call *ClassCall) (out []byte, rval int32) {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeUsageReadOp)
 	if rval < 0 {
@@ -893,16 +955,17 @@ func rgwUserUsageLogRead(call *ClassCall) (out []byte, rval int32) {
 }
 
 // rgwUserUsageLogTrim is rgw_user_usage_log_trim with usage_log_trim_cb
-// (cls_rgw.cc:3752-3803 at v19.2.6, :4154-4205 at v20.2.4): ENOENT for an
-// object that does not exist, EINVAL for a request that does not decode,
-// then one window of usageIterateRange from the range's start, each record
-// it hands on removed under the by-time and by-user keys built from its
-// owner. A record filed under its payer is therefore found and never
-// removed, and a trim of its payer removes the owner's record of the same
-// hour and bucket instead (tracker #72593, fixed in v21 only). ENODATA
-// answers a window that found no record with nothing after it; a window
-// of 1000 keys none of which matches the bucket filter answers 0 without
-// progress, every time (#58136).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3752-L3803 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4154-L4205 at v20.2.4):
+// ENOENT for an object that does not exist, EINVAL for a request that does
+// not decode, then one window of usageIterateRange from the range's start,
+// each record it hands on removed under the by-time and by-user keys built
+// from its owner. A record filed under its payer is therefore found and
+// never removed, and a trim of its payer removes the owner's record of the
+// same hour and bucket instead (tracker #72593, fixed in v21 only).
+// ENODATA answers a window that found no record with nothing after it; a
+// window of 1000 keys none of which matches the bucket filter answers 0
+// without progress, every time (#58136).
 func rgwUserUsageLogTrim(call *ClassCall) int32 {
 	if call.Stored == nil {
 		return -int32(syscall.ENOENT)
@@ -929,9 +992,11 @@ func rgwUserUsageLogTrim(call *ClassCall) int32 {
 	return 0
 }
 
-// rgwUsageLogClear is rgw_usage_log_clear (cls_rgw.cc:3805-3815 at v19.2.6,
-// :4207-4217 at v20.2.4): the omap cleared, header included, as
-// cls_cxx_map_clear does; an object that does not exist is already clear.
+// rgwUsageLogClear is rgw_usage_log_clear
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3805-L3815 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4207-L4217 at v20.2.4):
+// the omap cleared, header included, as cls_cxx_map_clear does; an object
+// that does not exist is already clear.
 func rgwUsageLogClear(call *ClassCall) int32 {
 	if obj := call.Object(); obj != nil {
 		clear(obj.Omap)
@@ -967,26 +1032,31 @@ func (c *Cluster) UsageEntries(pool, ns, oid string) []rgwcls.UsageLogEntry {
 }
 
 // rgwBIAdvanceAndRetry is RGWBIAdvanceAndRetryError, -EFBIG
-// (cls_rgw_const.h:11 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_const.h#L11 at v19.2.6
+// and v20.2.4).
 const rgwBIAdvanceAndRetry = -int32(syscall.EFBIG)
 
 // rgwListMaxAttempts is rgw_bucket_list's max_attempts, its bound on the
-// omap reads one call makes (cls_rgw.cc:492 at v19.2.6, :542 at v20.2.4).
+// omap reads one call makes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L492 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L542 at v20.2.4).
 const rgwListMaxAttempts = 8
 
-// rgwBucketListEntries is the rest of rgw_bucket_list (cls_rgw.cc:525-694 at
-// v19.2.6, :575-744 at v20.2.4) for a request of entries. It starts after
-// the start key, past the subdirectory a delimiter-terminated start key
-// names, and makes up to eight omap reads of the entries still wanted. Each
-// entry is decoded, EINVAL when it does not decode; a key
-// decode_list_index_key refuses and a version marker are skipped; without
-// list_versions an entry that is not visible, or named as the start key, is
-// skipped with every version of its name. With a delimiter a name holding it
-// after the prefix becomes one common-prefix entry and the listing skips
-// past the subdirectory. The reply is truncated when the last read left
-// keys and found some, with the last key visited as its marker, and a
-// truncated reply of no entries is RGWBIAdvanceAndRetryError. The fake
-// stores no key in the 0x80 "ugly namespace" get_obj_vals skips.
+// rgwBucketListEntries is the rest of rgw_bucket_list
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L525-L694 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L575-L744 at v20.2.4)
+// for a request of entries. It starts after the start key, past the
+// subdirectory a delimiter-terminated start key names, and makes up to eight
+// omap reads of the entries still wanted. Each entry is decoded, EINVAL when
+// it does not decode; a key decode_list_index_key refuses and a version
+// marker are skipped; without list_versions an entry that is not visible, or
+// named as the start key, is skipped with every version of its name. With a
+// delimiter a name holding it after the prefix becomes one common-prefix
+// entry and the listing skips past the subdirectory. The reply is truncated
+// when the last read left keys and found some, with the last key visited as
+// its marker, and a truncated reply of no entries is
+// RGWBIAdvanceAndRetryError. The fake stores no key in the 0x80 "ugly
+// namespace" get_obj_vals skips.
 func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader) (out []byte, rval int32) {
 	var keys []string
 	if call.Stored != nil {
@@ -1084,11 +1154,12 @@ func rgwObjVals(keys []string, start, prefix string, n int) (page []string, more
 	return page, false
 }
 
-// rgwDecodeListIndexKey is decode_list_index_key (cls_rgw.cc:417-462 at
-// v19.2.6, :467-512 at v20.2.4): a key without a NUL is the name; a longer
-// one is the name, then NUL-separated values, "i<instance>" and "v<ver>". A
-// key with no value after its NUL, or a version that does not parse, is
-// refused.
+// rgwDecodeListIndexKey is decode_list_index_key
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L417-L462 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L467-L512 at v20.2.4):
+// a key without a NUL is the name; a longer one is the name, then
+// NUL-separated values, "i<instance>" and "v<ver>". A key with no value
+// after its NUL, or a version that does not parse, is refused.
 func rgwDecodeListIndexKey(k string) (rgwcls.ObjKey, bool) {
 	name, rest, found := strings.Cut(k, "\x00")
 	if !found {
@@ -1111,9 +1182,9 @@ func rgwDecodeListIndexKey(k string) (rgwcls.ObjKey, bool) {
 	return key, true
 }
 
-// rgwVisible is rgw_bucket_dir_entry::is_visible (cls_rgw_types.h:446-457 at
-// v19.2.6): current, which an unversioned entry always is, and not a delete
-// marker.
+// rgwVisible is rgw_bucket_dir_entry::is_visible
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L446-L457 at v19.2.6):
+// current, which an unversioned entry always is, and not a delete marker.
 func rgwVisible(en rgwcls.DirEntry) bool {
 	current := en.Flags&rgwcls.FlagVer == 0 || en.Flags&(rgwcls.FlagVer|rgwcls.FlagCurrent) == rgwcls.FlagVer|rgwcls.FlagCurrent
 	return current && en.Flags&rgwcls.FlagDeleteMarker == 0
@@ -1124,19 +1195,19 @@ func rgwVisible(en rgwcls.DirEntry) bool {
 // v19.2.6 and v20.2.4).
 const rgwDefaultTagTimeout = 120 * time.Second
 
-// rgwDirSuggestChanges is Squid's rgw_dir_suggest_changes (cls_rgw.cc:2192-2408
-// at v19.2.6). A shard that does not exist is ENOENT, and a header that does
-// not decode EIO. Each change is an op byte, its log flag stripped, and an
-// entry; one that does not decode is EINVAL. A key the shard does not hold is
-// skipped. The stored entry's pending ops older than the header's tag
-// timeout, or 120 s, are dropped; a change made against an older index
-// version than the entry's is skipped; while a pending op remains nothing
-// changes. Otherwise the stored entry is unaccounted when it exists, and a
-// removal removes it while an update stores the suggested entry at the
-// header's version and accounts it. The header is written, its version
-// counted, when its stats changed. The fake keeps no bucket index log, so the
-// log flag changes nothing, and Tentacle's own reshard guard is left to the
-// guard call radosgw sends ahead of it.
+// rgwDirSuggestChanges is Squid's rgw_dir_suggest_changes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2192-L2408 at v19.2.6).
+// A shard that does not exist is ENOENT, and a header that does not decode EIO.
+// Each change is an op byte, its log flag stripped, and an entry; one that does
+// not decode is EINVAL. A key the shard does not hold is skipped. The stored
+// entry's pending ops older than the header's tag timeout, or 120 s, are
+// dropped; a change made against an older index version than the entry's is
+// skipped; while a pending op remains nothing changes. Otherwise the stored
+// entry is unaccounted when it exists, and a removal removes it while an update
+// stores the suggested entry at the header's version and accounts it. The
+// header is written, its version counted, when its stats changed. The fake
+// keeps no bucket index log, so the log flag changes nothing, and Tentacle's
+// own reshard guard is left to the guard call radosgw sends ahead of it.
 func rgwDirSuggestChanges(call *ClassCall) int32 {
 	if call.Stored == nil {
 		return -int32(syscall.ENOENT)
@@ -1235,12 +1306,14 @@ func (c *Cluster) Suggestions(pool, ns, oid string) []rgwcls.Suggestion {
 	return out
 }
 
-// rgwCheckIndex is check_index (cls_rgw.cc:3035-3114 at v19.2.6, :3361-3434
-// at v20.2.4) over a shard: its stored header, and the header its entries
-// make, which carries the stored tag timeout, version and sync-stopped flag
-// and nothing else of it, and counts each existing plain entry without flags
-// in its category. An entry that does not decode is EIO. The fake answers
-// ENOENT for a shard that does not exist, which is what the OSD answers
+// rgwCheckIndex is check_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3035-L3114 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3434 at v20.2.4)
+// over a shard: its stored header, and the header its entries make, which
+// carries the stored tag timeout, version and sync-stopped flag and nothing
+// else of it, and counts each existing plain entry without flags in its
+// category. An entry that does not decode is EIO. The fake answers ENOENT
+// for a shard that does not exist, which is what the OSD answers
 // bucket_check_index, a read; bucket_rebuild_index, a write, would instead
 // read an empty header there (PrimaryLogPG.cc:7767-7770 at v19.2.6) and
 // create the shard holding a zero header at version 1. radosgw sends
@@ -1277,8 +1350,10 @@ func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32
 	return existing, calc, 0
 }
 
-// rgwBucketCheckIndex is rgw_bucket_check_index (cls_rgw.cc:3129-3141 at
-// v19.2.6, :3461-3478 at v20.2.4): both headers, as rgw_cls_check_index_ret.
+// rgwBucketCheckIndex is rgw_bucket_check_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3129-L3141 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3461-L3478 at v20.2.4):
+// both headers, as rgw_cls_check_index_ret.
 func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
 	existing, calc, rval := rgwCheckIndex(call)
 	if rval < 0 {
@@ -1287,11 +1362,13 @@ func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
 	return encodeSquid(rgwcls.CheckIndexRet{ExistingHeader: existing, CalculatedHeader: calc}), 0
 }
 
-// rgwBucketRebuildIndex is rgw_bucket_rebuild_index (cls_rgw.cc:3116-3126 at
-// v19.2.6): the recalculated header written in place of the stored one, its
-// version counted as write_bucket_header counts it (:696-703). Tentacle's
-// (:3436-3458) also guards itself against a reshard, which the fake, Squid's
-// class, leaves out.
+// rgwBucketRebuildIndex is rgw_bucket_rebuild_index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3116-L3126 at v19.2.6):
+// the recalculated header written in place of the stored one, its version
+// counted as write_bucket_header counts it (:696-703). Tentacle's
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3436-L3458)
+// also guards itself against a reshard, which the fake, Squid's class,
+// leaves out.
 func rgwBucketRebuildIndex(call *ClassCall) int32 {
 	_, calc, rval := rgwCheckIndex(call)
 	if rval < 0 {

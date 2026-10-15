@@ -33,8 +33,9 @@ var (
 // LZ4Compressor.cc:142 and :144 at v19.2.6, :138 and :140 at v20.2.4).
 // radosgw's GET takes Ret for an errno, EPERM or ENOENT, and answers 403
 // AccessDenied or 404 NoSuchKey when no byte of the body has gone out
-// (send_response_data, rgw_rest_s3.cc:391-404 at v19.2.6; rgw_common.cc:89
-// and :97). A DecodeError is an ErrCorrupt.
+// (send_response_data,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L391-L404 at v19.2.6;
+// rgw_common.cc:89 and :97). A DecodeError is an ErrCorrupt.
 type DecodeError struct {
 	Codec string
 	Ret   int

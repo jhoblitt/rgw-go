@@ -9,8 +9,9 @@ import (
 )
 
 // LockWriteMethods are the methods LockClass emulates that the lock class
-// registers with CLS_METHOD_WR (cls_lock.cc:625-633 at v19.2.6 and v20.2.4),
-// which RegisterClass takes with LockClass.
+// registers with CLS_METHOD_WR
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/lock/cls_lock.cc#L625-L633 at v19.2.6
+// and v20.2.4), which RegisterClass takes with LockClass.
 var LockWriteMethods = []string{"lock", "unlock", "break_lock"}
 
 // ClientName is the entity every fake request originates from,

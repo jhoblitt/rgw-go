@@ -40,8 +40,9 @@ const (
 )
 
 // EntityName is entity_name_t: the holder's type and number, DENC'd as u8
-// then i64 (msg_types.h:93-96 at v19.2.6). A client's number is its global
-// id, the seam's Cluster.InstanceID.
+// then i64
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/msg/msg_types.h#L93-L96 at v19.2.6).
+// A client's number is its global id, the seam's Cluster.InstanceID.
 type EntityName struct {
 	Type uint8
 	Num  int64

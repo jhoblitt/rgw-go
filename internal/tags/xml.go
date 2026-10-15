@@ -13,8 +13,13 @@ import (
 var ErrMalformedXML = errors.New("tags: malformed xml")
 
 // ParseXML is RGWObjTagging_S3::decode_xml then rebuild (rgw_tag_s3.cc:14-17,
-// :32-57), as the tagging ops' get_params run them (rgw_rest_s3.cc:776-815
-// and :868-913 at v19.2.6, :858-897 and :950-995 at v20.2.4):
+// :32-57), as the tagging ops' get_params run them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L776-L815
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L868-L913 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L858-L897
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L950-L995 at v20.2.4):
 // <Tagging><TagSet><Tag><Key/><Value/></Tag>...</TagSet></Tagging>.
 //
 // The document is read with xmltext.Parse, the reader every S3 XML request

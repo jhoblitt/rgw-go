@@ -11,13 +11,16 @@ import (
 	"strings"
 )
 
-// Escape is xml_stream_escaper (src/common/escape.cc:134-169 at v19.2.6 and
-// v20.2.4), the escaping XMLFormatter gives every string it writes as element
-// text (Formatter.cc:516-571 at v19.2.6, :536-591 at v20.2.4): &, <, >, ' and
-// " become &amp;, &lt;, &gt;, &apos; and &quot;; a byte below 0x20 other than
-// tab and newline, and 0x7f, becomes a character reference with two lowercase
-// hex digits, &#x0d; for a carriage return; every other byte is copied, those
-// from 0x80 up whether or not they are valid UTF-8.
+// Escape is xml_stream_escaper
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L134-L169 at v19.2.6
+// and v20.2.4), the escaping XMLFormatter gives every string it writes as
+// element text
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/Formatter.cc#L516-L571 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L536-L591 at v20.2.4):
+// &, <, >, ' and " become &amp;, &lt;, &gt;, &apos; and &quot;; a byte below
+// 0x20 other than tab and newline, and 0x7f, becomes a character reference
+// with two lowercase hex digits, &#x0d; for a carriage return; every other
+// byte is copied, those from 0x80 up whether or not they are valid UTF-8.
 func Escape(s string) string {
 	var b strings.Builder
 	last := 0

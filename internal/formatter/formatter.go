@@ -44,10 +44,12 @@ type Formatter interface {
 	Reset()
 }
 
-// EscapeJSON is json_stream_escaper (escape.cc:254-286 at v19.2.6): '"',
-// '\\', tab and newline take their short escapes; other bytes below 0x20 and
-// 0x7f become \u00xx in lower-case hex; every other byte, UTF-8 included, is
-// copied. XML and HTML text goes through xmltext.Escape, xml_stream_escaper.
+// EscapeJSON is json_stream_escaper
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/escape.cc#L254-L286 at v19.2.6):
+// '"', '\\', tab and newline take their short escapes; other bytes below
+// 0x20 and 0x7f become \u00xx in lower-case hex; every other byte, UTF-8
+// included, is copied. XML and HTML text goes through xmltext.Escape,
+// xml_stream_escaper.
 func EscapeJSON(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

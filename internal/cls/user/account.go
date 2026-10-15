@@ -6,7 +6,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// The account methods the class registers (cls_user.cc:749-762 at v19.2.6
+// The account methods the class registers
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L749-L762 at v19.2.6
 // and v20.2.4, which do not differ).
 const (
 	methodAccountResourceAdd  = "account_resource_add"
@@ -60,8 +61,9 @@ func DecodeAccountHeader(d *denc.Decoder) AccountHeader {
 }
 
 // ResourceMetadata is rgwrados::users::resource_metadata
-// (driver/rados/users.h:67-85 at v19.2.6 and v20.2.4), the metadata of an
-// account users index entry: the user's id without its tenant.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/users.h#L67-L85 at v19.2.6
+// and v20.2.4), the metadata of an account users index entry: the user's
+// id without its tenant.
 type ResourceMetadata struct{ UserID string }
 
 // Encode mirrors resource_metadata::encode, ENCODE_START(1, 1).

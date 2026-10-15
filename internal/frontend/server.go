@@ -104,10 +104,12 @@ type listenAddr struct {
 
 // addrs lists the sockets spec asks for in the order AsioFrontend::init
 // binds them, TLS first since ssl_init adds those listeners before the
-// others (rgw_asio_frontend.cc:612-642 at v20.2.4). A port gets one socket
-// per address family and an endpoint one in its own; beast opens an IPv6
-// socket IPv6-only (v6_only, :671-678), where Go's "tcp" network listens on
-// both families for any wildcard address, 0.0.0.0 included.
+// others
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L612-L642 at v20.2.4).
+// A port gets one socket per address family and an endpoint one in its own;
+// beast opens an IPv6 socket IPv6-only (v6_only, :671-678), where Go's
+// "tcp" network listens on both families for any wildcard address, 0.0.0.0
+// included.
 func (s *Server) addrs() []listenAddr {
 	var addrs []listenAddr
 	ports := func(key string, ports []int, secure bool) {
@@ -138,8 +140,8 @@ func (s *Server) addrs() []listenAddr {
 // AsioFrontend::init binds and then drop_privileges runs. A port listens on
 // both address families; a family the host lacks is skipped with a warning,
 // and no listener at all is an error, as radosgw refuses to start
-// (rgw_asio_frontend.cc:656-729 at v20.2.4). A failed Listen closes what it
-// bound.
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L656-L729 at v20.2.4).
+// A failed Listen closes what it bound.
 func (s *Server) Listen() error {
 	var listeners []net.Listener
 	for _, a := range s.addrs() {
@@ -200,8 +202,9 @@ func (s *Server) Addrs() []net.Addr {
 // DrainTimeout, then Close. It returns nil on a clean drain. Requests do not
 // see ctx end, but a drain that expires closes their connections and ends
 // their contexts, and Serve returns only once every handler has: radosgw
-// joins every request before it closes its store (rgw_appmain.cc:588-604 at
-// v19.2.6, :624-644 at v20.2.4).
+// joins every request before it closes its store
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L588-L604 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L624-L644 at v20.2.4).
 func (s *Server) Serve(ctx context.Context) error {
 	if len(s.listeners) == 0 {
 		return errors.New("serving with no listener: Listen has not bound one")

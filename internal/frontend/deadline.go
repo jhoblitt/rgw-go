@@ -20,8 +20,9 @@ import (
 //
 // Whatever the timeout, the response goes out before net/http reads what h
 // left of the body, as beast answers before it discards the rest
-// (rgw_asio_frontend.cc:362-389 at v19.2.6, :372-399 at v20.2.4). The
-// deadlines bound that read and net/http's final flush too.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L362-L389 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L372-L399 at v20.2.4).
+// The deadlines bound that read and net/http's final flush too.
 func Deadlines(h http.Handler, timeout time.Duration) http.Handler {
 	return deadlines{h: h, timeout: timeout}
 }

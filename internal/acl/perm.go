@@ -13,10 +13,12 @@ const (
 
 // PermFor is rgw::IAM::op_to_perm: the ACL permission an action needs when no
 // policy decides it, and PermInvalid for an action without one, every non-s3
-// action included. The table is v20.2.4's (rgw_iam_policy.h:247-334), which is
-// v19.2.6's (:237-317) plus rows for the seven s3 actions only Tentacle knows;
-// a Squid radosgw never evaluates those actions, so the one table serves both
-// releases.
+// action included. The table is v20.2.4's
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L334),
+// which is v19.2.6's
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L237-L317)
+// plus rows for the seven s3 actions only Tentacle knows; a Squid radosgw
+// never evaluates those actions, so the one table serves both releases.
 func PermFor(a policy.Action) Permission {
 	switch a {
 	case policy.S3GetObject,

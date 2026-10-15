@@ -66,7 +66,9 @@ func (s serveSettings) validate() error {
 }
 
 // errNoArguments is radosgw's refusal of an empty command line, on which it
-// exits 1 (rgw_main.cc:90-93 at v19.2.6 and v20.2.4).
+// exits 1
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L90-L93 at v19.2.6
+// and v20.2.4).
 var errNoArguments = errors.New("-h or --help for usage")
 
 // serve is radosgw's main: the command-line checks rgw_main.cc makes itself
@@ -103,13 +105,17 @@ func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string)
 
 // needUsage is ceph_argparse_need_usage, which radosgw asks of its command
 // line alone, before CEPH_ARGS joins it: -h or --help anywhere, past a "--"
-// too (ceph_argparse.cc:575-587 at v19.2.6, :579-591 at v20.2.4).
+// too
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_argparse.cc#L575-L587 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_argparse.cc#L579-L591 at v20.2.4).
 func needUsage(args []string) bool {
 	return slices.ContainsFunc(args, func(a string) bool { return a == "-h" || a == "--help" })
 }
 
 // usage is radosgw's usage (rgw_main.cc:42-56 at v19.2.6 and v20.2.4, with
-// generic_usage, ceph_argparse.cc:550-573 at v19.2.6, :554-577 at v20.2.4),
+// generic_usage,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_argparse.cc#L550-L573 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_argparse.cc#L554-L577 at v20.2.4),
 // then rgw-go's own settings.
 const usage = `usage: radosgw [options...]
 options:
@@ -140,11 +146,12 @@ rgw-go logs to stderr and takes its own settings from the environment:
   RGW_GO_RADOS_COMPLETIONS  sync, callback or pipe (default callback)
 `
 
-// envToVec is ceph's env_to_vec for a set CEPH_ARGS (ceph_argparse.cc:91-127
-// at v19.2.6, :95-131 at v20.2.4): env split on spaces, empty words dropped,
-// then env's options, args's options, and, when either names any, a "--"
-// followed by env's arguments and args's, each list split at its first
-// "--".
+// envToVec is ceph's env_to_vec for a set CEPH_ARGS
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_argparse.cc#L91-L127 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_argparse.cc#L95-L131 at v20.2.4):
+// env split on spaces, empty words dropped, then env's options, args's
+// options, and, when either names any, a "--" followed by env's arguments
+// and args's, each list split at its first "--".
 func envToVec(env string, args []string) []string {
 	var words []string
 	for w := range strings.SplitSeq(env, " ") {
@@ -172,10 +179,12 @@ func splitDashDash(args []string) (opts, rest []string) {
 }
 
 // radosgwDefaults are the defaults radosgw gives its own process before it
-// reads any configuration (rgw_main.cc:79-87 at v19.2.6 and v20.2.4), as
-// librados arguments that set the same default level (config.cc:780-791 at
-// v19.2.6, :781-792 at v20.2.4), so the config file, the mon config store,
-// CEPH_ARGS and the command line each still override them.
+// reads any configuration
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_main.cc#L79-L87 at v19.2.6
+// and v20.2.4), as librados arguments that set the same default level
+// (config.cc:780-791 at v19.2.6, :781-792 at v20.2.4), so the config file,
+// the mon config store, CEPH_ARGS and the command line each still override
+// them.
 var radosgwDefaults = []string{
 	"--default-debug_rgw=1/5",
 	"--default-keyring=$rgw_data/keyring",
@@ -393,10 +402,17 @@ func (g *Gateway) AdminHandler(prefix string) *admin.Handler {
 // serveAndRun starts the frontend's serve and the store's run in g. run's
 // context ends once serve has returned, not with gctx: radosgw stops its
 // frontends before it finalizes the usage logger and closes the store
-// (AppMain::shutdown, rgw_appmain.cc:589, :593 and :604 at v19.2.6, :624,
-// :628 and :644 at v20.2.4), so the workers, the usage log's last flush
-// among them, outlive the drain. A run that fails ends gctx, and with it
-// serve.
+// (AppMain::shutdown,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L589,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L593
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L604 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L624,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L628
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L644 at v20.2.4),
+// so the workers, the usage log's last flush among them, outlive the
+// drain. A run that fails ends gctx, and with it serve.
 func serveAndRun(gctx context.Context, g *errgroup.Group, serve, run func(context.Context) error) {
 	runCtx, stopRun := context.WithCancel(context.WithoutCancel(gctx))
 	g.Go(func() error {
@@ -421,10 +437,13 @@ func watchRADOS(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster) 
 }
 
 // s3Config reads the options the S3 handler takes: rgw_dns_name joined with
-// the zonegroup's hostnames as rgw_rest_init joins them (rgw_rest.cc:215-223
-// at v19.2.6 and v20.2.4), the Server header end_header sends,
-// rgw_service_provider_name when it is set (:637-642 at v19.2.6, :642-647
-// at v20.2.4), and the request cap zi was opened with.
+// the zonegroup's hostnames as rgw_rest_init joins them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L215-L223 at v19.2.6
+// and v20.2.4), the Server header end_header sends,
+// rgw_service_provider_name when it is set
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L637-L642 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L642-L647 at v20.2.4),
+// and the request cap zi was opened with.
 func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Config, error) {
 	dns, err := conf.List("rgw_dns_name")
 	if err != nil {
@@ -447,15 +466,16 @@ func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Co
 }
 
 // unservedAPIs lays out the REST managers radosgw registers for the enabled
-// APIs other than S3 (rgw_appmain.cc:307-366 at v19.2.6, :316-375 at
-// v20.2.4): Swift at rgw_swift_url_prefix, Swift auth at
-// rgw_swift_auth_entry, the admin API at rgw_admin_entry and the zero API,
-// in that order. paths are where a manager rgw-go does not serve sits, each
-// entry's own and the parents register_resource adds for a nested one;
-// adminPath is where the admin API sits, "" when it is off or a later
-// registration replaced it. s3On reports whether S3 is the default
-// manager: radosgw leaves it out when rgw_swift_url_prefix is "/", which
-// puts Swift at the root.
+// APIs other than S3
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_appmain.cc#L307-L366 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L316-L375 at v20.2.4):
+// Swift at rgw_swift_url_prefix, Swift auth at rgw_swift_auth_entry, the
+// admin API at rgw_admin_entry and the zero API, in that order. paths are
+// where a manager rgw-go does not serve sits, each entry's own and the
+// parents register_resource adds for a nested one; adminPath is where the
+// admin API sits, "" when it is off or a later registration replaced it.
+// s3On reports whether S3 is the default manager: radosgw leaves it out
+// when rgw_swift_url_prefix is "/", which puts Swift at the root.
 func unservedAPIs(conf *cephconf.Options, apis cephconf.APIs) (paths []string, adminPath string, s3On bool, err error) {
 	var swift, swiftAuth, adminEntry string
 	for _, o := range []struct {
@@ -493,8 +513,9 @@ func unservedAPIs(conf *cephconf.Options, apis cephconf.APIs) (paths []string, a
 // managers is the top-level resource map RGWRESTMgr::register_resource
 // builds: a path holds the manager registered there last, and a parent
 // path it adds for a nested entry holds a manager with no handler unless
-// one is there already (rgw_rest.cc:1935-1966 at v19.2.6, :1952-1983 at
-// v20.2.4).
+// one is there already
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1935-L1966 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1952-L1983 at v20.2.4).
 type managers struct {
 	order []string
 	// isAdmin is true where the admin API sits, false where a manager
@@ -523,7 +544,8 @@ func (m *managers) register(entry string, isAdmin bool) {
 // resourcePaths are the paths RGWRESTMgr::register_resource puts a manager
 // at for entry: r = "/"+entry, and r up to each "/" in it past the first and
 // before the last byte, where it adds a manager with no handler
-// (rgw_rest.cc:1935-1966 at v19.2.6, :1952-1983 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1935-L1966 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1952-L1983 at v20.2.4).
 func resourcePaths(entry string) []string {
 	r := "/" + entry
 	paths := []string{r}
@@ -537,16 +559,20 @@ func resourcePaths(entry string) []string {
 	}
 }
 
-// router is RGWREST::get_handler's manager lookup (rgw_rest.cc:2276-2304 at
-// v19.2.6, :2298-2326 at v20.2.4). A request whose decoded URI, the path
-// with a virtual-hosted bucket in front, is at or under the admin API's path
-// or an unserved one goes to the manager at the longest of those paths, as
-// RGWRESTMgr::get_resource_mgr matches them (:1974-1997 at v19.2.6,
-// :1991-2014 at v20.2.4): the admin handler, or unserved. Any other request
-// goes to S3, the default manager, or to unserved when S3 is off. A request
-// whose decoded URI, Host-named bucket included, would come from a malformed
-// percent-escape (s3.MalformedPath) is answered as net/http answers one in
-// an origin-form path, before any handler.
+// router is RGWREST::get_handler's manager lookup
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2276-L2304 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2298-L2326 at v20.2.4).
+// A request whose decoded URI, the path with a virtual-hosted bucket in
+// front, is at or under the admin API's path or an unserved one goes to the
+// manager at the longest of those paths, as RGWRESTMgr::get_resource_mgr
+// matches them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1974-L1997 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1991-L2014 at v20.2.4):
+// the admin handler, or unserved. Any other request goes to S3, the default
+// manager, or to unserved when S3 is off. A request whose decoded URI,
+// Host-named bucket included, would come from a malformed percent-escape
+// (s3.MalformedPath) is answered as net/http answers one in an origin-form
+// path, before any handler.
 type router struct {
 	s3, admin, unserved http.Handler
 	cfg                 s3.Config
@@ -607,12 +633,16 @@ func under(path, p string) bool {
 // InvalidRequest when the decoded URI the router matched holds a NUL, which
 // preprocess refuses before the lookup (rgw_rest.cc:2182-2186 at v19.2.6,
 // :2204-2208 at v20.2.4;
-// abort_early from process_request, rgw_process.cc:316-318 at v19.2.6,
-// :318-320 at v20.2.4). process_request logs no usage for such a request,
-// since it sets should_log only past that point (:322 at v19.2.6, :324 at
-// v20.2.4), and draws each request's id at random
-// (StoreDriver::get_new_req_id, rgw_sal_store.h:27-29 at v19.2.6, :101-103
-// at v20.2.4).
+// abort_early from process_request,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L316-L318 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L318-L320 at v20.2.4).
+// process_request logs no usage for such a request, since it sets
+// should_log only past that point
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L322 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L324 at v20.2.4),
+// and draws each request's id at random (StoreDriver::get_new_req_id,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sal_store.h#L27-L29 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal_store.h#L101-L103 at v20.2.4).
 type unservedHandler struct {
 	env     *op.Env
 	metrics op.Metrics

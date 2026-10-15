@@ -31,7 +31,8 @@ const (
 )
 
 // methodMPUploadPartInfoUpdate is RGW_MP_UPLOAD_PART_INFO_UPDATE
-// (cls_rgw_const.h:68 at v19.2.6, :71 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_const.h#L68 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_const.h#L71 at v20.2.4).
 const methodMPUploadPartInfoUpdate = "mp_upload_part_info_update"
 
 // ErrBusyResharding is CLS_RGW_ERR_BUSY_RESHARDING as a positive errno.

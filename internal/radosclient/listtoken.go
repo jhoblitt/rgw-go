@@ -10,7 +10,8 @@ import (
 
 // RJenkins is ceph_str_hash_rjenkins, Bob Jenkins' lookup2 hash, which a
 // pool of the default object_hash places objects by
-// (src/common/ceph_hash.cc:22-78 at v19.2.6 and v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_hash.cc#L22-L78 at v19.2.6
+// and v20.2.4).
 func RJenkins(k []byte) uint32 {
 	a, b, c := uint32(0x9e3779b9), uint32(0x9e3779b9), uint32(0)
 	length := uint32(len(k)) //nolint:gosec // the C takes the length as an unsigned int
@@ -98,8 +99,9 @@ func mix(a0, b0, c0 uint32) (a, b, c uint32) {
 // PlacementHash is the hash RADOS places an object without a locator by:
 // pg_pool_t::hash_key under the default object_hash, rjenkins of ns, a 0x1f
 // and oid, or of oid alone in the default namespace (src/osd/osd_types.cc
-// :1785-1796 at v19.2.6, :1794-1805 at v20.2.4). An object with a locator
-// is placed by the locator's hash instead.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/osd/osd_types.cc#L1785-L1796 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.cc#L1794-L1805 at v20.2.4).
+// An object with a locator is placed by the locator's hash instead.
 func PlacementHash(ns, oid string) uint32 {
 	if ns == "" {
 		return RJenkins([]byte(oid))
@@ -133,8 +135,9 @@ func DecodeListToken(token string) (lastOID string, err error) {
 // ListAfter reports whether the object hashing to h and named oid comes
 // after the resume point (lastHash, lastOID) in hobject order, the order a
 // listing of one namespace without locators follows: by the bit-reversed
-// hash, then by name (cmp, src/common/hobject.cc:335-370 at v19.2.6,
-// :331-366 at v20.2.4).
+// hash, then by name (cmp,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/hobject.cc#L335-L370 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/hobject.cc#L331-L366 at v20.2.4).
 func ListAfter(h uint32, oid string, lastHash uint32, lastOID string) bool {
 	if h != lastHash {
 		return bits.Reverse32(h) > bits.Reverse32(lastHash)

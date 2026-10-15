@@ -2,14 +2,15 @@ package rgwtext
 
 import "strings"
 
-// URLDecode is radosgw's url_decode (rgw_common.cc:1701-1734 at v19.2.6,
-// :1764-1797 at v20.2.4). "%XX" decodes. A '+' is a space in query mode,
-// which inQuery starts in and a literal '?' switches on; an escaped '?' does
-// not. A '%' with fewer than two bytes after it ends the result there, and
-// one followed by a byte that is not a hex digit empties it. A byte above
-// 0x7f is no hex digit here; radosgw looks it up outside its hex table
-// (docs/exclusions.md, "A byte above 0x7f in a percent-escape is a bad hex
-// digit").
+// URLDecode is radosgw's url_decode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1701-L1734 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1764-L1797 at v20.2.4).
+// "%XX" decodes. A '+' is a space in query mode, which inQuery starts in and
+// a literal '?' switches on; an escaped '?' does not. A '%' with fewer than
+// two bytes after it ends the result there, and one followed by a byte that
+// is not a hex digit empties it. A byte above 0x7f is no hex digit here;
+// radosgw looks it up outside its hex table (docs/exclusions.md, "A byte
+// above 0x7f in a percent-escape is a bad hex digit").
 func URLDecode(s string, inQuery bool) string {
 	if strings.IndexByte(s, '%') < 0 && strings.IndexByte(s, '+') < 0 {
 		return s
