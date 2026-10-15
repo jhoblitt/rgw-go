@@ -39,7 +39,7 @@ var _ = Describe("the usage log's read and trim", func() {
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		seedRookZone(c, "ceph-objectstore", true)
 		var err error
 		store, err = driver.Open(ctx, c, conf(map[string]string{

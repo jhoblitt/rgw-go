@@ -45,7 +45,7 @@ var _ = Describe("RGWClass's listing and suggestions", func() {
 	}
 	BeforeEach(func(ctx SpecContext) {
 		c = fakerados.New()
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		now = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 		c.SetClock(func() time.Time { return now })
 		var err error

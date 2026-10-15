@@ -209,8 +209,13 @@ func (p *Pool) run(name, oid string, steps []radosclient.Step, writeOp bool, fla
 func (x *execution) runSteps(steps []radosclient.Step) ([]func(), error) {
 	// Before running any step, the OSD loads every class an op calls and
 	// takes whether the op writes from each step's mode and each method's
-	// WR flag (OpInfo::set_from_op). An op that does not write finds no
-	// object context for a missing object (PrimaryLogPG::do_op).
+	// WR flag (OpInfo::set_from_op). Whatever a call's position or FailOK
+	// flag, it refuses the whole op with EOPNOTSUPP when get_method_flags
+	// finds no method of the call's name in its class
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L189-L196 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L189-L196 at v20.2.4).
+	// An op that does not write finds no object context for a missing object
+	// (PrimaryLogPG::do_op).
 	for _, st := range steps {
 		s, ok := st.(*radosclient.ExecStep)
 		if !ok {
@@ -218,7 +223,7 @@ func (x *execution) runSteps(steps []radosclient.Step) ([]func(), error) {
 			continue
 		}
 		cls, ok := x.cluster.classes[s.Class]
-		if !ok {
+		if !ok || !cls.registers(s.Method) {
 			return nil, x.errno(syscall.EOPNOTSUPP)
 		}
 		x.mayWrite = x.mayWrite || cls.writes[s.Method]

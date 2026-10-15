@@ -199,7 +199,7 @@ var _ = Describe("the usage log", func() {
 		t0 = time.Date(2026, 9, 28, 12, 34, 56, 0, time.UTC)
 		c = fakerados.New()
 		c.SetRequiredOSDRelease("squid")
-		c.RegisterClass("rgw", fakerados.RGWClass(), fakerados.RGWWriteMethods...)
+		c.RegisterClassMethods("rgw", fakerados.RGWClass(), fakerados.RGWMethods, fakerados.RGWWriteMethods)
 		seedRookZone(c, "ceph-objectstore", true)
 		clock = newFakeClock(t0)
 		s = open(ctx, nil)
@@ -447,7 +447,7 @@ var _ = Describe("the usage log", func() {
 
 		It("returns the first failed write and drops the batch, as log_usage does", func(ctx SpecContext) {
 			var adds int
-			c.RegisterClass("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
+			c.RegisterClassMethods("rgw", func(call *fakerados.ClassCall) ([]byte, int32) {
 				if call.Method == "user_usage_log_add" {
 					adds++
 					if adds == 2 {
@@ -455,7 +455,7 @@ var _ = Describe("the usage log", func() {
 					}
 				}
 				return fakerados.RGWClass()(call)
-			}, fakerados.RGWWriteMethods...)
+			}, fakerados.RGWMethods, fakerados.RGWWriteMethods)
 			s.Log(ctx, get(alice, "plain", t0))
 			s.Log(ctx, get(carol, "other", t0))
 			Expect(driver.UsageOIDForTest(s, "carol", 1)).To(Equal("usage.1"), "written first")
