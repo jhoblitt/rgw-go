@@ -15,14 +15,17 @@
 //	make citecheck-content [FILES="FILE..."]
 //	make citecheck-go PKGS="DIR..."
 //	make citecheck-go-fix PKGS="DIR..."
+//	make citation-go-check
 //	make citecheck-files
 //	make citecheck-files-check
 //
 // A FILE whose name ends in .go is read as Go source, as Go comments below
 // says; every other is read as markdown. The Go targets read every .go file
-// under each DIR, at any depth, outside testdata directories. The files
-// command and its targets keep the list of ceph's files, as The list of
-// ceph's files below says.
+// under each DIR, at any depth, outside testdata directories, and make
+// citation-go-check, which make check and CI run, every tracked .go file
+// outside them but hack/citecheck's, whose doc and specs write the plain forms
+// as examples, under --form-only. The files command and its targets keep the
+// list of ceph's files, as The list of ceph's files below says.
 //
 // --ceph names the clone, /home/jhoblitt/github/ceph by default; it can also
 // come from CITECHECK_CEPH, or from the config file --config (CITECHECK_CONFIG)

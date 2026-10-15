@@ -155,6 +155,15 @@ MARKDOWN = $(shell git ls-files '*.md')
 citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
 	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
+# Every tracked Go file outside testdata but hack/citecheck's, whose package
+# doc and specs write the plain citation forms as examples. --form-only tells
+# a plain citation of ceph's code by the list of ceph's files below.
+CITATION_GO_FILES = $(shell git ls-files '*.go' | grep -v -e '/testdata/' -e '^hack/citecheck/')
+
+.PHONY: citation-go-check
+citation-go-check: ## Fail when a tracked Go file's comment holds a plain Ceph citation, or a ceph link that is malformed or in a code block
+	@go run ./hack/citecheck --form-only $(CITATION_GO_FILES)
+
 # The list of ceph's citable files, which tells a plain citation of ceph, in
 # markdown or in a Go comment, from one of rgw-go's without a clone, is made at
 # the releases the docs cite: those citecheck's [S] and [T] markers name, every
@@ -186,7 +195,7 @@ citecheck-go-fix: ## Rewrite the plain Ceph citations in the Go comments under t
 	go run ./hack/citecheck --fix $(CITECHECK_GO_FILES)
 
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citecheck-files-check test ## The local gate
+check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citation-go-check citecheck-files-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
