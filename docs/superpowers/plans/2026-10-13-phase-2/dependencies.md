@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 9874965. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 9eb8119. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -13,14 +13,14 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 ```mermaid
 flowchart LR
   u_S["Shared<br/>3 tasks"]
-  u_F["F: floor 19.2.7<br/>14 tasks"]
+  u_F["F: floor 19.2.7<br/>17 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
   u_B["B: bucket config<br/>38 tasks"]
   u_WP["WP: write path<br/>22 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
-  u_CL["CL: citation links<br/>4 tasks"]
+  u_CL["CL: citation links<br/>5 tasks"]
   u_S -->|4| u_V
   u_S -->|2| u_L
   u_S -->|3| u_C
@@ -80,6 +80,9 @@ flowchart LR
   t_F12["F12"]
   t_F13["F13"]
   t_F14["F14"]
+  t_F15["F15"]
+  t_F16["F16"]
+  t_F17["F17"]
   t_F2 --> t_F3
   t_F2 --> t_F4
   t_F3 --> t_F4
@@ -99,6 +102,9 @@ flowchart LR
   t_F10 --> t_F11
   t_F3 --> t_F12
   t_F4 --> t_F13
+  t_F13 --> t_F15
+  t_F15 --> t_F16
+  t_F15 --> t_F17
   click t_F1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927" "F1: docs, the spec's Squid floor is v19.2.7"
   click t_F2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f2-docs-the-registry-at-v1927" "F2: docs, the registry at v19.2.7"
   click t_F3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f3-docs-the-exclusions-at-v1927" "F3: docs, the exclusions at v19.2.7"
@@ -113,6 +119,9 @@ flowchart LR
   click t_F12 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f12-driver-guardheads-instance-exemption-on-both-releases" "F12: driver, guardHead's instance exemption on both releases"
   click t_F13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f13-auth-every-prefix-init_meta_info-renames-must-be-signed" "F13: auth, every prefix init_meta_info renames must be signed"
   click t_F14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f14-op-a-completemultipartupload-naming-a-version-answers-501" "F14: op, a CompleteMultipartUpload naming a version answers 501"
+  click t_F15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f15-auth-sigv2-refuses-a-renamed-header-carrying-an-x-amz-directive" "F15: auth, SigV2 refuses a renamed header carrying an x-amz directive"
+  click t_F16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f16-s3-createbucket-reads-its-object-lock-header-from-the-renamed-map" "F16: s3, CreateBucket reads its object lock header from the renamed map"
+  click t_F17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f17-auth-a-sigv2-presigned-request-means-the-same-wherever-its-headerquery-split-falls" "F17: auth, a SigV2 presigned request means the same wherever its header/query split falls"
 ```
 
 - [F1](F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927): docs, the spec's Squid floor is v19.2.7
@@ -129,6 +138,9 @@ flowchart LR
 - [F12](F-floor-19.2.7.md#task-f12-driver-guardheads-instance-exemption-on-both-releases): driver, guardHead's instance exemption on both releases
 - [F13](F-floor-19.2.7.md#task-f13-auth-every-prefix-init_meta_info-renames-must-be-signed): auth, every prefix init_meta_info renames must be signed
 - [F14](F-floor-19.2.7.md#task-f14-op-a-completemultipartupload-naming-a-version-answers-501): op, a CompleteMultipartUpload naming a version answers 501
+- [F15](F-floor-19.2.7.md#task-f15-auth-sigv2-refuses-a-renamed-header-carrying-an-x-amz-directive): auth, SigV2 refuses a renamed header carrying an x-amz directive
+- [F16](F-floor-19.2.7.md#task-f16-s3-createbucket-reads-its-object-lock-header-from-the-renamed-map): s3, CreateBucket reads its object lock header from the renamed map
+- [F17](F-floor-19.2.7.md#task-f17-auth-a-sigv2-presigned-request-means-the-same-wherever-its-headerquery-split-falls): auth, a SigV2 presigned request means the same wherever its header/query split falls
 
 ### V: versioning
 
@@ -909,17 +921,22 @@ flowchart LR
   t_CL2["CL2"]
   t_CL3["CL3"]
   t_CL4["CL4"]
+  t_CL5["CL5"]
   t_CL1 --> t_CL2
   t_CL1 --> t_CL3
   t_CL3 --> t_CL4
+  t_CL2 --> t_CL5
+  t_CL3 --> t_CL5
   click t_CL1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl1-hackcitecheck-links-are-the-only-citation-form" "CL1: hack/citecheck, links are the only citation form"
   click t_CL2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl2-the-markdown-sweep" "CL2: the Markdown sweep"
   click t_CL3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl3-hackcitecheck-ceph-citations-in-go-comments" "CL3: hack/citecheck, Ceph citations in Go comments"
   click t_CL4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl4-the-go-comment-sweep" "CL4: the Go-comment sweep"
+  click t_CL5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/CL-citation-links.md#task-cl5-hackcitecheck-plain-ceph-citations-in-markdown" "CL5: hack/citecheck, plain Ceph citations in Markdown"
 ```
 
 - [CL1](CL-citation-links.md#task-cl1-hackcitecheck-links-are-the-only-citation-form): hack/citecheck, links are the only citation form
 - [CL2](CL-citation-links.md#task-cl2-the-markdown-sweep): the Markdown sweep
 - [CL3](CL-citation-links.md#task-cl3-hackcitecheck-ceph-citations-in-go-comments): hack/citecheck, Ceph citations in Go comments
 - [CL4](CL-citation-links.md#task-cl4-the-go-comment-sweep): the Go-comment sweep
+- [CL5](CL-citation-links.md#task-cl5-hackcitecheck-plain-ceph-citations-in-markdown): hack/citecheck, plain Ceph citations in Markdown
 
