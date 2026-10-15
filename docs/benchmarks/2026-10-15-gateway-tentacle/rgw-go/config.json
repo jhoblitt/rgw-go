@@ -1,0 +1,28 @@
+{
+  "client.rgw.ceph.objectstore.a": {
+    "source": "config show",
+    "options": {
+      "rgw_dynamic_resharding": "false",
+      "rgw_enable_gc_threads": "false",
+      "rgw_enable_lc_threads": "false",
+      "rgw_run_sync_thread": "false",
+      "rgw_d3n_l1_local_datacache_enabled": "false",
+      "rgw_enable_usage_log": "true",
+      "rgw_usage_log_tick_interval": "1",
+      "rgw_usage_log_flush_threshold": "1"
+    }
+  },
+  "client.rgw.rgw-go": {
+    "source": "config get",
+    "options": {
+      "rgw_dynamic_resharding": "false",
+      "rgw_enable_gc_threads": "false",
+      "rgw_enable_lc_threads": "false",
+      "rgw_run_sync_thread": "false",
+      "rgw_d3n_l1_local_datacache_enabled": "false",
+      "rgw_enable_usage_log": "true",
+      "rgw_usage_log_tick_interval": "1",
+      "rgw_usage_log_flush_threshold": "1"
+    }
+  }
+}

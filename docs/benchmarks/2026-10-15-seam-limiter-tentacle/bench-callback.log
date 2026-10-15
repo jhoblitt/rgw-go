@@ -1,0 +1,6 @@
+goos: linux
+goarch: amd64
+pkg: github.com/jhoblitt/rgw-go/test/bench/seam
+cpu: AMD Ryzen 9 7950X3D 16-Core Processor          
+BenchmarkSeam/shape=write4m/conc=64-32         	     640	   6011000 ns/op	      3566 cpu-us/op	       166.4 ops/s	    375959 p50-us	    461101 p99-us	        46.00 threads
+PASS

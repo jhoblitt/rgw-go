@@ -175,6 +175,12 @@ benchmark was re-run.
   callback and in pipe on both releases; with the bounds derived from the
   throttle, +19, while 617 of the 640 writes parked on the limiter each
   time. No cell under the byte budget parked on it.
+  Re-run on 2026-10-15 at Ceph 19.2.7 and 20.2.4, with the limiter's byte
+  bound at 100 MiB ([2026-10-15-seam-limiter-squid](benchmarks/2026-10-15-seam-limiter-squid/),
+  [2026-10-15-seam-limiter-tentacle](benchmarks/2026-10-15-seam-limiter-tentacle/)):
+  +19 and +22 threads in callback and pipe on Squid, +19 and +20 on
+  Tentacle, and +35 and +37 in sync, with 615 of the 640 writes parked on
+  the limiter in every mode.
 - **Throughput and latency held within the criteria against `rados bench`
   in both modes on both releases.** The worst cells, write4k at 64 on Squid
   in callback and write4m at 1 elsewhere, had floor runs within 6.2% of each
