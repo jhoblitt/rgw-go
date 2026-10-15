@@ -293,17 +293,19 @@ type ObjectPart struct {
 }
 
 // MaxObjectParts is the max-parts list_parts takes without x-amz-max-parts,
-// and the most the header may ask for ([T] rgw_rest_s3.cc:3961,
+// and the most the header may ask for
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3961,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4084).
 const MaxObjectParts = 1000
 
-// GetObjectAttributes is RGWGetObjAttrs ([T]
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6337-L6403,
-// rgw_rest_s3.cc:3941-4137), which rgw-go serves on both releases although a
-// Squid radosgw answers ?attributes as GetObject. It is a GetObject that reads
-// no data: Init, the check order, the SSE checks and the cloud-tier rule are
-// GetObject's. The handler sets Versioned, the SSE inputs and Secure; Init
-// clears every other GetObject input.
+// GetObjectAttributes is RGWGetObjAttrs
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6337-L6403,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3941-L4137),
+// which rgw-go serves on both releases although a Squid radosgw answers
+// ?attributes as GetObject. It is a GetObject that reads no data: Init, the
+// check order, the SSE checks and the cloud-tier rule are GetObject's. The
+// handler sets Versioned, the SSE inputs and Secure; Init clears every other
+// GetObject input.
 type GetObjectAttributes struct {
 	GetObject
 	// Requested is x-amz-object-attributes.

@@ -88,8 +88,8 @@ func genericAttrsFor(conf *cephconf.Options) []genericAttr {
 	return attrs
 }
 
-// uppercaseUnderscore is uppercase_underscore_http_attr (rgw_rest.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L163-L179 at v19.2.6).
+// uppercaseUnderscore is uppercase_underscore_http_attr
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L163-L179 at v19.2.6).
 func uppercaseUnderscore(s string) string {
 	b := []byte(s)
 	for i, c := range b {
@@ -103,9 +103,10 @@ func uppercaseUnderscore(s string) string {
 }
 
 // envName is the name beast files a header under in RGWEnv
-// (rgw_asio_client.cc:36-66 at v19.2.6 and v20.2.4): Content-Length and
-// Content-Type under their CGI names, every other header under HTTP_ and its
-// name upper cased with each dash an underscore and each underscore a dash.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L66 at v19.2.6
+// and v20.2.4): Content-Length and Content-Type under their CGI names, every
+// other header under HTTP_ and its name upper cased with each dash an
+// underscore and each underscore a dash.
 func envName(header string) string {
 	switch {
 	case strings.EqualFold(header, "Content-Length"):
@@ -128,8 +129,8 @@ func envName(header string) string {
 }
 
 // requestEnv is the headers as RGWEnv holds them: each environment name with
-// the last value of its header, as RGWEnv::set keeps the last (rgw_env.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
+// the last value of its header, as RGWEnv::set keeps the last
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
 // and v20.2.4), and the names in its map's order.
 func requestEnv(h http.Header) (names []string, vals map[string]string) {
 	vals = map[string]string{}
@@ -211,8 +212,8 @@ func isCryptName(name string) bool {
 // requestAttrs is populate_with_generic_attrs
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3307-L3316 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3535-L3544 at v20.2.4)
-// and rgw_get_request_metadata (rgw_op.h
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2171-L2233 at v19.2.6,
+// and rgw_get_request_metadata
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2171-L2233 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408 at v20.2.4)
 // over the x_meta_map that headerMeta builds from the headers and, when query
 // is set, map_qs_metadata adds from the query string
@@ -295,9 +296,11 @@ func confUint(r *op.Request, name string, get func(*cephconf.Options, string) (u
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327 at v20.2.4):
 // a value that is not UTF-8 as check_utf8 reads it, or holds a control
 // character, is mime_encode_as_qp's quoted-printable text inside
-// "=?UTF-8?Q?" and "?=" (src/common/mime.c:19-50): up to its first NUL, each
-// byte with the high bit set, each "=" and each control character as "=XX",
-// the rest as it is. Any other value is unchanged.
+// "=?UTF-8?Q?" and "?="
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/mime.c#L19-L50): up
+// to its first NUL, each byte with the high bit set, each "=" and each
+// control character as "=XX", the rest as it is. Any other value is
+// unchanged.
 func formatXattr(v string) string {
 	if utf8.ValidString(v) && !hasControlChar(v) {
 		return v

@@ -221,8 +221,8 @@ func PostAuthInit(p Parsed, authTenant string) error {
 	return nil
 }
 
-// validObjectName is RGWHandler_REST::validate_object_name (rgw_rest.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1846-L1859 at v19.2.6,
+// validObjectName is RGWHandler_REST::validate_object_name
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1846-L1859 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1850-L1863 at v20.2.4):
 // at most 1024 bytes, of UTF-8 as check_utf8 accepts it, which is what
 // utf8.ValidString accepts.

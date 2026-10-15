@@ -24,8 +24,9 @@ const msgOwnerMismatch = "Cannot modify ACL Owner"
 //   - acl.ErrOwnerMismatch is AccessDenied, "Cannot modify ACL Owner";
 //   - acl.ErrTooManyGrants is LimitExceeded;
 //   - a *policy.ParseError is InvalidArgument with its Error(), the
-//     e.what() RGWPutBucketPolicy::execute answers (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8116-L8120 at
-//     v19.2.6, https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9047-L9051 at v20.2.4);
+//     e.what() RGWPutBucketPolicy::execute answers
+//     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8116-L8120 at v19.2.6,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9047-L9051 at v20.2.4);
 //   - tags.ErrInvalidTag is InvalidTag and tags.ErrMalformedXML is
 //     MalformedXML.
 //

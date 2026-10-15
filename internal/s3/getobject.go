@@ -26,8 +26,7 @@ import (
 
 // The object read routes are rgw_rest_s3.cc's RGWGetObj_ObjStore_S3,
 // RGWGetObjTags_ObjStore_S3, RGWGetACLs_ObjStore_S3 and, at v20.2.4 only,
-// RGWGetObjAttrs_ObjStore_S3. A bare line number is v19.2.6's
-// rgw_rest_s3.cc; [T] marks v20.2.4's.
+// RGWGetObjAttrs_ObjStore_S3.
 
 // responseAttrParams is resp_attr_params
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L128-L141;
@@ -471,8 +470,9 @@ func sanitizedHdrval(v []byte) string {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L361-L378;
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L372-L389):
 // the parts other than aws-chunked, joined with ", ". ceph::split takes ", "
-// as a set of delimiters and skips empty parts (common/split.h:32-38 at
-// v19.2.6 and v20.2.4).
+// as a set of delimiters and skips empty parts
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/split.h#L32-L38 at v19.2.6
+// and v20.2.4).
 func withoutAWSChunked(v string) string {
 	var kept []string
 	for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
@@ -494,7 +494,8 @@ func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 	}
 	if v, ok := attrs[meta.AttrReplicationTrace]; ok {
 		// rgw_zone_set_entry encodes as the string to_str gives, which
-		// from_str and to_str carry through unchanged (cls_rgw_types.cc:14-47).
+		// from_str and to_str carry through unchanged
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.cc#L14-L47).
 		d := denc.NewDecoder(v)
 		zones := denc.DecodeSlice(d, func(d *denc.Decoder) string { return d.String() })
 		if d.Err() == nil {
@@ -517,8 +518,9 @@ func setReplicationHeaders(h http.Header, attrs map[string][]byte) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L703-L711):
 // RGWObjTags::count after decode, whose failure it ignores. When the binary
 // form fails, decode reads the attr as the text older objects store and keeps
-// every tag it added before the text failed (rgw_tag.h:32-62,
-// rgw_tag.cc:36-57).
+// every tag it added before the text failed
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.h#L32-L62,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_tag.cc#L36-L57).
 func taggingCount(b []byte) int {
 	d := denc.NewDecoder(b)
 	if set := tags.Decode(d); d.Err() == nil {

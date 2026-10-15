@@ -22,7 +22,6 @@ import (
 // Their send_response sends the headers with end_header(...,
 // CHUNKED_TRANSFER_ENCODING) once the op has run, then the whole document
 // in the one flush it ends with; a failed op is an ordinary error document.
-// A bare line number below is v19.2.6's rgw_rest_s3.cc.
 
 // xmlnsS3 is XMLNS_AWS_S3, the namespace every listing's root carries.
 const xmlnsS3 = "http://s3.amazonaws.com/doc/2006-03-01/"

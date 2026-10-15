@@ -45,11 +45,12 @@ func getObjectAttrs(ctx context.Context, w http.ResponseWriter, r *op.Request) e
 	return nil
 }
 
-// objectAttrsInput is RGWGetObjAttrs_ObjStore_S3::get_params ([T]
-// :3941-3983): x-amz-max-parts, capped at 1000, then
-// x-amz-part-number-marker, each through strict_strtol, the first refusal
-// ending the parse; then x-amz-object-attributes. x-amz-expected-bucket-owner
-// is read and never used, as radosgw reads it.
+// objectAttrsInput is RGWGetObjAttrs_ObjStore_S3::get_params
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3941-L3983):
+// x-amz-max-parts, capped at 1000, then x-amz-part-number-marker, each
+// through strict_strtol, the first refusal ending the parse; then
+// x-amz-object-attributes. x-amz-expected-bucket-owner is read and never
+// used, as radosgw reads it.
 func objectAttrsInput(r *op.Request, o *op.GetObjectAttributes) error {
 	if v, ok := op.HeaderValue(r.Header, "x-amz-max-parts"); ok {
 		n, err := parseInt(v)
@@ -71,10 +72,11 @@ func objectAttrsInput(r *op.Request, o *op.GetObjectAttributes) error {
 	return nil
 }
 
-// objectAttrsDocument is send_response's GetObjectAttributes section ([T]
-// :4017-4133), with no namespace: the requested attributes in its order. The
-// ETag is the stored attr, unquoted; the Checksum is empty, rgw-go storing
-// none (docs/exclusions.md); ObjectParts appears for a multipart object only.
+// objectAttrsDocument is send_response's GetObjectAttributes section
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4017-L4133),
+// with no namespace: the requested attributes in its order. The ETag is the
+// stored attr, unquoted; the Checksum is empty, rgw-go storing none
+// (docs/exclusions.md); ObjectParts appears for a multipart object only.
 // Every string goes through the formatter's escaping and every number is
 // written bare.
 func objectAttrsDocument(o *op.GetObjectAttributes) string {

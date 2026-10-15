@@ -140,12 +140,13 @@ func sourceIP(cfg Config, r *op.Request) (string, bool) {
 // without regard to case: REMOTE_ADDR, the client's address alone
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L92 at v19.2.6
 // and v20.2.4), CONTENT_LENGTH and CONTENT_TYPE, and HTTP_ followed by any
-// other header's name in capitals with '-' and '_' swapped (:40-65). rgw-go
-// holds neither the other variables beast sets, the request line's among
-// them, nor the headers net/http takes out of a server request: Host and
-// Transfer-Encoding always, and Trailer and Content-Length from a chunked one
-// (net/http/server.go:1087, net/http/transfer.go:644, :727, :790 in Go 1.27).
-// For those it reports none.
+// other header's name in capitals with '-' and '_' swapped
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L40-L65).
+// rgw-go holds neither the other variables beast sets, the request line's
+// among them, nor the headers net/http takes out of a server request: Host
+// and Transfer-Encoding always, and Trailer and Content-Length from a chunked
+// one (net/http/server.go:1087, net/http/transfer.go:644, :727, :790 in Go
+// 1.27). For those it reports none.
 func cgiVar(r *op.Request, name string) (string, bool) {
 	switch upper := strings.ToUpper(name); upper {
 	case "REMOTE_ADDR":
@@ -193,8 +194,11 @@ func swapDashes(s string) string {
 func opKeys(cfg Config, r *op.Request, a policy.Action) (keys []envPair, tagsFirst bool) {
 	switch a {
 	case policy.S3ListBucket, policy.S3ListBucketVersions:
-		// RGWListBucket (:3033-3060, :3267-3294). HEAD bucket is
-		// RGWStatBucket, which also checks s3:ListBucket and adds nothing.
+		// RGWListBucket
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3033-L3060,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3267-L3294).
+		// HEAD bucket is RGWStatBucket, which also checks s3:ListBucket
+		// and adds nothing.
 		if r.Method == http.MethodGet && r.Object.Name == "" {
 			return listKeys(cfg, r), false
 		}
@@ -202,23 +206,32 @@ func opKeys(cfg Config, r *op.Request, a policy.Action) (keys []envPair, tagsFir
 		switch r.Method {
 		case http.MethodPut:
 			if isCopyObject(r) {
-				// RGWCopyObj's destination check (:5477-5485, :6043-6051).
+				// RGWCopyObj's destination check
+				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5477-L5485,
+				// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6043-L6051).
 				return copyKeys(r), true
 			}
 			// RGWPutObj, which serves UploadPart and UploadPartCopy too
-			// (:3966-3980, :4175-4189).
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3966-L3980,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4175-L4189).
 			return putObjectKeys(cfg, r), false
 		case http.MethodPost:
-			// RGWInitMultipart and RGWCompleteMultipart (:6273-6278,
-			// :6347-6352; :6943-6948, :7023-7028), which read their
-			// parameters only once authorized. A POST naming neither is a
-			// browser upload, which rgw-go does not serve.
+			// RGWInitMultipart and RGWCompleteMultipart
+			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6273-L6278,
+			// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6347-L6352;
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6943-L6948,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7023-L7028),
+			// which read their parameters only once authorized. A POST
+			// naming neither is a browser upload, which rgw-go does not
+			// serve.
 			if hasQuery(r, "uploads") || hasQuery(r, "uploadId") {
 				return cryptKeys(cfg, r, false), true
 			}
 		}
 	case policy.S3PutBucketAcl, policy.S3PutObjectAcl, policy.S3PutObjectVersionAcl:
-		// RGWPutACLs (:5742-5744, :6320-6322).
+		// RGWPutACLs
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5742-L5744,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6320-L6322).
 		return append([]envPair{{"s3:x-amz-acl", cannedACL(r)}}, grantKeys(r)...), false
 	}
 	return nil, false
@@ -226,11 +239,13 @@ func opKeys(cfg Config, r *op.Request, a policy.Action) (keys []envPair, tagsFir
 
 // listKeys are RGWListBucket's: the prefix and the delimiter when not empty,
 // and always the max-keys it lists with, which parse_value_and_bound bounds
-// by rgw_max_listing_results with 1000 when absent (rgw_rest_s3.h:160 at
-// v19.2.6, :161 at v20.2.4). They are the listing's own r.List once it has
-// set them, and otherwise read from the query as get_params reads it. A
-// max-keys that does not parse fails the request before radosgw adds a key;
-// the op refuses it first in rgw-go too.
+// by rgw_max_listing_results with 1000 when absent
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L160 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L161 at v20.2.4).
+// They are the listing's own r.List once it has set them, and otherwise read
+// from the query as get_params reads it. A max-keys that does not parse
+// fails the request before radosgw adds a key; the op refuses it first in
+// rgw-go too.
 func listKeys(cfg Config, r *op.Request) []envPair {
 	var (
 		prefix, delimiter string
@@ -377,9 +392,10 @@ func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4),
 // which rgw-go's S3 API does not read (docs/exclusions.md). The query's
 // overwrites the header's on every route in radosgw
-// (rgw_rest_s3.cc:2599-2601 at v19.2.7, :2752-2754 at v20.2.4); rgw-go
-// takes no query encryption parameter on either SigV2 route, neither of
-// which signs it, nor on a route a result does not name
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2599-L2601 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2752-L2754 at v20.2.4);
+// rgw-go takes no query encryption parameter on either SigV2 route, neither
+// of which signs it, nor on a route a result does not name
 // (op.AuthRoute.ReadsQueryEncryption, docs/exclusions.md).
 func cryptAttr(r *op.Request, name string, withQuery bool) (string, bool) {
 	val, found := op.HeaderValue(r.Header, "X-Amz-"+name)

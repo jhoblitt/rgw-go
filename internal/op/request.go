@@ -98,10 +98,12 @@ type Request struct {
 }
 
 // ListConditions are the listing parameters RGWListBucket::verify_permission
-// adds to the IAM environment once get_params has read them (rgw_op.cc:
-// 3033-3045 at v19.2.6, :3267-3279 at v20.2.4): s3:prefix and s3:delimiter
-// when not empty, and s3:max-keys always, the count the listing returns at
-// most, after parse_value_and_bound has bounded it.
+// adds to the IAM environment once get_params has read them
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3033-L3045 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3267-L3279 at v20.2.4):
+// s3:prefix and s3:delimiter when not empty, and s3:max-keys always, the
+// count the listing returns at most, after parse_value_and_bound has bounded
+// it.
 type ListConditions struct {
 	Prefix    string
 	Delimiter string
@@ -110,7 +112,8 @@ type ListConditions struct {
 
 // HeaderValue is a request header as radosgw's RGWEnv holds it: beast sets
 // one variable per header field in arrival order, so the last of a repeated
-// header is the one radosgw sees (rgw_asio_client.cc:36-65,
+// header is the one radosgw sees
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L65,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
 // and v20.2.4). A header present with an empty value is present.
 func HeaderValue(h http.Header, name string) (string, bool) {

@@ -17,10 +17,11 @@ import (
 // DeleteObject is RGWDeleteObj
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5129-L5327 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5519-L5726 at v20.2.4;
-// rgw_rest_s3.cc:3427-3470 at v19.2.6, :3685-3750 at v20.2.4). The handler
-// fills the headers' values, url-decoded where radosgw decodes them, and
-// nil for a header that is absent. A header present with an empty value is
-// a condition radosgw checks, and fails.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3427-L3470 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3750 at v20.2.4).
+// The handler fills the headers' values, url-decoded where radosgw decodes
+// them, and nil for a header that is absent. A header present with an
+// empty value is a condition radosgw checks, and fails.
 type DeleteObject struct {
 	// Versioned is that the request names a version instance, which selects
 	// the action. Init sets it from the request.
@@ -127,7 +128,7 @@ func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3737-L3741 at v20.2.4),
 // and a lost race is success
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304 at v19.2.6,
-// :5701-5703 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5701-L5703 at v20.2.4).
 func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err

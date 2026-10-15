@@ -37,8 +37,8 @@ func getObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 // writeDocument answers 200 with the XML declaration and doc, already
 // escaped, as application/xml. Its length is the one radosgw's frontend adds
 // to a response whose end_header named none, without Accept-Ranges
-// (rgw_client_io_filters.h:221-253 at v19.2.6 and v20.2.4). A HEAD gets the
-// headers alone (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
+// and v20.2.4). A HEAD gets the headers alone (docs/exclusions.md).
 func writeDocument(w http.ResponseWriter, r *op.Request, doc []byte) {
 	SetCommonHeaders(w, r)
 	h := w.Header()

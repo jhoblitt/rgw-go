@@ -35,12 +35,13 @@ type Config struct {
 	ACLGrantsMaxNum int
 	// MaxListingResults is rgw_max_listing_results, the bound on a listing's
 	// max-keys. radosgw's default is 1000 on Squid and 5000 on Tentacle
-	// (rgw.yaml.in:3435 at v19.2.6, :3620 at v20.2.4), and that release
-	// default applies here only when librados does not know the option, or
-	// when the field is zero, which Ceph's minimum of 1 leaves free. Every
-	// librados knows it, so ConfigFrom yields the configured value or the
-	// linked librados's compiled default: the cluster's release's only when
-	// the image links the cluster's librados.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L3435 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3620 at v20.2.4),
+	// and that release default applies here only when librados does not know
+	// the option, or when the field is zero, which Ceph's minimum of 1
+	// leaves free. Every librados knows it, so ConfigFrom yields the
+	// configured value or the linked librados's compiled default: the
+	// cluster's release's only when the image links the cluster's librados.
 	MaxListingResults int64
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time

@@ -22,8 +22,9 @@ type Config struct {
 	// included
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5607-L5610 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6163-L6166 at v20.2.4),
-	// though rgw.yaml.in:911-916 documents it as presigned-only; rgw-go
-	// mirrors radosgw.
+	// though
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L911-L916
+	// documents it as presigned-only; rgw-go mirrors radosgw.
 	DisablePresignedURLs bool
 	// Insecure is rgw_sigv4_insecure (default false): it skips the checks
 	// that host and every x-amz-* header but x-amz-content-sha256 are signed
@@ -35,8 +36,9 @@ type Config struct {
 	// DNSNames is rgw_dns_name plus the zonegroup hostnames, the list
 	// s3.Config.DNSNames also gets: the SigV2 canonical resource starts with
 	// the bucket a virtual-hosted request names in its Host, as
-	// RGWREST::preprocess prepends it (rgw_rest.cc:2154-2161 at v19.2.6,
-	// :2171-2178 at v20.2.4).
+	// RGWREST::preprocess prepends it
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178 at v20.2.4).
 	DNSNames []string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time

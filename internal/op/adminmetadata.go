@@ -16,8 +16,10 @@ import (
 
 // The metadata API is RGWHandler_Metadata's ops (rgw_rest_metadata.cc and
 // rgw_rest_metadata.h, the same at v19.2.6 and v20.2.4) over the metadata
-// manager (rgw_metadata.cc:469-552 at v19.2.6, :264-347 at v20.2.4), with
-// Env.Metadata serving each section's handler.
+// manager
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L469-L552 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L264-L347 at v20.2.4),
+// with Env.Metadata serving each section's handler.
 
 // errTopLevel is the top-level handler's -ENOTSUP for a get, put or remove
 // that names no section (RGWMetadataTopHandler,
@@ -32,8 +34,8 @@ var errTopLevel = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.E
 var metadataSections = []string{"bucket", "bucket.instance", "user"}
 
 // SyncType is RGWMDLogSyncType as update-type names it
-// (rgw_rest_metadata.cc:221-232): APPLY_ALWAYS, APPLY_UPDATES and
-// APPLY_NEWER.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L221-L232):
+// APPLY_ALWAYS, APPLY_UPDATES and APPLY_NEWER.
 type SyncType uint8
 
 // The sync types a put takes.
@@ -57,8 +59,9 @@ func ParseSyncType(s string) (SyncType, bool) {
 }
 
 // GetMetadata is RGWOp_Metadata_Get and RGWOp_Metadata_Get_Myself
-// (rgw_rest_metadata.cc:54-75): the entry Key names in Section. Cap
-// metadata=read (rgw_rest_metadata.h:38-39).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L54-L75):
+// the entry Key names in Section. Cap metadata=read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.h#L38-L39).
 type GetMetadata struct {
 	AdminOp
 	Section, Key string
@@ -90,8 +93,10 @@ func (o *GetMetadata) Execute(ctx context.Context, r *Request) error {
 // names no max-entries.
 const metadataListMax = 1000
 
-// ListMetadata is RGWOp_Metadata_List (rgw_rest_metadata.cc:77-174): the
-// keys of Section from Marker. Cap metadata=read (rgw_rest_metadata.h:26-27).
+// ListMetadata is RGWOp_Metadata_List
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L77-L174):
+// the keys of Section from Marker. Cap metadata=read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.h#L26-L27).
 type ListMetadata struct {
 	AdminOp
 	Section string
@@ -178,7 +183,8 @@ func listSections(_ context.Context, _, marker string, maxEntries int) (keys []s
 }
 
 // PutMetadata is RGWOp_Metadata_Put::execute past its body read
-// (rgw_rest_metadata.cc:234-274), RGWMetadataManager::put
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L234-L274),
+// RGWMetadataManager::put
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L501-L552 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L296-L347 at v20.2.4)
 // and Squid's RGWMetadataHandlerPut_SObj::put_pre
@@ -187,7 +193,8 @@ func listSections(_ context.Context, _, marker string, maxEntries int) (keys []s
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_metadata.h#L196-L218 at v19.2.6).
 // The entry written is the one Section and Key name: the body's "key" is
 // decoded after the manager has found the handler and entry, so it changes
-// neither. Cap metadata=write (rgw_rest_metadata.h:61-62).
+// neither. Cap metadata=write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.h#L61-L62).
 //
 // Tentacle's handlers take the sync type and ignore it, applying every put
 // (docs/ceph-upstream-bugs.md, "Tentacle's metadata put ignores
@@ -386,11 +393,13 @@ func jsonKind(raw json.RawMessage) byte {
 	return 0
 }
 
-// RemoveMetadata is RGWOp_Metadata_Delete (rgw_rest_metadata.cc:290-300)
+// RemoveMetadata is RGWOp_Metadata_Delete
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L290-L300)
 // and RGWMetadataManager::remove
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L554-L574 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L349-L369 at v20.2.4).
-// Cap metadata=write (rgw_rest_metadata.h:75-76).
+// Cap metadata=write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.h#L75-L76).
 type RemoveMetadata struct {
 	AdminOp
 	Section, Key string

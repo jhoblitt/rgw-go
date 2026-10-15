@@ -20,8 +20,7 @@ import (
 // The multipart routes are rgw_rest_s3.cc's RGWInitMultipart_ObjStore_S3,
 // RGWCompleteMultipart_ObjStore_S3, RGWAbortMultipart_ObjStore_S3,
 // RGWListMultipart_ObjStore_S3 and RGWListBucketMultiparts_ObjStore_S3, and
-// RGWPutObj_ObjStore_S3 for a PUT naming an upload. A bare line number is
-// v19.2.6's rgw_rest_s3.cc; [T] marks v20.2.4's.
+// RGWPutObj_ObjStore_S3 for a PUT naming an upload.
 
 // multipartHandlers is the multipart upload routes over env's options; each
 // entry binds to the one scope Dispatch routes its name in. UploadPart and
@@ -234,13 +233,18 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 // once the requester is authorized: the ACL, create_s3_policy's, whose
 // grantees are looked up; a retention or a legal hold, refused for what the
 // bucket holds (multipartObjectLock); a Content-MD5 that ceph_unarmor does
-// not decode to 16 bytes, InvalidDigest (:4184-4198, :4393-4407); then the
-// attrs, requestAttrs' with the query's x-amz-meta-* included where the
-// route reads them (op.AuthRoute.ReadsQueryMeta), as map_qs_metadata adds
-// them for put_obj on every route, and the tag set, as encode_obj_tags_attr
-// stores it on the part's head (:4531, :4799). radosgw builds the ACL and
-// checks the object lock in get_params, before verify_permission, and the
-// attrs once the part is stored (docs/exclusions.md).
+// not decode to 16 bytes, InvalidDigest
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407);
+// then the attrs, requestAttrs' with the query's x-amz-meta-* included
+// where the route reads them (op.AuthRoute.ReadsQueryMeta), as
+// map_qs_metadata adds them for put_obj on every route, and the tag set, as
+// encode_obj_tags_attr stores it on the part's head
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4531,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799).
+// radosgw builds the ACL and checks the object lock in get_params, before
+// verify_permission, and the attrs once the part is stored
+// (docs/exclusions.md).
 func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *op.UploadPart, set *tags.Set) error {
 	p, aclErr := newObjectACL(ctx, r)
 	if aclErr != nil {
@@ -343,8 +347,10 @@ type completeMultipartUploadResult struct {
 // completeMultipart is complete_multipart, CompleteMultipartUpload. The op
 // reads uploadId and, once the requester is authorized, the body; If-Match
 // and If-None-Match are their headers' last values, nil when absent, which
-// v20.2.4 reads (:4572-4573) and rgw-go applies on both releases
-// (docs/exclusions.md). The success is send_response's
+// v20.2.4 reads
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573)
+// and rgw-go applies on both releases (docs/exclusions.md). The success is
+// send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
 // 200 and the document, whose length radosgw's frontend adds, the ETag in
@@ -373,9 +379,12 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 // Its base is s->info.domain when that is not empty, with no scheme:
 // RGWREST::preprocess sets it to the configured name the Host matched, as
 // cut from the Host, and otherwise to rgw_dns_name as configured, a list of
-// names included (rgw_rest.cc:2163-2165 and
+// names included
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2163-L2165
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2178-L2180 at v19.2.6,
-// :2180-2182 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2180-L2182
+// and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2200-L2202 at v20.2.4).
 // Otherwise it is the scheme rgw_transport_is_secure names and HTTP_HOST,
 // beast setting no SERVER_NAME, or "<HTTP_HOST>" for a request that sent no
@@ -520,8 +529,10 @@ const (
 )
 
 // multipartUpload is one Upload section of ListMultipartUploadsResult
-// (:4209-4217, [T] :4757-4765): the initiator twice, as Initiator and as
-// Owner, and STANDARD whatever the upload's class.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4209-L4217,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4757-L4765):
+// the initiator twice, as Initiator and as Owner, and STANDARD whatever
+// the upload's class.
 type multipartUpload struct {
 	Key          xmltext.Text   `xml:"Key"`
 	UploadID     xmltext.Text   `xml:"UploadId"`

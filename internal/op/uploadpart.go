@@ -135,12 +135,15 @@ func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 // destination. The destination is checked first all the same, and a refusal
 // there that Run would not let an admin through is answered before the
 // source is touched. For a copy, the op mask comes next, which radosgw
-// checks before verify_permission (rgw_process.cc:208 at v19.2.6 and
-// v20.2.4), then the request's storage class, which init_permissions checks
-// first (rgw_op.cc:576-583 at v19.2.6, :606-613 at v20.2.4). Only then are
-// the source's bucket, NoSuchBucket when missing, and its head read, the
-// head with its first chunk, as read_obj_policy reads it with prefetch_data
-// set
+// checks before verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L208 at v19.2.6
+// and v20.2.4), then the request's storage class, which init_permissions
+// checks first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4).
+// Only then are the source's bucket, NoSuchBucket when missing, and its
+// head read, the head with its first chunk, as read_obj_policy reads it
+// with prefetch_data set
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3926-L3934 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4135-L4143 at v20.2.4),
 // where radosgw loads the source bucket in init_processing
@@ -213,14 +216,18 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // request's with the policy, written under the request id. First come the
 // checks of stored state that radosgw makes before verify_permission, which
 // rgw-go makes once the requester is authorized: the request's storage class
-// must be one the zone has (rgw_op.cc:576-583 at v19.2.6, :606-613 at
-// v20.2.4), which VerifyPermission has checked for a copy before it read the
-// source; a bucket with a default encryption is refused; a public canned ACL
-// under the bucket's block of public ACLs is refused (:3903-3909 at v19.2.6,
-// :4112-4118 at v20.2.4); then Authorized runs, and a public ACL it built
-// from the grant headers is refused too, as PutObject refuses one, where
-// radosgw stores it (docs/exclusions.md). Then a copy naming a source version
-// is refused, until versioning is served.
+// must be one the zone has
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4),
+// which VerifyPermission has checked for a copy before it read the source; a
+// bucket with a default encryption is refused; a public canned ACL under the
+// bucket's block of public ACLs is refused
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3903-L3909 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118 at v20.2.4);
+// then Authorized runs, and a public ACL it built from the grant headers is
+// refused too, as PutObject refuses one, where radosgw stores it
+// (docs/exclusions.md). Then a copy naming a source version is refused, until
+// versioning is served.
 func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 	if !o.CopySource {
 		if err := checkDestPlacement(r, o.StorageClass); err != nil {
@@ -283,9 +290,11 @@ func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4244-L4260 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4469 at v20.2.4),
 // a NoSuchUpload ahead of every source error; the source's cloud tier and
-// its existence (:4297-4331 at v19.2.6, :4510-4544 at v20.2.4); then the
-// range against the source's accounted size, and the copy of that range
-// from the one state the request read.
+// its existence
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4297-L4331 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4510-L4544 at v20.2.4);
+// then the range against the source's accounted size, and the copy of
+// that range from the one state the request read.
 //
 // radosgw checks the cloud tier only for a copy without a range, and reads
 // no x-amz-copy-source-if-* header for a part: only RGWCopyObj's get_params
@@ -347,8 +356,9 @@ func (o *UploadPart) checkCloudTier(r *Request) error {
 // the read ends at once. Otherwise a range must lie within the source: one
 // starting at or past its end fails range_to_ofs with -ERANGE, and one
 // ending past it fails the same way once the copy loop reaches the end and
-// asks for the next piece (rgw_op.cc:4386-4400 at v19.2.6, :4618-4632 at
-// v20.2.4;
+// asks for the next piece
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4386-L4400 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4618-L4632 at v20.2.4;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_sal.cc#L429-L449 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.cc#L426-L446 at v20.2.4),
 // after the leading pieces were written, where rgw-go refuses before it
@@ -383,8 +393,9 @@ func (o *UploadPart) Complete(context.Context, *Request) {}
 // gen_rand_alphanumeric's A-Za-z0-9-_
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3281-L3283 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4125-L4127 at v20.2.4;
-// common/random_string.cc:48), and rgw-go's the same. Each op answers it
-// where a missing upload would be answered (docs/exclusions.md).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L48),
+// and rgw-go's the same. Each op answers it where a missing upload would be
+// answered (docs/exclusions.md).
 func aliasedUpload(id string) error {
 	if !strings.Contains(id, ".") {
 		return nil

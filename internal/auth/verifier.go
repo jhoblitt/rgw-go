@@ -77,7 +77,11 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	// get_auth_data refuses every signed request before it reads one, and
 	// Strategy::apply gives the refusal its message
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5607-L5610
-	// and rgw_auth.cc:505-509 at v19.2.6, :6163-6166 and :520-524 at v20.2.4).
+	// and
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L505-L509 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6163-L6166
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L520-L524 at v20.2.4).
 	if v.cfg.DisablePresignedURLs {
 		return nil, op.ErrAccessDenied.WithMessage("Presigned URLs are disabled by admin")
 	}
@@ -192,16 +196,17 @@ func (v *Verifier) parseAuthData(rv *requestView, ver version, rt route, payload
 }
 
 // lookup is LocalEngine::authenticate up to the signature compare
-// (rgw_rest_s3.cc:6325-6352 at v19.2.6, :6896-6923 at v20.2.4): the user the
-// key index names, the key in that user's record, and the account of an
-// account user. Any lookup failure is ERR_INVALID_ACCESS_KEY. radosgw indexes
-// only active keys, so an inactive one fails the lookup; rgw-go checks the
-// flag after it, which keeps the answer whatever a store indexes. Stored
-// identity policies are decoded at authorization, not here. Neither its
-// errors nor its log name the access key, which is the request's. A key
-// holding a NUL fails without a lookup, as go-ceph would hand librados the
-// key's index object name as a C string that ends at the NUL; radosgw looks
-// the whole key up and finds none (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6325-L6352 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6896-L6923 at v20.2.4):
+// the user the key index names, the key in that user's record, and the
+// account of an account user. Any lookup failure is ERR_INVALID_ACCESS_KEY.
+// radosgw indexes only active keys, so an inactive one fails the lookup;
+// rgw-go checks the flag after it, which keeps the answer whatever a store
+// indexes. Stored identity policies are decoded at authorization, not here.
+// Neither its errors nor its log name the access key, which is the request's.
+// A key holding a NUL fails without a lookup, as go-ceph would hand librados
+// the key's index object name as a C string that ends at the NUL; radosgw
+// looks the whole key up and finds none (docs/exclusions.md).
 func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord, meta.AccessKey, *meta.AccountInfo, error) {
 	if strings.IndexByte(accessKey, 0) >= 0 {
 		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key holds a NUL byte", op.ErrInvalidAccessKeyID)

@@ -42,8 +42,9 @@ func bucketEncryptionUnserved(rec *BucketRecord) error {
 // the bucket attr holding its PublicAccessBlockConfiguration.
 const AttrPublicAccess = meta.AttrPrefix + "public-access"
 
-// defaultMaxPutSize is rgw_max_put_size's default, 5 GiB (rgw.yaml.in:134 at
-// v19.2.6), for a configuration that cannot be read.
+// defaultMaxPutSize is rgw_max_put_size's default, 5 GiB
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L134 at v19.2.6),
+// for a configuration that cannot be read.
 const defaultMaxPutSize = 5 << 30
 
 // PutObject is RGWPutObj for S3
@@ -105,10 +106,12 @@ func (o *PutObject) Action() policy.Action { return policy.S3PutObject }
 func (o *PutObject) OpMask() uint32 { return OpTypeWrite }
 
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket
-// (rgw_op.cc:539-541 at v19.2.6, :569-571 at v20.2.4), then Params. The
-// checks of what the bucket holds that radosgw makes there and in
-// init_processing wait for the requester to be authorized, so that a refused
-// requester learns nothing of the bucket (Execute; docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L539-L541 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L569-L571 at v20.2.4),
+// then Params. The checks of what the bucket holds that radosgw makes there
+// and in init_processing wait for the requester to be authorized, so that a
+// refused requester learns nothing of the bucket (Execute;
+// docs/exclusions.md).
 func (o *PutObject) Init(ctx context.Context, r *Request) error {
 	if err := loadBucket(ctx, r); err != nil {
 		return err
@@ -129,11 +132,14 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 
 // Execute first makes, in radosgw's order, the checks of stored state that
 // radosgw makes before verify_permission: the request's storage class on the
-// bucket's placement must be one the zone has (rgw_op.cc:576-583 at v19.2.6,
-// :606-613 at v20.2.4); a public canned ACL under the bucket's block of
-// public ACLs is refused (:3903-3909, :4112-4118); then Authorized runs, and
-// a public policy it built from the grant headers is refused too, which
-// radosgw stores (docs/exclusions.md). Then come
+// bucket's placement must be one the zone has
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4);
+// a public canned ACL under the bucket's block of public ACLs is refused
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3903-L3909,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118);
+// then Authorized runs, and a public policy it built from the grant headers
+// is refused too, which radosgw stores (docs/exclusions.md). Then come
 // RGWPutObj_ObjStore::verify_params
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1049-L1059 at v19.2.6
 // and v20.2.4) and RGWPutObj::execute in its order
@@ -252,9 +258,15 @@ func blockPublicACLs(rec *BucketRecord) bool {
 // they reach the index (RGWRados::Object::Delete::delete_obj,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5768-L5770 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6456-L6458 at v20.2.4;
-// RGWRados::set_attrs, :6601-6603 and :7401-7403), and the delete takes the
-// unversioned path whenever the bucket's flags lack BUCKET_VERSIONED (:5774,
-// :6462), which RGWDeleteMultiObj passes for each key
+// RGWRados::set_attrs,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6601-L6603
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7401-L7403),
+// and the delete takes the unversioned path whenever the bucket's flags lack
+// BUCKET_VERSIONED
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462),
+// which RGWDeleteMultiObj passes for each key
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6889 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7826 at v20.2.4).
 func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
@@ -286,10 +298,15 @@ func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L339-L346 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396 at v20.2.4),
 // then links the key to an OLH as a versioned object
-// (driver/rados/rgw_rados.cc:3369-3375 at v19.2.7); and it copies from a
-// source naming it without the checks of a copy onto itself
-// (rgw_rest_s3.cc:3541-3548 at v19.2.6, :3821-3828 at v20.2.4; copy_obj,
-// rgw_rados.cc:4890 and :5150).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375 at v19.2.7);
+// and it copies from a source naming it without the checks of a copy onto
+// itself
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3541-L3548 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3821-L3828 at v20.2.4;
+// copy_obj,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4890
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5150).
 func newHeadVersioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 	if err := versioningUnserved(rec); err != nil {
 		return err
@@ -309,11 +326,13 @@ func newHeadVersioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3069-L3075 at v20.2.4);
 // object lock is enabled only with versioning
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2392
-// and rgw_op.cc:8232 at v19.2.6,
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8232 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2497
-// and :9180 at v20.2.4). The suspended flag without it, which radosgw
-// never writes, leaves the state unknown, and an unknown state is taken
-// for a versioned one.
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9180 at v20.2.4).
+// The suspended flag without it, which radosgw never writes, leaves the
+// state unknown, and an unknown state is taken for a versioned one.
 func neverVersioned(rec *BucketRecord) bool {
 	return rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) == 0
 }

@@ -104,15 +104,17 @@ func (rv *requestView) param(name string) (string, bool) {
 
 // header is RGWEnv::get for a signed-header token. Beast files a header as
 // HTTP_ and its name upper-cased with '-' and '_' swapped, and radosgw maps a
-// token the same way into a map that ignores case (rgw_asio_client.cc:36-66;
+// token the same way into a map that ignores case
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L66;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L749-L755,
-// rgw_env.cc:46-53 at v19.2.6), so a token finds the header whose name equals
-// it but for case, and the last of a repeated header. net/http keeps the Host
-// header in req.Host and a chunked Transfer-Encoding in req.TransferEncoding;
-// for an absolute-form target it puts the target's authority in req.Host and
-// drops the Host header, which beast keeps. HTTP/1.1 requires a Host header,
-// so an empty req.Host there is one sent empty, which beast files as an empty
-// HTTP_HOST; under HTTP/1.0 net/http leaves an empty header and none alike.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L46-L53 at v19.2.6),
+// so a token finds the header whose name equals it but for case, and the last
+// of a repeated header. net/http keeps the Host header in req.Host and a
+// chunked Transfer-Encoding in req.TransferEncoding; for an absolute-form
+// target it puts the target's authority in req.Host and drops the Host
+// header, which beast keeps. HTTP/1.1 requires a Host header, so an empty
+// req.Host there is one sent empty, which beast files as an empty HTTP_HOST;
+// under HTTP/1.0 net/http leaves an empty header and none alike.
 func (rv *requestView) header(name string) (string, bool) {
 	switch asciiLower(name) {
 	case "host":
@@ -139,7 +141,7 @@ func (rv *requestView) chunkedTE() bool { return len(rv.req.TransferEncoding) > 
 
 // localPort is SERVER_PORT, the listener's port, and whether beast would
 // also set SERVER_PORT_SECURE, which it does on a TLS listener
-// (rgw_asio_client.cc:86-91).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L86-L91).
 func (rv *requestView) localPort() (port string, secure bool) {
 	secure = rv.req.TLS != nil
 	addr, ok := rv.req.Context().Value(http.LocalAddrContextKey).(net.Addr)

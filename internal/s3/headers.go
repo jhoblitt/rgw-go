@@ -31,10 +31,10 @@ func SetCommonHeaders(w http.ResponseWriter, r *op.Request) {
 // SetHeader sets name to v under name's own spelling. radosgw's dump_header
 // hands the name to the frontend, which writes its bytes as they are
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L347-L357,
-// rgw_asio_client.cc:167-178 at v19.2.6 and v20.2.4), and an SDK reads a
-// user metadata key back case and all. http.Header.Set would send
-// net/http's canonical form instead; net/http writes a key set directly as
-// it stands.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L167-L178 at v19.2.6
+// and v20.2.4), and an SDK reads a user metadata key back case and all.
+// http.Header.Set would send net/http's canonical form instead; net/http
+// writes a key set directly as it stands.
 func SetHeader(h http.Header, name, v string) { h[name] = []string{v} }
 
 // addHeader is SetHeader that keeps the values already under name.
@@ -58,7 +58,9 @@ func isOwnerOf(id op.Identity, owner meta.Owner) bool {
 // and HEAD of an object
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L459 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L495 at v20.2.4)
-// and the PUT of an object or part without a copy source (:2747, :2911).
+// and the PUT of an object or part without a copy source
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2911).
 // Every other Content-Length radosgw sends is the one its frontend adds when
 // the response completes, which carries no Accept-Ranges.
 func SetContentLength(h http.Header, n uint64) {

@@ -23,7 +23,8 @@ func deleteDoc(objects ...string) string {
 }
 
 // expectStatusLine checks rec is status alone, as send_status sends it: none
-// of end_header's headers and no document (rgw_rest_s3.cc:4247-4255).
+// of end_header's headers and no document
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4247-L4255).
 func expectStatusLine(rec *httptest.ResponseRecorder, status int) {
 	GinkgoHelper()
 	Expect(rec.Code).To(Equal(status), rec.Body.String())

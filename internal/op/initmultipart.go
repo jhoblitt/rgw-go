@@ -14,8 +14,9 @@ import (
 // InitMultipart is RGWInitMultipart, CreateMultipartUpload
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6271-L6343 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L7019 at v20.2.4;
-// rgw_rest_s3.cc:3969-4062 at v19.2.6). The handler fills the inputs;
-// Execute creates the upload through MultipartStore.CreateUpload.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3969-L4062 at v19.2.6).
+// The handler fills the inputs; Execute creates the upload through
+// MultipartStore.CreateUpload.
 type InitMultipart struct {
 	// Attrs are the handler's request attrs, each NUL-terminated.
 	Attrs map[string][]byte
@@ -69,10 +70,12 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6293-L6343 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6963-L7019 at v20.2.4):
 // the destination placement, the bucket's rule with the request's storage
-// class, must be one the zone has (rgw_op.cc:576-583 at v19.2.6, :606-613 at
-// v20.2.4), which radosgw checks before verify_permission and so before
-// anything get_params reads; a bucket with a default encryption is refused,
-// as get_encryption_defaults comes first in get_params; Params runs, and a
+// class, must be one the zone has
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4),
+// which radosgw checks before verify_permission and so before anything
+// get_params reads; a bucket with a default encryption is refused, as
+// get_encryption_defaults comes first in get_params; Params runs, and a
 // public ACL under the bucket's block of public ACLs is refused, as
 // PutObject refuses one, where radosgw checks no block for
 // CreateMultipartUpload, whose ACL the completed object takes

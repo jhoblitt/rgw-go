@@ -45,7 +45,9 @@ func getBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) 
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8999-L9008 at v20.2.4),
 // then the parse and the refusal of a public policy under a block of
 // public policies, which the evaluator makes and whose errors are mapped
-// through authz.ErrorFor; 204 with no body (:8047-8058, :8965-8976).
+// through authz.ErrorFor; 204 with no body
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8047-L8058,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8965-L8976).
 func putBucketPolicy(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.PutBucketPolicy{Params: func(_ context.Context, o *op.PutBucketPolicy) error {
 		e, err := evaluator(r)

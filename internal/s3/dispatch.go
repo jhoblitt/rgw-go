@@ -100,12 +100,15 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 	return "", false
 }
 
-// table is RGWHandler_REST_{Service,Bucket,Obj}_S3::op_* (rgw_rest_s3.cc
-// :4596-4881 at v19.2.6, :5137-5441 at v20.2.4) and the is_*_op predicates
-// they call (rgw_rest_s3.h:670-775 at v19.2.6, :694-805 at v20.2.4), each a
-// test of its key's presence. A method missing from the table, the service
-// PUT, DELETE and OPTIONS among them, is the base class's nullptr. The
-// service POST's IAM, STS and topic actions are not dispatched here.
+// table is RGWHandler_REST_{Service,Bucket,Obj}_S3::op_*
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4596-L4881 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5137-L5441 at v20.2.4)
+// and the is_*_op predicates they call
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L670-L775 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L694-L805 at v20.2.4),
+// each a test of its key's presence. A method missing from the table, the
+// service PUT, DELETE and OPTIONS among them, is the base class's nullptr.
+// The service POST's IAM, STS and topic actions are not dispatched here.
 //
 // The bucket op_get, op_put and op_delete open by returning nullptr for an
 // "encryption" subresource, which never exists because RGWHTTPArgs::append
@@ -308,8 +311,10 @@ type payloadRow struct {
 // switch
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5944 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6515 at v20.2.4)
-// and its streamed switch, RGW_OP_PUT_OBJ alone (:5957-5969, :6528-6540). A
-// route missing from it takes neither form.
+// and its streamed switch, RGW_OP_PUT_OBJ alone
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5957-L5969,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6528-L6540).
+// A route missing from it takes neither form.
 var payloadTable = map[string]payloadRow{
 	"put_obj":                           {op.PayloadSigned | op.PayloadChunked, 0},
 	"create_bucket":                     {op.PayloadSigned, 0},

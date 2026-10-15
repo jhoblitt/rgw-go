@@ -270,14 +270,15 @@ func checkMetadataUser(ctx context.Context, users UserStore, accounts AccountSto
 	return nil
 }
 
-// RemoveMetadataUser is the user section's remove (rgw_user.cc:2772-2787 at
-// v19.2.6, :2853-2868 at v20.2.4): the user the key names, read and then
-// removed under the version read, then its entry in its account's users
-// index. A user outside an account whose bucket list holds a bucket is
-// ErrBucketAlreadyExists, as the user removal route refuses it, since
-// remove_user_info removes that list and with it the buckets' place in
-// their owner's list; radosgw's metadata remove does not check. A missing
-// user is ErrNoSuchKey.
+// RemoveMetadataUser is the user section's remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2772-L2787 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2853-L2868 at v20.2.4):
+// the user the key names, read and then removed under the version read,
+// then its entry in its account's users index. A user outside an account
+// whose bucket list holds a bucket is ErrBucketAlreadyExists, as the user
+// removal route refuses it, since remove_user_info removes that list and
+// with it the buckets' place in their owner's list; radosgw's metadata
+// remove does not check. A missing user is ErrNoSuchKey.
 func RemoveMetadataUser(ctx context.Context, users UserStore, accounts AccountStore, key string) error {
 	rec, err := users.GetUser(ctx, meta.ParseUserID(key))
 	if errors.Is(err, ErrNoSuchUser) {

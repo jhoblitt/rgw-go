@@ -17,10 +17,12 @@ const defaultPartUploadLimit = 10000
 // CompleteMultipart is RGWCompleteMultipart, CompleteMultipartUpload
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6345-L6541 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7431 at v20.2.4;
-// rgw_rest.cc:1580-1595 at v19.2.6; rgw_rest_s3.cc:4064-4108 at v19.2.6,
-// :4565-4644 at v20.2.4). Execute reads the completion document from r.Body,
-// through the authenticator's verifying reader to its final Read, before it
-// parses it, and completes the upload through MultipartStore.Complete.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1580-L1595 at v19.2.6;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4064-L4108 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4565-L4644 at v20.2.4).
+// Execute reads the completion document from r.Body, through the
+// authenticator's verifying reader to its final Read, before it parses it,
+// and completes the upload through MultipartStore.Complete.
 type CompleteMultipart struct {
 	UploadID string
 	// IfMatch and IfNoneMatch are the headers' values, nil when absent: a
@@ -66,8 +68,8 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291 at v20.2.4),
 // so on a bucket never versioned it would file the head in the index under
 // that instance and then link the key to an OLH as a versioned object
-// (rgw_rados.cc:3369-3375 at v19.2.7). Then it is
-// RGWCompleteMultipart::execute in its order
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375 at v19.2.7).
+// Then it is RGWCompleteMultipart::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6416 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7211 at v20.2.4):
 // get_params, whose empty upload id is -ENOTSUP, 500 UnknownError, and whose

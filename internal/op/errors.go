@@ -133,7 +133,7 @@ var (
 	ErrBucketNotEmpty               = &Error{Code: "BucketNotEmpty", Status: 409, Errno: 39}
 	ErrLimitExceeded                = &Error{Code: "LimitExceeded", Status: 409, Errno: 2302}
 	ErrAccountAlreadyExists         = &Error{Code: "AccountAlreadyExists", Status: 409, Errno: 2403}
-	ErrRestoreAlreadyInProgress     = &Error{Code: "RestoreAlreadyInProgress", Status: 409, Errno: 2500} // v20.2.4 only (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L364, table row :142); no Squid row
+	ErrRestoreAlreadyInProgress     = &Error{Code: "RestoreAlreadyInProgress", Status: 409, Errno: 2500} // v20.2.4 only (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L364, table row https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L142); no Squid row
 	ErrConcurrentModification       = &Error{Code: "ConcurrentModification", Status: 409, Errno: 125}
 	ErrMissingContentLength         = &Error{Code: "MissingContentLength", Status: 411, Errno: 2011}
 	ErrPreconditionFailed           = &Error{Code: "PreconditionFailed", Status: 412, Errno: 2015}
@@ -154,8 +154,9 @@ var (
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2203-L2206 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2377-L2381 at v20.2.4).
 // Only radosgw's Swift table names it, "Metadata name too long"
-// (rgw_common.cc:149 at v19.2.6, :151 at v20.2.4); for S3, set_req_state_err
-// finds no row and answers UnknownError
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L149 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L151 at v20.2.4);
+// for S3, set_req_state_err finds no row and answers UnknownError
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L322-L354 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L332-L367 at v20.2.4).
 // It is no row of the S3 table, so Errors leaves it out.
@@ -220,12 +221,16 @@ var byErrno = func() map[int]*Error {
 // bug in an op and renders as InternalError; a context error renders as the
 // 408 RequestTimeout, which is what a client that is still connected sees.
 // A context deadline is a store call timing out, which radosgw meets as
-// librados's -ETIMEDOUT (Objecter.cc:2323 at v19.2.6, :2391 at v20.2.4,
+// librados's -ETIMEDOUT
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/osdc/Objecter.cc#L2323 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L2391 at v20.2.4,
 // with rados_osd_op_timeout set), that row
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L112 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L113 at v20.2.4);
-// ERR_REQUEST_TIMEOUT's RequestTimeout is a 400 (:73, :74) radosgw answers a
-// PutObject body shorter than its Content-Length with
+// ERR_REQUEST_TIMEOUT's RequestTimeout is a 400
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L73,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L74)
+// radosgw answers a PutObject body shorter than its Content-Length with
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4430-L4431 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4662-L4663 at v20.2.4).
 func AsError(err error) *Error {
@@ -246,8 +251,9 @@ func AsError(err error) *Error {
 // radosgw notices such a client only when a read or write on its socket
 // fails; it logs a failed write and goes on (dump_status,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L289-L301 at v19.2.6
-// and v20.2.4), then ends the connection (rgw_asio_frontend.cc:350-355 at
-// v19.2.6, :360-365 at v20.2.4).
+// and v20.2.4), then ends the connection
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_frontend.cc#L350-L355 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L360-L365 at v20.2.4).
 func ClientGone(ctx context.Context, err error) bool {
 	return errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled)
 }

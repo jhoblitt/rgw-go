@@ -13,9 +13,10 @@ import (
 // ListParts is RGWListMultipart, ListParts
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6652-L6694 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7576-L7633 at v20.2.4;
-// rgw_rest.cc:1597-1622 at v19.2.6, :1602-1627 at v20.2.4). The handler
-// fills the inputs; Execute lists a page of the upload's parts through
-// MultipartStore.ListParts.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1597-L1622 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1602-L1627 at v20.2.4).
+// The handler fills the inputs; Execute lists a page of the upload's
+// parts through MultipartStore.ListParts.
 type ListParts struct {
 	UploadID string
 	// Marker is part-number-marker, 0 when absent.

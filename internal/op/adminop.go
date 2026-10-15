@@ -16,8 +16,10 @@ import (
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L322 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L461-L463 at v19.2.6).
 // Each op writes its own VerifyPermission, which is
-// RGWRESTOp::verify_permission (rgw_rest.cc:1687-1690): CheckCaps with the
-// op's check_caps pair, which Run lets an admin identity through.
+// RGWRESTOp::verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1687-L1690):
+// CheckCaps with the op's check_caps pair, which Run lets an admin identity
+// through.
 type AdminOp struct{}
 
 // Action is ActionNone: radosgw's IAM never evaluates an admin op.

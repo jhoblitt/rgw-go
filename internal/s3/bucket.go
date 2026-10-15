@@ -42,8 +42,7 @@ func bucketHandlers() map[string]HandlerFunc {
 
 // The bucket routes are rgw_rest_s3.cc's RGWCreateBucket_ObjStore_S3,
 // RGWDeleteBucket_ObjStore_S3, RGWStatBucket_ObjStore_S3 and
-// RGWGetBucketLocation_ObjStore_S3. A bare line number is v19.2.6's
-// rgw_rest_s3.cc.
+// RGWGetBucketLocation_ObjStore_S3.
 
 // defaultMaxPutParamSize is rgw_max_put_param_size's default, 1 MiB
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L138-L145 at v19.2.6,
@@ -230,8 +229,9 @@ func maxPutParamSize(r *op.Request) uint64 {
 // not yet create a bucket with a requested index (docs/exclusions.md). A
 // body radosgw's XML parser refuses is InvalidArgument. On Squid the root
 // must be CreateBucketConfiguration holding a LocationConstraint
-// (:2500-2520); on Tentacle the LocationConstraint may be absent, and a
-// BucketIndex is checked as radosgw checks it.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2500-L2520);
+// on Tentacle the LocationConstraint may be absent, and a BucketIndex is
+// checked as radosgw checks it.
 func parseCreateBucketConfiguration(r *op.Request, body []byte) (lc string, index bool, err error) {
 	root, err := xmltext.Parse(body)
 	if err != nil {

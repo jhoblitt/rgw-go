@@ -21,9 +21,10 @@ const copyOntoItselfMsg = "This copy request is illegal because it is trying to 
 // CopyObject is RGWCopyObj
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5376-L5693 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5942-L6273 at v20.2.4;
-// rgw_rest_s3.cc:3478-3603 at v19.2.6, :3758-3886 at v20.2.4). The handler
-// fills the inputs; ObjectStore.CopyObject copies, and the op authorizes
-// and checks.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3478-L3603 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3886 at v20.2.4).
+// The handler fills the inputs; ObjectStore.CopyObject copies, and the op
+// authorizes and checks.
 type CopyObject struct {
 	SrcTenant, SrcBucket string
 	SrcKey               meta.ObjKey
@@ -106,17 +107,21 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // source's read, then s3:PutObject on the destination. The destination is
 // checked first all the same, and a refusal there that Run would not let an
 // admin through is answered before the source is touched. Then come the op
-// mask, which radosgw checks before verify_permission (rgw_process.cc:208 at
-// v19.2.6 and v20.2.4), and the request's storage class on the destination's
-// placement, which init_permissions checks first (rgw_op.cc:576-583 at
-// v19.2.6, :606-613 at v20.2.4). Only then are the source's bucket,
-// NoSuchBucket when missing, and its head read, the head with its first
-// chunk, as read_obj_policy reads it with prefetch_data set
+// mask, which radosgw checks before verify_permission
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L208 at v19.2.6
+// and v20.2.4), and the request's storage class on the destination's
+// placement, which init_permissions checks first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4).
+// Only then are the source's bucket, NoSuchBucket when missing, and its head
+// read, the head with its first chunk, as read_obj_policy reads it with
+// prefetch_data set
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5413-L5422 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5979-L5988 at v20.2.4),
-// where radosgw loads the source bucket in init_processing (:5392-5400,
-// :5958-5966), before the op mask, and reads the source before the
-// destination's check.
+// where radosgw loads the source bucket in init_processing
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5392-L5400,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5958-L5966),
+// before the op mask, and reads the source before the destination's check.
 //
 // radosgw authorizes the source's read against its bucket's ACL alone and
 // reads the object's ACL without using it (docs/ceph-upstream-bugs.md,
@@ -177,7 +182,8 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3553-L3564 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3833-L3844 at v20.2.4): a
 // copy onto itself must change the storage class. The source's is its storage class attr on
-// its bucket's placement, as read_obj_policy reads it (rgw_op.cc:314-322 and
+// its bucket's placement, as read_obj_policy reads it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L314-L322 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5428-L5435 at v19.2.6),
 // compared with s->dest_placement as rgw_placement_rule's == does, an empty class being
 // STANDARD.

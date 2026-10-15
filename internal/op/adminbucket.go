@@ -17,10 +17,10 @@ import (
 
 // The admin bucket ops are driver/rados/rgw_rest_bucket.cc's RGWOp_* bodies
 // over driver/rados/rgw_bucket.cc's RGWBucketAdminOp. rgw_rest_bucket.cc's
-// line numbers are the same at v19.2.6 and v20.2.4; a bare rgw_bucket.cc
-// line is v19.2.6's. radosgw's REST ops pass no error-message sink to
-// RGWBucketAdminOp, so its refusals reach the client without the text
-// radosgw-admin prints, and these carry none either.
+// line numbers are the same at v19.2.6 and v20.2.4. radosgw's REST ops pass
+// no error-message sink to RGWBucketAdminOp, so its refusals reach the
+// client without the text radosgw-admin prints, and these carry none
+// either.
 
 // BucketStatsData is what bucket_stats
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1351-L1436;
@@ -88,7 +88,8 @@ func loadAdminBucket(ctx context.Context, env *Env, uid meta.UserID, bucket stri
 
 // loadInitBucket is RGWBucket::init's bucket load, by its instance when
 // bucketID is given, as load_bucket loads an rgw_bucket with an id
-// (driver/rados/rgw_sal_rados.cc:616-629; v20.2.4
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L616-L629;
+// v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L634-L647).
 func loadInitBucket(ctx context.Context, env *Env, uid meta.UserID, bucket, bucketID string) (*BucketRecord, error) {
 	if bucket == "" && uid.ID == "" {
@@ -231,7 +232,7 @@ func DecodeRenameIntent(attrs map[string][]byte) (RenameIntent, bool) {
 func bucketsCap(r *Request, perm uint32) error { return CheckCaps(r, "buckets", perm) }
 
 // BucketInfo is RGWOp_Bucket_Info and RGWBucketAdminOp::info
-// (rgw_rest_bucket.cc:19-62;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L19-L62;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1631-L1724,
 // list_owner_bucket_info
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1546-L1629;
@@ -445,7 +446,7 @@ func bucketOwner(uid meta.UserID, accountID string) (meta.Owner, error) {
 }
 
 // LinkBucket is RGWOp_Bucket_Link and RGWBucketAdminOp::link
-// (rgw_rest_bucket.cc:128-170;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L128-L170;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1026-L1187,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1177-L1338).
@@ -604,7 +605,7 @@ func (o *LinkBucket) unfinishedRename(ctx context.Context, env *Env, tenant stri
 }
 
 // UnlinkBucket is RGWOp_Bucket_Unlink and RGWBucketAdminOp::unlink
-// (rgw_rest_bucket.cc:172-209;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L172-L209;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L999-L1024,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1150-L1175).
@@ -642,7 +643,8 @@ func (o *UnlinkBucket) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveBucketAdmin is RGWOp_Bucket_Remove and
-// RGWBucketAdminOp::remove_bucket (rgw_rest_bucket.cc:211-248;
+// RGWBucketAdminOp::remove_bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L211-L248;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1282-L1327,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1444-L1490).
@@ -674,8 +676,10 @@ func (o *RemoveBucketAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // the zonegroup check for a forwarded request, which it recognizes by an
 // argument its parser never lets it see (docs/ceph-upstream-bugs.md), and
 // rgw-go, which forwards nothing, never skips it. The op answers every
-// -ENOENT as NoSuchBucket (rgw_rest_bucket.cc:245-247). Each pass deletes
-// what is left, so a removal that failed partway completes on retry.
+// -ENOENT as NoSuchBucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L245-L247).
+// Each pass deletes what is left, so a removal that failed partway
+// completes on retry.
 func (o *RemoveBucketAdmin) Execute(ctx context.Context, r *Request) error {
 	env := r.Env
 	rec, err := env.Buckets.GetBucket(ctx, o.Tenant, o.Bucket)
@@ -715,7 +719,7 @@ func (o *RemoveBucketAdmin) freeDanglingName(ctx context.Context, env *Env) erro
 }
 
 // SetBucketQuota is RGWOp_Set_Bucket_Quota and RGWBucket::set_quota
-// (rgw_rest_bucket.cc:250-328;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L250-L328;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L261-L272
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1726-L1736).
@@ -807,7 +811,7 @@ func validAdminObjectName(name string) bool {
 }
 
 // GetBucketPolicyAdmin is RGWOp_Get_Policy and RGWBucket::get_policy
-// (rgw_rest_bucket.cc:64-92;
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L64-L92;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L907-L983,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1058-L1134).
@@ -871,7 +875,9 @@ func (o *GetBucketPolicyAdmin) Execute(ctx context.Context, r *Request) error {
 }
 
 // RemoveObjectAdmin is RGWOp_Object_Remove and RGWBucket::remove_object
-// (rgw_rest_bucket.cc:362-390; rgw_bucket.cc:148-161 and
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L362-L390;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L148-L161
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L274-L289).
 // Cap buckets=write.
 type RemoveObjectAdmin struct {
@@ -895,9 +901,12 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // versioning is or was enabled or that has object lock is answered
 // NotImplemented before the store is asked about the object: radosgw keys
 // the object with no instance and passes the bucket's versioning
-// (rgw_bucket.cc:274-289 at v19.2.6, :275-290 at v20.2.4;
-// rgw_sal_rados.cc:2933-2937, :3775-3779), so on a versioned bucket it
-// writes a delete marker, whether or not the object exists
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L274-L289 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2933-L2937,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3775-L3779),
+// so on a versioned bucket it writes a delete marker, whether or not the
+// object exists
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4),
 // where the store's unversioned delete would remove the object outright

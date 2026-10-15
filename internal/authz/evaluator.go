@@ -55,7 +55,8 @@ func New(cfg Config) *Evaluator {
 // refuses what the user's policies and the ACLs allow. With no group store
 // to read them from, evaluating the rest could grant what radosgw denies;
 // an admin identity still passes through op.Run's override, as it does
-// after any policy denial (rgw_process.cc:228-239 at v20.2.4).
+// after any policy denial
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239 at v20.2.4).
 func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) error {
 	if id.User == nil || len(id.User.GroupIDs) == 0 {
 		return nil
@@ -103,7 +104,9 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1305-L1308 at v19.2.6,
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1318-L1321 at v20.2.4);
 		// verify_user_permission_no_policy refuses a role and finds no user
-		// ACL for S3, which allows (:1281-1297, :1294-1310).
+		// ACL for S3, which allows
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1281-L1297,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1294-L1310).
 		switch {
 		case r.Identity.Account != nil:
 			return e.decided(ctx, a, "no policy allows an account user", op.ErrAccessDenied)
@@ -170,14 +173,16 @@ func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Ac
 // (RGWCopyObj::verify_permission,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5407-L5460 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5973-L6026 at v20.2.4)
-// and DeleteObjects' per-key check (:6818-6838 at v19.2.6, :7743-7775 at
-// v20.2.4). The resource's inputs are bucket's: its ACL and owner, its
-// policy parsed with its own tenant, and its public-access block, which
-// applies with the request's bucket's. The request's bucket supplies
-// requester pays and the x-amz-expected-bucket-owner comparison. A copy
-// source's suspended bucket and undecodable ACL or block are refused
-// unmarked, as radosgw reads a source inside verify_permission; a source
-// policy that does not parse is refused marked, and for every requester.
+// and DeleteObjects' per-key check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6818-L6838 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743-L7775 at v20.2.4).
+// The resource's inputs are bucket's: its ACL and owner, its policy parsed
+// with its own tenant, and its public-access block, which applies with the
+// request's bucket's. The request's bucket supplies requester pays and the
+// x-amz-expected-bucket-owner comparison. A copy source's suspended bucket
+// and undecodable ACL or block are refused unmarked, as radosgw reads a
+// source inside verify_permission; a source policy that does not parse is
+// refused marked, and for every requester.
 func (e *Evaluator) VerifyBucketIn(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, bucket *op.BucketRecord, key meta.ObjKey) error {
 	ids, b, reqBlock, rule, err := e.explicitPrelude(ctx, r, bucket)
 	if err != nil {
@@ -230,10 +235,11 @@ func (e *Evaluator) decided(ctx context.Context, a policy.Action, rule string, e
 // refuses them, before any check: radosgw loads the user's account and its
 // policies at authentication (load_account_and_policies,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L135-L187 at v19.2.6
-// and v20.2.4) and fails it with -EPERM when one does not decode (:548-554
-// at v19.2.6, :563-569 at v20.2.4). A user of an account that is not loaded
-// is refused too, rather than judged by the ACLs as a user outside any
-// account would be.
+// and v20.2.4) and fails it with -EPERM when one does not decode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L548-L554 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L563-L569 at v20.2.4).
+// A user of an account that is not loaded is refused too, rather than
+// judged by the ACLs as a user outside any account would be.
 func (e *Evaluator) identityPolicies(r *op.Request) ([]*policy.Policy, error) {
 	if u := r.Identity.User; u != nil && u.AccountID != "" && r.Identity.Account == nil {
 		return nil, op.BeforeVerify(fmt.Errorf("%w: account %s of %s is not loaded", op.ErrAccessDenied, u.AccountID, u.UserID))
@@ -304,11 +310,12 @@ func suspended(rec *op.BucketRecord) bool { return rec.Info.Flags&meta.BucketSus
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L524-L653 at v20.2.4),
 // marking each refusal. A policy that does not parse refuses all but an
 // admin, and replaces a suspended bucket's or an undecodable ACL's refusal,
-// as the policy's -EACCES overwrites read_bucket_policy's result (:598-615 at
-// v19.2.6, :628-645 at v20.2.4); a public-access block that does not decode
-// is refused the same way (docs/exclusions.md). For an admin the failed
-// policy or block is none. A suspended bucket refuses all but an admin
-// (read_bucket_policy,
+// as the policy's -EACCES overwrites read_bucket_policy's result
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L598-L615 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645 at v20.2.4);
+// a public-access block that does not decode is refused the same way
+// (docs/exclusions.md). For an admin the failed policy or block is none. A
+// suspended bucket refuses all but an admin (read_bucket_policy,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L366-L370 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L396-L400 at v20.2.4).
 func (e *Evaluator) requestBucket(ctx context.Context, r *op.Request) (bucketInputs, error) {
@@ -567,7 +574,9 @@ func (e *Evaluator) permitOne(r *op.Request, id identity, c *check, accountRoot,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1183-L1261 at v20.2.4)
 // without session policies, and the rule that decided. Identity policies
 // are evaluated with no identity, as eval_identity_or_session_policies does
-// (:1146-1168, :1159-1181), so their Principal elements are ignored.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1146-L1168,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1159-L1181),
+// so their Principal elements are ignored.
 func (e *Evaluator) evaluate(env policy.Env, id identity, accountRoot bool, a policy.Action, arn policy.ARN,
 	resource *policy.Policy, ids []*policy.Policy,
 ) (effect policy.Effect, rule string) {

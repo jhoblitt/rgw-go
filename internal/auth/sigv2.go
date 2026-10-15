@@ -33,8 +33,8 @@ var signedSubresourcesV2 = []string{
 	"uploadId", "uploads", "versionId", "versioning", "versions", "website", "object-lock",
 }
 
-// authDataV2 is AWSGeneralAbstractor::get_auth_data_v2 (rgw_rest_s3.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6033-L6113 at v19.2.6,
+// authDataV2 is AWSGeneralAbstractor::get_auth_data_v2
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L6033-L6113 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6604-L6684 at v20.2.4).
 // Without a non-empty Authorization header the credentials are the query's
 // AWSAccessKeyId and Signature, and Expires must be present and later than
@@ -82,20 +82,22 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 	return d, nil
 }
 
-// canonicalStringV2 is rgw_create_s3_canonical_header (rgw_auth_s3.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L193-L260 at v19.2.6,
+// canonicalStringV2 is rgw_create_s3_canonical_header
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L193-L260 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L194-L263 at v20.2.4)
-// and the string it builds (:130-169, :131-170): the method, Content-MD5 and
-// Content-Type as sent or empty, and the date line, each ended by a newline;
-// then the amz headers, on the query route the query's meta, and the
-// canonical resource. A Content-MD5 with a byte that is neither base64 nor
-// whitespace is refused. On the query route the date line is Expires, cut at
-// a NUL as radosgw appends it as a C string. On the header route an
-// x-amz-date empties the date line and is the request date, which is
-// otherwise the Date header, and that is also the date line. headerTime is
-// the request date's instant, zero on the query route. The method is the
-// request's; at v20.2.4 radosgw signs an OPTIONS CORS request over its
-// Access-Control-Request-Method instead (get_canonical_method,
+// and the string it builds
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L130-L169,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L131-L170):
+// the method, Content-MD5 and Content-Type as sent or empty, and the date
+// line, each ended by a newline; then the amz headers, on the query route
+// the query's meta, and the canonical resource. A Content-MD5 with a byte
+// that is neither base64 nor whitespace is refused. On the query route the
+// date line is Expires, cut at a NUL as radosgw appends it as a C string. On
+// the header route an x-amz-date empties the date line and is the request
+// date, which is otherwise the Date header, and that is also the date line.
+// headerTime is the request date's instant, zero on the query route. The
+// method is the request's; at v20.2.4 radosgw signs an OPTIONS CORS request
+// over its Access-Control-Request-Method instead (get_canonical_method,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776 at v20.2.4).
 func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts string, headerTime time.Time, err error) {
@@ -221,19 +223,22 @@ func qsMetaV2(rv *requestView) map[string]string {
 // queryMetaV2 is a presigned SigV2 request's qsMetaV2, for
 // AuthResult.QueryMeta, once Verifier.Authenticate has authenticated the
 // request. The string to sign runs the query's lines straight on from the
-// headers', each set sorted on its own (rgw_auth_s3.cc:164-165 at v19.2.7,
-// :165-166 at v20.2.4), so a run of x-amz-meta-* or x-amz-security-token
-// lines can move between the end of the headers and the start of the query
-// with the signature kept. radosgw stores query meta on a PutObject or an
-// UploadPart alone and reads the session token from the header alone
-// (rgw_op.cc:904-909 at v19.2.7, :939-944 at v20.2.4), so the two forms mean
-// different things (docs/ceph-upstream-bugs.md). rgw-go has every read take
-// them as one set, on both releases (docs/exclusions.md), and refuses what
-// does not make one: a name the string to sign carries from both sides, and
-// an empty session token, in the headers or under a query name in any case,
-// where authDataV2 refuses only the query's x-amz-security-token spelt so. It
-// also refuses a query line whose name or value, url-decoded, holds a CR or
-// LF: get_canon_amz_hdrs writes each line unescaped
+// headers', each set sorted on its own
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L164-L165 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L165-L166 at v20.2.4),
+// so a run of x-amz-meta-* or x-amz-security-token lines can move between the end of
+// the headers and the start of the query with the signature kept. radosgw stores
+// query meta on a PutObject or an UploadPart alone and reads the session token from
+// the header alone
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904-L909 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L939-L944 at v20.2.4),
+// so the two forms mean different things (docs/ceph-upstream-bugs.md). rgw-go has
+// every read take them as one set, on both releases (docs/exclusions.md), and refuses
+// what does not make one: a name the string to sign carries from both sides, and an
+// empty session token, in the headers or under a query name in any case, where
+// authDataV2 refuses only the query's x-amz-security-token spelt so. It also refuses
+// a query line whose name or value, url-decoded, holds a CR or LF: get_canon_amz_hdrs
+// writes each line unescaped
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L66-L86 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87 at v20.2.4),
 // so such a parameter signs as the several lines it spells, signed header lines or a
@@ -270,12 +275,15 @@ func queryMetaV2(rv *requestView) (map[string]string, error) {
 
 // expiresLineBreak refuses, once Verifier.Authenticate has authenticated a
 // presigned SigV2 request, an Expires holding a CR or LF. Expires is the date
-// line, written as sent up to a NUL (rgw_auth_s3.cc:217 and :159-162 at
-// v19.2.7, :219 and :160-163 at v20.2.4), and its expiry is read by atoll,
-// which stops at the first byte that is no digit, so an Expires of
-// 1441000000%0Ax-amz-copy-source:b/src passes and signs as the header
-// X-Amz-Copy-Source: b/src does, which the request no longer carries
-// (docs/ceph-upstream-bugs.md).
+// line, written as sent up to a NUL
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L217 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L159-L162 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L219 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L160-L163 at v20.2.4),
+// and its expiry is read by atoll, which stops at the first byte that is no
+// digit, so an Expires of 1441000000%0Ax-amz-copy-source:b/src passes and
+// signs as the header X-Amz-Copy-Source: b/src does, which the request no
+// longer carries (docs/ceph-upstream-bugs.md).
 func expiresLineBreak(rv *requestView) error {
 	if expires, _ := rv.param("Expires"); strings.ContainsAny(expires, "\r\n") {
 		return errors.New("the Expires parameter signs a line break")

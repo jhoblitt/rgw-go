@@ -31,9 +31,10 @@ type Upload struct {
 	// s->req_id). Empty selects a random tag.
 	WriteTag string
 	// IfMatch and IfNoneMatch are CompleteMultipartUpload's conditional
-	// headers, which v20.2.4 honors (rgw_rest_s3.cc:4572-4573 at v20.2.4) and
-	// rgw-go honors on both releases (docs/exclusions.md, "Write conditions
-	// are Tentacle's on Squid too"); empty means unset.
+	// headers, which v20.2.4 honors
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573 at v20.2.4)
+	// and rgw-go honors on both releases (docs/exclusions.md, "Write
+	// conditions are Tentacle's on Squid too"); empty means unset.
 	IfMatch, IfNoneMatch string
 }
 
@@ -170,8 +171,10 @@ func SortCompleteParts(parts []CompletePart) []CompletePart {
 // MultipartETag is the ETag complete computes: the hex MD5 of the parts'
 // 16-byte MD5s, "-" and the part count
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3503-L3505
-// and :3579-3585 at v19.2.6). An ETag that is not 32 hex digits is
-// ErrInvalidPart, where radosgw's hex_to_buf hashes whatever it decodes.
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3579-L3585 at v19.2.6).
+// An ETag that is not 32 hex digits is ErrInvalidPart, where radosgw's
+// hex_to_buf hashes whatever it decodes.
 func MultipartETag(etags []string) (string, error) {
 	h := md5.New() //nolint:gosec // a multipart ETag is the MD5 of the parts' MD5s
 	for _, e := range etags {
@@ -210,7 +213,8 @@ type MultipartStore interface {
 	// lock and returns it; a part that does not match is ErrInvalidPart.
 	// Parts are sorted by number before validation, the last of a repeated
 	// number kept, as radosgw's std::map<int, string> keeps them
-	// (rgw_multi.cc:44-53 at v19.2.6 and v20.2.4), so no order error exists.
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.cc#L44-L53 at v19.2.6
+	// and v20.2.4), so no order error exists.
 	Complete(ctx context.Context, up *Upload, parts []CompletePart) (*PutResult, error)
 	Abort(ctx context.Context, up *Upload) error
 }

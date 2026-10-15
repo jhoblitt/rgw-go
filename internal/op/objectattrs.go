@@ -66,16 +66,18 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2401-L2419 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994 at v20.2.4).
 // radosgw answers a lost race with success and leaves the ACL unwritten
-// (:5925-5927 at v19.2.6, :6587-6589 at v20.2.4; docs/ceph-upstream-bugs.md,
-// "radosgw's PutBucketAcl answers success when its write loses a race").
-// rgw-go retries it through RetryRacedWriteReauthorized, reading the head
-// again and authorizing the requester against it before each retry, and
-// refuses a new owner and a public policy under a block of public ACLs
-// against the ACL and the bucket each try read, so a retry never writes
-// back an owner a concurrent change replaced, nor writes for a requester a
-// concurrent change refused. A retry that passes them and finds the requested
-// ACL in place writes nothing and succeeds; once the retries are spent it
-// answers ConcurrentModification (docs/exclusions.md).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5925-L5927 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6587-L6589 at v20.2.4;
+// docs/ceph-upstream-bugs.md, "radosgw's PutBucketAcl answers success when
+// its write loses a race"). rgw-go retries it through
+// RetryRacedWriteReauthorized, reading the head again and authorizing the
+// requester against it before each retry, and refuses a new owner and a
+// public policy under a block of public ACLs against the ACL and the bucket
+// each try read, so a retry never writes back an owner a concurrent change
+// replaced, nor writes for a requester a concurrent change refused. A retry
+// that passes them and finds the requested ACL in place writes nothing and
+// succeeds; once the retries are spent it answers ConcurrentModification
+// (docs/exclusions.md).
 func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err

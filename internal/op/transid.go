@@ -13,7 +13,8 @@ func TransID(seq uint64, now time.Time, suffix string) string {
 }
 
 // TransIDSuffix is radosgw's trans_id_suffix: "-<instance id>-<zone name>",
-// URL-encoded with URLEncode(…, true), radosgw's url_encode (svc_zone_utils.cc:22-63).
+// URL-encoded with URLEncode(…, true), radosgw's url_encode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_zone_utils.cc#L22-L63).
 func TransIDSuffix(instanceID uint64, zone string) string {
 	return URLEncode(fmt.Sprintf("-%d-%s", instanceID, zone), true)
 }
@@ -26,13 +27,17 @@ func HostID(instanceID uint64, zone, zonegroup string) string {
 // URLEncode is radosgw's url_encode(src, encode_slash)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1775-L1785 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1838 at v20.2.4)
-// over char_needs_url_encoding (:1743-1773; :1806): a byte <= 0x20 or >= 0x7F,
-// or one of " # % & + , / : ; < = > ? @ [ \ ] ^ ` { }, is %XX; everything else —
-// alphanumerics and ! $ ' ( ) * - . _ | ~ — passes through. With encodeSlash
-// false '/' passes too, dump_urlsafe's form for listing prefixes and delimiters
-// (rgw_rest.h:712, encode_slash defaults true). It serves the transaction-id
-// suffix (encodeSlash true) and the object and multipart-upload listings'
-// encoding-type=url; nothing else in rgw-go URL-encodes by hand.
+// over char_needs_url_encoding
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1743-L1773;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1806): a
+// byte <= 0x20 or >= 0x7F, or one of " # % & + , / : ; < = > ? @ [ \ ] ^ ` { },
+// is %XX; everything else — alphanumerics and ! $ ' ( ) * - . _ | ~ — passes
+// through. With encodeSlash false '/' passes too, dump_urlsafe's form for
+// listing prefixes and delimiters
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L712,
+// encode_slash defaults true). It serves the transaction-id suffix (encodeSlash
+// true) and the object and multipart-upload listings' encoding-type=url;
+// nothing else in rgw-go URL-encodes by hand.
 func URLEncode(s string, encodeSlash bool) string {
 	var b strings.Builder
 	for i := range len(s) {

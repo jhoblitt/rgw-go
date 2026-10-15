@@ -25,11 +25,13 @@ import (
 // A system user's non-empty rgwx-uid names the effective owner, a user or an
 // account, which must load or the request is EACCES; the tenant becomes the
 // named one's and the identity stays the system user's
-// (SysReqApplier::load_acct_info, rgw_auth_filters.h:282-317 at v19.2.6,
-// :304-345 at v20.2.4; docs/exclusions.md has Tentacle's user record). A
-// failure is logged by its code alone, without the rgwx-uid. An rgwx-uid
-// holding a NUL is EACCES without a lookup, as go-ceph would hand librados
-// the owner's object name as a C string that ends at the NUL.
+// (SysReqApplier::load_acct_info,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_filters.h#L282-L317 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L304-L345 at v20.2.4;
+// docs/exclusions.md has Tentacle's user record). A failure is logged by its
+// code alone, without the rgwx-uid. An rgwx-uid holding a NUL is EACCES
+// without a lookup, as go-ceph would hand librados the owner's object name
+// as a C string that ends at the NUL.
 func (v *Verifier) identity(ctx context.Context, rv *requestView, rec *op.UserRecord, accessKey string, key meta.AccessKey, account *meta.AccountInfo) (op.Identity, error) {
 	info := rec.Info
 	id := op.Identity{

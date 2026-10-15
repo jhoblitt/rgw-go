@@ -16,7 +16,7 @@ import (
 // the RADOS driver's read_usage and trim_usage, which Env.UsageReader is.
 
 // usageShowPage is the page RGWUsage::show asks read_usage for
-// (rgw_usage.cc:39).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L39).
 const usageShowPage = 1000
 
 // errAccountUsage is RadosBucket::read_usage's and trim_usage's -ENOTSUP
@@ -67,8 +67,11 @@ func usageScope(ctx context.Context, env *Env, uid, tenant, bucket string) (user
 	return rec.Info.Owner.User.String(), rec.Info.Bucket.Name, nil
 }
 
-// ShowUsage is RGWOp_Usage_Get with RGWUsage::show (rgw_rest_usage.cc:15-70,
-// rgw_usage.cc:33-164). Cap usage=read (rgw_rest_usage.cc:20-22).
+// ShowUsage is RGWOp_Usage_Get with RGWUsage::show
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L15-L70,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L33-L164).
+// Cap usage=read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L20-L22).
 type ShowUsage struct {
 	AdminOp
 	// UID is the uid argument, in rgw_user's string form.
@@ -146,7 +149,9 @@ func (o *ShowUsage) Execute(ctx context.Context, r *Request) error {
 // aggregate is rgw_usage_log_entry::aggregate with a category filter
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1005-L1023 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1044-L1062 at v20.2.4),
-// with sum's total over the categories it kept (:1025-1033, :1064-1072).
+// with sum's total over the categories it kept
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw_types.h#L1025-L1033,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L1064-L1072).
 func (s *UsageSummary) aggregate(rec *UsageRecord, filter map[string]bool) {
 	for cat, d := range rec.Categories {
 		if _, ok := filter[cat]; len(filter) > 0 && !ok {
@@ -175,8 +180,10 @@ func addUsageData(a, b UsageData) UsageData {
 }
 
 // TrimUsage is RGWOp_Usage_Delete with RGWUsage::trim
-// (rgw_rest_usage.cc:72-121, rgw_usage.cc:166-177). Cap usage=write
-// (rgw_rest_usage.cc:77-79).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L72-L121,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_usage.cc#L166-L177).
+// Cap usage=write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L77-L79).
 type TrimUsage struct {
 	AdminOp
 	UID, Bucket, Tenant string

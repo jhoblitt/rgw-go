@@ -16,18 +16,19 @@ var errBadPart = errors.New("op: a Part without a PartNumber or an ETag")
 // RGWCompleteMultipart::execute reads it through RGWMultiXMLParser
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6383-L6407 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7179-L7203 at v20.2.4;
-// rgw_multi.cc:24-71 and rgw_xml.cc, identical at both tags). Every element
-// named Part, at any depth, must hold a PartNumber child whose own text is
-// not empty and an ETag child; the first of each counts, the number read as
-// C's atoi reads it and the ETag's text kept as it is, quotes included. The
-// parts are the root's Part children, of a CompleteMultipartUpload root or
-// else of a CompletedMultipartUpload one: alloc_obj also builds a
-// MultipartUpload root, but execute never looks one up. They come back
-// sorted by number, the last of a repeated number kept, as the std::map<int,
-// string> holds them. A document the reader refuses, any other root, a bad
-// Part or no parts is ErrMalformedXML. The caller bounds doc, as
-// read_all_input bounds it by rgw_max_put_param_size; the reader keeps no
-// recursion and allocates in proportion to doc alone.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.cc#L24-L71 and
+// rgw_xml.cc, identical at both tags). Every element named Part, at any
+// depth, must hold a PartNumber child whose own text is not empty and an
+// ETag child; the first of each counts, the number read as C's atoi reads it
+// and the ETag's text kept as it is, quotes included. The parts are the
+// root's Part children, of a CompleteMultipartUpload root or else of a
+// CompletedMultipartUpload one: alloc_obj also builds a MultipartUpload
+// root, but execute never looks one up. They come back sorted by number, the
+// last of a repeated number kept, as the std::map<int, string> holds them. A
+// document the reader refuses, any other root, a bad Part or no parts is
+// ErrMalformedXML. The caller bounds doc, as read_all_input bounds it by
+// rgw_max_put_param_size; the reader keeps no recursion and allocates in
+// proportion to doc alone.
 func ParseCompleteMultipart(doc []byte) ([]CompletePart, error) {
 	root, err := xmltext.ParseFunc(doc, func(e *xmltext.Element) error {
 		if e.Name != "Part" {

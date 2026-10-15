@@ -24,9 +24,11 @@ type PutUserOptions struct {
 	// ErrConcurrentModification unless the stored version matches.
 	IfVersion *meta.ObjVersion
 	// Mtime is stored as given, as store_user_info's mtime argument is
-	// (svc_user_rados.cc:300 at v19.2.6, :281-282 at v20.2.4); zero stores
-	// the current time (svc_sys_obj_core.cc:508-510 at both tags), as for
-	// every admin write, since RadosUser::store_user passes none
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L300 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L281-L282 at v20.2.4);
+	// zero stores the current time
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_sys_obj_core.cc#L508-L510 at both tags),
+	// as for every admin write, since RadosUser::store_user passes none
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L269-L276 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L286-L293 at v20.2.4).
 	Mtime time.Time
@@ -41,8 +43,9 @@ type PutUserOptions struct {
 	// as radosgw lets it when rgw_user_unique_email is false: the index is
 	// then written over after the user, as radosgw writes it. An email an
 	// account's index names is refused whatever SharedEmail says, as
-	// account emails are unique (account::write, account.cc:312-322 at
-	// v19.2.6 and v20.2.4).
+	// account emails are unique (account::write,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L312-L322 at v19.2.6
+	// and v20.2.4).
 	SharedEmail bool
 }
 
@@ -69,11 +72,12 @@ type UserStore interface {
 	// obj_version's compare,
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version_types.h#L46-L49 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/version/cls_version_types.h#L54-L57 at v20.2.4).
-	// An active access key another user holds is ErrKeyExists (:257-270 at
-	// v19.2.6), and so is any access key FindKeyHolder gives another user;
-	// each of the record's access keys is claimed for the user before the
-	// user is written, so of two writes giving one key id to two users one
-	// fails, and a key the record drops is released after.
+	// An active access key another user holds is ErrKeyExists
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L257-L270 at v19.2.6),
+	// and so is any access key FindKeyHolder gives another user; each of the
+	// record's access keys is claimed for the user before the user is
+	// written, so of two writes giving one key id to two users one fails, and
+	// a key the record drops is released after.
 	PutUser(ctx context.Context, rec *UserRecord, opts PutUserOptions) error
 	// RemoveUser removes the active access keys' and Swift keys' index
 	// objects, the email index and, for a user outside an account, the

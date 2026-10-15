@@ -72,9 +72,11 @@ type chunkedParams struct {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1261-L1268 at v20.2.4);
 // a mismatch there is SignatureDoesNotMatch. The chunk in progress when the
 // decoded length is reached is verified by the next Read, as complete()
-// verifies it (:1555-1564, :1532-1541), and a mismatch is
-// XAmzContentSHA256Mismatch, the error do_aws4_auth_completion makes of
-// complete()'s false
+// verifies it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1555-L1564,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1532-L1541),
+// and a mismatch is XAmzContentSHA256Mismatch, the error
+// do_aws4_auth_completion makes of complete()'s false
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1370-L1371 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1607-L1608 at v20.2.4).
 // That Read then reads what follows, as complete describes, and reports the
@@ -265,9 +267,11 @@ func sigEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), [
 // <size>;chunk-signature=<64 bytes> (create_next,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1134-L1183 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1111-L1160 at v20.2.4);
-// the unsigned form is <size>, anything after a ';' ignored (:1184-1207,
-// :1161-1184). A body that ends before a byte of either is io.EOF, and one
-// that ends inside them io.ErrUnexpectedEOF.
+// the unsigned form is <size>, anything after a ';' ignored
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1184-L1207,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1161-L1184).
+// A body that ends before a byte of either is io.EOF, and one that ends
+// inside them io.ErrUnexpectedEOF.
 func (r *chunkedReader) nextHeader() (size uint64, declared string, consumed int, err error) {
 	if !r.first {
 		var crlf [2]byte
@@ -361,8 +365,9 @@ func parseChunkSize(s []byte) (uint64, bool) {
 // that CRLF and the final chunk line count against it; a longer section is
 // the LimitExceeded that radosgw's dead check names. The trailer signature
 // chains from the final chunk signature computed from prevSig, the last
-// verified chunk's or the seed, as complete() computes it (:1565-1575,
-// :1542-1552).
+// verified chunk's or the seed, as complete() computes it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1565-L1575,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1542-L1552).
 func (r *chunkedReader) finish(consumed int) error {
 	budget := maxTrailerSection - consumed
 	var buf [maxTrailerSection + 1]byte
@@ -399,7 +404,9 @@ func readToEnd(src io.Reader, buf []byte) (int, error) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1368-L1395 at v20.2.4):
 // the final chunk signature and the hex SHA-256 of the canonical trailer
 // headers, which are "name:value\n" for each signed trailer in name order
-// (get_canon_amz_hdrs, :66-86, :67-87).
+// (get_canon_amz_hdrs,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L66-L86,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L67-L87).
 func trailerStringToSign(date, scope, finalChunkSig, canonicalTrailers string) string {
 	return strings.Join([]string{trailerAlgorithm, date, scope, finalChunkSig, sha256Hex(canonicalTrailers)}, "\n")
 }

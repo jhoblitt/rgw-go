@@ -17,8 +17,8 @@ import (
 )
 
 // The bucket ops of this file are rgw_op.cc's RGWCreateBucket,
-// RGWDeleteBucket, RGWStatBucket and RGWGetBucketLocation. A bare line
-// number is v19.2.6's; the v20.2.4 code is the same unless noted.
+// RGWDeleteBucket, RGWStatBucket and RGWGetBucketLocation. Where a
+// link cites v19.2.6 alone, the v20.2.4 code is the same unless noted.
 
 // loadBucket is rgw_build_bucket_policies' load of the bucket the request
 // names, which every S3 op but CreateBucket makes before anything else
@@ -449,10 +449,13 @@ func (o *DeleteBucket) VerifyPermission(ctx context.Context, r *Request) error {
 }
 
 // Execute removes the bucket. A plain ConcurrentModification from the
-// store is success, as radosgw makes it (rgw_op.cc:3792-3797; v20.2.4
-// :4001-4006); ErrRemovalRaced, a removal that lost the entry point after
-// claiming the bucket, which stays, and ErrRenamePending are the 409s they
-// are. A bucket an unfinished admin rename marks is refused with
+// store is success, as radosgw makes it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3792-L3797;
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4001-L4006);
+// ErrRemovalRaced, a removal that lost the entry point after claiming the
+// bucket, which stays, and ErrRenamePending are the 409s they are. A
+// bucket an unfinished admin rename marks is refused with
 // ConcurrentModification first, as its other name shares the index
 // (docs/exclusions.md, "Bucket link and unlink write differently from
 // radosgw").

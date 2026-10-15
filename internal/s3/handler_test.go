@@ -265,7 +265,7 @@ var _ = Describe("Handler", func() {
 	// after get_handler's own refusal of an object subresource on a bucket and
 	// before get_op's refusals and authentication
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L310-L327 at v19.2.6,
-	// rgw_rest_s3.cc:5026-5041).
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5041).
 	DescribeTable("refuses a copy source radosgw cannot parse where RGWHandler_REST_S3::init does",
 		func(method, target string, code int, errCode string, hdr ...string) {
 			rec := serveReq(h, method, target, nil, hdr...)

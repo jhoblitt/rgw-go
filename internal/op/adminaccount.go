@@ -12,9 +12,8 @@ import (
 )
 
 // The account ops are rgw::account's create, modify, remove and info
-// (rgw_account.cc) behind rgw_rest_account.cc's RGWOp_Account_*. A bare line
-// number is rgw_account.cc's at v19.2.6; each fact cited holds at v20.2.4,
-// whose differences are named.
+// (rgw_account.cc) behind rgw_rest_account.cc's RGWOp_Account_*. Each fact a
+// v19.2.6 link cites holds at v20.2.4, whose differences are named.
 
 // AccountParams is rgw::account::AdminOpState
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_account.h#L47-L62 at v20.2.4):
@@ -145,8 +144,11 @@ func accountCapType(r *Request) string {
 	return "accounts"
 }
 
-// CreateAccount is RGWOp_Account_Create (rgw_rest_account.cc:20-102) and
-// create (:112-177). Cap accounts=write.
+// CreateAccount is RGWOp_Account_Create
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L20-L102)
+// and create
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L112-L177).
+// Cap accounts=write.
 type CreateAccount struct {
 	AdminOp
 	Params AccountParams
@@ -193,8 +195,11 @@ func (o *CreateAccount) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// GetAccountInfo is RGWOp_Account_Get (rgw_rest_account.cc:171-191) and
-// info (:461-496). Cap account=read on Squid, accounts=read on Tentacle.
+// GetAccountInfo is RGWOp_Account_Get
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L171-L191)
+// and info
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L461-L496).
+// Cap account=read on Squid, accounts=read on Tentacle.
 type GetAccountInfo struct {
 	AdminOp
 	Params AccountParams
@@ -219,10 +224,13 @@ func (o *GetAccountInfo) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// ModifyAccount is RGWOp_Account_Modify (rgw_rest_account.cc:104-168) and,
-// on Tentacle, RGWOp_Account_Quota_Set (v20.2.4
+// ModifyAccount is RGWOp_Account_Modify
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L104-L168)
+// and, on Tentacle, RGWOp_Account_Quota_Set (v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_account.cc#L223-L299),
-// over modify (:179-272). Cap accounts=write.
+// over modify
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L179-L272).
+// Cap accounts=write.
 type ModifyAccount struct {
 	AdminOp
 	Params AccountParams
@@ -302,9 +310,11 @@ func (o *ModifyAccount) Execute(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L306).
 const accountListChunk = 100
 
-// RemoveAccount is RGWOp_Account_Delete (rgw_rest_account.cc:193-221) and
-// remove (:274-459). Cap account=write on Squid, accounts=write on
-// Tentacle.
+// RemoveAccount is RGWOp_Account_Delete
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_account.cc#L193-L221)
+// and remove
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_account.cc#L274-L459).
+// Cap account=write on Squid, accounts=write on Tentacle.
 type RemoveAccount struct {
 	AdminOp
 	Params AccountParams

@@ -20,8 +20,8 @@ const (
 )
 
 // ParseKeyType is the key-type argument as the RGWOp_User_* bodies map it
-// (driver/rados/rgw_rest_user.cc:225-233 at v19.2.6): "swift", "s3", and
-// anything else undefined.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L225-L233 at v19.2.6):
+// "swift", "s3", and anything else undefined.
 func ParseKeyType(s string) KeyType {
 	switch s {
 	case "swift":
@@ -39,7 +39,7 @@ func ParseKeyType(s string) KeyType {
 // GenerateKey is set_generate_key, which generates whichever of AccessKey
 // and SecretKey is empty. An undefined Type is Swift when a subuser is
 // named and S3 otherwise (RGWAccessKeyPool::check_op,
-// driver/rados/rgw_user.cc:474-483).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L474-L483).
 type UserKeyParams struct {
 	AccessKey, SecretKey string
 	Type                 KeyType
@@ -76,7 +76,8 @@ var anonymousUser = meta.UserID{ID: AnonymousUserID}
 
 // opUserID is the uid RGWUserAdminOpState holds once set_user_id(uid) ran:
 // set_user_id ignores an id rgw_user::empty() calls empty, leaving the
-// anonymous user the op state starts with (driver/rados/rgw_user.cc:268-283).
+// anonymous user the op state starts with
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L268-L283).
 func opUserID(uid meta.UserID) meta.UserID {
 	if uid.ID == "" {
 		return anonymousUser
@@ -327,7 +328,10 @@ func foldEqual(a, b string) bool {
 // the display name lower-cased, changed. So an account member always has
 // an entry, which holds off the account's removal, and a retry, or any
 // later write of the user, adds a missing one. radosgw links the user
-// after storing it and only when the link changed (:295 and :360-375;
+// after storing it and only when the link changed
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L295
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L360-L375;
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L274
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L340-L355 at v20.2.4),
@@ -376,7 +380,8 @@ func writeUserWith(ctx context.Context, env *Env, rec *UserRecord, old *meta.Use
 
 // CreateUser is RGWOp_User_Create and RGWUserAdminOp_User::create
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L133-L285,
-// driver/rados/rgw_user.cc:1744-1918 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1744-L1918
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2410-L2442 at v19.2.6).
 // Cap users=write.
 type CreateUser struct {
@@ -543,7 +548,8 @@ func joinAccount(ctx context.Context, env *Env, info *meta.UserInfo, accountID s
 
 // ModifyUser is RGWOp_User_Modify and RGWUserAdminOp_User::modify
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L287-L438,
-// driver/rados/rgw_user.cc:2017-2228 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2017-L2228
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2444-L2475 at v19.2.6).
 // Cap users=write.
 type ModifyUser struct {
@@ -785,7 +791,9 @@ func suspendBuckets(ctx context.Context, env *Env, uid meta.UserID, suspended bo
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1714-L1742 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1720-L1748 at v20.2.4):
 // every bucket of uid's own list chowned to the account, each loaded as
-// adopt_user_bucket loads the entry's bucket (:1681-1712, :1687-1718;
+// adopt_user_bucket loads the entry's bucket
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1681-L1712,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1687-L1718;
 // loadListedBucket), and skipped when it is gone or another owner holds it.
 // ChownBucket retries a lost race as adopt_user_bucket does, and refuses, so
 // this skips, a round that finds the name loading another instance or the
@@ -802,9 +810,11 @@ func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID stri
 			rec, err := loadListedBucket(ctx, env, uid, ents[i].Bucket)
 			if err == nil {
 				err = env.BucketAdmin.ChownBucket(ctx, rec, owner, acct.Info.Name)
-				// radosgw logs a failed chown at level 1 (rgw_user.cc:1705 at
-				// v19.2.6, :1711 at v20.2.4). A refused round may have left an
-				// earlier round's writes for an operator to clear.
+				// radosgw logs a failed chown at level 1
+				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1705 at v19.2.6,
+				// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1711 at v20.2.4).
+				// A refused round may have left an earlier round's writes for
+				// an operator to clear.
 				if errors.Is(err, ErrNoSuchBucket) {
 					slog.WarnContext(ctx, "the bucket changed while it was being adopted, leaving it",
 						slog.String("bucket", rec.Info.Bucket.Name), slog.String("instance", rec.Info.Bucket.ID),
@@ -827,9 +837,14 @@ func adoptBuckets(ctx context.Context, env *Env, uid meta.UserID, accountID stri
 // id, the bucket its name loads. A bucket uid does not hold is
 // ErrNoSuchBucket, where radosgw takes whatever it loads: a link whose
 // removal of the old owner's entry failed, which radosgw logs and goes past
-// (rgw_bucket.cc:1118 and :3424-3432 at v19.2.6, :1269 and :3510-3518 at
-// v20.2.4), leaves an entry naming the instance its new owner holds.
-// ChownBucket checks the owner again in each of its rounds.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1118
+// and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L3424-L3432 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1269
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3510-L3518 at v20.2.4),
+// leaves an entry naming the instance its new owner holds. ChownBucket
+// checks the owner again in each of its rounds.
 func loadListedBucket(ctx context.Context, env *Env, uid meta.UserID, b meta.BucketID) (*BucketRecord, error) {
 	var rec *BucketRecord
 	var err error
@@ -866,7 +881,8 @@ type GetUserInfo struct {
 	// DumpKeys says the document may show the user's keys: the requester
 	// holds users=read, or is a system request or an admin
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L121-L128 at v19.2.6;
-	// Squid's is_admin_of is admin || system, rgw_auth.cc:1048-1051,
+	// Squid's is_admin_of is admin || system,
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L1048-L1051,
 	// Tentacle's is_admin the same).
 	DumpKeys bool
 }
@@ -900,10 +916,12 @@ func (o *GetUserInfo) Execute(ctx context.Context, r *Request) error {
 	switch {
 	case l.rec == nil && uid == anonymousUser:
 		// init_members' keys.init refuses the anonymous op uid with EINVAL
-		// before info asks whether a user was found (rgw_user.cc:246-264
+		// before info asks whether a user was found
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L246-L264
 		// and
 		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1454-L1456 at v19.2.6,
-		// :252-270 and
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L252-L270
+		// and
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1458-L1460 at v20.2.4).
 		return ErrInvalidArgument
 	case l.rec == nil:
@@ -933,7 +951,8 @@ func (o *GetUserInfo) Execute(ctx context.Context, r *Request) error {
 
 // RemoveUser is RGWOp_User_Remove and RGWUserAdminOp_User::remove
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_user.cc#L440-L479,
-// driver/rados/rgw_user.cc:1940-2015 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L1940-L2015
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L2477-L2492 at v19.2.6).
 // Cap users=write.
 type RemoveUser struct {
@@ -959,9 +978,12 @@ func (o *RemoveUser) VerifyPermission(_ context.Context, r *Request) error {
 // its objects first. A bucket the list names that another owner now holds
 // is left alone. Then the user goes, and after it the user's entry in the
 // account users index, an entry already gone taken as removed. radosgw
-// unlinks the entry first (svc_user_rados.cc:601-610 before
+// unlinks the entry first
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L601-L610
+// before
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_user_rados.cc#L624 at v19.2.6,
-// :575-584 before
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L575-L584
+// before
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L598 at v20.2.4),
 // so a removal that stops between leaves a user its account's removal no
 // longer sees; here a stop leaves only an entry naming a gone user, which

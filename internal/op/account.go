@@ -27,23 +27,28 @@ type AccountStore interface {
 	// GetAccount returns the account with id, or ErrNoSuchEntity.
 	GetAccount(ctx context.Context, id string) (*AccountRecord, error)
 	// GetAccountByName and GetAccountByEmail follow the name and email index
-	// objects (account.cc:200-240), the email matched case-insensitively; an
-	// index that names no account is ErrNoSuchEntity.
+	// objects
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L200-L240),
+	// the email matched case-insensitively; an index that names no account
+	// is ErrNoSuchEntity.
 	GetAccountByName(ctx context.Context, tenant, name string) (*AccountRecord, error)
 	GetAccountByEmail(ctx context.Context, email string) (*AccountRecord, error)
-	// PutAccount is rgwrados::account::write (account.cc:242-392): old is the
-	// record before the change (nil on create). Each refusal comes before
-	// anything is written:
+	// PutAccount is rgwrados::account::write
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L242-L392):
+	// old is the record before the change (nil on create). Each refusal comes
+	// before anything is written:
 	//   - an id that differs from old's is ErrInvalidArgument;
 	//   - a name (in its tenant) or an email that differs from old's and that
 	//     any index entry holds is ErrAccountAlreadyExists, whoever the entry
 	//     names: another account, a user (users and accounts share the email
-	//     index, account.cc:102-114), or this account when old does not list it.
-	//     The RADOS driver takes an entry naming an account that no longer
-	//     holds that name or email for none, and refuses the name and email
-	//     rec holds, changed or not, when another holds them; it claims them
-	//     before it writes the account, and a create first writes the account
-	//     with neither, which it removes on a refused claim (docs/exclusions.md);
+	//     index,
+	//     https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L102-L114),
+	//     or this account when old does not list it. The RADOS driver takes an
+	//     entry naming an account that no longer holds that name or email for
+	//     none, and refuses the name and email rec holds, changed or not, when
+	//     another holds them; it claims them before it writes the account, and a
+	//     create first writes the account with neither, which it removes on a
+	//     refused claim (docs/exclusions.md);
 	//   - Exclusive over a stored id is ErrAccountAlreadyExists;
 	//   - a non-zero rec.Version that differs from the stored version is
 	//     ErrConcurrentModification; a zero one is not checked by the
@@ -53,21 +58,23 @@ type AccountStore interface {
 	// stored one, as cls_version_inc counts, and
 	// drops old's name and email entries only where they still name this account.
 	PutAccount(ctx context.Context, rec *AccountRecord, old *meta.AccountInfo, opts PutAccountOptions) error
-	// RemoveAccount is account.cc:394-438. The RADOS driver refuses with
-	// ErrBucketNotEmpty and radosgw's message while the account has a role,
-	// a group, an OpenID Connect provider or a topic, and refuses a zero
-	// rec.Version or a name or email redirect it cannot read; the memstore
-	// holds none of those resources.
+	// RemoveAccount is
+	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/account.cc#L394-L438.
+	// The RADOS driver refuses with ErrBucketNotEmpty and radosgw's message
+	// while the account has a role, a group, an OpenID Connect provider or
+	// a topic, and refuses a zero rec.Version or a name or email redirect
+	// it cannot read; the memstore holds none of those resources.
 	RemoveAccount(ctx context.Context, rec *AccountRecord) error
 	// The users index "users.<account>" (driver/rados/users.cc): AddAccountUser
 	// is add with exclusive=false and no limit, keyed by the display name;
 	// RemoveAccountUser removes that key; ListAccountUsers returns user ids.
 	// cls_user keys the index by the display name lowercased
-	// (cls_user.cc:511-518), so names differing only in case share an entry.
-	// Removing a key the index lacks is ErrNoSuchKey, the ENOENT radosgw's
-	// remove_user does not ignore. A listing returns the entries after
-	// marker, at most maxIDs and never more than cls_user's 1000; next is
-	// the last key returned when more remain, else "".
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L511-L518),
+	// so names differing only in case share an entry. Removing a key the index
+	// lacks is ErrNoSuchKey, the ENOENT radosgw's remove_user does not ignore.
+	// A listing returns the entries after marker, at most maxIDs and never more
+	// than cls_user's 1000; next is the last key returned when more remain,
+	// else "".
 	AddAccountUser(ctx context.Context, accountID string, info meta.UserInfo) error
 	RemoveAccountUser(ctx context.Context, accountID, displayName string) error
 	ListAccountUsers(ctx context.Context, accountID, marker string, maxIDs uint32) (ids []string, next string, err error)

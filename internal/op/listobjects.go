@@ -18,8 +18,8 @@ const defaultMaxKeys = 1000
 // max-parts and max-uploads: the option as librados reads it, which under
 // Rook is the cluster's own release's library, and for an Env without
 // options the release's default, 1000 on Squid and 5000 on Tentacle
-// (src/common/options/rgw.yaml.in:3428-3435 at v19.2.6, :3613-3620 at
-// v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L3428-L3435 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3613-L3620 at v20.2.4).
 func MaxListingResults(r *Request) int64 {
 	if r.Env.Conf != nil {
 		if v, err := r.Env.Conf.Uint64("rgw_max_listing_results"); err == nil {

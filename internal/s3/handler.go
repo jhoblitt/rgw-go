@@ -165,9 +165,13 @@ func routedScopes(name string) []op.Scope {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L970 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L988 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1042 at v20.2.4;
-// rgw_rest_pubsub.cc:1197, :1452 and
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_pubsub.cc#L1197,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_pubsub.cc#L1452
+// and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_pubsub.cc#L1556 at v19.2.6,
-// :1208, :1464 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1208,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1464
+// and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1569 at v20.2.4).
 // S3 Select's op is an RGWGetObj.
 var radosgwNames = map[string]string{
@@ -180,7 +184,8 @@ var radosgwNames = map[string]string{
 }
 
 // usageName is the RGWOp::name() of the op radosgw runs for route at rel,
-// the category the usage log files the request under (rgw_log.cc:245 and
+// the category the usage log files the request under
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L245 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L556 at v19.2.6
 // and v20.2.4). Squid's radosgw runs ?attributes as GetObject
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4805-L4821 at v19.2.6).
@@ -196,8 +201,10 @@ func usageName(route string, rel denc.Release) string {
 
 // served is how far the request got: the route's name and radosgw's op name,
 // both "unknown" until a route is dispatched, as rgw_log_op names a request
-// no op serves (rgw_log.cc:556), whether postauth_init has named its bucket,
-// and whether the client went away.
+// no op serves
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L556),
+// whether postauth_init has named its bucket, and whether the client went
+// away.
 type served struct {
 	route, usage string
 	named, gone  bool
@@ -211,13 +218,14 @@ type served struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L651 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L594-L656 at v20.2.4).
 // Once the response is written it observes the request and logs its usage,
-// refused requests included, as process_request's tail does (:454-462 at
-// v19.2.6, :461-469 at v20.2.4). A panic anywhere before anything was
-// written is answered 500, observed and usage-logged; one after it ends the
-// connection, so a truncated body is never framed as complete. A request
-// whose authentication or route fails because its client went away
-// (op.EndForGoneClient) is observed and usage-logged, and then its
-// connection ends with nothing more written.
+// refused requests included, as process_request's tail does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L454-L462 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L461-L469 at v20.2.4).
+// A panic anywhere before anything was written is answered 500, observed
+// and usage-logged; one after it ends the connection, so a truncated body
+// is never framed as complete. A request whose authentication or route
+// fails because its client went away (op.EndForGoneClient) is observed and
+// usage-logged, and then its connection ends with nothing more written.
 // Every line logged under the request's context carries its transaction id.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
@@ -459,7 +467,8 @@ func zoneGroupEndpoint(zg meta.ZoneGroup) string {
 
 // refuse answers a request refused before postauth_init has named its
 // bucket, so neither the error document nor the usage log names one (dump,
-// rgw_common.cc:397-398 at v19.2.6, :410-411 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L397-L398 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L410-L411 at v20.2.4).
 func refuse(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
 	r.Bucket = ""
 	WriteError(ctx, w, r, err)
@@ -517,9 +526,12 @@ func ApplyAuth(r *op.Request, res *op.AuthResult) {
 }
 
 // countingReader counts what the op reads into n. radosgw's accounting
-// filter sits above the payload decoders (rgw_client_io.h:334-349 at
-// v19.2.6 and v20.2.4) and counts a request body only inside PutObject's
-// data reads (rgw_rest.cc:1082-1093 at v19.2.6, :1087-1098 at v20.2.4).
+// filter sits above the payload decoders
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io.h#L334-L349 at v19.2.6
+// and v20.2.4) and counts a request body only inside PutObject's data
+// reads
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1082-L1093 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1087-L1098 at v20.2.4).
 type countingReader struct {
 	r io.Reader
 	n *int64

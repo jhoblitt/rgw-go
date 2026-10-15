@@ -322,11 +322,13 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 // that takes its payload hash from elsewhere, as radosgw's STS, IAM and
 // topic ops take it from the PayloadHash parameter
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5854 at v19.2.7)
-// while the exemption still applies to them (its TODO, rgw_auth_s3.cc:832).
-// A Content-Type need not be signed. v20.2.4 also refuses an unsigned
-// Content-Type or payloadHashHeader (rgw_auth_s3.cc:765-797); rgw-go takes
-// v19.2.7's rule on Tentacle too (docs/exclusions.md). Every refusal is
-// EPERM.
+// while the exemption still applies to them (its TODO,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L832). A
+// Content-Type need not be signed. v20.2.4 also refuses an unsigned
+// Content-Type or payloadHashHeader
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797);
+// rgw-go takes v19.2.7's rule on Tentacle too (docs/exclusions.md). Every
+// refusal is EPERM.
 func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, hostPort string) (string, error) {
 	m := map[string]string{}
 	for tok := range strings.SplitSeq(signedHeaders, ";") {
@@ -432,9 +434,11 @@ func signatureV4(key []byte, stringToSign string) string {
 	return hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
 }
 
-// expectedPayloadHash is get_v4_exp_payload_hash (rgw_auth_s3.h:638-661 at
-// v19.2.6, :641-664 at v20.2.4): x-amz-content-sha256, or UNSIGNED-PAYLOAD
-// when it is absent, as go-ceph's admin client relies on.
+// expectedPayloadHash is get_v4_exp_payload_hash
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L638-L661 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L641-L664 at v20.2.4):
+// x-amz-content-sha256, or UNSIGNED-PAYLOAD when it is absent, as
+// go-ceph's admin client relies on.
 func expectedPayloadHash(rv *requestView) string {
 	if h, ok := rv.header(payloadHashHeader); ok {
 		return h
@@ -448,7 +452,12 @@ func expectedPayloadHash(rv *requestView) string {
 // but for its per-op payload whitelist, which needs the route and is
 // acceptedBy, and for its non-S3 ops (is_non_s3_op: the STS, IAM, OIDC and
 // topic ops), whose payload hash radosgw takes from the PayloadHash query
-// parameter and never completes (:5807-5818 and :5882, :6374-6385 and :6449);
+// parameter and never completes
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5807-L5818
+// and https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5882,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6374-L6385
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6449);
 // rgw-go does not route those ops. The method is the request's: radosgw signs
 // an OPTIONS CORS request over its Access-Control-Request-Method instead.
 func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*authData, error) {

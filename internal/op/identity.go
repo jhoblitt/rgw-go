@@ -107,7 +107,8 @@ const (
 	RouteAnonymous
 	// RouteSigV2Header is SigV2 in the Authorization header, whose string to
 	// sign takes nothing from the query but the sub-resources
-	// (rgw_auth_s3.cc:215-216 at v19.2.7, :217-218 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L215-L216 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L217-L218 at v20.2.4).
 	RouteSigV2Header
 	// RouteSigV2Query is presigned SigV2, whose string to sign takes the
 	// query's x-amz-meta-* and x-amz-security-token alone (get_v2_qs_map,

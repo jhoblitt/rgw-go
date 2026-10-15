@@ -10,9 +10,10 @@ import (
 // ListMultipartUploads is RGWListBucketMultiparts, ListMultipartUploads
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6696-L6745 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7635-L7684 at v20.2.4;
-// rgw_rest.cc:1624-1658 at v19.2.6, :1629-1663 at v20.2.4). The handler fills
-// the inputs; Execute lists a page of the bucket's uploads through
-// MultipartStore.ListUploads.
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1624-L1658 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1629-L1663 at v20.2.4).
+// The handler fills the inputs; Execute lists a page of the bucket's uploads
+// through MultipartStore.ListUploads.
 type ListMultipartUploads struct {
 	Prefix, Delimiter         string
 	KeyMarker, UploadIDMarker string

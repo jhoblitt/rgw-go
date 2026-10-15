@@ -12,9 +12,11 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
-// The attrs the loaders read, from rgw_common.h (:154-157 at v19.2.6,
-// :173-176 at v20.2.4). The ACLs are op.BucketACLFor's and op.ObjectACLFor's,
-// and the tags tags.Attr.
+// The attrs the loaders read, from rgw_common.h
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L154-L157 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L173-L176 at v20.2.4).
+// The ACLs are op.BucketACLFor's and op.ObjectACLFor's, and the tags
+// tags.Attr.
 const (
 	attrIAMPolicy     = meta.AttrPrefix + "iam-policy"
 	attrUserPolicy    = meta.AttrPrefix + "user-policy"
@@ -76,7 +78,9 @@ func identityPolicies(id *op.Identity, r denc.Release) ([]*policy.Policy, error)
 // that does not decode for none, which turns off IgnorePublicAcls,
 // BlockPublicPolicy and RestrictPublicBuckets; rgw-go refuses the request
 // instead with AccessDenied, as radosgw refuses one whose stored bucket
-// policy does not parse (rgw_op.cc:598-615 at v19.2.6, :628-645 at v20.2.4;
+// policy does not parse
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L598-L615 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645 at v20.2.4;
 // docs/exclusions.md).
 func publicAccess(rec *op.BucketRecord) (*acl.PublicAccessBlock, error) {
 	if rec == nil {
@@ -96,7 +100,8 @@ func publicAccess(rec *op.BucketRecord) (*acl.PublicAccessBlock, error) {
 }
 
 // The condition key prefixes rgw_check_policy_condition looks for
-// (rgw_op.cc:109-111 at v19.2.6, :120-122 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L109-L111 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L120-L122 at v20.2.4).
 const (
 	existingObjectTagPrefix = "s3:ExistingObjectTag"
 	resourceTagPrefix       = "s3:ResourceTag"

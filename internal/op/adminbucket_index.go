@@ -10,7 +10,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
-// The index check is RGWOp_Check_Bucket_Index (rgw_rest_bucket.cc:94-126)
+// The index check is RGWOp_Check_Bucket_Index
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_bucket.cc#L94-L126)
 // over RGWBucketAdminOp::check_index
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1241-L1280 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1392-L1442 at v20.2.4)
@@ -146,7 +147,8 @@ func (o *CheckBucketIndex) badMultipart(ctx context.Context, env *Env, rec *Buck
 	return badMultipartSquid(keys), nil
 }
 
-// badMultipartSquid is Squid's check (rgw_bucket.cc:326-420 at v19.2.6):
+// badMultipartSquid is Squid's check
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L326-L420 at v19.2.6):
 // each entry's head object name split at its last '.'; a "meta" suffix
 // marks an upload, and every other entry is a part of the upload its prefix
 // names, the whole name when it has no '.'. The parts of uploads no meta
@@ -178,7 +180,9 @@ func badMultipartSquid(keys []meta.ObjKey) []meta.ObjKey {
 	return out
 }
 
-// badMultipartByShard is Tentacle's check (rgw_bucket.cc:343-482 and
+// badMultipartByShard is Tentacle's check
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L343-L482
+// and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L497-L557 at v20.2.4),
 // which reads each shard's multipart entries in index order, the REST op's
 // max_aio of 0 giving one coroutine that takes the shards in turn. The

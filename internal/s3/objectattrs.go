@@ -12,17 +12,18 @@ import (
 )
 
 // putObjectACL is put_acls at object scope: RGWPutACLs_ObjStore_S3::get_params
-// (:3616-3635, [T] :3899-3918), then the policy built from the canned ACL, the
-// grant headers or the body by the evaluator, which also refuses a canned
-// ACL beside a body, a new owner, too many grants and a public policy under a
-// block of public ACLs; its errors are mapped through authz.ErrorFor. The
-// body is read only once the requester is authorized, as RGWPutACLs::execute
-// calls get_params
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3616-L3635,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3899-L3918),
+// then the policy built from the canned ACL, the grant headers or the body by
+// the evaluator, which also refuses a canned ACL beside a body, a new owner,
+// too many grants and a public policy under a block of public ACLs; its errors
+// are mapped through authz.ErrorFor. The body is read only once the requester
+// is authorized, as RGWPutACLs::execute calls get_params
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5828 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6474 at v20.2.4),
 // through what authentication left in r.Body to its final Read; a body longer
-// than rgw_max_put_param_size is MalformedXML naming the limit (rgw_op.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5830-L5837 at v19.2.6,
+// than rgw_max_put_param_size is MalformedXML naming the limit
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5830-L5837 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6476-L6483 at v20.2.4).
 // The 200 carries no body (writeEmptyXML).
 func putObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
@@ -52,11 +53,16 @@ func putObjectACL(ctx context.Context, w http.ResponseWriter, r *op.Request) err
 }
 
 // putObjectTags is put_obj_tags: RGWPutObjTags_ObjStore_S3::get_params
-// (:776-815, [T] :858-897) once the requester is authorized, the body read
-// through what authentication left in r.Body to its final Read, a body
-// longer than rgw_max_put_param_size InvalidRange, and the document parsed
-// into at most ten tags, its errors mapped through authz.ErrorFor; 200 with
-// no body (send_response :817-825, [T] :899-907; writeEmptyXML).
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L776-L815,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L858-L897)
+// once the requester is authorized, the body read through what
+// authentication left in r.Body to its final Read, a body longer than
+// rgw_max_put_param_size InvalidRange, and the document parsed into at most
+// ten tags, its errors mapped through authz.ErrorFor; 200 with no body
+// (send_response
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L817-L825,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L899-L907;
+// writeEmptyXML).
 func putObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.PutObjectTagging{Params: func(_ context.Context, o *op.PutObjectTagging) error {
 		body, err := readParamBody(r, invalidRange)
@@ -78,7 +84,9 @@ func putObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 }
 
 // deleteObjectTags is delete_obj_tags: 204 with no body
-// (RGWDeleteObjTags_ObjStore_S3::send_response, :827-837, [T] :909-919),
+// (RGWDeleteObjTags_ObjStore_S3::send_response,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L827-L837,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L909-L919),
 // under writeEmptyXML's type.
 func deleteObjectTags(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	if err := op.Run(ctx, &op.DeleteObjectTagging{}, r); err != nil {

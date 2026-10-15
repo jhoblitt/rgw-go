@@ -20,8 +20,7 @@ import (
 // The object write routes are rgw_rest_s3.cc's RGWPutObj_ObjStore_S3,
 // RGWDeleteObj_ObjStore_S3, RGWDeleteMultiObj_ObjStore_S3,
 // RGWCopyObj_ObjStore_S3, RGWPutACLs_ObjStore_S3 at object scope,
-// RGWPutObjTags_ObjStore_S3 and RGWDeleteObjTags_ObjStore_S3. A bare line
-// number is v19.2.6's rgw_rest_s3.cc; [T] marks v20.2.4's.
+// RGWPutObjTags_ObjStore_S3 and RGWDeleteObjTags_ObjStore_S3.
 
 // putObject is put_obj without a copy source (RGWPutObj_ObjStore_S3,
 // get_params
@@ -282,8 +281,8 @@ func objectLockHeaders(r *op.Request, isCopy bool) error {
 	return nil
 }
 
-// fromISO8601 is ceph::from_iso_8601 with ws_terminates (src/common/iso_8601.cc
-// https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.cc#L51-L151 at v19.2.6
+// fromISO8601 is ceph::from_iso_8601 with ws_terminates
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.cc#L51-L151 at v19.2.6
 // and v20.2.4) as RGWObjectRetention's caller then reads it,
 // real_clock::to_time_t: the time's whole seconds, through real_time's unsigned
 // 64-bit nanoseconds, which wrap for a time after 2554. A date or time may end
@@ -355,12 +354,13 @@ func fromISO8601(s string) (int64, bool) {
 	return 0, false
 }
 
-// cephUnarmor is ceph_unarmor (src/common/armor.c:107-137 at v19.2.6 and
-// v20.2.4) into the 17-byte buffer RGWPutObj::execute passes: groups of four
-// base64 digits, "-" and "_" read as "+" and "/" and "=" as a zero digit,
-// line feeds between groups skipped; an "=" in a group's third or fourth
-// place ends the decode there, whatever follows. A group cut short, a byte
-// that is no digit and output past the buffer fail.
+// cephUnarmor is ceph_unarmor
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/armor.c#L99-L131 at v19.2.6
+// and v20.2.4) into the 17-byte buffer RGWPutObj::execute passes: groups of
+// four base64 digits, "-" and "_" read as "+" and "/" and "=" as a zero
+// digit, line feeds between groups skipped; an "=" in a group's third or
+// fourth place ends the decode there, whatever follows. A group cut short, a
+// byte that is no digit and output past the buffer fail.
 func cephUnarmor(src string) ([]byte, bool) {
 	const capacity = md5.Size + 1
 	dst := make([]byte, 0, capacity)

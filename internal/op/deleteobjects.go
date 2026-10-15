@@ -48,8 +48,8 @@ type DeleteObjectsEntry struct {
 	// IfMatch, IfMatchSize and IfMatchLastModified are the entry's ETag,
 	// Size and LastModifiedTime, which v20.2.4 reads and rgw-go applies on
 	// both releases; nil, nil and zero when absent. An ETag element present
-	// and empty is a condition, which fails (rgw_multi_del.cc:38-40 at
-	// v20.2.4).
+	// and empty is a condition, which fails
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi_del.cc#L38-L40 at v20.2.4).
 	IfMatch             *string
 	IfMatchSize         *uint64
 	IfMatchLastModified time.Time
@@ -97,7 +97,6 @@ func (o *DeleteObjects) OpMask() uint32 { return OpTypeDelete }
 // Init is init_permissions, then get_params during init_processing
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6758-L6766 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7697-L7705 at v20.2.4;
-// rgw_rest.cc
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1660-L1674 at v19.2.6):
 // the bucket, NoSuchBucket before the body is touched, then the whole
 // body as ReadParamBody reads it under rgw_max_put_param_size.
@@ -239,9 +238,12 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6818-L6910 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743-L7855 at v20.2.4):
 // the key, its permission, s3:DeleteObjectVersion for a key naming any
-// version, the null one included (:6829-6831, :7766-7768), checked in the
-// request's bucket with the request's public-access block, and the delete
-// with the entry's conditions, where a missing key is success.
+// version, the null one included
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6829-L6831,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7766-L7768),
+// checked in the request's bucket with the request's public-access block,
+// and the delete with the entry's conditions, where a missing key is
+// success.
 func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry) DeleteResult {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {

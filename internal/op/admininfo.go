@@ -167,10 +167,12 @@ const (
 
 // GetRateLimit is RGWOp_Ratelimit_Info
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L4-L120 at v19.2.6
-// and v20.2.4) under cap ratelimit=read (:5-7): a bucket's or a user's
-// limits, or with Global the realm's period config. The handler refuses a
-// global argument other than true or false, as radosgw checks it before
-// anything else (:24-32).
+// and v20.2.4) under cap ratelimit=read
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L5-L7):
+// a bucket's or a user's limits, or with Global the realm's period
+// config. The handler refuses a global argument other than true or false,
+// as radosgw checks it before anything else
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L24-L32).
 type GetRateLimit struct {
 	AdminOp
 	UID, Scope, Bucket, Tenant string
@@ -191,11 +193,12 @@ func (o *GetRateLimit) VerifyPermission(_ context.Context, r *Request) error {
 	return CheckCaps(r, "ratelimit", meta.CapRead)
 }
 
-// Execute is the op's branches in radosgw's order (:35-120): a bucket scope
-// naming a bucket, a user scope naming a uid, then global; anything else is
-// -EINVAL. radosgw's user branch falls through to -EINVAL once it has
-// flushed its body, after the 200 and the body are sent, so the client sees
-// the limits, which is what this answers.
+// Execute is the op's branches in radosgw's order
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L35-L120):
+// a bucket scope naming a bucket, a user scope naming a uid, then global;
+// anything else is -EINVAL. radosgw's user branch falls through to -EINVAL
+// once it has flushed its body, after the 200 and the body are sent, so the
+// client sees the limits, which is what this answers.
 func (o *GetRateLimit) Execute(ctx context.Context, r *Request) error {
 	switch {
 	case o.Scope == rateLimitBucket && o.Bucket != "" && !o.Global:
@@ -225,12 +228,15 @@ func (o *GetRateLimit) Execute(ctx context.Context, r *Request) error {
 
 // SetRateLimit is RGWOp_Ratelimit_Set
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L122-L343 at v19.2.6
-// and v20.2.4) under cap ratelimit=write (:123-125): the limits given laid
-// over a user's, a bucket's, or with Global one scope of the realm's
-// period config. A nil field was not given; a negative limit is ignored
-// (set_ratelimit_info, :141-175). The handler refuses a limit that does
-// not parse and an enabled or global other than true or false, as radosgw
-// does before anything else (:197-227).
+// and v20.2.4) under cap ratelimit=write
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L123-L125):
+// the limits given laid over a user's, a bucket's, or with Global one
+// scope of the realm's period config. A nil field was not given; a
+// negative limit is ignored (set_ratelimit_info,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L141-L175).
+// The handler refuses a limit that does not parse and an enabled or global
+// other than true or false, as radosgw does before anything else
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L197-L227).
 type SetRateLimit struct {
 	AdminOp
 	UID, Scope, Bucket, Tenant                           string
@@ -271,8 +277,10 @@ func (o *SetRateLimit) apply(l *meta.RateLimitInfo) bool {
 }
 
 // Execute refuses a request that sets nothing, "No rate limit configuration
-// arguments have been sent" (:169-172), then runs radosgw's branches. The
-// user and bucket writes are merge_and_store_attrs
+// arguments have been sent"
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_ratelimit.cc#L169-L172),
+// then runs radosgw's branches. The user and bucket writes are
+// merge_and_store_attrs
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L238-L244
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L778 at v19.2.6,

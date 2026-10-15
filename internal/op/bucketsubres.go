@@ -21,8 +21,7 @@ import (
 // RGWDeleteBucketTags and RGWGetLC. Each loads the bucket in Init, so a
 // missing bucket is NoSuchBucket before the permission check, and authorizes
 // its action against the bucket. The forward to the metadata master each
-// write makes is a no-op on a single zone, which is its own master. A bare
-// line number is v19.2.6's rgw_op.cc.
+// write makes is a no-op on a single zone, which is its own master.
 
 // AttrIAMPolicy is RGW_ATTR_IAM_POLICY
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L154 at v19.2.6,
@@ -50,9 +49,11 @@ const racedWriteRetries = 15
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210 at v20.2.4):
 // f, and while it returns ErrConcurrentModification, up to fifteen times,
 // the bucket read again by name into r.BucketRec, as try_refresh_info reads
-// it (driver/rados/rgw_rados.cc:9011-9026 at v19.2.6, :9956-9971 at
-// v20.2.4), then f again. A read that fails ends it with the read's error, a
-// bucket gone since being the -ENOENT radosgw answers as NoSuchKey
+// it
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9011-L9026 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9956-L9971 at v20.2.4),
+// then f again. A read that fails ends it with the read's error, a bucket
+// gone since being the -ENOENT radosgw answers as NoSuchKey
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L97 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98 at v20.2.4).
 // A read that finds the name naming another instance, a bucket deleted and
@@ -173,8 +174,11 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // -EPERM, "Cannot modify ACL Owner"
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5859-L5864),
 // and a public policy under a block of public ACLs, or a block that does not
-// decode (:5905-5910; docs/exclusions.md). radosgw answers a lost race with
-// success and leaves the ACL unwritten (:5925-5927;
+// decode
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5905-L5910;
+// docs/exclusions.md). radosgw answers a lost race with success and leaves
+// the ACL unwritten
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5925-L5927;
 // docs/ceph-upstream-bugs.md, "radosgw's PutBucketAcl answers success when
 // its write loses a race"); rgw-go retries it through retryBucketWrite and
 // makes both checks again against the bucket as each try reads it, so a retry

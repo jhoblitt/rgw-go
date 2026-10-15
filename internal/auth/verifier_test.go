@@ -667,7 +667,9 @@ var _ = Describe("Verifier through the s3 handler", func() {
 	// The key is unknown: a form the route refuses is 501 from authentication,
 	// a form it takes goes on to the key lookup and is 403 InvalidAccessKeyId,
 	// so the status shows which side of the whitelist the route sits on at
-	// that release (rgw_rest_s3.cc:5899-5969 at v19.2.6, :6466-6540 at v20.2.4).
+	// that release
+	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969 at v19.2.6,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540 at v20.2.4).
 	DescribeTable("answers the dispatched route's payload forms at the cluster's release",
 		func(ctx SpecContext, rel denc.Release, method, target, hash string, wantStatus int, wantCode string) {
 			rs := memstore.New(memstore.Config{Release: rel})

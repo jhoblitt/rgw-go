@@ -51,8 +51,10 @@ type payloadClass struct {
 // classifyPayload is get_auth_data_v4's choice of completer
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5855-L6000 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6422-L6571 at v20.2.4)
-// over the predicates of rgw_auth_s3.h:663-702 at v19.2.6, :666-705 at
-// v20.2.4. A request has no body when its Content-Length is 0 and it has no
+// over the predicates of
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.h#L663-L702 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L666-L705 at v20.2.4.
+// A request has no body when its Content-Length is 0 and it has no
 // Transfer-Encoding. The ops that take no body never complete the payload, so
 // radosgw refuses here a request without a body whose hash is neither an
 // unsigned form nor the empty string's, with XAmzContentSHA256Mismatch.
@@ -85,7 +87,9 @@ func classifyPayload(rv *requestView, payloadHash string) (payloadClass, error) 
 // lists
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5903-L5944 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6470-L6515 at v20.2.4),
-// an aws-chunked payload only for RGW_OP_PUT_OBJ (:5962-5969, :6533-6540).
+// an aws-chunked payload only for RGW_OP_PUT_OBJ
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5962-L5969,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6533-L6540).
 // The refusal is ERR_NOT_IMPLEMENTED.
 func (pc payloadClass) acceptedBy(forms op.PayloadForms) error {
 	switch {
