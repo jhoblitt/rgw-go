@@ -67,7 +67,23 @@ Every task's requirements include these. Values are copied from the spec and the
 - **Threat model:** each unit file states its threat model. Reviews judge a component against it, and adversarial review is for the spec's security boundaries only (PP-14).
 - **Shell is glue:** parsing, validation and logic are Go with tests (PP-15).
 - **s3-tests:** every rgw-go fix, where reasonable, carries an s3-tests test that covers it, merged into jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task. The pin bump is its own change.
-- **The next s3-tests pin bump** adds the known-differences lines that the tests landed since the pin need: F13's `test_sigv4_presigned_put_xgoog_meta_unsigned`, as F18 revises it, in both known-differences files (rgw-go stores no metadata from the unsigned header, radosgw stores it as user metadata), and F15's `test_sigv2_signed_copy_source_moved_to_xgoog`, in both (rgw-go refuses the relabelled copy source, radosgw stores a plain PutObject, as F15's runs on both releases showed).
+- **The next s3-tests pin bump** adds the known-differences lines that the tests landed since the pin
+  need, each in both known-differences files, as each task's runs on both releases showed:
+  - F13's `test_sigv4_presigned_put_xgoog_meta_unsigned`, as F18 revises it: rgw-go stores no
+    metadata from the unsigned header, and radosgw stores it as user metadata.
+  - F15's `test_sigv2_signed_copy_source_moved_to_xgoog`: rgw-go refuses the relabelled copy source,
+    and radosgw stores a plain PutObject.
+  - F17's `test_sigv2_presigned_multipart_meta_moved_to_query`,
+    `test_sigv2_presigned_copy_replace_meta_in_query`,
+    `test_sigv2_presigned_meta_lines_packed_into_one_query_value`,
+    `test_sigv2_presigned_copy_source_moved_to_expires` and
+    `test_sigv2_presigned_meta_name_with_colon`: rgw-go folds or refuses each, and radosgw serves the
+    moved meaning.
+  - F19's `test_sigv2_header_put_unsigned_meta_in_query`: rgw-go stores the signed metadata alone,
+    and radosgw also stores the query's unsigned `x-amz-meta-*`.
+
+  F17's packed-UploadPart test and F20's `test_object_write_bad_part_number` pass on both gateways
+  and need no line.
 - **Go conventions:** go-conventions (Ginkgo v2 and Gomega specs, errors wrapped, slog). Every build, test and lint passes `ceph_preview`; cgo builds use the project CLAUDE.md's `CGO_CFLAGS` and `CGO_LDFLAGS`. No task ids in code.
 - **Clusters:** only disposable rooket clusters (`make cluster-up RELEASE=squid|tentacle`), reached through `ROOKET_NAME=rgw-go-<release> rooket k`; never the ambient kubectl. A task marked "Cluster: yes" runs one at a time.
 - **rgw-rs:** every material change to `docs/exclusions.md` is announced to the rgw-rs session.
