@@ -38,9 +38,15 @@ import (
 // heads in, where ~RadosWriter removes the part head through the bucket
 // index
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229).
+// compression is the compression type of the upload's destination
+// placement as the upload stores it, which RGWPutObj::execute takes from
+// get_info without inheriting from the bucket
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3716 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4575 at v20.2.4).
 type partLayout struct {
 	layout
 	indexedHead bool
+	compression string
 }
 
 // partLayout resolves the layout of a part of an upload whose destination
@@ -68,17 +74,19 @@ func (s *Store) partLayout(ctx context.Context, rec *op.BucketRecord, dest meta.
 			op.ErrUnknown, l.chunk, pool.Name(), s.w.opts.putWindow)
 	}
 	headPool, ok := s.dataPool(rec.Info.PlacementRule, bucket)
-	return partLayout{layout: l, indexedHead: ok && headPool == name}, nil
+	return partLayout{layout: l, indexedHead: ok && headPool == name, compression: s.compressionType(dest)}, nil
 }
 
 // partResult is what one part's data write leaves: the manifest as written,
-// the ETag, the stored size and the plaintext's, which is accounted, and the
-// writer holding its stripes.
+// the ETag, the stored size and the plaintext's, which is accounted, the
+// compression info when the part compressed, and the writer holding its
+// stripes.
 type partResult struct {
 	m         meta.Manifest
 	etag      string
 	size      uint64
 	accounted uint64
+	cs        *meta.CompressionInfo
 	tw        *tailWriter
 }
 
@@ -103,7 +111,7 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
 	h := md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
 	plain := newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize, h)
-	stored := storeAsIs(plain)
+	stored := s.storeFor(ctx, plain, size, pl.compression, false)
 	m := meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, uploadID), n, pl.stripe)
 	tw := s.partWriter(&m, pl, n, stored.incompressible)
 	_, got, err := tw.consume(ctx, stored, size)
@@ -137,7 +145,11 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 		return partResult{}, err
 	}
 	m.SetObjSize(got)
-	return partResult{m: m, etag: hex.EncodeToString(sum), size: got, accounted: plain.n, tw: tw}, nil
+	pr := partResult{m: m, etag: hex.EncodeToString(sum), size: got, accounted: plain.n, tw: tw}
+	if ci, ok := stored.compression(); ok {
+		pr.cs = &ci
+	}
+	return pr, nil
 }
 
 // partWriter is newPartWriter for a part laid out as pl, whose data is
@@ -158,6 +170,10 @@ func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32, incompress
 // then one op on the meta object: assert_exists, mp_upload_part_info_update
 // of the part's RGWUploadPartInfo under partKey, and cls_version_inc
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L539-L576).
+// A compressed part's head carries its user.rgw.compression, among the attrs
+// RGWPutObj::execute hands write_meta, and its record the same cs_info
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L552-L556 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L591-L595 at v20.2.4).
 // It returns the part head's mtime. On a failure the part's objects are
 // removed, as ~RadosWriter removes them, except when the meta object's op
 // timed out and may yet land
@@ -176,6 +192,11 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 		a = map[string][]byte{}
 	}
 	a[meta.AttrETag] = []byte(pr.etag)
+	cs := meta.NewCompressionInfo()
+	if pr.cs != nil {
+		cs = *pr.cs
+		a[meta.AttrCompression] = encodeAt(cs, s.release)
+	}
 	pool := pl.tailPool
 	if loc := stripe.Locator(); loc != "" {
 		pool = pool.WithLocator(loc)
@@ -204,7 +225,7 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 	}
 	info := meta.UploadPartInfo{
 		Num: n, Size: pr.size, AccountedSize: pr.accounted, ETag: pr.etag, Modified: s.now(),
-		Manifest: pr.m, Compression: meta.NewCompressionInfo(),
+		Manifest: pr.m, Compression: cs,
 	}
 	w := radosclient.NewWriteOp()
 	w.AssertExists()

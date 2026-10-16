@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -576,5 +578,200 @@ var _ = Describe("CopyPart", func() {
 		_, err := s.CopyPart(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: meta.ObjKey{Name: "k"}}, 1, st, op.ByteRange{Length: 5 << 20})
 		Expect(err).To(MatchError(op.ErrNoSuchUpload))
 		Expect(c.Reads(testDataPool, "", tailOID(secondPrefix, 1))).To(BeZero(), "get_info runs before the source is read")
+	})
+})
+
+var _ = Describe("a part of an upload into a compressing class", func() {
+	var (
+		c       *fakerados.Cluster
+		s       *driver.Store
+		rec     *op.BucketRecord
+		key     meta.ObjKey
+		up      *op.Upload
+		prefix  string
+		metaObj string
+		shard   string
+		mtime   time.Time
+		dest    meta.PlacementRule
+	)
+	// setCompression gives dest's class the compression type typ, none for
+	// "", and reopens the store, as a gateway serving the zone after the
+	// change does.
+	setCompression := func(ctx context.Context, typ string) {
+		GinkgoHelper()
+		editRoot(c, meta.ZoneInfoOID(putZoneID), meta.DecodeZoneParams, func(z *meta.ZoneParams) {
+			pi := z.PlacementPools["default-placement"]
+			class := pi.StorageClasses[dest.StorageClass]
+			class.CompressionType = nil
+			if typ != "" {
+				class.CompressionType = new(typ)
+			}
+			pi.StorageClasses[dest.StorageClass] = class
+			z.PlacementPools["default-placement"] = pi
+		})
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+	}
+	BeforeEach(func(ctx SpecContext) {
+		mtime = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+		dest = meta.PlacementRule{Name: "default-placement", StorageClass: compClass(compression.Zlib)}
+		c = newPutCluster()
+		withCompressionClasses(c, compression.Zlib)
+		clock := mtime
+		c.SetClock(func() time.Time { return clock })
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		key = meta.ObjKey{Name: "k"}
+		var err error
+		up, err = s.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, OwnerName: "Alice", Placement: dest, Attrs: attrsWithACL(initiator)})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		prefix = "k." + up.ID
+		metaObj = metaOID(rec, "k", up.ID)
+		shard = indexShardOID(rec, "k")
+	})
+	putPart := func(ctx context.Context, n int, body []byte) *op.PartResult {
+		GinkgoHelper()
+		res, err := s.PutPart(ctx, up, n, bytes.NewReader(body), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(body)), Mtime: mtime})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		return res
+	}
+	// partStreamOf is what part n of the upload under prefix p stored: its
+	// head's bytes, then each shadow stripe's.
+	partStreamOf := func(p string, n int) []byte {
+		out := slices.Clone(c.Object(testDataPool, "", partHeadOID(p, n)).Data)
+		for i := 1; c.Object(testDataPool, "", partShadowOID(p, n, i)) != nil; i++ {
+			out = append(out, c.Object(testDataPool, "", partShadowOID(p, n, i)).Data...)
+		}
+		return out
+	}
+	partStream := func(n int) []byte { return partStreamOf(prefix, n) }
+	// decodesTo expects every block of ci, cut from stored, to decode to its
+	// bytes of plain.
+	decodesTo := func(ci meta.CompressionInfo, stored, plain []byte) {
+		GinkgoHelper()
+		dec, err := compression.NewDecoder(ci.Type)
+		Expect(err).NotTo(HaveOccurred())
+		for i, b := range ci.Blocks {
+			end := uint64(len(plain))
+			if i+1 < len(ci.Blocks) {
+				end = ci.Blocks[i+1].OldOfs
+			}
+			got, err := dec.Decode(nil, stored[b.NewOfs:b.NewOfs+b.Len], int(end-b.OldOfs), ci.CompressorMessage) //nolint:gosec // spec sizes are small
+			Expect(err).NotTo(HaveOccurred(), "block %d", i)
+			Expect(got).To(Equal(plain[b.OldOfs:end]), "block %d", i)
+		}
+	}
+
+	It("compresses the part on its own and records its cs_info, as MultipartObjectProcessor::complete does", func(ctx SpecContext) {
+		body := hexNoise(9 << 20)
+		res := putPart(ctx, 2, body)
+		Expect(res.ETag).To(Equal(md5hex(body)), "the MD5 of the plaintext")
+		stored := partStream(2)
+		info := storedPart(c, metaObj, "part.00000002")
+		Expect([]uint64{info.Size, info.AccountedSize, info.Manifest.ObjSize}).To(Equal([]uint64{uint64(len(stored)), 9 << 20, uint64(len(stored))}),
+			"rgw_putobj_processor.cc:585-586 at v20.2.4: the stored size, and the plaintext's accounted")
+		ci := info.Compression
+		Expect([]any{ci.Type, ci.OrigSize, ci.CompressorMessage}).To(Equal([]any{compression.Zlib, uint64(9 << 20), new(int32(-15))}))
+		Expect(ci.Blocks).To(HaveLen(3), "the part's own blocks, from its plaintext offset 0")
+		Expect(ci.Blocks[0]).To(Equal(meta.CompressionBlock{OldOfs: 0, NewOfs: 0, Len: ci.Blocks[0].Len}))
+		decodesTo(ci, stored, body)
+		Expect(c.Object(testDataPool, "", partHeadOID(prefix, 2)).Xattrs).To(HaveKeyWithValue(meta.AttrCompression, encode(ci)),
+			"the part head's write_meta stores the attrs RGWPutObj::execute built")
+		en, ok := c.Entry(rookIndexPool, "", shard, partIndexKey(prefix, 2))
+		Expect(ok).To(BeTrue())
+		Expect([]uint64{en.Meta.Size, en.Meta.AccountedSize}).To(Equal([]uint64{uint64(len(stored)), 9 << 20}))
+		hint := &radosclient.SetAllocHintStep{Flags: 512}
+		Expect(c.WritesTo(testDataPool, "", partHeadOID(prefix, 2))[0].Steps()[1]).To(Equal(hint), "the part head's exclusive create")
+		for i := 1; c.Object(testDataPool, "", partShadowOID(prefix, 2, i)) != nil; i++ {
+			for _, w := range c.WritesTo(testDataPool, "", partShadowOID(prefix, 2, i)) {
+				Expect(w.Steps()[0]).To(Equal(hint), "shadow %d", i)
+			}
+		}
+	})
+
+	It("compresses a copied part as it does a part's body", func(ctx SpecContext) {
+		src := hexNoise(6 << 20)
+		s.SetRandForTest(fixedRand(secondPrefix))
+		_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "src"}, bytes.NewReader(src), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(src)), Tag: "tx-src"})
+		Expect(err).NotTo(HaveOccurred())
+		s.SetRandForTest(fixedRand(putPrefix))
+		st, err := s.PrefetchObject(ctx, rec, meta.ObjKey{Name: "src"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Compression).To(BeNil(), "the source's STANDARD class does not compress")
+		_, err = s.CopyPart(ctx, up, 1, st, op.ByteRange{Offset: 1 << 20, Length: 5 << 20})
+		Expect(err).NotTo(HaveOccurred())
+		info := storedPart(c, metaObj, "part.00000001")
+		Expect([]any{info.Compression.Type, info.Compression.OrigSize, info.AccountedSize}).To(Equal([]any{compression.Zlib, uint64(5 << 20), uint64(5 << 20)}))
+		decodesTo(info.Compression, partStream(1), src[1<<20:])
+	})
+
+	It("completes compressed parts into an object the read path decodes, their block maps concatenated", func(ctx SpecContext) {
+		body := hexNoise(6 << 20)
+		r1 := putPart(ctx, 1, body[:5<<20])
+		r2 := putPart(ctx, 2, body[5<<20:])
+		stored1 := partStream(1)
+		_, err := s.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: r1.ETag}, {Number: 2, ETag: r2.ETag}})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		st, err := s.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Compression).NotTo(BeNil())
+		ci := *st.Compression
+		Expect([]any{ci.Type, ci.OrigSize, ci.CompressorMessage}).To(Equal([]any{compression.Zlib, uint64(6 << 20), new(int32(-15))}))
+		Expect(ci.Blocks).To(HaveLen(3))
+		Expect([]uint64{ci.Blocks[2].OldOfs, ci.Blocks[2].NewOfs}).To(Equal([]uint64{5 << 20, uint64(len(stored1))}),
+			"part 2's block, shifted past part 1's plaintext and stored bytes (rgw_sal_rados.cc:4393-4406 at v20.2.4)")
+		Expect(readBack(ctx, s, st, 0, 6<<20)).To(Equal(body))
+		Expect(readBack(ctx, s, st, 5<<20-3, 6)).To(Equal(body[5<<20-3:5<<20+3]), "a range across the parts")
+	})
+
+	It("records cs_info in Tentacle's part record beside its checksum field, and completes from it", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Tentacle, nil, mtime)
+		tkey := meta.ObjKey{Name: "t"}
+		tup, err := s.CreateUpload(ctx, rec, tkey, op.UploadParams{Owner: initiator, OwnerName: "Alice", Placement: dest, Attrs: attrsWithACL(initiator)})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		body := hexNoise(6 << 20)
+		tmeta := metaOID(rec, "t", tup.ID)
+		var parts []op.CompletePart
+		for i, piece := range [][]byte{body[:5<<20], body[5<<20:]} {
+			res, perr := s.PutPart(ctx, tup, i+1, bytes.NewReader(piece), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(piece)), Mtime: mtime})
+			Expect(perr).NotTo(HaveOccurred())
+			parts = append(parts, op.CompletePart{Number: i + 1, ETag: res.ETag})
+			upd := execIn(c.LastWrite(extraPoolName, "", tmeta), 1, "mp_upload_part_info_update", rgwcls.DecodeMPUploadPartInfoUpdateOp)
+			Expect(upd.Info[0]).To(Equal(byte(6)), "RGWUploadPartInfo v6, Tentacle's, part %d", i+1)
+			d := denc.NewDecoder(upd.Info)
+			info := meta.DecodeUploadPartInfo(d)
+			Expect(d.Err()).NotTo(HaveOccurred())
+			Expect(info.Cksum).To(BeNil(), "part %d: no checksum", i+1)
+			Expect([]any{info.Compression.Type, info.Compression.OrigSize, info.AccountedSize}).To(
+				Equal([]any{compression.Zlib, uint64(len(piece)), uint64(len(piece))}), "part %d", i+1)
+			decodesTo(info.Compression, partStreamOf("t."+tup.ID, i+1), piece)
+		}
+		settle(s)
+		_, err = s.Complete(ctx, tup, parts)
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		st, err := s.StatObject(ctx, rec, tkey)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Compression).NotTo(BeNil())
+		Expect(st.Compression.Blocks).To(HaveLen(3))
+		Expect(readBack(ctx, s, st, 0, 6<<20)).To(Equal(body))
+	})
+
+	It("refuses at completion an upload whose parts differ in compression", func(ctx SpecContext) {
+		body := hexNoise(6 << 20)
+		setCompression(ctx, "")
+		r1 := putPart(ctx, 1, body[:5<<20])
+		Expect(storedPart(c, metaObj, "part.00000001").Compression.Type).To(Equal(compression.None))
+		setCompression(ctx, compression.Zlib)
+		r2 := putPart(ctx, 2, body[5<<20:])
+		Expect(storedPart(c, metaObj, "part.00000002").Compression.Type).To(Equal(compression.Zlib))
+		_, err := s.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: r1.ETag}, {Number: 2, ETag: r2.ETag}})
+		Expect(err).To(MatchError(op.ErrInvalidPart), "rgw_sal_rados.cc:4379-4391 at v20.2.4")
+		Expect(c.Object(testDataPool, "", putBucketID+"_k")).To(BeNil())
 	})
 })

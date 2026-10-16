@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
@@ -37,8 +38,29 @@ var _ = Describe("the write options", func() {
 			GCThreads:          true,
 			MultiObjDelMaxAIO:  16,
 			CopyConcurrentIO:   10,
-		}), "rgw.yaml.in, identical at v19.2.6 and v20.2.4")
+			Codec:              compression.EncoderOptions{ZlibLevel: 5, ZlibWinsize: -15, ZstdLevel: 1},
+		}), "rgw.yaml.in, identical at v19.2.6 and v20.2.4; global.yaml.in's compressor options, identical at v19.2.7 and v20.2.4")
 	})
+
+	It("reads the compressor options", func(ctx SpecContext) {
+		s, err := driver.Open(ctx, c, conf(map[string]string{
+			"compressor_zlib_level": "9", "compressor_zlib_winsize": "31", "compressor_zstd_level": "19",
+		}), driver.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.WriteOptionsForTest().Codec).To(Equal(compression.EncoderOptions{ZlibLevel: 9, ZlibWinsize: 31, ZstdLevel: 19}))
+	})
+
+	DescribeTable("starts with zlib options zlib refuses, logging them, as radosgw's compress fails each object",
+		func(ctx SpecContext, option, value string) {
+			var buf bytes.Buffer
+			DeferCleanup(driver.CaptureLog(&buf))
+			_, err := driver.Open(ctx, c, conf(map[string]string{option: value}), driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(buf.String()).To(MatchRegexp(`"level":"ERROR".*` + option))
+		},
+		Entry("a level above 9", "compressor_zlib_level", "10"),
+		Entry("a window of no framing", "compressor_zlib_winsize", "7"),
+	)
 
 	DescribeTable("floors an rgw_gc_max_objs below 1, logging the option and the tracker",
 		func(ctx SpecContext, value string) {
@@ -131,6 +153,8 @@ var _ = Describe("the write options", func() {
 	It("fails naming a write option it cannot read", func(ctx SpecContext) {
 		_, err := driver.Open(ctx, c, conf(map[string]string{"rgw_gc_max_deferred": "lots"}), driver.Options{})
 		Expect(err).To(MatchError(ContainSubstring("rgw_gc_max_deferred")))
+		_, err = driver.Open(ctx, c, conf(map[string]string{"compressor_zstd_level": "lots"}), driver.Options{})
+		Expect(err).To(MatchError(ContainSubstring("compressor_zstd_level")))
 	})
 })
 

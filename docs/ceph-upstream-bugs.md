@@ -4110,7 +4110,12 @@ Every new entry adds its row to this table, in document order.
   the zlib wrapper with an 8-bit window, and `openMember` refuses a header
   window wider than that (`internal/compression/zlib.go`). The spec "zlib,
   the header radosgw writes for message 8"
-  (`internal/compression/codec_test.go`) pins it.
+  (`internal/compression/codec_test.go`) pins it. Its own writes under the
+  option at 8 read back on both gateways: it deflates with a 32 KiB window
+  and stores 15 as the message (`internal/compression/encode.go`,
+  `newZlibEncoder`; `docs/exclusions.md`, "zlib's compressor message states
+  the window rgw-go deflates with"), which the spec "the zlib wrapper at 8,
+  where radosgw states 8" (`internal/driver/put_test.go`) pins.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
@@ -6461,10 +6466,12 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6.
 - **rgw-go:** not affected: `compression.Stream` writes the part of each
   decoded block that lies in the range and stops, whatever
-  `rgw_max_chunk_size` is (`internal/compression`, `internal/driver`). When
-  rgw-go writes compressed objects, blocks larger than a coexisting
-  radosgw's `rgw_max_chunk_size` would expose that radosgw to this loop;
-  `docs/exclusions.md` records the difference.
+  `rgw_max_chunk_size` is (`internal/compression`, `internal/driver`). It
+  makes each compressed block it writes from at most its own
+  `rgw_max_chunk_size` of plaintext, as radosgw does (`internal/driver`,
+  `compressor`), so its objects expose a coexisting radosgw to this loop
+  only where that radosgw's `rgw_max_chunk_size` is the smaller;
+  `docs/exclusions.md` records it.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
   [#74662](https://tracker.ceph.com/issues/74662) and

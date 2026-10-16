@@ -4,12 +4,14 @@ import (
 	"context"
 	"hash"
 	"io"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/semaphore"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -163,6 +165,7 @@ type WriteOptions struct {
 	GCMaxQueueSize, GCMaxDeferred                uint64
 	GCThreads                                    bool
 	MultiObjDelMaxAIO, CopyConcurrentIO          int
+	Codec                                        compression.EncoderOptions
 }
 
 // WriteOptionsForTest is the write options Open read.
@@ -174,8 +177,33 @@ func (s *Store) WriteOptionsForTest() WriteOptions {
 		GCProcessorMaxTime: time.Duration(o.gcProcessorMaxTime) * time.Second, GCProcessorPeriod: time.Duration(o.gcProcessorPeriod) * time.Second,
 		GCMaxConcurrentIO: o.gcMaxConcurrentIO, GCMaxTrimChunk: o.gcMaxTrimChunk,
 		GCMaxQueueSize: o.gcMaxQueueSize, GCMaxDeferred: o.gcMaxDeferred, GCThreads: o.gcThreads,
-		MultiObjDelMaxAIO: o.multiObjDelMaxAIO, CopyConcurrentIO: o.copyConcurrentIO,
+		MultiObjDelMaxAIO: o.multiObjDelMaxAIO, CopyConcurrentIO: o.copyConcurrentIO, Codec: o.codec,
 	}
+}
+
+// CompressesForTest reports whether a write into a placement of compression
+// type typ, encrypted or not, compresses.
+func (s *Store) CompressesForTest(ctx context.Context, typ string, encrypted bool) bool {
+	return s.storeFor(ctx, newPlaintext(strings.NewReader(""), 0, s.w.opts.chunkSize), 0, typ, encrypted).comp != nil
+}
+
+// StoredStageForTest is the stored stage a client write of body, declared
+// long, into a placement of compression type typ reads, and the bytes of block
+// buffers its compressor holds.
+func (s *Store) StoredStageForTest(ctx context.Context, body io.Reader, declared int64, typ string) (io.Reader, func() int) {
+	st := s.storeFor(ctx, newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize), declared, typ, false)
+	return st, func() int {
+		if st.comp == nil {
+			return 0
+		}
+		return cap(st.comp.src) + cap(st.comp.dst)
+	}
+}
+
+// SetEncoderForTest makes f the source of the encoders s's writes compress
+// with.
+func (s *Store) SetEncoderForTest(f func(codec string, o compression.EncoderOptions) (compression.Encoder, error)) {
+	s.w.newEncoder = f
 }
 
 // RandAlnumForTest is randAlnum for the external specs.

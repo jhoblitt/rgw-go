@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -714,5 +718,357 @@ var _ = Describe("the plaintext stage", func() {
 		r, _ := driver.PlaintextForTest(&errAfter{data: []byte("0123456789"), err: op.ErrBadDigest}, 6, 4)
 		_, err := io.ReadAll(r)
 		Expect(err).To(MatchError(op.ErrEntityTooLarge), "the chunk was whole before the error came")
+	})
+})
+
+// compClass is the PUT fixture's storage class whose compression type is typ.
+func compClass(typ string) string { return "COMP_" + strings.ToUpper(typ) }
+
+// withCompressionClasses gives the fixture zone's default-placement a class
+// for each of types, named by compClass, its data in the STANDARD pool.
+func withCompressionClasses(c *fakerados.Cluster, types ...string) {
+	editRoot(c, meta.ZoneInfoOID(putZoneID), meta.DecodeZoneParams, func(z *meta.ZoneParams) {
+		pi := z.PlacementPools["default-placement"]
+		for _, t := range types {
+			pi.StorageClasses[compClass(t)] = meta.ZoneStorageClass{DataPool: new(meta.ParsePool(testDataPool)), CompressionType: new(t)}
+		}
+		z.PlacementPools["default-placement"] = pi
+	})
+}
+
+// hexNoise is n seeded random hex digits, half the entropy of random bytes:
+// every codec stores 10 MiB of it in more than one 4 MiB head.
+func hexNoise(n int) []byte {
+	r := rand.New(rand.NewPCG(3, 4))
+	const digits = "0123456789abcdef"
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = digits[r.IntN(len(digits))]
+	}
+	return out
+}
+
+// storedStream is what a PUT under prefix stored: its head's bytes, then
+// each tail's.
+func storedStream(c *fakerados.Cluster, headOID, prefix string) []byte {
+	out := slices.Clone(c.Object(testDataPool, "", headOID).Data)
+	for n := 1; c.Object(testDataPool, "", tailOID(prefix, n)) != nil; n++ {
+		out = append(out, c.Object(testDataPool, "", tailOID(prefix, n)).Data...)
+	}
+	return out
+}
+
+// readBack is n bytes at ofs of st, read through ReadObject.
+func readBack(ctx context.Context, s *driver.Store, st *op.ObjectState, ofs, n uint64) []byte {
+	GinkgoHelper()
+	var buf bytes.Buffer
+	Expect(s.ReadObject(ctx, st, op.ByteRange{Offset: ofs, Length: n}, &buf)).To(Succeed())
+	return buf.Bytes()
+}
+
+// afterWriteFull is the step after steps' write_full, nil when there is none.
+func afterWriteFull(steps []radosclient.Step) radosclient.Step {
+	for i, st := range steps {
+		if _, ok := st.(*radosclient.WriteFullStep); ok && i+1 < len(steps) {
+			return steps[i+1]
+		}
+	}
+	return nil
+}
+
+// tailHints is the alloc hint flags of every write to the tails under prefix.
+func tailHints(c *fakerados.Cluster, prefix string) []radosclient.AllocHintFlags {
+	var out []radosclient.AllocHintFlags
+	for n := 1; c.Object(testDataPool, "", tailOID(prefix, n)) != nil; n++ {
+		for _, w := range c.WritesTo(testDataPool, "", tailOID(prefix, n)) {
+			if h, ok := w.Steps()[0].(*radosclient.SetAllocHintStep); ok {
+				out = append(out, h.Flags)
+			}
+		}
+	}
+	return out
+}
+
+// failingEncoder is codec's encoder that fails its calls from the n-th on.
+type failingEncoder struct {
+	enc   compression.Encoder
+	calls *atomic.Int32
+	n     int32
+}
+
+func (f failingEncoder) Encode(dst, src []byte) ([]byte, *int32, error) {
+	if f.calls.Add(1) >= f.n {
+		return nil, nil, errors.New("compress failed")
+	}
+	return f.enc.Encode(dst, src)
+}
+
+var _ = Describe("PutObject into a compressing class", func() {
+	var (
+		c       *fakerados.Cluster
+		s       *driver.Store
+		rec     *op.BucketRecord
+		key     meta.ObjKey
+		attrs   map[string][]byte
+		headOID string
+		shard   string
+		mtime   time.Time
+	)
+	BeforeEach(func(ctx SpecContext) {
+		mtime = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+		c = newPutCluster()
+		withCompressionClasses(c, compression.Zlib, compression.Snappy, compression.Zstd, compression.LZ4, "random", "brotli")
+		clock := mtime
+		c.SetClock(func() time.Time { return clock })
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		key = meta.ObjKey{Name: "k"}
+		attrs = map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(alice, "Alice"))}
+		headOID = putBucketID + "_k"
+		shard = indexShardOID(rec, "k")
+	})
+	put := func(ctx context.Context, body []byte, class string, p op.PutParams) (*op.PutResult, error) {
+		p.Attrs, p.StorageClass, p.Tag = attrs, class, "t"
+		if p.Size == 0 {
+			p.Size = int64(len(body))
+		}
+		return s.PutObject(ctx, rec, key, bytes.NewReader(body), p)
+	}
+	compressionInfo := func() (meta.CompressionInfo, bool) {
+		GinkgoHelper()
+		b, ok := c.Object(testDataPool, "", headOID).Xattrs[meta.AttrCompression]
+		if !ok {
+			return meta.CompressionInfo{}, false
+		}
+		d := denc.NewDecoder(b)
+		ci := meta.DecodeCompressionInfo(d)
+		Expect(d.Err()).NotTo(HaveOccurred())
+		return ci, true
+	}
+
+	DescribeTable("stores a 10 MiB body as its codec's blocks, the head and tails cut from the compressed stream",
+		func(ctx SpecContext, codec string, message *int32) {
+			body := hexNoise(10 << 20)
+			res, err := put(ctx, body, compClass(codec), op.PutParams{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.ETag).To(Equal(md5hex(body)), "the MD5 of the plaintext")
+			head := c.Object(testDataPool, "", headOID)
+			stored := storedStream(c, headOID, putPrefix)
+			Expect(len(stored)).To(BeNumerically(">", 4<<20), "the stored stream has tails")
+			Expect(head.Data).To(Equal(stored[:4<<20]), "HeadObjectProcessor's head chunk is the stream's first 4 MiB")
+			m := meta.DecodeManifest(denc.NewDecoder(head.Xattrs[meta.AttrManifest]))
+			Expect([]uint64{m.ObjSize, m.HeadSize}).To(Equal([]uint64{uint64(len(stored)), 4 << 20}), "the manifest's size is the stored size")
+
+			ci, ok := compressionInfo()
+			Expect(ok).To(BeTrue(), "user.rgw.compression")
+			Expect([]any{ci.Type, ci.OrigSize, ci.CompressorMessage}).To(Equal([]any{codec, uint64(10 << 20), message}))
+			Expect(ci.Blocks).To(HaveLen(3), "one block per rgw_max_chunk_size of plaintext, the last shorter")
+			dec, err := compression.NewDecoder(codec)
+			Expect(err).NotTo(HaveOccurred())
+			var end uint64
+			for i, b := range ci.Blocks {
+				Expect([]uint64{b.OldOfs, b.NewOfs}).To(Equal([]uint64{uint64(i) << 22, end}), "block %d: its plaintext offset, and the end of the block before", i)
+				plain := body[b.OldOfs:min(b.OldOfs+4<<20, 10<<20)]
+				got, derr := dec.Decode(nil, stored[b.NewOfs:b.NewOfs+b.Len], len(plain), ci.CompressorMessage)
+				Expect(derr).NotTo(HaveOccurred(), "block %d", i)
+				Expect(got).To(Equal(plain), "block %d decodes with the read path's decoder", i)
+				end = b.NewOfs + b.Len
+			}
+			Expect(end).To(BeEquivalentTo(len(stored)), "the blocks cover the stored bytes")
+
+			settle(s)
+			en, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue())
+			Expect([]uint64{en.Meta.Size, en.Meta.AccountedSize}).To(Equal([]uint64{uint64(len(stored)), 10 << 20}),
+				"the stored size, and the plaintext's accounted")
+			Expect(driver.CachedBucketStatsForTest(s, rec).Size).To(BeEquivalentTo(10<<20), "the quota cache adds the accounted size")
+
+			hints := tailHints(c, putPrefix)
+			Expect(hints).NotTo(BeEmpty())
+			Expect(hints).To(HaveEach(radosclient.AllocHintFlags(512)), "add_write_hint, rgw_putobj_processor.cc:146-155 at v20.2.4")
+			Expect(afterWriteFull(c.LastWrite(testDataPool, "", headOID).Steps())).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}),
+				"_do_write_meta, rgw_rados.cc:3327-3335 at v20.2.4")
+
+			st, err := s.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readBack(ctx, s, st, 0, 10<<20)).To(Equal(body), "a GET decodes it")
+			Expect(readBack(ctx, s, st, 4<<20-5, 10)).To(Equal(body[4<<20-5:4<<20+5]), "a range across two blocks")
+			Expect(readBack(ctx, s, st, 9<<20, 7)).To(Equal(body[9<<20:9<<20+7]), "a range in the last block")
+		},
+		Entry("zlib, whose message is the default window's -15", compression.Zlib, new(int32(-15))),
+		Entry("snappy, which sets no message", compression.Snappy, (*int32)(nil)),
+		Entry("zstd, which sets no message", compression.Zstd, (*int32)(nil)),
+		Entry("lz4, which sets no message", compression.LZ4, (*int32)(nil)),
+	)
+
+	DescribeTable("states the window zlib deflated with in the message, never a narrower one",
+		func(ctx SpecContext, winsize string, message int32) {
+			s = openPutStore(ctx, c, denc.Squid, map[string]string{"compressor_zlib_winsize": winsize}, mtime)
+			body := hexNoise(1 << 20)
+			_, err := put(ctx, body, compClass(compression.Zlib), op.PutParams{})
+			Expect(err).NotTo(HaveOccurred())
+			ci, ok := compressionInfo()
+			Expect(ok).To(BeTrue())
+			Expect(ci.CompressorMessage).To(Equal(&message))
+			st, err := s.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readBack(ctx, s, st, 0, 1<<20)).To(Equal(body))
+		},
+		Entry("raw deflate at -15, radosgw's own", "-15", int32(-15)),
+		Entry("raw deflate at -9, where radosgw states -9", "-9", int32(-15)),
+		Entry("the zlib wrapper at 8, where radosgw states 8", "8", int32(15)),
+		Entry("the zlib wrapper at 15, radosgw's own", "15", int32(15)),
+		Entry("gzip at 20, which deflateInit2 refuses and radosgw stores raw", "20", int32(31)),
+		Entry("gzip at 31, radosgw's own", "31", int32(31)),
+	)
+
+	It("checks the declared length on the plaintext", func(ctx SpecContext) {
+		_, err := put(ctx, hexNoise(6<<20), compClass(compression.Zstd), op.PutParams{Size: 10 << 20})
+		Expect(err).To(MatchError(op.ErrRequestTimeout))
+		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "the tails written are removed")
+	})
+	It("checks the Content-MD5 on the plaintext", func(ctx SpecContext) {
+		body := hexNoise(5 << 20)
+		sum := md5.Sum(body)
+		_, err := put(ctx, body, compClass(compression.Zstd), op.PutParams{ContentMD5: sum[:]})
+		Expect(err).NotTo(HaveOccurred())
+		_, ok := compressionInfo()
+		Expect(ok).To(BeTrue())
+	})
+	It("checks rgw_max_put_size on the plaintext", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_put_size": "6291456"}, mtime)
+		_, err := put(ctx, bytes.Repeat([]byte("a"), 8<<20), compClass(compression.Zstd), op.PutParams{})
+		Expect(err).To(MatchError(op.ErrEntityTooLarge), "8 MiB of plaintext, though it stores in a few KiB")
+		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
+	})
+	It("checks the quota on the plaintext", func(ctx SpecContext) {
+		rec.Info.Quota = meta.Quota{MaxSize: 9 << 20, MaxObjects: -1, CheckOnRaw: true, Enabled: true}
+		_, err := put(ctx, hexNoise(10<<20), compClass(compression.Zstd), op.PutParams{})
+		Expect(err).To(MatchError(op.ErrQuotaExceeded), "10 MiB of plaintext, though it stores in about 5")
+	})
+
+	It("stores the object as it is, hinted incompressible, when its first block does not compress", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Squid, map[string]string{"compressor_zlib_level": "10"}, mtime)
+		body := hexNoise(6 << 20)
+		res, err := put(ctx, body, compClass(compression.Zlib), op.PutParams{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.ETag).To(Equal(md5hex(body)))
+		_, ok := compressionInfo()
+		Expect(ok).To(BeFalse(), "deflateInit2 refuses level 10, and RGWPutObj_Compress::process stores the object uncompressed")
+		Expect(storedStream(c, headOID, putPrefix)).To(Equal(body))
+		Expect(tailHints(c, putPrefix)).To(HaveEach(radosclient.AllocHintFlags(512)), "set_compressed ran when the plugin loaded")
+		Expect(afterWriteFull(c.LastWrite(testDataPool, "", headOID).Steps())).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}))
+		settle(s)
+		en, _ := c.Entry(rookIndexPool, "", shard, "k")
+		Expect([]uint64{en.Meta.Size, en.Meta.AccountedSize}).To(Equal([]uint64{6 << 20, 6 << 20}))
+	})
+	It("fails a later block that does not compress with UnknownError and leaves nothing behind", func(ctx SpecContext) {
+		calls := &atomic.Int32{}
+		s.SetEncoderForTest(func(codec string, o compression.EncoderOptions) (compression.Encoder, error) {
+			enc, err := compression.NewEncoder(codec, o)
+			return failingEncoder{enc: enc, calls: calls, n: 2}, err
+		})
+		_, err := put(ctx, hexNoise(10<<20), compClass(compression.Zstd), op.PutParams{})
+		Expect(err).To(MatchError(op.ErrUnknown), "process's -EIO for the next part, rgw_compression.cc:54-60")
+		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
+	})
+
+	DescribeTable("stores the object as it is, unhinted, for a type it has no encoder for, and logs the type once",
+		func(ctx SpecContext, typ string) {
+			logs := &bytes.Buffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			body := hexNoise(6 << 20)
+			for range 2 {
+				_, err := put(ctx, body, compClass(typ), op.PutParams{})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			_, ok := compressionInfo()
+			Expect(ok).To(BeFalse())
+			Expect(storedStream(c, headOID, putPrefix)).To(Equal(body))
+			Expect(tailHints(c, putPrefix)).To(HaveEach(radosclient.AllocHintFlags(0)))
+			Expect(afterWriteFull(c.LastWrite(testDataPool, "", headOID).Steps())).NotTo(BeAssignableToTypeOf(&radosclient.SetAllocHintStep{}))
+			Expect(strings.Count(logs.String(), `"compression_type":"`+typ+`"`)).To(Equal(1), logs.String())
+		},
+		Entry("random, which radosgw's teuthology runs set", "random"),
+		Entry("brotli, a plugin radosgw may load", "brotli"),
+	)
+
+	It("stores an empty body with no compression info, its head hinted as radosgw hints it", func(ctx SpecContext) {
+		_, err := s.PutObject(ctx, rec, key, strings.NewReader(""), op.PutParams{Attrs: attrs, Tag: "t", StorageClass: compClass(compression.Zlib)})
+		Expect(err).NotTo(HaveOccurred())
+		_, ok := compressionInfo()
+		Expect(ok).To(BeFalse(), "is_compressed is false until a block compresses")
+		Expect(afterWriteFull(c.LastWrite(testDataPool, "", headOID).Steps())).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}))
+	})
+
+	It("cuts its blocks by rgw_max_chunk_size, not by the chunk a pool's alignment makes", func(ctx SpecContext) {
+		c.SetRequiredAlignment(testDataPool, 3<<20)
+		_, err := put(ctx, hexNoise(10<<20), compClass(compression.Zstd), op.PutParams{})
+		Expect(err).NotTo(HaveOccurred())
+		ci, ok := compressionInfo()
+		Expect(ok).To(BeTrue())
+		Expect(ci.Blocks).To(HaveLen(3))
+		Expect([]uint64{ci.Blocks[1].OldOfs, ci.Blocks[2].OldOfs}).To(Equal([]uint64{4 << 20, 8 << 20}), "get_data reads rgw_max_chunk_size, rgw_rest.cc:1076")
+		Expect(c.Object(testDataPool, "", headOID).Data).To(HaveLen(3<<20), "the head chunk is the aligned one")
+	})
+
+	It("compresses an encrypted write only where the zonegroup supports compress-encrypted", func(ctx SpecContext) {
+		Expect(s.CompressesForTest(ctx, compression.Zlib, false)).To(BeTrue())
+		Expect(s.CompressesForTest(ctx, compression.Zlib, true)).To(BeFalse(), "rgw_op.cc:4576-4577 at v20.2.4")
+		editRoot(c, meta.PeriodOID("period-ceph-objectstore", 1), meta.DecodePeriod, func(p *meta.Period) {
+			zg := p.PeriodMap.ZoneGroups["zg-ceph-objectstore"]
+			zg.EnabledFeatures = append(zg.EnabledFeatures, "compress-encrypted")
+			p.PeriodMap.ZoneGroups["zg-ceph-objectstore"] = zg
+		})
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		Expect(s.CompressesForTest(ctx, compression.Zlib, true)).To(BeTrue())
+	})
+
+	DescribeTable("lets go of its block buffers once the plaintext ends, before the drain and the head write",
+		func(ctx SpecContext, declared int64) {
+			body := hexNoise(6 << 20)
+			r, held := s.StoredStageForTest(ctx, bytes.NewReader(body), declared, compression.Zstd)
+			_, err := r.Read(make([]byte, 1))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(held()).To(BeNumerically(">=", 4<<20), "a block of plaintext and its encoded form")
+			n, err := io.Copy(io.Discard, r)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeNumerically(">", 0))
+			Expect(held()).To(BeZero())
+		},
+		Entry("a body of its declared length, which ends on the probe past it", int64(6<<20)),
+		Entry("a body of unknown length, which ends with its last block", int64(-1)),
+	)
+
+	It("stores a body into a class without a compression type as it is", func(ctx SpecContext) {
+		body := hexNoise(6 << 20)
+		_, err := put(ctx, body, "", op.PutParams{})
+		Expect(err).NotTo(HaveOccurred())
+		_, ok := compressionInfo()
+		Expect(ok).To(BeFalse())
+		Expect(tailHints(c, putPrefix)).To(HaveEach(radosclient.AllocHintFlags(0)))
+	})
+
+	It("takes no compression from a bucket whose placement has no name, as get_compression_type finds none", func(ctx SpecContext) {
+		editRoot(c, meta.ZoneInfoOID(putZoneID), meta.DecodeZoneParams, func(z *meta.ZoneParams) {
+			pi := z.PlacementPools["default-placement"]
+			std := pi.StorageClasses[meta.StorageClassStandard]
+			std.CompressionType = new(compression.Zlib)
+			pi.StorageClasses[meta.StorageClassStandard] = std
+			z.PlacementPools["default-placement"] = pi
+		})
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		rec.Info.PlacementRule = meta.PlacementRule{}
+		_, err := put(ctx, hexNoise(1<<20), "", op.PutParams{})
+		Expect(err).NotTo(HaveOccurred())
+		_, ok := compressionInfo()
+		Expect(ok).To(BeFalse(), "rgw_zone.cc:356-365 looks the placement up by its empty name")
+		rec.Info.PlacementRule = meta.PlacementRule{Name: "default-placement"}
+		_, err = put(ctx, hexNoise(1<<20), "", op.PutParams{})
+		Expect(err).NotTo(HaveOccurred())
+		_, ok = compressionInfo()
+		Expect(ok).To(BeTrue(), "the same class under its name compresses")
 	})
 })
