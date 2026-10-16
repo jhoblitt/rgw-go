@@ -1520,15 +1520,16 @@ review and verified against the tree.
     version among them"). A get shows the `user.rgw.` attrs alone, so no
     document read back carries another.
   - A document that does not decode answers 400 InvalidArgument, and one
-    naming a website configuration or a sync policy with groups, which
-    rgw-go carries opaque, 501 NotImplemented. The decoders read Go's JSON
-    grammar and refuse what radosgw's `decode_json` takes but cannot mean:
-    a string member given null, an object or an array; a list or map given
-    anything but an array, null included, or holding an entry that is no
-    object; a time in a form other than the two radosgw's dump writes,
-    `<sec>.<usec>` and the ISO date; a key without an id, an attr that is
-    not padded base64, a hash type other than Mod, and an index type or
-    reshard status the enums lack. An entry point from before version 8,
+    naming a sync policy with groups, which rgw-go carries opaque, 501
+    NotImplemented. The decoders read Go's JSON grammar and refuse what
+    radosgw's `decode_json` takes but cannot mean: a string member given
+    null, an object or an array; a list or map given anything but an
+    array, null included, or holding an entry that is no object; a time in
+    a form other than the two radosgw's dump writes, `<sec>.<usec>` and the
+    ISO date; a key without an id, an attr that is not padded base64, a
+    hash type other than Mod, an index type or reshard status the enums
+    lack, and a website redirect or error status code outside u16's range,
+    which radosgw wraps into its u16. An entry point from before version 8,
     which embeds its bucket info, answers 400.
   - A user put whose document names another user than the key answers 400
     InvalidArgument; radosgw reads the key's user and writes the
@@ -1990,18 +1991,15 @@ review and verified against the tree.
     reads an aws-chunked trailer line's value only up to a second colon,
     and drops an empty one").
 - **Some bucket sub-records are carried opaque in phase 0.**
-  RGWBucketInfo's website configuration, object-lock configuration and
-  sync policy are kept as the encoded bytes radosgw wrote and written back
-  unchanged; the compat check of each is still applied. This keeps them
-  byte-exact by construction, with one known exception until they are
-  modelled: radosgw re-encodes an old v1 website configuration as v2 when
-  it rewrites the bucket, while rgw-go writes the v1 bytes back. The phase
-  that serves website, object lock or bucket sync policy models them. The
-  admin API's `GET` or `PUT /admin/metadata/bucket.instance` of a bucket
-  holding a website configuration or a sync policy answers 501
-  NotImplemented, where radosgw renders the record, and writes a put's
-  document even when that document holds neither: the put reads the
-  stored record in its rendered form before it writes.
+  RGWBucketInfo's object-lock configuration and sync policy are kept as
+  the encoded bytes radosgw wrote and written back unchanged; the compat
+  check of each is still applied. This keeps them byte-exact by
+  construction. The phase that serves object lock or bucket sync policy
+  models them. The admin API's `GET` or `PUT
+  /admin/metadata/bucket.instance` of a bucket holding a sync policy with
+  groups answers 501 NotImplemented, where radosgw renders the record, and
+  so does a put of a document that holds none: the put reads the stored
+  record in its rendered form before it writes.
 - **Zonegroup and period JSON with sync policy groups is not rendered.** The
   zonegroup's and period's sync policy is also kept opaque, and rgw-go
   refuses to render their JSON when a sync policy holds groups. Rook creates
