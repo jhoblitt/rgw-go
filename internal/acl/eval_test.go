@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
@@ -429,6 +430,49 @@ var _ = Describe("Policy.Verify", func() {
 		Expect(p.Verify(carol, acl.PermFullControl, acl.PermRead, "", false)).To(BeTrue(), "carol, of the account")
 		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "", false)).To(BeFalse(), "bob, of no account")
 	})
+	// Every unauthenticated request runs as the user anonymous
+	// (rgw_get_anon_user,
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_user.cc#L106-L111 at v19.2.7 and v20.2.4),
+	// so a grant to that user, and its ownership, admit everyone.
+	DescribeTable("the anonymous user's grants and ownership, for the anonymous requester",
+		func(p acl.Policy, perm acl.Permission, ignorePublicACLs, want bool) {
+			Expect(p.Verify(anonymous, perm, perm, "", ignorePublicACLs)).
+				To(Equal(want), "perm %#x, IgnorePublicAcls %t", perm, ignorePublicACLs)
+		},
+		Entry("a grant to the user reads",
+			alicesPolicy(userGrant("anonymous", acl.PermRead)), acl.PermRead, false, true),
+		Entry("IgnorePublicAcls sets a grant to the user aside",
+			alicesPolicy(userGrant("anonymous", acl.PermRead)), acl.PermRead, true, false),
+		Entry("Swift's READ_OBJS item for the user gives the fallback's read",
+			alicesPolicy(userGrant("anonymous", acl.PermReadObjs)), acl.PermReadObjs, false, true),
+		Entry("IgnorePublicAcls sets Swift's READ_OBJS item for the user aside",
+			alicesPolicy(userGrant("anonymous", acl.PermReadObjs)), acl.PermReadObjs, true, false),
+		Entry("Swift's WRITE_OBJS item for the user gives a write",
+			alicesPolicy(userGrant("anonymous", acl.PermWriteObjs)), acl.PermWrite, false, true),
+		Entry("IgnorePublicAcls sets Swift's WRITE_OBJS item for the user aside",
+			alicesPolicy(userGrant("anonymous", acl.PermWriteObjs)), acl.PermWrite, true, false),
+		Entry("an email grant keyed like the user reads, as the user map holds it",
+			alicesPolicy(emailGrant("anonymous", acl.PermRead)), acl.PermRead, false, true),
+		Entry("IgnorePublicAcls sets the email grant aside too",
+			alicesPolicy(emailGrant("anonymous", acl.PermRead)), acl.PermRead, true, false),
+		Entry("the user's ownership gives READ_ACP",
+			acl.Policy{Owner: acl.Owner{ID: "anonymous"}}, acl.PermReadACP, false, true),
+		Entry("IgnorePublicAcls sets the user's ownership aside for READ_ACP",
+			acl.Policy{Owner: acl.Owner{ID: "anonymous"}}, acl.PermReadACP, true, false),
+		Entry("the user's ownership gives WRITE_ACP",
+			acl.Policy{Owner: acl.Owner{ID: "anonymous"}}, acl.PermWriteACP, false, true),
+		Entry("IgnorePublicAcls sets the user's ownership aside for WRITE_ACP",
+			acl.Policy{Owner: acl.Owner{ID: "anonymous"}}, acl.PermWriteACP, true, false),
+	)
+	It("leaves under IgnorePublicAcls the grants and ownership of a user who is not the anonymous one", func() {
+		p := acl.Policy{Owner: acl.Owner{ID: "bob"}}
+		p.ACL.AddGrant(userGrant("bob", acl.PermRead))
+		p.ACL.AddGrant(userGrant("anonymous", acl.PermRead))
+		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "", true)).To(BeTrue(), "bob's own grant")
+		Expect(p.Verify(bob, acl.PermFullControl, acl.PermWriteACP, "", true)).To(BeTrue(), "bob's ownership")
+		Expect(p.Verify(anonymous, acl.PermFullControl, acl.PermRead, "", true)).To(BeFalse(), "the anonymous grant beside them")
+		Expect(p.ACL.UserMap).To(HaveKeyWithValue("anonymous", int32(acl.PermRead)), "the stored map, untouched")
+	})
 	It("answers under IgnorePublicAcls as for a request without a Referer, a negative grant's revoked flags included", func() {
 		// The client chooses whether to send a Referer, so a request that
 		// leaves out the one a negative grant matches gets what that grant
@@ -546,6 +590,18 @@ var _ = Describe("Policy.IsPublic", func() {
 			alicesPolicy(groupGrant(acl.GroupNone, acl.PermFullControl|acl.PermReadObjs|acl.PermWriteObjs)), false),
 		Entry("an unknown grantee with every flag",
 			alicesPolicy(acl.Grant{Type: acl.GranteeUnknown, Permission: acl.PermFullControl}), false),
+		Entry("Swift's read item for the user anonymous",
+			alicesPolicy(userGrant("anonymous", acl.PermReadObjs)), true),
+		Entry("Swift's write item for the user anonymous",
+			alicesPolicy(userGrant("anonymous", acl.PermWriteObjs)), true),
+		Entry("an S3 grant to the user anonymous", alicesPolicy(userGrant("anonymous", acl.PermRead)), true),
+		Entry("an email grant keyed like the user anonymous", alicesPolicy(emailGrant("anonymous", acl.PermRead)), true),
+		Entry("a policy the user anonymous owns", acl.Policy{Owner: acl.Owner{ID: "anonymous"}}, true),
+		Entry("the policy Canned builds for an anonymous writer, as stored",
+			cannedFor(anonOwner, ""), true),
+		Entry("a grant to the user anonymous with no flags", alicesPolicy(userGrant("anonymous", 0)), false),
+		Entry("a grant to a tenant's user named anonymous", alicesPolicy(userGrant("t1$anonymous", acl.PermRead)), false),
+		Entry("a policy a tenant's user named anonymous owns", acl.Policy{Owner: acl.Owner{ID: "t1$anonymous"}}, false),
 	)
 
 	It("calls private only an ACL every answer of which IgnorePublicAcls leaves as it is", func() {
@@ -557,6 +613,10 @@ var _ = Describe("Policy.IsPublic", func() {
 			"an account grant":            alicesPolicy(userGrant("RGW12345678901234567", acl.PermFullControl)),
 			"group grants of nothing":     alicesPolicy(groupGrant(acl.GroupAllUsers, 0), groupGrant(acl.GroupAuthenticatedUsers, 0)),
 			"a grant to no group":         alicesPolicy(groupGrant(acl.GroupNone, acl.PermFullControl)),
+			"a tenant's user named anonymous": {
+				Owner: acl.Owner{ID: "t1$anonymous"},
+				ACL:   alicesPolicy(userGrant("t1$anonymous", acl.PermFullControl)).ACL,
+			},
 		}
 		ids := map[string]fakeIdentity{"alice": alice, "bob": bob, "anonymous": anonymous, "carol": carol}
 		perms := []acl.Permission{
@@ -577,20 +637,13 @@ var _ = Describe("Policy.IsPublic", func() {
 		}
 	})
 
-	It("answers as radosgw's is_public for every ACL an S3 request builds", func(ctx SpecContext) {
-		// is_public masks the public groups' flags with FULL_CONTROL
-		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247 at v19.2.7 and v20.2.4);
-		// an S3 request can name no other flag and no referer.
-		radosgwIsPublic := func(p acl.Policy) bool {
-			return p.ACL.GroupPerm(acl.GroupAllUsers, acl.PermFullControl) != acl.PermNone ||
-				p.ACL.GroupPerm(acl.GroupAuthenticatedUsers, acl.PermFullControl) != acl.PermNone
-		}
+	It("answers as radosgw's is_public for every ACL an S3 request builds that gives the user anonymous nothing", func(ctx SpecContext) {
 		built := map[string]acl.Policy{}
 		for _, canned := range []string{
 			"", "private", "public-read", "public-read-write", "authenticated-read",
 			"bucket-owner-read", "bucket-owner-full-control",
 		} {
-			for _, owner := range []acl.Owner{aliceOwner, bobOwner, {ID: "anonymous"}} {
+			for _, owner := range []acl.Owner{aliceOwner, bobOwner} {
 				p, err := acl.Canned(owner, aliceOwner, canned)
 				Expect(err).NotTo(HaveOccurred(), "canned %q", canned)
 				built["canned "+canned+" by "+owner.ID] = p
@@ -635,7 +688,82 @@ var _ = Describe("Policy.IsPublic", func() {
 		}
 		Expect([]int{public, private}).To(HaveEach(BeNumerically(">", 0)), "public and private ACLs among those built")
 	})
+
+	Describe("for the ACL an anonymous writer's own write builds", func() {
+		It("does not count the writer's own rights, so it answers as radosgw's is_public", func(ctx SpecContext) {
+			built := map[string]acl.Policy{}
+			for _, canned := range []string{
+				"", "private", "public-read", "public-read-write", "authenticated-read",
+				"bucket-owner-read", "bucket-owner-full-control",
+			} {
+				built["canned "+canned] = cannedFor(anonOwner, canned)
+			}
+			for _, item := range []string{`id="bob"`, `emailAddress="c@x"`, `uri="` + acl.URIAllUsers + `"`} {
+				p, err := acl.FromHeaders(ctx, newResolver(), anonOwner, acl.GrantHeaders{Read: item})
+				Expect(err).NotTo(HaveOccurred(), item)
+				built["x-amz-grant-read: "+item] = p
+			}
+			var public, private int
+			for name, p := range built {
+				Expect(p.IsPublic()).To(BeTrue(), "%s, as stored", name)
+				want := radosgwIsPublic(p)
+				Expect(p.ForOwnWrite(anonOwner).IsPublic()).To(Equal(want), "%s, as its own write", name)
+				if want {
+					public++
+				} else {
+					private++
+				}
+			}
+			Expect([]int{public, private}).To(HaveEach(BeNumerically(">", 0)), "public and private ACLs among those built")
+		})
+
+		It("still counts a grant to the user anonymous the write names", func(ctx SpecContext) {
+			res := newResolver()
+			res.names["anonymous"] = ""
+			p, err := acl.FromHeaders(ctx, res, anonOwner, acl.GrantHeaders{Read: `id="anonymous"`})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.ForOwnWrite(anonOwner).IsPublic()).To(BeTrue(), "a header grant to the user anonymous")
+
+			q := cannedFor(anonOwner, "").ForOwnWrite(anonOwner)
+			q.ACL.AddGrant(userGrant("anonymous", acl.PermReadObjs))
+			Expect(q.IsPublic()).To(BeTrue(), "a flag beyond the canned FULL_CONTROL")
+		})
+
+		It("is not encoded, so the stored policy decodes public", func() {
+			p := cannedFor(anonOwner, "").ForOwnWrite(anonOwner)
+			Expect(p.IsPublic()).To(BeFalse(), "as its own write")
+			Expect(decodeWhole(encodeAt(p, denc.Squid), acl.DecodePolicy).IsPublic()).To(BeTrue(), "decoded")
+		})
+
+		It("leaves a policy whose writer is not the anonymous user as it is", func() {
+			for _, p := range []acl.Policy{
+				cannedFor(anonOwner, ""), swiftContainer("*"), alicesPolicy(userGrant("anonymous", acl.PermRead)),
+			} {
+				Expect(p.ForOwnWrite(aliceOwner)).To(Equal(p), "grants %v", p.ACL.Grants)
+			}
+		})
+	})
 })
+
+// radosgwIsPublic is RGWAccessControlPolicy::is_public, which masks the two
+// public groups' flags with FULL_CONTROL
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247 at v19.2.7 and v20.2.4).
+func radosgwIsPublic(p acl.Policy) bool {
+	return p.ACL.GroupPerm(acl.GroupAllUsers, acl.PermFullControl) != acl.PermNone ||
+		p.ACL.GroupPerm(acl.GroupAuthenticatedUsers, acl.PermFullControl) != acl.PermNone
+}
+
+// anonOwner is the anonymous user as an ACL owner, rgw_get_anon_user's id.
+var anonOwner = acl.Owner{ID: "anonymous"}
+
+// cannedFor is the canned ACL canned that owner's write builds in alice's
+// bucket.
+func cannedFor(owner acl.Owner, canned string) acl.Policy {
+	GinkgoHelper()
+	p, err := acl.Canned(owner, aliceOwner, canned)
+	Expect(err).NotTo(HaveOccurred(), "canned %q", canned)
+	return p
+}
 
 var _ = Describe("List.GroupPerm", func() {
 	DescribeTable("is the group's stored flags within the mask",

@@ -205,6 +205,18 @@ func DecodeOwner(d *denc.Decoder) Owner {
 type Policy struct {
 	ACL   List  `json:"acl"`
 	Owner Owner `json:"owner"`
+	// writer holds the rights an anonymous writer's own write gave it here,
+	// which ForOwnWrite marks and IsPublic does not count. It is neither
+	// encoded nor dumped.
+	writer ownRights
+}
+
+// ownRights are the rights a write's anonymous requester holds by that
+// write: the flags of Canned's grant to it, and the ownership FromHeaders
+// gives it.
+type ownRights struct {
+	grant Permission
+	owns  bool
 }
 
 // Encode mirrors RGWAccessControlPolicy::encode, ENCODE_START(2, 2): the

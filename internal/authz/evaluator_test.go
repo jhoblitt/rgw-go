@@ -820,6 +820,91 @@ var _ = Describe("Evaluator", func() {
 				})
 			})
 
+			Describe("grants to the user anonymous and its ownership under IgnorePublicAcls", func() {
+				BeforeEach(func() {
+					alice := userOwner("", "alice")
+					// Swift's X-Container-Read: anonymous and X-Container-Write:
+					// anonymous store a grant to that user, existing or not
+					// (user_to_grant,
+					// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L98-L114 at v19.2.7 and v20.2.4).
+					f.bucket("anonr", alice, aclAttr(withGrant(ownerACL(alice), userGrant("anonymous", acl.PermReadObjs))))
+					f.object("anonr", "o", aclAttr(ownerACL(alice)), nil)
+					f.bucket("anonw", alice, aclAttr(withGrant(ownerACL(alice), userGrant("anonymous", acl.PermWriteObjs))))
+					f.object("anonw", "o", aclAttr(ownerACL(alice)), nil)
+					f.bucket("anonobj", alice, aclAttr(ownerACL(alice)))
+					canned, err := acl.Canned(acl.Owner{ID: "anonymous"}, acl.Owner{ID: "alice", DisplayName: "alice"}, "")
+					Expect(err).NotTo(HaveOccurred())
+					f.object("anonobj", "canned", aclAttr(canned), nil)
+					owned := acl.Policy{Owner: acl.Owner{ID: "anonymous"}}
+					owned.ACL.AddGrant(userGrant("bob", acl.PermRead))
+					f.object("anonobj", "owned", aclAttr(owned), nil)
+					f.bucket("anonown", alice, aclAttr(acl.Policy{Owner: acl.Owner{ID: "anonymous"}}))
+					f.object("anonown", "o", aclAttr(ownerACL(alice)), nil)
+				})
+
+				objectAs := func(bucket, key string, a policy.Action, perm acl.Permission) error {
+					return f.eval.VerifyObject(f.ctx, f.req(anon(), bucket, key), a, perm)
+				}
+				bucketAs := func(bucket string, a policy.Action, perm acl.Permission) error {
+					return f.eval.VerifyBucket(f.ctx, f.req(anon(), bucket, ""), a, perm)
+				}
+				cases := func() []struct {
+					name string
+					err  error
+				} {
+					return []struct {
+						name string
+						err  error
+					}{
+						{"Swift read item, GetObject through the fallback", objectAs("anonr", "o", policy.S3GetObject, acl.PermRead)},
+						{"Swift read item, GetObjectAcl through the fallback", objectAs("anonr", "o", policy.S3GetObjectAcl, acl.PermReadACP)},
+						{"Swift read item, ListBucket", f.list(anon(), "anonr")},
+						{"Swift write item, PutObject", f.putObject(anon(), "anonw", "new")},
+						{"Swift write item, PutObjectTagging through the fallback", objectAs("anonw", "o", policy.S3PutObjectTagging, acl.PermWrite)},
+						{"Swift write item, DeleteObjectTagging through the fallback", objectAs("anonw", "o", policy.S3DeleteObjectTagging, acl.PermWrite)},
+						{"an anonymous canned write, GetObject", objectAs("anonobj", "canned", policy.S3GetObject, acl.PermRead)},
+						{"an anonymous canned write, GetObjectAcl", objectAs("anonobj", "canned", policy.S3GetObjectAcl, acl.PermReadACP)},
+						{"an anonymous canned write, PutObjectAcl", objectAs("anonobj", "canned", policy.S3PutObjectAcl, acl.PermWriteACP)},
+						{"an anonymous owner, GetObjectAcl", objectAs("anonobj", "owned", policy.S3GetObjectAcl, acl.PermReadACP)},
+						{"an anonymous owner, PutObjectAcl", objectAs("anonobj", "owned", policy.S3PutObjectAcl, acl.PermWriteACP)},
+						{"an anonymous bucket owner, GetBucketAcl", bucketAs("anonown", policy.S3GetBucketAcl, acl.PermReadACP)},
+					}
+				}
+
+				It("serve the anonymous user without a block, as radosgw does", func() {
+					for _, c := range cases() {
+						Expect(c.err).To(Succeed(), c.name)
+					}
+				})
+
+				DescribeTable("refuse the anonymous user under the block",
+					func(block acl.PublicAccessBlock) {
+						for _, b := range []string{"anonr", "anonw", "anonobj", "anonown"} {
+							f.setAttr("", b, attrPublicAccess, pabAttr(block))
+						}
+						for _, c := range cases() {
+							Expect(c.err).To(MatchError(op.ErrAccessDenied), c.name)
+						}
+						Expect(objectAs("anonobj", "owned", policy.S3GetObject, acl.PermRead)).
+							To(MatchError(op.ErrAccessDenied), "an anonymous owner's object, which grants it no read")
+						Expect(f.getObject(bob(), "anonobj", "owned")).To(Succeed(), "bob's grant on it")
+					},
+					Entry("IgnorePublicAcls alone", ignoreBlock),
+					Entry("all four settings", allBlocks),
+				)
+
+				// verify_object_permission_no_policy's fallback asks the bucket's
+				// ACL for swift_perm, Swift's flags alone
+				// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1587-L1599 at v19.2.7,
+				// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1644-L1656 at v20.2.4),
+				// which the owner's READ_ACP and WRITE_ACP never cover.
+				It("give a bucket's anonymous owner nothing through the object read's fallback, with or without the block", func() {
+					Expect(objectAs("anonown", "o", policy.S3GetObjectAcl, acl.PermReadACP)).To(MatchError(op.ErrAccessDenied), "no block")
+					f.setAttr("", "anonown", attrPublicAccess, pabAttr(ignoreBlock))
+					Expect(objectAs("anonown", "o", policy.S3GetObjectAcl, acl.PermReadACP)).To(MatchError(op.ErrAccessDenied), "IgnorePublicAcls")
+				})
+			})
+
 			Describe("members of IAM groups", func() {
 				var gina, hugo op.Identity
 				var logs *bytes.Buffer

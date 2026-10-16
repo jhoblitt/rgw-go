@@ -126,7 +126,9 @@ var _ = Describe("GetBucketPolicyStatus", func() {
 
 	// radosgw's is_public calls each of these ACLs private on both releases
 	// (docs/exclusions.md, "IgnorePublicAcls sets aside a Swift container's
-	// grants to everyone, and an ACL holding them is public").
+	// grants to everyone, and an ACL holding them is public" and
+	// "BlockPublicAcls counts grants to the user anonymous and its ownership,
+	// but for an anonymous writer's own").
 	DescribeTable("is public when the bucket's private ACL holds a grant IgnorePublicAcls sets aside, on both releases",
 		func(ctx SpecContext, g acl.Grant) {
 			for _, rel := range policyStatusReleases {
@@ -138,6 +140,7 @@ var _ = Describe("GetBucketPolicyStatus", func() {
 			}
 		},
 		Entry("a referer grant", acl.Grant{Type: acl.GranteeReferer, URLSpec: ".example.com", Permission: acl.PermRead}),
+		Entry("a grant to the user anonymous", acl.Grant{Type: acl.GranteeCanonUser, ID: "anonymous", Permission: acl.PermRead}),
 	)
 
 	It("judges the policy as the cluster's release parses it", func(ctx SpecContext) {
