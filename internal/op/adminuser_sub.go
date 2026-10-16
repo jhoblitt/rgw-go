@@ -3,7 +3,6 @@ package op
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"math"
@@ -27,22 +26,9 @@ const (
 	plainAlnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 )
 
-// randomFrom is choose_from: n random bytes, each taken as the char it is,
-// signed on the platforms radosgw ships on, then cast to unsigned and
-// reduced into table.
-func randomFrom(table string, n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b) // crypto/rand.Read never fails
-	for i, c := range b {
-		pos := uint32(int32(int8(c)))        //nolint:gosec // static_cast<unsigned>(char) sign-extends as this does
-		b[i] = table[pos%uint32(len(table))] //nolint:gosec // the tables are 36 and 62 bytes long
-	}
-	return string(b)
-}
-
 // genSecretKey is rgw_generate_secret_key
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L500-L506 at v19.2.6).
-func genSecretKey() string { return randomFrom(plainAlnum, secretKeyLen) }
+func genSecretKey() string { return meta.ChooseFrom(plainAlnum, secretKeyLen) }
 
 // genAccessKey is rgw_generate_access_key
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_user.cc#L508-L533):
@@ -50,7 +36,7 @@ func genSecretKey() string { return randomFrom(plainAlnum, secretKeyLen) }
 // generate_key's ERR_INVALID_ACCESS_KEY.
 func genAccessKey(ctx context.Context, env *Env) (string, error) {
 	for {
-		id := randomFrom(upperAlnum, accessKeyLen)
+		id := meta.ChooseFrom(upperAlnum, accessKeyLen)
 		_, err := env.Users.GetUserByAccessKey(ctx, id)
 		if errors.Is(err, ErrNoSuchUser) {
 			return id, nil

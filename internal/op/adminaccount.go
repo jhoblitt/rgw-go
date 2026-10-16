@@ -43,7 +43,7 @@ const (
 // gen_rand_numeric's crypto random digits with "RGW" over the first
 // three.
 func generateAccountID() string {
-	return accountIDPrefix + randomFrom(decimalDigits, accountIDLen-len(accountIDPrefix))
+	return accountIDPrefix + meta.ChooseFrom(decimalDigits, accountIDLen-len(accountIDPrefix))
 }
 
 // validateAccountID is validate_id

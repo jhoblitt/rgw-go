@@ -3,7 +3,6 @@ package memstore
 import (
 	"bytes"
 	"cmp"
-	"crypto/rand"
 	"fmt"
 	"maps"
 	"slices"
@@ -264,16 +263,11 @@ func (s *Store) newTag() string { return "_" + randomAlphanumeric(23) }
 // a URL-safe base64 alphabet despite the name.
 const alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-// randomAlphanumeric is gen_rand_alphanumeric: n characters, each a random
-// byte reduced into the table.
-func randomAlphanumeric(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b) // crypto/rand.Read never fails
-	for i, c := range b {
-		b[i] = alphanumeric[int(c)%len(alphanumeric)]
-	}
-	return string(b)
-}
+// randomAlphanumeric is gen_rand_alphanumeric
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L45-L51 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L45-L51 at v20.2.4):
+// n characters of alphanumeric.
+func randomAlphanumeric(n int) string { return meta.ChooseFrom(alphanumeric, n) }
 
 // instance finds rec's bucket instance.
 func (s *Store) instance(rec *op.BucketRecord) (*bucket, error) {
