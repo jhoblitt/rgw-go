@@ -1,10 +1,11 @@
 # Phase 2 unit B: bucket configuration
 
 Threat model: a client adversary at the security boundaries PP-14 names, which get adversarial
-review: authentication (BC-5, BC-31), authorization (BC-4, BC-18, BC-28c, BC-28e, BC-32) and the
-parsers of a client's documents (BC-2, BC-10, BC-17, BC-23, BC-28a, BC-29, BC-30); everything
-else here, the configuration storage, the website renderer and the recording tasks, defends
-against honest mistakes, and every write keeps the bucket instance radosgw-readable.
+review: authentication (BC-3's preflight, BC-5, BC-6's options_cors route, BC-31), authorization
+(BC-4, BC-18, BC-28c, BC-28e, BC-32) and the parsers of a client's documents (BC-2, BC-10, BC-17,
+BC-23, BC-28a, BC-29, BC-30); everything else here, the configuration storage, the website renderer
+and the recording tasks, defends against honest mistakes, and every write keeps the bucket instance
+radosgw-readable.
 
 ## Scope
 
@@ -37,7 +38,7 @@ and P4 (the owner, 2026-10-13).
 | B1 | Every S3 response carries the CORS headers once the request's bucket is loaded, error responses included (D15). One exclusion lists the routes radosgw omits. | AWS's per-request model; no per-release route table to keep. |
 | B2 | PutBucketWebsite's unparseable body or missing `WebsiteConfiguration` is 400 MalformedXML, not radosgw's InvalidArgument. The block document keeps radosgw's missing namespace, and PolicyStatus and the block keep lower-case booleans (D16). | The error code a client sees follows AWS; document bytes that SDKs ignore stay byte-comparable with radosgw. |
 | B3 | GetBucketPolicyStatus and the block's enforcement judge a policy with S3's `IsPublic` alone (D17). | One AWS-correct judgment on both releases. |
-| B4 | A signed preflight's signature is not compared, as radosgw and AWS do (D18). The registry entry records that phase 3's rate limiter must not charge OPTIONS CORS to the key's user. | The presigned CORS tests need it; the rate-limit charge is the security half. |
+| B4 | A signed preflight's signature is not compared, as radosgw and AWS do (D18). The registry entry records that phase 3's rate limiter must neither charge a preflight to its key's user nor apply that user's limit or exemption. | The presigned CORS tests need it; the rate limit is the security half: radosgw's limiter answers a forged preflight 503 SlowDown by the key user's limit ([rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L108-L134), [rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L108-L134)), and never for a system key, nor on Squid for an admin key ([rgw_process.cc:96-98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L96-L98), [rgw_process.cc:97](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L97)). |
 | B5 | PutBucketEncryption is validated as AWS documents: SSEAlgorithm one of `AES256`, `aws:kms`, `aws:kms:dsse`, `aws:fsx`, `aws:backup`; KMSMasterKeyID only with `aws:kms` or `aws:kms:dsse`; 400 MalformedXML otherwise (D19). The stored form is unchanged. | AWS's API reference; a stored default neither gateway can serve fails a write on both, as on an unconfigured radosgw. |
 | B6 | The six encryption-configuration s3-tests, and BC-25's three, run through the T unit's include list (D20); BC-27 adds their lines. The eight ownership tests carry only `object_ownership`, so BC-28f lifts that marker. | The T unit owns the selection; each area owns its own lines. |
 | B7 | Ownership controls are built to v21.1.2's stored form and enforced (P4, the owner, 2026-10-13). | The spec names the item; an upgraded zone's radosgw reads that form; the floors' fall-through can delete a bucket (defect 11). |
@@ -207,10 +208,10 @@ relies on fakerados behaviour beyond what it serves today.
 ### Task BC-3: CORS ops
 
 - **Layer:** op. **Files:** create `internal/op/cors.go`. **Cluster:** no.
-- **Consumes:** BC-2's `Decode`, `Match`. **Produces:** `AttrCORS` (`user.rgw.cors`);
-  `GetBucketCORS{Config}`, `PutBucketCORS{Params}` (a body hook, as PutBucketTagging's),
-  `DeleteBucketCORS`, and `OptionsCORS` with its results: the rule, the origin, the method and
-  the allowed requested headers.
+- **Consumes:** BC-2's `Decode`, `Match`; BC-5's preflight marker. **Produces:** `AttrCORS`
+  (`user.rgw.cors`); `GetBucketCORS{Config}`, `PutBucketCORS{Params}` (a body hook, as
+  PutBucketTagging's), `DeleteBucketCORS`, and `OptionsCORS` with its results: the rule, the
+  origin, the method and the allowed requested headers.
 - **Behaviour:**
   1. **Get.** Action s3:GetBucketCORS, with bucket tags
      ([rgw_op.cc:6049-6060](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6049-L6060),
@@ -237,24 +238,73 @@ relies on fakerados behaviour beyond what it serves today.
      no Origin is 400 InvalidArgument; no Access-Control-Request-Method is 400 InvalidArgument;
      no configuration is 403 AccessDenied; no rule from `Match` is 403
      ([rgw_op.cc:6159-6207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6159-L6207),
-     [rgw_op.cc:6826-6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6874)). The op types and masks
-     are radosgw's: get and options read, put and delete write
+     [rgw_op.cc:6826-6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6874)). The op types are
+     radosgw's, and so are the masks of get (read) and of put and delete (write)
      ([rgw_op.h:1697-1764](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1697-L1764), [rgw_op.h:1850-1920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1850-L1920)).
+     Options' `Name` is `op.OptionsCORSName`, radosgw's `options_cors`
+     ([rgw_op.h:1761](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1761),
+     [rgw_op.h:1917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1917)): BC-5's
+     guard, `op.RefuseUnverified`, lets only that op run an identity granted without a signature
+     compare, so under any other name `op.Run` refuses the preflight with 500.
+     A preflight's identity is its key's user, with no signature compared (BC-5), so its answer
+     must be the same for every key that resolves. Options therefore departs from radosgw in
+     three ways, each an exclusion BC-3 records, and BC-3 rules on the tenant:
+     - **No op mask check.** radosgw's mask for options is read
+       ([rgw_op.h:1763](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1763),
+       [rgw_op.h:1919](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1919)), and
+       `verify_op_mask` checks it against the key's user
+       ([rgw_process.cc:208](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L208),
+       [rgw_process.cc:208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L208);
+       [rgw_op.cc:1017-1035](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1017-L1035),
+       [rgw_op.cc:1216-1234](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1216-L1234)),
+       so a forged preflight reveals that the key's user lacks the read bit: 403 AccessDenied
+       where another key gets the CORS answer. Options asks for no op mask.
+     - **No x-amz-request-charged.** radosgw adds it to the answer when the identity does not
+       own a requester-pays bucket
+       ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601),
+       [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606)),
+       which reveals whether the key's user owns it. BC-6's route sends the answer without it.
+     - **Usage as anonymous.** radosgw charges the key's user as payer on a requester-pays
+       bucket, and files the entry under it as owner when no bucket is named
+       ([rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L203-L219),
+       [rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L203-L219)).
+       A preflight's usage is accounted as an anonymous request's, keyed on BC-5's preflight
+       marker, so no entry is charged to the key's user.
+     - **Tenant.** radosgw resolves a bucket name that names no tenant under the identity's tenant
+       ([rgw_rest_s3.cc:4995-4998](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4995-L4998),
+       [rgw_rest_s3.cc:5525-5528](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5525-L5528);
+       [rgw_bucket.cc:127-130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket.cc#L127-L130),
+       [rgw_bucket.cc:127-130](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket.cc#L127-L130)),
+       which is why its preflight looks the key up at all (ceph commit fe15b52edb5). BC-3 rules,
+       with a spec, whether a preflight's bucket resolves under the key user's tenant.
+       Constraint: the answers for two keys whose users differ only in tenant differ only where
+       an anonymous request's answers for the same bucket name would (an anonymous request
+       names a tenant only explicitly, as `t:b`), or the departure is recorded as an exclusion.
+       Reason: the tenant is a property of the key's user.
 - **Specs:**
   - each op's error order with counterfeiter fakes;
   - a PutBucketCors that loses a race to a PutBucketAcl keeps the winner's ACL;
   - a retry runs VerifyPermission again and writes nothing for a requester the new ACL refuses;
-  - OptionsCORS on a bucket whose rules allow the origin but not the method.
+  - OptionsCORS on a bucket whose rules allow the origin but not the method;
+  - the invariant table: OptionsCORS, run with a forged preflight's identity from a plain, a
+    tenanted, an account, a suspended and a system key, and from a key whose user lacks the read
+    op mask, on one requester-pays bucket that every key resolves alike and none of their users
+    owns, gives each the same error or the same results, and no usage entry `LogUsage` writes
+    for them is charged to any of them; BC-6 runs the table end to end;
+  - the tenant ruling: a tenanted key's preflight of a bucket name without a tenant, beside an
+    anonymous preflight of that name with and without the tenant.
 - **Exclusions and registry:** extends "A retried PutBucketPolicy keeps what the write it lost
   to changed" and its registry entry with PutBucketCors (defect 4, data corruption,
   unreproduced); extends "A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again" with the CORS writes (defect 5). The CORS writes
+  policy or tagging write is authorized again" with the CORS writes (defect 5); adds behaviour
+  4's three departures and its tenant ruling, with any departure from the tenant constraint,
+  to BC-5's exclusion "A preflight's answer says nothing of its key's user". The CORS writes
   also join "A retried bucket write stops when the name names another bucket", citing their
   retries ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107),
   [rgw_op.cc:6133-6152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6133-L6152),
   [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774),
   [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819)).
-- **Depends on:** BC-2. **PR:** one. **Brief:** about 180 lines.
+- **Depends on:** BC-2, BC-5 (the preflight marker). **PR:** one. **Brief:** about 180 lines.
 
 ### Task BC-4: The non-preflight CORS refusal
 
@@ -326,8 +376,14 @@ relies on fakerados behaviour beyond what it serves today.
   4. **options_cors:** 200 with BC-2's preflight headers, else the op's 403 or 400
      ([rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
      [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
-- **Specs:** status, headers and body of each route from test_set_cors, test_cors_header_option,
-  test_cors_origin_wildcard and the presigned preflight cases.
+     The handler adds no per-user header, x-amz-request-charged among them, and calls nothing
+     that reads the key's user, which BC-3's invariant pins end to end (Specs).
+- **Specs:**
+  - status, headers and body of each route from test_set_cors, test_cors_header_option,
+    test_cors_origin_wildcard and the presigned preflight cases;
+  - BC-3's invariant table end to end through the route: a forged preflight with each of its
+    keys gives the same status, headers and body, apart from request ids, none of them carrying
+    x-amz-request-charged, and writes no usage charged to any of them.
 - **Exclusions and registry:** none.
 - **Depends on:** S2, BC-3, BC-5 (the presigned preflight specs). **PR:** one. **Brief:** about
   150 lines.
@@ -373,8 +429,21 @@ relies on fakerados behaviour beyond what it serves today.
      `user.rgw.cors` bytes equal for the same document, wildcard, multi-origin, expose-header
      and max-age rules included.
   4. Reproduce defects 1, 2 and 4 on both releases and set their registry status; run each
-     entry's prior-art search.
-- **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, cors`.
+     entry's prior-art search. Do the same for the two registry entries BC-2 added: the
+     wildcard over-match ("radosgw's CORS wildcard match allows origins and headers its
+     pattern does not cover": an AllowedOrigin `* example.com` admitting `evilexample.com`,
+     and an overlapping pattern), and the CVE-2021-3524 carriage return ("radosgw from Quincy
+     on lacks CVE-2021-3524's fix for CORS expose headers": `&#13;` in an ExposeHeader sent
+     as a bare carriage return on the wire).
+  5. Add s3-tests tests for the first rule that matches origin, method and requested headers,
+     merged into jhoblitt/ceph's `rgw-go-s3tests` branch: a later rule for the origin that
+     allows PUT where the first allows only GET, and a later rule that allows a requested
+     header the first lacks, each by preflight and by an ordinary request's headers. radosgw
+     fails them on both floors, so they become known-differences lines under "CORS rules are
+     matched as Amazon S3 matches them" once the recording confirms it; the pin bump that
+     brings them in is its own change.
+- **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, cors`, and the
+  s3-tests tests of behaviour 5.
 - **Depends on:** BC-3 to BC-7. **PR:** one per release's recording, landed one at a time by
   the controller. **Brief:** about 80 lines.
 
@@ -1508,7 +1577,7 @@ WP-23 for BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 | Wave | Tasks, in parallel | Each waits for |
 |---|---|---|
 | 1 | BC-2, BC-5, BC-9, BC-13, BC-17, BC-23, BC-28a, BC-28b, BC-29, BC-31; BC-20; BC-30 | nothing in the unit; BC-20 S3; BC-30 WP-1 |
-| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a |
+| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2 and BC-5; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a |
 | 3 | BC-4, BC-6, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3 and BC-5; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
 | 4 | BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
 | 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
