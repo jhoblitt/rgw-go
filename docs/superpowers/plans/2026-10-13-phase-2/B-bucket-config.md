@@ -38,7 +38,7 @@ and P4 (the owner, 2026-10-13).
 | B1 | Every S3 response carries the CORS headers once the request's bucket is loaded, error responses included (D15). One exclusion lists the routes radosgw omits. | AWS's per-request model; no per-release route table to keep. |
 | B2 | PutBucketWebsite's unparseable body or missing `WebsiteConfiguration` is 400 MalformedXML, not radosgw's InvalidArgument. The block document keeps radosgw's missing namespace, and PolicyStatus and the block keep lower-case booleans (D16). | The error code a client sees follows AWS; document bytes that SDKs ignore stay byte-comparable with radosgw. |
 | B3 | GetBucketPolicyStatus and the block's enforcement judge a policy with S3's `IsPublic` alone (D17). | One AWS-correct judgment on both releases. |
-| B4 | A signed preflight's signature is not compared, as radosgw and AWS do (D18). The registry entry records that phase 3's rate limiter must not charge OPTIONS CORS to the key's user. | The presigned CORS tests need it; the rate-limit charge is the security half. |
+| B4 | A signed preflight's signature is not compared, as radosgw and AWS do (D18). The registry entry records that phase 3's rate limiter must neither charge a preflight to its key's user nor apply that user's limit or exemption. | The presigned CORS tests need it; the rate limit is the security half: radosgw's limiter answers a forged preflight 503 SlowDown by the key user's limit ([rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L108-L134), [rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L108-L134)), and never for a system key, nor on Squid for an admin key ([rgw_process.cc:96-98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L96-L98), [rgw_process.cc:97](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L97)). |
 | B5 | PutBucketEncryption is validated as AWS documents: SSEAlgorithm one of `AES256`, `aws:kms`, `aws:kms:dsse`, `aws:fsx`, `aws:backup`; KMSMasterKeyID only with `aws:kms` or `aws:kms:dsse`; 400 MalformedXML otherwise (D19). The stored form is unchanged. | AWS's API reference; a stored default neither gateway can serve fails a write on both, as on an unconfigured radosgw. |
 | B6 | The six encryption-configuration s3-tests, and BC-25's three, run through the T unit's include list (D20); BC-27 adds their lines. The eight ownership tests carry only `object_ownership`, so BC-28f lifts that marker. | The T unit owns the selection; each area owns its own lines. |
 | B7 | Ownership controls are built to v21.1.2's stored form and enforced (P4, the owner, 2026-10-13). | The spec names the item; an upgraded zone's radosgw reads that form; the floors' fall-through can delete a bucket (defect 11). |
@@ -241,6 +241,11 @@ relies on fakerados behaviour beyond what it serves today.
      [rgw_op.cc:6826-6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6874)). The op types are
      radosgw's, and so are the masks of get (read) and of put and delete (write)
      ([rgw_op.h:1697-1764](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1697-L1764), [rgw_op.h:1850-1920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1850-L1920)).
+     Options' `Name` is `op.OptionsCORSName`, radosgw's `options_cors`
+     ([rgw_op.h:1761](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1761),
+     [rgw_op.h:1917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1917)): BC-5's
+     guard, `op.RefuseUnverified`, lets only that op run an identity granted without a signature
+     compare, so under any other name `op.Run` refuses the preflight with 500.
      A preflight's identity is its key's user, with no signature compared (BC-5), so its answer
      must be the same for every key that resolves. Options therefore departs from radosgw in
      three ways, each an exclusion BC-3 records, and BC-3 rules on the tenant:
