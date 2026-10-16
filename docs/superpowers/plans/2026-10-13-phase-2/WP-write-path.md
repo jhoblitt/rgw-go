@@ -731,6 +731,38 @@ client's `otp_check`.
      rgw-go-compressed object. Both read back byte-exact through both gateways.
   6. **Review Focus 4, one way.** A PUT to rgw-go naming MD5, XXHASH64 or XXHASH128 answers 400
      and stores nothing: radosgw's HEAD of the key is 404, and `bucket check` is clean.
+  7. **Compression stats.** S3 shows no trace of compression: HEAD and GET give the plaintext's
+     size, so the admin stats are the only client-visible witness. The same compressible body is
+     written by each gateway through each codec's class, once by PutObject and once as a two-part
+     upload, each object into a bucket of its own: one bucket per gateway, codec and mode, holding
+     that one object. The codecs' encoders differ, so the stored bytes may too; the two gateways'
+     objects compare as follows:
+     - `radosgw-admin bucket stats`: `size`, the accounted size, the plaintext's, is equal, and so
+       is `size_actual`, that size rounded up to 4 KiB per object by `cls_rgw_get_rounded_size`
+       ([cls_rgw.cc:1183-1185](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1183-L1185),
+       [cls_rgw.cc:1316-1318](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1316-L1318);
+       [cls_rgw_types.h:125-128](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L125-L128),
+       [cls_rgw_types.h:128-131](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L128-L131)).
+       Each bucket's `size_utilized`, the stored size, is below its `size` and, as the bucket
+       holds one object, equals the end of that object's block map, its last block's `new_ofs`
+       plus `len`
+       ([rgw_rados.cc:5540-5555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5540-L5555),
+       [rgw_rados.cc:6196-6211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6196-L6211);
+       [rgw_common.cc:3108-3121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L3108-L3121),
+       [rgw_common.cc:3164-3177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177));
+     - `object stat`'s `compression` section, the `user.rgw.compression` attr it decodes as an
+       `RGWCompressionInfo`
+       ([rgw_admin.cc:8611-8612](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L8611-L8612),
+       [radosgw-admin.cc:9045-9046](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L9045-L9046)):
+       the same `compression_type`, `orig_size`, `compressor_message` and blocks' `old_ofs`,
+       while each block's `new_ofs` and `len` are its writer's own.
+
+     Optionally, one s3-tests selection run with STANDARD compressing, as radosgw's own
+     rgw/verify QA runs s3-tests under a `compression type` that `configure_compression` sets on
+     the default placement
+     ([overrides.yaml:20](https://github.com/ceph/ceph/blob/v20.2.4/qa/suites/rgw/verify/overrides.yaml#L20),
+     [rgw.py:374-384](https://github.com/ceph/ceph/blob/v20.2.4/qa/tasks/rgw.py#L374-L384)). That QA
+     sets `random`, which rgw-go stores uncompressed (WD-10), so the run names a codec instead.
 - **Depends on:** WP-8 to WP-11, WP-13. **PR:** one. **Brief:** about 160 lines.
 
 ### Task WP-16: the otp class client
