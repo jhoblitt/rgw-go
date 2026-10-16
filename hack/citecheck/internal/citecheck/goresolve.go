@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/doc/comment"
 	"go/parser"
 	"go/token"
 	"log/slog"
@@ -24,11 +25,15 @@ var (
 	// and the file when it names one.
 	reHeader = regexp.MustCompile(`(?i)\ba bare (?:(` + goPath + `) )?line(?: number)?s?(?: below)? (?:is|are|being) ` +
 		`(?:(` + goPath + `)'s at (` + tagForm + `)|(` + tagForm + `)'s(?: (` + goPath + `))?)`)
-	reIdent   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{2,}`)
-	reSpan    = regexp.MustCompile("`[^`]+`")
-	reCamel   = regexp.MustCompile(`[a-z][A-Z]`)
-	reAcronym = regexp.MustCompile(`^[A-Z]{2,}[a-z]`)
-	reNumber  = regexp.MustCompile(`^(?:v\d+|\d+)$`)
+	// reCitedHeader is the other wording of a header convention, which names
+	// the file and the tag the lines its comment goes on to cite are at:
+	// "cited in rgw_op.cc at v19.2.6 unless noted".
+	reCitedHeader = regexp.MustCompile(`(?i)\bcited in (` + goPath + `) at (` + tagForm + `),? unless (?:noted|stated)\b`)
+	reIdent       = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{2,}`)
+	reSpan        = regexp.MustCompile("`[^`]+`")
+	reCamel       = regexp.MustCompile(`[a-z][A-Z]`)
+	reAcronym     = regexp.MustCompile(`^[A-Z]{2,}[a-z]`)
+	reNumber      = regexp.MustCompile(`^(?:v\d+|\d+)$`)
 )
 
 // markTags are the releases the [S] and [T] markers name, at which a
@@ -121,6 +126,11 @@ func headersIn(ps *paraScan) []header {
 		}
 		hs = append(hs, h)
 	}
+	for _, m := range reCitedHeader.FindAllStringSubmatchIndex(ps.masked, -1) {
+		name := ps.masked[m[2]:m[3]]
+		hs = append(hs, header{off: ps.para.offset(m[0]), tag: ps.masked[m[4]:m[5]], named: name, names: []string{name}})
+	}
+	slices.SortFunc(hs, func(a, b header) int { return a.off - b.off })
 	return hs
 }
 
@@ -200,14 +210,12 @@ func (g *goChecker) refOf(ps *paraScan, ii, off int) string {
 		it.rule = "at <tag>"
 		return t
 	}
-	if g.md != nil {
-		if w := atOther(norm, it.pos+1); w != "" {
-			it.rule, it.why = w, fmt.Sprintf("no ref: it is cited %s, which is no tag: link it by hand", w)
-			if prep, ref, _ := strings.Cut(w, " "); isCommitWord(strings.ToLower(ref)) || isBranchRef(prep, ref) {
-				it.atRef = ref
-			}
-			return ""
+	if w := atOther(norm, it.pos+1); w != "" && (g.md != nil || commitOrBranch(w)) {
+		it.rule, it.why = w, fmt.Sprintf("no ref: it is cited %s, which is no tag: link it by hand", w)
+		if prep, ref, _ := strings.Cut(w, " "); isCommitWord(strings.ToLower(ref)) || isBranchRef(prep, ref) {
+			it.atRef = ref
 		}
+		return ""
 	}
 	if it.mark != "" {
 		it.rule = "its marker"
@@ -787,12 +795,45 @@ func (g *goChecker) resolve(ps *paraScan, it *goItem, cands []candidate) (string
 	if !readsBack(u, cite) {
 		return fmt.Sprintf("the link %s would read back as another citation", u), nil
 	}
+	// A markdown link's destination ends at its ")"; a Go comment's URL ends
+	// where godoc's linking ends it.
+	if g.md == nil {
+		if extra := godocTakes(u, ps.para.text[it.end:]); extra != "" {
+			return fmt.Sprintf(`godoc would link the %q after it as part of the URL: reword it so that a blank, or a `+
+				`"." or "," that ends the clause, follows the citation`, extra), nil
+		}
+	}
 	it.path, it.url, it.ids = p, u, ids
 	slog.DebugContext(g.ctx, "resolved a citation", slog.String("file", g.name),
 		slog.Int("line", ps.para.lines[ps.para.lineAt(it.start)].n), slog.String("citation", it.text),
 		slog.String("ref", it.ref), slog.String("ref_from", it.rule), slog.String("path", p),
 		slog.Any("identifiers", ids), slog.Any("clause_files", files), slog.Any("clause_releases", it.releases))
 	return "", nil
+}
+
+// godocTakes returns the bytes of after, the text that follows where the URL
+// u is written in a Go comment, that godoc would link as part of the URL,
+// as it does a "'s" or a "-": go/doc/comment's linking of a URL in a doc
+// comment's text, which runs to the next blank.
+func godocTakes(u, after string) string {
+	word, _, _ := strings.Cut(after, " ")
+	if word == "" {
+		return ""
+	}
+	var p comment.Parser
+	d := p.Parse(u + word)
+	if len(d.Content) == 0 {
+		return ""
+	}
+	para, ok := d.Content[0].(*comment.Paragraph)
+	if !ok || len(para.Text) == 0 {
+		return ""
+	}
+	l, ok := para.Text[0].(*comment.Link)
+	if !ok || !strings.HasPrefix(l.URL, u) {
+		return ""
+	}
+	return l.URL[len(u):]
 }
 
 // clauseFiles returns the base names of the files cited or named in a

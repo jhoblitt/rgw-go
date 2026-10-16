@@ -661,8 +661,10 @@ func contGuard(ps *paraScan, it *goItem, ids []string) string {
 }
 
 // reAtWord is an "at", "on" or "in" and the word after it, right after a
-// citation.
-var reAtWord = regexp.MustCompile("^[`\\s]*\\)?\\s*(at|on|in) ([^\\s,;)]+)")
+// citation, past an "its head", "their head", "the head" or "commit" before
+// the word, as "at its head 2c1db8239cc" and "at commit 2c1db8239cc" name a
+// commit.
+var reAtWord = regexp.MustCompile("^[`\\s]*\\)?\\s*(at|on|in) (?:(?:its|their|the) head |commit )?([^\\s,;)]+)")
 
 // atOther returns the "at <ref>", "on <ref>" or "in <ref>" right after the
 // citation whose placeholder ends at k in norm, or after the citations listed
@@ -719,6 +721,20 @@ func otherRefWord(prep, w string) bool {
 		return true
 	}
 	return false
+}
+
+// commitOrBranch reports whether the ref atOther found, its "at", "on" or
+// "in" and its word, is a commit id, or a branch after "at" or "on", since
+// "in main" may name a function: the refs a Go comment's citation is not given
+// another rule's tag in place of.
+func commitOrBranch(w string) bool {
+	prep, ref, _ := strings.Cut(w, " ")
+	switch lw := strings.ToLower(ref); lw {
+	case "main", "master", "origin/main", "upstream":
+		return prep != "in"
+	default:
+		return isCommitWord(lw)
+	}
 }
 
 // isBranchRef reports whether an "at", "on" or "in" and the word after it

@@ -124,6 +124,12 @@ type goItem struct {
 	paren     bool
 	bare      bool
 	parenOnly bool
+	// dir is the path a file's citation that starts a comment line is split
+	// from by the line break before it, as "src/rgw/driver/" ends a line
+	// before "rados/rgw_tools.cc:97", which starts at dirAt in the paragraph's
+	// text.
+	dir   string
+	dirAt int
 }
 
 // paraScan is what a comment paragraph cites.
@@ -256,6 +262,14 @@ func goForms(items []*goItem, ms string, p *commentPara) []*goItem {
 		it.paren = parenthesized(ms, it.start, it.end)
 		it.bare = it.paren && standsBare(ms, it.start, it.end)
 	}
+	for _, it := range items {
+		if it.kind != fileItem || !slices.Contains(p.at[1:], it.start) {
+			continue
+		}
+		if loc := reDirEnd.FindStringIndex(ms[:it.start-1]); len(loc) > 0 && (loc[0] == 0 || !pathByte(ms[loc[0]-1])) {
+			it.dir, it.dirAt = ms[loc[0]:loc[1]], loc[0]
+		}
+	}
 	return items
 }
 
@@ -324,6 +338,9 @@ func parenSpan(ms string, s, e int) (open, closing int) {
 	}
 	return -1, -1
 }
+
+// reDirEnd is a path of directories that ends a text, its last byte a "/".
+var reDirEnd = regexp.MustCompile(`(?:[\w.\-]+/)+$`)
 
 // splitCite returns the citation of a file whose lines a line break, the
 // blank at j in ms that joins two lines, splits from it: a file and a ":"

@@ -33,7 +33,9 @@ type goResult struct {
 // link its plain citation resolves to. When marked, the [S] or [T] at mark
 // that gave the citation its ref, and the blanks after it, go with it, lead
 // being what else stood between them, a "(" or nothing, unless one of group,
-// the citations the marker gives a ref, is not rewritten.
+// the citations the marker gives a ref, is not rewritten. When named, the
+// file's name or the directories at nameAt, which a blank or a line break
+// alone splits from the citation and which the link names too, go with it.
 type textEdit struct {
 	start, end int
 	text       string
@@ -42,6 +44,8 @@ type textEdit struct {
 	mark       int
 	lead       string
 	group      []*goItem
+	named      bool
+	nameAt     int
 }
 
 // withMarker returns the edit that also drops its marker, when it has one.
@@ -50,6 +54,35 @@ func (e textEdit) withMarker() textEdit {
 		e.start, e.text = e.mark, e.lead+e.text
 	}
 	return e
+}
+
+// withName returns the edit that also drops the name before it, when it has
+// one.
+func (e textEdit) withName() textEdit {
+	if e.named {
+		e.start = e.nameAt
+	}
+	return e
+}
+
+// nameBefore returns where the name that a blank or a line break alone
+// splits from the plain citation ps.items[ii] starts, now that it resolves to
+// its link, and whether the link names it too, so that it goes with the
+// citation: the directories a file's citation continues from the line before,
+// or the file named right before a continuation.
+func nameBefore(ps *paraScan, ii int) (int, bool) {
+	it := ps.items[ii]
+	switch {
+	case it.dir != "":
+		return it.dirAt, strings.HasSuffix("/"+it.path, "/"+it.dir+it.name)
+	case it.kind != contItem || it.marked || ii == 0:
+		return 0, false
+	}
+	o := ps.items[ii-1]
+	if o.kind != mentionItem || strings.TrimSpace(ps.para.text[o.end:it.start]) != "" {
+		return 0, false
+	}
+	return o.start, it.path == o.name || strings.HasSuffix(it.path, "/"+o.name)
 }
 
 // markKey names the marker at a norm offset of a paragraph.
@@ -116,7 +149,9 @@ func checkGo(ctx context.Context, c *Checker, m mode, name string, src []byte) (
 					if _, ok := edits[ps.para]; !ok {
 						touched = append(touched, ps.para)
 					}
-					edits[ps.para] = append(edits[ps.para], textEdit{start: it.start, end: it.end, text: it.url, item: it})
+					te := textEdit{start: it.start, end: it.end, text: it.url, item: it}
+					te.nameAt, te.named = nameBefore(ps, ii)
+					edits[ps.para] = append(edits[ps.para], te)
 				}
 			}
 		}
@@ -308,7 +343,7 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 		if wrap {
 			marked := make([]textEdit, len(edits[p]))
 			for i, te := range edits[p] {
-				marked[i] = te.withMarker()
+				marked[i] = te.withName().withMarker()
 			}
 			if e, ok := rewrapped(src, p, marked); ok {
 				es = append(es, e)
@@ -326,9 +361,11 @@ func rewriteParas(src []byte, touched []*commentPara, edits map[*commentPara][]t
 // inPlace returns the edits that write each paragraph's links where its
 // citations stand, each with the marker that gave it its ref when the marker
 // is on its line and none of the citations the marker governs is refused,
-// and records in refused why each edit it cannot make is refused: one
-// refused already, or, by broken's reason, one that runs across a line
-// break.
+// and with the name before it that goes with it: on its line, in the same
+// edit, and ending the line before, by an edit of its own that drops it and
+// the blanks before it, unless nothing else is on that line. It records in
+// refused why each edit it cannot make is refused: one refused already, or,
+// by broken's reason, one that runs across a line break.
 func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused map[*goItem]string,
 	broken func(*goItem) string,
 ) []edit {
@@ -347,6 +384,16 @@ func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused ma
 				!slices.ContainsFunc(te.group, func(it *goItem) bool { _, no := refused[it]; return no }) {
 				te = m
 			}
+			if te.named {
+				if j := p.lineAt(te.nameAt); j == p.lineAt(te.start) {
+					te = te.withName()
+				} else if e, paren, ok := dropName(p, te.nameAt); ok {
+					es = append(es, e)
+					if paren {
+						te.text = "(" + te.text
+					}
+				}
+			}
 			i := p.lineAt(te.start)
 			s := p.lines[i].start + te.start - p.at[i]
 			es = append(es, edit{start: s, end: s + te.end - te.start, text: te.text})
@@ -355,27 +402,57 @@ func inPlace(paras []*commentPara, edits map[*commentPara][]textEdit, refused ma
 	return es
 }
 
+// dropName returns the edit that drops the name at the offset at in a
+// paragraph's text, which ends its line, with the blanks before it and a "("
+// right before it, which paren reports, for the link to open instead; and
+// false when nothing but blanks comes before them on its line, which dropping
+// them would leave empty.
+func dropName(p *commentPara, at int) (e edit, paren, ok bool) {
+	j := p.lineAt(at)
+	s := at
+	if s > p.at[j] && p.text[s-1] == '(' {
+		s, paren = s-1, true
+	}
+	for s > p.at[j] && p.text[s-1] == ' ' {
+		s--
+	}
+	if s == p.at[j] {
+		return edit{}, false, false
+	}
+	l := p.lines[j]
+	return edit{start: l.start + s - p.at[j], end: l.end, text: ""}, paren, true
+}
+
 // rewrapped returns the edit that makes a paragraph's edits and rewraps it
-// to its widest line's width, in runes, a word wider than that, such as a
-// link and the "at <tag>" after it, on a line of its own, and false when
-// the paragraph may not be
-// rewrapped: it is not plain prose, its lines' prefixes differ, a line holds
-// a tab or two blanks running, or a line it would make reads as a list
-// item, a heading or a link definition. The lines before the first edit are
-// kept, and so are those after the last once the new lines end where an old
-// one did.
+// to its widest line's width, in runes, its prefix included, a word wider
+// than that, such as a link and the "at <tag>" after it, on a line of its
+// own, and false when the paragraph may not be rewrapped: it is neither plain
+// prose nor a list item's first paragraph, its lines' prefixes differ, a line
+// holds a tab or two blanks running, or a line it would make reads as a list
+// item, a heading or a link definition. A list item's first line keeps its
+// prefix and its marker, and its other lines take the prefix of its second,
+// or with none its first's and blanks as wide as its marker. The lines before
+// the first edit are kept, and so are those after the last once the new lines
+// end where an old one did.
 func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
-	if !p.wrap || bytes.IndexByte(src, '\r') >= 0 {
+	if !p.wrap && !p.item || bytes.IndexByte(src, '\r') >= 0 {
 		return edit{}, false
 	}
-	prefix := p.lines[0].prefix
+	head, rest, ok := p.prefixes()
+	if !ok {
+		return edit{}, false
+	}
 	width := 0
-	for _, l := range p.lines {
+	for i, l := range p.lines {
 		t := string(src[l.start:l.end])
-		if l.prefix != prefix || strings.Contains(t, "  ") || strings.ContainsRune(t, '\t') || strings.HasSuffix(t, " ") {
+		pre := rest
+		if i == 0 {
+			pre = head
+		}
+		if l.prefix != pre || strings.Contains(t, "  ") || strings.ContainsRune(t, '\t') || strings.HasSuffix(t, " ") {
 			return edit{}, false
 		}
-		width = max(width, utf8.RuneCountInString(t))
+		width = max(width, utf8.RuneCountInString(pre)+utf8.RuneCountInString(t))
 	}
 	var b strings.Builder
 	last := 0
@@ -410,10 +487,17 @@ func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
 	}
 	end := len(p.lines)
 	k0 := wordAt[moved(p.at[first])]
+	// prefixOf is the prefix of the n-th line the rewrap makes.
+	prefixOf := func(n int) string {
+		if n == 0 && first == 0 {
+			return head
+		}
+		return rest
+	}
 	var out []string
 	cur := words[k0]
 	for k := k0 + 1; k < len(words); k++ {
-		if utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(words[k]) <= width {
+		if utf8.RuneCountInString(prefixOf(len(out)))+utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(words[k]) <= width {
 			cur += " " + words[k]
 			continue
 		}
@@ -428,12 +512,35 @@ func rewrapped(src []byte, p *commentPara, es []textEdit) (edit, bool) {
 		out = append(out, cur)
 	}
 	for i, l := range out {
-		if listItem(l) || heading(l) || strings.HasPrefix(l, "[") && strings.Contains(l, "]:") {
+		marker := p.item && i == 0 && first == 0
+		if listItem(l) != marker || heading(l) || strings.HasPrefix(l, "[") && strings.Contains(l, "]:") {
 			return edit{}, false
 		}
-		out[i] = prefix + l
+		out[i] = prefixOf(i) + l
 	}
-	return edit{start: p.lines[first].start - len(prefix), end: p.lines[end-1].end, text: strings.Join(out, "\n")}, true
+	return edit{start: p.lines[first].start - len(prefixOf(0)), end: p.lines[end-1].end, text: strings.Join(out, "\n")}, true
+}
+
+// prefixes returns the prefix of a paragraph's first line, and that of the
+// lines after it: for plain prose its first line's, and for a list item its
+// second line's, which must be wider than its first's, or with no second line
+// its first's and blanks as wide as its marker and the blanks after it.
+func (p *commentPara) prefixes() (head, rest string, ok bool) {
+	head = p.lines[0].prefix
+	switch {
+	case !p.item:
+		return head, head, true
+	case len(p.lines) > 1:
+		rest = p.lines[1].prefix
+		return head, rest, len(rest) > len(head) && strings.HasPrefix(rest, strings.TrimRight(head, " "))
+	}
+	t := p.text
+	n := strings.IndexAny(t, " \t")
+	if n < 0 {
+		return "", "", false
+	}
+	n += len(t[n:]) - len(strings.TrimLeft(t[n:], " \t"))
+	return head, head + strings.Repeat(" ", utf8.RuneCountInString(t[:n])), true
 }
 
 // reLinkEnd is a word ending in a link's line anchor, or in it and the

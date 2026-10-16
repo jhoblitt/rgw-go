@@ -101,6 +101,12 @@ var _ = Describe("Go comments", func() {
 				"// A bare line number is rgw_gofix.cc's at v19.2.6.\n\n// prepare is RGWGoFix::prepare (:4-11).\n", prepareS),
 			Entry("a header convention naming a file's bare lines",
 				"// A bare rgw_gofix.cc line is v19.2.6's.\n\n// prepare is RGWGoFix::prepare (rgw_gofix.cc:4-11).\n", prepareS),
+			Entry(`a header convention saying a comment's citations are "cited in <file> at <tag> unless noted"`,
+				"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\nfunc cases() {\n\t// prepare is RGWGoFix::prepare\n"+
+					"\t// (:4-11), and complete RGWGoFix::complete (:23-38 at v20.2.4).\n\tprepare()\n}\n",
+				prepareS, completeT),
+			Entry(`a header convention, past an "in main" after it, which names no branch`,
+				"// A bare rgw_gofix.cc line is v19.2.6's.\n\n// prepare is RGWGoFix::prepare (rgw_gofix.cc:4-11 in main).\n", prepareS),
 			Entry("a header convention naming the tag, the file its paragraph names",
 				"// The fixture is RGWGoFix (rgw_gofix.cc). A bare line number below is\n// v19.2.6's.\n\n"+
 					"// prepare is RGWGoFix::prepare (:4-11; v20.2.4 :14-21).\n", prepareS, prepareT),
@@ -243,6 +249,31 @@ var _ = Describe("Go comments", func() {
 		Entry(`a continuation after another citation's own "at <tag>"`,
 			"// prepare ("+prepareS+" at v19.2.6, :14-21).\n", 3, ":14-21",
 			`no ref: no "at <tag>" follows it, no [S] or [T] marks it, and no comment above says what a bare line number means`),
+		Entry(`a continuation under "cited in <file> at <tag>" with no "unless noted", which states no header convention`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6.\nfunc cases() {\n\t// prepare (:4-11).\n\tprepare()\n}\n", 5, ":4-11",
+			"its file, rgw_gofix.cc, is named only in a comment before its own, which --fix does not read a continuation's "+
+				"file from: link it by hand"),
+		Entry(`"at its head <commit>" after it, which a header convention's tag does not override`,
+			"// A bare line number below is v19.2.6's.\n\n// as the fix does (rgw_gofix.cc:4-11 at its head 2c1db8239cc).\n", 5,
+			"rgw_gofix.cc:4-11", "no ref: it is cited at 2c1db8239cc, which is no tag: link it by hand"),
+		Entry(`"at commit <commit>" after it, which a header convention's tag does not override`,
+			"// A bare line number below is v19.2.6's.\n\n// as the fix does (rgw_gofix.cc:4-11 at commit 2c1db8239cc).\n", 5,
+			"rgw_gofix.cc:4-11", "no ref: it is cited at 2c1db8239cc, which is no tag: link it by hand"),
+		Entry(`"at main" after it, which a header convention's tag does not override`,
+			"// A bare line number below is v19.2.6's.\n\n// prepare (rgw_gofix.cc:4-11 at main).\n", 5,
+			"rgw_gofix.cc:4-11", "no ref: it is cited at main, which is no tag: link it by hand"),
+		Entry(`a citation whose "'s" godoc would link as part of the URL`,
+			"// A bare line number below is v19.2.6's.\n\n// The pool opens at rgw_gofix.cc:6's call.\n", 5, "rgw_gofix.cc:6",
+			`godoc would link the "'s" after it as part of the URL: reword it so that a blank, or a "." or "," that `+
+				`ends the clause, follows the citation`),
+		Entry(`a "cited in <file> at <tag> unless noted" header, for another file's citation`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\n\n// The side is rgw_side.cc:2.\n", 5, "rgw_side.cc:2",
+			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
+				`rgw_side.cc's: write "at <tag>" after it`),
+		Entry(`a "cited in <file> at <tag> unless noted" header, for another file's continuation`,
+			"// Each case is cited in rgw_gofix.cc at v19.2.6 unless noted.\n\n// The side is rgw_side.cc\n// (:2).\n", 6, ":2",
+			`no ref: only the header convention gives one, v19.2.6, and it gives it to rgw_gofix.cc's lines, not `+
+				`rgw_side.cc's: write "at <tag>" after it`),
 		Entry("a continuation whose nearest file is too short",
 			"// prepare ("+prepareS+") and write_meta (:20-30 at v19.2.6).\n", 3, ":20-30",
 			"line 30 is past the end of src/rgw/rgw_gofix.cc, which has 28 lines at v19.2.6"),
@@ -284,11 +315,11 @@ var _ = Describe("Go comments", func() {
 			4, ":25", "line 25 is past the end of src/rgw/driver/rados/rgw_twin.cc, which has 2 lines at v19.2.6"),
 	)
 
-	It("lists a citation in a list item that runs across a line break, which it does not rewrap", func(ctx SpecContext) {
-		src := "package fix\n\n// prepare:\n//\n//   - opens the index pool, rgw_gofix.cc\n//     [S]:6, first.\nfunc prepare() {}\n"
+	It("lists a citation that runs across a line break in a paragraph it does not rewrap", func(ctx SpecContext) {
+		src := "package fix\n\n// prepare opens.  Then rgw_gofix.cc\n// [S]:6 is first.\nfunc prepare() {}\n"
 		f, status := fixGo(ctx, src)
 		Expect(status).To(Equal(1))
-		Expect(stdout.String()).To(Equal(f + ":5: rgw_gofix.cc [S]:6: it runs across a line break in a comment citecheck " +
+		Expect(stdout.String()).To(Equal(f + ":3: rgw_gofix.cc [S]:6: it runs across a line break in a comment citecheck " +
 			"does not rewrap: put it on one line\ncitations checked: 1, failed: 1, rewritten: 0\n"))
 		Expect(read(f)).To(Equal(src))
 	})
@@ -336,6 +367,37 @@ var _ = Describe("Go comments", func() {
 					"// (rgw_gofix.cc:4-11, :13-28, at v19.2.6), each returning r.\nfunc prepare() {}\n",
 				"package fix\n\n// prepare and complete are, in order, the fixture's two functions\n// ("+prepareS+",\n// "+
 					completeS+", at v19.2.6),\n// each returning r.\nfunc prepare() {}\n"),
+			Entry("the words after the link filling a line to the widest line's width, its prefix counted",
+				"package fix\n\n// aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii\n// (rgw_gofix.cc:6 at v19.2.6) jjjj\n"+
+					"// kkkk llll mmmm nnnn oooo pppp qqqq rrrr\nfunc prepare() {}\n",
+				"package fix\n\n// aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii\n// ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6)\n"+
+					"// jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr\nfunc prepare() {}\n"),
+			Entry("a list item, its marker's line keeping its prefix and its other lines the indent of its second",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool\n//     ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6),\n"+
+					"//     then returns.\nfunc prepare() {}\n"),
+			Entry(`a list item whose "at" ended a line before its tag, the two kept on the link's line`,
+				"package fix\n\n// prepare:\n//\n//   - prepare answers (rgw_gofix.cc:4-11 at\n//     v19.2.6, :14-21 at v20.2.4);\n"+
+					"//   - more.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - prepare answers\n//     ("+prepareS+" at v19.2.6,\n//     "+prepareT+
+					" at v20.2.4);\n//   - more.\nfunc prepare() {}\n"),
+			Entry("a list item of one line, its other lines indented as wide as its marker",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6) first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool\n//     ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6)\n"+
+					"//     first.\nfunc prepare() {}\n"),
+			Entry("a list item whose citation runs across a line break",
+				"package fix\n\n// prepare:\n//\n//   - opens the index pool, rgw_gofix.cc\n//     [S]:6, first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the index pool,\n//     "+cephURL("v19.2.6", gofixPath, "L6")+",\n"+
+					"//     first.\nfunc prepare() {}\n"),
+			Entry("the file named before a continuation, a line break between them, dropped with it",
+				"package fix\n\n// prepare is in the fixture's (rgw_gofix.cc\n// :4-11 at v19.2.6), as RGWGoFix::prepare.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare is in the fixture's\n// ("+prepareS+" at v19.2.6),\n// as RGWGoFix::prepare.\nfunc prepare() {}\n"),
+			Entry("the directories that end the line before a file's citation, dropped with it",
+				"package fix\n\n// prepare opens the pool (src/rgw/\n// rgw_gofix.cc:4-11 at v19.2.6), as radosgw.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens the pool\n// ("+prepareS+" at v19.2.6),\n// as radosgw.\nfunc prepare() {}\n"),
+			Entry("the directories before a file's citation kept, when the link's path does not end in them",
+				"package fix\n\n// prepare reads docs/\n// rgw_gofix.cc:4-11 at v19.2.6 first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare reads docs/\n// "+prepareS+" at v19.2.6\n// first.\nfunc prepare() {}\n"),
 			Entry("an indented comment, its prefix kept",
 				"package fix\n\nfunc prepare() {\n\t// open_bucket_index_pool first (rgw_gofix.cc:6 at v19.2.6), as\n"+
 					"\t// radosgw does.\n}\n",
@@ -349,9 +411,13 @@ var _ = Describe("Go comments", func() {
 				Expect(status).To(Equal(0))
 				Expect(read(f)).To(Equal(after))
 			},
-			Entry("in a list item",
-				"package fix\n\n// prepare:\n//\n//   - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
-				"package fix\n\n// prepare:\n//\n//   - opens the pool ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
+			Entry("in a list item whose second line is not indented past its marker",
+				"package fix\n\nfunc prepare() {\n\t// - opens the pool (rgw_gofix.cc:6 at v19.2.6), then\n\t// returns.\n}\n",
+				"package fix\n\nfunc prepare() {\n\t// - opens the pool ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
+					"\t// returns.\n}\n"),
+			Entry("in a list item whose lines hold two blanks running",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool  (rgw_gofix.cc:6 at v19.2.6), then\n//     returns.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare:\n//\n//   - opens the pool  ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6), then\n"+
 					"//     returns.\nfunc prepare() {}\n"),
 			Entry("in a comment after code",
 				"package fix\n\nvar x = 1 // rgw_gofix.cc:6 at v19.2.6\n",
@@ -363,6 +429,24 @@ var _ = Describe("Go comments", func() {
 			Entry("in a paragraph whose lines hold two blanks running",
 				"package fix\n\n// prepare opens.  Then it\n// returns (rgw_gofix.cc:6 at v19.2.6).\nfunc prepare() {}\n",
 				"package fix\n\n// prepare opens.  Then it\n// returns ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6).\n"+
+					"func prepare() {}\n"),
+			Entry("the file named before a continuation, ending the line before, dropped with the blanks before it",
+				"package fix\n\n// prepare opens.  Then the pool in rgw_gofix.cc\n// :6 at v19.2.6 opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool in\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 opens.\n"+
+					"func prepare() {}\n"),
+			Entry(`the "(" before the file named before a continuation moved onto the link's line`,
+				"package fix\n\n// prepare opens.  Then the pool (rgw_gofix.cc\n// :6 at v19.2.6) opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool\n// ("+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6) opens.\n"+
+					"func prepare() {}\n"),
+			Entry("the name of another file than the link's kept before the continuation it links",
+				"package fix\n\n// prepare opens.  Then the pool (rgw_gofix.cc:4-11 at v19.2.6) calls\n"+
+					"// open_bucket_index_pool after rgw_side.cc\n// :6 at v19.2.6 first.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then the pool ("+prepareS+" at v19.2.6) calls\n"+
+					"// open_bucket_index_pool after rgw_side.cc\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 first.\n"+
+					"func prepare() {}\n"),
+			Entry("the file named before a continuation kept, alone on the line before",
+				"package fix\n\n// prepare opens.  Then\n// rgw_gofix.cc\n// :6 at v19.2.6 opens.\nfunc prepare() {}\n",
+				"package fix\n\n// prepare opens.  Then\n// rgw_gofix.cc\n// "+cephURL("v19.2.6", gofixPath, "L6")+" at v19.2.6 opens.\n"+
 					"func prepare() {}\n"),
 		)
 

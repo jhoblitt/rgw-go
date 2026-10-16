@@ -24,8 +24,9 @@ type commentLine struct {
 type commentPara struct {
 	lines []commentLine
 	// wrap reports whether the paragraph is plain prose that --fix may
-	// rewrap: unindented lines, not a list item or a heading.
-	wrap bool
+	// rewrap: unindented lines, not a list item or a heading; and item
+	// whether it is a list item's first paragraph, which --fix may rewrap too.
+	wrap, item bool
 	// code reports whether the paragraph is a line of a code block, which
 	// --fix does not rewrite.
 	code bool
@@ -228,6 +229,7 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 			switch {
 			case listItem(body):
 				start(false)
+				cur.item = true
 			case heading(body):
 				start(false)
 				cur.add(line, body)
@@ -244,6 +246,7 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 			case listItem(body):
 				inList = true
 				start(false)
+				cur.item = true
 			case inList || cur != nil && !cur.wrap:
 				if cur == nil {
 					start(false)

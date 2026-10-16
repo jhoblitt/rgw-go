@@ -351,40 +351,57 @@
 //	A bare line number below is v19.2.6's rgw_op.cc.
 //	A bare line number is rgw_op.cc's at v19.2.6.
 //	A bare rgw_op.cc line is v19.2.6's.
+//	Each case is cited in rgw_op.cc at v19.2.6 unless noted.
 //
-// A citation is unresolved, left as it is and listed with why, when it is in
-// a code block, is a line reference in prose, or is a continuation whose file
-// only a comment above its own names, none of which --fix rewrites; when it has
-// no ref, or only a header's that names another file, or only a clause's
-// that names two releases; when its ref names no commit in the clone; when
-// its paragraph names rook, go-ceph or s3-tests, whose files the clone does
-// not hold; when only the header convention gives its ref and the words that
-// lead to it, back to the last citation, ". ", ";" or ",", name another
-// release, by tag, marker or codename; when it is cited at both tags and its
-// lines differ between them; when it is a continuation with no candidate
-// file, or with no identifier beside it in a clause that names two files;
-// when its file is no file at the ref, or several that no identifier tells
-// apart; when the lines hold no identifier named beside it; and when its
-// link fails a check a link must pass, such as lines past the file's end.
+// A citation is unresolved, left as it is and listed with why, when it is in a
+// code block, is a line reference in prose, or is a continuation whose file
+// only a comment above its own names, none of which --fix rewrites; when it
+// has no ref, or only a header's that names another file, or only a clause's
+// that names two releases; when an "at", "on" or "in" and a commit id after
+// it, or an "at" or "on" and main, master, origin/main or upstream, name a ref
+// that is no tag, which no other rule's tag stands in for, an "its head",
+// "their head", "the head" or "commit" before the ref aside, as "at its head
+// 2c1db8239cc" and "at commit 2c1db8239cc" name a commit; when its ref names
+// no commit in the clone; when its paragraph names rook, go-ceph or s3-tests,
+// whose files the clone does not hold; when only the header convention gives
+// its ref and the words that lead to it, back to the last citation, ". ", ";"
+// or ",", name another release, by tag, marker or codename; when it is cited
+// at both tags and its lines differ between them; when it is a continuation
+// with no candidate file, or with no identifier beside it in a clause that
+// names two files; when its file is no file at the ref, or several that no
+// identifier tells apart; when the lines hold no identifier named beside it;
+// when its link fails a check a link must pass, such as lines past the file's
+// end; and when godoc would link the text right after it as part of the URL,
+// as it does a "'s", "-" or "*", which go/doc/comment's linking of a doc
+// comment's URL decides.
 //
 // The text around a link is kept, an "at <tag>" after it included, but a
 // marker that gave citations their ref, with the blanks after it, is dropped
-// once each of them is a link, and so is every other citation listed after
-// the first, and only blanks or a "(" stand between the marker and the
-// first. A paragraph a link is written into is rewrapped to the width of
-// its widest line, in runes, a word wider than that on a line of its own,
-// where a link and the "at <tag>" or "at both tags" right after it are one
-// word; the lines before the first link are kept, and so are those after
-// the last once the new lines end where an old line did. A list item, a
-// heading, a comment after code, and a paragraph whose lines' prefixes
-// differ or that holds a tab or two blanks running are not rewrapped: the
-// link is written in place, a citation there that runs across a line break
-// is listed instead, and a marker that would run across one is kept. Nor is
-// a paragraph rewrapped when a line of the rewrap would read as a list item,
-// a heading or a link definition. When the file was gofmt-clean and the
-// rewrapping leaves it not, its links are written in place instead, and when
-// that leaves it not clean either, none is written. A second run rewrites
-// nothing.
+// once each of them is a link, and so is every other citation listed after the
+// first, and only blanks or a "(" stand between the marker and the first. So
+// is a file's name that only blanks or a line break split from the
+// continuation after it, and the directories ending the line before a file's
+// citation, src/rgw/driver/ before rados/rgw_tools.cc:97, when the link's path
+// ends in them; written in place, a name ending the line before goes with the
+// blanks before it and a "(" right before it, which then opens the link, and
+// stays when nothing else is on its line. A paragraph a link is written into
+// is rewrapped to the width of its widest line, in runes, its prefix included,
+// a word wider than that on a line of its own, where a link and the "at <tag>"
+// or "at both tags" right after it are one word; the lines before the first
+// link are kept, and so are those after the last once the new lines end where
+// an old line did. A list item's first paragraph is rewrapped too, its first
+// line keeping its prefix and its marker and its other lines taking its second
+// line's prefix, which must be the wider, or with no second line its first's
+// and blanks as wide as its marker and the blanks after it. A heading, a
+// comment after code, and a paragraph whose lines' prefixes differ otherwise
+// or that holds a tab or two blanks running are not rewrapped: the link is
+// written in place, a citation there that runs across a line break is listed
+// instead, and a marker that would run across one is kept. Nor is a paragraph
+// rewrapped when a line of the rewrap would read as a list item, but for a
+// list item's first line, a heading or a link definition. When the file was
+// gofmt-clean and the rewrapping leaves it not, its links are written in place
+// instead, and when that leaves it not clean either, none is written. A second
+// run rewrites nothing.
 //
 // # Plain citations in markdown
 //
@@ -506,7 +523,8 @@
 // And a citation is unresolved, besides as Go comments lists:
 //
 //   - when it is cited at, on or in a ref that is no tag: at, on or in a
-//     branch or a commit id; at a version that is no tag, "all", or a ref
+//     branch or a commit id, an "its head", "their head", "the head" or
+//     "commit" before it aside; at a version that is no tag, "all", or a ref
 //     holding a "/"; or in a version or Boost;
 //   - when the clause rule or the "(" rule finds a release not right before
 //     it, and the words before it, back to its sentence's start, the last
