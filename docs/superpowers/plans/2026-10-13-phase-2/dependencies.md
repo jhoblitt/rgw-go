@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 766fc50. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 9474319. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -17,7 +17,7 @@ flowchart LR
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
-  u_B["B: bucket config<br/>38 tasks"]
+  u_B["B: bucket config<br/>39 tasks"]
   u_WP["WP: write path<br/>22 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
@@ -563,6 +563,7 @@ flowchart LR
   t_BC_32["BC-32"]
   t_BC_33["BC-33"]
   t_BC_34["BC-34"]
+  t_BC_35["BC-35"]
   t_S2["S2"]:::ext
   t_S3["S3"]:::ext
   t_V11["V11"]:::ext
@@ -655,6 +656,11 @@ flowchart LR
   t_BC_31 --> t_BC_34
   t_BC_32 --> t_BC_34
   t_BC_33 --> t_BC_34
+  t_BC_3 --> t_BC_35
+  t_BC_11 --> t_BC_35
+  t_BC_18 --> t_BC_35
+  t_BC_24 --> t_BC_35
+  t_BC_28c --> t_BC_35
   click t_BC_2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-2-cors-types" "BC-2: CORS types"
   click t_BC_3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-3-cors-ops" "BC-3: CORS ops"
   click t_BC_4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-4-the-non-preflight-cors-refusal" "BC-4: The non-preflight CORS refusal"
@@ -693,6 +699,7 @@ flowchart LR
   click t_BC_32 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-32-post-object-op" "BC-32: POST object op"
   click t_BC_33 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-33-post-object-routes" "BC-33: POST object routes"
   click t_BC_34 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-34-post-recording-and-gate" "BC-34: POST recording and gate"
+  click t_BC_35 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-35-retitle-the-re-authorized-retries-exclusion" "BC-35: Retitle the re-authorized-retries exclusion"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
@@ -745,6 +752,7 @@ flowchart LR
 - [BC-32](B-bucket-config.md#task-bc-32-post-object-op): POST object op
 - [BC-33](B-bucket-config.md#task-bc-33-post-object-routes): POST object routes
 - [BC-34](B-bucket-config.md#task-bc-34-post-recording-and-gate): POST recording and gate
+- [BC-35](B-bucket-config.md#task-bc-35-retitle-the-re-authorized-retries-exclusion): Retitle the re-authorized-retries exclusion
 
 ### WP: write path
 
