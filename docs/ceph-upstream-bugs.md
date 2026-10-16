@@ -309,6 +309,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's otp check sends the otp_check request to otp_get_result](#radosgws-otp-check-sends-the-otp_check-request-to-otp_get_result) | pending | pending |  |
 | [radosgw writes a compressed part's stripes without the incompressible hint](#radosgw-writes-a-compressed-parts-stripes-without-the-incompressible-hint) | pending | pending |  |
 | [radosgw's retried PutBucketVersioning skips its object-lock and MFA delete checks](#radosgws-retried-putbucketversioning-skips-its-object-lock-and-mfa-delete-checks) | pending | pending |  |
+| [radosgw's GetPublicAccessBlock document lacks the S3 namespace](#radosgws-getpublicaccessblock-document-lacks-the-s3-namespace) | pending | pending | ✓ |
+| [radosgw stores false for a public access block setting it cannot find](#radosgw-stores-false-for-a-public-access-block-setting-it-cannot-find) | pending | pending | ✓ |
+| [radosgw's XML parser expands the entities a request body declares](#radosgws-xml-parser-expands-the-entities-a-request-body-declares) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15861,3 +15864,249 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V10, 2026-10-15, transcribing
   `RGWSetBucketVersioning::execute`; derived from the source, not
   reproduced.
+
+## radosgw's GetPublicAccessBlock document lacks the S3 namespace
+
+- **Kind:** defect, cosmetic: the document GetPublicAccessBlock sends
+  opens `PublicAccessBlockConfiguration` with no namespace, where radosgw's
+  other S3 documents, PolicyStatus among them, are in S3's. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_public_access.cc` is identical at the two tags.
+  - `dump_xml` opens its section through the `Formatter::ObjectSection`
+    constructor that takes no namespace, then writes each boolean with
+    `dump_bool`
+    ([rgw_public_access.cc:11-20](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L11-L20),
+    [rgw_public_access.cc:11-20](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L11-L20)),
+    and the op sends it after the XML declaration
+    ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624),
+    [rgw_rest_s3.cc:5124-5135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5124-L5135)).
+    XMLFormatter writes an `xmlns` only when a section is opened with one
+    ([Formatter.cc:615-634](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L615-L634),
+    [Formatter.cc:621-640](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L621-L640)).
+  - GetBucketPolicyStatus opens `PolicyStatus` in `XMLNS_AWS_S3`
+    ([rgw_rest_s3.cc:4593](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4593),
+    [rgw_rest_s3.cc:5104](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5104)),
+    and the AWS SDK for Go sends PutPublicAccessBlock's
+    `PublicAccessBlockConfiguration` in S3's namespace
+    ([api.go:39151](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L39151)).
+    That Amazon S3's GetPublicAccessBlock response carries the namespace is
+    expected, not verified here.
+  - Both documents' booleans are `dump_bool`'s lower-case `true` and
+    `false`
+    ([Formatter.h:97-100](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.h#L97-L100),
+    [Formatter.h:213-216](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.h#L213-L216)).
+    That is a quirk, not a defect: AWS's API reference writes `TRUE`, and
+    radosgw's comments on both documents say clients want lower case and
+    S3 sends it, on the block's
+    ([rgw_public_access.cc:13-15](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L13-L15),
+    [rgw_public_access.cc:13-15](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L13-L15))
+    and on PolicyStatus's
+    ([rgw_rest_s3.cc:4593-4597](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4593-L4597),
+    [rgw_rest_s3.cc:5104-5108](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5104-L5108)).
+- **Impact:** none for an SDK, which matches the response's elements by
+  local name; the AWS SDK for Go reads a boolean with `strconv.ParseBool`,
+  which takes either case
+  ([unmarshal.go:268](https://github.com/aws/aws-sdk-go/blob/v1.55.8/private/protocol/xml/xmlutil/unmarshal.go#L268)).
+  A namespace-aware consumer that looks for the elements in S3's namespace
+  finds none.
+- **Releases:** v19.2.7 and v20.2.4; `dump_xml` is unchanged on main at
+  7ed73efc1be.
+- **rgw-go:** mirrors it, so the two gateways' documents stay
+  byte-comparable: `acl.PublicAccessBlock.MarshalS3XML`
+  (`internal/acl/publicaccess.go`) writes the section with no namespace and
+  each boolean lower-case. rgw-go does not serve GetPublicAccessBlock or
+  GetBucketPolicyStatus yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 planning, 2026-10-13, from the source; confirmed by
+  task BC-17, 2026-10-15. Not reproduced.
+
+## radosgw stores false for a public access block setting it cannot find
+
+- **Kind:** defect, S3-correctness, possibly security-relevant at a low
+  level: a PutPublicAccessBlock document whose setting radosgw does not
+  find under the name it looks for stores that setting false and answers
+  200, so an owner who asked for a block is told it is set while it is off.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_xml.h`, `rgw_xml.cc` and `rgw_public_access.cc` are identical at
+  the two tags.
+  - `decode_xml` reads each of the four booleans as an optional field: its
+    four `RGWXMLDecoder::decode_xml` calls
+    ([rgw_public_access.cc:5-8](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L5-L8),
+    [rgw_public_access.cc:5-8](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L5-L8))
+    take the template's default, `mandatory = false`
+    ([rgw_xml.h:156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L156),
+    [rgw_xml.h:156](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L156)).
+    When the root has no child of that name, `RGWXMLDecoder::decode_xml`
+    sets the value to `T()`, false, and returns false, which the caller
+    ignores; when it has several, only the first is decoded
+    ([rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+    [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)).
+  - Children are found by their names as written: expat runs without
+    namespace processing
+    ([rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)),
+    and `find` looks the name up among them as a plain string
+    ([rgw_xml.cc:123-135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L123-L135),
+    [rgw_xml.cc:123-135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L123-L135)).
+    So `BlockPublicACLs`, `blockpublicacls`, and `s3:BlockPublicAcls` with
+    `s3` bound to S3's namespace, which a namespace-aware reader takes for
+    `BlockPublicAcls`, all miss. Nothing refuses a child the decode did not
+    use.
+  - The op then writes the block it decoded
+    ([rgw_op.cc:8646-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8646-L8673),
+    [rgw_op.cc:9614-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9614-L9641)),
+    and `<BlockPublicAcls>false</BlockPublicAcls><BlockPublicAcls>true</BlockPublicAcls>`
+    stores false.
+  - Amazon S3 answers MalformedXML to "XML that doesn't conform to the
+    published XSD" for a configuration (S3's error list as the AWS SDK for
+    Go carries it,
+    [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
+    That it refuses these documents is expected, not verified here.
+- **Impact:** the block exists to stop public ACLs and policies on a
+  bucket. A client that misspells a setting's name or prefixes it leaves
+  that setting off and is told it succeeded; a GetPublicAccessBlock shows
+  the false. SDK-built documents name the elements correctly and are
+  unaffected. The registry's tagging entry, "radosgw reads a tagging body
+  whose root is not Tagging as an empty tag set", is the same optional
+  lookup one level up.
+- **Releases:** v19.2.7 and v20.2.4; `decode_xml` and the parser are
+  unchanged on main at 7ed73efc1be.
+- **rgw-go:** differs: `acl.ParsePublicAccessBlockXML`
+  (`internal/acl/publicaccess.go`) answers each such document 400
+  MalformedXML (docs/exclusions.md, "A PutPublicAccessBlock document is
+  held to S3's schema").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-17, 2026-10-15, reading `decode_xml` for
+  rgw-go's parser of the block. Derived from the source, not reproduced.
+
+## radosgw's XML parser expands the entities a request body declares
+
+- **Kind:** defect, possibly security-relevant (anonymous resource
+  amplification): a request body that radosgw reads as XML may carry a
+  document type declaration, and expat expands the entities it declares
+  into memory, bounded only by expat's own amplification limit, about 100
+  times the input. Ops parse a client's XML before they authorize it, two
+  at v19.2.7 and three at v20.2.4, so an anonymous client reaches the
+  expansion on any existing bucket.
+  Unreproduced on radosgw: derived from the source, with expat's reading
+  checked in the floors' own expat.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_xml.cc` is identical at the two tags.
+  - `RGWXMLParser` creates its parser with `XML_ParserCreate(nullptr)` and
+    sets only the element and character-data handlers and its user data
+    ([rgw_xml.cc:155-159](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L155-L159),
+    [rgw_xml.cc:155-159](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L155-L159);
+    [rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L213-L223),
+    [rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L213-L223)):
+    no entity-declaration handler that could stop at a DTD, and no
+    amplification setting of its own.
+  - Every piece of character data, expanded entities included, is appended
+    to its element's `data`
+    ([rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L83-L87),
+    [rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L83-L87)),
+    which lives until the parser is destroyed
+    ([rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L161-L172),
+    [rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L161-L172)).
+  - The floors link expat 2.5.0: the quay.io/ceph/ceph:v19.2.7 image holds
+    expat-2.5.0-9.el9 beside ceph-radosgw-19.2.7-0.el9, and v20.2.4's
+    expat-2.5.0-7.el9 beside ceph-radosgw-20.2.4-0.el9. With
+    `RGWXMLParser`'s handlers set, each image's own expat expands an
+    internal entity and loads no external one. A 1,020,326-byte body whose
+    340,000 references each name a 290-character entity parses and delivers
+    98,600,000 characters, 96.6 times its size. A 4,194,296-byte body of
+    the same shape delivers 405,417,100. At 400 characters expat stops with
+    "limit on input amplification factor (from DTD and entities) breached".
+    So expat bounds the expansion at about 100 times the input once it
+    passes its 8 MiB activation threshold, and no tighter.
+  - Authentication, anonymous included, comes first (`verify_requester`,
+    [rgw_process.cc:345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L345),
+    [rgw_process.cc:347](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L347)),
+    then the bucket's load (`init_permissions`,
+    [rgw_process.cc:174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L174),
+    [rgw_process.cc:174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L174)),
+    then the op's `init_processing`
+    ([rgw_process.cc:202](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L202),
+    [rgw_process.cc:202](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L202)),
+    and only then its `verify_permission`
+    ([rgw_process.cc:225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225),
+    [rgw_process.cc:225](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225)).
+    Three ops parse the client's XML in `init_processing`:
+    - PutBucketNotificationConfiguration, at both tags:
+      `RGWPSCreateNotifOp::init_processing` calls `get_params_from_body`
+      ([rgw_rest_pubsub.cc:1205-1215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_pubsub.cc#L1205-L1215),
+      [rgw_rest_pubsub.cc:1217-1227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1217-L1227)),
+      which reads up to `rgw_max_put_param_size`, 1 MiB by default, and
+      parses it
+      ([rgw_rest_pubsub.cc:1155-1188](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_pubsub.cc#L1155-L1188),
+      [rgw_rest_pubsub.cc:1166-1199](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1166-L1199)).
+    - POST object's `tagging` field, at both tags:
+      `RGWPostObj::init_processing` calls `get_params`
+      ([rgw_op.cc:4576-4580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4576-L4580),
+      [rgw_op.cc:4869-4873](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4869-L4873)),
+      which calls `get_policy` and then `get_tags`
+      ([rgw_rest_s3.cc:3063-3069](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3063-L3069),
+      [rgw_rest_s3.cc:3202-3208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3202-L3208)),
+      and `get_tags` parses the field with `RGWXMLParser`
+      ([rgw_rest_s3.cc:3080-3094](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3080-L3094),
+      [rgw_rest_s3.cc:3216-3230](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3216-L3230)).
+      A form with no `policy` field is logged "No attached policy found!"
+      and goes on as its requester, anonymous when it carries no
+      credentials
+      ([rgw_rest_s3.cc:3238-3240](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3238-L3240),
+      [rgw_rest_s3.cc:3374-3376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3374-L3376)).
+      Each field is read up to `rgw_max_chunk_size`
+      ([rgw_rest_s3.cc:2962-2963](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2962-L2963),
+      [rgw_rest_s3.cc:3088-3089](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3088-L3089)),
+      4 MiB by default
+      ([rgw.yaml.in:84-95](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L84-L95),
+      [rgw.yaml.in:84-98](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L84-L98)).
+    - RestoreObject, at v20.2.4 only, which v19.2.7 lacks:
+      `RGWRestoreObj::init_processing` calls `get_params`
+      ([rgw_op.cc:5417-5425](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5417-L5425)),
+      which reads up to `rgw_max_put_param_size` and parses it
+      ([rgw_rest_s3.cc:3583-3608](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3583-L3608)).
+  - Every other `RGWXMLParser` user shares the expansion after
+    authorization: the client bodies of PutPublicAccessBlock, which reads
+    up to `rgw_max_put_param_size`
+    ([rgw_op.cc:8626-8631](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8626-L8631),
+    [rgw_op.cc:9594-9599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9594-L9599)),
+    and every other op that reads an XML body, through `RGWXMLParser` or a
+    parser derived from it, such as DeleteObjects'
+    ([rgw_multi_del.h:62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi_del.h#L62),
+    [rgw_multi_del.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi_del.h#L62))
+    and CompleteMultipartUpload's
+    ([rgw_multi.h:55](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi.h#L55),
+    [rgw_multi.h:55](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi.h#L55)). So do the
+    server-side parses of a remote server's response: the cloud-transition
+    client's multipart-init response
+    ([rgw_lc_tier.cc:910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_lc_tier.cc#L910),
+    [rgw_lc_tier.cc:1155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_lc_tier.cc#L1155)),
+    the AWS sync module's
+    ([rgw_sync_module_aws.cc:1223](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L1223),
+    [rgw_sync_module_aws.cc:1221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L1221)),
+    and, at v20.2.4, `parse_aws_s3_error`
+    ([rgw_op.cc:125-145](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L125-L145)).
+- **Impact:** an anonymous client can make radosgw hold about 100 MB for
+  each 1 MiB PutBucketNotificationConfiguration body, or about 400 MB for
+  each POST object whose 4 MiB `tagging` field carries such a DTD, while
+  the request runs, on any existing bucket and before any authorization;
+  concurrent requests add up. An authenticated client reaches the same
+  bound through every other XML body, and a remote endpoint through its
+  responses. An expat without that amplification limit lets a few hundred
+  bytes of nested entities expand without bound; which expat a deployment
+  links depends on its build. Whether Amazon S3 refuses a DTD was not
+  checked.
+- **Releases:** v19.2.7 and v20.2.4; on main at 7ed73efc1be `rgw_xml.cc`
+  differs only in its editor mode lines.
+- **rgw-go:** unaffected. Go's `encoding/xml` expands no entity a DTD
+  declares and refuses a reference to one (docs/exclusions.md, "S3 XML
+  request bodies are read with Go's `encoding/xml`, not expat"), and
+  `acl.ParsePublicAccessBlockXML` refuses a DTD outright
+  (docs/exclusions.md, "A PutPublicAccessBlock document is held to S3's
+  schema").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-17, 2026-10-15, recording what radosgw does
+  with a DTD in a PutPublicAccessBlock body; its bound and its
+  pre-authorization reach corrected by the task's review the same day.

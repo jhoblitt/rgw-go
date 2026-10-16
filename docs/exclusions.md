@@ -2485,6 +2485,82 @@ following.
   whitespace; a malformed document type declaration, which Go's decoder
   passes through unparsed; and a character reference to a surrogate code
   point, which Go's decoder reads as U+FFFD.
+- **A PutPublicAccessBlock document is held to S3's schema.** radosgw
+  looks up a mandatory `PublicAccessBlockConfiguration` root and its four
+  optional booleans, and answers 400 MalformedXML only to a body expat
+  cannot parse or one without that root
+  ([rgw_op.cc:8646-8658](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8646-L8658),
+  [rgw_op.cc:9614-9626](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9614-L9626);
+  [rgw_public_access.cc:4-9](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L4-L9),
+  [rgw_public_access.cc:4-9](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L4-L9)).
+  Past that it reads the body leniently. It ignores an element it does not
+  know, so a misspelled `BlockPublicACLs` or a prefixed `s3:BlockPublicAcls`
+  leaves that boolean false while the request answers 200
+  (docs/ceph-upstream-bugs.md, "[radosgw stores false for a public access
+  block setting it cannot
+  find](ceph-upstream-bugs.md#radosgw-stores-false-for-a-public-access-block-setting-it-cannot-find)").
+  Of a repeated boolean it reads the first and never decodes the others
+  ([rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+  [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)).
+  It ignores attributes, `xmlns` among them, so any namespace is taken,
+  and text between the elements. It expands the entities a document type
+  declaration declares (docs/ceph-upstream-bugs.md, "[radosgw's XML parser
+  expands the entities a request body
+  declares](ceph-upstream-bugs.md#radosgws-xml-parser-expands-the-entities-a-request-body-declares)").
+  It reads a boolean as `true` or `false` in any ASCII case, or else as a
+  decimal integer with whitespace around it, non-zero for true
+  ([rgw_xml.cc:392-406](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L392-L406),
+  [rgw_xml.cc:392-406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L392-L406);
+  [rgw_xml.cc:282-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L282-L308),
+  [rgw_xml.cc:282-308](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L282-L308)).
+  Amazon S3 answers MalformedXML to "XML that doesn't conform to the
+  published XSD" for a configuration, and its PutPublicAccessBlock takes a
+  required root in S3's namespace holding four booleans (S3's error list
+  and the operation's input as the AWS SDK for Go carries them,
+  [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221),
+  [api.go:39151](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L39151),
+  [api.go:33710-33751](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L33710-L33751)).
+  AWS's answer to each case below was not checked against Amazon S3
+  itself. rgw-go answers 400 MalformedXML (`acl.ParsePublicAccessBlockXML`,
+  `internal/acl/publicaccess.go`) to:
+  - a document type declaration, or any other `<!` declaration;
+  - a root other than an unprefixed `PublicAccessBlockConfiguration`, or a
+    second root;
+  - under the root, an element other than the four booleans, a prefixed
+    one even when its prefix is bound to S3's namespace, an element inside
+    a boolean, and a repeated boolean;
+  - an attribute other than an `xmlns` naming S3's namespace or none,
+    prefix declarations included;
+  - text other than XML whitespace (space, tab, carriage return and line
+    feed) outside a boolean;
+  - an integer other than `1` or `0` as a boolean, such as `2`, `-7`, `+0`
+    or `01`, which radosgw's integer fallback reads, non-zero as true, and
+    which no schema gives a boolean meaning. rgw-go reads `true` and
+    `false` in any ASCII case, as radosgw does and as AWS's reference
+    writes `TRUE`, and `1` or `0` with XML whitespace around it, as
+    xs:boolean and radosgw both read them. It refuses whitespace around
+    `true` or `false`, as radosgw does. Both read a value with its
+    references and CDATA sections decoded and its comments and processing
+    instructions dropped;
+  - a boolean whose text, once decoded, is longer than 64 bytes, which
+    radosgw reads when it is `1` or `0` inside whitespace;
+  - a body longer than 1 MiB, `rgw_max_put_param_size`'s default
+    ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145),
+    [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)).
+    radosgw's op reads the body with that option as its `max_len` and
+    refuses a Content-Length over it unread, `-ERANGE`
+    ([rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1556-L1558),
+    [rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1558)),
+    which it answers 416 InvalidRange
+    ([rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
+    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)),
+    so under the default the parser's limit is never reached. Under a
+    raised option radosgw reads a longer document, and rgw-go refuses it.
+
+  The refusal comes at the first token that breaks a rule, so a hostile
+  document costs no more than its offending prefix. A document an SDK sends
+  reads alike on both gateways, and both store the block in the same
+  `user.rgw.public-access` encoding.
 - **A NUL in a request argument that names a RADOS object is refused.**
   radosgw refuses a NUL only in the decoded path (`ERR_ZERO_IN_URL`,
   `rgw_rest.cc:2182-2186` at v19.2.6, `:2204-2208` at v20.2.4). A `%00`
