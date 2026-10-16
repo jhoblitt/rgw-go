@@ -670,12 +670,17 @@ func bucketACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 }
 
 // objectACL is verify_object_permission_no_policy
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1560-L1608 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1560-L1608 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1614-L1671 at v20.2.4):
 // a grant of the object's ACL within the permission mask, matched with no
 // referer, or with rgw_enforce_swift_acls the Swift container flags of the
 // bucket's ACL, which only a Swift client writes. Deferring to the bucket's
-// ACLs is Swift's alone.
+// ACLs is Swift's alone. IgnorePublicAcls sets the public grants of both
+// ACLs aside, where radosgw's fallback, bucket_acl.verify_permission for
+// swift_perm, leaves it off
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656 at v20.2.4;
+// docs/exclusions.md).
 func (e *Evaluator) objectACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 	mask := id.PermMask()
 	if c.object.Verify(id, mask, c.perm, "", c.ignorePublicACLs()) {
@@ -691,7 +696,7 @@ func (e *Evaluator) objectACL(r *op.Request, id identity, c *check) (ok bool, ru
 	if c.perm&acl.PermWrite != 0 {
 		swift |= acl.PermWriteObjs
 	}
-	if swift != 0 && c.bucket.acl.Verify(id, swift, swift, referer(r), false) {
+	if swift != 0 && c.bucket.acl.Verify(id, swift, swift, referer(r), c.ignorePublicACLs()) {
 		return true, "bucket acl swift flags"
 	}
 	return false, "object acl"

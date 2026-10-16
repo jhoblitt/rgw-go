@@ -1,6 +1,8 @@
 package acl_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -396,8 +398,14 @@ var _ = Describe("Policy.Verify", func() {
 			[]acl.Grant{refererGrant(".example.com", acl.PermRead)}, "https://example.com/", false, false),
 		Entry("a request without a Referer does not",
 			[]acl.Grant{refererGrant(".example.com", acl.PermRead)}, "", false, false),
-		Entry("IgnorePublicAcls leaves referer grants in force",
-			[]acl.Grant{refererGrant(".example.com", acl.PermRead)}, "https://a.example.com/x", true, true),
+		Entry("IgnorePublicAcls sets a grant to one domain aside",
+			[]acl.Grant{refererGrant(".example.com", acl.PermRead)}, "https://a.example.com/x", true, false),
+		Entry("IgnorePublicAcls sets an exact host's grant aside",
+			[]acl.Grant{refererGrant("example.com", acl.PermRead)}, "https://example.com/", true, false),
+		Entry("IgnorePublicAcls sets the wildcard aside for a request with a Referer",
+			[]acl.Grant{refererGrant("*", acl.PermRead)}, "https://example.com/", true, false),
+		Entry("IgnorePublicAcls sets the wildcard aside for a request without one",
+			[]acl.Grant{refererGrant("*", acl.PermRead)}, "", true, false),
 		Entry("the wildcard reads without a Referer, through the AllUsers group it registers",
 			[]acl.Grant{refererGrant("*", acl.PermRead)}, "", false, true),
 		Entry("a matching negative grant revokes what AllUsers gave",
@@ -421,22 +429,212 @@ var _ = Describe("Policy.Verify", func() {
 		Expect(p.Verify(carol, acl.PermFullControl, acl.PermRead, "", false)).To(BeTrue(), "carol, of the account")
 		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "", false)).To(BeFalse(), "bob, of no account")
 	})
+	It("answers under IgnorePublicAcls as for a request without a Referer, a negative grant's revoked flags included", func() {
+		// The client chooses whether to send a Referer, so a request that
+		// leaves out the one a negative grant matches gets what that grant
+		// revokes in any case.
+		p := alicesPolicy(userGrant("bob", acl.PermRead), refererGrant(".evil.com", 0))
+		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "https://x.evil.com/", false)).
+			To(BeFalse(), "the negative grant revokes bob's READ")
+		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "", false)).
+			To(BeTrue(), "bob reads without the Referer it matches")
+		Expect(p.Verify(bob, acl.PermFullControl, acl.PermRead, "https://x.evil.com/", true)).
+			To(BeTrue(), "under IgnorePublicAcls, as without the Referer")
+	})
+})
+
+// swiftContainer is the policy rgw::swift::create_container_policy builds
+// for alice's container from an X-Container-Read list of .r: items, each
+// given by its spec
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L172-L208 at v19.2.7 and v20.2.4):
+// create_default's FULL_CONTROL grant to alice, then a referer grant of
+// READ_OBJS for each spec, or of nothing for a spec starting with "-"
+// (referrer_to_grant,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L57-L96 at v19.2.7 and v20.2.4).
+func swiftContainer(specs ...string) acl.Policy {
+	grants := []acl.Grant{userGrant("alice", acl.PermFullControl)}
+	for _, s := range specs {
+		perm := acl.PermReadObjs
+		if spec, negative := strings.CutPrefix(s, "-"); negative {
+			s, perm = spec, acl.PermNone
+		}
+		grants = append(grants, refererGrant(s, perm))
+	}
+	return alicesPolicy(grants...)
+}
+
+var _ = Describe("a Swift container's referer grants", func() {
+	// The Swift fallback of verify_object_permission_no_policy asks the
+	// bucket's ACL for READ_OBJS with the request's Referer
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656 at v20.2.4);
+	// the bucket check asks for READ.
+	DescribeTable("for the anonymous user",
+		func(p acl.Policy, perm acl.Permission, referer string, ignorePublicACLs, want bool) {
+			Expect(p.Verify(anonymous, perm, perm, referer, ignorePublicACLs)).
+				To(Equal(want), "perm %#x, referer %q, IgnorePublicAcls %t", perm, referer, ignorePublicACLs)
+		},
+		Entry(".r:* gives an object read without a Referer",
+			swiftContainer("*"), acl.PermReadObjs, "", false, true),
+		Entry(".r:* gives an object read with a Referer",
+			swiftContainer("*"), acl.PermReadObjs, "http://example.com/", false, true),
+		Entry(".r:* gives a listing with a Referer",
+			swiftContainer("*"), acl.PermRead, "http://example.com/", false, true),
+		Entry(".r:* gives no object read under IgnorePublicAcls, without a Referer",
+			swiftContainer("*"), acl.PermReadObjs, "", true, false),
+		Entry(".r:* gives no object read under IgnorePublicAcls, with a Referer",
+			swiftContainer("*"), acl.PermReadObjs, "http://example.com/", true, false),
+		Entry(".r:* gives no listing under IgnorePublicAcls, with a Referer",
+			swiftContainer("*"), acl.PermRead, "http://example.com/", true, false),
+		Entry(".r:.example.com gives an object read to a matching Referer",
+			swiftContainer(".example.com"), acl.PermReadObjs, "http://a.example.com/", false, true),
+		Entry(".r:.example.com gives no object read under IgnorePublicAcls",
+			swiftContainer(".example.com"), acl.PermReadObjs, "http://a.example.com/", true, false),
+		Entry(".r:.example.com gives no listing under IgnorePublicAcls",
+			swiftContainer(".example.com"), acl.PermRead, "http://a.example.com/", true, false),
+	)
+
+	It("leave the answer under IgnorePublicAcls the same whatever the Referer", func() {
+		policies := map[string]acl.Policy{
+			".r:*":                        swiftContainer("*"),
+			".r:.example.com":             swiftContainer(".example.com"),
+			".r:*,.r:-.evil.com":          swiftContainer("*", "-.evil.com"),
+			"bob READ, .r:-.evil.com":     alicesPolicy(userGrant("bob", acl.PermRead), refererGrant(".evil.com", 0)),
+			"AllUsers READ, .r:-evil.com": alicesPolicy(groupGrant(acl.GroupAllUsers, acl.PermRead), refererGrant("evil.com", 0)),
+		}
+		ids := map[string]fakeIdentity{"alice": alice, "bob": bob, "anonymous": anonymous, "carol": carol}
+		perms := []acl.Permission{acl.PermRead, acl.PermWrite, acl.PermReadACP, acl.PermWriteACP, acl.PermReadObjs, acl.PermWriteObjs}
+		referers := []string{"http://example.com/", "http://a.example.com/", "http://x.evil.com/", "http://evil.com/"}
+		for name, p := range policies {
+			for who, id := range ids {
+				for _, perm := range perms {
+					want := p.Verify(id, acl.PermFullControl|perm, perm, "", true)
+					for _, ref := range referers {
+						Expect(p.Verify(id, acl.PermFullControl|perm, perm, ref, true)).
+							To(Equal(want), "%s, %s, perm %#x, referer %q", name, who, perm, ref)
+					}
+				}
+			}
+		}
+	})
 })
 
 var _ = Describe("Policy.IsPublic", func() {
-	DescribeTable("is whether AllUsers or AuthenticatedUsers holds any S3 flag",
-		func(grants []acl.Grant, want bool) {
-			Expect(alicesPolicy(grants...).IsPublic()).To(Equal(want))
+	DescribeTable("is whether the ACL holds a grant IgnorePublicAcls sets aside",
+		func(p acl.Policy, want bool) {
+			Expect(p.IsPublic()).To(Equal(want), "group map %v, referers %v", p.ACL.GroupMap, p.ACL.RefererList)
 		},
-		Entry("AllUsers READ", []acl.Grant{groupGrant(acl.GroupAllUsers, acl.PermRead)}, true),
-		Entry("AuthenticatedUsers WRITE", []acl.Grant{groupGrant(acl.GroupAuthenticatedUsers, acl.PermWrite)}, true),
-		Entry("the wildcard referer, registered as AllUsers", []acl.Grant{refererGrant("*", acl.PermRead)}, true),
+		Entry("AllUsers READ", alicesPolicy(groupGrant(acl.GroupAllUsers, acl.PermRead)), true),
+		Entry("AuthenticatedUsers WRITE", alicesPolicy(groupGrant(acl.GroupAuthenticatedUsers, acl.PermWrite)), true),
+		Entry("the wildcard referer, registered as AllUsers", alicesPolicy(refererGrant("*", acl.PermRead)), true),
+		Entry("AllUsers with only Swift's READ_OBJS",
+			alicesPolicy(groupGrant(acl.GroupAllUsers, acl.PermReadObjs)), true),
+		Entry("AuthenticatedUsers with only Swift's WRITE_OBJS",
+			alicesPolicy(groupGrant(acl.GroupAuthenticatedUsers, acl.PermWriteObjs)), true),
+		Entry("AllUsers with only flags beyond Swift's",
+			alicesPolicy(groupGrant(acl.GroupAllUsers, acl.PermInvalid)), true),
+		Entry("Swift's .r:*", swiftContainer("*"), true),
+		Entry("only a referer grant to one domain", swiftContainer(".example.com"), true),
+		Entry("only a negative referer grant", swiftContainer("-.evil.com"), true),
+		Entry("the owner's default", alicesDefault(), false),
 		Entry("only user and email grants",
-			[]acl.Grant{userGrant("alice", acl.PermFullControl), emailGrant("b@example.com", acl.PermRead)}, false),
-		Entry("a group grant with no flags", []acl.Grant{groupGrant(acl.GroupAllUsers, 0)}, false),
-		Entry("AllUsers with only Swift's container flags",
-			[]acl.Grant{groupGrant(acl.GroupAllUsers, acl.PermReadObjs|acl.PermWriteObjs)}, false),
+			alicesPolicy(userGrant("alice", acl.PermFullControl), emailGrant("b@example.com", acl.PermRead)), false),
+		Entry("a user grant of Swift's flags",
+			alicesPolicy(userGrant("bob", acl.PermReadObjs|acl.PermWriteObjs)), false),
+		Entry("a group grant with no flags", alicesPolicy(groupGrant(acl.GroupAllUsers, 0)), false),
+		Entry("a grant to no group, with every flag",
+			alicesPolicy(groupGrant(acl.GroupNone, acl.PermFullControl|acl.PermReadObjs|acl.PermWriteObjs)), false),
+		Entry("an unknown grantee with every flag",
+			alicesPolicy(acl.Grant{Type: acl.GranteeUnknown, Permission: acl.PermFullControl}), false),
 	)
+
+	It("calls private only an ACL every answer of which IgnorePublicAcls leaves as it is", func() {
+		private := map[string]acl.Policy{
+			"the owner's default":         alicesDefault(),
+			"no grant":                    alicesPolicy(),
+			"user and email grants":       alicesPolicy(userGrant("bob", acl.PermRead), emailGrant("b@example.com", acl.PermWrite)),
+			"a user grant of Swift flags": alicesPolicy(userGrant("bob", acl.PermReadObjs|acl.PermWriteObjs)),
+			"an account grant":            alicesPolicy(userGrant("RGW12345678901234567", acl.PermFullControl)),
+			"group grants of nothing":     alicesPolicy(groupGrant(acl.GroupAllUsers, 0), groupGrant(acl.GroupAuthenticatedUsers, 0)),
+			"a grant to no group":         alicesPolicy(groupGrant(acl.GroupNone, acl.PermFullControl)),
+		}
+		ids := map[string]fakeIdentity{"alice": alice, "bob": bob, "anonymous": anonymous, "carol": carol}
+		perms := []acl.Permission{
+			acl.PermRead, acl.PermWrite, acl.PermReadACP, acl.PermWriteACP, acl.PermFullControl,
+			acl.PermReadObjs, acl.PermWriteObjs, acl.PermInvalid,
+		}
+		referers := []string{"", "http://example.com/", "http://a.example.com/"}
+		for name, p := range private {
+			Expect(p.IsPublic()).To(BeFalse(), name)
+			for who, id := range ids {
+				for _, perm := range perms {
+					for _, ref := range referers {
+						Expect(p.Verify(id, perm, perm, ref, true)).To(Equal(p.Verify(id, perm, perm, ref, false)),
+							"%s, %s, perm %#x, referer %q", name, who, perm, ref)
+					}
+				}
+			}
+		}
+	})
+
+	It("answers as radosgw's is_public for every ACL an S3 request builds", func(ctx SpecContext) {
+		// is_public masks the public groups' flags with FULL_CONTROL
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247 at v19.2.7 and v20.2.4);
+		// an S3 request can name no other flag and no referer.
+		radosgwIsPublic := func(p acl.Policy) bool {
+			return p.ACL.GroupPerm(acl.GroupAllUsers, acl.PermFullControl) != acl.PermNone ||
+				p.ACL.GroupPerm(acl.GroupAuthenticatedUsers, acl.PermFullControl) != acl.PermNone
+		}
+		built := map[string]acl.Policy{}
+		for _, canned := range []string{
+			"", "private", "public-read", "public-read-write", "authenticated-read",
+			"bucket-owner-read", "bucket-owner-full-control",
+		} {
+			for _, owner := range []acl.Owner{aliceOwner, bobOwner, {ID: "anonymous"}} {
+				p, err := acl.Canned(owner, aliceOwner, canned)
+				Expect(err).NotTo(HaveOccurred(), "canned %q", canned)
+				built["canned "+canned+" by "+owner.ID] = p
+			}
+		}
+		headers := map[string]func(*acl.GrantHeaders, string){
+			"x-amz-grant-read":         func(h *acl.GrantHeaders, v string) { h.Read = v },
+			"x-amz-grant-write":        func(h *acl.GrantHeaders, v string) { h.Write = v },
+			"x-amz-grant-read-acp":     func(h *acl.GrantHeaders, v string) { h.ReadACP = v },
+			"x-amz-grant-write-acp":    func(h *acl.GrantHeaders, v string) { h.WriteACP = v },
+			"x-amz-grant-full-control": func(h *acl.GrantHeaders, v string) { h.FullControl = v },
+		}
+		uris := []string{acl.URIAllUsers, acl.URIAuthenticatedUsers}
+		items := []string{`id="bob"`, `emailAddress="c@x"`, `uri="` + uris[0] + `"`, `uri="` + uris[1] + `"`}
+		for name, set := range headers {
+			for _, item := range items {
+				var h acl.GrantHeaders
+				set(&h, item)
+				p, err := acl.FromHeaders(ctx, newResolver(), aliceOwner, h)
+				Expect(err).NotTo(HaveOccurred(), "%s: %s", name, item)
+				built[name+": "+item] = p
+			}
+		}
+		for _, perm := range []string{"READ", "WRITE", "READ_ACP", "WRITE_ACP", "FULL_CONTROL", "read"} {
+			for _, uri := range uris {
+				doc := aclDoc(xmlGrant("CanonicalUser", "<ID>alice</ID>", "FULL_CONTROL"),
+					xmlGrant("Group", "<URI>"+uri+"</URI>", perm))
+				p, err := acl.ParseS3XML(ctx, newResolver(), []byte(doc))
+				Expect(err).NotTo(HaveOccurred(), doc)
+				built["xml "+perm+" to "+uri] = p
+			}
+		}
+		var public, private int
+		for name, p := range built {
+			want := radosgwIsPublic(p)
+			Expect(p.IsPublic()).To(Equal(want), name)
+			if want {
+				public++
+			} else {
+				private++
+			}
+		}
+		Expect([]int{public, private}).To(HaveEach(BeNumerically(">", 0)), "public and private ACLs among those built")
+	})
 })
 
 var _ = Describe("List.GroupPerm", func() {

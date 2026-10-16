@@ -22,27 +22,30 @@ type Identity interface {
 }
 
 // Perm is RGWAccessControlPolicy::get_perm
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L160-L199):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L160-L199 at v19.2.7 and v20.2.4):
 // the flags of mask the policy grants id. They are the user map's flags for
 // id and the ACL flags for the owner; while they fall short of mask, the
-// AllUsers group's unless ignorePublicACLs, and the AuthenticatedUsers
-// group's unless that too or id is anonymous; and while those still fall
-// short, for a request with a Referer, RefererPerm replaces them. An empty
-// referer stands for radosgw's absent header: an empty one names no host, so
-// it could change nothing.
+// AllUsers group's, and the AuthenticatedUsers group's unless id is
+// anonymous; and while those still fall short, for a request with a Referer,
+// RefererPerm replaces them. An empty referer stands for radosgw's absent
+// header: an empty one names no host, so it could change nothing.
+//
+// ignorePublicACLs, IgnorePublicAcls, sets aside both groups and every
+// referer grant. The client chooses the Referer, so a referer grant is a
+// grant to everyone; and a negative one revokes nothing from a request that
+// leaves the header out. radosgw reads the referer grants whatever
+// IgnorePublicAcls says (docs/exclusions.md).
 func (p Policy) Perm(id Identity, mask Permission, referer string, ignorePublicACLs bool) Permission {
 	perm := mask & id.PermsFromACLSpec(p.ACL.UserMap)
 	if id.IsOwnerOf(p.Owner.ID) {
 		perm |= mask & (PermReadACP | PermWriteACP)
 	}
-	if perm == mask {
+	if perm == mask || ignorePublicACLs {
 		return perm
 	}
-	if !ignorePublicACLs && perm&mask != mask {
-		perm |= p.ACL.GroupPerm(GroupAllUsers, mask)
-		if !id.IsAnonymous() {
-			perm |= p.ACL.GroupPerm(GroupAuthenticatedUsers, mask)
-		}
+	perm |= p.ACL.GroupPerm(GroupAllUsers, mask)
+	if !id.IsAnonymous() {
+		perm |= p.ACL.GroupPerm(GroupAuthenticatedUsers, mask)
 	}
 	if referer != "" && perm&mask != mask {
 		perm = p.ACL.RefererPerm(perm, referer, mask)
@@ -68,15 +71,20 @@ func (p Policy) Verify(id Identity, userPermMask, perm Permission, referer strin
 }
 
 // IsPublic is RGWAccessControlPolicy::is_public
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L235-L247):
-// whether the AllUsers or the AuthenticatedUsers group holds any S3 flag.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247 at v19.2.7 and v20.2.4)
+// as Amazon S3 judges an ACL, public when "it grants any permissions to
+// members of the predefined AllUsers or AuthenticatedUsers groups"
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status):
+// whether the group map gives either group any flag, Swift's included, or
+// the ACL holds a referer grant. Those are what Perm sets aside under
+// IgnorePublicAcls, so an ACL this calls private is one IgnorePublicAcls
+// leaves as it is. radosgw counts only the S3 flags, and so calls a Swift
+// container opened with .r:* private (docs/exclusions.md); an ACL an S3
+// request builds holds no other flag and no referer grant, and the two agree
+// on it.
 func (p Policy) IsPublic() bool {
-	for _, g := range []uint32{GroupAllUsers, GroupAuthenticatedUsers} {
-		if perm := p.ACL.GroupPerm(g, PermFullControl); perm != PermNone && perm != PermInvalid {
-			return true
-		}
-	}
-	return false
+	return p.ACL.GroupMap[GroupAllUsers] != 0 || p.ACL.GroupMap[GroupAuthenticatedUsers] != 0 ||
+		len(p.ACL.RefererList) > 0
 }
 
 // DefaultPolicy is RGWAccessControlPolicy::create_default
