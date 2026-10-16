@@ -1,0 +1,23 @@
+{
+    "CORSRule": {
+        "ID": "",
+        "MaxAgeSeconds": 4294967295,
+        "AllowedMethod": 1,
+        "AllowedOrigin": [
+            "*"
+        ],
+        "AllowedHeader": [
+            "-",
+            "1",
+            "a",
+            "d",
+            "e",
+            "h",
+            "m",
+            "r",
+            "t",
+            "x",
+            "z"
+        ],
+        "ExposeHeader": []
+    }

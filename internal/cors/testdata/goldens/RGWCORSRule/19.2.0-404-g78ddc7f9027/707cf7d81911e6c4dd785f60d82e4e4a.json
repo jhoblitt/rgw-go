@@ -1,0 +1,9 @@
+{
+    "CORSRule": {
+        "ID": "",
+        "MaxAgeSeconds": 4294967295,
+        "AllowedMethod": 0,
+        "AllowedOrigin": [],
+        "AllowedHeader": [],
+        "ExposeHeader": []
+    }
