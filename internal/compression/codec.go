@@ -17,8 +17,12 @@ const (
 )
 
 var (
-	// ErrUnknownCodec is a compression_type with no decoder here. radosgw
-	// logs "Cannot load compressor of type" and fails the read with EIO.
+	// ErrUnknownCodec is a compression_type with no decoder or encoder here.
+	// On a read radosgw logs "Cannot load compressor of type" and fails it
+	// with EIO. On a write it logs "Cannot load plugin for compression type"
+	// and stores the object uncompressed
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4360-L4372 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4576-L4588 at v20.2.4).
 	ErrUnknownCodec = errors.New("compression: unknown codec")
 	// ErrCorrupt is a stored block or block map that does not decode. A block
 	// that radosgw's decompress refuses as well is also a *DecodeError; one
