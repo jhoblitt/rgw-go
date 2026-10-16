@@ -296,9 +296,21 @@ func (s *Store) NewTailWriterForTest(ctx context.Context, rec *op.BucketRecord, 
 	return &TailWriter{tw: s.newTailWriter(&m, l), m: &m}, nil
 }
 
-// Consume is consume.
+// Consume is consume of body's plaintext stage under rgw_max_put_size, with h
+// its sink, stored as it is.
 func (t *TailWriter) Consume(ctx context.Context, body io.Reader, size int64, h hash.Hash) (head []byte, n uint64, err error) {
-	return t.tw.consume(ctx, body, size, h)
+	return t.tw.consume(ctx, storeAsIs(newPlaintext(body, t.tw.s.w.opts.maxPutSize, t.tw.s.w.opts.chunkSize, h)), size)
+}
+
+// SetIncompressibleForTest marks the writer's data as compressed, as a
+// compressing write's stored stage does.
+func (t *TailWriter) SetIncompressibleForTest() { t.tw.incompressible = true }
+
+// PlaintextForTest is newPlaintext over body, held to limit in reads of
+// chunk: the stage reader and a count of the bytes it has passed.
+func PlaintextForTest(body io.Reader, limit, chunk uint64, sinks ...io.Writer) (io.Reader, func() uint64) {
+	p := newPlaintext(body, limit, chunk, sinks...)
+	return p, func() uint64 { return p.n }
 }
 
 // Drain is drain.
@@ -410,6 +422,7 @@ type HeadWriteForTest struct {
 	Category             uint8
 	CompleteMultipart    bool
 	Size, AccountedSize  uint64
+	Incompressible       bool
 }
 
 // WriteMetaForTest is writeMeta of hw in rec's bucket through x; it returns
@@ -418,7 +431,7 @@ func (s *Store) WriteMetaForTest(ctx context.Context, rec *op.BucketRecord, hw H
 	res, err := s.writeMeta(ctx, &headWrite{
 		rec: rec, key: hw.Key, tag: hw.Tag, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch, data: hw.Data, attrs: hw.Attrs, create: hw.Create,
 		nonAtomic: hw.NonAtomic, pool: hw.Pool, oid: hw.OID, loc: hw.Loc, category: hw.Category,
-		completeMultipart: hw.CompleteMultipart, size: hw.Size, accountedSize: hw.AccountedSize,
+		completeMultipart: hw.CompleteMultipart, size: hw.Size, accountedSize: hw.AccountedSize, incompressible: hw.Incompressible,
 	}, x)
 	return res.epoch, err
 }
@@ -549,8 +562,12 @@ func (s *Store) SyncAllStatsForTest(ctx context.Context, owner meta.Owner) error
 	return s.syncAllStats(ctx, owner)
 }
 
-// PartWriter is a part's tailWriter for the external specs.
-type PartWriter struct{ tw *tailWriter }
+// PartWriter is a part's tailWriter for the external specs, with the
+// plaintext stage Consume read its body through.
+type PartWriter struct {
+	tw    *tailWriter
+	plain *plaintext
+}
 
 // NewPartWriterForTest is newPartWriter for part n of m over l.
 func (s *Store) NewPartWriterForTest(m *meta.Manifest, l Layout, n uint32) *PartWriter {
@@ -560,18 +577,25 @@ func (s *Store) NewPartWriterForTest(m *meta.Manifest, l Layout, n uint32) *Part
 	}, n)}
 }
 
-// Consume is consume of a body of the declared size, -1 when unknown; it
-// returns the body's length.
+// Consume is consume of a body of the declared size, -1 when unknown, through
+// its plaintext stage under rgw_max_put_size with h its sink; it returns the
+// body's length.
 func (p *PartWriter) Consume(ctx context.Context, body io.Reader, size int64, h hash.Hash) (uint64, error) {
-	_, n, err := p.tw.consume(ctx, body, size, h)
+	p.plain = newPlaintext(body, p.tw.s.w.opts.maxPutSize, p.tw.s.w.opts.chunkSize, h)
+	_, n, err := p.tw.consume(ctx, storeAsIs(p.plain), size)
 	return n, err
 }
 
 // Resume is resume: p takes over prev's kept first stripe and streams the
-// rest of body.
+// rest of body, counted on from what prev's Consume read, with h its sink.
 func (p *PartWriter) Resume(ctx context.Context, prev *PartWriter, body io.Reader, h hash.Hash) (uint64, error) {
-	return p.tw.resume(ctx, prev.tw, body, h)
+	p.plain = newPlaintext(body, p.tw.s.w.opts.maxPutSize, p.tw.s.w.opts.chunkSize, h)
+	p.plain.n = prev.plain.n
+	return p.tw.resume(ctx, prev.tw, storeAsIs(p.plain))
 }
+
+// SetIncompressibleForTest marks the writer's data as compressed.
+func (p *PartWriter) SetIncompressibleForTest() { p.tw.incompressible = true }
 
 // Drain is drain.
 func (p *PartWriter) Drain() error { return p.tw.drain() }

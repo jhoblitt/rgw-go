@@ -168,6 +168,25 @@ var _ = Describe("tailWriter", func() {
 		Expect(stamped).To(BeFalse(), "a tail write carries no mtime")
 	})
 
+	It("hints every tail write of compressed data incompressible", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_chunk_size": "1048576"}, time.Now())
+		body := mibPattern(6)
+		tw := writer(ctx)
+		tw.SetIncompressibleForTest()
+		_, _, err := tw.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tw.Drain()).To(Succeed())
+		var n int
+		for _, oid := range tw.Tails() {
+			for _, w := range c.WritesTo(testDataPool, "", oid) {
+				Expect(w.Steps()[0]).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}),
+					"add_write_hint's ALLOC_HINT_FLAG_INCOMPRESSIBLE, rgw_putobj_processor.cc:146-155 at v20.2.4; %s", oid)
+				n++
+			}
+		}
+		Expect(n).To(Equal(5), "every piece of both tails")
+	})
+
 	It("writes a stripe in pieces when the chunk is smaller than the stripe", func(ctx SpecContext) {
 		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_chunk_size": "1048576"}, time.Now())
 		body := bytes.Repeat([]byte("abcdefgh"), (6<<20)/8)
@@ -452,6 +471,19 @@ var _ = Describe("part writer", func() {
 		Expect(c.Object(testDataPool, "", shadowOID(2, 2)).Data).To(Equal(body[8<<20:]))
 		Expect(c.LastWrite(testDataPool, "", shadowOID(2, 1)).Steps()[0]).To(Equal(&radosclient.SetAllocHintStep{}), "a later stripe is no exclusive create")
 		Expect(c.WriteOrder(testDataPool, "")[0]).To(Equal(partOID(2)), "the exclusive create completed before any shadow was issued")
+	})
+
+	It("hints the part head's exclusive create and every shadow write of compressed data incompressible", func(ctx SpecContext) {
+		tw := writer(ctx, 2)
+		tw.SetIncompressibleForTest()
+		_, err := tw.Consume(ctx, bytes.NewReader(mibPattern(9)), -1, md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tw.Drain()).To(Succeed())
+		hint := &radosclient.SetAllocHintStep{Flags: 512}
+		Expect(c.LastWrite(testDataPool, "", partOID(2)).Steps()[:2]).To(Equal([]radosclient.Step{&radosclient.CreateStep{Exclusive: true}, hint}))
+		for _, oid := range []string{shadowOID(2, 1), shadowOID(2, 2)} {
+			Expect(c.LastWrite(testDataPool, "", oid).Steps()[0]).To(Equal(hint), oid)
+		}
 	})
 
 	It("writes the whole first stripe in one exclusive write when the chunk is smaller", func(ctx SpecContext) {
