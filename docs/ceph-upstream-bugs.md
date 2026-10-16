@@ -305,6 +305,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's clear_olh clears the index's OLH entry after a failed head removal](#radosgws-clear_olh-clears-the-indexs-olh-entry-after-a-failed-head-removal) | pending | pending |  |
 | [radosgw's versioned write fails when the key's OLH head goes between its read and its init](#radosgws-versioned-write-fails-when-the-keys-olh-head-goes-between-its-read-and-its-init) | pending | pending |  |
 | [radosgw's follow_olh answers the version that was current before the replay it runs](#radosgws-follow_olh-answers-the-version-that-was-current-before-the-replay-it-runs) | pending | pending |  |
+| [cls_otp's otp_set puts an array as long as the seed on the OSD's stack](#cls_otps-otp_set-puts-an-array-as-long-as-the-seed-on-the-osds-stack) | none | [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014) |  |
+| [radosgw's otp check sends the otp_check request to otp_get_result](#radosgws-otp-check-sends-the-otp_check-request-to-otp_get_result) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15614,3 +15616,111 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4's review, 2026-10-15, tracing the stale answer
   V4 reproduces; derived from the source, not reproduced.
+
+## cls_otp's otp_set puts an array as long as the seed on the OSD's stack
+
+- **Kind:** defect, security (possible): denial of service, by an RGW admin
+  holding `metadata=write`, who needs no Ceph cap to fault an OSD, and with
+  it every pool whose placement groups it holds. Robustness: an unbounded
+  stack allocation, sized by request data, in OSD code. Fixed in v21.0.1 and
+  later, unfixed at both floors. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `otp_set` parses each device's seed with `parse_seed` before it stores
+    the device
+    ([cls_otp.cc:320-332](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L320-L332),
+    [cls_otp.cc:320-332](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L320-L332)).
+  - `parse_seed` declares `char secret[seed.length()]`, a variable-length
+    array on the OSD worker thread's stack, for every seed type; a base32
+    seed never uses it, as `oath_base32_decode` allocates its own buffer
+    ([cls_otp.cc:268-299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L268-L299),
+    [cls_otp.cc:268-299](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L268-L299)).
+  - Nothing on radosgw's path bounds the seed. `otp_info_t::decode_json`
+    reads it as a string
+    ([cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L52-L71),
+    [cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L52-L71)),
+    the metadata put reads a body of any length
+    (`RGWOp_Metadata_Put::get_data`,
+    [rgw_rest_metadata.cc:176-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.cc#L176-L219),
+    [rgw_rest_metadata.cc:176-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L176-L219)),
+    and `RGWSI_Cls::MFA::set_mfa` sends the document's devices to `otp_set`
+    ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216),
+    [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L188-L216)).
+- **Impact:** a seed longer than the worker thread's stack moves the stack
+  pointer past the stack's end. The OSD faults, or, in a build without
+  stack-clash probing, writes into the memory below the stack. A retry of the
+  put repeats it on the object's primary OSD.
+  - The bound is the OSD's own: it refuses a write op whose data passes
+    `osd_max_write_size` MiB, 90 by default and at least 4, and `otp_set` is
+    a write method, so with the defaults a seed of up to about 90 MiB reaches
+    `parse_seed`
+    ([PrimaryLogPG.cc:2129-2147](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L2129-L2147),
+    [PrimaryLogPG.cc:2176-2194](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L2176-L2194);
+    [osd.yaml.in:763-773](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/osd.yaml.in#L763-L773),
+    [osd.yaml.in:808-818](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/osd.yaml.in#L808-L818)).
+  - The put writes the metadata log. At v19.2.7 `RGWSI_MetaBackend_OTP` is
+    an `RGWSI_MetaBackend_SObj`, whose `pre_modify` and `post_modify` add an
+    entry before the class call and another after it, marking a failed put
+    aborted (`do_mutate`,
+    [svc_meta_be.cc:96-106](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be.cc#L96-L106);
+    [svc_meta_be_sobj.cc:60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_sobj.cc#L60),
+    [svc_meta_be_sobj.cc:83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_sobj.cc#L83);
+    [svc_meta_be_otp.h:44](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.h#L44)).
+    At v20.2.4 the put adds one entry, once `set_mfa` succeeds
+    ([rgw_otp.cc:76-81](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L76-L81)).
+    Not traced, a question for the reproduction session: whether metadata
+    sync carries such a seed to the other zones.
+- **Releases:** fixed in v21.0.1 and later. Unfixed at both floors, v19.2.7
+  and v20.2.4, and on the squid and tentacle branches as of their
+  2026-10-12 heads.
+- **rgw-go:** writes no otp devices yet (`internal/cls/otp` sends what it is
+  given). Its otp metadata put must bound a seed's length, as its validation
+  keeps a document from faulting the OSD ("cls_otp divides by a stored
+  step_size that is never validated", above).
+- **Upstream:** fixed on main by
+  [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014), "rgw: VLAs are
+  no longer welcome", merged 2026-05-13. Its commit 5462945cbf7, "cls/otp:
+  Replace VLA with `boost::container::small_vector`", keeps up to 1024 bytes
+  of the seed on the stack and moves a longer one to the heap. The PR was a
+  code-hygiene sweep of radosgw's variable-length arrays, not a report of
+  this defect, and its commits name no tracker issue. tracker.ceph.com,
+  searched on 2026-10-16, has no report of it: "parse_seed" finds nothing,
+  and "cls_otp" and "otp seed" find nothing about the stack array or a
+  seed's length. The fix is in v21.0.1 and later, and on neither the squid
+  nor the tentacle branch: a backport to both is the open action.
+- **Found:** phase 2 Task WP-16, 2026-10-16, verifying the otp class's
+  calls at both tags; derived from the source, not reproduced. Upstream's
+  fix predates it.
+
+## radosgw's otp check sends the otp_check request to otp_get_result
+
+- **Kind:** defect, cosmetic: dead code and a request type that is never
+  sent, which mislead a reimplementation. MFA checks work, as the client and
+  the class agree. Not security-relevant. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `OTP::check` encodes `cls_otp_check_otp_op`, the device id, the code
+    and a random token, into `in` and sends it to `otp_check`. It then
+    encodes `cls_otp_get_result_op`, the token alone, into `in2`, but sends
+    `in` again to `otp_get_result`; nothing reads `in2` or `out2`
+    ([cls_otp_client.cc:60-97](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L97),
+    [cls_otp_client.cc:60-99](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60-L99)).
+  - The class's `otp_get_result` decodes a `cls_otp_check_otp_op` and finds
+    the device by its id and the check by its token
+    ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511),
+    [cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L511)).
+  - `cls_otp_get_result_op` holds no id, so the class could not find the
+    device from it
+    ([cls_otp_ops.h:51-66](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_ops.h#L51-L66),
+    [cls_otp_ops.h:51-66](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_ops.h#L51-L66)).
+    Sent to the class, its token is read as the id and the code past its
+    end, and the decode fails with EINVAL.
+- **Impact:** none on a running cluster. A reimplementation that pairs the
+  method with the type named for it sends a request the class refuses, and
+  an emulation of the class built the same way refuses radosgw's.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** sends no check yet (`internal/cls/otp`). Its check must send
+  `otp_get_result` the `otp_check` request, as radosgw does, and the class
+  emulation must decode that request.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task WP-16, 2026-10-16, verifying the otp client's
+  calls at both tags; derived from the source, not reproduced.
