@@ -673,6 +673,47 @@ benchmark was re-run.
 - **Found:** N Task 8 re-review, 2026-10-08; the request checks and the
   goceph guard came with X23.
 
+### librados' C API has no u64-mode cmpxattr
+
+- **Evidence:** `rados_write_op_cmpxattr` and `rados_read_op_cmpxattr`
+  compare an xattr in string mode only: both pass
+  `CEPH_OSD_CMPXATTR_MODE_STRING`
+  ([librados_c.cc:3667-3683](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L3667-L3683) and
+  [librados_c.cc:4148-4164](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L4148-L4164),
+  [librados_c.cc:3667-3683](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3667-L3683) and
+  [librados_c.cc:4148-4164](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L4148-L4164)),
+  and go-ceph binds those. The C++ API's
+  `ObjectOperation::cmpxattr(name, op, uint64_t)` sends
+  `CEPH_OSD_CMPXATTR_MODE_U64`
+  ([librados_cxx.cc:130-137](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_cxx.cc#L130-L137),
+  [librados_cxx.cc:130-137](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_cxx.cc#L130-L137)),
+  in which the OSD parses the stored value as a decimal number, an empty
+  one as 0, and compares the operand with it
+  ([PrimaryLogPG.cc:4937-4974](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L4937-L4974),
+  [PrimaryLogPG.cc:5005-5042](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L5005-L5042)).
+  radosgw guards `apply_olh_log`'s head op with `cmpxattr(olh.ver, GTE,
+  last epoch)` in that mode
+  ([rgw_rados.cc:8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8435),
+  [rgw_rados.cc:9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9181))
+  and `clear_olh`'s removal with `cmpxattr(olh.ver, EQ, ver)`
+  ([rgw_rados.cc:8617](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8617),
+  [rgw_rados.cc:9363](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9363)).
+  In string mode a GTE puts "9" above "10".
+- **Class:** inherent in the C API. Lifting it takes a librados change that
+  adds the mode to the C functions, then a go-ceph binding; none is asked
+  for upstream now, since the guard below is correct and compatible.
+- **Status:** worked around. `applyOLHLog` (`internal/driver/olh_head.go`)
+  guards on `cmpxattr(olh.ver, EQ, <the bytes it read>)` in string mode,
+  which refuses an apply whenever another writer moved `olh.ver` since the
+  head was read; docs/exclusions.md, "apply_olh_log's olh.ver guard is EQ
+  on the bytes read, retried from a fresh read", records the difference.
+  `clearOLHHead` compares the decimal `ver`, the bytes an apply writes,
+  which the u64 EQ matches too. The state written is radosgw's.
+- **Note:** a pure-Go client encodes the op itself and can send the u64
+  mode.
+- **Found:** phase 2 research for versioning, recorded with the OLH head
+  operations, 2026-10-15.
+
 ## RADOS semantics that shape the client
 
 These come from the OSD, not from cgo, so a pure-Go client has them too.
