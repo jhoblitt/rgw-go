@@ -5963,7 +5963,8 @@ Every new entry adds its row to this table, in document order.
   common, valid policy, such as `Principal: *` under
   `aws:SecureTransport`; unfixed through main. Reproduced on v19.2.7 and
   v20.2.4 on 2026-10-15 by two s3-tests in jhoblitt/ceph 52de0d67ba8,
-  which is pending its merge into `rgw-go-s3tests`. Under
+  merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#10](https://github.com/jhoblitt/ceph/pull/10). Under
   BlockPublicPolicy both releases store a grant to every principal under
   `Bool aws:SecureTransport true`
   (`test_block_public_condition_on_unlisted_key`), and both report a grant
@@ -6021,10 +6022,13 @@ Every new entry adds its row to this table, in document order.
   does, so a grant to every principal is public unless a condition limits
   it to fixed values of a key that page lists. `Bool aws:SecureTransport
   true` leaves such a grant public, and `IpAddress aws:SourceIp 1.1.1.1/32`
-  makes it non-public. PutBucketPolicy's BlockPublicPolicy refusal and
-  RestrictPublicBuckets take that judgment (`docs/exclusions.md`, "A bucket
-  policy is public as Amazon S3 judges it"); rgw-go does not serve
-  GetBucketPolicyStatus yet.
+  makes it non-public. PutBucketPolicy's BlockPublicPolicy refusal,
+  RestrictPublicBuckets and GetBucketPolicyStatus's IsPublic
+  (`op.GetBucketPolicyStatus`, `internal/op/policystatus.go`) take that
+  judgment (`docs/exclusions.md`, "A bucket policy is public as Amazon S3
+  judges it"), so GetBucketPolicyStatus reports the policy of
+  `test_get_fixed_source_ip_bucket_policy_status` not public on both
+  releases.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search on 2026-10-04 found no
   report or fix PR. Related, in the opposite direction: Squid's false
@@ -6895,7 +6899,11 @@ Every new entry adds its row to this table, in document order.
   An Allow statement whose NotPrincipal names principals but not the
   wildcard, which only Squid parses, grants every other principal and is
   public unless a condition limits it (`docs/exclusions.md`, "A bucket
-  policy is public as Amazon S3 judges it").
+  policy is public as Amazon S3 judges it"). GetBucketPolicyStatus's
+  IsPublic takes that judgment (`internal/op/policystatus.go`), so it
+  reports the policy of
+  `test_get_nonpublicpolicy_principal_bucket_policy_status` not public on
+  both releases.
 - **Upstream:** [#67047](https://tracker.ceph.com/issues/67047), with its
   duplicate [#67048](https://tracker.ceph.com/issues/67048), reported it;
   the fix 019aaa4d101 came with
@@ -6921,8 +6929,9 @@ Every new entry adds its row to this table, in document order.
   unauthenticated request. Tentacle's is_public calls it not public, so
   BlockPublicPolicy stores it and RestrictPublicBuckets lets anonymous
   requests through. Unfixed through main. Reproduced on v20.2.4 on
-  2026-10-15 by two s3-tests in jhoblitt/ceph 5a0d460976c, pending its
-  merge into `rgw-go-s3tests`:
+  2026-10-15 by two s3-tests in jhoblitt/ceph 5a0d460976c, merged into
+  `rgw-go-s3tests` by
+  [jhoblitt/ceph#10](https://github.com/jhoblitt/ceph/pull/10):
   - under BlockPublicPolicy it stores a grant of s3:GetObject to
     `arn:aws:iam:::root` (`test_block_public_anonymous_root_principal`);
   - with RestrictPublicBuckets set it still serves an anonymous GetObject
@@ -14175,7 +14184,9 @@ Every new entry adds its row to this table, in document order.
     `ignorePublicACLs` (`internal/acl/eval.go`);
   - the object check's Swift fallback passes `false` for it
     (`objectACL`, `internal/authz/evaluator.go`);
-  - `acl.Policy.IsPublic` keeps the mask (`internal/acl/eval.go`).
+  - `acl.Policy.IsPublic` keeps the mask (`internal/acl/eval.go`), and
+    GetBucketPolicyStatus's IsPublic takes it
+    (`internal/op/policystatus.go`).
 
   rgw-go's fix is a planned task.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
