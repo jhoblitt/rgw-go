@@ -4042,9 +4042,9 @@ rgw-go does the following.
   ::a.b.c.d (`MaskedIP`'s `operator ==`,
   [rgw_iam_policy.h:341-346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L341-L346),
   [rgw_iam_policy.h:360-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L360-L365)).
-  The judgment decides PutBucketPolicy's BlockPublicPolicy refusal and
-  RestrictPublicBuckets. Under a block of public policies rgw-go therefore
-  differs from radosgw as follows:
+  The judgment decides PutBucketPolicy's BlockPublicPolicy refusal,
+  RestrictPublicBuckets and GetBucketPolicyStatus's IsPublic. Under a block
+  of public policies rgw-go therefore differs from radosgw as follows:
   - It refuses with 403 AccessDenied, on both releases, a grant to everyone
     under a condition that limits nothing by that rule and that the three
     keys fail, such as `Bool aws:SecureTransport true`, which radosgw stores
@@ -4075,6 +4075,21 @@ rgw-go does the following.
   everyone from 1.1.1.1/32 alone, and one under
   `StringEquals aws:UserId anonymous`, which grants no one in rgw-go, whose
   environment holds neither aws:UserId nor aws:userid.
+
+  GetBucketPolicyStatus reports a bucket public when its policy is, by this
+  judgment, or its ACL is, whatever its public-access block sets, as
+  radosgw joins its own two answers
+  ([rgw_op.cc:8608-8611](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8608-L8611),
+  [rgw_op.cc:9576-9579](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9576-L9579)).
+  Wherever the two judgments disagree on a release, as the cases above
+  show, a bucket whose ACL is not public gets the opposite IsPublic from
+  rgw-go and from that release's radosgw. So s3-tests'
+  `test_get_nonpublicpolicy_principal_bucket_policy_status`, a grant to
+  `arn:aws:iam::s3tenant1:root`, reports false on both releases, where
+  Squid's radosgw reports true; a grant to everyone under
+  `Bool aws:SecureTransport true` reports true, where radosgw reports false
+  on both; and a grant to everyone from 1.1.1.1/32 alone reports false,
+  where radosgw reports true on both.
 - **A copy source is checked against its own bucket.** radosgw checks
   CopyObject's and UploadPartCopy's source through the request's state,
   whose bucket is the destination, and takes three inputs from the
