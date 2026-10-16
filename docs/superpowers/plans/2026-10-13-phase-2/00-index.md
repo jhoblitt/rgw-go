@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S6 | 6 |
+| `00-index.md` | this index, and the shared tasks S1 to S7 | 7 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V15c |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
@@ -256,9 +256,20 @@ The controller's rulings on the research's open questions, under the owner's rul
 - **Specs:** a byte table over the three table sizes, sign-extended reads included; the callers' existing specs pass unchanged.
 - **Depends on:** V2. **PR:** one. **Brief:** about 40 lines.
 
+### Task S7: one schema scanner for S3 XML request bodies
+
+- **Layer:** library (`internal/xmltext`). **Files:** add the scanner to `internal/xmltext`; modify the four documents' scans, V10's `internal/s3/bucketversioning.go`, BC-17's `internal/acl/publicaccess.go`, BC-23's `internal/sse/xml.go` and BC-10's `internal/website/scan.go`, and their specs. V10's call site is in `internal/s3`, a handler package: an exception to the library layer, as V10 keeps its document's scan beside its handler, and the change there only swaps that scan for a call into the scanner. **Cluster:** no.
+- **Why:** BC-10's review (Minor 4) found that four documents each carry a near-identical scan of their body's tokens before `xmltext.Parse` builds a tree. Each refuses, as MalformedXML, much of the same structure: a declaration, whose internal subset can declare entities that expat expands; a prefixed element name; a namespace other than S3's; a second of an element its schema allows once; and, in BC-17, BC-23 and BC-10, unknown elements and attributes. Four guards for one rule drift apart as each document's review tunes its own.
+- **Produces:** one scanner over a document's table of the children each element holds, and which of them may repeat. A document adds its own checks of an element's text or children where that element ends, as BC-10's AWS constraints do.
+- **Behaviour:**
+  1. No document's answers change: each keeps its refusals, their order, its error text cut short as today, and the leniency its task chose (V10 reads elements its schema does not name, where BC-17, BC-23 and BC-10 refuse them).
+  2. A refused body costs a read of its tokens up to the refusal, and no tree is built for it.
+- **Specs:** each document's existing specs and fuzz targets pass unchanged; the scanner's own table over the shared refusals, once per leniency.
+- **Depends on:** V10, BC-17, BC-23, BC-10. **PR:** one. **Brief:** about 100 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, and S6 once V2 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, and S7 once V10, BC-17, BC-23 and BC-10 land.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T unit starts at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.

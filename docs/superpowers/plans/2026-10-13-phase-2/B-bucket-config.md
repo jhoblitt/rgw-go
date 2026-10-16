@@ -78,7 +78,10 @@ and P4 (the owner, 2026-10-13).
 - `meta.WebsiteConf` (BC-9), the field type of `BucketInfo.Website`.
 - `internal/website` (BC-10): `ParseXML(body []byte, maxRules int) (meta.WebsiteConf, error)`,
   `EffectiveKey(conf meta.WebsiteConf, key string, isFile bool) (string, bool)`,
-  `Redirect(conf meta.WebsiteConf, key string, status int, proto, host string) (url string, code int, ok bool)`.
+  `Redirect(conf meta.WebsiteConf, key string, status int, proto, host string) (url string, code int, ok bool, err error)`,
+  and its halves `Match(conf meta.WebsiteConf, key string, status int) (meta.RoutingRule, bool)`
+  and `Apply(r meta.RoutingRule, proto, host, key string) (url string, code int, err error)`,
+  whose one error is `website.ErrUnsafeRedirect`.
 - `op.Request.Website bool` and `op.Request.Redirect string` (BC-13).
 - `internal/sse` (BC-23): the three configuration structs, their XML and `Validate`.
 - `op.EncryptionDefaults(r *Request, asked map[string]string) (Encryption, error)` and
@@ -416,7 +419,7 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Layer:** library. **Files:** create `internal/website/`. **Cluster:** no.
 - **Consumes:** BC-9's `meta.WebsiteConf`; `internal/xmltext`. **Produces:**
   `ParseXML(body []byte, maxRules int) (meta.WebsiteConf, error)`, `MarshalS3XML(conf) []byte`,
-  `EffectiveKey`, `Redirect` (signatures in Seams).
+  `EffectiveKey`, `Redirect`, `Match` and `Apply` (signatures in Seams).
 - **Behaviour:**
   1. **Parsing** ([rgw_rest_s3.cc:2279-2345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2279-L2345),
      [rgw_rest_s3.cc:2374-2440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2374-L2440)):
@@ -428,9 +431,17 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
        negative value meaning 50) is 400 InvalidRequest with radosgw's message
        ([rgw.yaml.in:46-50](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L46-L50), [rgw.yaml.in:46-50](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L46-L50)).
   2. **Element rules.** A HttpRedirectCode outside 301-399, a HttpErrorCodeReturnedEquals
-     outside 400-599, and ReplaceKeyPrefixWith with ReplaceKeyWith are 400 InvalidArgument;
-     RedirectAllRequestsTo makes the rest ignored
+     outside 400-599, and ReplaceKeyPrefixWith with ReplaceKeyWith are 400 InvalidArgument
      ([rgw_website.cc:214-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L214-L341), [rgw_website.cc:214-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L214-L341)).
+     A document with RedirectAllRequestsTo and any other property is 400 MalformedXML, as
+     AWS's model rules of RedirectAllRequestsTo: "If you specify this property, you can't
+     specify any other property" (aws-sdk-go v1.55.8 `service/s3/api.go:43886-43889`);
+     radosgw ignores the rest (`RGWBucketWebsiteConf::decode_xml`, [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L323-L341),
+     [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L323-L341)).
+     The rest of the strict reading, AWS's other constraints (an ErrorDocument's Key, a Suffix
+     without a slash, a rule's Redirect, a Protocol of http or https) and the empty Condition,
+     Redirect and RoutingRules it accepts are the exclusion "PutBucketWebsite answers
+     MalformedXML for a document that does not parse or fit S3's schema".
   3. **Rendering.** `WebsiteConfiguration` in the S3 namespace: RedirectAllRequestsTo (HostName,
      then Protocol when set), IndexDocument/Suffix, ErrorDocument/Key, RoutingRules, each only
      when set (same lines).
@@ -444,10 +455,20 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
      `://` host (the rule's, else the Host header) `/` and the replaced key; the code is the
      rule's HttpRedirectCode, else 301
      ([rgw_website.cc:34-114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L34-L114), [rgw_website.cc:34-114](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L34-L114)).
+     The replaced key is percent-encoded as radosgw's `url_encode` encodes a key with the slash
+     kept ([rgw_common.cc:1736-1793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1736-L1793), [rgw_common.cc:1799-1856](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1799-L1856)), where radosgw
+     writes it raw, so a key's CR, LF, `?`, `#` and `%` cannot reshape the header or the URL.
+     A host holding a byte at or below 0x20, or 0x7F, or a protocol other than http or https,
+     which `apply_rule` writes raw too
+     ([rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L45-L59), [rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L45-L59)), is `ErrUnsafeRedirect`,
+     so a configuration radosgw stored fails closed; the parse refuses such a HostName as
+     InvalidArgument.
 - **Specs:** a table from each cited function; the redirect-code and error-code bounds; the
   routing-rule limit with its message; the unparseable body's MalformedXML.
-- **Exclusions and registry:** new exclusion for the MalformedXML code (B2); new registry
-  entry for defect 15 (S3-correctness, minor, unreproduced).
+- **Exclusions and registry:** new exclusion for the MalformedXML code (B2), one for the
+  Location's encoded key and one for the declined host and protocol; new registry entry for
+  defect 15 (S3-correctness, minor, unreproduced) and one for the Location's raw key, host and
+  protocol.
 - **Depends on:** BC-9. **PR:** one. **Brief:** about 200 lines.
 
 ### Task BC-11: Website configuration ops
@@ -491,6 +512,11 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
      [rgw_rest_s3.cc:5311-5316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5311-L5316)).
   2. Otherwise: PUT 200; DELETE 204; GET the document
      ([rgw_rest_s3.cc:2347-2383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2347-L2383), [rgw_rest_s3.cc:2442-2478](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2442-L2478)).
+  3. PUT reads the body, under `rgw_max_put_param_size`, only after the request is
+     authorized: radosgw reads it in `get_params`, which `RGWSetBucketWebsite::execute` calls
+     first ([rgw_op.cc:2905-2910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2905-L2910), [rgw_op.cc:3137-3142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3137-L3142)), after
+     `verify_permission` ([rgw_process.cc:225-255](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225-L255), [rgw_process.cc:225-258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225-L258)).
+     So only an authorized requester reaches the parse and its cost.
 - **Specs:** each route's status, headers and body; the 405 with the option off; the routing
   rule limit read from the option.
 - **Exclusions and registry:** none.
@@ -534,8 +560,9 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 
 - **Layer:** op. **Files:** create `internal/op/website_get.go`; modify `internal/op/getobject.go`
   (one hook field, one call). **Cluster:** no.
-- **Consumes:** BC-10's `EffectiveKey` and `Redirect`; BC-13's `Request.Website`.
-  **Produces:** the retarget hook GetObject calls between its bucket load and its object read.
+- **Consumes:** BC-10's `EffectiveKey`, `website.Match` and `website.Apply`; BC-13's
+  `Request.Website`. **Produces:** the retarget hook GetObject calls between its bucket load and
+  its object read.
 - **Behaviour** (`retarget`, run after the bucket loads and before read permissions,
   [rgw_process.cc:180-190](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L180-L190), [rgw_process.cc:180-190](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L180-L190)):
   1. No bucket is NoSuchBucket; no website is NoSuchWebsiteConfiguration; no index suffix is
@@ -547,13 +574,28 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
      [rgw_rest_s3.cc:5876-5896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L5896); the tags
      differ only in how the stat loads state).
   3. A redirect is `ErrWebsiteRedirect` with `r.Redirect` and the rule's code; otherwise the
-     effective key is read as a GetObject.
+     effective key is read as a GetObject. `retarget` matches the rule on the effective key,
+     passing `new_obj.name` to `should_redirect`, and builds the Location from the request's
+     original key, passing `key_name` to `apply_rule`
+     ([rgw_rest_s3.cc:5419-5429](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5419-L5429),
+     [rgw_rest_s3.cc:5945-5955](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5945-L5955)). BC-14 does the same with
+     `Match` and `Apply`, and returns `Apply`'s `ErrUnsafeRedirect` for BC-15 to answer.
   4. An object holding `user.rgw.x-amz-website-redirect-location` is 301 with that Location and
      no body ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
      [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)).
+  5. **The empty host.** radosgw takes the host from `HTTP_HOST`, empty when the request has
+     none ([rgw_rest_s3.cc:5424](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5424), [rgw_rest_s3.cc:5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5950)), so a request
+     without a Host, a website request under B14, redirects to `http:///` or `https:///` and
+     the key. A URL
+     parser that follows the WHATWG standard skips those slashes, so a key `evil.com/x` sends
+     the client to `evil.com`; only the requester meets it, since browsers always send a Host
+     (the registry's "radosgw writes a website redirect's key, host and protocol raw into its
+     Location"). BC-14 decides between radosgw's form, no redirect without a host, and the
+     configured website domain.
 - **Specs:** each effective-key case; a directory object; a redirect-all; a routing rule with
-  and without a code; an object with a redirect attr; the original key kept for BC-15.
-- **Exclusions and registry:** none.
+  and without a code; an object with a redirect attr; the original key kept for BC-15; the
+  empty-host choice.
+- **Exclusions and registry:** a new exclusion if the empty-host choice departs from radosgw.
 - **Depends on:** BC-10, BC-13. **PR:** one. **Brief:** about 180 lines.
 
 ### Task BC-15: Website serving and errors
@@ -577,11 +619,37 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
      its conditionals cleared and the original status; else, or when that fails, the HTML page
      ([rgw_rest_s3.cc:5460-5585](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5460-L5585),
      [rgw_rest_s3.cc:5986-6111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5986-L6111)).
-  4. WebsiteRedirect carries Location.
+  4. WebsiteRedirect carries Location. BC-10's `website.Apply` percent-encodes its key and
+     declines a host or protocol that would put a control byte in it, so net/http's folding of
+     CR and LF in a header value never meets a Location, and no exclusion is needed for it.
+  5. **A redirect code of 0, 100-199, 200, or outside 100-999 is answered 301.**
+     `website.Apply` returns the code a rule stores, any `uint16` above 0 (it answers a stored 0
+     as 301 already), and only the admin JSON path can store one outside 301-399
+     (`RGWRedirectInfo::decode_json`,
+     [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L142-L148), [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)). BC-15 maps 0 and
+     200 to WebsiteRedirect's 301, as radosgw's `abort_early` calls `set_req_state_err` over an
+     `http_ret` of 0 or 200
+     ([rgw_rest.cc:702-706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L702-L706), [rgw_rest.cc:707-711](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L707-L711);
+     `ERR_WEBSITE_REDIRECT`, [rgw_common.cc:58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L58), [rgw_common.cc:59](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L59)). It maps a code
+     in 100-199, 101 included, or outside 100-999 to 301 too, where radosgw writes the code as
+     given in its status line (`ClientIO::send_status`,
+     [rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L109-L118), [rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L109-L118)). net/http's
+     `WriteHeader` panics outside 100-999 (`checkWriteHeaderCode`, `net/http/server.go:1166-1180`
+     at Go 1.27.1); it writes 100-199 other than 101 as an informational response that does not
+     end the response, and 101 as a final one that announces a protocol switch
+     (`net/http/server.go:1223-1227` at Go 1.27.1). Neither gives the redirect radosgw's status
+     line does.
+  6. **An unsafe redirect is 500 InternalError.** `website.ErrUnsafeRedirect`, from BC-14's hook
+     or the error handler's `website.Redirect`, is answered 500 InternalError, so a stored host
+     holding a control byte, or a protocol other than http or https, fails closed where radosgw
+     writes it raw (BC-10's exclusion "A website redirect is refused for a host holding a
+     control byte or a protocol other than http or https").
 - **Specs:** status, headers and body for each path; an error document that is itself missing
   falls back to the HTML page; a conditional GET's error document served unconditionally; PUT
-  on a website host 405 in HTML.
-- **Exclusions and registry:** none.
+  on a website host 405 in HTML; a rule storing code 200, 100, 101, 99 or 1000 answered 301;
+  a stored HostName holding CR and LF answered 500 on both paths.
+- **Exclusions and registry:** a new exclusion line: a stored redirect code in 100-199, or
+  outside 100-999, is answered 301, where radosgw writes it as given.
 - **Depends on:** S2, BC-12, BC-14. **PR split:** (a) the HTML renderer and website-mode
   refusals; (b) serving and the error handler. **Brief:** about 230 lines.
 
@@ -1432,6 +1500,13 @@ task budgets the cluster reproduction.
 | 18 | A POST form's part ends wherever `--` boundary appears, mid-line included, so file data holding it is cut there: stored truncated when the rest parses as parts, else refused ([rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1173-L1220), [rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1173-L1220)) | S3-correctness (an upload stored other than sent) | unreproduced, from the source; found while drafting this unit | none searched | RFC 2046's delimiter (BC-29, B11) |
 
 Not defects, recorded so no task re-derives them: the head write applies a default retention
-to POST objects as it does for PutObject; `should_redirect`'s write of 301 into the
-configuration leaves every redirect-all at 301 anyway; SSE-S3 and SSE-KMS fail on an
-unconfigured radosgw by design (the key-management exclusion).
+to POST objects as it does for PutObject; a redirect-all answers the code it stores when no
+index suffix is stored, because `retarget` then fails at `get_effective_key`
+([rgw_rest_s3.cc:5409-5414](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5409-L5414), [rgw_rest_s3.cc:5935-5940](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5935-L5940)) and the website
+error handler's `should_redirect`, the first call, copies the stored code, which `apply_rule`
+answers when it is above 0 ([rgw_website.cc:101-106](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L101-L106), [rgw_website.cc:101-106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L101-L106);
+[rgw_website.cc:61-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L61-L62), [rgw_website.cc:61-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L61-L62)), and
+301 when it stores none, which is every redirect-all S3's PutBucketWebsite writes; with an
+index suffix stored, `retarget`'s call writes 301 into the configuration first and the error
+handler copies that; SSE-S3 and SSE-KMS fail on an unconfigured radosgw by design (the
+key-management exclusion).
