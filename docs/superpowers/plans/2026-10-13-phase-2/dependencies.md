@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 74e49d6. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 658c82e. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -24,7 +24,7 @@ flowchart LR
   u_S -->|4| u_V
   u_S -->|2| u_L
   u_S -->|3| u_C
-  u_S -->|11| u_B
+  u_S -->|12| u_B
   u_S -->|3| u_WP
   u_V -->|2| u_S
   u_V -->|9| u_L
@@ -582,6 +582,7 @@ flowchart LR
   t_BC_35["BC-35"]
   t_S2["S2"]:::ext
   t_S3["S3"]:::ext
+  t_S5["S5"]:::ext
   t_V11["V11"]:::ext
   t_L5b["L5b"]:::ext
   t_C8["C8"]:::ext
@@ -622,6 +623,7 @@ flowchart LR
   t_BC_14 --> t_BC_16
   t_BC_15 --> t_BC_16
   t_S3 --> t_BC_18
+  t_S5 --> t_BC_18
   t_BC_17 --> t_BC_18
   t_S2 --> t_BC_19
   t_BC_18 --> t_BC_19
@@ -718,6 +720,7 @@ flowchart LR
   click t_BC_35 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-35-retitle-the-re-authorized-retries-exclusion" "BC-35: Retitle the re-authorized-retries exclusion"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
+  click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
   click t_L5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5b-the-lock-headers-op-and-s3" "L5b: the lock headers, op and S3"
   click t_C8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c8-the-lifecycle-response-headers" "C8: the lifecycle response headers"
