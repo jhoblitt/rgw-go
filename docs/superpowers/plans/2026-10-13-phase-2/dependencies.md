@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 9474319. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 74e49d6. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -12,7 +12,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 
 ```mermaid
 flowchart LR
-  u_S["Shared<br/>6 tasks"]
+  u_S["Shared<br/>7 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
@@ -26,7 +26,7 @@ flowchart LR
   u_S -->|3| u_C
   u_S -->|11| u_B
   u_S -->|3| u_WP
-  u_V -->|1| u_S
+  u_V -->|2| u_S
   u_V -->|9| u_L
   u_V -->|8| u_C
   u_V -->|1| u_B
@@ -35,6 +35,7 @@ flowchart LR
   u_L -->|6| u_C
   u_L -->|1| u_B
   u_C -->|1| u_B
+  u_B -->|3| u_S
   u_B -->|1| u_WP
   u_WP -->|2| u_V
   u_WP -->|2| u_L
@@ -57,16 +58,30 @@ flowchart LR
   t_S4["S4"]
   t_S5["S5"]
   t_S6["S6"]
+  t_S7["S7"]
   t_V2["V2"]:::ext
+  t_V10["V10"]:::ext
+  t_BC_10["BC-10"]:::ext
+  t_BC_17["BC-17"]:::ext
+  t_BC_23["BC-23"]:::ext
   t_S1 --> t_S4
   t_V2 --> t_S6
+  t_V10 --> t_S7
+  t_BC_10 --> t_S7
+  t_BC_17 --> t_S7
+  t_BC_23 --> t_S7
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
   click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
   click t_S6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s6-one-choose_from" "S6: one choose_from"
+  click t_S7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies" "S7: one schema scanner for S3 XML request bodies"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
+  click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
+  click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
+  click t_BC_17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-17-block-xml" "BC-17: Block XML"
+  click t_BC_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-23-encryption-configuration-type" "BC-23: Encryption configuration type"
   classDef ext stroke-dasharray: 5 4
 ```
 
@@ -76,6 +91,7 @@ flowchart LR
 - [S4](00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup): fakerados refuses an unregistered class method at op setup
 - [S5](00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants): IgnorePublicAcls ignores Swift's public container grants
 - [S6](00-index.md#task-s6-one-choose_from): one choose_from
+- [S7](00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies): one schema scanner for S3 XML request bodies
 
 ### F: floor 19.2.7
 
