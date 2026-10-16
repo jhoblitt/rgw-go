@@ -436,7 +436,11 @@ func (p *parser) str(s string) bool {
 		pr, errmsg, ok := p.principal(st.w, s)
 		switch {
 		case ok && p.s[len(p.s)-2].w.id == tokPrincipal:
+			held := len(t.Principals)
 			t.Principals = addPrincipal(t.Principals, pr)
+			if len(t.Principals) == held && countsAsEveryone(pr) {
+				t.droppedOpenPrincipal = true
+			}
 		case ok:
 			t.NotPrincipals = addPrincipal(t.NotPrincipals, pr)
 		case p.opts.RejectInvalidPrincipals:

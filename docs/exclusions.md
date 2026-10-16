@@ -3991,7 +3991,8 @@ rgw-go does the following.
   (`rgw_common.cc:1407-1412` and `:1575-1580` at v20.2.4), and a requester
   outside the bucket owner's account when the bucket's public-access block
   sets RestrictPublicBuckets and its policy is public (`:1374-1380`,
-  `:1541-1547`), judging the policy public as v20.2.4's `is_public` does.
+  `:1541-1547`), judging the policy public as Amazon S3 does ("A bucket
+  policy is public as Amazon S3 judges it", below).
   Squid's radosgw ignores both (`docs/ceph-upstream-bugs.md`, "Squid
   accepts RestrictPublicBuckets but never enforces it"). rgw-go also lets an
   admin user that is not a system user through a suspended bucket's
@@ -4000,6 +4001,82 @@ rgw-go does the following.
   only system users (`:366`, `:403` and `:612` at v19.2.6). The policy
   language itself, its actions, operators and principals, follows the
   cluster's release.
+- **A bucket policy is public as Amazon S3 judges it.** radosgw's
+  `is_public` evaluates a statement granting every principal against three
+  fixed keys, aws:SourceIp `1.1.1.1`, aws:UserId `anonymous` and a KMS key
+  id
+  ([rgw_iam_policy.cc:1894-1907](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1894-L1907),
+  [rgw_iam_policy.cc:1929-1942](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1929-L1942)),
+  so a condition on any other key, such as `Bool aws:SecureTransport true`,
+  makes the grant not public and one 1.1.1.1 meets makes it public; Squid's
+  also counts every other Allow statement whose NotPrincipal names no
+  wildcard, a grant to one user among them (`none_of` over `noprinc`,
+  [rgw_iam_policy.cc:1909-1912](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1909-L1912))
+  (`docs/ceph-upstream-bugs.md`, "radosgw's is_public judges a
+  wildcard-principal statement against a fixed three-key environment" and
+  "Squid's is_public counts every Allow statement whose NotPrincipal is not
+  the wildcard"). rgw-go judges a policy on both releases as Amazon S3's
+  "The meaning of "public""
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status)
+  does, evaluating no condition (`policy.Policy.IsPublic`). A policy is
+  public when an Allow statement grants every principal, and none of its
+  conditions limits the grant to fixed values of a key that page lists. A
+  statement grants every principal through the wildcard in its Principal; a
+  principal there whose name holds a wildcard, `*` or `?`, or a policy
+  variable; a principal that admits the anonymous requester, the default
+  tenant's account, as `arn:aws:iam:::root` or `""`, or the user
+  `arn:aws:iam:::user/anonymous` (`docs/ceph-upstream-bugs.md`,
+  "Tentacle's is_public misses a fixed principal that admits the anonymous
+  requester"); or a NotPrincipal without the wildcard. A fixed value holds
+  no wildcard of the matching operators, `*`, `?`, `[` or `\`, and no policy
+  variable. The listed keys are aws:SourceIp, each range no
+  broader than an IPv4 /8 or an IPv6 /32; aws:SourceArn, aws:SourceVpc,
+  aws:SourceVpce, aws:SourceOwner, aws:SourceAccount, aws:userid,
+  aws:PrincipalOrgID and s3:DataAccessPointAccount; and
+  s3:DataAccessPointArn, whose access point name alone may hold a wildcard
+  when the account is fixed. Keys match in any ASCII case. IpAddress limits
+  aws:SourceIp; the string and ARN equality and matching operators and
+  their ForAnyValue forms limit the rest; IfExists, ForAllValues, the
+  negated operators and a condition with no value limit nothing. A Deny
+  statement, and what a statement's actions and resources name, never
+  count. An IPv6 range holding ::/96 or ::ffff:0:0/96 holds every IPv4
+  address, since radosgw compares an IPv4 address with an IPv6 range as
+  ::a.b.c.d (`MaskedIP`'s `operator ==`,
+  [rgw_iam_policy.h:341-346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L341-L346),
+  [rgw_iam_policy.h:360-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L360-L365)).
+  The judgment decides PutBucketPolicy's BlockPublicPolicy refusal and
+  RestrictPublicBuckets. Under a block of public policies rgw-go therefore
+  differs from radosgw as follows:
+  - It refuses with 403 AccessDenied, on both releases, a grant to everyone
+    under a condition that limits nothing by that rule and that the three
+    keys fail, such as `Bool aws:SecureTransport true`, which radosgw stores
+    on both.
+  - It refuses a grant to a principal whose name holds a wildcard or a
+    policy variable, such as `arn:aws:iam:::user/alice:*`, every subuser of
+    alice, or `arn:aws:iam:::user/${aws:username}`. Squid's radosgw refuses
+    it too, through its count of every named principal, and Tentacle's
+    stores it.
+  - It refuses a grant to a principal that admits the anonymous requester.
+    Squid's radosgw refuses it too, for the same reason, and Tentacle's
+    stores it.
+  - It stores a grant to everyone limited to fixed values of a listed key
+    that the three keys meet, which radosgw refuses on both releases: a
+    range holding 1.1.1.1, such as `IpAddress aws:SourceIp 1.1.1.1/32`, or
+    `StringEquals aws:UserId anonymous`, whose key matches aws:userid in any
+    case.
+  - On Squid it stores a grant to fixed named principals, which Squid's
+    radosgw refuses.
+
+  Under RestrictPublicBuckets, which Squid's radosgw never enforces, rgw-go
+  refuses every requester outside the bucket owner's account a grant that
+  it judges public and v20.2.4 does not: a grant to everyone under
+  `Bool aws:SecureTransport true`; a grant to `user/alice:*`, whose
+  subusers v20.2.4 serves when another user owns the bucket; and a grant to
+  `arn:aws:iam:::root`, whose anonymous and default-tenant requesters
+  v20.2.4 serves. It serves two grants that v20.2.4 restricts: a grant to
+  everyone from 1.1.1.1/32 alone, and one under
+  `StringEquals aws:UserId anonymous`, which grants no one in rgw-go, whose
+  environment holds neither aws:UserId nor aws:userid.
 - **A copy source is checked against its own bucket.** radosgw checks
   CopyObject's and UploadPartCopy's source through the request's state,
   whose bucket is the destination, and takes three inputs from the

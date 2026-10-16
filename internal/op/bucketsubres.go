@@ -364,7 +364,7 @@ func (o *PutBucketPolicy) Execute(ctx context.Context, r *Request) error {
 	if o.Policy == nil {
 		return fmt.Errorf("%w: no bucket policy to store", ErrInternalError)
 	}
-	public := o.Policy.IsPublic(policy.SemanticsFor(r.Env.Zone.Release()))
+	public := o.Policy.IsPublic()
 	set := map[string][]byte{AttrIAMPolicy: []byte(o.Policy.Text)}
 	return retryBucketWrite(ctx, r, o, func() error {
 		if public && blocksPublicPolicy(r.BucketRec) {

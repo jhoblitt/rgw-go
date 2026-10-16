@@ -263,10 +263,10 @@ func blocks(rec *op.BucketRecord, set func(*acl.PublicAccessBlock) bool) bool {
 // principals radosgw does not support when rgw_policy_reject_invalid_principals
 // is set, under the cluster's release. A body that does not parse is the
 // *policy.ParseError; a public policy on a bucket whose public-access block
-// sets BlockPublicPolicy, judged by the release's is_public, is
-// op.ErrAccessDenied, a block that does not decode blocking. The attr to store
-// is the policy's Text. A caller maps its errors through ErrorFor before
-// rendering.
+// sets BlockPublicPolicy, judged as Amazon S3 judges one
+// (policy.Policy.IsPublic), is op.ErrAccessDenied, a block that does not
+// decode blocking. The attr to store is the policy's Text. A caller maps its
+// errors through ErrorFor before rendering.
 func (e *Evaluator) ParseBucketPolicy(r *op.Request, body []byte) (*policy.Policy, error) {
 	tenant := r.Tenant
 	p, err := policy.Parse(string(body), policy.ParseOptions{
@@ -275,7 +275,7 @@ func (e *Evaluator) ParseBucketPolicy(r *op.Request, body []byte) (*policy.Polic
 	if err != nil {
 		return nil, err
 	}
-	if p.IsPublic(e.sem) && blocks(r.BucketRec, func(b *acl.PublicAccessBlock) bool { return b.BlockPublicPolicy }) {
+	if p.IsPublic() && blocks(r.BucketRec, func(b *acl.PublicAccessBlock) bool { return b.BlockPublicPolicy }) {
 		return nil, fmt.Errorf("%w: the bucket blocks public policies", op.ErrAccessDenied)
 	}
 	return p, nil

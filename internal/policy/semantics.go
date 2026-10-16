@@ -20,13 +20,6 @@ type Semantics struct {
 	// std::not_fn, e.g.
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L890-L892).
 	NotMeansNone bool
-	// PublicNeedsWildcardPrincipal: is_public counts an Allow statement only
-	// for a wildcard Principal
-	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1935-L1947 at v20.2.4);
-	// v19.2.6 also counts every other Allow statement whose NotPrincipal names
-	// no wildcard
-	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1900-L1917).
-	PublicNeedsWildcardPrincipal bool
 	// RejectAllowWithNotPrincipal: an Allow statement with a NotPrincipal
 	// fails the parse, "Allow with NotPrincipal is not allowed."
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L773-L776 at v20.2.4);
@@ -54,11 +47,10 @@ type Semantics struct {
 func SemanticsFor(r denc.Release) Semantics {
 	tentacle := r >= denc.Tentacle
 	return Semantics{
-		NullTestsValues:              tentacle,
-		NotMeansNone:                 tentacle,
-		PublicNeedsWildcardPrincipal: tentacle,
-		RejectAllowWithNotPrincipal:  tentacle,
-		ServicePrincipals:            tentacle,
-		FindKeepsFirstValue:          tentacle,
+		NullTestsValues:             tentacle,
+		NotMeansNone:                tentacle,
+		RejectAllowWithNotPrincipal: tentacle,
+		ServicePrincipals:           tentacle,
+		FindKeepsFirstValue:         tentacle,
 	}
 }

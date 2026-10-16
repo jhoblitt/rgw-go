@@ -8,21 +8,10 @@ import (
 	"sync"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
-	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
-
-// restrictSemantics judges whether a bucket policy is public for
-// RestrictPublicBuckets, which rgw-go enforces on both releases as v20.2.4
-// does
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1374-L1380
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1541-L1547 at v20.2.4).
-// Squid's is_public counts nearly every Allow statement, so its rule would
-// turn the block into a refusal of almost every grant.
-var restrictSemantics = policy.SemanticsFor(denc.Tentacle)
 
 // Evaluator implements op.Authorizer: radosgw's verify_user_permission,
 // verify_bucket_permission and verify_object_permission through the request
@@ -634,10 +623,11 @@ func requesterPays(r *op.Request, id identity) bool {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1374-L1380
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1541-L1547 at v20.2.4):
-// a public policy refuses everyone outside the bucket owner's account, each
-// block judged against its own bucket's owner.
+// a public policy, judged as Amazon S3 judges one (policy.Policy.IsPublic),
+// refuses everyone outside the bucket owner's account, each block judged
+// against its own bucket's owner.
 func restricted(r *op.Request, id identity, c *check, resource *policy.Policy) bool {
-	if !resource.IsPublic(restrictSemantics) {
+	if !resource.IsPublic() {
 		return false
 	}
 	blocks := []struct {

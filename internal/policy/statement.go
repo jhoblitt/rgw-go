@@ -68,6 +68,12 @@ type Statement struct {
 	Resources    []ARN
 	NotResources []ARN
 	Conditions   []Condition
+
+	// droppedOpenPrincipal is set when Principal listed a principal that
+	// counts as every principal for IsPublic, and radosgw's principal set
+	// dropped it as equal to one already held (addPrincipal). Evaluation
+	// never sees it, as radosgw's does not.
+	droppedOpenPrincipal bool
 }
 
 // Eval is Statement::eval
