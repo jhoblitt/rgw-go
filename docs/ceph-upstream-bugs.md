@@ -313,6 +313,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's GetPublicAccessBlock document lacks the S3 namespace](#radosgws-getpublicaccessblock-document-lacks-the-s3-namespace) | pending | pending | ✓ |
 | [radosgw stores false for a public access block setting it cannot find](#radosgw-stores-false-for-a-public-access-block-setting-it-cannot-find) | pending | pending | ✓ |
 | [radosgw's XML parser expands the entities a request body declares](#radosgws-xml-parser-expands-the-entities-a-request-body-declares) | pending | pending | ✓ |
+| [radosgw's PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any algorithm](#radosgws-putbucketencryption-stores-any-ssealgorithm-and-a-kms-key-id-with-any-algorithm) | pending | pending |  |
+| [radosgw's PutBucketEncryption stores a configuration without the elements it cannot find](#radosgws-putbucketencryption-stores-a-configuration-without-the-elements-it-cannot-find) | pending | [ceph/ceph#71247](https://github.com/ceph/ceph/pull/71247), [ceph/ceph#72634](https://github.com/ceph/ceph/pull/72634) |  |
+| [radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false](#radosgw-writes-getbucketencryptions-bucketkeyenabled-as-true-which-botocore-reads-as-false) | pending | pending |  |
+| [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16262,3 +16266,250 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task BC-17, 2026-10-15, recording what radosgw does
   with a DTD in a PutPublicAccessBlock body; its bound and its
   pre-authorization reach corrected by the task's review the same day.
+
+## radosgw's PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any algorithm
+
+- **Kind:** defect, S3-correctness: PutBucketEncryption stores whatever
+  `SSEAlgorithm` its document names, and a `KMSMasterKeyID` beside any
+  algorithm or none, and answers 200, where Amazon S3 takes five
+  algorithms and a key id only with `aws:kms` or `aws:kms:dsse`. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_bucket_encryption.h`, `rgw_bucket_encryption.cc`, `rgw_xml.h` and
+  `rgw_xml.cc` are identical at the two tags.
+  - `ApplyServerSideEncryptionByDefault::decode_xml` reads both values as
+    optional strings
+    ([rgw_bucket_encryption.cc:8-11](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.cc#L8-L11),
+    [rgw_bucket_encryption.cc:8-11](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.cc#L8-L11)),
+    each its element's text as it is
+    ([rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L179-L182),
+    [rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L179-L182)).
+  - The op stores the configuration it decoded, and nothing between the
+    decode and the write looks at either value
+    ([rgw_op.cc:8790-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8790-L8811),
+    [rgw_op.cc:9758-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9758-L9779)).
+  - Amazon S3 takes `AES256`, `aws:kms`, `aws:kms:dsse`, `aws:fsx` and
+    `aws:backup`, and a key id "if and only if SSEAlgorithm is set to
+    aws:kms or aws:kms:dsse"
+    (https://docs.aws.amazon.com/AmazonS3/latest/API/API_ServerSideEncryptionByDefault.html;
+    the model the AWS SDK for Go v2 carries,
+    [enums.go:1469-1478](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/enums.go#L1469-L1478)
+    and
+    [types.go:4845-4898](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4845-L4898)).
+    That it refuses the others with MalformedXML is expected, not verified
+    here.
+- **Impact:** a client that names an algorithm Amazon S3 refuses, such as
+  a misspelled `AES-256` or `aes256`, or a KMS key beside `AES256`, is told
+  the default is set. The writes that read the default then fail with 400
+  when they name no encryption of their own: PutObject, POST object and
+  CreateMultipartUpload, whose `get_params` call `get_encryption_defaults`
+  ([rgw_rest_s3.cc:2620](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2620),
+  [rgw_rest_s3.cc:2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2981) and
+  [rgw_rest_s3.cc:4003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4003);
+  [rgw_rest_s3.cc:2773](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2773),
+  [rgw_rest_s3.cc:3118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3118) and
+  [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454)).
+  That function puts the stored algorithm and key id in place of the
+  request's
+  ([rgw_rest_s3.cc:208-230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L208-L230),
+  [rgw_rest_s3.cc:205-227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L205-L227)).
+  - A key beside `AES256` is refused there with 400 InvalidArgument,
+    "algorithm <AES256> but got sse-kms attributes", at both tags and over
+    either transport
+    ([rgw_rest_s3.cc:266-269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L266-L269),
+    [rgw_rest_s3.cc:263-266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L263-L266)).
+    UploadPart, which the same `RGWPutObj_ObjStore_S3::get_params` serves,
+    is refused the same way.
+  - An algorithm other than `aws:kms` and `AES256` is refused by
+    `rgw_s3_prepare_encrypt`. At v19.2.7 that function checks the transport
+    first, whatever the algorithm, so with `rgw_crypt_require_ssl` at its
+    default, true
+    ([rgw.yaml.in:2823-2827](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2823-L2827)),
+    a request over plain HTTP is refused with 400 InvalidRequest
+    ([rgw_crypt.cc:1152-1156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1152-L1156)),
+    and one over TLS with 400 InvalidArgument, "Server Side Encryption with
+    KMS managed key requires HTTP header x-amz-server-side-encryption :
+    aws:kms or AES256", which names a header the client never sent
+    ([rgw_crypt.cc:1203-1208](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1203-L1208)).
+    v20.2.4 checks the transport only for `aws:kms`
+    ([rgw_crypt.cc:1167-1172](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1167-L1172)),
+    so it answers 400 InvalidArgument over either
+    ([rgw_crypt.cc:1218-1223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1218-L1223)).
+  - UploadPart takes its encryption from its upload, through
+    `rgw_s3_prepare_decrypt` on the upload's meta object, rather than from
+    the default
+    ([rgw_rest_s3.cc:2859-2876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2859-L2876),
+    [rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002)),
+    and CopyObject reads no default at all, so neither meets the algorithm
+    check.
+  - A key id with no algorithm is taken for `aws:kms`
+    ([rgw_rest_s3.cc:258-261](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L258-L261),
+    [rgw_rest_s3.cc:255-258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L255-L258)).
+  - No such default lets a write it was meant to encrypt be stored in the
+    clear.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: `sse.ParseXML` (`internal/sse/xml.go`) refuses such
+  a document with 400 MalformedXML through
+  `sse.BucketEncryptionConfig.Validate` (docs/exclusions.md, "A
+  PutBucketEncryption document is held to S3's schema and AWS's values").
+  A configuration radosgw stored this way decodes and renders as stored.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning, 2026-10-13, from the source; confirmed by
+  Task BC-23, 2026-10-16. Not reproduced.
+
+## radosgw's PutBucketEncryption stores a configuration without the elements it cannot find
+
+- **Kind:** defect, S3-correctness, possibly security-relevant at a low
+  level: a PutBucketEncryption document holding an element radosgw does
+  not find under the name and in the place it looks for is stored without
+  it, and the request answers 200, so an owner who asked for a default
+  algorithm, or for SSE-C to be blocked, is told it is set while it is
+  not. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_bucket_encryption.cc`, `rgw_xml.h` and `rgw_xml.cc` are identical
+  at the two tags.
+  - Each member's `decode_xml` looks its elements up as optional fields
+    ([rgw_bucket_encryption.cc:8-34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.cc#L8-L34),
+    [rgw_bucket_encryption.cc:8-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.cc#L8-L34))
+    through `RGWXMLDecoder::decode_xml`, which gives an absent one its
+    default and decodes only the first of several
+    ([rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+    [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)).
+    Children are found by their names as written, as expat runs without
+    namespace processing
+    ([rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)),
+    and nothing refuses a child the decode did not use.
+  - So `<SseAlgorithm>AES256</SseAlgorithm>`, or an `SSEAlgorithm` written
+    directly in `Rule`, stores a rule naming no algorithm; `<Rules>` for
+    `<Rule>` stores no rule; and a second `Rule` is never read.
+  - Amazon S3 reads a rule's `BlockedEncryptionTypes`, which refuses writes
+    with SSE-C (the model the AWS SDK for Go v2 carries,
+    [types.go:4925-4971](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4925-L4971)).
+    Neither floor names that element anywhere in `src/rgw`, so both store
+    the rest of the rule and block nothing. radosgw's main branch reads it
+    since 96ed8b8c780, which no release carries.
+  - Amazon S3 answers MalformedXML to "XML that doesn't conform to the
+    published XSD" for a configuration (S3's error list as the AWS SDK for
+    Go carries it,
+    [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
+    That it refuses these documents is expected, not verified here.
+- **Impact:** a misspelled or misplaced algorithm leaves the bucket with
+  no default, so on a radosgw with a key server the writes that name no
+  encryption are stored unencrypted while the owner was told the default
+  is set; GetBucketEncryption shows the empty algorithm. A
+  `BlockedEncryptionTypes` that an owner sends to keep SSE-C keys out of
+  the bucket is dropped, and SSE-C writes go on. SDK-built documents name
+  the elements correctly; a current SDK sends `BlockedEncryptionTypes`
+  when asked to. "radosgw stores false for a public access block setting
+  it cannot find" is the same lookup in another document.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: `sse.ParseXML` (`internal/sse/xml.go`) answers each
+  such document 400 MalformedXML (docs/exclusions.md, "A
+  PutBucketEncryption document is held to S3's schema and AWS's values").
+- **Upstream:** pending: rgw-bug-reproduction recorded it as
+  BC23-1-PUTBUCKETENCRYPTION-LENIENT-XML-200, open and security-relevant
+  only conditionally. The tracker has not been searched. Related upstream
+  work, which fixes neither the lenient lookup of the other elements nor
+  the first-of-several read:
+  [ceph/ceph#71247](https://github.com/ceph/ceph/pull/71247), merged on
+  main as 98b8a9c48c3 with 96ed8b8c780 and in no release, reads
+  `BlockedEncryptionTypes`, and its squid backport,
+  [ceph/ceph#72634](https://github.com/ceph/ceph/pull/72634), is open.
+- **Found:** phase 2 Task BC-23, 2026-10-16, reading `decode_xml` for
+  rgw-go's parser. Derived from the source, not reproduced.
+
+## radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false
+
+- **Kind:** defect, S3-correctness: GetBucketEncryption writes a bucket
+  key that is on as `<BucketKeyEnabled>True</BucketKeyEnabled>`, and
+  botocore, under boto3 and the AWS CLI, reads any boolean text but `true`
+  as false. Not security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_bucket_encryption.cc`, `rgw_xml.h` and `rgw_xml.cc` are identical
+  at the two tags.
+  - `ServerSideEncryptionConfiguration::dump_xml` writes the flag, when it
+    is set, with `encode_xml("BucketKeyEnabled", true, f)`
+    ([rgw_bucket_encryption.cc:25-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.cc#L25-L30),
+    [rgw_bucket_encryption.cc:25-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.cc#L25-L30)).
+    That call binds to the non-template `encode_xml(const char *, bool,
+    Formatter *)`
+    ([rgw_xml.h:338](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L338),
+    [rgw_xml.h:338](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L338))
+    over the section template
+    ([rgw_xml.h:319-325](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L319-L325),
+    [rgw_xml.h:319-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L319-L325)),
+    which writes `True` or `False`
+    ([rgw_xml.cc:463-472](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L463-L472),
+    [rgw_xml.cc:463-472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L463-L472)).
+  - botocore 1.43.6's XML response parser returns true only for the text
+    `true`
+    ([parsers.py:566-570](https://github.com/boto/botocore/blob/1.43.6/botocore/parsers.py#L566-L570)),
+    and the REST-XML parser S3 uses inherits it
+    ([parsers.py:1404](https://github.com/boto/botocore/blob/1.43.6/botocore/parsers.py#L1404));
+    AWS CLI 2.17.6's copy of botocore reads it the same way
+    ([parsers.py:510-514](https://github.com/aws/aws-cli/blob/2.17.6/awscli/botocore/parsers.py#L510-L514)).
+    The AWS SDK for Go reads either case with `strconv.ParseBool`
+    ([unmarshal.go:268](https://github.com/aws/aws-sdk-go/blob/v1.55.8/private/protocol/xml/xmlutil/unmarshal.go#L268)),
+    and the AWS SDK for Go v2 writes the flag lower-case
+    ([serializers.go:15433-15443](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/serializers.go#L15433-L15443),
+    smithy-go's
+    [value.go:159-161](https://github.com/aws/smithy-go/blob/v1.28.4/encoding/xml/value.go#L159-L161)).
+- **Impact:** a boto3 or AWS CLI client reads back `BucketKeyEnabled`
+  false for a bucket whose default enables it, so one that checks the
+  setting after it set it sees it off. The stored configuration, and what
+  a write does with it, are unaffected. No s3-test reads the flag.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: `sse.BucketEncryptionConfig.MarshalS3XML`
+  (`internal/sse/xml.go`) writes `true`, as the SDKs write it
+  (docs/exclusions.md, "GetBucketEncryption writes BucketKeyEnabled as
+  true"). rgw-go does not serve GetBucketEncryption yet.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task BC-23, 2026-10-16, reading `dump_xml` for
+  rgw-go's renderer, and botocore's parser. Derived from the source, not
+  reproduced.
+
+## radosgw stores an AES256 default with a bucket key that fails every write it applies to
+
+- **Kind:** defect, S3-correctness: PutBucketEncryption stores `AES256`
+  with `BucketKeyEnabled` true, and every later PutObject, POST object,
+  CreateMultipartUpload and UploadPart into the bucket that names no
+  encryption of its own fails with 400 InvalidArgument "algorithm <AES256>
+  but got sse-kms attributes", on a radosgw whose SSE-S3 is configured
+  too. Not security-relevant: the writes fail, and none is stored
+  unencrypted. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The op stores the flag as decoded, whatever the algorithm
+    ([rgw_op.cc:8790-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8790-L8811),
+    [rgw_op.cc:9758-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9758-L9779)).
+  - When the request names no algorithm, `get_encryption_defaults` takes
+    the stored one
+    ([rgw_rest_s3.cc:208-215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L208-L215),
+    [rgw_rest_s3.cc:205-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L205-L212)),
+    takes a stored bucket key as a KMS attribute
+    ([rgw_rest_s3.cc:241-245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L241-L245),
+    [rgw_rest_s3.cc:238-242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L238-L242)),
+    and refuses KMS attributes with any algorithm but `aws:kms`
+    ([rgw_rest_s3.cc:266-269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L266-L269),
+    [rgw_rest_s3.cc:263-266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L263-L266)).
+    A write that names an algorithm itself does not take the stored flag.
+  - Amazon S3's model does not tie `BucketKeyEnabled` to an algorithm in
+    the configuration
+    ([types.go:4948-4968](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4948-L4968)).
+    What Amazon S3 answers to this configuration, at the put or at a
+    write, was not checked.
+- **Impact:** a bucket whose default is SSE-S3 with a bucket key refuses
+  every PutObject, POST object and CreateMultipartUpload into it that
+  names no encryption, and every UploadPart of an upload begun before the
+  configuration, until the configuration changes; each of them calls
+  `get_encryption_defaults`, and CopyObject does not ("radosgw's
+  PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any
+  algorithm"). On a radosgw without a key server every write that takes
+  an `AES256` default fails anyway, with another message.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** stores the configuration, as radosgw does:
+  `sse.BucketEncryptionConfig.Validate` (`internal/sse/xml.go`) refuses
+  neither value. rgw-go serves no write that takes a bucket's default yet.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task BC-23, 2026-10-16, tracing what a stored default
+  does to a write. Derived from the source, not reproduced.

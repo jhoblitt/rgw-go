@@ -239,9 +239,18 @@ Still required, and these three hold the exclusion together:
    so that objects radosgw wrote with a customer key decrypt. Until then
    rgw-go answers SSE-C reads and writes with 501, so it neither stores in
    the clear what a client asked to have encrypted nor serves ciphertext.
-2. The three bucket-encryption configuration ops behave exactly as a
-   radosgw with no backend configured: the configuration round-trips,
-   and any use of `aws:kms` or `AES256` fails with radosgw's error.
+2. The three bucket-encryption configuration ops behave as a radosgw
+   with no backend configured, and any use of `aws:kms` or `AES256`
+   fails with radosgw's error. A configuration is stored in radosgw's
+   `RGWBucketEncryptionConfig` bytes, and one radosgw stored is read as
+   stored, but not every document round-trips: PutBucketEncryption
+   refuses with 400 MalformedXML a document outside S3's schema, an
+   `SSEAlgorithm` outside AWS's list, and a `KMSMasterKeyID` beside an
+   algorithm other than `aws:kms` or `aws:kms:dsse`, all of which
+   radosgw stores ("A PutBucketEncryption document is held to S3's
+   schema and AWS's values"), and GetBucketEncryption writes a bucket
+   key as `true` where radosgw writes `True` ("GetBucketEncryption
+   writes BucketKeyEnabled as true").
 3. Objects radosgw encrypted with a key server carry a crypt-mode xattr.
    rgw-go reads it and refuses with the error radosgw gives when its
    backend is unavailable. Ciphertext is never served as plaintext.
@@ -2561,6 +2570,100 @@ following.
   document costs no more than its offending prefix. A document an SDK sends
   reads alike on both gateways, and both store the block in the same
   `user.rgw.public-access` encoding.
+- **A PutBucketEncryption document is held to S3's schema and AWS's
+  values.** radosgw looks up a mandatory `ServerSideEncryptionConfiguration`
+  root and, under it, an optional `Rule` holding an optional
+  `ApplyServerSideEncryptionByDefault`, with its optional `SSEAlgorithm`
+  and `KMSMasterKeyID`, and an optional `BucketKeyEnabled`. It answers 400
+  MalformedXML only to a body expat cannot parse, one without that root,
+  and a `BucketKeyEnabled` it cannot read as a boolean
+  ([rgw_op.cc:8774-8796](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8774-L8796),
+  [rgw_op.cc:9742-9764](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9742-L9764);
+  [rgw_bucket_encryption.cc:8-34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket_encryption.cc#L8-L34),
+  [rgw_bucket_encryption.cc:8-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_encryption.cc#L8-L34)).
+  Past that it reads the body leniently. It ignores an element it does not
+  know or does not find in its place, so a misspelled `SSEAlgorithm` or
+  `Rule`, or AWS's `BlockedEncryptionTypes`, is dropped while the request
+  answers 200, and of a repeated element it reads the first
+  (docs/ceph-upstream-bugs.md, "[radosgw's PutBucketEncryption stores a
+  configuration without the elements it cannot
+  find](ceph-upstream-bugs.md#radosgws-putbucketencryption-stores-a-configuration-without-the-elements-it-cannot-find)").
+  It ignores attributes, `xmlns` among them, and text between the
+  elements, and it expands the entities a document type declaration
+  declares. It reads `BucketKeyEnabled` as `true` or `false` in any ASCII
+  case, or else as a decimal integer with whitespace around it, non-zero
+  for true
+  ([rgw_xml.cc:392-406](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L392-L406),
+  [rgw_xml.cc:392-406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L392-L406)).
+  And it stores any `SSEAlgorithm`, and a `KMSMasterKeyID` beside any
+  algorithm (docs/ceph-upstream-bugs.md, "[radosgw's PutBucketEncryption
+  stores any SSEAlgorithm, and a KMS key id with any
+  algorithm](ceph-upstream-bugs.md#radosgws-putbucketencryption-stores-any-ssealgorithm-and-a-kms-key-id-with-any-algorithm)").
+  Amazon S3 takes an `SSEAlgorithm` of `AES256`, `aws:kms`,
+  `aws:kms:dsse`, `aws:fsx` or `aws:backup`, and a `KMSMasterKeyID` "if
+  and only if SSEAlgorithm is set to aws:kms or aws:kms:dsse"
+  (https://docs.aws.amazon.com/AmazonS3/latest/API/API_ServerSideEncryptionByDefault.html;
+  the model the AWS SDK for Go v2 carries,
+  [enums.go:1469-1478](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/enums.go#L1469-L1478)
+  and
+  [types.go:4845-4898](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4845-L4898)),
+  and answers MalformedXML to "XML that doesn't conform to the published
+  XSD" for a configuration (S3's error list as the AWS SDK for Go carries
+  it,
+  [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
+  AWS's answer to each case below was not checked against Amazon S3
+  itself. rgw-go answers 400 MalformedXML (`sse.ParseXML`,
+  `internal/sse/xml.go`) to:
+  - a document type declaration, or any other `<!` declaration;
+  - a root other than an unprefixed `ServerSideEncryptionConfiguration`,
+    or a second root;
+  - an element the schema does not place where it stands: an unknown or
+    misspelled one, `BlockedEncryptionTypes`, one under another parent
+    than its own, and a prefixed one even when its prefix is bound to S3's
+    namespace; an element inside a value; and a repeated element, a
+    second `Rule` among them;
+  - an attribute other than an `xmlns` naming S3's namespace or none,
+    prefix declarations included;
+  - text other than XML whitespace (space, tab, carriage return and line
+    feed) outside a value;
+  - a `BucketKeyEnabled` other than `true` or `false` in any ASCII case,
+    or `1` or `0` with XML whitespace around it, so an integer such as
+    `2`, `-7`, `+0` or `01`, which radosgw reads, non-zero as true; and one
+    whose text, once decoded, is longer than 64 bytes;
+  - an `SSEAlgorithm` outside AWS's five, compared as written, so `aes256`
+    and ` AES256` too, and a `KMSMasterKeyID` with an algorithm other than
+    `aws:kms` or `aws:kms:dsse` (`sse.BucketEncryptionConfig.Validate`);
+  - a body longer than 1 MiB, `rgw_max_put_param_size`'s default
+    ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145),
+    [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)).
+    radosgw's op reads the body with that option as its `max_len` and
+    refuses a Content-Length over it unread, `-ERANGE`
+    ([rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1556-L1558),
+    [rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1558)),
+    which it answers 416 InvalidRange
+    ([rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
+    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)),
+    so under the default the parser's limit is never reached. Under a
+    raised option radosgw reads a longer document, and rgw-go refuses it.
+
+  rgw-go keeps radosgw's reading where S3's model is stricter and nothing
+  the document says is lost: a document without a `Rule` stores a
+  configuration without one, and a `Rule` without an `SSEAlgorithm` stores
+  one naming no algorithm, though the model marks both required
+  ([types.go:4901-4910](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4901-L4910),
+  [types.go:4845-4853](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4845-L4853)).
+  An empty `KMSMasterKeyID` is no key id, as both gateways store it. A
+  value is its element's text, references and CDATA decoded, comments and
+  processing instructions dropped, nothing trimmed, as radosgw reads it.
+  The refusal comes at the first token that breaks a rule, so a hostile
+  document costs no more than its offending prefix. An SDK document that
+  names one of AWS's algorithms and carries no `BlockedEncryptionTypes`
+  reads alike on both gateways, and both store it in the same
+  `user.rgw.sse-s3.policy` bytes. An SDK sends an algorithm outside AWS's
+  list as it is given, since it does not check the enum, and
+  `BlockedEncryptionTypes` when asked to, as s3-tests'
+  `_put_bucket_blocked_encryption_types` does: radosgw stores the first
+  and drops the second, and rgw-go refuses both.
 - **A NUL in a request argument that names a RADOS object is refused.**
   radosgw refuses a NUL only in the decoded path (`ERR_ZERO_IN_URL`,
   `rgw_rest.cc:2182-2186` at v19.2.6, `:2204-2208` at v20.2.4). A `%00`
@@ -3187,6 +3290,16 @@ v20.2.4 tags, rgw-go does the following.
   (`rgw_rest.cc:2182-2186`, `:2290-2304` and `:676-681` at v19.2.6,
   `:2204-2208`, `:2312-2326` and `:681-686` at v20.2.4). rgw-go renders
   every S3 document and error document as XML, those included.
+- **GetBucketEncryption writes BucketKeyEnabled as true.** radosgw writes
+  a bucket key that is on as `True`, which botocore, and so boto3 and the
+  AWS CLI, reads as false (docs/ceph-upstream-bugs.md, "[radosgw writes
+  GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as
+  false](ceph-upstream-bugs.md#radosgw-writes-getbucketencryptions-bucketkeyenabled-as-true-which-botocore-reads-as-false)").
+  rgw-go writes `true`, as the AWS SDKs write it
+  (`sse.BucketEncryptionConfig.MarshalS3XML`, `internal/sse/xml.go`); every
+  other byte of the document is radosgw's. An SDK that reads either case,
+  as the AWS SDK for Go does, sees the same configuration from both
+  gateways.
 - **No `Bucket` header.** With `rgw_expose_bucket` set, which defaults to
   false, radosgw names the bucket in a `Bucket` header on an error it
   answers through `abort_early`, one refused before the op executes
