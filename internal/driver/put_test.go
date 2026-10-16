@@ -459,6 +459,18 @@ var _ = Describe("PutObject", func() {
 		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
 	})
 
+	DescribeTable("refuses a body of unknown length past rgw_max_put_size once get_data's chunk that carries it there is read",
+		func(ctx SpecContext, data int, want error) {
+			s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_put_size": "6291456"}, mtime)
+			body := &cutReader{r: bytes.NewReader(bytes.Repeat([]byte("e"), data)), err: op.ErrSignatureDoesNotMatch}
+			_, err := s.PutObject(ctx, rec, key, body, op.PutParams{Attrs: attrs, Size: -1, Tag: "t"})
+			Expect(err).To(MatchError(want))
+			Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
+		},
+		Entry("a body error inside the 4-8 MiB chunk wins, as recv_body's error precedes the size check", 7<<20, op.ErrSignatureDoesNotMatch),
+		Entry("EntityTooLarge once that chunk is whole, ahead of a later body error", 9<<20, op.ErrEntityTooLarge),
+	)
+
 	It("stores an empty object as an empty head", func(ctx SpecContext) {
 		res, err := s.PutObject(ctx, rec, key, strings.NewReader(""), op.PutParams{Attrs: attrs, Size: 0, Tag: "t"})
 		Expect(err).NotTo(HaveOccurred())
@@ -619,4 +631,88 @@ var _ = Describe("PutObject's conditions", func() {
 		Entry("If-None-Match other etag on a missing key: Squid writes, as Tentacle does", denc.Squid, false, "", md5hex("other"), nil),
 		Entry("If-None-Match other etag on a missing key: Tentacle writes", denc.Tentacle, false, "", md5hex("other"), nil),
 	)
+})
+
+// errAfter yields data, then err with the read that returns its last bytes.
+type errAfter struct {
+	data []byte
+	err  error
+}
+
+func (e *errAfter) Read(p []byte) (int, error) {
+	n := copy(p, e.data)
+	e.data = e.data[n:]
+	if len(e.data) == 0 {
+		return n, e.err
+	}
+	return n, nil
+}
+
+// piecesReader yields each of pieces in reads of its own, then err, counting
+// the bytes it has handed out.
+type piecesReader struct {
+	pieces [][]byte
+	err    error
+	read   int
+}
+
+func (r *piecesReader) Read(p []byte) (int, error) {
+	if len(r.pieces) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.pieces[0])
+	r.pieces[0] = r.pieces[0][n:]
+	if len(r.pieces[0]) == 0 {
+		r.pieces = r.pieces[1:]
+	}
+	r.read += n
+	return n, nil
+}
+
+// The stage specs below hold the body to 6 bytes in chunks of 4, so the
+// chunk get_data reads that carries the body past its limit is bytes 4-8.
+var _ = Describe("the plaintext stage", func() {
+	It("hands every byte of the body to each sink and counts them", func() {
+		body := mibPattern(3)
+		h, buf := md5.New(), &bytes.Buffer{}
+		r, n := driver.PlaintextForTest(bytes.NewReader(body), uint64(len(body)), 1<<20, h, buf)
+		got, err := io.ReadAll(r)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(body))
+		Expect(buf.Bytes()).To(Equal(body))
+		sum := md5.Sum(body)
+		Expect(h.Sum(nil)).To(Equal(sum[:]))
+		Expect(n()).To(BeEquivalentTo(len(body)), "a body of exactly rgw_max_put_size passes")
+	})
+	It("refuses with EntityTooLarge at the end of the chunk that carries the body past its limit", func() {
+		r, n := driver.PlaintextForTest(bytes.NewReader([]byte("0123456789")), 6, 4)
+		p := make([]byte, 4)
+		k, err := r.Read(p)
+		Expect([]any{k, err}).To(Equal([]any{4, nil}))
+		_, err = r.Read(p)
+		Expect(err).To(MatchError(op.ErrEntityTooLarge), "get_data's ERR_TOO_LARGE, rgw_rest.cc:1101-1103 at v19.2.7 and v20.2.4")
+		Expect(n()).To(BeEquivalentTo(8))
+	})
+	It("lets a body error inside that chunk win, as get_data returns recv_body's error before its size check", func() {
+		r, _ := driver.PlaintextForTest(&piecesReader{pieces: [][]byte{[]byte("0123456")}, err: op.ErrBadDigest}, 6, 4)
+		_, err := io.ReadAll(r)
+		Expect(err).To(MatchError(op.ErrBadDigest), "rgw_rest.cc:1090-1093 at v19.2.7 and v20.2.4")
+	})
+	It("reads no further than that chunk's end, and refuses there, ahead of a later body error", func() {
+		body := &piecesReader{pieces: [][]byte{[]byte("0123456"), []byte("78901")}, err: op.ErrBadDigest}
+		r, _ := driver.PlaintextForTest(body, 6, 4)
+		_, err := io.ReadAll(r)
+		Expect(err).To(MatchError(op.ErrEntityTooLarge))
+		Expect(body.read).To(Equal(8), "recv_body fills the chunk and reads no more")
+	})
+	It("refuses a body that ends inside that chunk", func() {
+		r, _ := driver.PlaintextForTest(&piecesReader{pieces: [][]byte{[]byte("0123456")}, err: io.EOF}, 6, 4)
+		_, err := io.ReadAll(r)
+		Expect(err).To(MatchError(op.ErrEntityTooLarge))
+	})
+	It("refuses at once a read that runs past that chunk's end, whatever error comes with it", func() {
+		r, _ := driver.PlaintextForTest(&errAfter{data: []byte("0123456789"), err: op.ErrBadDigest}, 6, 4)
+		_, err := io.ReadAll(r)
+		Expect(err).To(MatchError(op.ErrEntityTooLarge), "the chunk was whole before the error came")
+	})
 })

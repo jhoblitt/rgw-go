@@ -76,6 +76,12 @@ type headWrite struct {
 	// counting as success. radosgw has no such write; a copy onto itself
 	// needs it (docs/exclusions.md, "Object write differences").
 	expect *op.ObjectState
+	// incompressible marks data radosgw's compressor made: its write_full is
+	// followed by the incompressible hint, as _do_write_meta follows it for
+	// an object set_compressed marked
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3230-L3238 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3327-L3335 at v20.2.4).
+	incompressible bool
 }
 
 // headResult is what write_meta leaves behind.
@@ -258,6 +264,9 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st *
 	w.SetMtime(mtime)
 	if hw.data != nil {
 		w.WriteFull(hw.data)
+		if hw.incompressible {
+			w.SetAllocHint(0, 0, allocHintIncompressible)
+		}
 	}
 	for _, name := range hw.rmAttrs {
 		w.RmXattr(name)

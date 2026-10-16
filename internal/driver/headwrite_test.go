@@ -3,6 +3,7 @@ package driver_test
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -273,5 +274,62 @@ var _ = Describe("the head write's placement, atomicity, category and index knob
 		}, s.NewIndexOpForTest(rec, meta.ObjKey{Name: "k"}, "tag"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{NumObjects: 1}), "update_stats(owner, bucket, 1, 0, orig_size), rgw_rados.cc:3359-3362")
+	})
+})
+
+var _ = Describe("the head write's alloc hint", func() {
+	var (
+		c   *fakerados.Cluster
+		s   *driver.Store
+		rec *op.BucketRecord
+		key meta.ObjKey
+	)
+	BeforeEach(func(ctx SpecContext) {
+		c = newPutCluster()
+		s = openPutStore(ctx, c, denc.Squid, nil, time.Now())
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		key = meta.ObjKey{Name: "k"}
+	})
+	write := func(ctx context.Context, data []byte, incompressible bool) []radosclient.Step {
+		GinkgoHelper()
+		_, err := s.WriteMetaForTest(ctx, rec, driver.HeadWriteForTest{
+			Key: key, Tag: "tag", Data: data, Attrs: attrsWithACL(initiator), Create: true,
+			Size: uint64(len(data)), AccountedSize: uint64(len(data)), Incompressible: incompressible,
+		}, s.NewIndexOpForTest(rec, key, "tag"))
+		Expect(err).NotTo(HaveOccurred())
+		return c.LastWrite(testDataPool, "", putBucketID+"_k").Steps()
+	}
+
+	// fromWriteFull is steps from the write_full on.
+	fromWriteFull := func(steps []radosclient.Step) []radosclient.Step {
+		GinkgoHelper()
+		i := slices.IndexFunc(steps, func(st radosclient.Step) bool {
+			_, ok := st.(*radosclient.WriteFullStep)
+			return ok
+		})
+		Expect(i).To(BeNumerically(">=", 0), "a write_full")
+		return steps[i:]
+	}
+
+	It("follows the write_full of compressed data with an incompressible hint", func(ctx SpecContext) {
+		steps := fromWriteFull(write(ctx, []byte("abc"), true))
+		Expect(steps[:2]).To(Equal([]radosclient.Step{&radosclient.WriteFullStep{Data: []byte("abc")}, &radosclient.SetAllocHintStep{Flags: 512}}),
+			"_do_write_meta, rgw_rados.cc:3326-3335 at v20.2.4")
+	})
+	It("hints an empty head of compressed data too, whose write_full radosgw still sends", func(ctx SpecContext) {
+		steps := fromWriteFull(write(ctx, []byte{}, true))
+		Expect(steps[:2]).To(Equal([]radosclient.Step{&radosclient.WriteFullStep{Data: []byte{}}, &radosclient.SetAllocHintStep{Flags: 512}}))
+	})
+	It("sends no hint without a write_full", func(ctx SpecContext) {
+		for _, st := range write(ctx, nil, true) {
+			Expect(st).NotTo(BeAssignableToTypeOf(&radosclient.SetAllocHintStep{}))
+		}
+	})
+	It("sends no hint for data it stores as it is", func(ctx SpecContext) {
+		for _, st := range write(ctx, []byte("abc"), false) {
+			Expect(st).NotTo(BeAssignableToTypeOf(&radosclient.SetAllocHintStep{}))
+		}
 	})
 })

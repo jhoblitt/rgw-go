@@ -161,12 +161,8 @@ type tailWriter struct {
 	m     *meta.Manifest
 	pool  radosclient.Pool
 	chunk uint64
-	// maxSize is rgw_max_put_size, to which RGWPutObj_ObjStore::get_data
-	// holds a request's body; copy_obj_data's stream, which no request
-	// carries, has no limit.
-	maxSize uint64
-	sem     *semaphore.Weighted // the put window, in bytes
-	wg      sync.WaitGroup
+	sem   *semaphore.Weighted // the put window, in bytes
+	wg    sync.WaitGroup
 
 	// namer names stripe n; nil is m.TailObj. A part writer names stripe 0
 	// the part head, "<prefix>.<part>", and the rest its shadow stripes,
@@ -187,6 +183,9 @@ type tailWriter struct {
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229 at v19.2.6),
 	// which is the caller's to do.
 	keepHead bool
+	// incompressible marks data radosgw's compressor made: every write of it
+	// carries the incompressible hint (allocHint).
+	incompressible bool
 
 	mu      sync.Mutex
 	stripes []tailStripe
@@ -197,7 +196,7 @@ type tailWriter struct {
 
 func (s *Store) newTailWriter(m *meta.Manifest, l layout) *tailWriter {
 	return &tailWriter{
-		s: s, m: m, pool: l.tailPool, chunk: l.chunk, maxSize: s.w.opts.maxPutSize,
+		s: s, m: m, pool: l.tailPool, chunk: l.chunk,
 		sem: semaphore.NewWeighted(int64(s.w.opts.putWindow)), //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
 	}
 }
@@ -271,10 +270,27 @@ func (t *tailWriter) addStripe(n uint64) int {
 	return len(t.stripes) - 1
 }
 
+// allocHintIncompressible is LIBRADOS_ALLOC_HINT_FLAG_INCOMPRESSIBLE
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/include/rados/librados.h#L157 at v19.2.7
+// and v20.2.4).
+const allocHintIncompressible radosclient.AllocHintFlags = 512
+
+// allocHint is add_write_hint's flags
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L118-L127 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L146-L155 at v20.2.4):
+// incompressible for data radosgw's compressor made, so the OSD does not
+// compress it again, and none otherwise.
+func allocHint(incompressible bool) radosclient.AllocHintFlags {
+	if incompressible {
+		return allocHintIncompressible
+	}
+	return 0
+}
+
 // write is RadosWriter::process
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L140-L159)
 // for the first n bytes of p at ofs within stripe idx: [set_alloc_hint2(0, 0,
-// 0)] and write_full at offset 0, write elsewhere, once the window has room
+// allocHint)] and write_full at offset 0, write elsewhere, once the window has room
 // for the piece's buffer. A write that failed since the last piece is
 // reported here, as process_completed reports the completions aio->get
 // returns. Stripes are written in parallel, but radosgw submits a stripe's
@@ -307,6 +323,7 @@ func (t *tailWriter) write(ctx context.Context, idx int, ofs uint64, p *[]byte, 
 		pool = pool.WithLocator(loc)
 	}
 	data := (*p)[:n]
+	hint := allocHint(t.incompressible)
 	t.wg.Go(func() {
 		defer t.sem.Release(weight)
 		defer close(done)
@@ -314,9 +331,7 @@ func (t *tailWriter) write(ctx context.Context, idx int, ofs uint64, p *[]byte, 
 			<-prev
 		}
 		w := radosclient.NewWriteOp()
-		// add_write_hint: only a write this request compresses is hinted
-		// incompressible, and nothing here compresses.
-		w.SetAllocHint(0, 0, 0)
+		w.SetAllocHint(0, 0, hint)
 		if ofs == 0 {
 			w.WriteFull(data)
 		} else {
@@ -393,23 +408,20 @@ func (t *tailWriter) readHead(r io.Reader, declared int64) (head []byte, done bo
 	return head, done, err
 }
 
-// consume reads body to EOF, writing every byte to h: the first
-// m.MaxHeadSize bytes come back as the head's data, the rest go to tail
-// objects in stripe order, each stripe in pieces of at most one chunk, as
-// StripeProcessor and ChunkProcessor cut them (rgw_putobj.cc). A stripe is
-// issued only when data for it arrives, and no empty write is sent. A body
-// error is returned as it is, except io.ErrUnexpectedEOF, which is
-// ErrRequestTimeout; a body past maxSize is EntityTooLarge
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1096-L1098 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1101-L1103 at v20.2.4).
-// declared is the body's length, -1 when unknown.
+// consume reads r, a write's stored stage, to EOF: the first m.MaxHeadSize
+// bytes come back as the head's data, the rest go to tail objects in stripe
+// order, each stripe in pieces of at most one chunk, as StripeProcessor and
+// ChunkProcessor cut them (rgw_putobj.cc). A stripe is issued only when data
+// for it arrives, and no empty write is sent. A body error, the plaintext
+// stage's EntityTooLarge among them, is returned as it is, except
+// io.ErrUnexpectedEOF, which is ErrRequestTimeout. declared is the length r
+// is expected to have, -1 when unknown, which sizes the first buffer.
 //
 // With exclusiveFirst there is no head: the first stripe is read whole and
 // written by writeFirst before anything else is read, and the rest follows
 // as above. When its exclusive create meets EEXIST, consume returns that
 // error, radosclient.ErrExists, keeping the stripe in t.first.
-func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64, h io.Writer) (head []byte, size uint64, err error) {
-	r := io.TeeReader(body, h)
+func (t *tailWriter) consume(ctx context.Context, r io.Reader, declared int64) (head []byte, size uint64, err error) {
 	if t.exclusiveFirst {
 		size, err = t.consumeFirst(ctx, r, declared)
 		return nil, size, err
@@ -418,11 +430,7 @@ func (t *tailWriter) consume(ctx context.Context, body io.Reader, declared int64
 	if err != nil {
 		return nil, 0, bodyErr(err)
 	}
-	size = uint64(len(head))
-	if size > t.maxSize {
-		return nil, 0, op.ErrEntityTooLarge
-	}
-	size, err = t.stream(ctx, r, size, done)
+	size, err = t.stream(ctx, r, uint64(len(head)), done)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -502,9 +510,6 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 	case err != nil:
 		t.release(p, true)
 		return nil, bodyErr(err)
-	case uint64(got) > t.maxSize: //nolint:gosec // a read count is never negative
-		t.release(p, true)
-		return nil, op.ErrEntityTooLarge
 	case uint64(got) > t.s.w.opts.putWindow: //nolint:gosec // a read count is never negative
 		t.release(p, true)
 		return nil, fmt.Errorf("%w: the first stripe of %s exceeds rgw_put_obj_min_window_size %d",
@@ -516,8 +521,8 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 // resume is consume for a part writer taking over prev's first stripe, which
 // met EEXIST under prev's prefix: it sends that stripe again under its own,
 // as process_first_chunk resubmits its data to the new head, and streams the
-// rest of body, hashing it into h, which holds the first stripe already.
-func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, body io.Reader, h io.Writer) (uint64, error) {
+// rest of r, the stored stage prev read the stripe from.
+func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, r io.Reader) (uint64, error) {
 	f := prev.first
 	prev.first = nil
 	held := uint64(cap(*f.p))
@@ -535,14 +540,14 @@ func (t *tailWriter) resume(ctx context.Context, prev *tailWriter, body io.Reade
 	if err != nil {
 		return 0, err
 	}
-	return t.stream(ctx, io.TeeReader(body, h), uint64(f.n), f.done) //nolint:gosec // a read count is never negative
+	return t.stream(ctx, r, uint64(f.n), f.done) //nolint:gosec // a read count is never negative
 }
 
 // writeFirst is RadosWriter::write_exclusive
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L161-L177 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L189-L205 at v20.2.4)
 // of a part's first stripe to stripe 0, the part head: create(true),
-// set_alloc_hint2(0, 0, 0) and write_full in one op, awaited before anything
+// set_alloc_hint2(0, 0, allocHint) and write_full in one op, awaited before anything
 // else is issued, under the window room the caller holds. An empty part still
 // sends it, with an empty write_full. EEXIST keeps f in t.first and is
 // returned as it is.
@@ -555,7 +560,7 @@ func (t *tailWriter) writeFirst(f *firstPiece) error {
 	}
 	w := radosclient.NewWriteOp()
 	w.Create(true)
-	w.SetAllocHint(0, 0, 0)
+	w.SetAllocHint(0, 0, allocHint(t.incompressible))
 	w.WriteFull((*f.p)[:f.n])
 	settled := false
 	defer func() {
@@ -584,7 +589,7 @@ func (t *tailWriter) writeFirst(f *firstPiece) error {
 }
 
 // stream writes the rest of r, from offset size, to the stripes it falls in,
-// and returns the body's length. done reports that r has ended already.
+// and returns r's length. done reports that r has ended already.
 func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done bool) (uint64, error) {
 	stripeMax := t.m.Rules[0].StripeMaxSize
 	// p is the piece being read until write takes it; whatever ends stream
@@ -616,9 +621,6 @@ func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done 
 				continue
 			}
 			piece := uint64(got) //nolint:gosec // a read count is never negative
-			if size+piece > t.maxSize {
-				return 0, op.ErrEntityTooLarge
-			}
 			if idx < 0 {
 				idx = t.addStripe(n)
 			}

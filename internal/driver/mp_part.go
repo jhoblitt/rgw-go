@@ -72,12 +72,14 @@ func (s *Store) partLayout(ctx context.Context, rec *op.BucketRecord, dest meta.
 }
 
 // partResult is what one part's data write leaves: the manifest as written,
-// the ETag and size, and the writer holding its stripes.
+// the ETag, the stored size and the plaintext's, which is accounted, and the
+// writer holding its stripes.
 type partResult struct {
-	m    meta.Manifest
-	etag string
-	size uint64
-	tw   *tailWriter
+	m         meta.Manifest
+	etag      string
+	size      uint64
+	accounted uint64
+	tw        *tailWriter
 }
 
 // streamPart is MultipartObjectProcessor's data path and RGWPutObj::execute's
@@ -87,7 +89,8 @@ type partResult struct {
 // does for a part number uploaded before, the prefix becomes
 // "<key>.<32 random characters>" and the stripe is sent again, once
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L414-L439).
-// Then the body's length
+// The stripes take the stored stage made from the body's plaintext, on
+// which the checks that follow are made: the body's length
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4430-L4433),
 // the quota on the bytes received
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4444-L4448),
@@ -99,22 +102,24 @@ type partResult struct {
 func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte) (partResult, error) {
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
 	h := md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
+	plain := newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize, h)
+	stored := storeAsIs(plain)
 	m := meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, uploadID), n, pl.stripe)
-	tw := s.partWriter(&m, pl, n)
-	_, got, err := tw.consume(ctx, body, size, h)
+	tw := s.partWriter(&m, pl, n, stored.incompressible)
+	_, got, err := tw.consume(ctx, stored, size)
 	if errors.Is(err, radosclient.ErrExists) && tw.first != nil {
 		m = meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, s.w.rand(32)), n, pl.stripe)
-		retry := s.partWriter(&m, pl, n)
-		got, err = retry.resume(ctx, tw, body, h)
+		retry := s.partWriter(&m, pl, n, stored.incompressible)
+		got, err = retry.resume(ctx, tw, stored)
 		tw = retry
 	}
 	// As PutObject: what follows the body does not watch the client.
 	ctx = context.WithoutCancel(ctx)
-	if err == nil && size >= 0 && uint64(size) != got {
+	if err == nil && size >= 0 && uint64(size) != plain.n {
 		err = op.ErrRequestTimeout
 	}
 	if err == nil {
-		err = s.CheckQuota(ctx, rec, rec.Info.Owner, int64(got), 1) //nolint:gosec // a part size is far below 2^63
+		err = s.CheckQuota(ctx, rec, rec.Info.Owner, int64(plain.n), 1) //nolint:gosec // a part size is far below 2^63
 	}
 	sum := h.Sum(nil)
 	if err == nil && contentMD5 != nil && !bytes.Equal(sum, contentMD5) {
@@ -132,13 +137,15 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 		return partResult{}, err
 	}
 	m.SetObjSize(got)
-	return partResult{m: m, etag: hex.EncodeToString(sum), size: got, tw: tw}, nil
+	return partResult{m: m, etag: hex.EncodeToString(sum), size: got, accounted: plain.n, tw: tw}, nil
 }
 
-// partWriter is newPartWriter for a part laid out as pl.
-func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32) *tailWriter {
+// partWriter is newPartWriter for a part laid out as pl, whose data is
+// incompressible when its stored stage made it so.
+func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32, incompressible bool) *tailWriter {
 	tw := s.newPartWriter(m, pl.layout, n)
 	tw.keepHead = pl.indexedHead
+	tw.incompressible = incompressible
 	return tw
 }
 
@@ -175,7 +182,7 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 	}
 	hw := &headWrite{
 		rec: rec, key: headObj.Key, attrs: a, mtime: mtime, nonAtomic: true, modifyTail: true,
-		pool: pool, oid: stripe.OID(), loc: stripe.Locator(), size: pr.size, accountedSize: pr.size,
+		pool: pool, oid: stripe.OID(), loc: stripe.Locator(), size: pr.size, accountedSize: pr.accounted,
 	}
 	x := s.newIndexOp(rec, headObj.Key, "")
 	x.hashName = key.Name
@@ -196,7 +203,7 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 		return time.Time{}, err
 	}
 	info := meta.UploadPartInfo{
-		Num: n, Size: pr.size, AccountedSize: pr.size, ETag: pr.etag, Modified: s.now(),
+		Num: n, Size: pr.size, AccountedSize: pr.accounted, ETag: pr.etag, Modified: s.now(),
 		Manifest: pr.m, Compression: meta.NewCompressionInfo(),
 	}
 	w := radosclient.NewWriteOp()
