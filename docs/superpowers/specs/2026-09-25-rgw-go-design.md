@@ -399,6 +399,20 @@ admin-socket counters in the form ceph-exporter scrapes, with librados's
 own client socket kept out of the shared socket directory. Admin adds the
 roles, user_policy, group and topic metadata sections.
 
+Bucket logging names each request by its op's `canonical_name`, which
+v20.2.4 gives every op and v19.2.7 lacks. The default is
+"REST.<method>.<op name>"
+([rgw_op.h:312-316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L312-L316)),
+and about 65 ops override it with their own "REST.<method>.<RESOURCE>",
+"REST.GET.WEBSITE" for instance. Only bucket logging reads it
+([rgw_process.cc:472-484](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L472-L484)
+and the `log_record` calls in `rgw_op.cc`), so until bucket logging is
+served rgw-go needs none and no exclusion records its absence. The
+bucket-logging task adds it for every op at once, as an `Op` method or as
+a table keyed by the op's name and the request method. An op it missed
+would log under the default without error, where radosgw logs its own
+name.
+
 **Phase 4, customer-key encryption and request payment.** SSE-C,
 byte-compatible with radosgw's chunked AES-256-CBC so that each gateway
 reads what the other wrote, ranges, multipart parts and copies included,
