@@ -593,6 +593,32 @@ var _ = Describe("CopyObject", func() {
 		Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrSourceZone, []byte{0x39, 0x30, 0, 0}), "this zone's, not the source's")
 	})
 
+	DescribeTable("keeps the source's OLH attrs only where the destination's versioning is enabled",
+		func(ctx SpecContext, flags uint32, kept bool) {
+			st := *srcSt
+			st.Attrs = maps.Clone(srcSt.Attrs)
+			olh := []string{meta.AttrOLHIDTag, meta.AttrOLHInfo, meta.AttrOLHVer}
+			for _, n := range olh {
+				st.Attrs[n] = []byte("src")
+			}
+			dst := *rec
+			dst.Info.Flags |= flags
+			_, err := s.CopyObject(ctx, &st, &dst, dstKey, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
+			Expect(err).NotTo(HaveOccurred())
+			head := c.Object(testDataPool, "", dstOID)
+			for _, n := range olh {
+				if kept {
+					Expect(head.Xattrs).To(HaveKeyWithValue(n, []byte("src")))
+				} else {
+					Expect(head.Xattrs).NotTo(HaveKey(n))
+				}
+			}
+		},
+		Entry("an unversioned bucket", uint32(0), false),
+		Entry("a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), false),
+		Entry("a bucket whose versioning is enabled", uint32(meta.BucketVersioned), true),
+	)
+
 	It("streams a source written without a manifest", func(ctx SpecContext) {
 		bare := []byte(strings.Repeat("b", 100))
 		c.Put(testDataPool, "", putBucketID+"_bare", bare)

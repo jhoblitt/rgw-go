@@ -747,3 +747,23 @@ var _ = DescribeTable("BucketID.Key is rgw_bucket::get_key at its default delimi
 	Entry("an id without a tenant", meta.BucketID{Name: "b", ID: "id"}, "b:id"),
 	Entry("a marker, which get_key leaves out", meta.BucketID{Name: "b", Marker: "m"}, "b"),
 )
+
+// versioningFlags is what versioned(), versioning_enabled() and
+// mfa_enabled() answer.
+type versioningFlags struct{ versioned, enabled, mfa bool }
+
+var _ = DescribeTable("BucketInfo's versioning helpers read the flags as RGWBucketInfo's do",
+	func(flags uint32, want versioningFlags) {
+		b := meta.NewBucketInfo()
+		b.Flags = flags
+		Expect(versioningFlags{b.Versioned(), b.VersioningEnabled(), b.MFAEnabled()}).To(Equal(want), "flags %#x", flags)
+	},
+	Entry("no flags", uint32(0), versioningFlags{}),
+	Entry("BUCKET_VERSIONED", uint32(meta.BucketVersioned), versioningFlags{versioned: true, enabled: true}),
+	Entry("versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), versioningFlags{versioned: true}),
+	Entry("BUCKET_VERSIONS_SUSPENDED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketVersionsSuspended), versioningFlags{}),
+	Entry("BUCKET_MFA_ENABLED alone", uint32(meta.BucketMFAEnabled), versioningFlags{mfa: true}),
+	Entry("versioning enabled with MFA delete", uint32(meta.BucketVersioned|meta.BucketMFAEnabled), versioningFlags{versioned: true, enabled: true, mfa: true}),
+	Entry("versioning suspended with MFA delete", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketMFAEnabled), versioningFlags{versioned: true, mfa: true}),
+	Entry("versioning enabled among every other flag", uint32(meta.BucketVersioned|meta.BucketSuspended|meta.BucketDatasyncDisabled|meta.BucketObjLockEnabled|meta.BucketDeleted), versioningFlags{versioned: true, enabled: true}),
+)

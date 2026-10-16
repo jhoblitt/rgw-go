@@ -170,7 +170,7 @@ func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[str
 			srcAttrs[n] = v
 		}
 	}
-	if !versioningEnabled(dst.Info) {
+	if !dst.Info.VersioningEnabled() {
 		delete(srcAttrs, meta.AttrOLHIDTag)
 		delete(srcAttrs, meta.AttrOLHInfo)
 		delete(srcAttrs, meta.AttrOLHVer)
@@ -270,14 +270,6 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 		return nil, err
 	}
 	return &op.PutResult{ETag: rgwBlStr(attrs[meta.AttrETag]), Size: src.Size, Mtime: res.mtime, Epoch: res.epoch}, nil
-}
-
-// versioningEnabled is RGWBucketInfo::versioning_enabled
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1076 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1118 at v20.2.4):
-// versioned and not suspended.
-func versioningEnabled(info meta.BucketInfo) bool {
-	return info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended) == meta.BucketVersioned
 }
 
 // sameBucketID is rgw_bucket's ==, which compares tenant, name and id only.

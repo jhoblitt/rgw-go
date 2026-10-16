@@ -129,6 +129,22 @@ func (b BucketInfo) HasWebsite() bool { return b.Website != nil }
 // ObjLockEnabled is obj_lock_enabled().
 func (b BucketInfo) ObjLockEnabled() bool { return b.Flags&BucketObjLockEnabled != 0 }
 
+// Versioned is RGWBucketInfo::versioned
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1074-L1077 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1116-L1119 at v20.2.4,
+// beside versioning_enabled and mfa_enabled): versioning was enabled once,
+// whether or not it is suspended now.
+func (b BucketInfo) Versioned() bool { return b.Flags&BucketVersioned != 0 }
+
+// VersioningEnabled is versioning_enabled(): versioned and not suspended.
+func (b BucketInfo) VersioningEnabled() bool {
+	return b.Flags&(BucketVersioned|BucketVersionsSuspended) == BucketVersioned
+}
+
+// MFAEnabled is mfa_enabled(): MFA delete is on, whatever the versioning
+// state.
+func (b BucketInfo) MFAEnabled() bool { return b.Flags&BucketMFAEnabled != 0 }
+
 // unixSeconds is real_clock::to_time_t as the bucket encoders store it in a u64.
 func unixSeconds(t Time) uint64 {
 	if t.IsZero() {
