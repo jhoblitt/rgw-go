@@ -296,6 +296,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 | [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending |  |
 | [radosgw v21 writes rate limits that Squid and Tentacle misread without error](#radosgw-v21-writes-rate-limits-that-squid-and-tentacle-misread-without-error) | pending | pending |  |
+| [radosgw stores a COMPOSITE CRC upload's checksum as a full-object CRC](#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc) | pending | pending | ✓ |
+| [radosgw reports a single-part CRC upload's full-object checksum as COMPOSITE](#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14993,3 +14995,173 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task BC-5, fix round 3, 2026-10-15, checking the
   record's encoding for the rate limiter's -EIO entry; derived from the
   source, not reproduced.
+
+## radosgw stores a COMPOSITE CRC upload's checksum as a full-object CRC
+
+- **Kind:** defect, S3-correctness: a CRC32 or CRC32C multipart upload
+  created with `x-amz-checksum-type: COMPOSITE` is given another kind of
+  checksum than it asked for. No stored data is damaged, and it is not
+  security-relevant. Unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - CreateMultipartUpload's `parse_cksum_flags` sets `FLAG_COMPOSITE` for
+    `x-amz-checksum-type: COMPOSITE`
+    ([rgw_cksum_pipe.h:138-154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L138-L154)),
+    and `permitted_cksum_algo_and_type` accepts COMPOSITE for every type but
+    crc64nvme
+    ([rgw_cksum.h:340-356](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L340-L356)),
+    so the upload keeps it in its `cksum_flags`.
+  - `try_sum_part_cksums` hands the upload's `cksum_flags` to
+    `CombinerFactory`
+    ([rgw_op.cc:7071-7072](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7071-L7072),
+    [rgw_op.cc:7099](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7099)),
+    which never reads them and gives every CRC type a `CRCCombiner`
+    ([rgw_cksum.cc:145-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L145-L155)).
+    The `DigestCombiner` it gives the other types states the composite AWS
+    defines, a checksum of the parts' checksums concatenated
+    ([rgw_cksum.cc:91-96](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L91-L96)).
+  - With two parts or more, each later `append` replaces the record with
+    `combine_crc_cksum`'s, built by the raw constructor with `FLAG_V2`
+    alone, and `final` ORs in FULL_OBJECT and COMBINED
+    ([rgw_cksum.cc:121-143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L121-L143),
+    [rgw_cksum.cc:31-89](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L31-L89),
+    [rgw_cksum.h:129-146](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L129-L146)).
+    `get_checksum_type` reads that as FULL_OBJECT
+    ([rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)),
+    and the completion's response, GET and HEAD with checksum mode, and
+    GetObjectAttributes, each through `get_checksum_type`, give the
+    full-object CRC as FULL_OBJECT
+    ([rgw_rest_s3.cc:4635-4640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4640),
+    [rgw_rest_s3.cc:551-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L586),
+    [rgw_rest_s3.cc:4029-4057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057)).
+  - With one part, the result is the part's own record. The put filter's
+    `finalize` stores a part's checksum under its upload's flags, COMPOSITE
+    here, without `FLAG_V2`
+    ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191),
+    [rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472)).
+    `final` makes them COMPOSITE, FULL_OBJECT and COMBINED, which
+    `composite()` takes for a composite
+    ([rgw_cksum.h:163-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L163-L175)),
+    so the completion answers the part's own CRC as `<crc>-1`
+    ([rgw_op.cc:7145-7151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7145-L7151)),
+    with ChecksumType COMPOSITE, where the composite is the CRC of that CRC.
+  - The completion then holds a supplied value to its own. `find_hdr_cksum`
+    takes the first `x-amz-checksum-<alg>` header from crc32 to blake3, so
+    it finds `x-amz-checksum-crc32` and `x-amz-checksum-crc32c`
+    ([rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136)).
+    A supplied value unequal to the armored one is compared only over the
+    armored value's length, less its `-<parts>` when `composite()`, and a
+    mismatch is `ERR_BAD_DIGEST`
+    ([rgw_op.cc:7317-7336](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317-L7336)),
+    400 BadDigest
+    ([rgw_common.cc:65](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L65)).
+    The composite AWS defines, `<CRC of the part CRCs>-<parts>`, differs in
+    its base64 from both the bare full-object CRC radosgw computes for
+    several parts and the `<part CRC>-1` it computes for one, so the
+    completion refuses it either way.
+  - main at 7ed73efc1be is the same: `CombinerFactory` and `CRCCombiner`
+    ([rgw_cksum.cc:147-157](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum.cc#L147-L157),
+    [rgw_cksum.cc:123-145](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum.cc#L123-L145)),
+    the completion's call
+    ([rgw_op.cc:7564](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L7564)),
+    its check of a supplied value
+    ([rgw_op.cc:7798-7817](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L7798-L7817)),
+    with a `find_hdr_cksum` that scans every type
+    ([rgw_cksum_pipe.h:149-164](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum_pipe.h#L149-L164)),
+    `parse_cksum_flags`
+    ([rgw_cksum_pipe.h:166-182](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum_pipe.h#L166-L182))
+    and `permitted_cksum_algo_and_type`
+    ([rgw_cksum.h:356-372](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum.h#L356-L372)).
+- **Impact:** a client that asks for a COMPOSITE CRC32 or CRC32C checksum
+  gets, for several parts, a full-object CRC reported as FULL_OBJECT, and
+  for one part the part's own CRC reported as the composite. Either way the
+  value is not the composite of its parts' checksums. A client that
+  supplies that composite with CompleteMultipartUpload is refused with 400
+  BadDigest, so it can complete the upload only by leaving the value out;
+  one that supplies none and checks the value afterwards finds a mismatch
+  on an intact object.
+- **Releases:** v20.2.4 and main 7ed73efc1be. v19.2.7 has no checksum
+  code; Squid's radosgw ignores CreateMultipartUpload's algorithm.
+- **rgw-go:** differs. `cksum.NewCombiner` gives a CRC upload created
+  COMPOSITE the composite, the same CRC over its parts' CRCs, big-endian and
+  concatenated, stored with flags V2, COMBINED and COMPOSITE, which a
+  Tentacle radosgw renders as `<crc>-<parts>` with COMPOSITE
+  (`internal/cksum/combine.go`; `docs/exclusions.md`, "A multipart upload's
+  combined CRC follows its checksum type").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 2); recorded by phase 2 task WP-2, 2026-10-15, which checked it
+  at v20.2.4 and main 7ed73efc1be and added the one-part case. Derived from
+  the source, not reproduced; task WP-14 reproduces it.
+
+## radosgw reports a single-part CRC upload's full-object checksum as COMPOSITE
+
+- **Kind:** defect, S3-correctness: a multipart upload of one part with a
+  CRC checksum is reported COMPOSITE though it holds the object's
+  full-object CRC. No stored data is damaged, and it is not
+  security-relevant. Unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - A part's record carries its upload's flags without `FLAG_V2`: the put
+    filter's `finalize` replaces the record's flags with the filter's
+    ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191)),
+    which for a part are the upload's `cksum_flags`
+    ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472)).
+    A CRC upload created without `x-amz-checksum-type` has FULL_OBJECT
+    ([rgw_cksum_pipe.h:138-154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L138-L154),
+    `cksum_flags_of`,
+    [rgw_cksum.h:302-316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L302-L316)),
+    and one created with a type naming neither COMPOSITE nor FULL_OBJECT has
+    none.
+  - `CRCCombiner`'s first `append` keeps that record whole, flags included,
+    and only a later part replaces it with `combine_crc_cksum`'s, whose flags
+    are `FLAG_V2`; `final` ORs in FULL_OBJECT and COMBINED
+    ([rgw_cksum.cc:121-143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L121-L143)).
+    A one-part upload's combined record therefore lacks `FLAG_V2`.
+  - `get_checksum_type` reports a multipart record without `FLAG_V2` as
+    COMPOSITE, taking it for one written before CRC combining
+    ([rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)).
+    So:
+    - the completion answers the bare CRC, since `composite()` is false
+      without COMPOSITE, with ChecksumType COMPOSITE
+      ([rgw_op.cc:7145-7151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7145-L7151),
+      [rgw_rest_s3.cc:4635-4640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4640));
+    - GET and HEAD with checksum mode send `<crc>-1` and
+      `x-amz-checksum-type: COMPOSITE`
+      ([rgw_rest_s3.cc:551-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L586)),
+      and GetObjectAttributes' Checksum the same, through the same
+      `get_checksum_type`
+      ([rgw_rest_s3.cc:4029-4057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057)).
+  - main at 7ed73efc1be is the same: `CRCCombiner`
+    ([rgw_cksum.cc:123-145](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum.cc#L123-L145)),
+    `finalize`
+    ([rgw_cksum_pipe.h:215-219](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum_pipe.h#L215-L219)),
+    the part's flags
+    ([rgw_op.cc:4898](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L4898)),
+    `get_checksum_type`
+    ([rgw_cksum.h:398-415](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_cksum.h#L398-L415)),
+    and the renderings
+    ([rgw_rest_s3.cc:561-599](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_rest_s3.cc#L561-L599),
+    [rgw_rest_s3.cc:4214-4235](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_rest_s3.cc#L4214-L4235),
+    [rgw_rest_s3.cc:4877-4882](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_rest_s3.cc#L4877-L4882)).
+- **Impact:** a one-part CRC32, CRC32C or CRC64NVME upload is reported as a
+  composite of part checksums when its value is the CRC of the object's
+  bytes. A client cannot check the object against what GET sends: as a
+  composite, `<crc>-1` is not the CRC of the part's CRC, and as the
+  full-object CRC it carries a suffix and the wrong type.
+- **Releases:** v20.2.4 and main 7ed73efc1be. v19.2.7 has no checksum
+  code.
+- **rgw-go:** differs. `cksum.NewCombiner` stores every full-object CRC with
+  flags V2, COMBINED and FULL_OBJECT, a one-part upload's included, which a
+  Tentacle radosgw renders as the bare CRC with FULL_OBJECT
+  (`internal/cksum/combine.go`; `docs/exclusions.md`, "A multipart upload's
+  combined CRC follows its checksum type").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 3); recorded by phase 2 task WP-2, 2026-10-15, which checked it
+  at v20.2.4 and main 7ed73efc1be. Derived from the source, not reproduced;
+  task WP-14 reproduces it.

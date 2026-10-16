@@ -5585,6 +5585,36 @@ does the following.
   a stripe width over 4 MiB a slow client holds more than a piece's room
   and slow clients can stop other PUTs, and a head, one aligned chunk,
   exceeds `rgw_max_chunk_size`.
+- **A multipart upload's combined CRC follows its checksum type.** rgw-go's
+  completion stores no combined checksum yet ("Client checksums are ignored
+  until phase 2"); the combination is `cksum.NewCombiner`'s
+  (`internal/cksum/combine.go`). It combines a multipart upload's part
+  checksums as radosgw's completion does
+  ([rgw_cksum.cc:96-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L96-L155)
+  at v20.2.4): a CRC32, CRC32C or CRC64NVME upload gets the full-object CRC
+  combined from its parts' CRCs and sizes, and any other type the type's
+  digest over its parts' digests, a composite. It differs in two ways.
+  Neither arises on a Squid cluster, whose radosgw ignores
+  CreateMultipartUpload's algorithm, and both write records a Tentacle
+  radosgw decodes and renders consistently:
+  - Every full-object CRC is stored with flags V2, COMBINED and
+    FULL_OBJECT, a one-part upload's included, and a Tentacle radosgw
+    renders it as the bare CRC with FULL_OBJECT. radosgw keeps a single
+    part's own flags, which lack V2, so it reports a one-part CRC upload as
+    COMPOSITE: the completion's response sends the bare CRC with ChecksumType
+    COMPOSITE, and GET, HEAD and GetObjectAttributes send it as `<crc>-1`
+    (`docs/ceph-upstream-bugs.md`,
+    "[radosgw reports a single-part CRC upload's full-object checksum as
+    COMPOSITE](ceph-upstream-bugs.md#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite)").
+  - A CRC32 or CRC32C upload created with `x-amz-checksum-type: COMPOSITE`
+    gets the composite it asked for: the same CRC over its parts' CRCs,
+    big-endian and concatenated, stored with flags V2, COMBINED and
+    COMPOSITE, which a Tentacle radosgw renders as `<crc>-<parts>` with
+    COMPOSITE. radosgw ignores the type: it stores the full-object CRC as
+    FULL_OBJECT, and for one part the part's own CRC as the composite
+    (`docs/ceph-upstream-bugs.md`, "[radosgw stores a COMPOSITE CRC upload's
+    checksum as a full-object
+    CRC](ceph-upstream-bugs.md#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc)").
 
 ### Bucket index differences
 
