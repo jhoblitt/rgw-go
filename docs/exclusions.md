@@ -2301,24 +2301,6 @@ review and verified against the tree.
   `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
   `:2496-2498` at v20.2.4). Any other value but `false` is 400
   InvalidArgument from both, after the permission check.
-- **PutBucketVersioning answers 501 until a later phase.** `PUT
-  /{bucket}?versioning` is recognized and, once the request authenticates,
-  answers 501 NotImplemented before any permission check and changes
-  nothing, as does `GET /{bucket}?versioning`: the route has no handler
-  (`Handler.serve` in `internal/s3/handler.go`, the `h.routes` lookup that
-  answers `op.ErrNotImplemented`). radosgw sets or clears `BUCKET_VERSIONED` and
-  `BUCKET_VERSIONS_SUSPENDED` (`RGWSetBucketVersioning::execute`,
-  `rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4). rgw-go
-  therefore makes no bucket versioned or suspended itself; one that is
-  was made so by radosgw, and rgw-go refuses it where it cannot yet serve
-  it: the writes in "Writes to a versioned or object-lock bucket answer
-  501 until versioning is served", PutObjectAcl among them, the listing
-  of versions, a read of an object whose head is an olh, the purging
-  removals in "A purging bucket removal refuses a bucket whose versioning
-  was ever enabled" (`refuseVersionedPurge`, `internal/op/adminpurge.go`),
-  and `DELETE /admin/bucket?object` in "The admin object removal refuses
-  a bucket whose versioning was ever enabled" (`RemoveObjectAdmin`,
-  `internal/op/adminbucket.go`).
 - **A stored lifecycle configuration answers 501 until phase 2.** `GET
   /{bucket}?lifecycle` loads the bucket and authorizes
   `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does
@@ -4476,6 +4458,74 @@ differ, rgw-go does the following.
   `test_bucket_concurrent_set_canned_acl`'s fifty concurrent PutBucketAcl
   requests all ask for one ACL, so a request that loses the race finds it
   in place and answers 200, and rgw-go passes the test as radosgw does.
+- **PutBucketVersioning answers MalformedXML for a document that does not
+  parse.** radosgw's `get_params` answers -EINVAL, 400 InvalidArgument, for
+  a body expat refuses and for one whose root is not
+  `VersioningConfiguration` ([rgw_rest_s3.cc:2228-2239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2228-L2239),
+  [rgw_rest_s3.cc:2323-2334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2323-L2334)), and for a `Status` other than
+  `Enabled` or `Suspended`, a missing one included, or an `MfaDelete` other
+  than `Enabled` or `Disabled`, each the element's own text compared
+  untrimmed and case for case ([rgw_rest_s3.cc:2179-2210](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2179-L2210),
+  [rgw_rest_s3.cc:2274-2305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2274-L2305)). rgw-go answers each with 400
+  MalformedXML, Amazon S3's code for a body that does not parse. S3's
+  PutBucketVersioning reference lists `Enabled | Suspended` and `Enabled |
+  Disabled` as the only values and names no code for a value outside them,
+  so rgw-go answers such a value as it answers a body that does not parse.
+  Before it builds a tree of the body, rgw-go also refuses with 400
+  MalformedXML these documents, which radosgw reads:
+  - one with a document type declaration, whose internal subset can declare
+    entities that expat, as `RGWXMLParser` sets it up, expands
+    ([rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L213-L223),
+    [rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L213-L223));
+  - one with an element below the root's children: radosgw reads a
+    `Status` that holds an element by its own text, and ignores an element
+    the schema does not name however deep it nests;
+  - one with a second `Status` or `MfaDelete`, where radosgw reads the
+    first ([rgw_xml.h:219-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L219-L241),
+    [rgw_xml.h:219-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L219-L241));
+  - one with a prefixed element name, which radosgw, with namespace
+    processing off ([rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)), reads as another name, so that it
+    refuses such a root and ignores such a child;
+  - one declaring a namespace other than S3's,
+    `http://s3.amazonaws.com/doc/2006-03-01/`, the empty one included.
+
+  A document without a namespace, an element the schema does not name
+  directly under the root, and attributes are read as radosgw reads them.
+  S3's reference marks `Status` as not required; both gateways refuse a
+  document without one. A body longer than `rgw_max_put_param_size` is 416
+  InvalidRange from both.
+- **A retried PutBucketVersioning checks object lock and MFA delete
+  again.** radosgw makes PutBucketVersioning's object-lock and MFA delete
+  checks once, against the bucket its request loaded
+  ([rgw_op.cc:2788-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2817),
+  [rgw_op.cc:3020-3049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3049)), and retries a write that lost a race
+  over the bucket it reads again, with the attrs its request loaded put
+  back ([rgw_op.cc:2828-2849](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2828-L2849),
+  [rgw_op.cc:3060-3081](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3060-L3081)). A suspension that loses to a
+  PutObjectLockConfiguration, which enables object lock on a
+  versioning-enabled bucket inside its own retry
+  ([rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
+  [rgw_op.cc:9224-9238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9238)), so suspends an object-lock bucket, and
+  one that loses to a verified change enabling MFA delete flips the
+  versioning state without a verified `x-amz-mfa`
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's retried PutBucketVersioning
+  skips its object-lock and MFA delete
+  checks](ceph-upstream-bugs.md#radosgws-retried-putbucketversioning-skips-its-object-lock-and-mfa-delete-checks)").
+  rgw-go makes both checks on every try against the bucket that try read,
+  so such a retry answers 409 InvalidBucketState or 403 AccessDenied and
+  writes nothing. Each try writes the attrs it read, so the change it lost
+  to stays (`docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketPolicy retry
+  writes back the bucket attrs its request started
+  with](ceph-upstream-bugs.md#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with)"),
+  and each retry is authorized again and stops when the name names another
+  bucket, as rgw-go's other retried bucket writes do ("A PutBucketAcl that
+  loses a race is retried, and every retried ACL, policy or tagging write
+  is authorized again" and "A retried bucket write stops when the name
+  names another bucket", above). A verified request sets the MFA delete
+  flag to its `MfaDelete` on every try, where radosgw sets it only when it
+  differed from the flag its request loaded; the two differ only when
+  another request changed the flag in between.
 
 ### Object read differences
 

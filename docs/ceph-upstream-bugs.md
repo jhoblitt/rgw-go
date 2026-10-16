@@ -308,6 +308,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_otp's otp_set puts an array as long as the seed on the OSD's stack](#cls_otps-otp_set-puts-an-array-as-long-as-the-seed-on-the-osds-stack) | none | [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014) |  |
 | [radosgw's otp check sends the otp_check request to otp_get_result](#radosgws-otp-check-sends-the-otp_check-request-to-otp_get_result) | pending | pending |  |
 | [radosgw writes a compressed part's stripes without the incompressible hint](#radosgw-writes-a-compressed-parts-stripes-without-the-incompressible-hint) | pending | pending |  |
+| [radosgw's retried PutBucketVersioning skips its object-lock and MFA delete checks](#radosgws-retried-putbucketversioning-skips-its-object-lock-and-mfa-delete-checks) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10687,6 +10688,15 @@ Every new entry adds its row to this table, in document order.
   - PutBucketTagging builds its copy from `s->bucket->get_attrs()` inside
     the retried write, so each try starts from the refreshed attrs
     (`rgw_op.cc:1197-1201`, `:1434-1438`).
+  - PutBucketVersioning has the same stale snapshot, checked at v19.2.7 and
+    v20.2.4: each try sets its flags over the bucket `try_refresh_info` read
+    again, info and attrs both
+    ([rgw_sal_rados.cc:780-783](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L780-L783),
+    [rgw_sal_rados.cc:798-801](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L798-L801)), then replaces those
+    attrs with `s->bucket_attrs` before `put_info` writes them
+    ([rgw_op.cc:2847-2848](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2847-L2848),
+    [rgw_op.cc:3079-3080](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3079-L3080)), so a versioning change that races
+    an ACL, policy or tag change puts the older attrs back.
 - **Impact:** a PutBucketPolicy that races a PutBucketAcl making the bucket
   private, or a PutPublicAccessBlock changing an existing block, can restore
   the public ACL or the older block, with both requests told they succeeded;
@@ -10699,6 +10709,10 @@ Every new entry adds its row to this table, in document order.
   `internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried
   PutBucketPolicy keeps what the write it lost to changed"). rgw-go does not
   serve PutBucketPublicAccessBlock or PutBucketCors yet.
+  Each try of PutBucketVersioning writes the attrs that try read
+  (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
+  `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
+  MFA delete again").
 - **Upstream:** [#51572](https://tracker.ceph.com/issues/51572),
   "retry_raced_bucket_write() callers not handling attrs correctly", open
   since 2021-07-07, reports the same mechanism and the same fix, building
@@ -11644,6 +11658,8 @@ Every new entry adds its row to this table, in document order.
   evaluates those of the user record read when the request was
   authenticated (`identityPolicies`, `internal/authz/load.go`), so a retry
   does not see a change to them.
+  PutBucketVersioning, another retried bucket write, is authorized again
+  the same way (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`).
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit X, Task 5, 2026-10-07, re-authorizing
   rgw-go's retried bucket writes; derived from the source, not reproduced.
@@ -15786,3 +15802,62 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit WP, Task WP-10, 2026-10-15, wiring the block
   encoders into the write path; derived from the source, not reproduced.
+
+## radosgw's retried PutBucketVersioning skips its object-lock and MFA delete checks
+
+- **Kind:** defect, a race, unfixed at v19.2.7, v20.2.4 and main;
+  security-relevant: a versioning change that loses its race to a change
+  enabling object lock or MFA delete lands without the refusal that change
+  brings in. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWSetBucketVersioning::execute` refuses any status but Enabled on an
+    object-lock bucket and, unless the request's `x-amz-mfa` verified, a
+    change of MFA delete or, with MFA delete on, a status that flips
+    `BUCKET_VERSIONS_SUSPENDED`. Each check reads the flags of `s->bucket` as
+    the request loaded it, once, before the write
+    ([rgw_op.cc:2788-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2817),
+    [rgw_op.cc:3020-3049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3049)), which also decides there whether
+    the write touches the MFA flag at all
+    (`mfa_set_status &= (mfa_status != cur_mfa_status)`).
+  - The write runs under `retry_raced_bucket_write`, which on -ECANCELED
+    reads the bucket again with `try_refresh_info` and runs the write again,
+    up to fifteen times
+    ([rgw_op.h:184-197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L184-L197),
+    [rgw_op.h:197-210](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210)). The write sets the requested flags over
+    the info read again and calls `put_info`, with none of the checks made
+    again ([rgw_op.cc:2828-2849](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2828-L2849),
+    [rgw_op.cc:3060-3081](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3060-L3081)).
+  - The write a try loses to can change what the checks read.
+    PutObjectLockConfiguration enables object lock on a versioning-enabled
+    bucket inside its own retried write
+    ([rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
+    [rgw_op.cc:9224-9238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9238)), and a PutBucketVersioning whose
+    `x-amz-mfa` verified sets `BUCKET_MFA_ENABLED`.
+  - Main has the same checks and write
+    ([rgw_op.cc:3346-3375](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L3346-L3375) and
+    [rgw_op.cc:3386-3407](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L3386-L3407), at 7ed73efc1be).
+  - The mechanism is the one "[radosgw's retried bucket writes are not
+    authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again)"
+    records: checks made once, before `retry_raced_bucket_write`, and not
+    again on the bucket each retry reads. There the checks are the request's
+    authorization; here they are the bucket state's preconditions.
+- **Impact:** a Suspended request that loads the bucket before a concurrent
+  PutObjectLockConfiguration lands, and retries after it, leaves an
+  object-lock bucket with its versioning suspended, which both ops otherwise
+  refuse to make. A request without a verified `x-amz-mfa` that loses its
+  race to the owner's verified enabling of MFA delete suspends or re-enables
+  versioning without one, the change MFA delete exists to guard. The window
+  is one request's, from its bucket load to its first write, and opens only
+  when the other write lands inside it.
+- **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** does not reproduce it. Each try makes the object-lock and MFA
+  checks against the bucket that try read, and a refusal ends the write with
+  nothing written (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
+  `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
+  MFA delete again"). The specs "refuses the retry once the write it lost to
+  enabled MFA delete" and "refuses the retry once the write it lost to
+  enabled object lock" (`internal/op/bucketversioning_test.go`) pin it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V10, 2026-10-15, transcribing
+  `RGWSetBucketVersioning::execute`; derived from the source, not
+  reproduced.
