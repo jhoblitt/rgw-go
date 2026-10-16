@@ -298,6 +298,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw v21 writes rate limits that Squid and Tentacle misread without error](#radosgw-v21-writes-rate-limits-that-squid-and-tentacle-misread-without-error) | pending | pending |  |
 | [radosgw stores a COMPOSITE CRC upload's checksum as a full-object CRC](#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc) | pending | pending | ✓ |
 | [radosgw reports a single-part CRC upload's full-object checksum as COMPOSITE](#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite) | pending | pending | ✓ |
+| [radosgw's bucket instance JSON drops a Swift container's web listing settings](#radosgws-bucket-instance-json-drops-a-swift-containers-web-listing-settings) | pending | pending |  |
+| [radosgw's Swift container metadata writes turn off a redirect-only S3 website](#radosgws-swift-container-metadata-writes-turn-off-a-redirect-only-s3-website) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15165,3 +15167,146 @@ Every new entry adds its row to this table, in document order.
   §6, defect 3); recorded by phase 2 task WP-2, 2026-10-15, which checked it
   at v20.2.4 and main 7ed73efc1be. Derived from the source, not reproduced;
   task WP-14 reproduces it.
+
+## radosgw's bucket instance JSON drops a Swift container's web listing settings
+
+- **Kind:** defect, unfixed at v19.2.7 and v20.2.4: a bucket instance's
+  metadata document has no place for the website configuration's Swift
+  members, so writing a document back resets them. Unreproduced: derived
+  from the source.
+- **Evidence:** `rgw_website.h` and `rgw_website.cc` are the same at v19.2.7
+  and v20.2.4.
+  - `RGWBucketWebsiteConf` stores `subdir_marker`, `listing_css_doc` and
+    `listing_enabled` from its version 2 on
+    ([rgw_website.h:194-217](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.h#L194-L217),
+    [rgw_website.h:194-217](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.h#L194-L217)).
+  - Only Swift sets them, from a container's
+    `X-Container-Meta-Web-Directory-Type`, `-Web-Listings-CSS` and
+    `-Web-Listings` metadata (`filter_out_website`,
+    [rgw_op.cc:3377-3414](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3377-L3414),
+    [rgw_op.cc:3605-3642](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3605-L3642)), and Swift's static website
+    reads them: it lists a container without an index document while
+    `listing_enabled` holds, and takes an object of the `subdir_marker`
+    content type for a directory (`RGWSwiftWebsiteHandler::retarget_bucket`
+    and `is_web_dir`, [rgw_rest_swift.cc:2754-2786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_swift.cc#L2754-L2786) and
+    [rgw_rest_swift.cc:2695-2735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_swift.cc#L2695-L2735),
+    [rgw_rest_swift.cc:2750-2782](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_swift.cc#L2750-L2782) and
+    [rgw_rest_swift.cc:2693-2732](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_swift.cc#L2693-L2732)).
+  - `RGWBucketWebsiteConf::dump` writes none of the three, and its
+    `decode_json` reads none ([rgw_website.cc:196-212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L196-L212),
+    [rgw_website.cc:196-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L196-L212)); `RGWBucketInfo::dump` and
+    `decode_json` carry the configuration only through them
+    ([rgw_common.cc:2529-2532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2529-L2532) and
+    [rgw_common.cc:2569-2572](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2569-L2572),
+    [rgw_common.cc:2591-2594](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2591-L2594) and
+    [rgw_common.cc:2628-2631](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2628-L2631)).
+  - The bucket instance handler decodes a put's document into a new
+    `RGWBucketCompleteInfo` (`get_meta_obj`,
+    [rgw_bucket.cc:2673-2683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2673-L2683),
+    [rgw_bucket.cc:2809-2819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2809-L2819)) and stores the
+    decoded instance whole, so the three members take
+    `RGWBucketWebsiteConf()`'s defaults: empty, empty and false.
+  - Multisite metadata sync moves a bucket instance as this document: the
+    secondary zone reads `/admin/metadata/<section>/<key>` from the master
+    and puts what it read (`RGWReadRemoteMetadataCR` and
+    `RGWAsyncMetaStoreEntry`, [rgw_sync.cc:1075-1077](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync.cc#L1075-L1077)
+    and [rgw_sync.cc:1117-1118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync.cc#L1117-L1118),
+    [rgw_sync.cc:1075-1077](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync.cc#L1075-L1077) and
+    [rgw_sync.cc:1117-1118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync.cc#L1117-L1118)).
+  - The dump also writes `redirect_all` alone when it names a hostname, so
+    a configuration holding such a redirect beside an index document, an
+    error document or routing rules loses those the same way. S3's
+    PutBucketWebsite alone stores no such configuration, as it reads
+    `RedirectAllRequestsTo` or the other three, never both
+    (`RGWBucketWebsiteConf::decode_xml`,
+    [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L323-L341),
+    [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L323-L341)),
+    but Swift's container POST and PUT edit the stored configuration in
+    place (`filter_out_website` on `s->bucket->get_info().website_conf`,
+    [rgw_op.cc:5000-5001](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5000-L5001) and
+    [rgw_op.cc:3691-3693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3691-L3693),
+    [rgw_op.cc:5342-5343](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5342-L5343) and
+    [rgw_op.cc:3919-3921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3919-L3921)), so an S3
+    `RedirectAllRequestsTo` followed by a Swift
+    `X-Container-Meta-Web-Index` stores a redirect beside an index document.
+- **Impact:** the S3-correctness class, though the API is Swift's: not
+  security-relevant, and no object data is lost. A metadata get and put of
+  a bucket instance, through `radosgw-admin metadata get` and `put`, the
+  admin API's metadata routes, or multisite metadata sync to another zone,
+  turns a Swift container's web listings off and drops its listing CSS and
+  directory type: on the zone written to, a web-mode GET of a container
+  without an index document is no longer answered with a listing, and
+  directory markers of a custom content type are no longer taken for
+  directories.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it in the document: the bucket instance's
+  `website_conf` is radosgw's form, written and read as both releases do
+  (`meta.WebsiteConf`'s `MarshalJSON`, `Dump` and `UnmarshalJSON`,
+  `internal/meta/website.go`), and a put stores the document's
+  configuration whole, so rgw-go's metadata put resets the three members,
+  as radosgw's does. rgw-go serves no Swift API and sets none of the
+  three members; a bucket instance it decodes from RADOS and writes back
+  keeps them (`meta.WebsiteConf`'s `Encode`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-9, 2026-10-15, modelling the bucket
+  website configuration; derived from the source, not reproduced.
+
+## radosgw's Swift container metadata writes turn off a redirect-only S3 website
+
+- **Kind:** defect, unfixed at v19.2.7 and v20.2.4: a Swift container POST,
+  or a PUT of a container that exists, on a bucket whose S3 website
+  configuration is a `RedirectAllRequestsTo` alone turns the website off
+  and drops the configuration, unless the request itself sets one of the
+  Swift website headers. Unreproduced: derived from the source.
+- **Evidence:** `rgw_website.h` and `rgw_website.cc` are the same at v19.2.7
+  and v20.2.4.
+  - Both Swift writes lay the request's container metadata over the stored
+    configuration and then set `has_website` from `is_empty()`, on every
+    such request, with website headers or without
+    (`RGWPutMetadataBucket::execute`, [rgw_op.cc:5000-5001](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5000-L5001),
+    [rgw_op.cc:5342-5343](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5342-L5343); `RGWCreateBucket::execute` for a
+    container that exists, [rgw_op.cc:3691-3693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3691-L3693),
+    [rgw_op.cc:3919-3921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3919-L3921)).
+  - `RGWBucketWebsiteConf::is_empty` asks only for the index document, the
+    error document and the three Swift members, never `redirect_all` or the
+    routing rules ([rgw_website.h:235-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.h#L235-L241),
+    [rgw_website.h:235-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.h#L235-L241)).
+  - S3's PutBucketWebsite stores a `RedirectAllRequestsTo` with no index or
+    error document: its parse reads the redirect or the other three, never
+    both ([rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L323-L341),
+    [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L323-L341)), its check asks for an index
+    document only when there is no redirect
+    (`RGWSetBucketWebsite_ObjStore_S3::get_params`,
+    [rgw_rest_s3.cc:2312-2325](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2312-L2325),
+    [rgw_rest_s3.cc:2407-2420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2407-L2420)), and it sets `has_website`
+    (`RGWSetBucketWebsite::execute`, [rgw_op.cc:2924-2929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2924-L2929),
+    [rgw_op.cc:3156-3161](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3156-L3161)).
+  - With `has_website` false, GetBucketWebsite answers
+    NoSuchWebsiteConfiguration (`RGWGetBucketWebsite::execute`,
+    [rgw_op.cc:2880-2885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2880-L2885),
+    [rgw_op.cc:3112-3117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3112-L3117)), and so does the website
+    endpoint, where it redirected (`RGWHandler_REST_S3Website::retarget`,
+    [rgw_rest_s3.cc:5399-5402](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5399-L5402),
+    [rgw_rest_s3.cc:5925-5928](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5925-L5928)). `RGWBucketInfo::encode`
+    writes the configuration only under `has_website`
+    ([rgw_common.cc:2288-2291](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2288-L2291),
+    [rgw_common.cc:2351-2354](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2351-L2354)), so the write that turns
+    the website off also drops the stored redirect.
+- **Impact:** the S3-correctness class, not security-relevant: it fails
+  closed, as the bucket stops redirecting and answers
+  NoSuchWebsiteConfiguration, and nothing becomes readable that was not.
+  Any Swift client that sets container metadata on such a bucket, a quota,
+  an ACL or a header unrelated to websites, deletes its S3 redirect-all
+  website without a trace.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** unaffected as a writer: it serves no Swift API, and it writes
+  `has_website` exactly when the instance holds a configuration
+  (`BucketInfo.HasWebsite`, `internal/meta/bucket_info.go`), so a
+  redirect-only configuration it rewrites keeps both. A record radosgw has
+  written this way carries `has_website` false and no configuration, which
+  rgw-go reads as a bucket without a website, as radosgw does; the
+  redirect cannot be recovered from the record.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, the review of Task BC-9, 2026-10-15, checking
+  the entry on the bucket instance JSON; derived from the source, not
+  reproduced.

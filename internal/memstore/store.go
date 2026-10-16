@@ -325,7 +325,11 @@ func cloneBucketInfo(i meta.BucketInfo) meta.BucketInfo {
 		i.Layout.Target = &t
 	}
 	i.Layout.Logs = slices.Clone(i.Layout.Logs)
-	i.Website = slices.Clone(i.Website)
+	if i.Website != nil {
+		w := *i.Website
+		w.RoutingRules = slices.Clone(w.RoutingRules)
+		i.Website = &w
+	}
 	i.MDSearchConfig = maps.Clone(i.MDSearchConfig)
 	i.ObjLock = slices.Clone(i.ObjLock)
 	i.SyncPolicy = slices.Clone(i.SyncPolicy)

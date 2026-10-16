@@ -102,11 +102,11 @@ func (b *BucketEntryPoint) UnmarshalJSON(data []byte) error {
 // init_default_bucket_layout gives one
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2781-L2801 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2895-L2919 at v20.2.4);
-// "region" stands in for an absent or empty zonegroup. A website
-// configuration or a sync policy with groups is ErrOpaqueJSON, as they are
-// carried opaque, and a hash type, index type or reshard status the enums do
-// not name is refused. obj_lock is read only while the document's flags
-// enable object lock, though v20.2.4 never reads it
+// "region" stands in for an absent or empty zonegroup. website_conf is read
+// only while has_website is true. A sync policy with groups is
+// ErrOpaqueJSON, as it is carried opaque, and a hash type, index type or
+// reshard status the enums do not name is refused. obj_lock is read only
+// while the document's flags enable object lock, though v20.2.4 never reads it
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647),
 // and ObjLock is nil exactly when it is not read, where v19.2.7 takes an
 // absent obj_lock as RGWObjectLock(). decode_json does not read
@@ -134,7 +134,9 @@ func (b *BucketInfo) UnmarshalJSON(data []byte) error {
 	}
 	out.RequesterPays = f.boolean("requester_pays")
 	if f.boolean("has_website") {
-		return fmt.Errorf("%w: website_conf", ErrOpaqueJSON)
+		var w WebsiteConf
+		f.decode("website_conf", &w)
+		out.Website = &w
 	}
 	out.SwiftVersioning = f.boolean("swift_versioning")
 	out.SwiftVerLocation = f.str("swift_ver_location")

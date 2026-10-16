@@ -149,21 +149,14 @@ var _ = Describe("Dump", func() {
 		Expect(out).NotTo(ContainSubstring(`"system"`), "system is written only for a system user")
 		Expect(out).NotTo(ContainSubstring(`"admin"`), "admin is written only for an admin")
 	})
-	It("fails the formatter on a bucket whose website configuration is carried opaque", func() {
+	It("fails the formatter on a bucket whose sync policy with groups is carried opaque", func() {
 		b := meta.NewBucketInfo()
-		b.Website = meta.RawStruct{2, 1, 0, 0, 0, 0}
+		b.SyncPolicy = meta.RawStruct{1, 1, 4, 0, 0, 0, 1, 0, 0, 0}
 		f := formatter.NewJSON(false)
 		f.OpenObjectSection("x")
 		meta.BucketCompleteInfo{Info: b}.Dump(f, denc.Squid)
 		f.CloseSection()
 		Expect(f.Err()).To(MatchError(meta.ErrOpaqueJSON))
-		b = meta.NewBucketInfo()
-		b.SyncPolicy = meta.RawStruct{1, 1, 4, 0, 0, 0, 1, 0, 0, 0}
-		f = formatter.NewJSON(false)
-		f.OpenObjectSection("x")
-		b.Dump(f, denc.Squid)
-		f.CloseSection()
-		Expect(f.Err()).To(MatchError(meta.ErrOpaqueJSON), "a sync policy with groups")
 	})
 	It("writes a cloud tier as each release does", func() {
 		t := meta.NewZoneGroupPlacementTier()

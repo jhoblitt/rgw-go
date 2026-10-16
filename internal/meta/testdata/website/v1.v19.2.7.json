@@ -1,0 +1,80 @@
+{
+    "bucket": {
+        "name": "photos",
+        "marker": "z.4161.1",
+        "bucket_id": "z.4161.1",
+        "tenant": "t",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "creation_time": "2026-09-29T06:45:34.050305Z",
+    "owner": "t$alice",
+    "flags": 2,
+    "zonegroup": "zg1",
+    "placement_rule": "default-placement/COLD",
+    "has_instance_obj": true,
+    "quota": {
+        "enabled": true,
+        "check_on_raw": false,
+        "max_size": 4096,
+        "max_size_kb": 4,
+        "max_objects": 3
+    },
+    "num_shards": 11,
+    "bi_shard_hash_type": 0,
+    "requester_pays": true,
+    "has_website": true,
+    "website_conf": {
+        "index_doc_suffix": "index.html",
+        "error_doc": "error.html",
+        "routing_rules": {
+            "rules": [
+                {
+                    "condition": {
+                        "key_prefix_equals": "docs/",
+                        "http_error_code_returned_equals": 404
+                    },
+                    "redirect_info": {
+                        "redirect": {
+                            "protocol": "https",
+                            "hostname": "example.com",
+                            "http_redirect_code": 301
+                        },
+                        "replace_key_prefix_with": "documents/",
+                        "replace_key_with": ""
+                    }
+                },
+                {
+                    "condition": {
+                        "key_prefix_equals": "images/",
+                        "http_error_code_returned_equals": 0
+                    },
+                    "redirect_info": {
+                        "redirect": {
+                            "protocol": "",
+                            "hostname": "",
+                            "http_redirect_code": 0
+                        },
+                        "replace_key_prefix_with": "",
+                        "replace_key_with": "folderdeleted.html"
+                    }
+                }
+            ]
+        }
+    },
+    "swift_versioning": true,
+    "swift_ver_location": "archive",
+    "index_type": 0,
+    "mdsearch_config": [
+        {
+            "key": "color",
+            "val": 1
+        }
+    ],
+    "reshard_status": 0,
+    "new_bucket_instance_id": ""
+}
+

@@ -95,8 +95,8 @@ func entryPointKey(key string) (tenant, name string, ok bool) {
 // each section's document, its JSON in Data and the value in Doc, at the
 // version and mtime its object was read at. An unknown section and a
 // missing entry are ErrNoSuchKey, find_handler's and the read's ENOENT. A
-// bucket instance whose website configuration or sync policy is carried
-// opaque is meta.ErrOpaqueJSON.
+// bucket instance whose sync policy with groups is carried opaque is
+// meta.ErrOpaqueJSON.
 func (s *Store) Get(ctx context.Context, section, key string) (op.MetadataEntry, error) {
 	if err := op.RefuseNULKey(key); err != nil {
 		return op.MetadataEntry{}, err

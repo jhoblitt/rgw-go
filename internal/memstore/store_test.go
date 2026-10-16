@@ -110,3 +110,28 @@ var _ = Describe("the zone", func() {
 		Expect(store.Period()).To(Equal(period), "period")
 	})
 })
+
+var _ = Describe("bucket records", func() {
+	It("stores and hands out copies of the website configuration", func(ctx SpecContext) {
+		store, _ := newStore()
+		site := func() *meta.WebsiteConf {
+			return &meta.WebsiteConf{
+				IndexDocSuffix: "index.html",
+				RoutingRules:   meta.RoutingRules{{Condition: meta.RoutingCondition{KeyPrefixEquals: "docs/"}}},
+			}
+		}
+		rec := mustCreate(ctx, store, "", "site", owner("alice"))
+		rec.Info.Website = site()
+		Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+		rec.Info.Website.IndexDocSuffix = "written.html"
+		rec.Info.Website.RoutingRules[0].Condition.KeyPrefixEquals = "written/"
+		got, err := store.GetBucket(ctx, "", "site")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Info.Website).To(Equal(site()), "the written record's later edits")
+		got.Info.Website.IndexDocSuffix = "read.html"
+		got.Info.Website.RoutingRules[0].Condition.KeyPrefixEquals = "read/"
+		again, err := store.GetBucket(ctx, "", "site")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again.Info.Website).To(Equal(site()), "a returned record's edits")
+	})
+})
