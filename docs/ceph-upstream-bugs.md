@@ -295,6 +295,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending |  |
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 | [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending |  |
+| [radosgw v21 writes rate limits that Squid and Tentacle misread without error](#radosgw-v21-writes-rate-limits-that-squid-and-tentacle-misread-without-error) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14843,3 +14844,151 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task BC-5, review round 2, 2026-10-15, verifying the
   preflight's rate-limit facet; derived from the source, not reproduced.
+
+## radosgw v21 writes rate limits that Squid and Tentacle misread without error
+
+- **Kind:** defect, robustness, in every v21 tag and on main. v21 encodes a
+  rate-limit record at version 2 with its two new limits inserted in the
+  middle, yet keeps compat 1, the claim that a version 1 decoder can read it.
+  Squid and Tentacle trust that claim, decode the record without error, and
+  read the wrong fields. Not security-relevant: no client or tenant writes the
+  record or chooses how it is misread, and a misread changes how much a
+  principal may do, never what it may access. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/` unless named; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - dae572d5008, "rgw: add rate limit for LIST & DELETE ops", merged by
+    [ceph/ceph#64762](https://github.com/ceph/ceph/pull/64762), adds
+    `max_list_ops` and `max_delete_ops` to `RGWRateLimitInfo` between
+    `max_read_ops` and `max_write_bytes`, and moves `ENCODE_START(1, 1)` to
+    `ENCODE_START(2, 1)`
+    ([rgw/rgw_common.h:579-608](https://github.com/ceph/ceph/blob/dae572d50080609c77d7131cfc99b1fb3f16d31b/src/rgw/rgw_common.h#L579-L608),
+    at dae572d5008). Main still encodes it so
+    ([rgw/rgw_common.h:595-624](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_common.h#L595-L624),
+    at 7ed73efc1be).
+  - That breaks Ceph's encoding rule. Compat is raised "if the change will
+    break existing decoders", and only "changes that add fields at the end of
+    the structure" keep it
+    ([doc/dev/encoding.rst:104-109](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/doc/dev/encoding.rst#L104-L109)
+    and
+    [:151-153](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/doc/dev/encoding.rst#L151-L153),
+    at 7ed73efc1be). `ENCODE_START` documents compat as the "oldest code
+    version that can decode it"
+    ([include/encoding.h:1446-1454](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1446-L1454),
+    [include/encoding.h:1447-1455](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1447-L1455)).
+  - Squid's and Tentacle's `RGWRateLimitInfo::decode` reads version 1: four
+    limits and `enabled`, in the old order
+    ([rgw/rgw_common.h:562-570](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L562-L570),
+    [rgw/rgw_common.h:586-594](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L586-L594)).
+    `DECODE_START` refuses a record only when its compat exceeds the
+    decoder's version
+    ([include/encoding.h:1510-1522](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1510-L1522),
+    [include/encoding.h:1511-1524](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1511-L1524)),
+    and `DECODE_FINISH` skips whatever the decoder leaves unread
+    ([include/encoding.h:1635-1642](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1635-L1642),
+    [include/encoding.h:1651-1658](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1651-L1658)).
+    A v21 record therefore decodes as follows:
+    - `max_write_ops` and `max_read_ops` read correctly;
+    - `max_write_bytes` reads v21's `max_list_ops`, and `max_read_bytes`
+      reads its `max_delete_ops`;
+    - `enabled` reads the first byte of v21's `max_write_bytes`. An `int64_t`
+      is encoded little-endian
+      ([include/encoding.h:124](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L124),
+      [include/encoding.h:125](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L125)),
+      and a `bool` decodes as true from any nonzero byte
+      ([include/encoding.h:101-105](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L101-L105),
+      [include/encoding.h:102-106](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L102-L106)),
+      so `enabled` is true exactly when v21's write-bytes limit is not a
+      multiple of 256;
+    - the rest of v21's write-bytes limit, its read-bytes limit and its own
+      `enabled` are skipped.
+  - How the misread values act:
+    - `rate_limit` applies a user's or bucket's record only when its
+      `enabled` is set
+      ([rgw/rgw_process.cc:123-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L123-L124)
+      and
+      [:146-147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L146-L147),
+      [rgw/rgw_process.cc:123-124](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L123-L124)
+      and
+      [:146-147](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L146-L147)).
+    - The limiter's `should_rate_limit` passes any request under a record
+      whose `enabled` is false
+      ([rgw/rgw_ratelimit.h:196-200](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_ratelimit.h#L196-L200),
+      [rgw/rgw_ratelimit.h:197-201](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_ratelimit.h#L197-L201)),
+      and takes a limit of 0 as unlimited
+      ([rgw/rgw_ratelimit.h:43-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_ratelimit.h#L43-L58),
+      [rgw/rgw_ratelimit.h:44-59](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_ratelimit.h#L44-L59)).
+    - `recv_body` charges a request body's bytes to the limiter
+      ([rgw/rgw_rest.cc:817-837](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L817-L837),
+      [rgw/rgw_rest.cc:817-837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L817-L837)),
+      and `decrease_bytes` lets a byte limit's debt reach two minutes of the
+      limit
+      ([rgw/rgw_ratelimit.h:123-132](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_ratelimit.h#L123-L132),
+      [rgw/rgw_ratelimit.h:124-133](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_ratelimit.h#L124-L133)).
+  - Global limits are the same record, nested in `RGWPeriodConfig`
+    ([rgw/driver/rados/rgw_zone.h:495-515](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_zone.h#L495-L515),
+    [rgw/driver/rados/rgw_zone.h:517-537](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.h#L517-L537)),
+    which `RGWPeriod` encodes with the period
+    ([rgw/driver/rados/rgw_zone.h:793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_zone.h#L793),
+    [rgw/driver/rados/rgw_zone.h:815](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.h#L815)).
+    radosgw takes its global limits from the current period
+    (`RadosStore::get_ratelimit`,
+    [rgw/driver/rados/rgw_sal_rados.cc:1944-1949](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L1944-L1949),
+    [rgw/driver/rados/rgw_sal_rados.cc:2481-2486](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2481-L2486)).
+    How a period reaches another zone was not traced.
+  - The older releases' own writers keep every field they are not given
+    (`set_ratelimit_info`,
+    [rgw/rgw_admin.cc:1358-1406](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1358-L1406),
+    [rgw/radosgw-admin/radosgw-admin.cc:1417-1465](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1417-L1465)),
+    after decoding the stored record as the entry on the rate limiter's
+    -EIO traces. Their `show_user_ratelimit` dumps the record as decoded
+    ([rgw/rgw_admin.cc:1552-1573](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1552-L1573),
+    [rgw/radosgw-admin/radosgw-admin.cc:1611-1632](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1611-L1632)).
+  - v21's `ratelimit disable` clears `enabled` and keeps the limits
+    ([rgw/radosgw-admin/radosgw-admin.cc:1617-1620](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/radosgw-admin/radosgw-admin.cc#L1617-L1620),
+    at 7ed73efc1be).
+- **Impact:** a Squid or Tentacle radosgw applies the wrong limits to a user
+  or bucket whose record v21 wrote, and nothing reports it.
+  - **When.** The two releases share records while a cluster runs v21 beside
+    older daemons, as during an upgrade, and after a downgrade from v21.
+    Metadata sync from a v21 metadata master also carries user and bucket
+    attrs to an older zone as bytes ("radosgw's metadata put writes a
+    document's attrs raw", above).
+  - **Limits turned off.** A record v21 enabled reads as disabled when its
+    write-bytes limit is 0 or any multiple of 256, such as a KiB or MiB
+    multiple. The user or bucket then falls back to the global limit, or to
+    none. The common ops-only record, set with `--max-read-ops` or
+    `--max-write-ops` and then `ratelimit enable`, has a write-bytes limit
+    of 0, so the older releases never apply it.
+  - **Byte limits dropped.** When the record does read as enabled, its byte
+    limits are v21's list and delete limits, which are unlimited when 0.
+  - **Limits turned on or tightened.** A record v21 disabled reads as enabled
+    when its write-bytes limit is not a multiple of 256. A list or delete
+    limit of N ops a minute is applied as a write or read limit of N bytes a
+    minute. After one write larger than N bytes, the user's or bucket's
+    writes are refused 503 SlowDown for up to two minutes, until the debt
+    refills.
+  - **Written back.** A `ratelimit set` on the older release stores the
+    misread values as version 1, and v21 then reads those as the record.
+  - **Silent.** The decode succeeds, and the older release's `ratelimit get`
+    shows the misread values as the stored ones.
+- **Releases:** introduced in v21.0.0, the first tag that contains
+  dae572d5008 (2026-03-26). It is in every v21 tag in the clone (v21.0.0,
+  v21.0.1, v21.1.0 to v21.1.2 and v21.3.0), on the umbrella branch, and on
+  main at 7ed73efc1be. The misread is Squid's and Tentacle's, checked at
+  v19.2.7 and v20.2.4. Both branches' heads in the clone still encode and
+  decode version 1.
+- **rgw-go:** writes version 1 at either release, as Squid and Tentacle do,
+  and decodes version 2 as v21 does (`RateLimitInfo.Encode` and
+  `DecodeRateLimitInfo`, `internal/meta/period.go:177-207`; pinned in
+  `internal/meta/zone_test.go:538-552`).
+  - So where Squid and Tentacle misread a v21 record, rgw-go reads the
+    limits v21 meant.
+  - Its ratelimit set then writes them back as version 1, without the list
+    and delete limits.
+  - rgw-go has no rate limiter, so only its admin ratelimit get and set read
+    the record.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task BC-5, fix round 3, 2026-10-15, checking the
+  record's encoding for the rate limiter's -EIO entry; derived from the
+  source, not reproduced.
