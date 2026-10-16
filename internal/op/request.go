@@ -78,6 +78,15 @@ type Request struct {
 	SrcTenant, SrcBucket string
 
 	Identity Identity
+	// MFAVerified is radosgw's s->mfa_verified
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1376 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1420 at v20.2.4):
+	// that the request's x-amz-mfa named a device of the requester and its
+	// current code
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559 at v20.2.4).
+	// No handler sets it, so every change that needs it is refused.
+	MFAVerified bool
 	// AuthRoute is AuthResult.Route, which says what of the query a read
 	// may take.
 	AuthRoute AuthRoute
