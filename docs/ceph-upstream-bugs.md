@@ -317,6 +317,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutBucketEncryption stores a configuration without the elements it cannot find](#radosgws-putbucketencryption-stores-a-configuration-without-the-elements-it-cannot-find) | pending | [ceph/ceph#71247](https://github.com/ceph/ceph/pull/71247), [ceph/ceph#72634](https://github.com/ceph/ceph/pull/72634) |  |
 | [radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false](#radosgw-writes-getbucketencryptions-bucketkeyenabled-as-true-which-botocore-reads-as-false) | pending | pending |  |
 | [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending |  |
+| [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending |  |
+| [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16513,3 +16515,202 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task BC-23, 2026-10-16, tracing what a stored default
   does to a write. Derived from the source, not reproduced.
+
+## radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse
+
+- **Kind:** defect, unfixed at v19.2.7 and v20.2.4: PutBucketWebsite answers
+  a body that does not parse, or has no `WebsiteConfiguration` root, with
+  400 InvalidArgument where Amazon S3 answers MalformedXML, and it stores
+  documents S3's schema does not admit. Unreproduced: derived from the
+  source.
+- **Evidence:** `rgw_website.cc`, `rgw_xml.h` and `rgw_xml.cc` are the same
+  at v19.2.7 and v20.2.4.
+  - `RGWSetBucketWebsite_ObjStore_S3::get_params` answers -EINVAL when expat
+    refuses the body, and when `decode_xml`, which looks
+    `WebsiteConfiguration` up as mandatory, throws
+    ([rgw_rest_s3.cc:2300-2310](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2300-L2310),
+    [rgw_rest_s3.cc:2395-2405](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2395-L2405)). -EINVAL is 400
+    InvalidArgument ([rgw_common.cc:61](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L61),
+    [rgw_common.cc:62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L62)).
+  - Amazon S3 answers MalformedXML when a client "sends malformed XML (XML
+    that doesn't conform to the published XSD) for the configuration"
+    (aws-sdk-go v1.55.8, `service/s3/api.go:20217-20221`).
+  - The decode stores what that schema refuses. A `Protocol` is any text,
+    where S3's model allows `http` or `https` (`service/s3/api.go:39492`,
+    `:39576` and `:45615-45619`), and `RGWBWRoutingRule::apply_rule` writes
+    it into the redirect's Location
+    ([rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L40-L63),
+    [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L40-L63)). Of a repeated
+    element it reads the first, as `RGWXMLDecoder::decode_xml` does
+    ([rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+    [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)), so a second index document or
+    host name is ignored. With namespace processing off
+    (`XML_ParserCreate`, [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)), a prefixed element is another
+    name, so an `s3:IndexDocument` is ignored even where `s3` names S3's
+    namespace, and a document whose only index document is written so is
+    refused as having none.
+  - The decode looks up only the elements it reads, so it ignores every
+    other element, every attribute and the text between elements
+    (`RGWBucketWebsiteConf::decode_xml` and the decode_xml of its parts,
+    [rgw_website.cc:233-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L233-L341),
+    [rgw_website.cc:233-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L233-L341)): a misspelled `Condition`
+    leaves a rule that matches every key. It reads `RedirectAllRequestsTo`
+    and ignores what stands beside it, which S3's model forbids
+    (`service/s3/api.go:43886-43889`). It stores an `ErrorDocument` with no
+    `Key`, or an empty one, as no error document, where the model requires a
+    `Key` of one byte at least (`:20427-20434`); a `Suffix` holding a slash,
+    which the model forbids (`:27211-27222`); and a `RoutingRule` with no
+    `Redirect`, which the model requires (`:40697-40702`) and which
+    redirects a key to itself on the request's own host.
+- **Impact:** the S3-correctness class, minor, not security-relevant. A
+  client that tells a malformed document from an invalid value by its error
+  code reads the wrong one, and a document S3 refuses is stored: a typo
+  widens a rule silently, a scheme other than `http` or `https` is written
+  into every redirect it answers, and a rule without a `Redirect` loops.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** answers 400 MalformedXML for each (`ParseXML`,
+  `internal/website/xml.go`, its scan in `internal/website/scan.go`;
+  `docs/exclusions.md`, "PutBucketWebsite answers MalformedXML for a
+  document that does not parse or fit S3's schema").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 bucket-configuration research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-bucketconfig.md`,
+  defect 15); recorded by phase 2 unit B, Task BC-10, 2026-10-16, which
+  checked it at v19.2.7 and v20.2.4 and found the schema half. Derived from
+  the source, not reproduced.
+
+## radosgw writes a website redirect's key, host and protocol raw into its Location
+
+- **Kind:** defect, possibly security-relevant: response-header injection
+  and response splitting (CWE-113) through a key's CR and LF, reflected from
+  the request's path; a key's `?`, `#` and `%` also reshape the URL. The
+  `HostName` and `Protocol` a bucket's owner stores reach the Location raw
+  too, CR and LF included, in every redirect the bucket's website answers.
+  Unfixed at v19.2.7 and v20.2.4. Unreproduced: derived from the source; no
+  cluster.
+- **Evidence:** `rgw_website.cc`, `rgw_client_io_filters.h` and
+  `rgw_asio_client.cc` are the same at v19.2.7 and v20.2.4.
+  - `RGWREST::preprocess` decodes the path with `url_decode` and refuses
+    only a NUL in it
+    ([rgw_rest.cc:2187-2191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2187-L2191),
+    [rgw_rest.cc:2204-2208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2204-L2208)); `url_decode` turns each
+    `%XX` into its byte, `%0D` and `%0A` into CR and LF
+    ([rgw_common.cc:1701-1729](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1701-L1729),
+    [rgw_common.cc:1764-1792](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1764-L1792)).
+    `init_from_header` takes the object's name from that decoded path
+    ([rgw_rest_s3.cc:4964-4980](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4964-L4980),
+    [rgw_rest_s3.cc:5494-5510](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5494-L5510)).
+  - The website handler's `retarget` and `error_handler` hand that name to
+    `apply_rule`, which appends it, or its part past the rule's prefix,
+    unchanged to the Location it builds in `s->redirect`
+    ([rgw_rest_s3.cc:5419-5436](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5419-L5436) and
+    [rgw_rest_s3.cc:5554-5567](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5554-L5567),
+    [rgw_rest_s3.cc:5945-5962](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5945-L5962) and
+    [rgw_rest_s3.cc:6080-6093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6080-L6093);
+    [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L40-L63),
+    [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L40-L63)). A redirect-all stored by
+    S3's PutBucketWebsite has no index suffix, so `retarget` fails at
+    `get_effective_key` and the error handler redirects
+    ([rgw_rest_s3.cc:5409-5414](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5409-L5414),
+    [rgw_rest_s3.cc:5935-5940](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5935-L5940)).
+  - `abort_early` sends `s->redirect` as Location through `dump_redirect`
+    ([rgw_rest.cc:716-727](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L716-L727),
+    [rgw_rest.cc:721-732](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L721-L732);
+    [rgw_rest.cc:440-443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L440-L443),
+    [rgw_rest.cc:440-443](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L440-L443)), whose `dump_header` passes the
+    string to `send_header` as it is
+    ([rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L347-L357),
+    [rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L347-L357)). The client IO filters
+    forward it, and `ClientIO::send_header` writes the name, `: `, the value
+    and a CRLF
+    ([rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L181),
+    [rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L181)).
+  - `retarget` runs before `read_permissions`
+    ([rgw_process.cc:183-196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L183-L196),
+    [rgw_process.cc:183-196](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L183-L196)), so the redirect is
+    answered whatever the requester may read.
+  - The host is the rule's, else the request's `HTTP_HOST`, empty when the
+    request has none
+    ([rgw_rest_s3.cc:5424](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5424) and
+    [rgw_rest_s3.cc:5555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5555),
+    [rgw_rest_s3.cc:5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5950) and
+    [rgw_rest_s3.cc:6081](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6081)). Tentacle makes a request with no
+    Host a website request when `s3website` comes before `s3` in
+    `rgw_enable_apis`
+    ([rgw_rest.cc:2193-2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198)), and the Location then
+    starts `http:///` or `https:///` and goes on with the key.
+  - The owner's host and protocol: PutBucketWebsite reads a rule's
+    `Protocol` and `HostName` (`RGWBWRedirectInfo::decode_xml`), and a
+    redirect-all's (`RGWBucketWebsiteConf::decode_xml`), as strings with
+    no check
+    ([rgw_website.cc:235-237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L235-L237) and
+    [rgw_website.cc:323-328](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L323-L328),
+    [rgw_website.cc:235-237](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L235-L237) and
+    [rgw_website.cc:323-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L323-L328)), and `get_params` checks only
+    that a redirect-all's host is not empty
+    ([rgw_rest_s3.cc:2312-2315](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2312-L2315),
+    [rgw_rest_s3.cc:2407-2410](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2407-L2410)). `decode_xml_obj` takes an
+    element's text whole
+    ([rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L179-L182),
+    [rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L179-L182)), as expat's character data
+    handler, `xml_handle_data`, appended it
+    ([rgw_xml.cc:84-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L84-L87),
+    [rgw_xml.cc:84-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L84-L87)), so `&#13;&#10;` in a `HostName`
+    stores a CR and an LF. `apply_rule` writes the protocol, `://` and the
+    host into the Location with no check
+    ([rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L45-L59),
+    [rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L45-L59)), and `abort_early` sends it as
+    above.
+- **Trigger:** a GET or HEAD on the website endpoint (the `s3website` API)
+  for a bucket whose website configuration is a `RedirectAllRequestsTo`,
+  or holds a routing rule the key matches that names no `ReplaceKeyWith`,
+  for a key such as `%0D%0ASet-Cookie:%20k=v`, or one holding `%3F`, `%23`
+  or `%25`. The requester needs no credentials: a link to that URL makes a
+  visitor's browser send it. Or a PutBucketWebsite whose `HostName` holds
+  `&#13;&#10;` and a header line, or whose `Protocol` is any other string,
+  by a requester allowed `s3:PutBucketWebsite` on the bucket; every GET or
+  HEAD the website then redirects carries it.
+- **Impact:**
+  - CR and LF: the response carries the header lines the link's author
+    wrote, such as a `Set-Cookie` for the website's domain. An empty line
+    ends the header section early, and the author's text becomes the start
+    of the body (response splitting).
+  - `?` and `#` turn the rest of the key into the Location's query or
+    fragment, and a `%` makes the client read the two bytes after it as an
+    escape, or makes the Location an invalid URI when they are not hex
+    digits, so the client is sent to another object than the rule names,
+    or nowhere.
+  - The empty host: a URL parser that follows the WHATWG URL standard skips
+    the extra slashes of `http:///`, so a key `evil.com/x` sends the client
+    to `evil.com`. Only a request without a Host meets it, and browsers
+    always send one, so it reaches no one but the requester.
+  - The owner's host and protocol: the bucket's own website responses carry
+    the header lines its configuration wrote. That reaches past the bucket
+    only where buckets' websites share a parent domain, as a `Set-Cookie`
+    for that domain reaches the other buckets' sites. A `Protocol` other
+    than `http` or `https` sends the client to another scheme.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected by the encoding: `website.Apply` builds the new
+  key as `apply_rule` does and percent-encodes it with the slash kept
+  (`internal/website/redirect.go`; `docs/exclusions.md`, "A website
+  redirect's Location carries the new key percent-encoded"), so the
+  Location carries no CR, LF, `?`, `#` or bare `%` from a key. Its frontend
+  writes headers through net/http (`internal/frontend/server.go`), which
+  also rewrites each CR and LF in a header value to a space
+  (`net/http/header.go:139` and `:206-207` at Go 1.27.1). It builds the
+  empty-host form as radosgw does; it serves no website endpoint yet, and
+  the task that serves one decides that case. Not affected by the owner's
+  host and protocol: `website.Apply` declines, as `ErrUnsafeRedirect`, a
+  host holding a byte at or below 0x20, or 0x7F, and a protocol other than
+  `http` or `https`, which covers a configuration radosgw stored, and the
+  website endpoint, once served, answers that as an internal error;
+  `website.ParseXML` refuses such
+  a `HostName` as InvalidArgument (`docs/exclusions.md`, "A website
+  redirect is refused for a host holding a control byte or a protocol
+  other than http or https").
+- **Upstream:** pending: sent to rgw-bug-reproduction
+  (BC10-1-WEBSITE-REDIRECT-LOCATION-CRLF).
+- **Found:** phase 2 unit B, Task BC-10, 2026-10-16, porting `apply_rule`;
+  the owner's host and protocol by that task's review, 2026-10-16. Derived
+  from the source, not reproduced.

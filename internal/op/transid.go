@@ -36,8 +36,10 @@ func HostID(instanceID uint64, zone, zonegroup string) string {
 // listing prefixes and delimiters
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.h#L712,
 // encode_slash defaults true). It serves the transaction-id suffix (encodeSlash
-// true) and the object and multipart-upload listings' encoding-type=url;
-// nothing else in rgw-go URL-encodes by hand.
+// true) and the object and multipart-upload listings' encoding-type=url. The
+// one other hand-written encoder, internal/website's urlEncode for a website
+// redirect's key, is this with encodeSlash false, kept apart because website
+// sits below op; a website spec holds the two equal over every byte.
 func URLEncode(s string, encodeSlash bool) string {
 	var b strings.Builder
 	for i := range len(s) {
