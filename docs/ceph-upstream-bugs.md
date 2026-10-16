@@ -14712,6 +14712,7 @@ Every new entry adds its row to this table, in document order.
   entry from `bi_get` as proof the marker exists would take this one too.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
+  derived from the source, not reproduced.
 
 ## radosgw's zstd compress leaks its compression stream when libzstd fails
 
