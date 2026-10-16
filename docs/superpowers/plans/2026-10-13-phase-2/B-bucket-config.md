@@ -373,8 +373,21 @@ relies on fakerados behaviour beyond what it serves today.
      `user.rgw.cors` bytes equal for the same document, wildcard, multi-origin, expose-header
      and max-age rules included.
   4. Reproduce defects 1, 2 and 4 on both releases and set their registry status; run each
-     entry's prior-art search.
-- **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, cors`.
+     entry's prior-art search. Do the same for the two registry entries BC-2 added: the
+     wildcard over-match ("radosgw's CORS wildcard match allows origins and headers its
+     pattern does not cover": an AllowedOrigin `* example.com` admitting `evilexample.com`,
+     and an overlapping pattern), and the CVE-2021-3524 carriage return ("radosgw from Quincy
+     on lacks CVE-2021-3524's fix for CORS expose headers": `&#13;` in an ExposeHeader sent
+     as a bare carriage return on the wire).
+  5. Add s3-tests tests for the first rule that matches origin, method and requested headers,
+     merged into jhoblitt/ceph's `rgw-go-s3tests` branch: a later rule for the origin that
+     allows PUT where the first allows only GET, and a later rule that allows a requested
+     header the first lacks, each by preflight and by an ordinary request's headers. radosgw
+     fails them on both floors, so they become known-differences lines under "CORS rules are
+     matched as Amazon S3 matches them" once the recording confirms it; the pin bump that
+     brings them in is its own change.
+- **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, cors`, and the
+  s3-tests tests of behaviour 5.
 - **Depends on:** BC-3 to BC-7. **PR:** one per release's recording, landed one at a time by
   the controller. **Brief:** about 80 lines.
 
