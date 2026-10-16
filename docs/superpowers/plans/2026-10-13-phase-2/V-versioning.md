@@ -1163,30 +1163,55 @@ their default.
 ### Task V13a: cls/otp, the check and result calls
 
 - **Layer:** cls. **Files:** create `internal/cls/otp/ops_check.go` and specs in WP-16's package;
-  append to `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+  update one entry's rgw-go line in `docs/ceph-upstream-bugs.md`. **Cluster:** no.
 - **Security boundary:** MFA (PP-14).
-- **Consumes:** WP-16's package, `OTPCheck` and the result constants. **Produces:**
+- **Consumes:** WP-16's package, `OTPCheck` and the result constants. **Produces** these names,
+  since WP-16 already holds `GetResult` (`GetAll`'s pending reply) and `CheckResult` (the result
+  enum):
 
   ```go
-  func Check(w *radosclient.WriteOp, id, val, token string)
-  func GetResult(r *radosclient.ReadOp, id, val, token string) *GetResultResult
+  type CheckOp struct{ ID, Val, Token string }  // cls_otp_check_otp_op v1
+  type GetResultReply struct{ Result OTPCheck } // cls_otp_get_result_reply v1
+  const (
+      MethodCheck     = "otp_check"      // RD|WR
+      MethodGetResult = "otp_get_result" // RD
+  )
+  var ErrCheckRefused error // a check whose result is not OTP_CHECK_SUCCESS
+  func Check(op radosclient.Execer, req CheckOp, r denc.Release)
+  func LookupCheck(op *radosclient.ReadOp, req CheckOp, r denc.Release) *CheckLookup
+  func (*CheckLookup) Record() (OTPCheck, error)
   ```
 
+  Each wire type has `Encode` and a `Decode` function, as WP-16's do, for V13b. Both calls take
+  the same `CheckOp`, so radosgw's quirk (behaviour 2) is built into the signatures. No
+  `GetResultOp` is defined: radosgw never sends `cls_otp_get_result_op`.
 - **Behaviour:**
-  1. `otp_check` (RD|WR) in a write op with `cls_otp_check_otp_op` v1 `{id, val, token}`, where the
-     token is 16 random alphanumerics; Squid sends it through `IoCtx::exec` and Tentacle through a
-     write op, the only cls_otp change between the tags
-     ([cls_otp_client.cc:60-96](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L96),
-     [cls_otp_client.cc:60](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60)).
-  2. `otp_get_result` (RD) with the same check-op buffer, not a `cls_otp_get_result_op`: the
-     client passes `in` ([cls_otp_client.cc:78-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L78-L83)) and the class decodes a
-     check op ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511), [cls_otp.cc:483](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483)).
-     The reply is `cls_otp_get_result_reply{otp_check_t{token, timestamp, result}}`.
-- **Specs:** goldens from `ceph-dencoder` for `cls_otp_check_otp_op` and
-  `cls_otp_get_result_reply`; `GetResult` sends the check op's bytes; each result value decodes.
-- **Registry:** defect 12 (cosmetic, both, consistent by accident): a note so no one "fixes" one
-  side to send `cls_otp_get_result_op`, which the class would answer EINVAL.
-- **Depends on:** WP-16. **PR split:** one. **Brief:** about 80 lines.
+  1. `OTP::check` sends `otp_check` (RD|WR) with the check op, whose token is 16 random
+     alphanumerics; the caller, V13c, draws it. Squid sends it through `IoCtx::exec` and Tentacle
+     on a write op ([cls_otp_client.cc:60-74](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L74), [cls_otp_client.cc:60-76](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60-L76)). The call step's
+     bytes are the same, and the OSD takes a call to an RD|WR method for a write either way
+     (`may_write`, `set_class_write`, [osd_op_util.cc:23-25](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L23-L25), [osd_op_util.cc:23-25](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L23-L25); [osd_op_util.cc:197-204](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L197-L204), [osd_op_util.cc:197-204](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L197-L204)), so V13a sends
+     it on a write op at both releases, in Tentacle's form.
+  2. It then sends `otp_get_result` (RD) on a separate read op carrying the same encoded
+     `CheckOp`. radosgw builds a `cls_otp_get_result_op` but passes `in`, the check op
+     ([cls_otp_client.cc:76-84](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L76-L84), [cls_otp_client.cc:78-86](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L78-L86)), and the class's
+     `otp_get_result` decodes a check op ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511), [cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L511)). The reply is
+     `cls_otp_get_result_reply{otp_check_t{token, timestamp, result}}`.
+  3. The answers are `check_mfa`'s ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63), [svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46-L63)). ENOENT from either call means no device
+     has the id, as `get_otp_instance` finds no `otp/<id>` key ([cls_otp.cc:171-193](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L171-L193), [cls_otp.cc:171-193](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L171-L193)); it stays
+     `radosclient.ErrNotFound`, which V13c reads as a missing device. A decoded result other than
+     `OTP_CHECK_SUCCESS` is `check_mfa`'s EACCES: `Record` returns the check with
+     `ErrCheckRefused`.
+  4. WP's WD-16, the formatting rule, binds this task's code.
+- **Specs:** hand-built goldens for `cls_otp_check_otp_op` and `cls_otp_get_result_reply`, as
+  WP-16's are, because neither `ceph-object-corpus` nor `ceph-dencoder` has an otp type at either
+  tag; `LookupCheck` sends exactly the bytes `Check` sends; each result value decodes; ENOENT and
+  each result but SUCCESS answer as behaviour 3 says.
+- **Registry:** none new. WP-16 recorded defect 12, "radosgw's otp check sends the otp_check
+  request to otp_get_result". This task updates its rgw-go line to say rgw-go sends the check op
+  to both methods, so no one "fixes" one side to send `cls_otp_get_result_op`, which the class
+  answers EINVAL.
+- **Depends on:** WP-16. **PR split:** one. **Brief:** about 90 lines.
 
 ### Task V13b: emulator, the otp check methods
 
@@ -1207,10 +1232,18 @@ their default.
      liboath's `oath_totp_validate2` for the digit count and the window walk and quotes it in the
      task notes (PP-2). The unsigned window distance of defect 11 is reproduced as the class
      computes it; a stored step of 0, which faults the OSD (defect 10), answers EIO here.
-  3. `otp_get_result` RD decodes a check op and answers the attempt with its token, or
-     `OTP_CHECK_UNKNOWN` when none carries it.
+  3. `otp_get_result` RD ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511), [cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L511)) decodes a `CheckOp`, so a
+     `cls_otp_get_result_op` frame, whose token reads as the id and whose code runs past the
+     frame, fails with EINVAL. It finds the device by the id, answering ENOENT when there is none
+     (`get_otp_instance`, [cls_otp.cc:171-193](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L171-L193), [cls_otp.cc:171-193](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L171-L193)). It answers the newest check carrying the
+     token, after `trim_expired` drops the checks older than one step, or
+     `{token, OTP_CHECK_UNKNOWN, now}` when none does (`otp_instance::find`,
+     [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169), [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L155-L169); `trim_expired`, [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106), [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L106)). The trim is not written back,
+     because the method is RD.
+  4. WP's WD-16, the formatting rule, binds this task's code.
 - **Specs:** RFC 6238 Appendix B's SHA-1 vectors at their times; a wrong code; a reused code; the
-  sixth attempt in one window; an unknown token; a missing device.
+  sixth attempt in one window; an unknown token; a missing device; a `cls_otp_get_result_op`
+  frame answered EINVAL; a lookup that trims an expired check and leaves it stored.
 - **Registry:** none new; defects 10 and 11 are in the registry already.
 - **Depends on:** WP-17, V13a. **PR split:** one. **Brief:** about 140 lines.
 
@@ -1227,9 +1260,13 @@ their default.
      is not verified; then `check_mfa`.
   2. `check_mfa` ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
      [svc_cls.cc:46](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46)): the object `user:<uid>` in the zone's `otp_pool`
-     ([svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.h#L56-L58)), V13a's two calls with one fresh token, verified
-     only on `OTP_CHECK_SUCCESS`.
-  3. Any other result, or a missing device, is `(false, nil)`; a RADOS failure is `(false, err)`.
+     ([svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.h#L56-L58)), V13a's two calls with one token, verified
+     only on `OTP_CHECK_SUCCESS`. The token is 16 random alphanumerics, as `OTP::check` draws
+     it with `gen_rand_alphanumeric` and `TOKEN_LEN` ([cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L65-L66),
+     [cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L65-L66)), drawn once per check and sent in both calls.
+  3. Any other result, which `Record` returns as V13a's `ErrCheckRefused`, or a missing device,
+     `radosclient.ErrNotFound` from either call, is `(false, nil)`; V13c matches both with
+     `errors.Is`. Any other RADOS failure is `(false, err)`.
 - **Specs** (on the emulator, V13b): an unknown serial; a good code; a wrong one; a reused one; a
   rate-limited one; the token shared by the two calls; a pool error.
 - **Exclusions:** none.
@@ -1433,7 +1470,7 @@ running release shows the defect (PP-11); "registry" marks an entry already in
 | 9 | `versionId` on PutObject, CopyObject's destination and CompleteMultipartUpload honoured as the instance on a bucket not versioning-enabled (registry) | both | S3-correctness | unreproduced | ignored (D3); exclusion; the registry's rgw-go line updated | V11 |
 | 10 | `cls_otp` divides by a stored `step_size` of 0 (registry, #80948) | both | denial of service, privileged | liboath reproducer only | this unit writes no otp entry; WP's admin otp refuses 0; the emulator answers EIO | V13b |
 | 11 | `cls_otp`'s replay index from the unsigned window distance (registry, #80949) | both | S3-correctness (TOTP replay window) | liboath reproducer | class-side; rgw-go calls the class as radosgw does, and the emulator reproduces it | V13b |
-| 12 | `cls_otp_client` sends the check-op buffer to `otp_get_result`; `cls_otp_get_result_op` is dead ([cls_otp_client.cc:78-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L78-L83), [cls_otp.cc:487](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L487)) | both | cosmetic (consistent by accident) | n/a | send the check op, as radosgw does; a registry note | V13a |
+| 12 | `cls_otp_client` sends the check-op buffer to `otp_get_result`; `cls_otp_get_result_op` is dead ([cls_otp_client.cc:78-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L78-L83), [cls_otp.cc:487](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L487)) | both | cosmetic (consistent by accident) | n/a | send the check op to both methods, as radosgw does; WP-16 recorded it (registry, "radosgw's otp check sends the otp_check request to otp_get_result"), and V13a updates its rgw-go line | V13a, V13b |
 | 13 | `RGWRados::get_olh` decodes `olh.ver` as `RGWOLHInfo` ([rgw_rados.cc:8896-8901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8896-L8901); Tentacle reads `olh.info`, [rgw_rados.cc:9640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9640)); only `radosgw-admin olh get` calls it | v19.2.6 | cosmetic (admin tool) | unreproduced | not met; read into the gate's `olh get` on Squid | V15b |
 | 14 | Tentacle removes a head without checking its write tag (registry, #80898 and #80906), reached by `apply_olh_log`'s instance removal | v20.2.4 | data corruption (tail leak) | unreproduced | phase 1's guard kept; the exclusion exists | V5b |
 | 15 | Squid before 19.2.3 refused a marker on a marker (registry) | below the floor | n/a | n/a | unaffected | none |
