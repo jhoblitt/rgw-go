@@ -245,7 +245,12 @@ relies on fakerados behaviour beyond what it serves today.
 - **Exclusions and registry:** extends "A retried PutBucketPolicy keeps what the write it lost
   to changed" and its registry entry with PutBucketCors (defect 4, data corruption,
   unreproduced); extends "A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again" with the CORS writes (defect 5).
+  policy or tagging write is authorized again" with the CORS writes (defect 5). The CORS writes
+  also join "A retried bucket write stops when the name names another bucket", citing their
+  retries ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107),
+  [rgw_op.cc:6133-6152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6133-L6152),
+  [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774),
+  [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819)).
 - **Depends on:** BC-2. **PR:** one. **Brief:** about 180 lines.
 
 ### Task BC-4: The non-preflight CORS refusal
@@ -644,8 +649,13 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
   PutBucketAcl, IgnorePublicAcls on an anonymous GET, and BlockPublicPolicy and
   RestrictPublicBuckets judged by S3's `IsPublic`.
 - **Exclusions and registry:** extends defect 4's exclusion and registry entry with
-  PutPublicAccessBlock; extends defect 5's exclusion with the block writes; adds rgw-go's Get
-  answer to the registry entry for defect 7.
+  PutPublicAccessBlock; extends defect 5's exclusion and "A retried bucket write stops when the
+  name names another bucket" with the block writes, citing their retries
+  ([rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673),
+  [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
+  [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641),
+  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)); adds
+  rgw-go's Get answer to the registry entry for defect 7.
 - **Depends on:** BC-17, S3 (the enforcement specs). **PR:** one. **Brief:** about 120 lines.
 
 ### Task BC-19: Block routes
@@ -775,7 +785,12 @@ byte-identical at the two tags.
      [rgw_op.cc:9811-9835](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9811-L9835)).
 - **Specs:** each op's error order with fakes; Delete removing both attrs; a retry
   re-authorized.
-- **Exclusions and registry:** extends defect 5's exclusion with the encryption writes.
+- **Exclusions and registry:** extends defect 5's exclusion and "A retried bucket write stops
+  when the name names another bucket" with the encryption writes, citing their retries
+  ([rgw_op.cc:8807-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8807-L8811),
+  [rgw_op.cc:8860-8866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8860-L8866),
+  [rgw_op.cc:9775-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9775-L9779),
+  [rgw_op.cc:9828-9834](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9828-L9834)).
 - **Depends on:** BC-23. **PR:** one. **Brief:** about 110 lines.
 
 ### Task BC-25: Encryption configuration routes
@@ -952,7 +967,11 @@ first release line to carry it (b3733296c8e), cited at that tag.
   the permission.
 - **Exclusions and registry:** new exclusion "rgw-go stores and enforces ownership controls a
   floor radosgw ignores": a floor radosgw accepts ACL writes under BucketOwnerEnforced and
-  carries the attr through its attr merges.
+  carries the attr through its attr merges. Its Put and Delete writes join defect 5's exclusion
+  and "A retried bucket write stops when the name names another bucket". The floors
+  serve no ownership ops, so they cite v21.1.2's retries, which re-read the bucket by name and
+  authorize nothing ([rgw_op.cc:10277-10304](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10277-L10304),
+  [rgw_op.cc:10353-10357](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10353-L10357)).
 - **Depends on:** BC-28a. **PR split:** (a) the three ops; (b) the ACL refusals and
   CreateBucket, after L2's PR (b) on `bucketops.go`. **Brief:** about 200 lines.
 
@@ -1261,6 +1280,30 @@ BC-29's and BC-32's specs.
 - **Depends on:** BC-29 to BC-33. **PR:** one, landed by the controller. **Brief:** about 70
   lines.
 
+### Task BC-35: Retitle the re-authorized-retries exclusion
+
+- **Layer:** docs. **Files:** modify `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` and
+  this file. **Cluster:** no.
+- **Behaviour:**
+  1. Retitle "A PutBucketAcl that loses a race is retried, and every retried ACL, policy or
+     tagging write is authorized again" to "A PutBucketAcl that loses a race is retried, and
+     every retried bucket write is authorized again". The new title names no kind of write,
+     so no later retried write renames it, and it keeps the prefix the short quote in item 2
+     uses.
+  2. Update every verbatim quote of the old title: BC-3's and BC-11's Exclusions and registry
+     lines in this file, and `docs/ceph-upstream-bugs.md`'s entries "radosgw's PutBucketAcl
+     answers success when its write loses a race" and "radosgw's retried bucket writes are not
+     authorized again". The short form "A PutBucketAcl that loses a race is retried" in
+     `docs/exclusions.md`'s "A retried bucket write stops when the name names another bucket"
+     still holds under the new title.
+  3. Announce the rename to the rgw-rs session.
+- **Specs:** none. `make citecheck` on the changed files; a search for the old title finds it
+  only in plan and research text that records history.
+- **Exclusions and registry:** the retitle and the quotes above; no behaviour changes.
+- **Depends on:** BC-3, BC-11, BC-18, BC-24, BC-28c, which each extend the exclusion's body,
+  so a rename inside any of them would collide with the others and orphan the quotes.
+  **PR:** one, docs only. **Brief:** about 40 lines.
+
 ## Order
 
 Prerequisites from other units: S2 for every handler task; S3 for BC-18, BC-20 and BC-28e;
@@ -1272,7 +1315,7 @@ BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 | 1 | BC-2, BC-5, BC-9, BC-13, BC-17, BC-23, BC-28a, BC-28b, BC-29, BC-31; BC-20; BC-30 | nothing in the unit; BC-20 S3; BC-30 WP-1 |
 | 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2; BC-9; BC-9; BC-17 and S3; BC-20; BC-23; BC-28a |
 | 3 | BC-4, BC-6, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3 and BC-5; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
-| 4 | BC-15, BC-32, BC-26 (b), BC-28d | BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b) |
+| 4 | BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
 | 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
 
 The cluster tasks run one at a time, and the recording ones land through the controller, as
@@ -1293,7 +1336,7 @@ task budgets the cluster reproduction.
 | 2 | The rule chosen is the first whose origin matches, so a later rule that allows the request is never used ([rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L186-L194)) | S3-correctness | unreproduced | fixed on main by cc1dcecee08 (PR #69190) | main's selection (BC-2) |
 | 3 | A signed preflight's signature is never compared | quirk, as AWS checks none; its rate-limit charge is security | unreproduced | reported to security@ceph.io 2026-10-05 | take the skip; phase 3 must not charge OPTIONS CORS to the key's user (BC-5, B4) |
 | 4 | PutBucketCors and PutPublicAccessBlock retries write back the attrs the request started with ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107), [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673)) | data corruption (a lost update of shared bucket state) | unreproduced | none found; the registry's PutBucketPolicy entry | set only the op's own attr (BC-3, BC-18) |
-| 5 | Retried bucket writes are not authorized again (registry) | security | unreproduced | registry | re-authorize each retry (BC-3, BC-11, BC-18, BC-24, BC-28c) |
+| 5 | Retried bucket writes are not authorized again (registry) | security | unreproduced | registry | re-authorize each retry (BC-3, BC-11, BC-18, BC-24, BC-28c); retitle its exclusion once they land (BC-35) |
 | 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624)) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection) | unreproduced; BC-22 captures the bytes | none found | the error document alone (BC-19) |
 | 7 | A public-access block that does not decode is ignored (registry) | security, low | unreproduced | registry | phase 1 fails closed; Get answers 500 (BC-18) |
 | 8 | POST object is never checked for a suspended user: the check precedes the form's authentication | security (fail-open) | unreproduced | none found; prior-art search pending | 403 UserSuspended; reported upstream once reproduced (BC-32) |
