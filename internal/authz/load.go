@@ -13,36 +13,19 @@ import (
 )
 
 // The attrs the loaders read, from rgw_common.h
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L154-L157 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L173-L176 at v20.2.4).
-// The ACLs are op.BucketACLFor's and op.ObjectACLFor's, and the tags
-// tags.Attr.
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L155-L157 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L174-L176 at v20.2.4).
+// The ACLs are op.BucketACLFor's and op.ObjectACLFor's, the bucket policy
+// op.BucketPolicyFor's, and the tags tags.Attr.
 const (
-	attrIAMPolicy     = meta.AttrPrefix + "iam-policy"
 	attrUserPolicy    = meta.AttrPrefix + "user-policy"
 	attrManagedPolicy = meta.AttrPrefix + "managed-policy"
 	attrPublicAccess  = meta.AttrPrefix + "public-access"
 )
 
-// bucketPolicy is get_iam_policy_from_attr
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L329-L338 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3276-L3285 at v20.2.4):
-// the bucket's stored policy parsed with tenant and, as for every stored
-// policy, unsupported principals dropped; nil for a bucket without one. A
-// policy that does not parse is the *policy.ParseError, wrapped.
+// bucketPolicy is op.BucketPolicyFor, get_iam_policy_from_attr.
 func bucketPolicy(ctx context.Context, rec *op.BucketRecord, tenant string, r denc.Release) (*policy.Policy, error) {
-	if rec == nil {
-		return nil, nil
-	}
-	b, ok := rec.Attrs[attrIAMPolicy]
-	if !ok {
-		return nil, nil
-	}
-	p, err := policy.Parse(string(b), policy.ParseOptions{Tenant: &tenant, Release: r, Context: ctx})
-	if err != nil {
-		return nil, fmt.Errorf("parsing the policy of bucket %s: %w", rec.Info.Bucket.Name, err)
-	}
-	return p, nil
+	return op.BucketPolicyFor(ctx, rec, tenant, r)
 }
 
 // identityPolicies are the identity's own policies as
