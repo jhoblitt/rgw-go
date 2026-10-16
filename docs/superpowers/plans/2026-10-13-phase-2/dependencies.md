@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at a2018dc. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 44e2c8a. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -12,7 +12,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 
 ```mermaid
 flowchart LR
-  u_S["Shared<br/>4 tasks"]
+  u_S["Shared<br/>5 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
@@ -54,17 +54,20 @@ flowchart LR
   t_S2["S2"]
   t_S3["S3"]
   t_S4["S4"]
+  t_S5["S5"]
   t_S1 --> t_S4
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
+  click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
 ```
 
 - [S1](00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables): fakerados's rgw class as method tables
 - [S2](00-index.md#task-s2-route-sets-per-feature-and-the-env-slots): route sets per feature and the Env slots
 - [S3](00-index.md#task-s3-one-aws-correct-ispublic): one AWS-correct IsPublic
 - [S4](00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup): fakerados refuses an unregistered class method at op setup
+- [S5](00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants): IgnorePublicAcls ignores Swift's public container grants
 
 ### F: floor 19.2.7
 
