@@ -3446,6 +3446,90 @@ v20.2.4 tags, rgw-go does the following.
     `driver/rados/rgw_user.cc:1977` at v19.2.6, `:1983` at v20.2.4;
     docs/ceph-upstream-bugs.md, "radosgw's bucket delete and user purge
     orphan the objects of a bucket with no zonegroup id").
+- **CORS rules are matched as Amazon S3 matches them.** rgw-go answers a
+  CORS request from the first rule, in stored order, that allows its
+  Origin, its method and, for a preflight, every header its
+  Access-Control-Request-Headers names (`cors.Configuration.Match`,
+  `internal/cors/match.go`). Amazon S3 "uses the first `CORSRule` rule that
+  matches the incoming browser request" on those three
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html#cors-eval-criteria;
+  the PutBucketCors reference as the AWS SDK for Go carries it,
+  [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)),
+  and so does radosgw's `match_rule` on main since cc1dcecee08 and on the
+  tentacle branch since 5f25f2bb0e2, which no release carries. Both floors
+  take the first rule whose AllowedOrigin matches the Origin alone. They
+  refuse a preflight 403 when that rule does not allow its method or a
+  requested header, and send no CORS headers on another response when it
+  does not allow the method, so a later rule for the same origin is never
+  used (docs/ceph-upstream-bugs.md, "[radosgw answers a CORS request with
+  the first rule whose origin
+  matches](ceph-upstream-bugs.md#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches)").
+  rgw-go also differs from the floors in what a rule allows and in how much
+  a preflight may ask:
+  - **An empty Origin matches no rule**, as main's `RGWCORSRule::matches`
+    refuses one. The floors match an `Origin` header with an empty value
+    against a rule that allows `*`, so an anonymous request carrying one is
+    sent `Access-Control-Allow-Origin: *` (`generate_cors_headers`,
+    [rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600),
+    [rgw_op.cc:1778-1837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1778-L1837)).
+  - **A wildcard is matched as written.** An AllowedOrigin or AllowedHeader
+    with one `*` allows a value that starts with what precedes the `*` and
+    ends with what follows it, the two not overlapping, spaces and tabs
+    compared as they are. That is the plain reading of Amazon S3's rule
+    that an origin "can contain only one `*` wildcard character, such as
+    `http://*.example.com`", and an AllowedHeader "at most one", with
+    `x-amz-*` as its example
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/ManageCorsUsing.html);
+    AWS documents no answer for an overlap or for whitespace. A member with
+    more than one `*`, which PutBucketCors refuses but a stored rule may
+    hold, allows only itself. radosgw lets the prefix and the suffix
+    overlap and drops spaces and tabs from the pattern, which allows values
+    the pattern does not cover, and reads a pattern with more than one `*`
+    through its first one or two pieces, which allows less than the
+    pattern covers (docs/ceph-upstream-bugs.md, "[radosgw's CORS wildcard
+    match allows origins and headers its pattern does not
+    cover](ceph-upstream-bugs.md#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover)").
+  - **A preflight naming more than 32 distinct headers matches no rule.**
+    `Match` compares the requested header names in ASCII lower case, each
+    once, and refuses a request naming more than `cors.MaxRequestHeaders`,
+    32, as it refuses one that no rule allows; `ResponseHeaders` then
+    allows none of them. radosgw has no limit. One rule costs its one-`*`
+    AllowedHeaders times the distinct names asked for, and an
+    unauthenticated preflight chooses both the bucket and the names. The
+    densest configuration a 1 MiB PutBucketCors body stores holds about
+    30,700 one-`*` members; against 32 names such as `X-Amz-Meta-07`, sent
+    once or repeated in other cases to 64 KiB, one preflight took 4.2 ms of
+    CPU on the development host. A larger stored configuration, which a
+    radosgw with a raised `rgw_max_put_param_size` or a direct RADOS write
+    can leave, costs proportionally more: the densest 1 MiB attr, about
+    149,600 members, took 20.7 ms. Without a limit, 64 KiB of distinct
+    names take seconds. A browser names only the headers its page sets
+    beyond the CORS-safelisted ones.
+
+  None of this changes the stored configuration, which both gateways read
+  and write alike.
+- **A CORS expose header's control bytes are sent escaped.** radosgw from
+  v17.2.0 on writes a line feed in a stored ExposeHeader as `\n` in
+  Access-Control-Expose-Headers, and a carriage return, which a
+  PutBucketCors body carries as `&#13;`, as it is. CVE-2021-3524's fix,
+  which also writes the carriage return as `\r`, reached only v14.2.21,
+  v15.2.12, v16.2.4 and the later releases of those three series
+  (docs/ceph-upstream-bugs.md, "[radosgw from Quincy on lacks
+  CVE-2021-3524's fix for CORS expose
+  headers](ceph-upstream-bugs.md#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers)").
+  rgw-go writes the carriage return as `\r`, byte for byte what v16.2.4's
+  `format_exp_headers` writes
+  ([rgw_cors.cc:145-155](https://github.com/ceph/ceph/blob/v16.2.4/src/rgw/rgw_cors.cc#L145-L155)).
+  It also writes every other byte below 0x20 but a tab, and 0x7f, as `\x`
+  and two lower-case hex digits (`cors.Rule.ResponseHeaders`,
+  `internal/cors/match.go`). radosgw sends those as they are, and ends the
+  value at a NUL, because `dump_access_control` takes it as a C string
+  ([rgw_rest.cc:526-554](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L526-L554),
+  [rgw_rest.cc:531-559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L531-L559)).
+  Of those bytes a PutBucketCors body can carry only DEL, as `&#127;`; the
+  others reach a stored rule only when something else writes it. The
+  stored configuration keeps every byte, and GetBucketCors renders it as
+  radosgw does.
 
 ### Request authentication differences
 

@@ -1,0 +1,13 @@
+{
+    "CORSRule": {
+        "ID": "",
+        "MaxAgeSeconds": 4294967295,
+        "AllowedMethod": 1,
+        "AllowedOrigin": [
+            "*"
+        ],
+        "AllowedHeader": [],
+        "ExposeHeader": [
+            "x-amz-meta-header1"
+        ]
+    }

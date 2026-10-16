@@ -112,6 +112,7 @@ cls_rgw_gc_urgent_data internal/cls/gc
 cls_rgw_gc_list_op internal/cls/gc
 cls_rgw_gc_list_ret internal/cls/gc
 RGWObjTags internal/tags
+RGWCORSRule internal/cors
 cls_lock_lock_op internal/cls/lock
 cls_lock_unlock_op internal/cls/lock
 cls_lock_break_op internal/cls/lock

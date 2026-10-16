@@ -319,6 +319,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending |  |
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending |  |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
+| [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
+| [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
+| [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16714,3 +16717,245 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit B, Task BC-10, 2026-10-16, porting `apply_rule`;
   the owner's host and protocol by that task's review, 2026-10-16. Derived
   from the source, not reproduced.
+
+## radosgw answers a CORS request with the first rule whose origin matches
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  on main and on the tentacle branch. A CORS configuration that gives one
+  origin several rules answers that origin from the first of them alone. A
+  preflight whose method or requested headers only a later rule allows is
+  refused 403, and any other request that only a later rule allows gets no
+  CORS headers, so the browser keeps its page from reading the response.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_cors.h`, `rgw_cors.cc`, `rgw_cors_s3.h` and `rgw_cors_s3.cc` are
+  identical at the two tags.
+  - `host_name_rule` returns the first rule whose `is_origin_present`
+    holds
+    ([rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L186-L194),
+    [rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L186-L194)).
+  - The preflight takes that rule, then answers ENOENT when it does not
+    allow the Access-Control-Request-Method or a requested header
+    (`RGWOptionsCORS::validate_cors_request`,
+    [rgw_op.cc:6159-6175](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6159-L6175),
+    [rgw_op.cc:6826-6842](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6842)),
+    which it sends as 403
+    (`RGWOptionsCORS_ObjStore_S3::send_response`,
+    [rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
+    [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
+  - Every other response takes its CORS headers from the same rule, and
+    sends none when that rule does not allow the request's method
+    (`generate_cors_headers`,
+    [rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600),
+    [rgw_op.cc:1778-1837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1778-L1837)).
+  - Amazon S3 "uses the first CORSRule rule that matches the incoming
+    browser request", a rule matching when the Origin matches its
+    AllowedOrigin, the method, or a preflight's
+    Access-Control-Request-Method, is one of its AllowedMethods, and
+    "every header specified in the Access-Control-Request-Headers request
+    header of a pre-flight request" matches an AllowedHeader (the
+    PutBucketCors reference as the AWS SDK for Go carries it,
+    [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)).
+  - main's `RGWCORSConfiguration::match_rule` takes the first rule that
+    allows the origin, the method and the requested headers, and both the
+    preflight and `generate_cors_headers` call it
+    ([rgw_cors.cc:242-290](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L242-L290)).
+- **Impact:** the configuration's later rules for an origin are dead: a
+  page the owner meant to allow is refused, unless each origin's methods
+  and headers sit in its first rule. No request is allowed that the
+  configuration does not allow.
+- **Releases:** v19.2.7 and v20.2.4 carry it. main carries the fix since
+  cc1dcecee08 and the tentacle branch since 5f25f2bb0e2; no tag does,
+  and the squid branch does not yet (the clone's `origin/squid` at
+  226f1401666, 2026-10-12, has no `match_rule`).
+- **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
+  (`internal/cors/match.go`), is main's `match_rule`
+  (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
+  them").
+- **Upstream:** tracked as [#77575](https://tracker.ceph.com/issues/77575),
+  with the backport trackers [#77584](https://tracker.ceph.com/issues/77584)
+  for tentacle and [#77586](https://tracker.ceph.com/issues/77586) for
+  squid.
+  - main: cc1dcecee08, "rgw: match CORS rules like Amazon S3", from
+    [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), merged as
+    2866fcf20c7 on 2026-06-22.
+  - tentacle: the backport 5f25f2bb0e2, from
+    [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), merged as
+    20cd4f8aa07 on 2026-08-21, in no tag.
+  - squid: [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648),
+    open.
+  - reef: [ceph/ceph#69649](https://github.com/ceph/ceph/pull/69649),
+    closed unmerged.
+- **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
+  main's `match_rule`; confirmed by task BC-2, 2026-10-15, which found the
+  tentacle backport. Derived from the source, not reproduced.
+
+## radosgw's CORS wildcard match allows origins and headers its pattern does not cover
+
+- **Kind:** defect, S3-correctness, possibly security-relevant at a low
+  level: where access rides on network position, an over-wide match lets a
+  page at an origin the owner did not allow read through a browser that
+  holds that position. radosgw never sends Access-Control-Allow-Credentials,
+  so such a page carries no cookies or HTTP authentication, but a browser's
+  network position is ambient authority all the same. The
+  rgw-bug-reproduction session's triage rates it conditional (low) on that
+  case. Unreproduced: derived from the source and checked against a
+  transcription of the matcher.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - AllowedOrigin and AllowedHeader share one matcher: `is_origin_present`
+    passes it the Origin, and `is_header_allowed` a lower-cased requested
+    header against the lower-cased set
+    ([rgw_cors.cc:159-173](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L159-L173),
+    [rgw_cors.cc:159-173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L159-L173)).
+  - In that matcher a member that is `*`, or the value itself, matches. For
+    a member holding a `*`, the first `*`'s offset decides whether a prefix
+    check runs (the `*` is not first) and whether a suffix check runs (it
+    is not last). The checks take the first one or two pieces of
+    `get_str_list(member, "* \t")`, which drops empty pieces, and a piece
+    left over refuses
+    (`is_string_in_set`,
+    [rgw_cors.cc:109-150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L109-L150),
+    [rgw_cors.cc:109-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L109-L150);
+    `get_str_list`,
+    [str_list.cc:22-28](https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L22-L28),
+    [str_list.cc:22-28](https://github.com/ceph/ceph/blob/v20.2.4/src/common/str_list.cc#L22-L28)).
+  - The prefix and the suffix are tested apart, so they may overlap:
+    `ab*bc` matches `abc`, and `https://a*a.example` matches
+    `https://a.example`. The prefix's length, `flen`, is only logged.
+  - A space or a tab splits the member as a `*` does and is lost:
+    `* example.com` matches `https://evilexample.com`, the header pattern
+    `x-amz *` matches `x-amzfoo`, and `a b*` matches no value but `a b*`
+    itself.
+  - A member with more than one `*` fails closed: `*a*` acts as `*a`,
+    `a*b*` acts as `a*b`, and `a*b*c`, `a**` and `*a*b` never match but
+    literally. PutBucketCors refuses such a member, so only a stored rule
+    written another way holds one, and it allows less than its pattern
+    covers.
+  - PutBucketCors refuses only an empty name and a name with a second `*`
+    (`validate_name_string`,
+    [rgw_cors.h:129-135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L129-L135),
+    [rgw_cors.h:129-135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L129-L135)),
+    so an overlapping pattern and one with whitespace reach a stored rule.
+  - A line-for-line Python transcription of `is_string_in_set` and
+    `get_str_list` gives each result above.
+- **Impact:** CORS decides which pages a browser lets read a response.
+  Where access depends on the requester's network position, under a
+  bucket policy's `aws:SourceIp`, which radosgw evaluates
+  ([rgw_op.cc:885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L885),
+  [rgw_op.cc:920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L920)),
+  or on a gateway reachable only from an internal network, the browser is
+  the client that holds the access. An outside page that an over-wide
+  match allows, opened in a browser inside that network, then reads the
+  bucket through it. Overlap admits only values that start with the
+  pattern's prefix and end with its suffix, which gains an attacker
+  nothing. Whitespace changes the suffix: `* example.com`, which as written
+  admits no origin, admits `evilexample.com`, a domain anyone may register.
+  Both need an owner to have written such a pattern. A pattern with
+  whitespace also refuses values it covers.
+- **Releases:** checked at v19.2.7 and v20.2.4; `is_string_in_set` is
+  unchanged on main at cc1dcecee08.
+- **rgw-go:** differs: it matches a member with one `*` as written, a value
+  that starts with what precedes the `*` and ends with what follows it, the
+  two not overlapping, and a member with more than one `*` only exactly,
+  for origins and headers alike (`inSet` and `requested.cover`,
+  `internal/cors/match.go`; `docs/exclusions.md`, "CORS rules are matched
+  as Amazon S3 matches them").
+- **Upstream:** related:
+  [ceph/ceph#56225](https://github.com/ceph/ceph/pull/56225), 64803e1ced5,
+  merged 2024-03-20, added `is_string_in_set`'s empty checks for a member
+  such as `" *"`, which it calls a misconfiguration; it fixed the crash
+  and left the over-match. The over-match itself is pending: sent to
+  rgw-bug-reproduction.
+- **Found:** phase 2 task BC-2, 2026-10-15, transcribing
+  `is_string_in_set`; its two-`*` behaviour corrected by the task review
+  the same day. Derived from the source, not reproduced.
+
+## radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers
+
+- **Kind:** defect, security:
+  [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524), "HTTP
+  header injects via CORS in RGW", which Ceph rates Medium, is unfixed in
+  every release from Quincy on. Its fix, which escapes a carriage return
+  in an ExposeHeader, was made on three stable branches and never
+  forward-ported to main, so no release from v17.2.0 on carries it. Exploiting it needs a
+  client or an intermediary that ends a header line at a bare carriage
+  return, which RFC 9112, section 2.2, forbids a recipient to do, so the
+  rgw-bug-reproduction session's triage rates it low and conditional on a
+  lenient parser or intermediary. Unreproduced: derived from the source,
+  with expat's reading of the reference checked through Python's expat
+  binding.
+- **Evidence:**
+  - The fix, "rgw: sanitize \r in s3 CORSConfiguration's ExposeHeader"
+    (Casey Bodley, 2021-05-04, "Fixes: CVE-2021-3524"), exists only as
+    three stable-branch commits: 763aebb9467 on nautilus, first in
+    v14.2.21; 94f7c87a78b on octopus, first in v15.2.12; and 4f078710d39 on
+    pacific, first in v16.2.4. It makes `format_exp_headers` replace a
+    carriage return with `\r` after it replaces a line feed with `\n`
+    ([rgw_cors.cc:145-155](https://github.com/ceph/ceph/blob/v16.2.4/src/rgw/rgw_cors.cc#L145-L155)).
+  - None of the three is on main, and v16.2.4 is not an ancestor of
+    v17.2.0. At v17.2.0, v17.2.8, v18.2.0, v18.2.7, v19.2.0, v19.2.7,
+    v20.2.0 and v20.2.4, on the squid and tentacle branches and on main,
+    `format_exp_headers` replaces only a line feed, the newline half that
+    1524d3c0c5c ("rgw: sanitize newlines in s3 CORSConfiguration's
+    ExposeHeader", 2020-05-26) added
+    ([rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L175-L184),
+    [rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L175-L184);
+    main's `format_exp_headers` at cc1dcecee08,
+    [rgw_cors.cc:231-240](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L231-L240)).
+  - The rest of the path is unchanged; each pair of links is v19.2.7's,
+    then v20.2.4's. `RGWCORSRule_S3::xml_end` stores each ExposeHeader's
+    text as it is, unchecked
+    ([rgw_cors_s3.cc:144-151](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L144-L151),
+    [rgw_cors_s3.cc:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L144-L151)),
+    the character data expat reports
+    (`xml_handle_data`,
+    [rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L83-L87),
+    [rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L83-L87)).
+    expat reports the character reference `&#13;` as a carriage return and
+    turns only a literal one, alone or before a line feed, into a line
+    feed: Python's binding of expat 2.8.3 reads
+    `<ExposeHeader>a&#13;Set-Cookie: x\r\nb</ExposeHeader>` as
+    `a\rSet-Cookie: x\nb`.
+  - `dump_access_control` sends the value as Access-Control-Expose-Headers
+    ([rgw_rest.cc:526-554](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L526-L554),
+    [rgw_rest.cc:531-559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L531-L559))
+    through `dump_header`
+    ([rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L347-L357),
+    [rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L347-L357)),
+    and the beast frontend writes a header's name, `: `, its value and a
+    CRLF as they are (`ClientIO::send_header`,
+    [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L180),
+    [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L180)).
+- **Impact:** anyone allowed s3:PutBucketCORS on a bucket can store an
+  ExposeHeader such as `x&#13;Set-Cookie: a=b`, and every CORS response of
+  the bucket then sends `Access-Control-Expose-Headers: x`, a bare carriage
+  return and `Set-Cookie: a=b` on one line. A client or proxy that ends a
+  header line at a bare carriage return reads a header of the writer's
+  choosing, a cookie for the gateway's host among them; one that does not
+  reads an odd header value.
+- **Releases:** the carriage-return half is present at v14.2.21 and
+  v14.2.22, v15.2.12 to v15.2.17 and v16.2.4 to v16.2.15, and absent from
+  every release from v17.2.0 on, v19.2.7 and v20.2.4 among them. Ceph's
+  advisory lists "Fixed versions: Pacific v16.2.4 (and later), Octopus
+  v15.2.12 (and later), Nautilus v14.2.21 (and later)"
+  ([CVE-2021-3524.rst:14-19](https://github.com/ceph/ceph/blob/v19.2.7/doc/security/CVE-2021-3524.rst#L14-L19),
+  and https://docs.ceph.com/en/latest/security/CVE-2021-3524/), which holds
+  within those three series; it lists no later series, and every series
+  from Quincy on lacks the carriage-return half.
+- **rgw-go:** differs: `cors.Rule.ResponseHeaders` writes a carriage return
+  as `\r` after it writes a line feed as `\n`, byte for byte what the fix's
+  `format_exp_headers` writes, and every other control byte but a tab as
+  `\xHH` (`internal/cors/match.go`; `docs/exclusions.md`, "A CORS expose
+  header's control bytes are sent escaped"). Go's net/http, which writes
+  rgw-go's responses, would in any case write a carriage return or line
+  feed left in a header value as a space (`headerNewlineToSpace`,
+  `net/http/header.go:139` and `:206` at go1.27.1).
+- **Upstream:** [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524)
+  and Ceph's advisory above. The fix landed as the three commits above,
+  with no pull request; the newline half, 1524d3c0c5c, came with
+  [ceph/ceph#35773](https://github.com/ceph/ceph/pull/35773), merged
+  2020-06-25. A forward port to main and the supported branches is
+  pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-2, 2026-10-15, reading `format_exp_headers`;
+  the task review matched it to CVE-2021-3524 the same day. Derived from
+  the source, not reproduced.

@@ -1,0 +1,17 @@
+{
+    "CORSRule": {
+        "ID": "test",
+        "MaxAgeSeconds": 100,
+        "AllowedMethod": 3,
+        "AllowedOrigin": [
+            "http://origin1",
+            "http://origin2"
+        ],
+        "AllowedHeader": [
+            "accept-encoding",
+            "accept-language"
+        ],
+        "ExposeHeader": [
+            "x-rgw-something"
+        ]
+    }
