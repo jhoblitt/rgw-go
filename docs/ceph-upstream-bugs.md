@@ -293,6 +293,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at an older epoch](#cls_rgws-bucket_link_olh-drops-the-remove_instance-it-logs-for-a-delete-marker-at-an-older-epoch) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) |  |
 | [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending |  |
 | [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending |  |
+| [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14711,4 +14712,49 @@ Every new entry adds its row to this table, in document order.
   entry from `bi_get` as proof the marker exists would take this one too.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
+
+## radosgw's zstd compress leaks its compression stream when libzstd fails
+
+- **Kind:** defect, fixed in v21.0.0, not on squid or tentacle. Unreproduced:
+  derived from the source.
+- **Evidence:** `ZstdCompressor::compress` is the same at v19.2.7 and v20.2.4.
+  - It creates a stream with `ZSTD_createCStream` and starts it without
+    reading `ZSTD_initCStream_srcSize`'s result
+    ([ZstdCompressor.h:30-31](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L30-L31),
+    [ZstdCompressor.h:30-31](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L30-L31)).
+  - When `ZSTD_compressStream2` fails it returns `-EINVAL` at once, and only
+    the path that succeeds reaches `ZSTD_freeCStream`
+    ([ZstdCompressor.h:49-56](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L49-L56),
+    [ZstdCompressor.h:49-56](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L49-L56)),
+    so the stream and its workspace leak.
+  - Ceph commit 4cc10e7aa8b, "compressor/zstd: modernize ZSTD API usage in
+    ZstdCompressor", merged as 744284811c8, moves `compress` to a
+    `ZSTD_CCtx`, checks each setup call, and frees the context on every
+    path, "to prevent memory leaks"
+    ([ZstdCompressor.h:30-81](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/compressor/zstd/ZstdCompressor.h#L30-L81)
+    on main at 7ed73efc1be, 2026-09-25).
+- **Impact:** not security-relevant, and no data or S3 effect: each failed
+  compress leaks one stream. libzstd fails here only on an internal error
+  such as an allocation failure, since the output buffer is
+  `ZSTD_compressBound` of the input and the pledged size is the input's
+  ([ZstdCompressor.h:35-36](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L35-L36),
+  [ZstdCompressor.h:35-36](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L35-L36)).
+  radosgw then stores the object uncompressed, or fails a later part with
+  EIO (`RGWPutObj_Compress::process`,
+  [rgw_compression.cc:54-64](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_compression.cc#L54-L64),
+  [rgw_compression.cc:54-64](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_compression.cc#L54-L64)).
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. v21.0.0
+  is the first release with the fix (`git tag --contains 744284811c8`), and
+  the squid and tentacle branch heads (226f1401666 and ab83d026c29, both
+  2026-10-12) carry no backport.
+- **rgw-go:** unaffected: its zstd encoder is klauspost's, one shared per
+  level, which allocates no stream per block (`internal/compression/encode.go`,
+  `zstdEncoder`).
+- **Upstream:** [#73522](https://tracker.ceph.com/issues/73522), which
+  4cc10e7aa8b's `Fixes:` trailer names, "zstd: Update zstd for cmake 4
+  compatibility", Resolved with no backport, fixed on main by
+  [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915), merged
+  2025-11-20.
+- **Found:** phase 2 unit WP, Task WP-4, 2026-10-15, transcribing
+  `ZstdCompressor::compress` for the block encoders, after upstream's fix;
   derived from the source, not reproduced.
