@@ -114,7 +114,7 @@ and BC-34.
 | `internal/op/{putobject,initmultipart,uploadpart}.go` | BC-26 | WP-6, V11, L5b | BC-26 after WP-6 (index Order 3) |
 | `internal/op/copyobject.go` | BC-26 (b) | V11 | never in parallel |
 | `internal/s3/{putobject,copyobject}.go`, `internal/s3/multipart.go` | BC-26; BC-13 (b) (`completeLocation`) | WP-7, WP-13, versioning, L5b, C8 | One call line per site, so whichever lands first, the later rebases; BC-26's op-file changes keep their order after WP-6 and V11, which share function bodies (index Order) |
-| `internal/authz/{env,load,write,evaluator}.go` | BC-26 (`cryptKeys` in `env.go`), BC-28e | S3 (the `IsPublic` callers) | BC-28e after S3 |
+| `internal/authz/{env,load,write,evaluator}.go` | BC-18 (the block ops' check in `evaluator.go`), BC-26 (`cryptKeys` in `env.go`), BC-28e | S3 (the `IsPublic` callers), S5 (the ACL checks) | BC-18 and BC-28e after S3; BC-18 after S5 |
 | `internal/op/bucketsubres.go`, `objectattrs.go`, `bucketops.go` | BC-28c | C6 (moves GetBucketLifecycle out of `bucketsubres.go`), L2 (b) (CreateBucket) | BC-28c (b) after L2 (b); line-local otherwise |
 | `internal/s3/bucket.go` (the CreateBucket handler) | BC-28d (one header read) | L2 (b) | BC-28d after L2 (b). S2 moves no existing binding; each feature task moves its own into its route set |
 | `internal/op/postobject.go` | BC-32 (owner), BC-28e (b) (the canned ACL call) | V11 (`VersionForWrite`) | BC-28e (b) after BC-32; whichever of V11 and BC-32 lands second switches the versioned-bucket refusal to `VersionForWrite` |
@@ -693,7 +693,9 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 
 ### Task BC-18: Block ops
 
-- **Layer:** op. **Files:** create `internal/op/publicaccess.go`. **Cluster:** no.
+- **Layer:** op. **Files:** create `internal/op/publicaccess.go`; modify `internal/op/authz.go`
+  (`Authorizer`) and `internal/authz/evaluator.go` for behaviour 5's check, a bucket check
+  without the ACL fallback, which neither offers today. **Cluster:** no.
 - **Consumes:** BC-17; `op.AttrPublicAccess` (`internal/op/putobject.go:35-37`). **Produces:**
   `GetPublicAccessBlock{Block}`, `PutPublicAccessBlock{Params}`, `DeletePublicAccessBlock`.
 - **Behaviour:**
@@ -711,11 +713,53 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
      absent ([rgw_op.cc:8715-8755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8715-L8755),
      [rgw_op.cc:9683-9723](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9683-L9723)).
   4. A block the op writes reaches every check through the cache-notified bucket record, with
-     no change to authz.
-- **Specs:** each op's error order with fakes; a lost race keeps the winner's ACL; a retry
-  re-authorized; a block written here, then enforced by phase 1's checks: BlockPublicAcls on
-  PutBucketAcl, IgnorePublicAcls on an anonymous GET, and BlockPublicPolicy and
-  RestrictPublicBuckets judged by S3's `IsPublic`.
+     no change to the checks that enforce it.
+  5. **No ACL grant authorizes the block's ops.** Put, Get and Delete are authorized by the
+     bucket owner and by identity or bucket policy only: where no policy decides, the owner
+     passes and everyone else is refused, and the evaluator's ACL fallback is not consulted.
+     - **Reason:** radosgw's `op_to_perm` maps s3PutBucketPublicAccessBlock to RGW_PERM_WRITE_ACP
+       ([rgw_iam_policy.h:310-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L310-L311),
+       [rgw_iam_policy.h:327-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L327-L328))
+       and s3GetBucketPublicAccessBlock to RGW_PERM_READ_ACP
+       ([rgw_iam_policy.h:288-289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L288-L289),
+       [rgw_iam_policy.h:304-305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L304-L305)).
+       Put and Delete's `verify_permission` pass s3PutBucketPublicAccessBlock to
+       `verify_bucket_permission`
+       ([rgw_op.cc:8619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8619),
+       [rgw_op.cc:8733](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8733);
+       [rgw_op.cc:9587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9587),
+       [rgw_op.cc:9701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9701)), and
+       Get's passes s3GetBucketPublicAccessBlock
+       ([rgw_op.cc:8683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8683),
+       [rgw_op.cc:9651](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9651)).
+       Where no policy decides, `verify_bucket_permission` falls back to the bucket ACL with
+       `op_to_perm`'s permission
+       ([rgw_common.cc:1370-1371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1370-L1371),
+       [rgw_common.cc:1392-1393](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1392-L1393)).
+     - **Consequence in radosgw:** any WRITE_ACP grantee can change or remove the block, and
+       any READ_ACP grantee can read it. That includes a named user, AllUsers while
+       IgnorePublicAcls is off
+       ([rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L180-L187),
+       [rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L180-L187)),
+       and the user `anonymous` through a Swift write list under all four settings: the list
+       grants WRITE_OBJS
+       ([rgw_acl_swift.cc:22](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L22),
+       [rgw_acl_swift.cc:22](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L22)),
+       which the ACL check widens to WRITE and WRITE_ACP
+       ([rgw_acl.cc:216-218](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L216-L218),
+       [rgw_acl.cc:216-218](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L216-L218)).
+     - **AWS:** WRITE_ACP on a bucket corresponds only to s3:PutBucketAcl, and READ_ACP only to
+       s3:GetBucketAcl
+       (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping).
+- **Specs:**
+  - each op's error order with fakes; a lost race keeps the winner's ACL; a retry
+    re-authorized;
+  - a block written here, then enforced by phase 1's checks: BlockPublicAcls on PutBucketAcl,
+    IgnorePublicAcls on an anonymous GET, and BlockPublicPolicy and RestrictPublicBuckets
+    judged by S3's `IsPublic`;
+  - for each op, these are refused with 403 AccessDenied, while the owner and a policy Allow
+    succeed: a WRITE_ACP, a FULL_CONTROL and a READ_ACP named grantee; an AllUsers WRITE_ACP
+    grant with IgnorePublicAcls off; a Swift `X-Container-Write: anonymous` container.
 - **Exclusions and registry:** extends defect 4's exclusion and registry entry with
   PutPublicAccessBlock; extends defect 5's exclusion and "A retried bucket write stops when the
   name names another bucket" with the block writes, citing their retries
@@ -723,8 +767,11 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
   [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
   [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641),
   [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)); adds
-  rgw-go's Get answer to the registry entry for defect 7.
-- **Depends on:** BC-17, S3 (the enforcement specs). **PR:** one. **Brief:** about 120 lines.
+  rgw-go's Get answer to the registry entry for defect 7; new exclusion "No ACL grant authorizes the
+  public access block's ops"; writes the rgw-go line of the registry entry "radosgw lets an ACL
+  grant change a bucket's public access block", which S5's PR adds.
+- **Depends on:** BC-17, S3 (the enforcement specs), S5 (that registry entry). **PR:** one.
+  **Brief:** about 120 lines.
 
 ### Task BC-19: Block routes
 
@@ -1454,14 +1501,14 @@ BC-29's and BC-32's specs.
 
 ## Order
 
-Prerequisites from other units: S2 for every handler task; S3 for BC-18, BC-20 and BC-28e;
-WP-1 for BC-30; WP-5 and WP-6 for BC-32; WP-6, WP-7 and WP-13 for BC-26 (Hot files); WP-23 for
-BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
+Prerequisites from other units: S2 for every handler task; S3 for BC-18, BC-20 and BC-28e; S5
+for BC-18; WP-1 for BC-30; WP-5 and WP-6 for BC-32; WP-6, WP-7 and WP-13 for BC-26 (Hot files);
+WP-23 for BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 
 | Wave | Tasks, in parallel | Each waits for |
 |---|---|---|
 | 1 | BC-2, BC-5, BC-9, BC-13, BC-17, BC-23, BC-28a, BC-28b, BC-29, BC-31; BC-20; BC-30 | nothing in the unit; BC-20 S3; BC-30 WP-1 |
-| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2; BC-9; BC-9; BC-17 and S3; BC-20; BC-23; BC-28a |
+| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a |
 | 3 | BC-4, BC-6, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3 and BC-5; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
 | 4 | BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
 | 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
