@@ -294,6 +294,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending |  |
 | [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending |  |
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
+| [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14758,3 +14759,87 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit WP, Task WP-4, 2026-10-15, transcribing
   `ZstdCompressor::compress` for the block encoders, after upstream's fix;
   derived from the source, not reproduced.
+
+## radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode
+
+- **Kind:** defect, robustness: `rate_limit()` is declared `bool` but returns
+  `-EIO` when a user's or a bucket's rate-limit attr does not decode. The
+  nonzero value converts to `true`, so every request of that user, or to that
+  bucket, is refused 503 SlowDown instead of failing with an I/O error. Not
+  security-relevant: only an operator writes the attr, through radosgw-admin,
+  the admin ratelimit API, or a metadata put by a holder of `metadata=write`
+  or metadata sync ("radosgw's metadata put writes a document's attrs raw",
+  above). A corrupted attr therefore takes an operator's mistake, a RADOS
+  writer or another defect. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - `rate_limit` is declared `bool`
+    ([rgw_process.cc:94](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L94),
+    [rgw_process.cc:95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L95)).
+    Past its exemptions, a health check and an admin or system user at
+    v19.2.7, a health check or a system request at v20.2.4
+    ([rgw_process.cc:96-98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L96-L98),
+    [rgw_process.cc:97-98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L97-L98)),
+    it decodes the user's `RGW_ATTR_RATELIMIT` and returns `-EIO` when the
+    decode throws
+    ([rgw_process.cc:115-129](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L115-L129),
+    [rgw_process.cc:115-129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L115-L129)).
+  - For a request that names a bucket it does the same with the bucket's
+    attr
+    ([rgw_process.cc:138-152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L138-L152),
+    [rgw_process.cc:138-152](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L138-L152)).
+  - The caller answers any `true` with `-ERR_RATE_LIMITED`
+    ([rgw_process.cc:248-250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L248-L250),
+    [rgw_process.cc:251-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L251-L253)),
+    which is 503 SlowDown
+    ([rgw_common.cc:135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L135),
+    [rgw_common.cc:136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L136)).
+    `-EIO` has no entry in the S3 error table, so had it reached the caller
+    as an error it would have answered 500 UnknownError
+    ([rgw_common.cc:346-353](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L346-L353),
+    [rgw_common.cc:359-366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L359-L366)).
+  - The commands that write the attr decode the stored one first and stop
+    with `-EIO` when it does not decode. radosgw-admin's ratelimit set,
+    enable and disable do so in `set_bucket_ratelimit`
+    ([rgw_admin.cc:1467-1511](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1467-L1511),
+    [radosgw-admin/radosgw-admin.cc:1526-1570](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1526-L1570))
+    and `set_user_ratelimit`
+    ([rgw_admin.cc:1513-1550](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1513-L1550),
+    [radosgw-admin/radosgw-admin.cc:1572-1609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1572-L1609)).
+    The admin API's ratelimit set does the same, for a user and for a
+    bucket
+    ([rgw_rest_ratelimit.cc:251-262](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_ratelimit.cc#L251-L262)
+    and
+    [:283-294](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_ratelimit.cc#L283-L294),
+    [rgw_rest_ratelimit.cc:251-262](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_ratelimit.cc#L251-L262)
+    and
+    [:283-294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_ratelimit.cc#L283-L294)).
+  - On main the function is still `bool`, and both returns and the caller
+    are unchanged
+    ([rgw_process.cc:95](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_process.cc#L95),
+    [:123-136](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_process.cc#L123-L136),
+    [:148-162](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_process.cc#L148-L162),
+    [:269-271](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_process.cc#L269-L271),
+    at 7ed73efc1be).
+- **Impact:**
+  - **User attr.** Every request the user sends that is not exempt is
+    refused 503 SlowDown.
+  - **Bucket attr.** Every request that names the bucket and is not exempt
+    is refused 503 SlowDown, whoever sends it.
+  - **Diagnosis.** A 503 is an answer clients retry, so the fault reads as
+    throttling. Only radosgw's level-0 log line "ERROR: failed to decode
+    rate limit" names the cause.
+  - **Repair.** No ratelimit command can repair the attr: radosgw-admin's
+    and the admin API's both stop at the same decode.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; main at
+  7ed73efc1be carries it too.
+- **rgw-go:** not yet: phase 3's rate limiter.
+  - rgw-go has no rate limiter.
+  - It reads the attr only in the admin ratelimit get and set, which answer
+    an attr that does not decode as radosgw's do: `-EIO`, 500 UnknownError,
+    and nothing written (`decodeRateLimit`,
+    `internal/op/admininfo.go:377-390`; pinned in
+    `internal/op/admininfo_test.go:291-299`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task BC-5, review round 2, 2026-10-15, verifying the
+  preflight's rate-limit facet; derived from the source, not reproduced.
