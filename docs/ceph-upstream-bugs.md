@@ -286,6 +286,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw logs an upload id without a part number as a part number without an upload id](#radosgw-logs-an-upload-id-without-a-part-number-as-a-part-number-without-an-upload-id) | pending | pending | ✓ |
 | [radosgw's IgnorePublicAcls and ACL is_public miss Swift's grants to everyone](#radosgws-ignorepublicacls-and-acl-is_public-miss-swifts-grants-to-everyone) | pending | pending | ✓ |
 | [radosgw's version instances are 31 characters, one short of their buffer](#radosgws-version-instances-are-31-characters-one-short-of-their-buffer) | pending | pending | ✓ |
+| [radosgw's checksum decode overruns its digest buffer and its type table](#radosgws-checksum-decode-overruns-its-digest-buffer-and-its-type-table) | pending | pending | ✓ |
+| [radosgw aborts on a checksum-mode GET of an object whose checksum attr has bytes past its record](#radosgw-aborts-on-a-checksum-mode-get-of-an-object-whose-checksum-attr-has-bytes-past-its-record) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14206,3 +14208,175 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V2, 2026-10-15, writing `meta.NewInstance`; its
   review classed it a defect. Derived from the source, not reproduced on a
   floor release.
+
+## radosgw's checksum decode overruns its digest buffer and its type table
+
+- **Kind:** defect, security-relevant: memory safety. Privileged, except
+  while a zone mixes a build carrying
+  [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) with v20.2.4:
+  then any client that may write an object can plant a type from 9 to 11,
+  which the release build's checked table index turns into an abort, a
+  denial of service. Otherwise the record must come from a writer of the
+  `user.rgw.cksum` attr in RADOS. Unfixed through main. Unreproduced:
+  derived from the source and the release binary.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - `Cksum::decode` reads the stored u16 type and u16 digest size and checks
+    neither. It copies that many bytes into `digest`, a `std::array` of
+    `max_digest_size`, 64 bytes, so a size from 65 to 65535 writes past it
+    ([rgw_cksum.h:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L268-L281),
+    [rgw_cksum.h:101-102](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L101-L102)).
+    The `<= max_digest_size` beside the read is a comment.
+  - Every accessor indexes the nine-entry `checksums` table with the stored
+    type through `std::array::operator[]`, which checks no bound unless
+    `_GLIBCXX_ASSERTIONS` is defined:
+    `type_string`, `aws` and `crc`
+    ([rgw_cksum.h:147-157](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L157))
+    and `to_armor`
+    ([rgw_cksum.h:199-207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L199-L207)).
+    A type above 8 reads a `Desc` from past the table
+    ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99)),
+    and `header_name` formats the name pointer it holds
+    ([rgw_cksum.h:177-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L177-L187)).
+  - Under `-D_GLIBCXX_ASSERTIONS`, `operator[]` aborts on such an index
+    instead. Ceph's CMake adds the flag only to Debug builds
+    ([CMakeLists.txt:208-211](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L208-L211)).
+    An RPM build takes its flags from `$RPM_OPT_FLAGS`
+    ([ceph.spec.in:1401-1402](https://github.com/ceph/ceph/blob/v20.2.4/ceph.spec.in#L1401-L1402)).
+    The release build carries the flag. In `quay.io/ceph/ceph:v20.2.4`
+    (ceph-radosgw-20.2.4-0.el9, CentOS Stream 9), `/usr/bin/radosgw`:
+    - imports the checked form's failure handler,
+      `std::__glibcxx_assert_fail(const char*, int, const char*, const char*)`,
+      and calls it from 1364 sites (`nm -D`, `objdump -d`);
+    - holds the assertion text of
+      `std::array<rgw::cksum::Desc, 9>::operator[](size_type) const`.
+
+    The flag bounds no `p.copy`, so the digest overflow is unchanged.
+  - A size below the type's leaves the rest of `digest` unwritten. The
+    constructor sets only the type and the flags
+    ([rgw_cksum.h:125-127](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L125-L127)),
+    and `to_armor` encodes the table's digest size, so a reader's local
+    `Cksum` renders stack bytes as the checksum.
+  - The attr's readers each decode into a local `Cksum` and catch only
+    `buffer::error`: GET and HEAD with `x-amz-checksum-mode`
+    ([rgw_rest_s3.cc:551-585](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L585));
+    the `cksum.decode` of GetObjectAttributes' Checksum
+    ([rgw_rest_s3.cc:4029-4036](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4036))
+    and the `part_cksum.decode` of its ObjectParts
+    ([rgw_sal_rados.cc:2912-2924](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2912-L2924));
+    and the `tcksum.decode` of a retried CompleteMultipartUpload
+    ([rgw_op.cc:7475-7481](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7475-L7481))
+    and of ListParts
+    ([rgw_op.cc:7617-7627](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7627)).
+  - The part record's reader decodes onto the heap. `list_parts` decodes
+    each `RGWUploadPartInfo` into a `RadosMultipartPart` it allocates with
+    `make_unique`
+    ([rgw_sal_rados.cc:4221-4230](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4221-L4230)).
+    The record's version 6 `cksum` is a `std::optional<Cksum>` inside it
+    ([rgw_basic_types.h:270-278](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L270-L278),
+    [rgw_basic_types.h:315-316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L315-L316)),
+    which `decode` fills in place
+    ([encoding.h:682-692](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L682-L692)).
+    ListParts and CompleteMultipartUpload reach it through `list_parts`
+    ([rgw_op.cc:7632](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7632),
+    [rgw_op.cc:7076](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7076)).
+  - main decodes the same way
+    ([rgw_cksum.h:279-292](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L279-L292))
+    and adds md5 9, xxhash64 10 and xxhash128 11
+    ([rgw_cksum.h:41-56](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L41-L56)).
+    They come from ee6894210c6, "rgw: support new checksum types to match
+    aws s3" (2026-09-01), which
+    [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) merged as
+    1fa637b2cd0 (2026-09-08). It is on main and in no release tag
+    (`git tag --contains ee6894210c6` is empty).
+    main computes them for a client that names them
+    ([rgw_cksum_digest.h:105-145](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_digest.h#L105-L145))
+    and stores the record as the attr
+    ([rgw_op.cc:5289-5290](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L5289-L5290)).
+- **Impact:** a record whose digest size is above 64 writes up to 65471
+  bytes of the record past the reader's `Cksum`: on the stack at the attr's
+  readers, and on the heap at the part record's. A type above 8 aborts the
+  release build's radosgw at the table index, a denial of service. A build
+  without `_GLIBCXX_ASSERTIONS` instead reads outside the table and can
+  fault as it formats the header name. A size below the type's discloses
+  stack memory to the client as the checksum. radosgw never writes such a
+  record itself. Each case needs one written to RADOS directly or by
+  corruption. A type from 9 to 11 has one more source: a build carrying
+  ceph/ceph#71484 in a zone that still runs v20.2.4. There, any client that
+  may write an object can store one by asking for MD5, XXHASH64 or
+  XXHASH128. A v20.2.4 GET or HEAD of it with checksum mode, or a
+  GetObjectAttributes asking for its Checksum, then aborts radosgw.
+  Their digest sizes, 16, 8 and 16, stay within the buffer, so that path is
+  the abort alone. No release tag carries #71484 yet. Once one does, that
+  mix is a supported rolling upgrade.
+- **Releases:** v20.2.4 and main f6f2529dd9e; ids 9 to 11 on main only.
+  v19.2.7 has no checksum code.
+- **rgw-go:** unaffected. `cksum.DecodeCksum` refuses a type above 8 and a
+  digest size other than the type's with `denc.ErrMalformed`, and
+  `cksum.Cksum.Encode` panics rather than write either
+  (`internal/cksum/record.go`). It writes nothing radosgw would not, so
+  there is no exclusion.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 9); recorded by phase 2 task WP-1, 2026-10-15, which added the
+  stack disclosure. Its review added the part record's heap overflow, the
+  unchecked `operator[]` and the source of ids 9 to 11 the same day, and
+  the release binary's assertions were read from the local v20.2.4 image.
+  Derived from the source, not reproduced.
+
+## radosgw aborts on a checksum-mode GET of an object whose checksum attr has bytes past its record
+
+- **Kind:** defect, unfixed through main: robustness, not security-relevant,
+  since no client request writes the attr and every radosgw, main included,
+  encodes it whole (version 2, compat 1). Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/`; v19.2.7 has no checksum code.
+  - GET and HEAD with `x-amz-checksum-mode` decode `user.rgw.cksum` with
+    `decode(cksum, i->second)` on the attr's whole bufferlist, in a `try`
+    that catches `buffer::error`
+    ([rgw_rest_s3.cc:551-585](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L585),
+    main
+    [rgw_rest_s3.cc:569-573](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L573)).
+  - That overload is the full-bufferlist decoder, which asserts that the
+    decode consumed every byte: `ceph_assert(p.end())`
+    ([encoding.h:633-638](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L633-L638),
+    main
+    [encoding.h:1486-1491](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/include/encoding.h#L1486-L1491)).
+    `ceph_assert` aborts in release builds, and bytes left over raise no
+    `buffer::error`.
+  - `Cksum::decode` ends with `DECODE_FINISH`, which moves to the end of
+    the struct
+    ([encoding.h:1651-1658](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1651-L1658)),
+    so a later version's longer record passes; only bytes after the
+    record's frame reach the assert.
+  - It is the only checksum reader that decodes the whole bufferlist. The
+    others decode from an iterator and do not check its end:
+    - `cksum.decode(bliter)` for GetObjectAttributes' Checksum
+      ([rgw_rest_s3.cc:4031-4036](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4031-L4036));
+    - `tcksum.decode(bliter)` for a retried CompleteMultipartUpload
+      ([rgw_op.cc:7475-7480](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7475-L7480))
+      and for ListParts
+      ([rgw_op.cc:7617-7622](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7622));
+    - `part_cksum.decode(ck_iter)` for ObjectParts
+      ([rgw_sal_rados.cc:2912-2917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2912-L2917));
+    - `decode(cksum, bl)` in `RGWUploadPartInfo::decode` for the part record
+      ([rgw_basic_types.h:315-316](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L315-L316)).
+  - Every radosgw writes the attr whole through `Cksum::encode`, at version
+    2 and compat 1 on v20.2.4
+    ([rgw_cksum.h:258-266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L258-L266))
+    and still on main
+    ([rgw_cksum.h:269-277](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L269-L277)),
+    so no mix of gateways in a zone leaves bytes after the record.
+- **Impact:** an object whose attr carries a byte past its record ends the
+  radosgw process at each GET or HEAD of it that asks for checksum mode,
+  which any client that may read the object can send. Only corruption or
+  another writer of the attr in RADOS can plant the bytes.
+- **Releases:** v20.2.4 and main f6f2529dd9e.
+- **rgw-go:** not affected yet: it reads no checksum attr.
+  `cksum.DecodeCksum` reads one record and leaves what follows it to its
+  caller (`internal/cksum/record.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-1, 2026-10-15, tracing the readers of
+  `Cksum::decode`. Its review set the class and listed the iterator
+  readers the same day. Derived from the source, not reproduced.
