@@ -106,6 +106,9 @@ func DeriveLimits(opts map[string]string) (ops int, bytes int64) {
 // Weight exposes an op's payload weight.
 var Weight = weight
 
+// Timespec exposes the conversion of a modification time for librados.
+var Timespec = timespec
+
 // ConfiguredOption reads one option through ConfiguredOptions.
 func ConfiguredOption(ctx context.Context, cfg Config, option string) (string, error) {
 	vals, err := ConfiguredOptions(ctx, cfg, option)

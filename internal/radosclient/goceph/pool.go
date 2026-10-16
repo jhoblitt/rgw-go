@@ -458,8 +458,14 @@ func asyncResult(name string, fs []finisher, c *rados.AioCompletion) (uint64, er
 	return c.Version(), nil
 }
 
-// timespec converts a modification time for librados.
+// timespec converts a modification time for librados. A zero t becomes the
+// zero timespec, which reaches the OSD as the zero mtime SetMtime documents;
+// t.Unix() would give year 1's seconds, which librados carries as a non-zero
+// time the OSD stores.
 func timespec(t time.Time) rados.Timespec {
+	if t.IsZero() {
+		return rados.Timespec{}
+	}
 	return rados.Timespec{Sec: t.Unix(), Nsec: int64(t.Nanosecond())}
 }
 

@@ -498,6 +498,29 @@ var _ = Describe("a write op", func() {
 		})).To(Succeed())
 		Expect(stored("obj").Mtime).To(Equal(set))
 	})
+
+	DescribeTable("keeps a changed object's stored mtime when the op's mtime reaches the OSD as zero",
+		func(ctx SpecContext, zero time.Time) {
+			Expect(writeErr(ctx, p, "fresh", func(op *radosclient.WriteOp) {
+				op.SetMtime(zero)
+				op.Create(true)
+			})).To(Succeed())
+			Expect(stored("fresh").Mtime).To(BeZero(), "an object created with a zero mtime has none")
+			set := time.Date(2026, 9, 29, 11, 0, 0, 0, time.UTC)
+			Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) {
+				op.SetMtime(set)
+				op.WriteFull(nil)
+			})).To(Succeed())
+			Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) {
+				op.SetMtime(zero)
+				op.SetXattr("x", []byte("v"))
+			})).To(Succeed())
+			Expect(stored("obj").Xattrs).To(HaveKeyWithValue("x", []byte("v")))
+			Expect(stored("obj").Mtime).To(Equal(set))
+		},
+		Entry("the zero time", time.Time{}),
+		Entry("the Unix epoch, which librados sends as the same zero timespec", time.Unix(0, 0)),
+	)
 })
 
 var _ = Describe("a read op", func() {
