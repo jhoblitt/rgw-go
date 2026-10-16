@@ -53,7 +53,7 @@ their default.
 | D9 | No upstream u64-mode cmpxattr request now; the C API's missing mode is a `docs/cgo-limitations.md` entry. | VD-1's guard is correct and compatible. | V4 |
 | P2 | (the owner, 2026-10-13) The admin object removal and the purges ignore object lock, as radosgw does, with an exclusion. | Rook's bucket deletion relies on the purge; refusing strands lock buckets. | V8b, V12b |
 | P3 | (the owner, 2026-10-13) V5b gets a Fable review after its task review, and V5c, split from it for size and carrying D1's races, shares that review; the other OLH tasks get the standard Opus review. | A wrong OLH step corrupts state both gateways share, and V5b and V5c hold the races. | V5b, V5c |
-| VD-1 | `apply_olh_log`'s head op is guarded by `cmpxattr(olh.ver, EQ, <bytes read>)` in string mode, not radosgw's numeric GTE. An apply that fails it re-reads the head and the log and applies again, up to a bound; past the bound ECANCELED is success by the protocol, with the pending attrs left for the next reader, the writer's own included (V5b B2). | The librados C API compares xattrs in string mode only ([librados_c.cc:3667-3683](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L3667-L3683)); a string GTE puts "9" above "10". The state written is identical (§2.9), and the retry keeps the progress GTE keeps (review F5). | V4, V5b |
+| VD-1 | `apply_olh_log`'s head op is guarded by `cmpxattr(olh.ver, EQ, <bytes read>)` in string mode, not radosgw's numeric GTE. An apply that fails it re-reads the head and the log and applies again, up to a bound; past the bound ECANCELED is success by the protocol, with the pending attrs left for the next reader, the writer's own included (V5b B2). | The librados C API compares xattrs in string mode only ([librados_c.cc:3667-3683](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L3667-L3683)); a string GTE puts "9" above "10". The state written is radosgw's (§2.9) but in one window: when another writer has applied a link at an epoch two links share, a retry from the fresh `olh.ver` keeps the version the class made current, where radosgw's pass writes the link logged last (`docs/ceph-upstream-bugs.md`, "radosgw's apply_olh_log applies a same-epoch link the class did not make current", which V4 adds). The retry keeps the progress GTE keeps (review F5). | V4, V5b |
 | VD-2 | Tentacle's condition evaluation, against the current version followed through the OLH, on both releases, for versioned writes and deletes. | Owner decision 1 and PP-3; v19.2.7 already evaluates this way (ce98cebb815), so only v19.2.6, below the floor, differed (defect 3). | V7a, V8a |
 | VD-3 | A conditional write whose link-time evaluation fails answers 412 and removes the instance it wrote, through the unversioned delete on the instance key. | Otherwise the instance entry and head stay as an invisible version holding quota. | V5c, V7a |
 | VD-4 | A conditional attempt that meets other writers' pending attrs runs `updateOLH` and backs off with jitter, up to a bound the task names as a constant; past it the attempt proceeds without the pending-attr check (D1). Every attempt, conditional or not, keeps radosgw's 100 tries and EIO. | D1's pending-attr guard waits on every in-flight writer, which radosgw's tight loop would exhaust in milliseconds. A pending attr with no log entry, left by a writer that died between its init and its link or by radosgw's own link at an old epoch (review N2), stays until `rgw_olh_pending_timeout_sec` expires it, so the wait must end on its own. | V5c |
@@ -63,6 +63,9 @@ their default.
 | VD-8 | DeleteObjects groups keys by name and skips the OLH update for all but the last of each name. | radosgw's op count, and the same final state (§2.4). | V8a, V12a |
 | VD-9 | The emulator stays Squid's class (no class-side reshard guard, no reshard log), as today. | The guard is the gateway's on both floors (§2.10). | V3a, V3b |
 | VD-10 | The OLH and `bi_get` method names live in V1's own files; `internal/cls/rgw/const.go` is not edited. | `ops_mp.go`'s pattern; no hot file. | V1 |
+| VD-11 | A read whose follow runs the update for a pending modification resolves the current version again from the head as the update left it, where radosgw's `follow_olh` answers the version current before the update; V6 records it as an exclusion. | The correct S3 answer; the second read writes nothing. radosgw's stale answer is a 404 NoSuchKey while the previous version is current, when the update replays the deletion of the current version (`docs/ceph-upstream-bugs.md`, "radosgw's follow_olh answers the version that was current before the replay it runs", which V4 adds). | V6 |
+| VD-12 | `setOLH` retries init's ENOENT on a head its read found, the OLH head removed between that read and its init, from a fresh read within its 100 attempts, where radosgw's `set_olh` returns it ([rgw_rados.cc:8699-8706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8699-L8706), [rgw_rados.cc:9445-9452](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9445-L9452)); V5b records it as an exclusion. | The correct S3 answer: the version's own write went right, and a fresh read finds no head and creates it (`docs/ceph-upstream-bugs.md`, "radosgw's versioned write fails when the key's OLH head goes between its read and its init", which V4 adds). | V5b |
+| VD-13 | `updateOLH` reads the pending log from the head's `olh.ver`, where radosgw's `update_olh` starts at marker 0 ([rgw_rados.cc:8651](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8651), [rgw_rados.cc:9397](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9397)); V5b records it as an exclusion. | Recorded, not aligned. The entries at or below `olh.ver` are already applied to the head, and the class returns only epochs above the `ver_marker` ([cls_rgw.cc:2057-2066](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2057-L2066), [cls_rgw.cc:2198-2207](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2198-L2207)), so rgw-go's replays skip a refused removal whose trim failed, where radosgw's remove the version: the safer side. A mixed fleet still meets radosgw's behaviour there, V8c's behaviour 5. | V5b |
 
 ## Seams
 
@@ -109,6 +112,8 @@ their default.
 | `internal/testutil/fakerados/cls_otp*.go` | WP-17, V13b | WP-17 owns `cls_otp.go`; V13b writes only `cls_otp_check.go`. |
 | `internal/cls/otp/` | WP-16, V13a | WP-16 owns the package and types; V13a adds `ops_check.go`. |
 | `internal/driver/indexop.go` | V5a | V5a alone. |
+| `internal/driver/olh_head.go` | V4, V5c | V4 creates it; V5c, after V4 by its own dependency, adds `ExpectTag`'s cmpxattr beside D1's guard. |
+| `internal/driver/stat.go` | V5b, V6 | V5b adds the unfollowed head read and leaves `StatObject` and `PrefetchObject` refusing an OLH head; V6, after V5b by its own dependency, lifts that refusal. |
 | `internal/driver/headwrite.go`, `put.go` | V7a; L5a, WP-10, WP-8 | V7a before L5a (L5a adds one call at V7a's attrs-finalizing point). WP-10 and WP-8 work in `put.go`'s stream stages, not the head write; the controller merges them apart from V7a. |
 | `internal/driver/copy.go`, `mp_complete.go` | V7b; WP-8, WP-9, WP-10 | V7b changes only the instance and the link call; the checksum work lives in `mp_cksum.go`. Merged one after the other. |
 | `internal/op/object.go`, `internal/driver/delete.go`, `internal/memstore/object.go` | V8a (the DeleteObject signature); V6, WP-5, C10a | No fixed order (the index's hot-file rule): each adds line-local fields, and whichever lands later rebases onto the others. V8a owns the DeleteObject signature change and keeps every field already there (`AssertEpoch` included); V6 lands before V8a by their own dependency. The task changing the interface regenerates `opfakes` and `driverfakes` and updates memstore. |
@@ -387,7 +392,8 @@ their default.
      by `cmpxattr(olh.idtag, EQ, tag)` and VD-1's `cmpxattr(olh.ver, EQ, <bytes read>)`, setting
      `olh.ver` to the last epoch in decimal and the kept mtime. Replay in epoch order: LINK_OLH
      applies when its epoch is above the head's, the head has no target instance, or the entry's
-     instance sorts above the current one ([rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496));
+     instance sorts before the current one ([rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496),
+     [rgw_rados.cc:9228-9242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242));
      UNLINK_OLH marks removal; REMOVE_INSTANCE collects keys; every entry's pending attr is
      removed; `olh.info` is set when a link won. The collected instances go through
      `removeInstance` before the head op ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541)).
@@ -406,10 +412,22 @@ their default.
   `removeInstance`); the EQ guard under a concurrent newer apply: the head op fails ECANCELED and
   writes nothing; expiry with `Cluster.SetClock`; follow's five outcomes; clear's guards; repair
   from a fake OLH entry. The index calls are a fake `olhIndex` here; V5b runs them on the emulator.
-- **Exclusions and registry:** `docs/cgo-limitations.md`, "librados' C API has no u64-mode
-  cmpxattr" (D9, a limitation, Q10's not-now ruling); `docs/exclusions.md`, "apply_olh_log's
-  olh.ver guard is EQ on the bytes read, retried from a fresh read" (VD-1; the state written is
-  radosgw's).
+- **Exclusions and registry:**
+  - `docs/cgo-limitations.md`, "librados' C API has no u64-mode cmpxattr" (D9, a limitation,
+    Q10's not-now ruling).
+  - `docs/exclusions.md`, "apply_olh_log's olh.ver guard is EQ on the bytes read, retried from a
+    fresh read" (VD-1; the state written is radosgw's but in the same-epoch window, where a retry
+    from a fresh `olh.ver` keeps the class's current version and radosgw writes the link logged
+    last).
+  - `docs/exclusions.md`, "A replay passes over a version removal that the writer's expected
+    write tag refuses": the replay lands, trims the log when another writer refused its clear,
+    and reports the refusal; only a refusal returned without an error is final.
+  - `docs/ceph-upstream-bugs.md`, five entries: "radosgw's apply_olh_log applies a same-epoch
+    link the class did not make current", "cls_rgw's OLH log trim drops an unapplied link at the
+    trimmed epoch", "radosgw's clear_olh clears the index's OLH entry after a failed head
+    removal", "radosgw's versioned write fails when the key's OLH head goes between its read and
+    its init" and "radosgw's follow_olh answers the version that was current before the replay it
+    runs".
 - **Depends on:** V1, V2, V3b. **PR split:** one. **Brief:** about 235 lines.
 
 ### Task V5a: driver, the OLH index operations and the awaited completion
@@ -441,6 +459,16 @@ their default.
   2. The read-log and `bi_get` are unguarded reads on the current shard, the log read with the
      empty-instance key and the head's tag ([rgw_rados.cc:8225-8269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8225-L8269),
      [rgw_rados.cc:8971](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8971)).
+     `getOLH`, the `bi_get` OLH of the name, maps to `radosclient.ErrNotFound` the class's
+     ENOENT for a name with no OLH entry, which `cls_cxx_map_get_val` answers
+     ([cls_rgw.cc:2655-2659](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2655-L2659),
+     [cls_rgw.cc:2823-2827](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2823-L2827)):
+     V4's settlement of a refused removal reads "absent" from it, and takes the refusal as final
+     then. A shard object a reshard removed also answers ENOENT at the OSD, so on ENOENT `getOLH`
+     re-finds the shard from the bucket, as `guardReshard` does for the guarded writes
+     (behaviour 1), and reads again; only an ENOENT from the shard the bucket now names is not
+     found. A stale shard reference would otherwise read as "absent" and settle a refusal as
+     final while its entries sit on the new shard.
   3. Request fields: `olh_tag` is the head's `olh.idtag` bytes; epoch 0 unless the caller gives
      one; `log_op` is phase 1's `logOp()`, false in a single zone; `zones_trace` is phase 1's
      `zonesTrace()`; unlink's bilog flags are VERSIONED_OP, plus NULL_VERSION for a request that
@@ -458,9 +486,11 @@ their default.
      Plain reads the name verbatim, so it reaches both. ENOENT from the last read is the caller's.
 - **Specs:** the request bytes of each call match V1's goldens; a busy shard waits and retries on
   the refreshed shard; ten busy answers are ErrBusyResharding; the read-log carries no guard;
-  `completeSync` returns the class's error; `getInstanceEntry` on a named instance, a
-  never-converted plain entry, a converted key with null data, one with a null delete marker, and
-  one with neither (ENOENT).
+  `getOLH` of a name with no OLH entry answers `radosclient.ErrNotFound` (`errors.Is`), and of a
+  re-tagged entry its tag and kept pending log; `getOLH` on a shard a reshard removed re-finds
+  the shard and answers the entry from the new one, not not-found; `completeSync` returns the
+  class's error; `getInstanceEntry` on a named instance, a never-converted plain entry, a
+  converted key with null data, one with a null delete marker, and one with neither (ENOENT).
 - **Exclusions and registry:** a new exclusion, "A versioned write awaits its index completion"
   (D5); "OLH epochs differ by OSD release" rewritten to what phase 2 does: epoch 0 in every
   request and no epoch reply decoded on either floor; the registry entry for tracker #80894
@@ -471,6 +501,7 @@ their default.
 ### Task V5b: driver, `setOLH`, `unlinkObjInstance` and the races
 
 - **Layer:** driver. **Files:** create `internal/driver/olh.go` and specs; modify
+  `internal/driver/stat.go` (the unfollowed head read, behaviour 8),
   `internal/driver/export_integration.go` (a fault point) and `docs/exclusions.md`.
   **Cluster:** no.
 - **Review:** task review, then a Fable review (P3, the owner, 2026-10-13).
@@ -486,13 +517,19 @@ their default.
   precision and `SkipUpdate`, plus two hooks V5c fills: an optional condition (D1) and an
   optional `ExpectTag []byte`. `olhUnlink` carries the epoch, the null-version flag,
   `SkipUpdate` and an optional `ExpectTag`. A removal refused by its `ExpectTag` is returned,
-  after the protocol completes, as `errRemovalRefused` naming the key (V8c re-links it).
+  after the protocol completes, as `errRemovalRefused` naming the key. Only a refusal returned
+  without an error is final, and only a final one is V8c's to re-link (this task's behaviour 5).
 - **Behaviour:**
   1. `setOLH` ([rgw_rados.cc:8669-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8669-L8762),
      [rgw_rados.cc:9415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9415)), each attempt: read the
-     OLH head without following, afresh after an ECANCELED; init; link; on a link failure cancel,
-     then ECANCELED → `repairOLH` and retry, any other error → a best-effort `updateOLH` unless
-     skipped, and return. After the link, `updateOLH` unless skipped; ECANCELED there is success
+     OLH head without following (behaviour 8), afresh after an ECANCELED or a retried ENOENT;
+     init; link; on a link failure cancel, then ECANCELED → `repairOLH` and retry, any other
+     error → a best-effort `updateOLH` unless skipped, and return. Init's ENOENT on a head the
+     read found, the head removed since, as the unlink of the key's last version removes it, is
+     retried like its ECANCELED (VD-12), where `set_olh` returns it
+     ([rgw_rados.cc:8699-8706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8699-L8706),
+     [rgw_rados.cc:9445-9452](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9445-L9452)).
+     After the link, `updateOLH` unless skipped; ECANCELED there is success
      ([rgw_rados.cc:8752-8755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8755)). 100 attempts, then EIO. A condition
      or an `ExpectTag` adds V5c's rules to each attempt.
   2. A link at an epoch below the OLH entry's (C11's transition, V8c's re-link) writes the
@@ -514,24 +551,82 @@ their default.
      loop around the unlink; the class's ENOENT is the caller's NoSuchKey.
   4. `updateOLH` ([rgw_rados.cc:8639-8667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8639-L8667),
      [rgw_rados.cc:9385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9385)): read the log from
-     the head's `olh.ver` and apply it, while truncated. An apply that fails its guards with
-     ECANCELED is retried from a fresh head read (`olh.ver` and the log read again, then applied),
-     up to a bound the task names as a constant; only past the bound is ECANCELED success by the
-     protocol, with the pending attrs left for the next reader. This restores the progress
-     radosgw's numeric GTE keeps ([rgw_rados.cc:8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8435),
-     [rgw_rados.cc:9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9181)) under VD-1's EQ guard (review F5).
+     the head's `olh.ver` (VD-13) and apply it, a page at a time while truncated: the class
+     returns up to 1000 epochs above the `ver_marker` a page, setting `is_truncated`
+     ([cls_rgw.cc:2057-2066](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2057-L2066),
+     [cls_rgw.cc:2198-2207](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2198-L2207)).
+     - Each page's landed head op wrote its last epoch to `olh.ver`, and `updateOLH` carries that
+       epoch forward, as the next page's marker and as the `olh.ver` its apply expects, so every
+       later page meets VD-1's EQ guard and a log longer than the bound times 1000 epochs lands.
+       The later pages' epochs all lie above both that epoch and the `olh.ver` first read, so the
+       replay takes the links radosgw's does, whose `update_olh` hands every page the state it
+       first read.
+     - An apply that fails its guards with ECANCELED is retried from a fresh head read (`olh.ver`
+       and the log read again, then applied), up to a bound the task names as a constant; only
+       past the bound is ECANCELED success by the protocol, with the pending attrs left for the
+       next reader. This restores the progress radosgw's numeric GTE keeps
+       ([rgw_rados.cc:8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8435),
+       [rgw_rados.cc:9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9181)) under VD-1's EQ guard (review F5).
+     - An apply whose head op landed and whose tail did not finish is not applied again. V4's
+       error names the tail left, the clear or the trim, and `updateOLH` runs that tail again
+       through V4's function that clears or trims the log after a replay's head op, within the
+       same bound (behaviour 5).
+
+     `updateOLH` leaves `*head` as its caller read it, carrying the expected `olh.ver` in a
+     copy of its own, as `update_olh` leaves the caller's state:
+     `apply_olh_log` only reads it
+     ([rgw_rados.cc:8409-8566](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8409-L8566),
+     [rgw_rados.cc:9155-9312](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9155-L9312)).
+     Each retry works on its own fresh read, and a caller that needs the head as the update left
+     it reads the head again (V6, VD-11). The carried copy's `olh.info` is the first read's, and
+     nothing compares against it across pages.
   5. `removeInstance` (V4's call): phase 1's unversioned removal on the instance key: read the
      instance head, guard on its write tag, or on `expectTag` when given, then `removeHead`
      (prepare DEL, obj_remove keeping `user.rgw.olh.`, complete_del, tails to the GC); ENOENT is
      success. A failed `expectTag` guard cancels the index DEL, so the head and the instance entry
-     stay while the unlink has already removed the list entry; the replay goes on (pending attrs,
-     `olh.ver`) and the refusal reaches the writer as `errRemovalRefused`. Phase 1's guard stays
-     where Tentacle removes unguarded (defect 14).
+     stay while the unlink has already removed the list entry, and the removal answers the refusal
+     V4's `olhIndex` seam defines. The replay passes over that version, lands its head op (pending
+     attrs, `olh.ver`) and its trim or clear, trimming to its last epoch when another writer's
+     pending attr refused the clear, and only then returns the refusal, which reaches the writer
+     as the Produces paragraph gives it.
+     - Only a refusal returned without an error is final. One joined with a failed trim, index
+       clear or clear expiry leaves the entry in the log. V4's error names the tail left, and
+       `updateOLH` runs it again through V4's tail function, within its bound (behaviour 4); the
+       trim that follows a clear another writer refuses lives in that function alone. It returns
+       the refusal alone once the tail finishes. Past the bound it returns the error with the
+       refusal, which is not final.
+     - V4's third outcome, the refusal joined with its not-final, not-retryable sentinel, means
+       the writer's entries are still in the log of an OLH entry another writer's link re-tagged
+       (V4's `olhIndex` seam). `updateOLH` does not retry it, since no retry restores the old
+       tag, and returns it as it is; that writer's replay may remove the version.
+     - Reading from `olh.ver` (VD-13), rgw-go's own later replays skip a refused removal whose
+       trim failed, at or below the `olh.ver` the head op wrote, where a radosgw replay, reading
+       from 0, meets it and removes the version. A mixed fleet keeps that: it is the second
+       window of V8c's behaviour 5.
+     - Once the writer's own replay has landed with its trim or clear, no later replay meets the
+       entry. Until then the version can still go as radosgw's replay removes it: a replay by
+       another reader running alongside the writer's own, or one after the writer's head op
+       failed and its retry never landed, meets the entry without `expectTag`. That is the second
+       window of V8c's behaviour 5.
+
+     Any other removal failure stops the replay before its head op, as `apply_olh_log`'s does
+     ([rgw_rados.cc:8537-8540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8537-L8540),
+     [rgw_rados.cc:9283-9286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9283-L9286)).
+     Phase 1's guard stays where Tentacle removes unguarded (defect 14).
   6. VD-5: a link or unlink that failed with a class or guard answer, and a `completeSync`
      that did, remove the instance the write made through `removeInstance`; a timeout or a lost
      connection removes nothing.
   7. A fault point, compiled only into the integration build, stops a writer after its link
      and before its replay, for V15b's case D.
+  8. The unfollowed head read. `readHead` refuses a head that carries `olh.ver` until V6 (the
+     refusal is in `decodeState`, which it calls). `setOLH`, `unlinkObjInstance` and `updateOLH`'s
+     retries read the head through a variant that decodes it without that refusal and never
+     follows, as `set_olh` and `unlink_obj_instance` read theirs
+     ([rgw_rados.cc:8694](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8694),
+     [rgw_rados.cc:8793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8793);
+     [rgw_rados.cc:9440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9440),
+     [rgw_rados.cc:9539](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9539)).
+     `StatObject` and `PrefetchObject` keep refusing until V6.
 - **Specs** (on the emulator with V3a and V3b):
   - each §2.9 failure: init EEXIST → retry; link ECANCELED → repair, then success; 100
     ECANCELEDs → EIO; another link error → cancel, best-effort update, VD-5's removal; a
@@ -549,6 +644,12 @@ their default.
   - **"an apply that loses VD-1's guard retries"** (F5): rgw-go's writer reads `olh.ver` empty,
     the other applies epoch 2, rgw-go's apply of epoch 3 fails EQ, re-reads and lands: `olh.info`
     on epoch 3's version, no pending attr;
+  - **"a log of many pages lands in one update"** (re-review 2, Minor 2): a pending log of more
+    than the bound times 1000 epochs replays in one `updateOLH`, each page's apply meeting the EQ
+    guard on the epoch the page before wrote, with no retry spent;
+  - **"an unfinished tail runs again"** (re-review 2, Important 1): the head op lands and the trim
+    fails once; `updateOLH` runs V4's tail again without a second head op, and the log ends
+    trimmed. The same for an index clear that fails once;
   - **"a versioned write meets a reshard in progress"** (Review Focus 2): the shard set
     resharding (a) between the completion and the link, (b) between the link and the trim, the
     reshard then finishing by moving the bucket to a new index generation with its instance,
@@ -562,21 +663,37 @@ their default.
   - **"an apply that exhausts VD-1's bound keeps the pending attr"** (review N3): every retry of
     rgw-go's apply loses the EQ guard; `setOLH` returns, its LINK entry unapplied, its pending
     attr present and `olh.info` on the previous version; the next `followOLH` applies the entry,
-    and `olh.info` then names the version the listing shows current;
+    and the stored `olh.info` then names the version the listing shows current. The spec asserts
+    the stored `olh.info`, not the follow's answer, which is the version current before its
+    update (V4; V6 re-resolves, VD-11);
   - `expectTag` refused: `errRemovalRefused`, the head and the instance entry present, the list
-    entry absent (V8c's re-link starts from this state);
+    entry absent (V8c's re-link starts from this state). With another writer's init between the
+    head op and the clear, the log is trimmed and that writer's replay leaves the version. With a
+    trim that fails once, `updateOLH` retries it and returns the refusal alone; with one that
+    keeps failing, the error comes with the refusal and the entry stays in the log;
+  - init's ENOENT (VD-12): the key's last version is unlinked and its OLH cleared between
+    `setOLH`'s read and its init; the next attempt finds no head, creates it and links, and the
+    write succeeds with its version current;
   - a writer stopped after its link: the next writer's update applies both; a pending attr past
     the timeout is expired by the next follow (`Cluster.SetClock`);
   - `SkipUpdate` leaves the pending attrs for the next update; two concurrent unlinks of one
     instance: one success, one NoSuchKey.
 - **Exclusions and registry:** a new exclusion, "rgw-go removes the instance a failed versioned
-  write made" (VD-3, VD-5; radosgw leaves it for `bucket check`); the registry entry for defect
-  14 (data corruption, v20.2.4, unreproduced) gains that `apply_olh_log` reaches it.
+  write made" (VD-3, VD-5; radosgw leaves it for `bucket check`); a new exclusion, "A versioned
+  write retries when the key's OLH head goes between its read and its init" (VD-12), citing the
+  registry's "radosgw's versioned write fails when the key's OLH head goes between its read and
+  its init"; a new exclusion, "A replay reads the pending log above the head's olh.ver"
+  (VD-13): the entries at or below it are already applied to the head, so rgw-go's replays
+  skip a refused removal whose trim failed, where radosgw's remove the version, the safer side,
+  and a mixed fleet still meets radosgw's behaviour there (V8c's behaviour 5); the registry
+  entry for defect 14 (data corruption, v20.2.4, unreproduced) gains that `apply_olh_log`
+  reaches it.
 - **Depends on:** V5a. **PR split:** one. **Brief:** about 245 lines.
 
 ### Task V5c: driver, conditional links (D1) and `ExpectTag`
 
-- **Layer:** driver. **Files:** create `internal/driver/olh_cond.go` and specs. **Cluster:** no.
+- **Layer:** driver. **Files:** create `internal/driver/olh_cond.go` and specs; modify
+  `internal/driver/olh_head.go` (`ExpectTag`'s cmpxattr in V4's init). **Cluster:** no.
 - **Review:** task review, then V5b's Fable review, which V5c shares (P3).
 - **Consumes:** V4's D1 init guard, V5b's `setOLH`, `unlinkObjInstance` and `updateOLH` and its
   radosgw-shaped writer, phase 1's `bucket_list` call on a shard. **Produces:** the condition and
@@ -610,9 +727,17 @@ their default.
   3. With an `ExpectTag` (V8c), each attempt compares the head's `user.rgw.idtag` with it, and a
      mismatch is `op.ErrConcurrentModification` with nothing written; init adds
      `cmpxattr(user.rgw.idtag, EQ, ExpectTag)`, whose ECANCELED makes the next attempt re-read
-     and re-check. The writer's own replay passes it to `removeInstance` for the REMOVE_INSTANCE
-     entries carrying its op tag. On `unlinkObjInstance` it guards the removal only; the check
-     before the unlink is V8c's.
+     and re-check. The cmpxattr goes with D1's guard, ahead of every set in the op, so it sees
+     other writers only: init itself sets `user.rgw.idtag` on a head without an OLH tag. A missing
+     head reads its tag as empty, so a non-empty `ExpectTag` is a mismatch before init, and an
+     empty one matches. Init then sends no cmpxattr: on a missing object `getattr_maybe_cache`
+     answers ENOENT, which the cmpxattr returns instead of reading the xattr as empty
+     ([PrimaryLogPG.cc:6403-6408](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6403-L6408),
+     [PrimaryLogPG.cc:6472-6477](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6472-L6477)).
+     The exclusive create stands in for it: a head another writer made first fails the create,
+     ECANCELED, and the next attempt's compare refuses. The writer's own replay passes it to
+     `removeInstance` for the REMOVE_INSTANCE entries carrying its op tag. On `unlinkObjInstance`
+     it guards the removal only; the check before the unlink is V8c's.
 - **Specs** (on the emulator, with V5b's radosgw-shaped writer):
   - **"a radosgw writer inits between a conditional write's init and its link"**, both
     interleavings: (i) it links first: the conditional write answers 412, its instance is gone,
@@ -631,14 +756,16 @@ their default.
     answers 412; neither answers 409;
   - If-Match on a pre-versioning object: the converted entry at epoch 1 does not void the write;
   - `ExpectTag`: a mismatch before init writes nothing; a write landing before init fails the
-    init's guard and the retry refuses; the own replay's removal uses it.
+    init's guard and the retry refuses; the own replay's removal uses it; on a missing head an
+    empty `ExpectTag` inits through the exclusive create, a head created first makes the retry
+    refuse, and a non-empty one refuses with nothing written.
 - **Exclusions:** none of its own: V7a writes D1's, which states this task's guarantee.
 - **Depends on:** V5b. **PR split:** one. **Brief:** about 205 lines.
 
 ### Task V6: driver, reads follow the OLH; attrs on a version
 
 - **Layer:** driver. **Files:** modify `internal/driver/stat.go`, `read.go`, `attrs.go` and
-  `internal/op/object.go` (`ObjectState`); specs. **Cluster:** no.
+  `internal/op/object.go` (`ObjectState`); specs; edit `docs/exclusions.md`. **Cluster:** no.
 - **Consumes:** V4's `followOLH`, V5a's `getInstanceEntry`, V5b's `updateOLH`. **Produces:**
   `ObjectState.DeleteMarker bool`; after a follow `ObjectState.Key` is the resolved version's
   key, so `Key.Instance` is the version id (the report's `ObjectState.Instance`, N20).
@@ -648,8 +775,11 @@ their default.
      [rgw_rados.cc:6874](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6874)): the head's
      `olh.idtag` is kept as the OLH tag; a head with `olh.ver` and no instance named follows to
      the target and returns its state ([rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258),
-     [rgw_rados.cc:6852](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852)). The
-     refusal at `internal/driver/stat.go:148-152` goes.
+     [rgw_rados.cc:6852](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852)). When the
+     follow ran the update for a pending attr, the head is read once more and the target resolved
+     from that read, without a second update (VD-11): radosgw resolves from the head as read
+     before the update. The refusal of a head carrying `olh.ver`, in `decodeState`, which
+     `readHead` calls, goes.
   2. A current delete marker: `Exists` false, `DeleteMarker` true. `versionId=null` on an OLH
      head without a manifest: not found ([rgw_rados.cc:6429-6433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6429-L6433)).
      A named instance reads `_:<instance>_<name>` without following.
@@ -668,10 +798,14 @@ their default.
      [rgw_sal_rados.cc:2994](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994)).
 - **Specs** (on the emulator, V3a and V3b): follow to the current version; a current marker; a named
   marker (D2) and a named missing version; null present and absent; a pending log entry a stopped
-  writer left is applied by `StatObject`; attrs on a noncurrent version leave the current untouched;
+  writer left is applied by `StatObject`; a read racing the deletion of the current version, whose
+  writer stopped between its unlink and its replay, answers the next version, not not-found
+  (VD-11); attrs on a noncurrent version leave the current untouched;
   the prefetch's head bytes are the target's; `versionId=null` naming a null delete marker sets
   `DeleteMarker` (D2's 405 for it is V14a's).
-- **Exclusions:** none.
+- **Exclusions:** a new exclusion, "A read that replays a pending modification answers the version
+  current after it" (VD-11), citing the registry's "radosgw's follow_olh answers the version that
+  was current before the replay it runs".
 - **Depends on:** V5b. **PR split:** one. **Brief:** about 180 lines.
 
 ### Task V7a: driver, versioned PutObject
@@ -873,8 +1007,20 @@ their default.
      then removed the version's list entry, while its instance entry and head stay
      ([cls_rgw.cc:1867-2018](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1867-L2018), [cls_rgw.cc:2002-2159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2002-L2159);
      V5b's `errRemovalRefused`). Left so, the version is readable and deletable by its id but
-     absent from ListObjectVersions and from lifecycle's listings. V8c re-links it with
-     `setOLH`, not a marker:
+     absent from ListObjectVersions and from lifecycle's listings. V8c acts only on a final
+     refusal, `errRemovalRefused` returned without an error (V5b B5). A refusal returned with an
+     error leaves the removal in the log, where a later replay can still remove the version, so
+     V8c re-links nothing and returns that error: a re-link then would list a version whose head
+     that replay removes. V4's not-final, not-retryable outcome, the writer's entries kept in the
+     log of an OLH entry another writer's link re-tagged, is the same: V8c re-links nothing, and
+     that writer's replay removes the version consistently, which is behaviour 5's second window.
+
+     A final refusal does not prove the version survived either (re-review 2, Important 2).
+     Another reader's replay, or a radosgw gateway's, that read the log after the unlink removes
+     the version guarded only on the write tag it reads itself, and that removal can land between
+     the own refusal and the own head op. So before any re-link, on either path, V8c confirms
+     through `getInstanceEntry` that the version's instance entry is still there; when it is
+     gone, V8c re-links nothing. Otherwise it re-links the version with `setOLH`, not a marker:
      - when it was noncurrent, at its own `versioned_epoch`: the class writes it back non-current
        with its list entry (V5b B2);
      - when it was current, at epoch 0, so it is current again at a fresh epoch, and the version
@@ -899,12 +1045,31 @@ their default.
        removal was refused, a newer null write owns the key and is already listed and current;
        V8c resets and re-links nothing. A versioned write of a new instance leaves that epoch
        unchanged, so it still takes the reset and the fallback. A refused named version is
-       re-listed only by V8c, so the named path needs no such check.
+       re-listed only by V8c, so the named path needs no epoch check; the existence check above
+       covers both paths.
      The delete then answers `op.ErrConcurrentModification`.
   5. Two windows stay, both radosgw's own: a writer that inits after the epoch-0 re-link's init
      and links before it ends below the restored version; and a replay by another reader, which
-     does not know `Expect`, removes what it reads, as radosgw's does. The own replay runs
-     straight after its link. L4 and C10b judge these against their threat models.
+     does not know `Expect`, removes what it reads, as radosgw's does. The second lasts until the
+     writer's own replay has landed with its trim or clear (V4's `olhIndex` seam): it covers a
+     replay by another reader running alongside the own one, and one after the own head op failed
+     and its retry never landed. The own replay runs straight after its link. A race stays too,
+     rgw-go's own since radosgw never re-links. A replay running alongside the own one, which read
+     the own entries before the own tail dropped them, can land its removal at any time after the
+     existence check, before the re-link's link or after it, and leave a list entry for a version
+     with no head. The race lasts until that replay's removal lands, which V8c cannot bound.
+
+     A replay of a re-tagged OLH entry's kept pending log (V4's `olhIndex` seam) adds no case. A
+     re-tag needs `pending_removal`, which only the unlink of the last version sets
+     ([cls_rgw.cc:1966](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1966),
+     [cls_rgw.cc:2113](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2113)),
+     and an init with fresh tags, which needs the head gone. The first replay to land on that
+     fresh head reads from marker 0, rgw-go's for want of an `olh.ver` (VD-13) and radosgw's always,
+     and runs its removals before its head op and its trim. So a replay that later reads from
+     above the own entries, or trims them, comes after one that removed the version, and the
+     existence check finds it gone.
+
+     L4 and C10b judge these against their threat models.
 - **Specs** (on the emulator):
   - a mismatch before the unlink: nothing written;
   - **"a refused removal leaves the version listed"**: an attr write lands between the unlink
@@ -913,6 +1078,13 @@ their default.
     trimmed; ListObjectVersions lists it. A noncurrent version is back at its original epoch with
     `olh.info` unchanged. A current one is current again at a fresh epoch, with the version the
     unlink promoted demoted and `olh.info` on the restored one;
+  - a refusal returned with an error (the same, with a trim that keeps failing): no re-link, the
+    delete returns the error, and the removal stays in the log;
+  - **"another replay removes the refused version before the re-link"** (re-review 2, Important
+    2): a replay alongside, by a reader that read the log after the unlink, removes the version
+    between the own refusal and the own head op. The own replay returns a final refusal;
+    `getInstanceEntry` finds no instance entry, so V8c re-links nothing, no list entry is
+    written for a version with no head, and the delete answers `op.ErrConcurrentModification`;
   - **"exactly one current entry after a fallback re-link"** (review N1): the same with a version
     another writer links and applies between the unlink and the re-link. That version stays
     current; the refused one is listed non-current at its own epoch; exactly one entry of the name
@@ -1453,9 +1625,10 @@ recordings land one at a time through the controller.
 
 ## Defects
 
-The report's §6 table, with the task that carries each choice. Status is unreproduced until a
-running release shows the defect (PP-11); "registry" marks an entry already in
-`docs/ceph-upstream-bugs.md`.
+The report's §6 table, then from row 18 the defects V4 and its review found, with the task that
+carries each choice. Status is unreproduced until a running release shows the defect (PP-11);
+"registry" marks an entry already in `docs/ceph-upstream-bugs.md`. Rows 18 to 22 cite theirs by
+title; those entries land with V4's PR.
 
 | # | Defect | Releases | Class | Status | rgw-go's choice | Task |
 |---|---|---|---|---|---|---|
@@ -1476,6 +1649,11 @@ running release shows the defect (PP-11); "registry" marks an entry already in
 | 15 | Squid before 19.2.3 refused a marker on a marker (registry) | below the floor | n/a | n/a | unaffected | none |
 | 16 | The versioned delete of `versionId=null` reads the null version with one `bi_get` of the plain key, which on a converted key is the version marker: its conditions meet the marker's empty meta (a spurious 412 for any If-Match) and `x-amz-delete-marker` is false for a null delete marker ([rgw_rados.cc:5906-5944](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5906-L5944), [rgw_rados.cc:6518-6556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6518-L6556); [cls_rgw.cc:2617-2664](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2617-L2664); review F4) | both | S3-correctness | unreproduced | resolve `null` in `read_key_entry`'s order, up to three `bi_get` reads (D8); exclusion | V5a, V8a |
 | 17 | A `version-id-marker` of `null` whose null version is a delete marker resumes past the key's remaining versions ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390), [cls_rgw.cc:408](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408)) | both | S3-correctness | unreproduced | resolved in the driver, skipping through the marker; exclusion | V9 |
+| 18 | Two links at one epoch, replayed together onto a head behind it, leave `olh.info` on the one logged last while the index makes the smaller instance current (registry, "radosgw's apply_olh_log applies a same-epoch link the class did not make current") | both | S3-correctness (multisite only) | unreproduced | radosgw's replay on a first pass; a retry from a fresh `olh.ver` keeps the class's current version (VD-1); exclusion | V4 |
+| 19 | A head removal that fails with anything but ECANCELED still clears the key's OLH index entry (registry, "radosgw's clear_olh clears the index's OLH entry after a failed head removal") | both | data corruption (honest failure) | unreproduced | radosgw's clear, a failure other than not found logged | V4 |
+| 20 | A versioned write whose key's OLH head goes between `set_olh`'s read and its init fails with ENOENT after its version is written (registry, "radosgw's versioned write fails when the key's OLH head goes between its read and its init") | both | S3-correctness (race) | unreproduced | V4's init answers ENOENT as radosgw's does; `setOLH` retries it from a fresh read within its 100 attempts (VD-12); exclusion | V4, V5b |
+| 21 | A read that replays a pending modification serves the version current before it, a 404 NoSuchKey while the previous version is current when the replay is the deletion of the current version (registry, "radosgw's follow_olh answers the version that was current before the replay it runs") | both | S3-correctness (race) | unreproduced | V4's `followOLH` answers as radosgw's does; V6 resolves again after the update (VD-11); exclusion | V4, V6 |
+| 22 | A link at the OLH entry's own epoch, logged after a replay read the log, is trimmed by that replay unapplied, so when the class made it current `olh.info` keeps the earlier link while the index makes it current; the opposite of row 18 (registry, "cls_rgw's OLH log trim drops an unapplied link at the trimmed epoch") | both | S3-correctness (multisite only) | unreproduced | reproduced through the class: V4's replay trims to its last epoch as radosgw's does | V4 |
 
 Not a radosgw defect, but made reachable by this unit: the seam dropped a failed class call's
 output, which made `RGWBIAdvanceAndRetryError` fatal (phase 1's exclusion "A shard that answers
