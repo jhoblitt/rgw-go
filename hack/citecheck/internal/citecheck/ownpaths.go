@@ -33,10 +33,14 @@ func rgwgoRoot(name string) string {
 
 // ownPath reports whether name, as a markdown citation writes it, is the
 // path from rgw-go's root of a file of rgw-go's, which stays plain.
-func (d *mdDoc) ownPath(name string) bool {
-	if d.root == "" || !filepath.IsLocal(name) {
+func (d *mdDoc) ownPath(name string) bool { return ownFile(d.root, name) }
+
+// ownFile reports whether name, as a citation writes it, is the path from
+// root, rgw-go's root or "" when there is none, of a file of rgw-go's.
+func ownFile(root, name string) bool {
+	if root == "" || !filepath.IsLocal(name) {
 		return false
 	}
-	fi, err := os.Stat(filepath.Join(d.root, filepath.FromSlash(name)))
+	fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(name)))
 	return err == nil && fi.Mode().IsRegular()
 }

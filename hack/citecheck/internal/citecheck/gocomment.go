@@ -19,12 +19,16 @@ type commentLine struct {
 }
 
 // commentPara is a run of comment lines read as one text, its lines joined
-// by single blanks: a paragraph, a list item, or a comment after code.
+// by single blanks: a paragraph, a list item, a comment after code, the
+// explanation of a //nolint directive, or one line of a code block.
 type commentPara struct {
 	lines []commentLine
 	// wrap reports whether the paragraph is plain prose that --fix may
 	// rewrap: unindented lines, not a list item or a heading.
 	wrap bool
+	// code reports whether the paragraph is a line of a code block, which
+	// --fix does not rewrite.
+	code bool
 	text string
 	// at holds the offset in text of each line's first byte.
 	at []int
@@ -37,12 +41,13 @@ type commentGroup struct {
 	paras []*commentPara
 }
 
-// goComments returns the prose of a Go file's // comments, group by group.
+// goComments returns the text of a Go file's // comments, group by group.
 // A cgo preamble is C, not prose, so neither a block comment nor the //
 // lines right above an import of "C" are read; nor are directives, such as
-// //go:build and //nolint, a line with no blank after its "//", or a code
-// block, a span of indented lines that does not start with a list marker,
-// which go/doc/comment would print as code.
+// //go:build, or a line with no blank after its "//", but for the
+// explanation after the " // " of a //nolint directive. A code block, a
+// span of indented lines that does not start with a list marker, which
+// go/doc/comment would print as code, is read a line at a time.
 func goComments(src []byte) []*commentGroup {
 	var groups []*commentGroup
 	starts := lineStarts(src)
@@ -184,8 +189,8 @@ func classify(src []byte, off int) (kind lineKind, text int) {
 // groupOf reads a run of full-line comments into paragraphs: plain
 // paragraphs, which a blank comment line, a directive, a list item or an
 // indented line ends; list items, an indented or unindented list marker's
-// line and the lines that continue it; and headings. A code block is left
-// out.
+// line and the lines that continue it; headings; a //nolint directive's
+// explanation; and each line of a code block.
 func groupOf(src []byte, starts, run []int) *commentGroup {
 	g := &commentGroup{}
 	var cur *commentPara
@@ -197,14 +202,26 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 	for _, off := range run {
 		kind, text := classify(src, off)
 		end := lineEndOf(src, off)
-		line := commentLine{n: lineNumber(starts, off), start: text, end: end, prefix: string(src[lineStartOf(src, off):text])}
+		n := lineNumber(starts, off)
+		line := commentLine{n: n, start: text, end: end, prefix: string(src[lineStartOf(src, off):text])}
 		body := string(src[text:end])
+		// alone is the line as a paragraph of its own: a code block's line,
+		// or a directive's explanation.
+		alone := func(code bool) {
+			cur = &commentPara{code: code}
+			cur.add(line, body)
+			g.paras = append(g.paras, cur)
+			cur = nil
+		}
 		switch kind {
 		case blankLine:
 			cur = nil
 			continue
 		case rawLine:
 			cur, inCode, inList = nil, false, false
+			if p := lintExplanation(src, off, n); p != nil {
+				g.paras = append(g.paras, p)
+			}
 			continue
 		case textLine:
 			inCode, inList = false, false
@@ -222,6 +239,7 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 		case indentedLine:
 			switch {
 			case inCode:
+				alone(true)
 				continue
 			case listItem(body):
 				inList = true
@@ -231,7 +249,8 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 					start(false)
 				}
 			default:
-				inCode, cur = true, nil
+				inCode = true
+				alone(true)
 				continue
 			}
 		}
@@ -240,14 +259,41 @@ func groupOf(src []byte, starts, run []int) *commentGroup {
 	return g
 }
 
-// trailingPara returns the prose of a comment after code, or nil for a
-// directive such as //nolint.
+// trailingPara returns the prose of a comment after code, the explanation of
+// a //nolint directive after code, or nil for another directive.
 func trailingPara(src []byte, off, n int) *commentPara {
 	kind, text := classify(src, off)
+	if kind == rawLine {
+		return lintExplanation(src, off, n)
+	}
 	if kind != textLine && kind != indentedLine {
 		return nil
 	}
 	end := lineEndOf(src, off)
+	p := &commentPara{}
+	p.add(commentLine{n: n, start: text, end: end, prefix: string(src[lineStartOf(src, off):text])}, string(src[text:end]))
+	return p
+}
+
+// lintExplanation returns the explanation of the //nolint directive at off, on
+// line n, the text after the first " // " in it, as a paragraph of its own,
+// or nil when the comment is no //nolint directive or explains nothing.
+func lintExplanation(src []byte, off, n int) *commentPara {
+	end := lineEndOf(src, off)
+	body := src[off+2 : end]
+	name := body
+	if i := bytes.IndexAny(body, ": "); i >= 0 {
+		name = body[:i]
+	}
+	k := bytes.Index(body, []byte(" // "))
+	if string(name) != "nolint" || k < 0 {
+		return nil
+	}
+	rest := body[k+4:]
+	text := off + 2 + k + 4 + len(rest) - len(bytes.TrimLeft(rest, " \t"))
+	if text == end {
+		return nil
+	}
 	p := &commentPara{}
 	p.add(commentLine{n: n, start: text, end: end, prefix: string(src[lineStartOf(src, off):text])}, string(src[text:end]))
 	return p

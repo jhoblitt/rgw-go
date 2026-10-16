@@ -3,6 +3,7 @@ package citecheck
 import (
 	"cmp"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -745,7 +746,7 @@ func isCommitWord(lw string) bool {
 // recording the ref, since nothing tells it is not, unless its paragraph
 // names another repository, as rook or go-ceph. It records the paths found,
 // which the reason it fails by names.
-func (g *goChecker) mdIsCeph(it *goItem, cands []candidate, off int) (bool, error) {
+func (g *goChecker) mdIsCeph(_ *paraScan, it *goItem, cands []candidate, off int) (bool, error) {
 	name := it.name
 	if it.kind == contItem {
 		switch {
@@ -804,10 +805,20 @@ func (g *goChecker) mdIsCeph(it *goItem, cands []candidate, off int) (bool, erro
 }
 
 // notLink returns why a plain citation of ceph fails when it is not
-// resolved: it is not a link, and, in markdown, which of ceph's files it
-// names and what to write instead, since rgw-go's own files stay plain.
+// resolved: it is not a link, and which of ceph's files it names and what to
+// write instead, since rgw-go's own files stay plain; or, for a Go comment's
+// continuation whose file only a comment above names, that file, and what to
+// write when it is no line of it.
 func (g *goChecker) notLink(it *goItem) string {
-	if g.md == nil || len(it.cephPaths) == 0 {
+	tail := ""
+	if g.md == nil && it.parenOnly {
+		tail = ", or, if it is no line number, write it outside parentheses"
+	}
+	switch {
+	case g.md == nil && it.far != "":
+		return fmt.Sprintf("%s: it continues %s, which a comment before its own names: link it, or, if it is no line of "+
+			"that file, name the file it is a line of before it in its own comment%s", notALink, path.Base(it.far), tail)
+	case len(it.cephPaths) == 0:
 		return notALink
 	}
 	paths := it.cephPaths
@@ -816,5 +827,5 @@ func (g *goChecker) notLink(it *goItem) string {
 		paths, more = paths[:3], fmt.Sprintf(" and %d more", len(it.cephPaths)-3)
 	}
 	return fmt.Sprintf("%s: ceph has %s%s: link it, or, if it cites rgw-go's own file, write that file's path from "+
-		"rgw-go's root", notALink, strings.Join(paths, ", "), more)
+		"rgw-go's root%s", notALink, strings.Join(paths, ", "), more, tail)
 }
