@@ -5613,6 +5613,107 @@ does the following.
     (`docs/ceph-upstream-bugs.md`, "[radosgw stores a COMPOSITE CRC upload's
     checksum as a full-object
     CRC](ceph-upstream-bugs.md#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc)").
+- **apply_olh_log's olh.ver guard is EQ on the bytes read, retried from a
+  fresh read.** radosgw replays a versioned key's pending log onto its OLH
+  head in one op guarded by `cmpxattr(olh.ver, GTE, last epoch)` in the
+  OSD's u64 mode, which passes whenever the log's last epoch is at or above
+  the stored `olh.ver`
+  ([rgw_rados.cc:8434-8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8434-L8435),
+  [rgw_rados.cc:9180-9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9180-L9181)).
+  librados' C API compares in string mode only, where a GTE puts "9" above
+  "10" (docs/cgo-limitations.md, "librados' C API has no u64-mode
+  cmpxattr"). rgw-go guards the op with `cmpxattr(olh.ver, EQ, <the bytes
+  it read>)` in string mode (`applyOLHLog`, `internal/driver/olh_head.go`),
+  which also refuses an apply when another writer applied any epoch since
+  the head was read, where radosgw's lets it through when its log reaches
+  that epoch. A refused apply writes nothing and answers ECANCELED, and
+  rgw-go then reads the head and the log again and applies anew, up to a
+  bound, which keeps the progress radosgw's GTE keeps; past the bound
+  ECANCELED is success, as radosgw takes it, and the pending attrs wait for
+  the next reader's replay. The attrs written are radosgw's, with two
+  differences.
+  - The retry compares the log's links with the fresh `olh.ver`. When
+    another writer has applied a link at an epoch two links share, the
+    retry keeps the version the class made current, where radosgw's pass,
+    comparing with the `olh.ver` it read, writes the link logged last
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's apply_olh_log applies a
+    same-epoch link the class did not make
+    current](ceph-upstream-bugs.md#radosgws-apply_olh_log-applies-a-same-epoch-link-the-class-did-not-make-current)").
+  - The equality guard also takes a log whose last epoch is below a stored
+    `olh.ver` that has not changed since the read, which radosgw's GTE
+    refuses. That happens after "[radosgw's clear_olh clears the index's OLH
+    entry after a failed head
+    removal](ceph-upstream-bugs.md#radosgws-clear_olh-clears-the-indexs-olh-entry-after-a-failed-head-removal)":
+    the next link creates the index's OLH entry again under the head's OLH
+    tag, the `olh_tag` the link carries ([cls_rgw.cc:1792-1804](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1792-L1804),
+    [cls_rgw.cc:1933-1945](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1933-L1945)),
+    and `start_modify` starts the new entry at epoch 2
+    ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+    [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)).
+    rgw-go then writes `olh.ver` back to that epoch. The link at epoch 2
+    lands its `olh.info` only when the tie-break applies it, its instance
+    sorting before the head's current one; the next link lands in any case.
+    radosgw's replay writes nothing to the head, and its GET answers 404
+    until a link's epoch reaches the old `olh.ver`. While the new writer's
+    pending attr remains, the follow's `update_olh` is refused and the
+    follow answers ENOENT
+    ([rgw_rados.cc:8987-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8987-L8996),
+    [rgw_rados.cc:9733-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9733-L9742)).
+    Afterwards `olh.info` still names the version whose unlink led to the
+    clear, which has no head: the unlink logged its `REMOVE_INSTANCE`
+    ([cls_rgw.cc:1970-1971](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971),
+    [cls_rgw.cc:2117-2118](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118)),
+    the replay's `delete_obj` removed it
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)),
+    and a delete marker never had one, so the read finds no
+    `astate->exists` and answers ENOENT
+    ([rgw_rados.cc:7056-7058](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7056-L7058),
+    [rgw_rados.cc:7718-7720](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7718-L7720)).
+    rgw-go's outcome serves the key better.
+
+  Versioning is not served yet; the retry lands with the update that runs
+  the replay.
+- **A replay passes over a version removal that the writer's expected write
+  tag refuses.** radosgw's `apply_olh_log` removes each version its pending
+  log names before its head op, and stops at a removal that fails with
+  anything but ENOENT, writing nothing to the head
+  ([rgw_rados.cc:8537-8540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8537-L8540),
+  [rgw_rados.cc:9283-9286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9283-L9286)).
+  rgw-go stops the same way, except for a removal it guards on the write
+  tag that the replaying writer's own `Expect` read: when that guard refuses
+  the removal, the replay passes over the version, lands its head op and its
+  trim or clear, and then reports the refusal (`applyOLHLog` and the
+  `olhIndex` seam, `internal/driver/olh_head.go`). The version's head and
+  instance entry stay; its pending attr goes with the head op and the entry
+  leaves the log with the trim or clear. When another writer's pending attr
+  refuses the clear, rgw-go trims the log to the replay's last epoch, which
+  its head op holds; radosgw's replay, with no refusal to keep, leaves the
+  log after a refused `clear_olh`
+  ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+  [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)).
+  Only a refusal reported without an error is final. One reported with a
+  failed trim, index clear or clear expiry leaves the entry in the log, and
+  the writer retries the trim or the clear before it acts on the refusal.
+  A trim the class refuses because the OLH entry carries another tag is
+  final only when the entry is gone, or its pending log holds none of the
+  writer's entries: a new link re-tags an entry whose `pending_removal` is
+  set and keeps its pending log
+  ([cls_rgw.cc:1768-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1777),
+  [cls_rgw.cc:1909-1918](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1909-L1918)).
+  Otherwise the refusal is reported as not final and is not retried, since
+  no retry restores the old tag, and the new writer's replay of that log
+  removes the version as radosgw's does.
+  Once the writer's own replay has landed with its trim or clear, no later
+  replay meets the entry. Until then a replay can still remove the version
+  as radosgw's does, guarded only on the write tag it reads: one by another
+  reader running alongside the writer's own, one after the writer's head op
+  failed and its retry never landed, and the replay of a re-tagged entry's
+  kept log. That is the window the
+  versioned delete with `Expect` keeps as radosgw's own, where a replay by
+  another reader, which does not know `Expect`, removes what it reads.
+  radosgw has no `Expect`, so a radosgw writer never meets this case.
+  Versioning is not served yet.
 
 ### Bucket index differences
 
