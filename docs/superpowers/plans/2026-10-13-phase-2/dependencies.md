@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 658c82e. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at f5c3266. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -593,6 +593,7 @@ flowchart LR
   t_WP_13["WP-13"]:::ext
   t_WP_23["WP-23"]:::ext
   t_BC_2 --> t_BC_3
+  t_BC_5 --> t_BC_3
   t_BC_2 --> t_BC_4
   t_BC_3 --> t_BC_4
   t_S2 --> t_BC_6
