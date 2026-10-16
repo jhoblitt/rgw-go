@@ -2940,7 +2940,10 @@ Every new entry adds its row to this table, in document order.
   shared zone alike: `acl.List.RefererPerm` replaces the flags as
   `get_referer_perm` does, and the spec "lets a matching referer grant
   replace even the owner's own grant, as radosgw does"
-  (`internal/acl/eval_test.go`) pins it.
+  (`internal/acl/eval_test.go`) pins it. Under IgnorePublicAcls rgw-go reads
+  no referer grant, so none replaces anything there (`docs/exclusions.md`,
+  "IgnorePublicAcls sets aside a Swift container's grants to everyone, and
+  an ACL holding them is public").
 - **Upstream:** intended behaviour, so there is nothing to file.
   [#18841](https://tracker.ceph.com/issues/18841) (Resolved) is the
   negative-referer report the replacement answered, through
@@ -14223,16 +14226,22 @@ Every new entry adds its row to this table, in document order.
   An ACL an S3 request writes carries no Swift flags, so the
   BlockPublicAcls checks of S3 writes are unaffected.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it today, in all three places:
-  - `acl.Policy.Perm` does not gate its referer branch on
-    `ignorePublicACLs` (`internal/acl/eval.go`);
-  - the object check's Swift fallback passes `false` for it
+- **rgw-go:** no longer reproduces it, in any of the three places
+  (`docs/exclusions.md`, "IgnorePublicAcls sets aside a Swift container's
+  grants to everyone, and an ACL holding them is public"):
+  - `acl.Policy.Perm` reads no referer grant under IgnorePublicAcls
+    (`internal/acl/eval.go`);
+  - the object check's Swift fallback passes IgnorePublicAcls on
     (`objectACL`, `internal/authz/evaluator.go`);
-  - `acl.Policy.IsPublic` keeps the mask (`internal/acl/eval.go`), and
-    GetBucketPolicyStatus's IsPublic takes it
-    (`internal/op/policystatus.go`).
+  - `acl.Policy.IsPublic` counts any flag of the two groups and any
+    referer grant (`internal/acl/eval.go`), and GetBucketPolicyStatus's
+    IsPublic takes it (`internal/op/policystatus.go`).
 
-  rgw-go's fix is a planned task.
+  On both releases' rooket clusters, with a bucket whose ACL radosgw's Swift
+  API set to `.r:*` and whose four block settings an S3 request set, rgw-go
+  refused the anonymous GetObject and ListBucket, with and without a
+  Referer, where the build before the fix served the GetObject and the
+  ListBucket that sent one. radosgw's own answer was not asked.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S3, 2026-10-15, checking `acl.Policy.IsPublic`
   against Amazon S3's rule for ACLs. Its review traced the IgnorePublicAcls

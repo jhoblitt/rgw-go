@@ -4422,6 +4422,56 @@ rgw-go does the following.
   radosgw takes it for none; the authorizer refuses such a bucket's
   requests from anyone but an admin ("A public-access block that does not
   decode refuses the request"), so only an admin meets these refusals.
+- **IgnorePublicAcls sets aside a Swift container's grants to everyone, and
+  an ACL holding them is public.** radosgw's IgnorePublicAcls, `get_perm`'s
+  `ignore_public_acls`, skips the AllUsers and AuthenticatedUsers groups but
+  not the referer grants a Swift container ACL holds, whose lookup,
+  `get_referer_perm`, runs whatever it says
+  ([rgw_acl.cc:180-192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L180-L192),
+  [rgw_acl.cc:180-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L180-L192)).
+  With `rgw_enforce_swift_acls` set, as it is by default
+  ([rgw_common.cc:1581](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1581),
+  [rgw_common.cc:1638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1638)),
+  an object read the object's ACL refuses falls back to the bucket ACL's
+  Swift flags, `bucket_acl.verify_permission` for `swift_perm`, with
+  IgnorePublicAcls left off
+  ([rgw_common.cc:1598-1599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599),
+  [rgw_common.cc:1655-1656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656))
+  (`docs/ceph-upstream-bugs.md`, "radosgw's IgnorePublicAcls and ACL
+  is_public miss Swift's grants to everyone"). So a container a Swift client
+  opened with `X-Container-Read: .r:*` serves anonymous S3 GetObject under
+  IgnorePublicAcls, and ListBucket to a request that sends a Referer. rgw-go
+  reads no referer grant under IgnorePublicAcls, and its Swift fallback
+  honours IgnorePublicAcls as its bucket and object checks do
+  (`acl.Policy.Perm`; `objectACL`, `internal/authz/evaluator.go`), so on
+  both releases it refuses those requests with 403 AccessDenied. It answers
+  403 too to a GET of a missing key that sends a Referer, which radosgw
+  answers 404 NoSuchKey because the referer grant lets the requester list
+  the bucket. The client chooses the Referer, so a referer grant is a grant
+  to everyone; a negative one,
+  `.r:-host`, is set aside too, and a request naming its host gets what the
+  same request without a Referer gets. A matching referer grant therefore
+  replaces none of the requester's own grants under IgnorePublicAcls
+  (`docs/ceph-upstream-bugs.md`, "radosgw lets a matching referer grant
+  replace the requester's own ACL grants"): the owner's S3 PutObject with a
+  Referer that `.r:example.com` matches succeeds there, where radosgw
+  refuses it. `acl.Policy.IsPublic`, which decides the BlockPublicAcls
+  refusals, counts any flag the group map gives AllUsers or
+  AuthenticatedUsers, Swift's READ_OBJS and WRITE_OBJS included, and any
+  referer grant; radosgw's `is_public` masks the groups' flags with
+  FULL_CONTROL and calls such a container private
+  ([rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247),
+  [rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L235-L247)).
+  Since BC-20 GetBucketPolicyStatus's IsPublic takes the same judgment
+  (`op.GetBucketPolicyStatus`, `internal/op/policystatus.go`): for a bucket
+  whose policy is not public, an ACL that only Swift's flags or a referer
+  grant make public is reported IsPublic true, where radosgw, which joins
+  the policy's `is_public` and the ACL's
+  ([rgw_op.cc:8608-8611](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8608-L8611),
+  [rgw_op.cc:9576-9579](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9576-L9579)),
+  reports false.
+  An S3 request can write neither those flags nor a referer grant, so on
+  the ACL an S3 write builds the two judgments agree.
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
   DeleteObject that names a version with 403 AccessDenied unless the
