@@ -318,6 +318,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending |  |
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending |  |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
+| [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16562,3 +16563,75 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit B, Task BC-10, 2026-10-16, porting `apply_rule`;
   the owner's host and protocol by that task's review, 2026-10-16. Derived
   from the source, not reproduced.
+
+## radosgw answers a CORS request with the first rule whose origin matches
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  on main and on the tentacle branch. A CORS configuration that gives one
+  origin several rules answers that origin from the first of them alone. A
+  preflight whose method or requested headers only a later rule allows is
+  refused 403, and any other request that only a later rule allows gets no
+  CORS headers, so the browser keeps its page from reading the response.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_cors.h`, `rgw_cors.cc`, `rgw_cors_s3.h` and `rgw_cors_s3.cc` are
+  identical at the two tags.
+  - `host_name_rule` returns the first rule whose `is_origin_present`
+    holds
+    ([rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L186-L194),
+    [rgw_cors.cc:186-194](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L186-L194)).
+  - The preflight takes that rule, then answers ENOENT when it does not
+    allow the Access-Control-Request-Method or a requested header
+    (`RGWOptionsCORS::validate_cors_request`,
+    [rgw_op.cc:6159-6175](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6159-L6175),
+    [rgw_op.cc:6826-6842](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6826-L6842)),
+    which it sends as 403
+    (`RGWOptionsCORS_ObjStore_S3::send_response`,
+    [rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
+    [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
+  - Every other response takes its CORS headers from the same rule, and
+    sends none when that rule does not allow the request's method
+    (`generate_cors_headers`,
+    [rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600),
+    [rgw_op.cc:1778-1837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1778-L1837)).
+  - Amazon S3 "uses the first CORSRule rule that matches the incoming
+    browser request", a rule matching when the Origin matches its
+    AllowedOrigin, the method, or a preflight's
+    Access-Control-Request-Method, is one of its AllowedMethods, and
+    "every header specified in the Access-Control-Request-Headers request
+    header of a pre-flight request" matches an AllowedHeader (the
+    PutBucketCors reference as the AWS SDK for Go carries it,
+    [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)).
+  - main's `RGWCORSConfiguration::match_rule` takes the first rule that
+    allows the origin, the method and the requested headers, and both the
+    preflight and `generate_cors_headers` call it
+    ([rgw_cors.cc:242-290](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L242-L290)).
+- **Impact:** the configuration's later rules for an origin are dead: a
+  page the owner meant to allow is refused, unless each origin's methods
+  and headers sit in its first rule. No request is allowed that the
+  configuration does not allow.
+- **Releases:** v19.2.7 and v20.2.4 carry it. main carries the fix since
+  cc1dcecee08 and the tentacle branch since 5f25f2bb0e2; no tag does,
+  and the squid branch does not yet (the clone's `origin/squid` at
+  226f1401666, 2026-10-12, has no `match_rule`).
+- **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
+  (`internal/cors/match.go`), is main's `match_rule`
+  (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
+  them").
+- **Upstream:** tracked as [#77575](https://tracker.ceph.com/issues/77575),
+  with the backport trackers [#77584](https://tracker.ceph.com/issues/77584)
+  for tentacle and [#77586](https://tracker.ceph.com/issues/77586) for
+  squid.
+  - main: cc1dcecee08, "rgw: match CORS rules like Amazon S3", from
+    [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), merged as
+    2866fcf20c7 on 2026-06-22.
+  - tentacle: the backport 5f25f2bb0e2, from
+    [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), merged as
+    20cd4f8aa07 on 2026-08-21, in no tag.
+  - squid: [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648),
+    open.
+  - reef: [ceph/ceph#69649](https://github.com/ceph/ceph/pull/69649),
+    closed unmerged.
+- **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
+  main's `match_rule`; confirmed by task BC-2, 2026-10-15, which found the
+  tentacle backport. Derived from the source, not reproduced.
