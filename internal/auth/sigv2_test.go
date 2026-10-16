@@ -67,6 +67,30 @@ var _ = Describe("SigV2", func() {
 		Entry("no colon leaves both empty", "abc", "", ""),
 	)
 
+	It("signs a preflight over its Access-Control-Request-Method, on both routes", func(ctx SpecContext) {
+		req := httptest.NewRequestWithContext(ctx, http.MethodOptions, "http://s3.example.com/b/k", nil)
+		req.Header.Set("Date", v2TestDate)
+		req.Header.Set("Access-Control-Request-Method", http.MethodDelete)
+		req.Header.Set("Authorization", "AWS "+testAccessKey+":sig")
+		d, err := authDataV2(newRequestView(req), &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.stringToSign).To(Equal("DELETE\n\n\n" + v2TestDate + "\n/b/k"))
+
+		pre := httptest.NewRequestWithContext(ctx, http.MethodOptions, "http://s3.example.com/b/k?AWSAccessKeyId=AK&Expires="+v2Expires+"&Signature=s", nil)
+		pre.Header.Set("Access-Control-Request-Method", http.MethodHead)
+		d, err = authDataV2(newRequestView(pre), &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.stringToSign).To(Equal("HEAD\n\n\n" + v2Expires + "\n/b/k"))
+
+		get := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://s3.example.com/b/k", nil)
+		get.Header.Set("Date", v2TestDate)
+		get.Header.Set("Access-Control-Request-Method", http.MethodDelete)
+		get.Header.Set("Authorization", "AWS "+testAccessKey+":sig")
+		d, err = authDataV2(newRequestView(get), &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.stringToSign).To(HavePrefix("GET\n"), "only an OPTIONS request takes the header's method")
+	})
+
 	It("refuses an empty x-amz-security-token header", func(ctx SpecContext) {
 		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://s3.example.com/b/k", nil)
 		req.Header.Set("Date", v2TestDate)

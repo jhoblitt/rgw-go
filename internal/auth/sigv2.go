@@ -42,7 +42,7 @@ var signedSubresourcesV2 = []string{
 // ':' into key and signature, both empty without one. An x-amz-security-token
 // present but empty, in the query or the headers respectively, is refused.
 // Only a header-signed request has its date checked for skew. Every refusal
-// but the skew is EPERM, with no message.
+// but the skew and a preflight's method is EPERM, with no message.
 func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) {
 	d := &authData{payload: payloadClass{kind: payloadNone}}
 	if a, _ := rv.header("authorization"); a == "" {
@@ -72,7 +72,7 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 	}
 	sts, headerTime, err := canonicalStringV2(rv, d.presigned, cfg.DNSNames)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", op.ErrAccessDenied, err)
+		return nil, err
 	}
 	if !d.presigned && !timeSkewOK(now, headerTime) {
 		return nil, op.ErrRequestTimeTooSkewed
@@ -96,14 +96,18 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 // the header route an x-amz-date empties the date line and is the request
 // date, which is otherwise the Date header, and that is also the date line.
 // headerTime is the request date's instant, zero on the query route. The
-// method is the request's; at v20.2.4 radosgw signs an OPTIONS CORS request
-// over its Access-Control-Request-Method instead (get_canonical_method,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258 and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776 at v20.2.4).
+// method line is canonicalMethod's, read once Content-MD5 and the date have
+// passed, as v20.2.4 reads it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258 at v20.2.4),
+// so a preflight's missing method is refused before the caller's skew check.
+// v19.2.7 signs a SigV2 preflight over OPTIONS and refuses no method
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L256 at v19.2.7);
+// rgw-go takes Tentacle's rule on both releases (docs/exclusions.md). The
+// method's refusal is EINVAL, every other EPERM.
 func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts string, headerTime time.Time, err error) {
 	md5, _ := rv.header("content-md5")
 	if !isBase64Charset(md5) {
-		return "", time.Time{}, errors.New("content-md5 is not base64")
+		return "", time.Time{}, fmt.Errorf("%w: content-md5 is not base64", op.ErrAccessDenied)
 	}
 	ctype, _ := rv.header("content-type")
 	var (
@@ -117,16 +121,20 @@ func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts 
 		reqDate, ok := rv.header("x-amz-date")
 		if !ok {
 			if reqDate, ok = rv.header("date"); !ok {
-				return "", time.Time{}, errors.New("missing request date")
+				return "", time.Time{}, fmt.Errorf("%w: missing request date", op.ErrAccessDenied)
 			}
 			date = reqDate
 		}
 		if headerTime, err = v2RequestTime(reqDate); err != nil {
-			return "", time.Time{}, err
+			return "", time.Time{}, fmt.Errorf("%w: %w", op.ErrAccessDenied, err)
 		}
 	}
+	method, err := canonicalMethod(rv)
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	var b strings.Builder
-	for _, line := range []string{rv.req.Method, md5, ctype, rgwtext.CString(date)} {
+	for _, line := range []string{method, md5, ctype, rgwtext.CString(date)} {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}

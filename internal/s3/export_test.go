@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"net/http"
 	"slices"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -53,4 +54,14 @@ func BoundRoutesForTest(h *Handler) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// AddOptionsRowForTest adds to the OPTIONS method at scope a first row that
+// dispatches key to name, as a stray dispatch-table row would, and returns
+// the function that restores the table.
+func AddOptionsRowForTest(scope op.Scope, key, name string) (restore func()) {
+	k := methodKey{scope, http.MethodOptions}
+	old := table[k]
+	table[k] = method{rows: append([]row{{key: key, name: name}}, old.rows...), def: old.def}
+	return func() { table[k] = old }
 }

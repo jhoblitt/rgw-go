@@ -391,6 +391,13 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		return
 	}
 	ApplyAuth(r, res)
+	// An identity granted without a signature compare may reach the preflight
+	// and nothing else, whatever dispatch sent it to, and whether or not the
+	// route runs through op.Run.
+	if refused := op.RefuseUnverified(r.Identity, route.Name); refused != nil {
+		refuse(ctx, w, r, refused)
+		return
+	}
 	if route.Name == "put_obj" && r.Body != nil {
 		r.Body = &countingReader{r: r.Body, n: &r.BytesIn}
 	}
@@ -407,7 +414,11 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		WriteError(ctx, w, r, err)
 		return
 	}
-	if u := r.Identity.User; u != nil && u.Suspended != 0 {
+	// An unverified identity's request, a preflight, proves only that its
+	// sender knows the key's id, so refusing a suspended user's would tell
+	// that sender the user is suspended; radosgw refuses it
+	// (docs/exclusions.md).
+	if u := r.Identity.User; u != nil && u.Suspended != 0 && !r.Identity.Unverified {
 		WriteError(ctx, w, r, op.ErrUserSuspended)
 		return
 	}

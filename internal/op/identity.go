@@ -1,6 +1,7 @@
 package op
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -38,6 +39,40 @@ type Identity struct {
 	// the authorizer decodes them on demand, as radosgw does per request
 	// (get_iam_identity_policies_from_attr).
 	Attrs map[string][]byte
+	// Unverified marks an identity its authenticator granted on its access
+	// key's id alone, without comparing the request's signature: a CORS
+	// preflight. Its sender has shown nothing of the key's secret, so nothing
+	// the request causes may be charged to the key's user or account, or
+	// depend on them, but for the tenant its bucket resolves under, which is
+	// radosgw's reason for looking the key up at all (docs/exclusions.md, "A
+	// preflight's answer says nothing of its key's user"). RefuseUnverified
+	// keeps such an identity to the preflight: Run calls it for every op and
+	// the S3 handler for every route it dispatches; the admin handler, which
+	// serves no preflight, refuses any Unverified identity.
+	Unverified bool
+}
+
+// OptionsCORSName is the op and route name of radosgw's CORS preflight,
+// RGWOptionsCORS
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1761 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1917 at v20.2.4),
+// the one an Unverified identity may reach.
+const OptionsCORSName = "options_cors"
+
+// RefuseUnverified refuses an Unverified identity for any op or route but
+// OptionsCORSName. radosgw grants a request without a signature compare only
+// when its op is the preflight
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931 at v20.2.4),
+// where rgw-go grants one by its method and relies on dispatch to send it
+// to the preflight alone; such an identity anywhere else is a dispatch fault,
+// so the refusal is ErrInternalError, which the error writers log at error
+// level. Its text names the op or route and nothing of the credentials.
+func RefuseUnverified(id Identity, name string) error {
+	if !id.Unverified || name == OptionsCORSName {
+		return nil
+	}
+	return fmt.Errorf("%w: an identity granted without a signature compare reached %s", ErrInternalError, name)
 }
 
 // Anonymous is the identity of an unauthenticated request: a

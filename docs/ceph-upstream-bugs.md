@@ -183,6 +183,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | none | none | ✓ |
 | [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | none | none | ✓ |
 | [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) | ✓ (the rate-limit charge) |
+| [radosgw's signed CORS preflight takes a system key's rgwx-uid unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified) | pending | pending | ✓ |
 | [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | [#80899](https://tracker.ceph.com/issues/80899) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | [#80899](https://tracker.ceph.com/issues/80899), [#80902](https://tracker.ceph.com/issues/80902) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
@@ -8887,20 +8888,116 @@ Every new entry adds its row to this table, in document order.
     (`rate_limit`, `rgw_process.cc:108-132` at both tags, called at `:248`,
     `:251`). It counts only GET and HEAD as reads, so an OPTIONS request is
     charged as a write (`rgw_ratelimit.h:153-154`, `:154-155`).
+  - The same limit decides the preflight's answer: `rate_limit` runs for it
+    before the op executes and answers -ERR_RATE_LIMITED, 503 SlowDown, once
+    the key user's limit, or the global user limit, is spent
+    ([rgw_process.cc:248-249](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L248-L249)
+    and
+    [rgw_common.cc:135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L135) at v19.2.7,
+    [rgw_process.cc:251-252](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L251-L252)
+    and
+    [rgw_common.cc:136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L136) at v20.2.4).
+    It exempts the key's user as the user record says: at v19.2.7 an admin
+    or a system user
+    ([rgw_process.cc:96-98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L96-L98)),
+    at v20.2.4 a system request alone
+    ([rgw_process.cc:97](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L97)),
+    which `SysReqApplier` makes of every system user's request, the
+    preflight's included
+    ([rgw_auth_filters.h:327-330](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L327-L330) at v19.2.7,
+    [rgw_auth_filters.h:354-357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L354-L357) at v20.2.4).
+  - The op mask check runs for the preflight
+    ([rgw_process.cc:208](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L208) at v19.2.7,
+    [rgw_process.cc:208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L208) at v20.2.4).
+    `RGWOptionsCORS` requires the read bit
+    ([rgw_op.h:1763](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1763) at v19.2.7,
+    [rgw_op.h:1919](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1919) at v20.2.4),
+    and `verify_op_mask` answers -EPERM, 403 AccessDenied, when the key
+    user's op mask lacks it
+    ([rgw_op.cc:1017-1035](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1017-L1035) at v19.2.7,
+    [rgw_op.cc:1216-1234](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1216-L1234) at v20.2.4).
+  - A response without an error carries x-amz-request-charged when the
+    bucket is requester-pays and the identity does not own it
+    ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601) at v19.2.7,
+    [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606) at v20.2.4).
+  - `log_usage` files the preflight as any request
+    ([rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L203-L219) at v19.2.7,
+    [rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L203-L219) at v20.2.4):
+    under the bucket owner when a bucket is named, with the request's user
+    as payer on a requester-pays bucket unless the answer is 403, and under
+    `s->owner` when no bucket is named. `Strategy::apply` sets `s->owner`
+    from the unverified identity
+    ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L534) at v19.2.7,
+    [rgw_auth.cc:549](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L549) at v20.2.4),
+    and a bucket token that ends at its colon, as in `OPTIONS /t:`, leaves
+    `s->bucket_name` empty when `postauth_init` refuses it
+    ([rgw_bucket.cc:122-126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket.cc#L122-L126)
+    and
+    [rgw_rest_s3.cc:4997-4998](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4997-L4998) at v19.2.7,
+    [rgw_bucket.cc:122-126](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket.cc#L122-L126)
+    and
+    [rgw_rest_s3.cc:5527-5528](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5527-L5528) at v20.2.4).
 - **Impact:** anyone who knows an access key id, but not its secret, can send
   a preflight that runs as that key's user. It learns whether the user is
   suspended (403 UserSuspended), and the ops log attributes the request to
   the key. Where per-user rate limits are set, such preflights drain the
   user's write-op budget, and the user's own writes are then refused as
-  rate-limited: a denial of service against that user. What the preflight
-  reads is no more than an anonymous preflight reads.
+  rate-limited: a denial of service against that user. The same limit
+  makes a forged preflight 503 SlowDown once the key user's budget is spent,
+  so its answer tells the sender that user's rate state, and never so for a
+  system key, or on Squid an admin's, which tells the sender that the key is
+  one. A preflight also answers 403 AccessDenied when the key user's op
+  mask lacks the read bit, and on a requester-pays bucket its
+  x-amz-request-charged says whether the key's user owns that bucket.
+  Forged preflights inflate usage records the skip makes the key user's:
+  that user's as payer on a requester-pays bucket and, with no bucket named,
+  that user's or its account's. With a bucket named the record is the
+  bucket owner's, as an anonymous preflight's is, so that charge needs no
+  skip. What the preflight reads is no more than an anonymous preflight
+  reads.
 - **Releases:** v19.1.0 on; checked at v19.2.6, v20.2.4 and main
   6cafff02b39.
-- **rgw-go:** differs: rgw-go serves no CORS preflight in phase 1 and
-  verifies a signed OPTIONS request's signature as any other's
-  (`docs/exclusions.md`, "A signed OPTIONS request is verified over OPTIONS
-  and answered 501 until CORS lands"). Phase 2's CORS work decides whether
-  to take the skip.
+- **rgw-go:** takes the skip, as radosgw does
+  ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401) at v19.2.7,
+  [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931) at v20.2.4).
+  - It signs a preflight over its Access-Control-Request-Method and refuses
+    one that names no CORS method with 400 InvalidArgument before the key is
+    looked up, SigV2 on Squid included (`docs/exclusions.md`, "A SigV2
+    preflight is signed over the method it asks for on Squid too").
+  - Once the key resolves as `LocalEngine` resolves it, it grants the
+    preflight without comparing its signature, SigV2 and SigV4 alike
+    (`internal/auth/verifier.go:115-137`), and marks the identity as
+    granted on its key's id alone.
+  - It keeps the identity so granted to the preflight: `op.Run`, the S3
+    handler and the admin handler refuse it everywhere else with 500
+    InternalError (`op.RefuseUnverified`, `internal/op/identity.go:71-76`;
+    `internal/op/op.go:70`, `internal/s3/handler.go:397`,
+    `internal/admin/handler.go:277`), so a stray dispatch row fails closed.
+  - Unlike radosgw, it answers every preflight whose key resolves alike, so
+    the preflight tells its sender no more than a forged request of another
+    method does: it runs a suspended user's preflight where radosgw answers
+    403 UserSuspended, and takes no `rgwx-uid` on one (`docs/exclusions.md`,
+    "A preflight's answer says nothing of its key's user").
+  - Unlike radosgw, it accounts a preflight's usage as an anonymous
+    request's, so a forged one files nothing under the key's user or account
+    and charges that user nothing as payer (`internal/op/usagelog.go:32-42`;
+    `docs/exclusions.md`, "A preflight's usage is accounted as an anonymous
+    request's").
+  - Only the preflight runs on such a request: the S3 handler dispatches an
+    OPTIONS request on a bucket or an object to it and refuses any other
+    before authentication (`internal/s3/dispatch.go:32-38`, `:205`,
+    `:253`), and the admin API refuses every OPTIONS request before
+    authentication (`internal/admin/dispatch.go:142-146`).
+    The preflight is answered 501 NotImplemented until CORS's ops land
+    (`docs/exclusions.md`, "A CORS preflight is answered 501 until CORS
+    lands").
+  - rgw-go has no rate limiter yet. Phase 3's preflight must neither charge
+    the key's user nor apply that user's limit or exemption: it is limited
+    as an anonymous request, as such a request proves only that its sender
+    knows the key's id. radosgw's `rate_limit` charges the request's user
+    and applies that user's limit
+    ([rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L108-L134) at v19.2.7,
+    [rgw_process.cc:108-134](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L108-L134) at v20.2.4).
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. The skip is
   [#64308](https://tracker.ceph.com/issues/64308)'s, named by fe15b52edb5's
@@ -8910,6 +9007,61 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A, Task 9, 2026-10-04, transcribing
   `LocalEngine::authenticate`; confirmed by the Task 9 review. Not
   reproduced.
+
+## radosgw's signed CORS preflight takes a system key's rgwx-uid unverified
+
+- **Kind:** defect, security-relevant and found by us: an information
+  disclosure to anyone who knows a system user's access key id, but not its
+  secret. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` grants a request typed `RGW_OP_OPTIONS_CORS`
+    once its key resolves, without comparing its signature, through
+    `create_apl_local`
+    ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401),
+    [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931);
+    "radosgw grants a signed CORS preflight without comparing its
+    signature", above).
+  - `AWSAuthStrategy::create_apl_local` wraps that `LocalApplier` in
+    `SysReqApplier` (`add_sysreq`,
+    [rgw_auth_s3.h:178-191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L178-L191),
+    [rgw_auth_s3.h:179-193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L179-L193)).
+  - `Strategy::apply` then calls the applier's `load_acct_info` and answers
+    the `int` it throws
+    ([rgw_auth.cc:519](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L519)
+    and
+    [rgw_auth.cc:537-539](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L537-L539),
+    [rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)
+    and
+    [rgw_auth.cc:552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L552)).
+  - For a system user, `SysReqApplier::load_acct_info` reads `rgwx-uid` and
+    throws `-EACCES` when the user or account it names does not load
+    ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317),
+    [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345));
+    for any other user it reads nothing.
+  - On Tentacle the user it loads becomes `s->user`
+    ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)),
+    which the suspended check then reads
+    ([rgw_process.cc:374-376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L374-L376)).
+- **Impact:** a preflight with a system user's access key id, any
+  signature and `?rgwx-uid=` naming a user or an account is 403
+  AccessDenied when that user or account does not load and is served
+  otherwise. Its sender learns that the key is a system user's, as another
+  user's key ignores `rgwx-uid`, and can then test, one request each,
+  whether any user id or account id exists. On Tentacle a named user that
+  is suspended answers 403 UserSuspended, so the sender learns that too. A
+  forged request of any other method is refused with SignatureDoesNotMatch
+  before `load_acct_info` runs, so only the preflight discloses this. The
+  sender needs only a system key's id, which every request signed with that
+  key and every URL presigned with it carries in the clear.
+- **Releases:** v19.1.0 on, with the preflight's signature skip; checked
+  at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: a preflight's identity takes no `rgwx-uid`
+  (`internal/auth/verifier.go:116-123`; `docs/exclusions.md`, "A
+  preflight's answer says nothing of its key's user").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-5, 2026-10-15, by the security review of its
+  preflight signing, tracing what a forged preflight's answer tells its
+  sender. Derived from the source, not reproduced.
 
 ## radosgw's copy drops its tail references after a head write that timed out
 

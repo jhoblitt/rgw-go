@@ -3422,35 +3422,127 @@ does the following.
   passes its 15-minute skew check (`docs/ceph-upstream-bugs.md`, "radosgw's
   SigV2 date check wraps the request time to 32 bits"). rgw-go compares the
   full time and answers such a request with 403 RequestTimeTooSkewed.
-- **A signed OPTIONS request is verified over OPTIONS and answered 501
-  until CORS lands.** radosgw serves an OPTIONS request on a bucket or an
-  object as its CORS preflight op. It builds the canonical request over
-  the request's `Access-Control-Request-Method` instead of `OPTIONS`, and
-  answers 400 InvalidArgument, before it looks the key up, when that header
-  is missing or names no CORS method: for SigV4 on both floors, for SigV2
-  on Tentacle only (`get_v4_canonical_method`, `rgw_auth_s3.cc:705-732`,
-  called at `rgw_rest_s3.cc:5827` at v19.2.6; `get_canonical_method`,
-  `rgw_auth_s3.cc:1749-1776`, called at `:258` and at `rgw_rest_s3.cc:6394`
-  at v20.2.4). For a key the index finds, once the user's account loads and
-  the key is in the user's record, it then skips the signature compare,
-  SigV2 and SigV4 alike, and runs the preflight (`rgw_rest_s3.cc:6325-6360`
-  at v19.2.6, `:6896-6931` at v20.2.4; `docs/ceph-upstream-bugs.md`,
-  "radosgw grants a signed CORS preflight without comparing its
-  signature"). rgw-go serves no CORS preflight in phase 1: it verifies a
-  signed OPTIONS request as any other, over the method `OPTIONS`, and
-  answers one that verifies with 501 NotImplemented. Where radosgw runs the
-  preflight whatever the signature, rgw-go answers 403
-  SignatureDoesNotMatch unless the request was signed over `OPTIONS`, a
-  request signed as radosgw expects included. Where radosgw answers 400
-  InvalidArgument for a missing or unknown method, rgw-go goes on to the
-  key: an unknown one is 403 InvalidAccessKeyId, and a known one is
-  answered as its signature decides. Otherwise an unknown key is 403
-  InvalidAccessKeyId from both. rgw-go does not give that 400 on its own:
-  it is the first step of radosgw's preflight signing, which phase 2's
-  CORS work takes whole, and alone it would refuse requests as radosgw
-  does while verifying the rest over another method. An unsigned OPTIONS
-  request is anonymous in both, which rgw-go answers with 501
-  NotImplemented.
+- **A CORS preflight is answered 501 until CORS lands.** radosgw serves an
+  OPTIONS request on a bucket or an object as its CORS preflight op
+  (`op_options`,
+  [rgw_rest_s3.cc:4823-4826](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4823-L4826) and
+  [rgw_rest_s3.cc:4908-4911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4908-L4911) at v19.2.7,
+  [rgw_rest_s3.cc:5348-5351](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5348-L5351) and
+  [rgw_rest_s3.cc:5438-5441](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5438-L5441) at v20.2.4).
+  rgw-go authenticates a preflight as radosgw does, a signed one without
+  comparing its signature (`docs/ceph-upstream-bugs.md`, "radosgw grants a
+  signed CORS preflight without comparing its signature"), but serves no
+  preflight yet: where radosgw runs the preflight, for a signed or an
+  anonymous OPTIONS request, rgw-go answers 501 NotImplemented.
+- **A preflight's answer says nothing of its key's user.** radosgw grants
+  a signed preflight without comparing its signature, so its key's id is
+  all its sender has to show (`docs/ceph-upstream-bugs.md`, "radosgw grants
+  a signed CORS preflight without comparing its signature"). Two of
+  radosgw's answers that come before any preflight op runs then tell that
+  sender more than any forged request of another method does, which radosgw
+  and rgw-go answer 403 SignatureDoesNotMatch for every key that resolves:
+  - a suspended user's preflight is 403 UserSuspended, as the suspended
+    check runs for every op
+    ([rgw_process.cc:372-374](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L372-L374) at v19.2.7,
+    [rgw_process.cc:374-376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L374-L376) at v20.2.4);
+  - a system user's preflight takes its `rgwx-uid`: the preflight's grant
+    goes through `create_apl_local`
+    ([rgw_rest_s3.cc:6397](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6397) at v19.2.7,
+    [rgw_rest_s3.cc:6927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6927) at v20.2.4),
+    which wraps the local applier in `SysReqApplier`
+    ([rgw_auth_s3.h:186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L186) at v19.2.7,
+    [rgw_auth_s3.h:188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L188) at v20.2.4),
+    and its `load_acct_info` answers 403 AccessDenied when the user or
+    account `rgwx-uid` names does not load
+    ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317) at v19.2.7,
+    [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345) at v20.2.4).
+    That tells the sender that the key is a system user's and whether the
+    user or account it names exists (`docs/ceph-upstream-bugs.md`,
+    "radosgw's signed CORS preflight takes a system key's rgwx-uid
+    unverified").
+
+  radosgw's other such answers come after the grant, each from the key's
+  user: the rate limiter answers 503 SlowDown once that user's limit is
+  spent, and exempts a system user's key, and on Squid an admin's too
+  ([rgw_process.cc:96-98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L96-L98) at v19.2.7,
+  [rgw_process.cc:97](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L97) at v20.2.4);
+  the op mask check refuses a user whose op mask lacks the read bit; and
+  the preflight's x-amz-request-charged says whether that user owns a
+  requester-pays bucket (the same registry entry has each). rgw-go has no
+  rate limiter and serves no preflight op yet. When it has them, a
+  preflight is limited as an anonymous request, and its answer depends on
+  neither the op mask nor who owns the bucket. The one thing of the key's
+  user a preflight's answer may depend on is the tenant its bucket resolves
+  under, which is radosgw's reason for looking the key up.
+
+  rgw-go answers every preflight whose key resolves alike: it runs a
+  suspended user's preflight (`internal/s3/handler.go:421`) and takes no
+  `rgwx-uid` on any preflight (`internal/auth/verifier.go:116-123`), on both
+  releases. A suspended user's own preflight therefore passes where radosgw
+  refuses it; the request it precedes is still refused. Only radosgw's own
+  multisite connection sends `rgwx-uid`, and multisite is excluded, so no
+  client rgw-go serves loses one.
+- **A preflight's usage is accounted as an anonymous request's.** radosgw
+  files a preflight's usage as any request's (`log_usage`,
+  [rgw_log.cc:195-251](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L195-L251) at v19.2.7,
+  [rgw_log.cc:195-251](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L195-L251) at v20.2.4).
+  With a bucket named, the record is the bucket owner's (`:207-208`), and the
+  request's user is its payer on a requester-pays bucket unless the answer is
+  403 (`:215-219`); with no bucket named, the record is `s->owner`'s
+  (`:203`), which `Strategy::apply` takes from the identity
+  ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L534) at v19.2.7,
+  [rgw_auth.cc:549](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L549) at v20.2.4).
+  A system user's request is not logged at all (`:197-198`). So forged
+  preflights, which need only a key's id, inflate the bucket owner's usage,
+  the key user's as payer, or, with no bucket named, the key user's or its
+  account's: a bucket token that ends at its colon, `OPTIONS /t:` or
+  `/t:/k`, names none and is answered 400 InvalidBucketName.
+
+  rgw-go's `op.LogUsage` filed a preflight as radosgw does. It now accounts
+  an identity the verifier marks as granted on its key's id alone as an
+  anonymous request's (`internal/op/usagelog.go:32-42`), on both releases:
+  - with a bucket named, the record stays the bucket owner's, as an
+    anonymous preflight's is, and the payer on a requester-pays bucket is
+    the anonymous user, not the key's user;
+  - with no bucket named, the record is the anonymous user's, not the key's
+    user's or account's;
+  - a system user's preflight is logged as an anonymous one, not left out.
+
+  The preflight is answered 501 until CORS lands, and that answer loads no
+  bucket, so today only the bucketless case writes an entry.
+- **A SigV2 preflight is signed over the method it asks for on Squid too.**
+  Tentacle builds a SigV2 OPTIONS request's string to sign over its
+  `Access-Control-Request-Method`, and answers 400 InvalidArgument when that
+  header is missing or names no CORS method, once the credentials,
+  Content-MD5 and the request date have passed and before the skew check
+  and the key lookup
+  (`get_canonical_method`, called at
+  [rgw_auth_s3.cc:258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L258),
+  [rgw_auth_s3.cc:1749-1776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776) at v20.2.4).
+  Squid applies that rule to SigV4 alone (`get_v4_canonical_method`,
+  [rgw_auth_s3.cc:705-732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L705-L732),
+  called at
+  [rgw_rest_s3.cc:5868](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5868) at v19.2.7)
+  and signs a SigV2 one over its own method, `info.method`
+  ([rgw_auth_s3.cc:256](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L256) at v19.2.7).
+  rgw-go takes Tentacle's rule on both releases, as it takes Tentacle's
+  gateway-side request parsing. So on Squid a SigV2 preflight without the
+  header, or naming another method, is 400 InvalidArgument from rgw-go
+  before the skew check and the key lookup. Squid's radosgw goes on: a
+  skewed Date is 403 RequestTimeTooSkewed and an unknown key 403
+  InvalidAccessKeyId, and a known key's preflight, whatever its signature,
+  runs the preflight op (`RGWOptionsCORS::execute`,
+  [rgw_op.cc:6177-6207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6177-L6207) at v19.2.7).
+  That op answers a missing header with 400 InvalidArgument too
+  (`:6189-6194`), but only once the bucket has loaded, a missing one being
+  404 NoSuchBucket first (`:539-540`), and the request carries an Origin, a
+  missing one being 400 InvalidArgument first (`:6183-6188`). It answers a
+  header naming another method, `get` or PATCH among them, with 403
+  AccessDenied, as no CORS rule allows it and the op sends that -ENOENT as
+  -EACCES
+  ([rgw_rest_s3.cc:3861-3862](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3861-L3862) at v19.2.7).
+  Neither gateway compares a preflight's signature, so the method it is
+  signed over changes nothing else.
 - **A system request's rgwx-uid names its owner, not its user record.**
   Only radosgw's own multisite connection sends a system request with
   `rgwx-uid` or `rgwx-perm-check-uid` (`RGWRESTConn`,

@@ -458,8 +458,12 @@ func expectedPayloadHash(rv *requestView) string {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6374-L6385
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6449);
-// rgw-go does not route those ops. The method is the request's: radosgw signs
-// an OPTIONS CORS request over its Access-Control-Request-Method instead.
+// rgw-go does not route those ops. The canonical method is read after the
+// canonical headers and before the payload is classified, so a preflight's
+// missing method is refused before an empty payload's checksum mismatch and
+// the payload whitelist
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5868 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6394 at v20.2.4).
 func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*authData, error) {
 	var (
 		c   *v4Credentials
@@ -477,13 +481,17 @@ func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*a
 	if err != nil {
 		return nil, err
 	}
+	method, err := canonicalMethod(rv)
+	if err != nil {
+		return nil, err
+	}
 	payloadHash := expectedPayloadHash(rv)
 	pc, err := classifyPayload(rv, payloadHash)
 	if err != nil {
 		return nil, err
 	}
 	uri, qs := canonicalURIV4(rv.rawPath), canonicalQueryV4(rv.rawQuery, presigned)
-	creq := canonicalRequestV4(rv.req.Method, uri, qs, hdrs, c.signedHeaders, payloadHash)
+	creq := canonicalRequestV4(method, uri, qs, hdrs, c.signedHeaders, payloadHash)
 	sts := stringToSignV4(c.date, c.scope, creq)
 	d := &authData{
 		accessKey: c.accessKey, signature: c.signature, canonicalRequest: creq, stringToSign: sts,
@@ -515,7 +523,7 @@ func authDataV4(rv *requestView, presigned bool, cfg *Config, now time.Time) (*a
 	// which a refusal here leaves standing.
 	if port := boto2HostPort(rv); presigned && port != "" && slices.Contains(strings.Split(c.signedHeaders, ";"), "host") {
 		if altHdrs, err := canonicalHeadersV4(rv, c.signedHeaders, cfg.Insecure, port); err == nil {
-			altSts := stringToSignV4(c.date, c.scope, canonicalRequestV4(rv.req.Method, uri, qs, altHdrs, c.signedHeaders, payloadHash))
+			altSts := stringToSignV4(c.date, c.scope, canonicalRequestV4(method, uri, qs, altHdrs, c.signedHeaders, payloadHash))
 			d.altSign = func(secret string) (string, error) { return signatureV4(signingKeyV4(secret, c.scope), altSts), nil }
 		}
 	}

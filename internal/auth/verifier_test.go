@@ -632,38 +632,6 @@ var _ = Describe("Verifier through the s3 handler", func() {
 		Expect(body).To(ContainSubstring("<Code>AccessDenied</Code><Message>The pre-signed URL has expired</Message>"))
 	})
 
-	// rgw-go serves no CORS preflight yet (docs/exclusions.md): it verifies a
-	// signed OPTIONS request over its own method, where radosgw signs it over
-	// Access-Control-Request-Method and skips the compare.
-	It("verifies a signed OPTIONS request over OPTIONS and answers it NotImplemented", func(ctx SpecContext) {
-		preflight := func(method string) *http.Request {
-			req := httptest.NewRequestWithContext(ctx, method, "http://s3.example.com/plain/k", nil)
-			req.Header.Set("Origin", "https://example.org")
-			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
-			return req
-		}
-		code, body := serve(signedAt(ctx, preflight(http.MethodOptions), "alice", time.Now()))
-		Expect(code).To(Equal(http.StatusNotImplemented), body)
-		Expect(body).To(ContainSubstring("<Code>NotImplemented</Code>"))
-
-		asRadosgw := signedAt(ctx, preflight(http.MethodGet), "alice", time.Now())
-		asRadosgw.Method = http.MethodOptions
-		code, body = serve(asRadosgw)
-		Expect(code).To(Equal(http.StatusForbidden))
-		Expect(body).To(ContainSubstring("<Code>SignatureDoesNotMatch</Code>"))
-
-		noMethod := preflight(http.MethodOptions)
-		noMethod.Header.Del("Access-Control-Request-Method")
-		code, body = serve(signedAt(ctx, noMethod, "alice", time.Now()))
-		Expect(code).To(Equal(http.StatusNotImplemented), "radosgw answers 400 InvalidArgument: %s", body)
-
-		unknownKey := preflight(http.MethodOptions)
-		unknownKey.Header.Del("Access-Control-Request-Method")
-		code, body = serve(signWith(ctx, unknownKey, "AKNOBODY", "x", time.Now()))
-		Expect(code).To(Equal(http.StatusForbidden), "radosgw answers 400 InvalidArgument before the lookup")
-		Expect(body).To(ContainSubstring("<Code>InvalidAccessKeyId</Code>"))
-	})
-
 	// The key is unknown: a form the route refuses is 501 from authentication,
 	// a form it takes goes on to the key lookup and is 403 InvalidAccessKeyId,
 	// so the status shows which side of the whitelist the route sits on at
