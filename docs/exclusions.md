@@ -4715,6 +4715,115 @@ differ, rgw-go does the following.
   flag to its `MfaDelete` on every try, where radosgw sets it only when it
   differed from the flag its request loaded; the two differ only when
   another request changed the flag in between.
+- **PutBucketWebsite answers MalformedXML for a document that does not
+  parse or fit S3's schema.** radosgw's `get_params` answers -EINVAL, 400
+  InvalidArgument, for a body expat refuses and for one whose root is not
+  `WebsiteConfiguration`
+  ([rgw_rest_s3.cc:2300-2310](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2300-L2310),
+  [rgw_rest_s3.cc:2395-2405](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2395-L2405)). rgw-go answers both
+  with 400 MalformedXML, Amazon S3's code for configuration XML that "doesn't
+  conform to the published XSD" (aws-sdk-go v1.55.8,
+  `service/s3/api.go:20217-20221`). It holds the document to S3's schema
+  as that SDK models it (`service/s3/api.go`: WebsiteConfiguration
+  `:43877-43893`, ErrorDocument `:20424-20435`, IndexDocument
+  `:27208-27223`, RedirectAllRequestsTo `:39566-39577`, RoutingRule
+  `:40688-40703`, Condition `:14366-14388`, Redirect `:39480-39514`), and
+  answers MalformedXML too for these documents, which radosgw reads:
+  - one with an element the schema does not hold where it stands, which
+    radosgw ignores, so that a misspelled `Condition` turns a prefix rule
+    into one that redirects every key;
+  - one with a second of an element the schema allows once, every one but
+    `RoutingRule`, where radosgw reads the first
+    (`RGWXMLDecoder::decode_xml`, [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+    [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241));
+  - one with a field that holds an element, whose own text radosgw reads;
+  - one with an attribute other than `xmlns` naming S3's namespace,
+    `http://s3.amazonaws.com/doc/2006-03-01/`: another namespace, the empty
+    one, a prefix declaration or any other attribute, which radosgw
+    ignores;
+  - one with text other than XML whitespace (space, tab, carriage return
+    and line feed) between elements, which radosgw ignores;
+  - one with a prefixed element name, which radosgw, with namespace
+    processing off (`XML_ParserCreate`, [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)), reads as another name, so that it
+    ignores an `s3:IndexDocument` even where `s3` names S3's namespace;
+  - one with a document type declaration, whose internal subset can declare
+    entities that expat, as `RGWXMLParser` sets it up, expands
+    ([rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L213-L223),
+    [rgw_xml.cc:213-223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L213-L223));
+  - one where `RedirectAllRequestsTo` stands beside another property, which
+    S3's model forbids (`:43886-43889`) and radosgw ignores
+    (`RGWBucketWebsiteConf::decode_xml`, [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L323-L341),
+    [rgw_website.cc:323-341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L323-L341));
+  - one with an `ErrorDocument` without a `Key`, or with an empty one,
+    which the model requires one byte long at least (`:20427-20434`) and
+    radosgw stores as no error document;
+  - one whose `Suffix` holds a slash, which the model forbids
+    (`:27211-27222`);
+  - one with a `RoutingRule` without a `Redirect`, which the model requires
+    (`:40697-40702`) and radosgw answers with a redirect to the request's
+    own key on the request's own host;
+  - one with a `Protocol`, in `RedirectAllRequestsTo` or in a rule's
+    `Redirect`, other than exactly `http` or `https`, the enumeration S3's
+    model gives it (`:39492`, `:39576` and `:45615-45619`). radosgw stores
+    any text and writes it into the redirect's Location
+    (`RGWBWRoutingRule::apply_rule`,
+    [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L40-L63),
+    [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L40-L63));
+  - one longer than 1 MiB, `rgw_max_put_param_size`'s default
+    ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145),
+    [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)), the limit `get_params` reads
+    the body under ([rgw_rest_s3.cc:2281-2289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2281-L2289),
+    [rgw_rest_s3.cc:2376-2384](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2376-L2384)), which radosgw parses when an
+    operator raises the option.
+
+  rgw-go answers every MalformedXML before any InvalidArgument, so its
+  answer does not depend on where in the document each sits; radosgw
+  answers the first refusal its decode reaches. What is left is radosgw's:
+  a missing redirect-all `HostName`, an `HttpRedirectCode` outside 301-399
+  or an `HttpErrorCodeReturnedEquals` outside 400-599, each read as
+  `strtol` reads a decimal, and `ReplaceKeyPrefixWith` beside
+  `ReplaceKeyWith` are 400 InvalidArgument with no message, as radosgw's
+  decode refusals are; an empty redirect-all `HostName`, no
+  `IndexDocument` and an absent or empty `Suffix` are 400 InvalidArgument
+  with radosgw's messages; and more rules than
+  `rgw_website_routing_rules_max_num` is 400 InvalidRequest with its
+  message ([rgw_rest_s3.cc:2312-2342](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2312-L2342),
+  [rgw_rest_s3.cc:2407-2437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2407-L2437)). S3's model requires the
+  redirect-all `HostName` and the `Suffix` too; for those rgw-go keeps
+  radosgw's InvalidArgument, the refusal radosgw already makes. rgw-go adds
+  one InvalidArgument, with no message, that radosgw does not make: a
+  `HostName`, in `RedirectAllRequestsTo` or a rule's `Redirect`, holding a
+  byte at or below 0x20, or 0x7F, which radosgw stores and writes raw into
+  the Location ("A website redirect is refused for a host holding a control
+  byte or a protocol other than http or https", below).
+  Three empty elements are accepted where S3's model asks for content. An
+  empty `Condition` is no condition, though the model asks a `Condition` to
+  hold one of its fields (`service/s3/api.go:14369-14387`). An empty
+  `Redirect` sends the request to its own host and key, as radosgw reads
+  it, though the model marks `HttpRedirectCode`, `ReplaceKeyPrefixWith` and
+  `ReplaceKeyWith` as not required only when a sibling is present
+  (`service/s3/api.go:39480-39514`). An empty `RoutingRules` is no rules,
+  so it may stand beside `RedirectAllRequestsTo`, which the model otherwise
+  wants alone. radosgw's GetBucketWebsite writes a rule with no condition
+  as an empty `Condition`, and a rule's `Redirect` even when it is empty
+  (`RGWBWRoutingRule::dump_xml`,
+  [rgw_website.cc:277-281](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L277-L281),
+  [rgw_website.cc:277-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L277-L281)); botocore 1.43.90 writes
+  `<RoutingRules />` for an empty list and `<Redirect />` for an empty
+  redirect; and aws-sdk-go-v2's s3 v1.114.2 writes `RoutingRules` whenever
+  its list is not nil (`serializers.go:16017-16027`). So a configuration
+  read from radosgw, or one an SDK writes for an empty list or redirect, is
+  not refused for its empty elements. An empty element that holds an
+  unknown element or text is still refused. The strict reading does refuse
+  a configuration radosgw stored with a value outside the schema, such as
+  a `Protocol` of `ftp` or a `Suffix` holding a slash: radosgw renders it
+  on GET, and putting it back to rgw-go is MalformedXML.
+  `ParseXML` (`internal/website/xml.go`, its scan in
+  `internal/website/scan.go`) holds these rules
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketWebsite answers
+  InvalidArgument for a document that does not
+  parse](ceph-upstream-bugs.md#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse)").
 
 ### Object read differences
 
@@ -4962,6 +5071,51 @@ does the following.
   answers 404 with `x-amz-delete-marker: false` to a requester who may
   list the bucket (`RGWHandler_REST_Obj_S3::op_get`,
   `rgw_rest_s3.cc:5360-5378` at v20.2.4).
+- **A website redirect's Location carries the new key percent-encoded.**
+  radosgw builds a website redirect's Location as the protocol, `://`, the
+  host, `/` and the new key: `ReplaceKeyPrefixWith` followed by the
+  request's key less the prefix, or `ReplaceKeyWith`, or the key, written
+  raw (`RGWBWRoutingRule::apply_rule`,
+  [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L40-L63),
+  [rgw_website.cc:40-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L40-L63)). The request's key arrives
+  URL-decoded, so its CR and LF reach the header, and its `?`, `#` and `%`
+  turn part of it into a query or a fragment or make the Location an
+  invalid URI (`docs/ceph-upstream-bugs.md`, "[radosgw writes a website
+  redirect's key, host and protocol raw into its
+  Location](ceph-upstream-bugs.md#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location)").
+  rgw-go builds the same new key and percent-encodes it as radosgw's
+  `url_encode` encodes a key with the slash kept: every byte at or below
+  0x20 or at or above 0x7F, and each of
+  ``" # % & + , : ; < = > ? @ [ \ ] ^ ` { }``, becomes `%XX` in upper-case hex
+  ([rgw_common.cc:1736-1793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1736-L1793),
+  [rgw_common.cc:1799-1856](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1799-L1856)), so the Location names the
+  object the rule names (`website.Apply`, `internal/website/redirect.go`).
+  A key of letters, digits, `/` and `! $ ' ( ) * - . _ | ~` gives the
+  Location radosgw gives.
+- **A website redirect is refused for a host holding a control byte or a
+  protocol other than http or https.** radosgw writes a redirect's
+  protocol, `://` and host into the Location raw, the rule's `Protocol`
+  and `HostName`, else the request's (`RGWBWRoutingRule::apply_rule`,
+  [rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L45-L59),
+  [rgw_website.cc:45-59](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L45-L59)), and its PutBucketWebsite
+  stores any `Protocol` and `HostName`, so a `HostName` written with
+  `&#13;&#10;` puts a CR and an LF into the header
+  (`docs/ceph-upstream-bugs.md`, "[radosgw writes a website redirect's
+  key, host and protocol raw into its
+  Location](ceph-upstream-bugs.md#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location)").
+  rgw-go refuses at both ends. PutBucketWebsite answers 400
+  InvalidArgument, with no message, for a `HostName`, in
+  `RedirectAllRequestsTo` or a rule's `Redirect`, that holds a byte at or
+  below 0x20, or 0x7F, where radosgw stores it (`website.ParseXML`); a
+  `Protocol` other than `http` or `https` is already MalformedXML there
+  ("PutBucketWebsite answers MalformedXML for a document that does not
+  parse or fit S3's schema", above). A redirect whose host, the rule's or
+  the request's, holds such a byte, or whose protocol is not `http` or
+  `https`, is declined (`website.Apply`, `ErrUnsafeRedirect`), and the
+  website endpoint, once served, answers 500 InternalError where radosgw
+  sends the redirect. That covers a configuration radosgw stored, which
+  rgw-go reads as it is. A host of other bytes, non-ASCII ones included,
+  is written as it is, as radosgw writes it.
 
 ### Object write differences
 
