@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "baz",
+        "instance": "v9GfcU2gMYTLaBQTiWdW5o34IKNemWG"
+    },
+    "delete_marker": false,
+    "epoch": 2,
+    "pending_log": [],
+    "tag": "t023azo39zerzc2x5zovpfxi4admm2fa",
+    "exists": true,
+    "pending_removal": false
+}
+

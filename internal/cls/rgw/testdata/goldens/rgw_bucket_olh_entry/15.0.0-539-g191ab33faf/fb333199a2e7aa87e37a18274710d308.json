@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": "Gn6p1KMFkKzx6mopHDmv-0XfxKfmNp."
+    },
+    "delete_marker": false,
+    "epoch": 6,
+    "pending_log": [
+        {
+            "key": 6,
+            "val": [
+                {
+                    "epoch": 6,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc032a909u4se741uw9xfxn",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "Gn6p1KMFkKzx6mopHDmv-0XfxKfmNp."
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "39rpl0m8efn26gohlgi8p5fo7vf63ps9",
+    "exists": true,
+    "pending_removal": false
+}
+

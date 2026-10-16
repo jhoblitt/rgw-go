@@ -1,0 +1,11 @@
+{
+    "epoch": 7,
+    "op": "remove_instance",
+    "op_tag": "0000000066f924fcbclifyfsl0oz63y0",
+    "key": {
+        "name": "testobj",
+        "instance": "8HrOtBs9NLcpoGZDV.akNb-ZUzJ.fMk"
+    },
+    "delete_marker": false
+}
+

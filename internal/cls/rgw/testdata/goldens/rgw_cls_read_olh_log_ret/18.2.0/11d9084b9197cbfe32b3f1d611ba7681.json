@@ -1,0 +1,51 @@
+{
+    "log": [
+        {
+            "key": 5,
+            "val": [
+                {
+                    "epoch": 5,
+                    "op": "link_olh",
+                    "op_tag": "0000000064cf83827cx442p8i10exvpn",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "90wuHBGJ8ohCKoQaMpRLYdf5f6IckXg"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 6,
+            "val": [
+                {
+                    "epoch": 6,
+                    "op": "link_olh",
+                    "op_tag": "0000000064cf838235f5htsrdss22be3",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "Wpf6NmTJlfb9pCtr1rdq78wDDASVms5"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "0000000064cf8382ek4h8dh7q759olke",
+                    "key": {
+                        "name": "myobj",
+                        "instance": ".-n.AD-JEAEzLXBPnG-uMOCIgRb3Y5w"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

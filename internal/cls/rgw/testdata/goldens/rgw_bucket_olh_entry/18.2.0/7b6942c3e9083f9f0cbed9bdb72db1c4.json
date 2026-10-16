@@ -1,0 +1,59 @@
+{
+    "key": {
+        "name": "key_0",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 6,
+    "pending_log": [
+        {
+            "key": 4,
+            "val": [
+                {
+                    "epoch": 4,
+                    "op": "remove_instance",
+                    "op_tag": "0000000064cf82ffqlfqxvpu3jezujoz",
+                    "key": {
+                        "name": "key_0",
+                        "instance": "CATom9AhaKKyLDyglAO6H9ehIc.qWug"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 5,
+            "val": [
+                {
+                    "epoch": 5,
+                    "op": "remove_instance",
+                    "op_tag": "0000000064cf82ffj2r16ejkt722q0oz",
+                    "key": {
+                        "name": "key_0",
+                        "instance": "CATom9AhaKKyLDyglAO6H9ehIc.qWug"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 6,
+            "val": [
+                {
+                    "epoch": 6,
+                    "op": "remove_instance",
+                    "op_tag": "0000000064cf82ff3dlr4rdnknya9ehx",
+                    "key": {
+                        "name": "key_0",
+                        "instance": "CATom9AhaKKyLDyglAO6H9ehIc.qWug"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "9okqk8hxphf9v0h9q9rspifrtnvf3vkw",
+    "exists": false,
+    "pending_removal": true
+}
+

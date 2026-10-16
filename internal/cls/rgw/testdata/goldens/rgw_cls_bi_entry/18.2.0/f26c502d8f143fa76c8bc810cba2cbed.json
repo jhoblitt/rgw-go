@@ -1,0 +1,32 @@
+{
+    "type": "plain",
+    "idx": "0SJABB0YGV4D",
+    "entry": {
+        "name": "0SJABB0YGV4D",
+        "instance": "",
+        "ver": {
+            "pool": 77,
+            "epoch": 1966
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 982596,
+            "mtime": "0.000000",
+            "etag": "",
+            "storage_class": "STANDARD",
+            "owner": "",
+            "owner_display_name": "",
+            "content_type": "",
+            "accounted_size": 982596,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "U6825WD89ZXP",
+        "flags": 0,
+        "pending_map": [],
+        "versioned_epoch": 0
+    }
+}
+

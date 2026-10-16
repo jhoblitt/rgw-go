@@ -1,0 +1,16 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": "Cf2eYqD-nu-5rJospvDfYFH0HPH8V1Q"
+    },
+    "op_tag": "00000000607435fdaj4wch1aef77okjg",
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-lei6t89dwkij5eit-356:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.370"
+        }
+    ]
+}
+

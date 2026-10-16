@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "foo123bar2",
+        "instance": "BgsXXj72YgLlC1C7DAWfMkh6.aA.1gP"
+    },
+    "delete_marker": false,
+    "epoch": 2,
+    "pending_log": [
+        {
+            "key": 2,
+            "val": [
+                {
+                    "epoch": 2,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc030afyutezpebxve9v8vi",
+                    "key": {
+                        "name": "foo123bar2",
+                        "instance": "BgsXXj72YgLlC1C7DAWfMkh6.aA.1gP"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "b2ukx6sxvxgbqn6yjf6xz3w2iojanman",
+    "exists": true,
+    "pending_removal": false
+}
+

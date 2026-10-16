@@ -1,0 +1,21 @@
+{
+    "log": [
+        {
+            "key": 19,
+            "val": [
+                {
+                    "epoch": 19,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91cdbxuexzwrd81m2n5tp",
+                    "key": {
+                        "name": " ",
+                        "instance": "gmbbO0hP-5ZH7TdaT0Q7YrFuVdcag26"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

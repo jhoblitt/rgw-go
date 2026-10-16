@@ -288,6 +288,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's version instances are 31 characters, one short of their buffer](#radosgws-version-instances-are-31-characters-one-short-of-their-buffer) | pending | pending | ✓ |
 | [radosgw's checksum decode overruns its digest buffer and its type table](#radosgws-checksum-decode-overruns-its-digest-buffer-and-its-type-table) | pending | pending | ✓ |
 | [radosgw aborts on a checksum-mode GET of an object whose checksum attr has bytes past its record](#radosgw-aborts-on-a-checksum-mode-get-of-an-object-whose-checksum-attr-has-bytes-past-its-record) | pending | pending | ✓ |
+| [cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more](#cls_rgw-mis-sorts-and-cannot-list-versions-whose-epoch-is-232-or-more) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) |  |
+| [cls_rgw's read_olh_log reads the first epoch of an empty pending log](#cls_rgws-read_olh_log-reads-the-first-epoch-of-an-empty-pending-log) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14380,3 +14382,150 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-1, 2026-10-15, tracing the readers of
   `Cksum::decode`. Its review set the class and listed the iterator
   readers the same day. Derived from the source, not reproduced.
+
+## cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more
+
+- **Kind:** defect, S3-correctness of versioning and data visibility:
+  deleting the current version can silently make a version older than the
+  next-newest current, or remove the key, and every version from epoch 2^32
+  up drops out of the listings. No stored data is damaged. Fixed in v21.0.0,
+  not on squid or tentacle. Not security-relevant. Prior art: upstream fixed
+  it on main before we met it. Unreproduced: derived from the source and from
+  the class's key helpers compiled on their own.
+- **Evidence:** paths are under `src/cls/rgw/` unless named.
+  - `decreasing_str` prints its last band, every epoch from 2^32 up, as
+    `"4%020lld"` of `(long long)-num`
+    ([cls_rgw.cc:272-290](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L272-L290),
+    [cls_rgw.cc:322-340](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L322-L340)). From 2^32
+    through 2^63 that value is negative, so the string is `4-` and nineteen
+    digits, and it grows with the epoch where every other band shrinks; above
+    2^63 it is `4` and twenty digits.
+  - `get_list_index_key` writes it after `"\0v"` in the version's list key
+    ([cls_rgw.cc:302-315](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L302-L315),
+    [cls_rgw.cc:352-365](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L352-L365)).
+  - `decode_list_index_key` reads that segment with `strict_strtoll`
+    ([cls_rgw.cc:417-462](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L417-L462),
+    [cls_rgw.cc:467-512](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L467-L512);
+    [strtol.cc:42-59](https://github.com/ceph/ceph/blob/v19.2.7/src/common/strtol.cc#L42-L59), the same at v20.2.4),
+    which refuses the `4-` form for its trailing bytes and the twenty-one digit
+    form for its range, so the key answers -EIO. `rgw_bucket_list` logs that
+    and skips the entry
+    ([cls_rgw.cc:595-602](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L595-L602),
+    [cls_rgw.cc:645-652](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L645-L652)).
+  - Those helpers and `strict_strtoll`, copied verbatim from each tag into a
+    harness built with g++, print `4-0000000004294967296` for 2^32 and
+    `400000000000000000001` for 2^64-1, and `decode_list_index_key` answers
+    -EIO for a list key holding either.
+  - When `bucket_unlink_instance` removes the current version it makes the
+    next list key current: `find_next_key` reads the first key after the
+    current one's, with `cls_cxx_map_get_vals` from that key for one entry
+    ([cls_rgw.cc:1437-1473](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1437-L1473),
+    [cls_rgw.cc:1564-1600](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1564-L1600)),
+    and the unlink makes that version current, logging
+    `CLS_RGW_OLH_OP_LINK_OLH` for it at the OLH entry's epoch
+    ([cls_rgw.cc:1936-1958](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1958),
+    [cls_rgw.cc:2083-2105](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2105)).
+    That version keeps its own epoch:
+    - `BIVerObjEntry::write` sets the OLH entry's epoch on an entry it has
+      not read, so it removes no list key
+      ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+      [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)).
+    - `write_entries` then reads the stored entry back over it with
+      `read_key_entry`, epoch included, and rewrites the instance and list
+      entries from it, flagged current
+      ([cls_rgw.cc:1388-1408](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1408),
+      [cls_rgw.cc:1514-1535](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1535)).
+
+    Band 4's negative half sorts ahead of its top half and of every lower
+    band, and in ascending epoch order. With versions at epochs 2, 2^32 and
+    2^32+1, whose list keys hold `913`, `4-0000000004294967296` and
+    `4-0000000004294967297`, deleting the current 2^32+1 version makes the
+    epoch-2 version current rather than the 2^32 one. The epoch-2 version
+    stays listed, now as the current one.
+  - When no key of the name follows the current one's, the unlink logs
+    `CLS_RGW_OLH_OP_UNLINK_OLH` and marks the OLH entry pending removal
+    ([cls_rgw.cc:1959-1967](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1959-L1967),
+    [cls_rgw.cc:2106-2114](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2106-L2114)).
+    radosgw's `apply_olh_log` then calls `clear_olh`, which removes the head
+    object and the index's OLH entry
+    ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556)
+    and
+    [rgw_rados.cc:8583-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8583-L8634),
+    [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)
+    and
+    [rgw_rados.cc:9329-9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9329-L9380)).
+    So with versions at 2^32 and 2^32+1 alone, deleting the current one
+    removes the key, though the 2^32 version survives.
+  - The class gives a new OLH entry epoch 2 and adds one per change unless
+    the request names an epoch (`start_modify`,
+    [cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+    [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)). A system
+    request names one in `rgwx-versioned-epoch`, which radosgw parses with
+    `strict_strtol` into its u64 `olh_epoch`
+    ([rgw_op.h:2117-2143](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2117-L2143),
+    [rgw_op.h:2280-2306](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2280-L2306)), so a negative value
+    names an epoch above 2^63.
+  - Ceph commit 4195486c8ed, "rgw: implement timestamp-based epochs", gives
+    `decreasing_str` unsigned bands through 2^64 and reads the segment with
+    `strict_strtoull` (main
+    [cls_rgw.cc:311-335](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L311-L335) and
+    [cls_rgw.cc:501-518](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L501-L518), at
+    7ed73efc1be, 2026-09-25). It is first tagged in v21.0.0.
+- **Impact:**
+  - Deleting the current version skips every older version in band 4's
+    negative half, and silently does one of two wrong things:
+    - when an older version of the name sorts after the skipped ones, it
+      becomes current, so a GET of the key serves that whole older version,
+      under its own version id and ETag;
+    - when none does, the key is removed, so a GET answers NoSuchKey while
+      the skipped versions survive, unlisted and reachable only by their
+      version ids.
+  - Either outcome needs the current version and an older one both at epochs
+    of 2^32 or more, the older one at 2^63 or below. One name reaches that
+    range only after about four billion changes. A system request's epoch is
+    int-range, so only a negative one reaches band 4, and then only its top
+    half, which sorts in the right order.
+  - A version whose epoch is 2^32 or more is in no bucket listing,
+    ListObjectVersions included.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. v21.0.0
+  and later are fixed.
+- **rgw-go:** reproduces it, since the class writes these keys.
+  `DecreasingStr`, `ListIndexKey` and `DecodeListIndexKey` in
+  `internal/cls/rgw/indexkey.go` carry the class's bands and its refusal, and
+  `internal/cls/rgw/indexkey_test.go` pins both.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Fixed on main by
+  [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), which merged
+  4195486c8ed; in v21.0.0 and later, and not backported to squid or tentacle.
+- **Found:** phase 2 Task V1, 2026-10-15, transcribing `decreasing_str`; its
+  reviews found the wrong promotion and the key removal the same day. Derived
+  from the source and the compiled helpers, not reproduced on a running
+  release.
+
+## cls_rgw's read_olh_log reads the first epoch of an empty pending log
+
+- **Kind:** defect, latent: undefined behaviour that changes no answer. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/cls/rgw/`.
+  - `rgw_bucket_read_olh_log` tests `log.begin()->first > op.ver_marker`
+    before anything shows the pending log holds an epoch
+    ([cls_rgw.cc:2054-2067](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2054-L2067),
+    [cls_rgw.cc:2195-2208](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2195-L2208)). For an
+    empty map `begin()` is `end()`, which the test dereferences. The same line
+    is on main ([cls_rgw.cc:2351](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L2351), at
+    7ed73efc1be).
+  - The log is empty once `bucket_trim_olh_log` has erased every epoch in it
+    ([cls_rgw.cc:2107-2114](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2107-L2114),
+    [cls_rgw.cc:2248-2255](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2248-L2255)). It is
+    also empty for a name with no OLH entry when the request's tag is empty,
+    since the read then takes the default entry.
+  - Whatever the read yields, both branches answer an empty, untruncated log:
+    the first copies the empty map, and the second starts from an
+    `upper_bound` that is `end()`.
+- **Impact:** none found beyond the undefined read itself; the answer does
+  not depend on the value read.
+- **Releases:** checked at v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** unaffected. `ReadOLHLog` in `internal/cls/rgw/ops_olh.go` builds
+  the request and decodes the reply.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V1, 2026-10-15, reading the class's read handler;
+  derived from the source, not reproduced.

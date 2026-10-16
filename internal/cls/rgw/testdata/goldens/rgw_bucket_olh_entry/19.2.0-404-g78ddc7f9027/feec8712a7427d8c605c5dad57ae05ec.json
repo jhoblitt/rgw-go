@@ -1,0 +1,39 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 3,
+    "pending_log": [
+        {
+            "key": 3,
+            "val": [
+                {
+                    "epoch": 3,
+                    "op": "unlink_olh",
+                    "op_tag": "0000000066f92412ibbus7aoz028uy9z",
+                    "key": {
+                        "name": "testobj",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 3,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f92412ibbus7aoz028uy9z",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "LWIE9MBmqoai0uAswcH8lxzzTlOA2jQ"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "xk42jdubaj27gmfjvhoza3dmnysws9zs",
+    "exists": false,
+    "pending_removal": true
+}
+

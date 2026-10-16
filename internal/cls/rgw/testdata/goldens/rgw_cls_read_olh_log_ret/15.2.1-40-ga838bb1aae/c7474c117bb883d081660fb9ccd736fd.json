@@ -1,0 +1,21 @@
+{
+    "log": [
+        {
+            "key": 1,
+            "val": [
+                {
+                    "epoch": 1234,
+                    "op": "link_olh",
+                    "op_tag": "op_tag",
+                    "key": {
+                        "name": "key.name",
+                        "instance": "key.instance"
+                    },
+                    "delete_marker": true
+                }
+            ]
+        }
+    ],
+    "is_truncated": true
+}
+

@@ -1,0 +1,86 @@
+{
+    "log": [
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc031099923ep6f21iauzn8",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "JL3Ow9fMaKf4tCc5njt6VsRMaAh0xrf"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 9,
+            "val": [
+                {
+                    "epoch": 9,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc03109cbfvddz73bz5jlub",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "hu8JmueZOF4KYeU1pzT3um5-ThmTLlF"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 9,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc03109cbfvddz73bz5jlub",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "jdw4it7ZEFFEp55qiwr.i7uGRTnxh.e"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc03109yzxtt3biiqwhgv3o",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "PolLXS-5eE1ws3Xbb5j0OoLRfxZEEMS"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005cc03109tsubz4av7h55clx2",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc03109tsubz4av7h55clx2",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "hu8JmueZOF4KYeU1pzT3um5-ThmTLlF"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

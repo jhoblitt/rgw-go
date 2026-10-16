@@ -1,0 +1,21 @@
+{
+    "log": [
+        {
+            "key": 3,
+            "val": [
+                {
+                    "epoch": 3,
+                    "op": "link_olh",
+                    "op_tag": "000000005e9779d9uziaaygk0shpkucu",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "8UPRhMHBZlxW7jyZsj7Fzuv4HYbA4CH"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

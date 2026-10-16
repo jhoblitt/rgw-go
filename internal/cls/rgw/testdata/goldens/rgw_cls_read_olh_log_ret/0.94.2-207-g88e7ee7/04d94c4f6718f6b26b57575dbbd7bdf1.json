@@ -1,0 +1,21 @@
+{
+    "log": [
+        {
+            "key": 1,
+            "val": [
+                {
+                    "epoch": 0,
+                    "op": "unknown",
+                    "op_tag": "",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": true
+}
+

@@ -1,0 +1,32 @@
+{
+    "type": "plain",
+    "idx": "obj-25",
+    "entry": {
+        "name": "obj-25",
+        "instance": "",
+        "ver": {
+            "pool": 77,
+            "epoch": 1
+        },
+        "locator": "loc-25",
+        "exists": true,
+        "meta": {
+            "category": 0,
+            "size": 1024,
+            "mtime": "0.000000",
+            "etag": "",
+            "storage_class": "STANDARD",
+            "owner": "",
+            "owner_display_name": "",
+            "content_type": "",
+            "accounted_size": 1024,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "tag-25",
+        "flags": 0,
+        "pending_map": [],
+        "versioned_epoch": 0
+    }
+}
+

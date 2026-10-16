@@ -1,0 +1,81 @@
+{
+    "log": [
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f92518qfzpvjd9w307e7v8",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "P.b0iF23bW.5QheNjWDiriak1gduxrp"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 7,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f92518qfzpvjd9w307e7v8",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "lRLjhJV.ZnkEwdEj5y-vMVhIQIHYXXu"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f92518bhyk34xhoy59asfb",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "023W2RxOna63buG0y27JYp3odBfEhy5"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f92518bhyk34xhoy59asfb",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "P.b0iF23bW.5QheNjWDiriak1gduxrp"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 9,
+            "val": [
+                {
+                    "epoch": 9,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f925183us3dru6jamoeyp2",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "QqZN7vEUCmothh1kk9qLZgRCM5X9IKs"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 9,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f925183us3dru6jamoeyp2",
+                    "key": {
+                        "name": "testobj-1",
+                        "instance": "023W2RxOna63buG0y27JYp3odBfEhy5"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

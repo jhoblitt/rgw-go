@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "foo",
+        "instance": "cDd49GImkRuCo2FcfSUxvVkhMlM4tMM"
+    },
+    "delete_marker": true,
+    "epoch": 4,
+    "pending_log": [],
+    "tag": "x3h2q0jmeewzosg83uqq4t34fhc8zaqt",
+    "exists": true,
+    "pending_removal": false
+}
+

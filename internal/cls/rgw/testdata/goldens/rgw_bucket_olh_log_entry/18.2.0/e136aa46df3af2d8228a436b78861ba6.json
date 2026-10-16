@@ -1,0 +1,11 @@
+{
+    "epoch": 3,
+    "op": "remove_instance",
+    "op_tag": "0000000064cf833al2112nickfoppaxc",
+    "key": {
+        "name": "bar321foo3",
+        "instance": "I0anrs3I9JtwD7u872Dyt2Q16JJWaY5"
+    },
+    "delete_marker": false
+}
+

@@ -1,0 +1,16 @@
+{
+    "key": {
+        "name": "bar321foo",
+        "instance": "gwZeRMElsGA3i9PMa4uPp49Y89.U821"
+    },
+    "op_tag": "0000000064cf833aqadnajn9a8aqpe0d",
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "47ec0c18-d69b-43a9-a077-4ac3e6f65c8b:yournamehere-r5ahkpb1ndqks8o1-313:47ec0c18-d69b-43a9-a077-4ac3e6f65c8b.4439.326"
+        }
+    ]
+}
+

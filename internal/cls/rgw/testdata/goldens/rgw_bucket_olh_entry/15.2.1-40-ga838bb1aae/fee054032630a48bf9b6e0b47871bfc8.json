@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": "SWGFP-iunTbkMxWvHafQwZGZgv-gUjj"
+    },
+    "delete_marker": false,
+    "epoch": 2,
+    "pending_log": [
+        {
+            "key": 2,
+            "val": [
+                {
+                    "epoch": 2,
+                    "op": "link_olh",
+                    "op_tag": "000000005e977594jiezc1n0ayazzq8g",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "SWGFP-iunTbkMxWvHafQwZGZgv-gUjj"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "bydaz8tsq7v4dml4x18g3vl2ey3kt77b",
+    "exists": true,
+    "pending_removal": false
+}
+

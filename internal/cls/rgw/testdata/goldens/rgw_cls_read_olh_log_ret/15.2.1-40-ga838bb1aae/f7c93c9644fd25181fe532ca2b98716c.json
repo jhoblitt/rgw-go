@@ -1,0 +1,21 @@
+{
+    "log": [
+        {
+            "key": 2,
+            "val": [
+                {
+                    "epoch": 2,
+                    "op": "link_olh",
+                    "op_tag": "000000005e977891gjt0geyhe51wkh84",
+                    "key": {
+                        "name": "bar321foo",
+                        "instance": "f9SiSFvMkZTc-aj1h3B9foXEVQ5aLxO"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

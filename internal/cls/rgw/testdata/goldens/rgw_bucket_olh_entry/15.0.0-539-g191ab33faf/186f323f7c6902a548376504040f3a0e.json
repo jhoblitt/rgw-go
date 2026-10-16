@@ -1,0 +1,89 @@
+{
+    "key": {
+        "name": "myobj",
+        "instance": "dkRbyEN2e7172vzfZEL1kBI21ji0KSJ"
+    },
+    "delete_marker": false,
+    "epoch": 15,
+    "pending_log": [
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310e39e2c5e52zzk60fr",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "i5QQbR9m09NcUIvEcZS2ZFkbXTLij8m"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 12,
+            "val": [
+                {
+                    "epoch": 12,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310ebil3f9fm5of6xf6f",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "oMGa5kiwU85Qoo2UrsVHQ3knVAPwUak"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 13,
+            "val": [
+                {
+                    "epoch": 13,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310e01gw7s4bg8demf06",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "5RKITavYoIz7ZwQcvJQiuhBWODevLR."
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 14,
+            "val": [
+                {
+                    "epoch": 14,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310ej3iu9stqlnw2ddbr",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "p32fJ44tjTeSxiuES73XoR8xR1ZKnrq"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 15,
+            "val": [
+                {
+                    "epoch": 15,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310e8c7ifnz6rww2bjeh",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "LsUoG4sx3dvIt9KEOxCN6yTIxpmtDt9"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "mmofa8we9z1pztl6edklvdc4ejw3zcgv",
+    "exists": true,
+    "pending_removal": false
+}
+

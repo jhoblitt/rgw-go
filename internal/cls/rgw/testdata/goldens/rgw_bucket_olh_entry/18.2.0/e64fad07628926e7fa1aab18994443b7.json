@@ -1,0 +1,39 @@
+{
+    "key": {
+        "name": "foo?bar",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 3,
+    "pending_log": [
+        {
+            "key": 3,
+            "val": [
+                {
+                    "epoch": 3,
+                    "op": "unlink_olh",
+                    "op_tag": "0000000064cf833a0ksupbz6ny8mpy8t",
+                    "key": {
+                        "name": "foo?bar",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 3,
+                    "op": "remove_instance",
+                    "op_tag": "0000000064cf833a0ksupbz6ny8mpy8t",
+                    "key": {
+                        "name": "foo?bar",
+                        "instance": "Zyvw6jKjfSpAUHLDnL70U0pZFu8cq-j"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "x3hxmwd6bk64t4vycfnvlyi8kbj2vbiu",
+    "exists": false,
+    "pending_removal": true
+}
+

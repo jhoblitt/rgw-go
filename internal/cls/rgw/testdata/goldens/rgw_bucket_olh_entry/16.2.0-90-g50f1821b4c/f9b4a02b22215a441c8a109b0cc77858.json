@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "foo123bar2",
+        "instance": "QI58jpGfIyfLnboEfYWY2Uu4CWs3W5R"
+    },
+    "delete_marker": false,
+    "epoch": 2,
+    "pending_log": [],
+    "tag": "4unrxqeaa1xi8x0uyj076t2cmcsmaode",
+    "exists": true,
+    "pending_removal": false
+}
+

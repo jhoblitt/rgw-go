@@ -1,0 +1,17 @@
+{
+    "type": "olh",
+    "idx": "idx",
+    "entry": {
+        "key": {
+            "name": "key.name",
+            "instance": "key.instance"
+        },
+        "delete_marker": true,
+        "epoch": 1234,
+        "pending_log": [],
+        "tag": "tag",
+        "exists": true,
+        "pending_removal": true
+    }
+}
+

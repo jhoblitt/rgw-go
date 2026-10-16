@@ -1,0 +1,49 @@
+{
+    "type": "instance",
+    "idx": "€1000_key_2\u0000ipoaW2xybq5OCzFQiOWATGBcneA9xRVo",
+    "entry": {
+        "name": "key_2",
+        "instance": "poaW2xybq5OCzFQiOWATGBcneA9xRVo",
+        "ver": {
+            "pool": 454,
+            "epoch": 0
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 5,
+            "mtime": "2024-09-29T09:20:17.432717Z",
+            "etag": "24fd6a24d80aabe2116d80b6c3dc89e2",
+            "storage_class": "STANDARD",
+            "owner": "testid",
+            "owner_display_name": "M. Tester",
+            "content_type": "",
+            "accounted_size": 5,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "13eea068-6d47-4013-9fac-b87ade569a1c.4535.8923570057852938698",
+        "flags": 3,
+        "pending_map": [
+            {
+                "key": "_bap8srfZa7ZcOIJECniLKBHOdxZBFcQ",
+                "val": {
+                    "state": 0,
+                    "timestamp": "2024-09-29T09:20:17.549067Z",
+                    "op": 1
+                }
+            },
+            {
+                "key": "_tNBCq0Zgh3xPCZV2dOJh5T31wcB-hP6",
+                "val": {
+                    "state": 0,
+                    "timestamp": "2024-09-29T09:20:17.547694Z",
+                    "op": 1
+                }
+            }
+        ],
+        "versioned_epoch": 2
+    }
+}
+

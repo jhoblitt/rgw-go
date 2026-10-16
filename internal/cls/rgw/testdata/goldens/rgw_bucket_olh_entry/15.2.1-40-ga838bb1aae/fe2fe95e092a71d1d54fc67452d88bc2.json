@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": " ",
+        "instance": "aUlDuxp7CMhtb86xY8sua.dUOf9Xisc"
+    },
+    "delete_marker": false,
+    "epoch": 7,
+    "pending_log": [
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "000000005e977a654q72x99aw0xc032f",
+                    "key": {
+                        "name": " ",
+                        "instance": "aUlDuxp7CMhtb86xY8sua.dUOf9Xisc"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "vz2dnohd3jd6pnpd3uxzaeekavtp4p1v",
+    "exists": true,
+    "pending_removal": false
+}
+

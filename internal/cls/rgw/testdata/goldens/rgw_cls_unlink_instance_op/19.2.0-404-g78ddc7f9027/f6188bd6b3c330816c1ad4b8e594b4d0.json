@@ -1,0 +1,16 @@
+{
+    "key": {
+        "name": "foo123bar",
+        "instance": "yzoOCFL8nHf6ZRCFSyzGrqzHG-OLhwg"
+    },
+    "op_tag": "0000000066f924bdu5mqc9poywl0szmn",
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "b9d33d85-8234-4f36-92ce-fe80e2223e0d:yournamehere-w1pkpjgzhoi6lzoi-343:b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.355"
+        }
+    ]
+}
+

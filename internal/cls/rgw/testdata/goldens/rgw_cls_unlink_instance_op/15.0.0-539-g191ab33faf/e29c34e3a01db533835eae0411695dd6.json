@@ -1,0 +1,16 @@
+{
+    "key": {
+        "name": "myobj",
+        "instance": "oMGa5kiwU85Qoo2UrsVHQ3knVAPwUak"
+    },
+    "op_tag": "000000005cc0310ebil3f9fm5of6xf6f",
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": [
+        {
+            "entry": "54f2466a-525e-4322-bc71-fc998e987f2f"
+        }
+    ]
+}
+

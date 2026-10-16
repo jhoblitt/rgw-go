@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 31,
+    "pending_log": [
+        {
+            "key": 31,
+            "val": [
+                {
+                    "epoch": 31,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005cc030f4a0pmbjnln2lwmfox",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "u40mwahq2ujh1ayaei0bif1bpc48dece",
+    "exists": false,
+    "pending_removal": true
+}
+
