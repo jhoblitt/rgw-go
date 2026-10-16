@@ -39,7 +39,7 @@ and P4 (the owner, 2026-10-13).
 | B3 | GetBucketPolicyStatus and the block's enforcement judge a policy with S3's `IsPublic` alone (D17). | One AWS-correct judgment on both releases. |
 | B4 | A signed preflight's signature is not compared, as radosgw and AWS do (D18). The registry entry records that phase 3's rate limiter must not charge OPTIONS CORS to the key's user. | The presigned CORS tests need it; the rate-limit charge is the security half. |
 | B5 | PutBucketEncryption is validated as AWS documents: SSEAlgorithm one of `AES256`, `aws:kms`, `aws:kms:dsse`, `aws:fsx`, `aws:backup`; KMSMasterKeyID only with `aws:kms` or `aws:kms:dsse`; 400 MalformedXML otherwise (D19). The stored form is unchanged. | AWS's API reference; a stored default neither gateway can serve fails a write on both, as on an unconfigured radosgw. |
-| B6 | The six encryption-configuration s3-tests run through the T unit's include list (D20); BC-27 adds their lines. The eight ownership tests carry only `object_ownership`, so BC-28f lifts that marker. | The T unit owns the selection; each area owns its own lines. |
+| B6 | The six encryption-configuration s3-tests, and BC-25's three, run through the T unit's include list (D20); BC-27 adds their lines. The eight ownership tests carry only `object_ownership`, so BC-28f lifts that marker. | The T unit owns the selection; each area owns its own lines. |
 | B7 | Ownership controls are built to v21.1.2's stored form and enforced (P4, the owner, 2026-10-13). | The spec names the item; an upgraded zone's radosgw reads that form; the floors' fall-through can delete a bucket (defect 11). |
 | B8 | CORS rule selection is main's `match_rule`: the first rule matching origin, method and, for a preflight, every requested header. A non-preflight request with an Origin no rule allows is refused, as main's `verify_cors_match` does. | AWS documents both; s3-tests expect the refusal; defects 1 and 2. |
 | B9 | Each bucket-attr write sets only its own attr on each try and is authorized again on each retry, as phase 1's `retryBucketWrite` does. | Defects 4 and 5: radosgw writes back the attrs the request started with, and does not re-authorize. |
@@ -756,8 +756,7 @@ byte-identical at the two tags.
      The floors validate neither.
 - **Specs:** the ceph-object-corpus goldens of the three structs (18.2.0 and
   19.2.0-404-g78ddc7f9027) decode to ceph-dencoder's JSON and re-encode byte-identically; XML
-  both ways; each validation refusal; an s3-tests addition for an unknown SSEAlgorithm, to the
-  `rgw-go-s3tests` branch.
+  both ways; each validation refusal. Its s3-tests additions are BC-25's, where the routes land.
 - **Exclusions and registry:** rewrites item 2 of "Key management: SSE-KMS and SSE-S3 with
   every backend", which says the configuration round-trips; new registry entry for defect 12
   (S3-correctness, unreproduced).
@@ -774,35 +773,79 @@ byte-identical at the two tags.
      configuration in `user.rgw.sse-s3.policy` alone on each try
      ([rgw_op.cc:8757-8812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8812),
      [rgw_op.cc:9725-9780](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9780)).
+     - After authorization and before `sse.ParseXML`, the body is read as `execute` reads it
+       through `get_params`, with `rgw_max_put_param_size` as the limit
+       ([rgw_op.cc:8757-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8762),
+       [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730);
+       [rgw_op.cc:8780](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8780),
+       [rgw_op.cc:9748](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9748)): no
+       Content-Length is 411 MissingContentLength, and one over that `max_len` is 416
+       InvalidRange, unread
+       ([rgw_rest.cc:1550-1558](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1550-L1558),
+       [rgw_rest.cc:1550-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1550-L1558);
+       [rgw_common.cc:87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L87),
+       [rgw_common.cc:88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L88);
+       [rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
+       [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)).
+       `sse.MaxConfigXML` is a backstop only.
+     - `sse.ErrMalformedXML` from `sse.ParseXML`, which already runs `Validate`, is 400
+       MalformedXML.
   2. **Get.** Action s3:GetBucketEncryption; no attr is ErrNoSuchBucketEncryption with "The
      server side encryption configuration was not found"; an undecodable one is 500
      ([rgw_op.cc:8814-8841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8814-L8841),
      [rgw_op.cc:9782-9809](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9782-L9809)). The tags differ
      only in the log level.
+     The attr is read with `sse.DecodeBucketEncryptionConfig(denc.NewDecoder(b))`, any bytes
+     after it ignored.
   3. **Delete.** Authorized as s3:PutBucketEncryption; it removes `user.rgw.sse-s3.policy` and
      `user.rgw.sse-s3.key-id`, which only a radosgw with an SSE-S3 backend writes; success when
      absent ([rgw_op.cc:8843-8867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8843-L8867),
      [rgw_op.cc:9811-9835](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9811-L9835)).
-- **Specs:** each op's error order with fakes; Delete removing both attrs; a retry
-  re-authorized.
+  4. **No op decodes and re-encodes the attr in place.** ceph main 96ed8b8c780, in no release,
+     writes the rule at (2,1) with `BlockedEncryptionTypes` after the bucket key
+     ([rgw_bucket_encryption.h:91-107](https://github.com/ceph/ceph/blob/96ed8b8c780/src/rgw/rgw_bucket_encryption.h#L91-L107)),
+     which BC-23's (1,1) re-encode drops. Put replaces the attr whole and Delete removes it.
+- **Specs:** each op's error order with fakes; 411 and 416 before the parse; Delete removing
+  both attrs; a retry re-authorized; a stored (2,1) rule read by Get and left as it is.
 - **Exclusions and registry:** extends defect 5's exclusion and "A retried bucket write stops
   when the name names another bucket" with the encryption writes, citing their retries
   ([rgw_op.cc:8807-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8807-L8811),
   [rgw_op.cc:8860-8866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8860-L8866),
   [rgw_op.cc:9775-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9775-L9779),
   [rgw_op.cc:9828-9834](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9828-L9834)).
-- **Depends on:** BC-23. **PR:** one. **Brief:** about 110 lines.
+- **Depends on:** BC-23. **PR:** one. **Brief:** about 130 lines.
 
 ### Task BC-25: Encryption configuration routes
 
-- **Layer:** handler. **Files:** S2's `internal/s3/encryption.go`. **Cluster:** no.
+- **Layer:** handler. **Files:** S2's `internal/s3/encryption.go`; three s3-tests on jhoblitt/ceph's
+  `rgw-go-s3tests`. **Cluster:** no.
 - **Consumes:** BC-23's XML, BC-24's ops.
-- **Behaviour:** PUT 200 with an empty body; GET the document in the S3 namespace; DELETE 204
-  ([rgw_rest_s3.cc:3877-3915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3877-L3915),
-  [rgw_rest_s3.cc:4328-4366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4328-L4366)).
-- **Specs:** each status, header and body, from the six configuration s3-tests.
+- **Behaviour:**
+  1. PUT 200 with an empty body; GET the document in the S3 namespace; DELETE 204
+     ([rgw_rest_s3.cc:3877-3915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3877-L3915),
+     [rgw_rest_s3.cc:4328-4366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4328-L4366)).
+  2. GET writes the XML declaration, as `dump_start` does through XMLFormatter's
+     `output_header`
+     ([rgw_rest_s3.cc:3897](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3897),
+     [rgw_rest_s3.cc:4348](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4348);
+     [Formatter.cc:426-430](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L426-L430),
+     [Formatter.cc:434-438](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L434-L438)),
+     then `MarshalS3XML()`.
+  3. **BC-23's s3-tests**, deferred to here, where the routes land, on `rgw-go-s3tests`:
+     - (a) an SSEAlgorithm of `AES-256` is 400 MalformedXML;
+     - (b) `aws:kms` with a key id and BucketKeyEnabled true reads back through boto3 with
+       BucketKeyEnabled True;
+     - (c) a misspelled `SseAlgorithm` is 400 MalformedXML.
+
+     Both floors fail all three: they answer 200 to (a) and (c), and boto3 reads (b) as False
+     (registry: "radosgw's PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with
+     any algorithm", "radosgw's PutBucketEncryption stores a configuration without the elements
+     it cannot find", "radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which
+     botocore reads as false").
+- **Specs:** each status, header and body, from the six configuration s3-tests and the three
+  above.
 - **Exclusions and registry:** none.
-- **Depends on:** S2, BC-24. **PR:** one. **Brief:** about 80 lines.
+- **Depends on:** S2, BC-24. **PR:** one, with the s3-tests commit. **Brief:** about 100 lines.
 
 ### Task BC-26: The default on writes
 
@@ -825,11 +868,21 @@ byte-identical at the two tags.
      [rgw_rest_s3.cc:2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2981),
      [rgw_rest_s3.cc:3118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3118),
      [rgw_rest_s3.cc:4003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4003),
-     [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454)):
+     [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454)),
+     and by UploadPart, which PutObject's `get_params` also serves
+     (`RGWHandler_REST_Obj_S3::op_put`,
+     [rgw_rest_s3.cc:4875-4878](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4875-L4878),
+     [rgw_rest_s3.cc:5402-5405](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5402-L5405)):
      - SSE-C with SSE-KMS or SSE-S3 headers is 400 InvalidArgument, before authorization;
      - SSE-C wins; otherwise the stored algorithm and key id fill what the request names none
        of, KMS attributes without an algorithm mean `aws:kms`, and KMS attributes with another
        algorithm are 400;
+     - a stored rule with no algorithm is `aws:kms` when it holds a key id or BucketKeyEnabled
+       true, which count as KMS attributes
+       ([rgw_rest_s3.cc:226-261](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L226-L261),
+       [rgw_rest_s3.cc:223-258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L223-L258)).
+       Both gateways store the BucketKeyEnabled form; radosgw stores the key-id form, which
+       BC-23's `Validate` refuses;
      - the filled attributes become `Request.CryptAttrs`, so the policy environment sees the
        default before authorization;
      - a stored configuration that does not decode is 400 InvalidArgument "Server side error -
@@ -838,20 +891,31 @@ byte-identical at the two tags.
   2. **The unconfigured `rgw_s3_prepare_encrypt`** ([rgw_crypt.cc:1030-1301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1030-L1301),
      [rgw_crypt.cc:1045-1315](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1045-L1315)), after authorization:
      - with `rgw_crypt_require_ssl` (default true) over plain HTTP, 400 InvalidRequest
-       ([rgw.yaml.in:2823-2827](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2823-L2827), [rgw.yaml.in:2955-2959](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2955-L2959));
+       ([rgw.yaml.in:2823-2827](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2823-L2827), [rgw.yaml.in:2955-2959](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2955-L2959)).
+       The floors differ: v19.2.7 makes the check for every algorithm, before the algorithm
+       check ([rgw_crypt.cc:1152-1156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1152-L1156)),
+       and v20.2.4 only for `aws:kms`
+       ([rgw_crypt.cc:1167-1172](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1167-L1172));
      - `aws:kms` without a key id, and an algorithm other than `aws:kms` and `AES256`, 400
        InvalidArgument;
      - otherwise the answer BC-27 records from a running radosgw, which source reading puts at
        400 InvalidArgument (the empty Barbican and Vault addresses,
        [rgw_kms.cc:919-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_kms.cc#L919-L979), [rgw_kms.cc:917-977](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_kms.cc#L917-L977),
        [rgw_kms.cc:255-271](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_kms.cc#L255-L271), [rgw_kms.cc:255-271](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_kms.cc#L255-L271)).
-  3. SSE-C keeps phase 1's 501 until phase 4. A configuration naming no algorithm refuses
-     nothing (B15).
-  4. CopyObject and UploadPart are not among radosgw's callers above. PR (b) first reads how
-     each chooses its destination's encryption at both tags and cites it in its notes, then
-     replaces phase 1's 501 with that behaviour.
-- **Specs:** every refusal of the two functions; TLS and plain HTTP; the policy keys with and
-  without a default; a default without an algorithm; an undecodable default after a 403.
+  3. SSE-C keeps phase 1's 501 until phase 4. B15's "a default naming no algorithm refuses
+     nothing" applies only to a rule with neither a key id nor BucketKeyEnabled true; one with
+     either is `aws:kms` (item 1).
+  4. CopyObject is not among radosgw's callers above. UploadPart is, so item 1's refusals reach
+     a part, but a part takes its encryption from its upload, never from the default:
+     `get_encrypt_filter` prepares a part with its upload's attrs through
+     `rgw_s3_prepare_decrypt`
+     ([rgw_rest_s3.cc:2859-2876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2859-L2876),
+     [rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002)).
+     PR (b) first reads how CopyObject chooses its destination's encryption at both tags and
+     cites it in its notes, then replaces phase 1's 501 in both with that behaviour.
+- **Specs:** every refusal of the two functions; TLS and plain HTTP, per floor; the policy keys
+  with and without a default; a default without an algorithm, alone and with a key id or a
+  bucket key; an UploadPart under a default item 1 refuses; an undecodable default after a 403.
 - **Exclusions and registry:** retires the SSE-S3 and SSE-KMS half of "Writes that ask for
   encryption answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4." and "A
   PUT's encryption condition keys leave out the bucket's default encryption."; extends "PutObject
@@ -861,13 +925,13 @@ byte-identical at the two tags.
   write-path unit on the same files: PR (a) after WP-6 and WP-7, PR (b) after WP-6, WP-7 and
   WP-13 (index Order 3), never in parallel with V11, L5b or C8 on a file they share.
 - **PR split:** (a) the helper, `CryptAttrs` and `cryptKeys`, with PutObject and
-  CreateMultipartUpload; (b) CopyObject and UploadPart. **Brief:** about 220 lines.
+  CreateMultipartUpload; (b) CopyObject and UploadPart. **Brief:** about 240 lines.
 
 ### Task BC-27: Encryption recording and gate
 
 - **Layer:** integration. **Files:** the T unit's `hack/s3tests/include-phase2.txt` (this
-  unit's six lines), both ledgers; new `test/integration/phase2_encryption_test.go`.
-  **Cluster:** yes.
+  unit's nine lines), both ledgers, both known-differences files; new
+  `test/integration/phase2_encryption_test.go`. **Cluster:** yes.
 - **Behaviour:**
   1. **(a) radosgw's write answers.** On an unconfigured zone, over TLS and over plain HTTP,
      record radosgw's status and error code for PutObject, CreateMultipartUpload and POST
@@ -875,15 +939,31 @@ byte-identical at the two tags.
      for SSE-S3 and SSE-KMS by header. The table goes into the registry's key-management notes;
      BC-26's specs pin it. This half needs nothing from rgw-go.
   2. **(b) the configuration tests.** Add test_put/get/delete_bucket_encryption_s3 and _kms
-     (`test_s3.py:15343-15435` at the s3-tests pin) to the include list (B6) and record both
-     ledgers.
-  3. **(b) gate case 4:** each gateway writes `AES256` and `aws:kms` configurations the other
+     ([test_s3.py:15390-15487](https://github.com/ceph/ceph/blob/ab228b1b9f0dc8cbc52f6dcbc649519212421c8d/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L15390-L15487),
+     helpers
+     [test_s3.py:15352-15387](https://github.com/ceph/ceph/blob/ab228b1b9f0dc8cbc52f6dcbc649519212421c8d/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L15352-L15387),
+     at the s3-tests pin) to the include list (B6) and record both ledgers. They get no
+     known-differences line: none sends or reads BucketKeyEnabled or an off-list value, so both
+     gateways agree, and a line would fail as stale.
+  3. **(b) BC-25's three tests.** Add include lines for (a), (b) and (c), each with a plain
+     known-differences line in both files: (a) and (c) under "A PutBucketEncryption document is
+     held to S3's schema and AWS's values", (b) under "GetBucketEncryption writes
+     BucketKeyEnabled as true".
+  4. **(b) gate case 4:** each gateway writes `AES256` and `aws:kms` configurations the other
      reads, the attr bytes equal and equal to the corpus encoding; rgw-go's write answers equal
-     the table of (a).
+     the table of (a). An `aws:kms` configuration with BucketKeyEnabled true is among them: its
+     attr bytes are equal across the gateways, and the GetBucketEncryption bodies are equal but
+     for radosgw's `True` and rgw-go's `true`.
+  5. The five BlockedEncryptionTypes tests at the pin, test_bucket_blocks_sse_c_by_default,
+     test_bucket_block_sse_c, test_bucket_block_sse_c_copy, test_bucket_unblock_sse_c and
+     test_bucket_block_sse_c_multipart
+     ([test_s3.py:15511-15629](https://github.com/ceph/ceph/blob/ab228b1b9f0dc8cbc52f6dcbc649519212421c8d/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L15511-L15629)),
+     stay out under the `encryption` marker: both floors fail them, and rgw-go refuses their
+     PutBucketEncryption with 400.
 - **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, encryption`.
 - **Depends on:** (a) nothing; (b) BC-23 to BC-26 and WP-23 (the include list).
   **PR split:** (a) the recording; (b) the include lines, the ledgers and the gate; each landed
-  by the controller. **Brief:** about 70 lines.
+  by the controller. **Brief:** about 90 lines.
 
 **Ownership controls: BC-28a to BC-28f (B7, P4 the owner, 2026-10-13).** Neither floor has the
 feature. Its only traces there are the IAM action names
