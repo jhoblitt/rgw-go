@@ -2,7 +2,6 @@ package driver
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"math"
@@ -134,17 +133,10 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 }
 
 // randAlnum is gen_rand_alphanumeric
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L33-L51 at v19.2.6
-// and v20.2.4): n characters of alphanumeric, each a random byte modulo
-// its 64 characters, which is unbiased.
-func randAlnum(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b) // crypto/rand.Read never returns an error
-	for i := range b {
-		b[i] = alphanumeric[int(b[i])%len(alphanumeric)]
-	}
-	return string(b)
-}
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L45-L51 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L45-L51 at v20.2.4):
+// n characters of alphanumeric, unbiased, as 64 divides 256.
+func randAlnum(n int) string { return meta.ChooseFrom(alphanumeric, n) }
 
 // writer is the write path's state on Store.
 type writer struct {

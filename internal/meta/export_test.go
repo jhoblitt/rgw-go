@@ -1,5 +1,11 @@
 package meta
 
+import "slices"
+
+// ChooseBytes is chooseBytes on a copy of b, so a spec's table rows stay as
+// written.
+func ChooseBytes(table string, b []byte) string { return chooseBytes(table, slices.Clone(b)) }
+
 // StripesUpTo is Stripes with limit standing for MaxStripes, so a spec can
 // reach the bound without building millions of stripes.
 func (m Manifest) StripesUpTo(limit int) ([]Stripe, error) { return m.stripes(limit) }

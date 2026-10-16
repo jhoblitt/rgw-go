@@ -1,7 +1,6 @@
 package meta
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -78,21 +77,6 @@ const (
 	lowerAlnum = "0123456789abcdefghijklmnopqrstuvwxyz"
 )
 
-// chooseFrom is choose_from
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L33-L42 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L33-L42 at v20.2.4):
-// n random bytes, each reduced modulo the table's length. The byte is read
-// unsigned; choose_from sign-extends a signed char first, which changes
-// nothing for a table of 36 or 64, as both divide 2^32 - 256.
-func chooseFrom(table string, n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b) // crypto/rand.Read never returns an error
-	for i, c := range b {
-		b[i] = table[int(c)%len(table)]
-	}
-	return string(b)
-}
-
 // instanceLen is OBJ_INSTANCE_LEN less the NUL: radosgw hands
 // gen_rand_alphanumeric_no_underscore a buffer of OBJ_INSTANCE_LEN (32)
 // bytes, and it draws one character fewer than its size
@@ -106,7 +90,7 @@ const instanceLen = 31
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9614-L9623 at v20.2.4),
 // a new version's instance. Its table holds nothing a URL escapes, and no
 // '_', which would end the instance early in its head's "_:<instance>_<name>".
-func NewInstance() string { return chooseFrom(noUnderscoreAlnum, instanceLen) }
+func NewInstance() string { return ChooseFrom(noUnderscoreAlnum, instanceLen) }
 
 // olhTagLen is the length of every tag olh_init_modification_impl draws.
 const olhTagLen = 32
@@ -117,7 +101,7 @@ const olhTagLen = 32
 // gives a head it makes an OLH: 32 characters of gen_rand_alphanumeric_lower,
 // drawn alike for the AttrOLHIDTag and for the fresh AttrIDTag written with
 // it.
-func NewOLHTag() string { return chooseFrom(lowerAlnum, olhTagLen) }
+func NewOLHTag() string { return ChooseFrom(lowerAlnum, olhTagLen) }
 
 // NewOLHOpTag is the op tag olh_init_modification_impl names a pending
 // modification by, at NewOLHTag's lines: the second of now, as utime_t keeps
@@ -130,5 +114,5 @@ func NewOLHTag() string { return chooseFrom(lowerAlnum, olhTagLen) }
 // not expired, so the names must sort as the times they store do.
 func NewOLHOpTag(now time.Time) string {
 	prefix := fmt.Sprintf("%016x", uint32(now.Unix())) //nolint:gosec // utime_t truncates seconds to u32
-	return prefix + chooseFrom(lowerAlnum, olhTagLen-len(prefix))
+	return prefix + ChooseFrom(lowerAlnum, olhTagLen-len(prefix))
 }
