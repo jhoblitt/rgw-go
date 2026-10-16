@@ -2929,7 +2929,14 @@ does the following.
   `rgw_multipart_min_part_size` at each CompleteMultipartUpload
   (`rgw_op.cc:6430-6431` and `driver/rados/rgw_sal_rados.cc:3458` at
   v19.2.6, `rgw_op.cc:7244-7245` and `driver/rados/rgw_sal_rados.cc:4306`
-  at v20.2.4).
+  at v20.2.4). The same holds for the compressor options its writes read,
+  `compressor_zlib_level`, `compressor_zlib_winsize` and
+  `compressor_zstd_level`, which radosgw's compressors read at each
+  compress
+  ([ZlibCompressor.cc:94-100](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zlib/ZlibCompressor.cc#L94-L100),
+  [ZlibCompressor.cc:106-112](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L106-L112);
+  [ZstdCompressor.h:31](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L31),
+  [ZstdCompressor.h:31](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L31)).
 - **Shard counts, the bucket-index AIO limit and the copy concurrency that
   are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
@@ -4522,8 +4529,11 @@ does the following.
   the end of a block larger than the serving gateway's `rgw_max_chunk_size`
   (`docs/ceph-upstream-bugs.md`, "[radosgw spins on a ranged GET of a
   compressed block larger than rgw_max_chunk_size](ceph-upstream-bugs.md#radosgw-spins-on-a-ranged-get-of-a-compressed-block-larger-than-rgw_max_chunk_size)").
-  When rgw-go writes compressed objects, blocks larger than a coexisting
-  radosgw's `rgw_max_chunk_size` would expose that radosgw to the loop.
+  rgw-go makes each compressed block from at most its own
+  `rgw_max_chunk_size` of plaintext, as radosgw does, so its objects expose
+  a coexisting radosgw to the loop only where that radosgw's
+  `rgw_max_chunk_size` is the smaller, as a radosgw configured with the
+  larger value would.
 - **GetObjectTagging and GetBucketTagging of a tag set that does not
   decode.** rgw-go answers 500 UnknownError when an object's or a bucket's
   `user.rgw.x-amz-tagging` decodes neither as a tag set nor as the
@@ -5617,7 +5627,9 @@ does the following.
   `driver/rados/rgw_rados.cc:659-693` and `:694-728`). On such a pool with
   a stripe width over 4 MiB a slow client holds more than a piece's room
   and slow clients can stop other PUTs, and a head, one aligned chunk,
-  exceeds `rgw_max_chunk_size`.
+  exceeds `rgw_max_chunk_size`. A compressing write's two block buffers, one
+  block of plaintext and its encoded form, are outside the budget too, held
+  until the body is read.
 - **A multipart upload's combined CRC follows its checksum type.** rgw-go's
   completion stores no combined checksum yet ("Client checksums are ignored
   until phase 2"); the combination is `cksum.NewCombiner`'s
@@ -5749,6 +5761,63 @@ does the following.
   another reader, which does not know `Expect`, removes what it reads.
   radosgw has no `Expect`, so a radosgw writer never meets this case.
   Versioning is not served yet.
+- **zlib's compressor message states the window rgw-go deflates with.**
+  radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
+  stores that value as each object's `compressor_message`
+  ([ZlibCompressor.cc:94-100](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zlib/ZlibCompressor.cc#L94-L100),
+  [ZlibCompressor.cc:106-112](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L106-L112)).
+  Go's deflate always uses a 32 KiB window, which a narrower window bits
+  value cannot inflate, so rgw-go stores the option's framing at 15 bits:
+  -15 for a negative value (raw deflate), 15 for 8 to 15 (the zlib
+  wrapper) and 31 for 16 and above (gzip) (`internal/compression`,
+  `newZlibEncoder`). At the default, -15, and at 15 and 31, the message is
+  radosgw's. Under any other value it differs, and where `deflateInit2`
+  refuses the value, -8 to -1, 16 to 24 and 32, radosgw stores the object
+  uncompressed while rgw-go compresses it. Each gateway reads the other's
+  objects, except those radosgw writes at 8, which neither reads
+  (`docs/ceph-upstream-bugs.md`,
+  "[compressor_zlib_winsize 8 writes zlib blocks radosgw cannot read
+  back](ceph-upstream-bugs.md#compressor_zlib_winsize-8-writes-zlib-blocks-radosgw-cannot-read-back)").
+  Under such a value a multipart upload whose parts come from both gateways
+  cannot complete: completion, on either gateway, refuses a part whose
+  compression or compressor message differs from the parts before it with
+  400 InvalidPart
+  ([rgw_sal_rados.cc:3535-3547](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3535-L3547),
+  [rgw_sal_rados.cc:4379-4391](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4379-L4391);
+  `internal/driver`, `mergeCompression`). A value of 0 to 7, or a
+  `compressor_zlib_level` outside -1 to 9, has both gateways store the
+  object uncompressed; rgw-go logs such options at startup.
+- **`random` and a codec rgw-go has no encoder for store the object
+  uncompressed.** A storage class whose `compression_type` is `random`, or a
+  codec other than the four rgw-go encodes (snappy, zlib, zstd and lz4), has
+  rgw-go store a PUT's or a part's data uncompressed, without the
+  incompressible hint, and log the type the first time it meets it.
+  radosgw compresses with the plugin it loads: for `random`, a teuthology
+  setting, a codec it picks at random for each object, and by the upload
+  id's hash for an upload's parts
+  ([rgw_op.cc:4087-4108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4087-L4108),
+  [rgw_op.cc:4296-4317](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4296-L4317));
+  for another name, such as brotli in a build with that plugin, its codec.
+  Where no plugin loads, radosgw stores the object uncompressed too
+  ([rgw_op.cc:4360-4366](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4360-L4366),
+  [rgw_op.cc:4576-4582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4576-L4582)).
+  rgw-go reads no codec but the four. So an upload whose parts come from both
+  gateways fails completion with 400 InvalidPart wherever radosgw compressed
+  its parts, as completion on either gateway refuses parts that differ in
+  their compression (the zlib entry above cites it).
+- **A compressed part is hinted incompressible.** rgw-go writes every stripe
+  of a part into a class whose codec it loads with the INCOMPRESSIBLE alloc
+  hint, a part stored as it is after its first block fails or under options
+  zlib refuses included, as both gateways write a compressed PUT's tails and
+  head. radosgw writes a compressed part's stripes without it: its writer
+  looks the flag up on the part head, which nothing marks
+  (`docs/ceph-upstream-bugs.md`, "[radosgw
+  writes a compressed part's stripes without the incompressible
+  hint](ceph-upstream-bugs.md#radosgw-writes-a-compressed-parts-stripes-without-the-incompressible-hint)").
+  Only BlueStore reads the hint: on a pool whose compression mode is
+  aggressive it then does not compress the part's stored bytes again
+  ([BlueStore.cc:17267-17272](https://github.com/ceph/ceph/blob/v19.2.7/src/os/bluestore/BlueStore.cc#L17267-L17272),
+  [BlueStore.cc:17508-17513](https://github.com/ceph/ceph/blob/v20.2.4/src/os/bluestore/BlueStore.cc#L17508-L17513)).
 
 ### Bucket index differences
 

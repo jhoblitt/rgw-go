@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cls/gc"
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
@@ -63,6 +65,12 @@ type writeOptions struct {
 	multiObjDelMaxAIO  int    // rgw_multi_obj_del_max_aio, 16, floored to 1 as RGWDeleteMultiObj::execute does
 	copyConcurrentIO   int    // rgw_max_copy_obj_concurrent_io, 10, 0 used as 1 with an error-level log line
 	maxRequests        int64  // Options.MaxConcurrentRequests, which Open sets
+	// codec is global.yaml.in's compressor_zlib_level, 5,
+	// compressor_zlib_winsize, -15, and compressor_zstd_level, 1, which
+	// radosgw's compressors read at each compress
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L768-L789 at v19.2.7
+	// and v20.2.4).
+	codec compression.EncoderOptions
 }
 
 // readWriteOptions reads the write options through conf, each through the
@@ -79,7 +87,11 @@ type writeOptions struct {
 // "A negative or overlong gc object wait"). A zero
 // stripe size, or a write window smaller
 // than one chunk, refuses to start (docs/exclusions.md, "Write sizes that
-// cannot write").
+// cannot write"). A compressor_zlib_level or compressor_zlib_winsize zlib
+// refuses is logged at error level and kept: radosgw's zlib compress then
+// fails for every object, which RGWPutObj_Compress stores uncompressed
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_compression.cc#L54-L64 at v19.2.7
+// and v20.2.4), and so does rgw-go.
 func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	var r reads
 	o := writeOptions{
@@ -99,8 +111,16 @@ func readWriteOptions(conf *cephconf.Options) (writeOptions, error) {
 	gcObjs := readOption(&r, conf.Int64, "rgw_gc_max_objs")
 	minWait := readOption(&r, conf.Int64, "rgw_gc_obj_min_wait")
 	delAIO := readOption(&r, conf.Uint64, "rgw_multi_obj_del_max_aio")
+	o.codec = compression.EncoderOptions{
+		ZlibLevel:   int(readOption(&r, conf.Int64, "compressor_zlib_level")),
+		ZlibWinsize: int(readOption(&r, conf.Int64, "compressor_zlib_winsize")),
+		ZstdLevel:   int(readOption(&r, conf.Int64, "compressor_zstd_level")),
+	}
 	if r.err != nil {
 		return writeOptions{}, fmt.Errorf("reading the write options: %w", r.err)
+	}
+	if _, err := compression.NewEncoder(compression.Zlib, o.codec); err != nil {
+		slog.Error("zlib refuses the compressor options; objects of a zlib class are stored uncompressed", slog.Any("error", err))
 	}
 	o.gcMaxObjs = min(floorShards("rgw_gc_max_objs", gcObjs), meta.ShardsMax)
 	if minWait < 0 {
@@ -149,6 +169,10 @@ type writer struct {
 	completions *completionManager
 	body        *bodyBudget
 	rand        func(n int) string
+	newEncoder  func(codec string, o compression.EncoderOptions) (compression.Encoder, error)
+	// unloadable holds each compression type a write met with no encoder,
+	// logged the first time.
+	unloadable sync.Map
 }
 
 // newWriter builds the write path's state for s, whose zone and period are
@@ -163,6 +187,7 @@ func newWriter(ctx context.Context, s *Store, opts writeOptions) *writer {
 		reshardWait: reshardWait,
 		body:        newBodyBudget(bodyBudgetSize(s.cluster, opts)),
 		rand:        randAlnum,
+		newEncoder:  compression.NewEncoder,
 	}
 	// RGWGC::initialize names the shards "gc.0" to "gc.<n-1>"
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L39-L44).

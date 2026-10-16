@@ -307,6 +307,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's follow_olh answers the version that was current before the replay it runs](#radosgws-follow_olh-answers-the-version-that-was-current-before-the-replay-it-runs) | pending | pending |  |
 | [cls_otp's otp_set puts an array as long as the seed on the OSD's stack](#cls_otps-otp_set-puts-an-array-as-long-as-the-seed-on-the-osds-stack) | none | [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014) |  |
 | [radosgw's otp check sends the otp_check request to otp_get_result](#radosgws-otp-check-sends-the-otp_check-request-to-otp_get_result) | pending | pending |  |
+| [radosgw writes a compressed part's stripes without the incompressible hint](#radosgw-writes-a-compressed-parts-stripes-without-the-incompressible-hint) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4110,7 +4111,12 @@ Every new entry adds its row to this table, in document order.
   the zlib wrapper with an 8-bit window, and `openMember` refuses a header
   window wider than that (`internal/compression/zlib.go`). The spec "zlib,
   the header radosgw writes for message 8"
-  (`internal/compression/codec_test.go`) pins it.
+  (`internal/compression/codec_test.go`) pins it. Its own writes under the
+  option at 8 read back on both gateways: it deflates with a 32 KiB window
+  and stores 15 as the message (`internal/compression/encode.go`,
+  `newZlibEncoder`; `docs/exclusions.md`, "zlib's compressor message states
+  the window rgw-go deflates with"), which the spec "the zlib wrapper at 8,
+  where radosgw states 8" (`internal/driver/put_test.go`) pins.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 2, 2026-10-01, transcribing radosgw's
@@ -6461,10 +6467,12 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main 06adccc25d6.
 - **rgw-go:** not affected: `compression.Stream` writes the part of each
   decoded block that lies in the range and stops, whatever
-  `rgw_max_chunk_size` is (`internal/compression`, `internal/driver`). When
-  rgw-go writes compressed objects, blocks larger than a coexisting
-  radosgw's `rgw_max_chunk_size` would expose that radosgw to this loop;
-  `docs/exclusions.md` records the difference.
+  `rgw_max_chunk_size` is (`internal/compression`, `internal/driver`). It
+  makes each compressed block it writes from at most its own
+  `rgw_max_chunk_size` of plaintext, as radosgw does (`internal/driver`,
+  `compressor`), so its objects expose a coexisting radosgw to this loop
+  only where that radosgw's `rgw_max_chunk_size` is the smaller;
+  `docs/exclusions.md` records it.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
   [#74662](https://tracker.ceph.com/issues/74662) and
@@ -15724,3 +15732,57 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task WP-16, 2026-10-16, verifying the otp client's
   calls at both tags; derived from the source, not reproduced.
+
+## radosgw writes a compressed part's stripes without the incompressible hint
+
+- **Kind:** defect, cosmetic: no data or S3 effect. On a pool whose
+  BlueStore compression mode is aggressive, the OSD compresses a compressed
+  part's stored bytes again. Not security-relevant. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; every
+  function named is the same at both tags.
+  - Once it loads a compressor plugin, `RGWPutObj::execute` marks the
+    request's object compressed, "always send incompressible hint when rgw
+    is itself doing compression"
+    ([rgw_op.cc:4366-4371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4366-L4371),
+    [rgw_op.cc:4582-4587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4582-L4587)).
+    `RadosObject::set_compressed` marks the object's own `rgw_obj`, for a
+    part the upload's key
+    ([rgw_sal_rados.h:590-593](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.h#L590-L593),
+    [rgw_sal_rados.h:598-601](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.h#L598-L601)).
+  - `RadosWriter::add_write_hint`, which every stripe write and a part
+    head's exclusive create call, hints INCOMPRESSIBLE when its `head_obj`
+    is marked compressed
+    ([rgw_putobj_processor.cc:118-127](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L118-L127),
+    [rgw_putobj_processor.cc:146-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L146-L155)).
+  - `MultipartObjectProcessor::prepare_head` points that `head_obj` at the
+    part head, an object in the multipart namespace, "instead of the final
+    multipart head"
+    ([rgw_putobj_processor.cc:469-470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L469-L470),
+    [rgw_putobj_processor.cc:503-504](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L503-L504)).
+    Nothing marks the part head compressed, so every write of a compressed
+    part carries hint flags 0.
+  - A PUT's writer keeps the object's own `head_obj`, so its tails are
+    hinted, and so is the head's `write_full`
+    ([rgw_rados.cc:3230-3238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3230-L3238),
+    [rgw_rados.cc:3327-3335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3327-L3335)).
+  - BlueStore leaves data hinted INCOMPRESSIBLE uncompressed only in
+    aggressive mode; force mode compresses it anyway, and passive mode
+    compresses only data hinted compressible
+    ([BlueStore.cc:17267-17272](https://github.com/ceph/ceph/blob/v19.2.7/src/os/bluestore/BlueStore.cc#L17267-L17272),
+    [BlueStore.cc:17508-17513](https://github.com/ceph/ceph/blob/v20.2.4/src/os/bluestore/BlueStore.cc#L17508-L17513)).
+- **Impact:** on an aggressive pool each compressed part's stored bytes are
+  compressed again, CPU spent for little or no space, where a compressed
+  PUT's are not. Nothing else differs.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; main not
+  checked.
+- **rgw-go:** hints every write of a part it compresses INCOMPRESSIBLE, the
+  part head's exclusive create and each shadow stripe, as both gateways
+  hint a PUT's (`internal/driver/mp_part.go`, `partWriter`;
+  `docs/exclusions.md`, "A compressed part is hinted incompressible"). The
+  spec "compresses the part on its own and records its cs_info, as
+  MultipartObjectProcessor::complete does" (`internal/driver/mp_part_test.go`)
+  pins it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit WP, Task WP-10, 2026-10-15, wiring the block
+  encoders into the write path; derived from the source, not reproduced.
