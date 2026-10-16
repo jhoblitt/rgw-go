@@ -1,0 +1,7 @@
+{
+    "rule_exist": true,
+    "sse_algorithm": "aws:kms",
+    "kms_master_key_id": "k",
+    "bucket_key_enabled": true
+}
+
