@@ -64,7 +64,9 @@ before writing Go here.
   observed (agents drained, sessions idle, load, running processes) and act, without asking
   again (PP-16).
 - Every rgw-go fix, where it is reasonable, carries an s3-tests test that covers it, merged into
-  jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task.
+  jhoblitt/ceph's `rgw-go-s3tests` branch as part of the task. A task that changes s3-tests also
+  moves the s3-tests pin itself, with the known-differences and deselect lines the move needs; no
+  note defers the move to a later bump (PP-19).
 - A citation of Ceph source is a GitHub link pinned to the tag or commit it was written against:
   in Markdown a link such as
   [rgw_op.cc:6902-6904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6902-L6904),
