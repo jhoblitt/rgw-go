@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S5 | 5 |
+| `00-index.md` | this index, and the shared tasks S1 to S6 | 6 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V15c |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
@@ -224,9 +224,20 @@ The controller's rulings on the research's open questions, under the owner's rul
   - if the clusters' radosgw serves Swift, one cluster spec: radosgw's Swift API sets `X-Container-Read: .r:*`, S3 sets all four block settings, and rgw-go refuses the anonymous read. If they do not, the implementer records why, and the stored ACL's bytes from such a container pin the specs instead.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 90 lines.
 
+### Task S6: one choose_from
+
+- **Layer:** meta, op and driver. **Files:** modify `internal/meta` (V2's `chooseFrom`, exported), `internal/op/adminuser_sub.go` and `internal/driver/writer.go`, and their specs. **Cluster:** no.
+- **Why:** V2's review (N4) found three helpers reproducing radosgw's `choose_from` ([random_string.cc:33-42](https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L33-L42), [random_string.cc:33-42](https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L33-L42)): `meta.chooseFrom`, `op.randomFrom` and `driver.randAlnum`. radosgw casts each random `char` to `unsigned`, which sign-extends it on x86-64; `op.randomFrom` does so and the other two read the byte unsigned. For the 36- and 64-character tables the two reads pick the same characters, since both divide 2^32 - 256; for the 62-character plain table they differ.
+- **Produces:** one exported helper in `internal/meta`, which op and driver call; the other two are deleted.
+- **Behaviour:**
+  1. The helper reads each byte as radosgw's cast does on x86-64, sign-extended, for every table.
+  2. Each caller keeps its table and length, as its current specs pin.
+- **Specs:** a byte table over the three table sizes, sign-extended reads included; the callers' existing specs pass unchanged.
+- **Depends on:** V2. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, and S5 at once.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, and S6 once V2 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T unit starts at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
