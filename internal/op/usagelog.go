@@ -29,7 +29,18 @@ import (
 // and the logger never receives an entry with neither a payer nor an owner,
 // which radosgw's flush drops.
 func LogUsage(ctx context.Context, r *Request, opName string) {
-	if r.Identity.System || r.Env == nil || r.Env.Usage == nil {
+	id := r.Identity
+	// An unverified identity proves only that its sender knows a key's id, so
+	// its usage is accounted as an anonymous request's: nothing is filed
+	// under the key's user or account, or charged to that user as payer, and
+	// a system user's is not left out. radosgw takes s->owner, and s->user as
+	// payer, from it like any other
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L197-L219 at v19.2.7
+	// and v20.2.4; docs/exclusions.md).
+	if id.Unverified {
+		id = Anonymous()
+	}
+	if id.System || r.Env == nil || r.Env.Usage == nil {
 		return
 	}
 	e := UsageEntry{
@@ -53,7 +64,7 @@ func LogUsage(ctx context.Context, r *Request, opName string) {
 	// r.BucketRec carries that owner either way.
 	switch {
 	case r.Bucket == "":
-		e.Owner = r.Identity.Owner
+		e.Owner = id.Owner
 	case r.BucketRec != nil:
 		e.Owner = r.BucketRec.Info.Owner
 		// A 403 is not charged to the requester
@@ -61,7 +72,7 @@ func LogUsage(ctx context.Context, r *Request, opName string) {
 		// and the payer is s->user, the user itself even when it belongs to an
 		// account.
 		if r.BucketRec.Info.RequesterPays && r.Status != 403 {
-			e.Payer = meta.UserOwner(r.Identity.User.UserID)
+			e.Payer = meta.UserOwner(id.User.UserID)
 		}
 	}
 	// Every 404 takes the invalid bucket name "-", a missing key's too, though

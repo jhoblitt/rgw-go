@@ -135,6 +135,28 @@ var _ = Describe("SigV4 header authentication", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("builds a preflight's canonical request over its Access-Control-Request-Method", func(ctx SpecContext) {
+		req := httptest.NewRequestWithContext(ctx, http.MethodOptions, "http://s3.example.com/bucket/key", nil)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPut)
+		sdkSign(ctx, req, unsignedPayload)
+		d, err := authDataV4(newRequestView(req), false, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.canonicalRequest).To(HavePrefix("PUT\n/bucket/key\n"))
+
+		pre := sdkPresign(ctx, httptest.NewRequestWithContext(ctx, http.MethodOptions, "http://s3.example.com/bucket/key", nil))
+		pre.Header.Set("Access-Control-Request-Method", http.MethodDelete)
+		d, err = authDataV4(newRequestView(pre), true, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.canonicalRequest).To(HavePrefix("DELETE\n/bucket/key\n"), "presigned")
+
+		get := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://s3.example.com/bucket/key", nil)
+		get.Header.Set("Access-Control-Request-Method", http.MethodPut)
+		sdkSign(ctx, get, unsignedPayload)
+		d, err = authDataV4(newRequestView(get), false, &cfg, signingTime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.canonicalRequest).To(HavePrefix("GET\n"), "only an OPTIONS request takes the header's method")
+	})
+
 	It("derives the signature AWS's algorithm derives", func() {
 		creq := "GET\n/\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\n\nhost;x-amz-date\nUNSIGNED-PAYLOAD"
 		Expect(signatureV4(signingKeyV4(testSecret, testScope), stringToSignV4(testDate, testScope, creq))).

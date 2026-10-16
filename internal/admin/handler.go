@@ -271,6 +271,13 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 		return
 	}
 	s3.ApplyAuth(r, res)
+	// No admin route is a preflight, so an identity granted without a
+	// signature compare is refused whatever route dispatch sent it to
+	// (op.RefuseUnverified).
+	if r.Identity.Unverified {
+		WriteError(ctx, w, r, q, fmt.Errorf("%w: an identity granted without a signature compare reached admin route %s", op.ErrInternalError, route.Name))
+		return
+	}
 	r.Tenant = r.Identity.Tenant
 	if u := r.Identity.User; u != nil && u.Suspended != 0 {
 		WriteError(ctx, w, r, q, op.ErrUserSuspended)

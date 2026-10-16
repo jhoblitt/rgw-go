@@ -98,7 +98,8 @@ func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 // authenticate resolves X-Test-User as auth's identity does; X-Test-Body
 // replaces the body as an aws-chunked decoder would. X-Test-Fail fails with
 // an InternalError that carries the Authorization header, as a careless
-// authenticator's error might.
+// authenticator's error might. X-Test-Unverified marks the identity as one
+// granted without a signature compare.
 func (fx *fixture) authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	fx.mu.Lock()
 	fx.lastPayloads = payloads
@@ -122,6 +123,7 @@ func (fx *fixture) authenticate(ctx context.Context, req *http.Request, payloads
 	res := &op.AuthResult{Identity: op.Identity{
 		User: &info, Owner: meta.UserOwner(info.UserID), Tenant: info.UserID.Tenant, OpMask: info.OpMask,
 		Caps: info.Caps, Admin: info.Admin != 0 || info.System != 0, System: info.System != 0,
+		Unverified: req.Header.Get("X-Test-Unverified") != "",
 	}}
 	if b := req.Header.Get("X-Test-Body"); b != "" {
 		res.Body, res.ContentLength = strings.NewReader(b), int64(len(b))

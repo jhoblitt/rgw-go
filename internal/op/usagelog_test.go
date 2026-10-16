@@ -136,6 +136,30 @@ var _ = Describe("LogUsage", func() {
 		r.Env.Usage = nil
 		Expect(func() { op.LogUsage(ctx, r, "get_obj") }).NotTo(Panic())
 	})
+	// An unverified identity is a CORS preflight granted on its key's id
+	// alone: its usage is what an anonymous request's would be.
+	DescribeTable("accounts an unverified identity's usage as an anonymous request's",
+		func(ctx SpecContext, id func() op.Identity, bucket string, rec func() *op.BucketRecord, status int) {
+			unverified := id()
+			unverified.Unverified = true
+			op.LogUsage(ctx, request(unverified, bucket, rec(), status), "options_cors")
+			got := store.Usage()
+			store = memstore.New(memstore.Config{})
+			op.LogUsage(ctx, request(op.Anonymous(), bucket, rec(), status), "options_cors")
+			Expect(got).To(Equal(store.Usage()))
+			Expect(got).To(HaveLen(1))
+			Expect(got[0].Owner).NotTo(Equal(unverified.Owner))
+			Expect(got[0].Payer).NotTo(Equal(meta.UserOwner(unverified.User.UserID)))
+		},
+		Entry("a user's, with no bucket named, not filed under the user",
+			func() op.Identity { return bob }, "", func() *op.BucketRecord { return nil }, http.StatusBadRequest),
+		Entry("an account user's, with no bucket named, not filed under the account",
+			func() op.Identity { return carol }, "", func() *op.BucketRecord { return nil }, http.StatusBadRequest),
+		Entry("a user's on a requester-pays bucket, not charged to the user as payer",
+			func() op.Identity { return bob }, "rp", func() *op.BucketRecord { return rp }, http.StatusOK),
+		Entry("a system user's, logged as an anonymous request is, not left out as a system request is",
+			func() op.Identity { i := bob; i.System = true; return i }, "", func() *op.BucketRecord { return nil }, http.StatusOK),
+	)
 	DescribeTable("counts the op as successful only for a status rgw_err::is_err does not call an error",
 		func(ctx SpecContext, status int, successful uint64) {
 			op.LogUsage(ctx, request(bob, "plain", plain, status), "get_obj")

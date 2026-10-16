@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,18 +45,20 @@ func New(cfg Config, creds CredentialStore, accounts op.AccountStore) *Verifier 
 
 // Authenticate resolves req to an identity or an op.Error, in the order of
 // RGW_Auth_S3::authorize, the anonymous engine, get_auth_data and the local
-// engine. payloads is the dispatched route's forms: a signed payload in a
-// form outside them is ErrNotImplemented, answered before the access key is
-// looked up, where get_auth_data_v4 throws it. A SigV2 request that has
-// authenticated is then refused if a sub-resource value spells a later one
-// (packedSubresourceV2), and a presigned one if its Expires holds a line
-// break (expiresLineBreak) or its signed meta does not make one set across
-// its headers and its query (queryMetaV2), rgw-go refusals radosgw does not
-// make; the query's part of that set is the result's QueryMeta. A signed
-// result names its Route, which says what of the query the signature
-// covers. Every result carries ContentLength; a Body is the payload's
-// verifying reader, which reports the payload's verdict on the Read that
-// ends it.
+// engine, which grants a CORS preflight (isPreflight) whose key resolves
+// without comparing its signature. payloads is the dispatched route's forms:
+// a signed payload in a form outside them is ErrNotImplemented, answered
+// before the access key is looked up, where get_auth_data_v4 throws it. A
+// SigV2 request that has authenticated is then refused if a sub-resource
+// value spells a later one (packedSubresourceV2), and a presigned one if its
+// Expires holds a line break (expiresLineBreak) or its signed meta does not
+// make one set across its headers and its query (queryMetaV2), rgw-go
+// refusals radosgw does not make; the query's part of that set is the
+// result's QueryMeta. A signed result names its Route, which says what of
+// the query the signature covers; a preflight's names the route of a
+// signature nothing compared, so nothing of a preflight is signed. Every
+// result carries ContentLength; a Body is the payload's verifying reader,
+// which reports the payload's verdict on the Read that ends it.
 func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	// Without Keystone and LDAP, rgw_s3_auth_use_rados off leaves radosgw no
 	// backend, and it denies every request, anonymous ones included
@@ -99,17 +102,39 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	if err != nil {
 		return nil, err
 	}
-	match, err := d.verify(key.Secret)
+	// LocalEngine::authenticate grants a preflight here without comparing
+	// its signature
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931 at v20.2.4):
+	// it looks the key up for the tenant a tenanted user's bucket is under,
+	// and a browser's preflight for a presigned URL cannot carry every header
+	// that URL signs (ceph commit fe15b52edb5). The identity is then the key's
+	// user on the key's id alone, so it is marked Unverified: nothing the
+	// request causes may be charged to that user, a rate limit's charge
+	// included (docs/ceph-upstream-bugs.md).
+	idView := rv
+	if isPreflight(rv) {
+		// A system user's rgwx-uid would have the preflight's answer say
+		// whether the user or account it names loads, and so that the key is
+		// a system user's, to anyone holding the key's id; radosgw takes it
+		// (docs/exclusions.md).
+		noSys := *rv
+		noSys.sysParams = map[string]string{}
+		idView = &noSys
+	} else {
+		var match bool
+		if match, err = d.verify(key.Secret); err != nil {
+			return nil, err
+		}
+		if !match {
+			return nil, op.ErrSignatureDoesNotMatch
+		}
+	}
+	id, err := v.identity(ctx, idView, rec, d.accessKey, key, account)
 	if err != nil {
 		return nil, err
 	}
-	if !match {
-		return nil, op.ErrSignatureDoesNotMatch
-	}
-	id, err := v.identity(ctx, rv, rec, d.accessKey, key, account)
-	if err != nil {
-		return nil, err
-	}
+	id.Unverified = isPreflight(rv)
 	var queryMeta map[string]string
 	if ver == versionV2 {
 		if refused := packedSubresourceV2(rv); refused != nil {
@@ -165,6 +190,50 @@ func authRoute(ver version, presigned bool) op.AuthRoute {
 	default:
 		return op.RouteSigV4Header
 	}
+}
+
+// corsMethods are the methods get_cors_method_flags names, matched as strcmp
+// matches them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L137-L147 at v19.2.7
+// and v20.2.4).
+var corsMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodHead}
+
+// isPreflight reports whether radosgw types the request as the CORS
+// preflight. Its bucket and object handlers' op_options serve every OPTIONS
+// request with RGWOptionsCORS_ObjStore_S3
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4823-L4826
+// and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4908-L4911 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5348-L5351
+// and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5438-L5441 at v20.2.4).
+// The signature skip that hangs on it is safe only while every caller of
+// Authenticate runs nothing but the preflight on an OPTIONS request, and
+// refuses one it has no preflight for before it authenticates, as
+// internal/s3 and internal/admin do. The identity it grants is marked
+// Unverified, which op.RefuseUnverified refuses everywhere but the
+// preflight, so a stray dispatch row fails closed.
+func isPreflight(rv *requestView) bool { return rv.req.Method == http.MethodOptions }
+
+// canonicalMethod is get_canonical_method (get_v4_canonical_method at
+// v19.2.7,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L705-L732 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1749-L1776 at v20.2.4):
+// the method a signature is over, which for a preflight is the method it
+// asks for, its Access-Control-Request-Method. A preflight that asks for
+// none, or for one that is not a CORS method, is EINVAL.
+func canonicalMethod(rv *requestView) (string, error) {
+	if !isPreflight(rv) {
+		return rv.req.Method, nil
+	}
+	m, ok := rv.header("access-control-request-method")
+	if !ok {
+		return "", fmt.Errorf("%w: preflight without access-control-request-method", op.ErrInvalidArgument)
+	}
+	if !slices.Contains(corsMethods, m) {
+		return "", fmt.Errorf("%w: access-control-request-method names no cors method", op.ErrInvalidArgument)
+	}
+	return m, nil
 }
 
 // parseAuthData is get_auth_data's choice of abstractor

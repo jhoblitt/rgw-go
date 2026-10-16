@@ -4,3 +4,6 @@ package admin
 // registered for, which a spec registers to exercise that route once every
 // route radosgw has is served.
 func Unregistered(name string) HandlerFunc { return unregistered(name) }
+
+// RouteNamesForTest is every route Dispatch yields.
+var RouteNamesForTest = routeNames
