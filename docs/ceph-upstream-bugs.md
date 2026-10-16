@@ -183,6 +183,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | none | none | ✓ |
 | [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | none | none | ✓ |
 | [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) | ✓ (the rate-limit charge) |
+| [radosgw's signed CORS preflight takes a system key's rgwx-uid unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified) | pending | pending | ✓ |
 | [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | [#80899](https://tracker.ceph.com/issues/80899) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | [#80899](https://tracker.ceph.com/issues/80899), [#80902](https://tracker.ceph.com/issues/80902) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [Squid labels a copy to another storage class with its source's class](#squid-labels-a-copy-to-another-storage-class-with-its-sources-class) | [#23264](https://tracker.ceph.com/issues/23264) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
@@ -8875,6 +8876,60 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 1 unit A, Task 9, 2026-10-04, transcribing
   `LocalEngine::authenticate`; confirmed by the Task 9 review. Not
   reproduced.
+
+## radosgw's signed CORS preflight takes a system key's rgwx-uid unverified
+
+- **Kind:** defect, security-relevant and found by us: an information
+  disclosure to anyone who knows a system user's access key id, but not its
+  secret. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` grants a request typed `RGW_OP_OPTIONS_CORS`
+    once its key resolves, without comparing its signature, through
+    `create_apl_local`
+    ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401),
+    [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931);
+    "radosgw grants a signed CORS preflight without comparing its
+    signature", above).
+  - `AWSAuthStrategy::create_apl_local` wraps that `LocalApplier` in
+    `SysReqApplier` (`add_sysreq`,
+    [rgw_auth_s3.h:178-191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L178-L191),
+    [rgw_auth_s3.h:179-193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L179-L193)).
+  - `Strategy::apply` then calls the applier's `load_acct_info` and answers
+    the `int` it throws
+    ([rgw_auth.cc:519](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L519)
+    and
+    [rgw_auth.cc:537-539](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L537-L539),
+    [rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)
+    and
+    [rgw_auth.cc:552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L552)).
+  - For a system user, `SysReqApplier::load_acct_info` reads `rgwx-uid` and
+    throws `-EACCES` when the user or account it names does not load
+    ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317),
+    [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345));
+    for any other user it reads nothing.
+  - On Tentacle the user it loads becomes `s->user`
+    ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)),
+    which the suspended check then reads
+    ([rgw_process.cc:374-376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L374-L376)).
+- **Impact:** a preflight with a system user's access key id, any
+  signature and `?rgwx-uid=` naming a user or an account is 403
+  AccessDenied when that user or account does not load and is served
+  otherwise. Its sender learns that the key is a system user's, as another
+  user's key ignores `rgwx-uid`, and can then test, one request each,
+  whether any user id or account id exists. On Tentacle a named user that
+  is suspended answers 403 UserSuspended, so the sender learns that too. A
+  forged request of any other method is refused with SignatureDoesNotMatch
+  before `load_acct_info` runs, so only the preflight discloses this. The
+  sender needs only a system key's id, which every request signed with that
+  key and every URL presigned with it carries in the clear.
+- **Releases:** v19.1.0 on, with the preflight's signature skip; checked
+  at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: a preflight's identity takes no `rgwx-uid`
+  (`internal/auth/verifier.go:116-123`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-5, 2026-10-15, by the security review of its
+  preflight signing, tracing what a forged preflight's answer tells its
+  sender. Derived from the source, not reproduced.
 
 ## radosgw's copy drops its tail references after a head write that timed out
 
