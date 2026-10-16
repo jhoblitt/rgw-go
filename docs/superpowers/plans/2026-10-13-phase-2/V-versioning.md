@@ -1134,6 +1134,7 @@ their default.
      [rgw_op.cc:7743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743)); `Deleted` with `VersionId` when named and `DeleteMarker`
      with `DeleteMarkerVersionId` when one was made ([rgw_rest_s3.cc:4303-4331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4303-L4331),
      [rgw_rest_s3.cc:4821](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821)), which phase 1 renders already.
+  5. `op.mfaEnabled` is deleted and its caller reads `rec.Info.MFAEnabled()`, V2's helper, which is the same expression (the review of V2, N4).
 - **Specs:** the action per request; the MFA tables for both ops; the grouping's skip flags, and
   its final state equal to one update per key; headers for a marker (enabled and suspended), a
   version, a marker's instance, a null delete marker's removal (`x-amz-delete-marker: true`) and a
