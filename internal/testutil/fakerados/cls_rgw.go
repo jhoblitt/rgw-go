@@ -61,9 +61,9 @@ func assembleRGWClass(tables []methodTable) (methods methodTable, names, writes 
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
-// a reshard log, as Tentacle's do. It keeps no bucket index log, and it does
-// not emulate versioned keys: a prepare or complete naming an instance is
-// EOPNOTSUPP.
+// a reshard log, as Tentacle's do. It keeps no bucket index log, and its
+// prepare and complete do not emulate versioned keys: one naming an instance
+// is EOPNOTSUPP.
 func RGWClass() ClassFunc { return rgwClassMethods.dispatch() }
 
 // The bucket index, reshard status, head object, gc, usage log and multipart

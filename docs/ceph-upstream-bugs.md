@@ -290,6 +290,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw aborts on a checksum-mode GET of an object whose checksum attr has bytes past its record](#radosgw-aborts-on-a-checksum-mode-get-of-an-object-whose-checksum-attr-has-bytes-past-its-record) | pending | pending | ✓ |
 | [cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more](#cls_rgw-mis-sorts-and-cannot-list-versions-whose-epoch-is-232-or-more) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) |  |
 | [cls_rgw's read_olh_log reads the first epoch of an empty pending log](#cls_rgws-read_olh_log-reads-the-first-epoch-of-an-empty-pending-log) | pending | pending | ✓ |
+| [cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at an older epoch](#cls_rgws-bucket_link_olh-drops-the-remove_instance-it-logs-for-a-delete-marker-at-an-older-epoch) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) |  |
+| [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending |  |
+| [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14528,4 +14531,184 @@ Every new entry adds its row to this table, in document order.
   the request and decodes the reply.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V1, 2026-10-15, reading the class's read handler;
+  derived from the source, not reproduced.
+
+## cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at an older epoch
+
+- **Kind:** defect, S3-correctness of versioning, multisite only: a delete
+  marker linked at an epoch below the OLH entry's, over a version under its
+  own key, logs that version's removal and then drops the log, so radosgw
+  never removes the version. Not security-relevant. Fixed on main, not in
+  squid or tentacle. Unreproduced: derived from the source and from
+  fakerados's emulation of the class.
+- **Evidence:** paths are under `src/` unless named.
+  - `rgw_bucket_link_olh` sets `removing` for a delete marker that replaces a
+    version under its own key: the null version's data for an empty
+    instance, an existing version of the same instance otherwise
+    ([cls_rgw.cc:1712-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1734),
+    [cls_rgw.cc:1853-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1875)).
+  - When `start_modify` refuses the request's epoch as below the entry's
+    ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+    [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)),
+    the class writes the marker noncurrent, adds
+    `CLS_RGW_OLH_OP_REMOVE_INSTANCE` to the entry's pending log when
+    `removing`, and returns without writing the entry
+    ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)).
+    `update_log` changes only the entry in memory
+    ([cls_rgw.cc:1543-1548](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1543-L1548),
+    [cls_rgw.cc:1670-1675](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1670-L1675));
+    the link's other path writes it
+    ([cls_rgw.cc:1817-1821](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1817-L1821),
+    [cls_rgw.cc:1958-1962](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1958-L1962)),
+    and so does `bucket_unlink_instance`'s own older-epoch branch after
+    logging the same op
+    ([cls_rgw.cc:1917-1929](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1917-L1929),
+    [cls_rgw.cc:2064-2076](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2064-L2076)).
+  - The removal therefore never reaches `apply_olh_log`, which is what
+    deletes each instance the log names
+    ([rgw_rados.cc:8479-8481](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8481)
+    and
+    [rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541),
+    [rgw_rados.cc:9225-9227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9227)
+    and
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+  - Only a delete names the marker's epoch. `Delete::delete_obj` passes the
+    delete's `olh_epoch` to `set_olh` for the marker
+    ([rgw_rados.cc:5899-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5899-L5901),
+    [rgw_rados.cc:6511-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6511-L6513)),
+    and it is nonzero only from multisite: DeleteObject takes it from a system
+    request's `rgwx-versioned-epoch`
+    ([rgw_op.cc:5268-5285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5268-L5285),
+    [rgw_op.cc:5657-5674](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5657-L5674)),
+    and data sync's object removal from the source zone's versioned epoch
+    ([rgw_cr_rados.cc:946](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_cr_rados.cc#L946),
+    [rgw_cr_rados.cc:1001](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc#L1001)).
+  - The fix writes the entry in that branch: at 4195486c8ed the branch logs
+    the removal and calls `olh.write`
+    ([cls_rgw.cc:1981-1994](https://github.com/ceph/ceph/blob/4195486c8edc68bfdf5cd4d87e04ef67f35a9364/src/cls/rgw/cls_rgw.cc#L1981-L1994),
+    at 4195486c8ed), and after 75c7b8ece79's rework main logs the removal,
+    or `CLS_RGW_OLH_OP_STALE`, and writes the entry
+    ([cls_rgw.cc:2001-2016](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L2001-L2016),
+    at 7ed73efc1be).
+- **Impact:** in the zone that applies such a marker, radosgw never runs the
+  removal of the version the marker replaces:
+  - for the null version, the null data keeps its instance entry, under a key
+    apart from the marker's, and also loses its list entry, as the next entry
+    traces; what that leaves of its objects was not traced;
+  - for a named instance, the marker overwrites the version's instance entry
+    under the same key
+    ([cls_rgw.cc:1350-1358](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1350-L1358),
+    [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+    so the version's object is named by no index entry and is never removed.
+    That needs a marker whose instance id equals a stored version's, so in
+    practice only the null version reaches this path.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; fixed in
+  v21.0.0 and later.
+- **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
+  (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
+  pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
+  links no versions yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Fixed on main by
+  [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), which merged
+  4195486c8ed; in v21.0.0 and later. Reworked by
+  [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661), which merged
+  75c7b8ece79; in v21.0.1 and later. Neither is backported to squid or
+  tentacle.
+- **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
+  split from a joint entry in its review the same day. Derived from the
+  source, not reproduced.
+
+## cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch
+
+- **Kind:** defect, S3-correctness of versioning, multisite only: a null
+  delete marker linked at an epoch below the OLH entry's unlinks the null
+  data's list entry whatever the data's epoch, so a current null version
+  newer than the marker drops out of every listing while it stays current.
+  Not security-relevant. Still on main. Unreproduced: derived from the source
+  and from fakerados's emulation of the class.
+- **Evidence:** paths are under `src/` unless named.
+  - For an empty instance the link reads the other null entry and, when one
+    is the data and the other a marker, unlinks the other's list entry
+    ([cls_rgw.cc:1712-1723](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1723),
+    [cls_rgw.cc:1853-1864](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1864)),
+    before `start_modify` compares the epochs
+    ([cls_rgw.cc:1751](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751),
+    [cls_rgw.cc:1892](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892)).
+  - When `start_modify` refuses the marker's epoch, the class writes the
+    marker noncurrent and returns without writing the OLH entry
+    ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)),
+    so the entry still names the null data as current, and nothing new is
+    logged for radosgw's apply to change the OLH head.
+  - The marker's epoch is nonzero only from multisite, as the entry on the
+    dropped REMOVE_INSTANCE traces.
+  - On main the block still runs before the epoch check
+    ([cls_rgw.cc:1895-1906](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L1895-L1906)
+    before
+    [cls_rgw.cc:1932](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L1932),
+    at 7ed73efc1be).
+- **Impact:** when the null data is the current version and newer than the
+  marker, a GET of the key serves it while no bucket listing shows it as
+  current, and ListObjectVersions omits it.
+  - A lead, unverified: main fixes the dropped removal, so the stale marker's
+    REMOVE_INSTANCE for the null version reaches `apply_olh_log`
+    ([rgw_rados.cc:10007-10008](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/driver/rados/rgw_rados.cc#L10007-L10008)
+    and
+    [rgw_rados.cc:10067-10079](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/driver/rados/rgw_rados.cc#L10067-L10079),
+    at 7ed73efc1be) while the OLH entry still names that null data, so main
+    may delete the current null version's data rather than only unlist it.
+    The delete path was not traced.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; main at
+  7ed73efc1be is still affected.
+- **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
+  (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
+  pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
+  links no versions yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Still on main at
+  7ed73efc1be.
+- **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
+  split from a joint entry in its review the same day, which also raised the
+  main-side lead. Derived from the source, not reproduced.
+
+## cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry
+
+- **Kind:** defect, cosmetic: unlinking a delete marker at an epoch below
+  the OLH entry's removes its list entry and leaves its instance entry, which
+  nothing removes later. Multisite only. Not security-relevant. Unreproduced:
+  derived from the source and from fakerados's emulation of the class.
+- **Evidence:** paths are under `src/` unless named.
+  - At any other epoch the class removes a delete marker's instance entry
+    itself, a marker having no object for radosgw's REMOVE_INSTANCE to
+    delete
+    ([cls_rgw.cc:1970-1979](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979),
+    [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)).
+  - When `start_modify` refuses the request's epoch, the class removes the
+    version's list entry and, for a delete marker, returns at once, with no
+    removal of the instance entry and nothing logged
+    ([cls_rgw.cc:1917-1925](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1917-L1925),
+    [cls_rgw.cc:2064-2072](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2064-L2072)).
+  - The epoch comes from the delete: `Delete::delete_obj` passes its
+    `olh_epoch` to `unlink_obj_instance`
+    ([rgw_rados.cc:5945-5948](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5945-L5948),
+    [rgw_rados.cc:6557-6560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6557-L6560)),
+    nonzero only from multisite, as the entry on the dropped REMOVE_INSTANCE
+    traces.
+  - On main the branch logs `CLS_RGW_OLH_OP_STALE` for the marker and writes
+    the OLH entry, and still leaves the instance entry
+    ([cls_rgw.cc:2266-2281](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L2266-L2281),
+    at 7ed73efc1be); what main's radosgw does with that log entry was not
+    checked.
+- **Impact:** the marker drops out of every listing, but `bi_get` of its
+  version id still finds its instance entry, and an unlink naming that id
+  again finds an entry where it would meet ENOENT.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; main at
+  7ed73efc1be also leaves the entry.
+- **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
+  (`rgwBucketUnlinkInstance`, `internal/testutil/fakerados/cls_rgw_olh.go`;
+  pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
+  unlinks no versions yet; a reader that takes a delete marker's instance
+  entry from `bi_get` as proof the marker exists would take this one too.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
   derived from the source, not reproduced.
