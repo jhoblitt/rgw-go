@@ -4367,12 +4367,24 @@ differ, rgw-go does the following.
     and leaves its meta object and parts. The emptiness check lets the
     delete reach it only for a head without a visible index entry.
 - **A retried bucket write stops when the name names another bucket.**
-  PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging and
-  DeleteBucketTagging retry a write that lost a race up to fifteen times,
-  each after reading the bucket again by name (`retry_raced_bucket_write`,
-  `rgw_op.h:183-196` at v19.2.6, `:197-210` at v20.2.4), and so does
-  rgw-go's PutBucketAcl ("A PutBucketAcl that loses a race is retried",
-  below). When the bucket
+  PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
+  DeleteBucketTagging, PutBucketWebsite and DeleteBucketWebsite retry a
+  write that lost a race up to fifteen times, each after reading the bucket
+  again by name (`retry_raced_bucket_write`, `rgw_op.h:183-196` at v19.2.6,
+  `:197-210` at v20.2.4), and so does rgw-go's PutBucketAcl ("A PutBucketAcl
+  that loses a race is retried", below). The re-read drops the bucket's
+  instance id
+  ([rgw_rados.cc:9212-9213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9212-L9213),
+  [rgw_rados.cc:9961-9962](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9961-L9962)),
+  and the website writes then set or clear the website of whatever bucket
+  it found
+  ([rgw_op.cc:2924-2929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2924-L2929)
+  and
+  [rgw_op.cc:2970-2975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2970-L2975),
+  [rgw_op.cc:3156-3161](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3156-L3161)
+  and
+  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207)).
+  When the bucket
   was deleted and a bucket of the same name created in between, radosgw
   writes into the new bucket, another owner's included
   (`docs/ceph-upstream-bugs.md`, "[radosgw's retried bucket write can land
@@ -4431,13 +4443,21 @@ differ, rgw-go does the following.
   in any order, never its bytes. An admin is
   let through a retry's unmarked access denial as Run lets one through the
   first check, and through nothing else. Every retried bucket write,
-  PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging and
-  DeleteBucketTagging, is authorized again the same way before each retry,
-  against the bucket that retry read: its ACL, its policy and its
-  public-access block, with the same admin rule. radosgw retries the last
-  four through `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`,
-  `:8110` and `:8204` at v19.2.6, `:1434`, `:1469`, `:9036` and `:9151` at
-  v20.2.4), which reads the bucket again and authorizes nothing, so when the
+  PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
+  DeleteBucketTagging, PutBucketWebsite and DeleteBucketWebsite, is
+  authorized again the same way before each retry, against the bucket that
+  retry read: its ACL, its policy and its public-access block, with the same
+  admin rule. radosgw retries all but PutBucketAcl through
+  `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`, `:8110` and `:8204`
+  at v19.2.6, `:1434`, `:1469`, `:9036` and `:9151` at v20.2.4; the website
+  writes at
+  [rgw_op.cc:2924-2929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2924-L2929)
+  and
+  [rgw_op.cc:2970-2975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2970-L2975),
+  [rgw_op.cc:3156-3161](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3156-L3161)
+  and
+  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207)),
+  which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
   them anyway, and can replace or remove the very policy that denied them

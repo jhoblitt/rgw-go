@@ -11620,13 +11620,14 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. Before each retry it runs the op's
   permission check again, for every retried bucket write it serves
-  (PutBucketAcl, Put and DeleteBucketPolicy, and Put and
-  DeleteBucketTagging) and for PutObjectAcl, which it retries where
-  radosgw does not: against the bucket that retry read and, for
+  (PutBucketAcl, Put and DeleteBucketPolicy, Put and DeleteBucketTagging,
+  and Put and DeleteBucketWebsite) and for PutObjectAcl, which it retries
+  where radosgw does not: against the bucket that retry read and, for
   PutObjectAcl, the object's head read again. A refusal ends the write
   with 403 AccessDenied and nothing written
   (`RetryRacedWriteReauthorized`, `internal/op/objectattrs.go`;
-  `retryBucketWrite`, `internal/op/bucketsubres.go`; `docs/exclusions.md`,
+  `retryBucketWrite`, `internal/op/bucketsubres.go`, through which the
+  website writes of `internal/op/website.go` retry; `docs/exclusions.md`,
   "A PutBucketAcl that loses a race is retried, and every retried ACL,
   policy or tagging write is authorized again"), since jhoblitt/rgw-go#184
   and #185. The identity's own policies are not read again: each check
