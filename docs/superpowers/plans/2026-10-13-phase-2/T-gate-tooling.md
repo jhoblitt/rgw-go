@@ -162,6 +162,13 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
   6. **The file's header** gives the format the deselect lists use (a node id, then `#` and
      why), and the rule that each line sits under its area's comment and lands with that area's
      recording task. BC-27's six encryption-configuration tests are the first lines.
+  7. **No setting from the environment.** The command also reads each flag from an `S3TESTS_`
+     variable and from a config file, and run.sh shuts both out by giving every flag on every
+     call ("Every call gives every flag, so that no such setting changes what a run runs", its
+     comment on `s3tests_flags`). `hack/s3tests/internal/selection/runsh_test.go`'s `ambient()`
+     pins that. A flag WP-23 adds, an include list's among them, joins `s3tests_flags`, or
+     `run_flags` beside `--tests` for a value that changes per run, and `ambient()`; otherwise
+     its `S3TESTS_` variable reaches the selection.
 - **Specs:** the union; each stale kind; the overlap; a base id against a parametrization id;
   the hash with an empty list equal to WP-22's; the pull request's s3tests check unchanged with
   the empty list.
@@ -193,6 +200,10 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
   5. **Known differences under `--selection`.** An entry that matches no compared test but
      matches a ledger test outside the selection is not stale. One that matches nothing in
      either still fails the run.
+  6. **No setting from the environment,** as WP-23's item 7 states it: a flag T-1 adds to the
+     command, the set's and the gate-only list's among them, joins run.sh's `s3tests_flags`, or
+     `run_flags` beside `--tests` for a value that changes per run, and `runsh_test.go`'s
+     `ambient()`; otherwise its `S3TESTS_` variable reaches the selection.
 - **Specs:** both sets; a stale gate-only line; diff with `--selection`: an unselected baseline
   test not compared, a selected test still compared both ways, a selected missing test still
   failing; the known-differences rule; a full record of the gate set retiring no gate-only
@@ -288,9 +299,16 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
 - **Layer:** gate. **Cluster:** yes.
 - **Files:**
   - (a) delete `hack/s3tests/deselect-phase2.txt` and `hack/admin/deselect-phase2.txt`, with
-    their entries in the command's list of files and in `hack/admin/run.sh`'s `DESELECT_LISTS`,
-    once both are empty ("A phase deletes its lines as it lands its features, and its file and
-    entry here with the last of them", `hack/s3tests/run.sh:74-76`);
+    their entries in the command's list of files, the selection package's `DeselectLists`, and
+    in `hack/admin/run.sh`'s `DESELECT_LISTS`, once both are empty ("A phase deletes its lines
+    as it lands its features, and its file and entry here with the last of them", the doc of
+    `DeselectLists`); and, as a harness edit, delete `excluded-markers.txt`'s static website
+    lines, `s3website`, `s3website_routing_rules` and `s3website_redirect_location`, with their
+    comment. At the pin, ab228b1 as at f6f2529dd9ef, the suite's `pytest.ini` declares those
+    markers and no s3-tests test carries them, so no recording task frees a test by deleting
+    them, and deleting them needs no ledger record. (a) checks that again at the pin current
+    when it runs: a bump that added a test carrying one of them would make the deletion free
+    that test, and so need its ledger record;
   - (b) the gate record, `gate.md` in the phase 2 plan's directory;
   - (c) the benchmark run's directories under `docs/benchmarks/` and their index lines.
 - **Consumes:** every unit's merged tasks. **Produces:** phase 2's close.
@@ -299,9 +317,11 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
      - Every task of every unit has merged, and every recording task's ledger appends have
        landed.
      - Neither phase 2 deselect list holds a line.
-     - `excluded-markers.txt` holds no marker of a phase 2 feature: checksum, object_ownership,
-       lifecycle, lifecycle_expiration, lifecycle_transition, object_lock and versioning's.
-       Each remaining line names its exclusion or later phase.
+     - No line of `excluded-markers.txt` sits under a `phase 2:` comment. The check reads the
+       file's own labels, so no list kept here can drift from it. Static website is phase 2 by
+       spec §9, so its markers, `s3website`, `s3website_routing_rules` and
+       `s3website_redirect_location`, are among them; (a) deletes those. Each remaining line
+       sits under its exclusion's comment or a later phase's.
      - Every material change to `docs/exclusions.md` in phase 2 was announced to the rgw-rs
        session.
   2. **s3-tests parity:** `make s3tests-parity SET=gate LC=rgw-go` on each release: phase 1's
@@ -326,8 +346,9 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
      workflow run or a log path).
 - **Specs:** the checks above.
 - **Exclusions and registry:** none of its own.
-- **Depends on:** every task of every unit. **PR split:** (a) the empty lists' removal; (b) the
-  gate record; (c) the benchmark results. **Brief:** about 120 lines.
+- **Depends on:** every task of every unit. **PR split:** (a) the empty lists' removal and the
+  static website markers' deletion; (b) the gate record; (c) the benchmark results.
+  **Brief:** about 120 lines.
 
 ### Task T-5: s3-tests, `_has_target_object_key_format` reports what it probes
 
