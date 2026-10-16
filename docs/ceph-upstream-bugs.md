@@ -320,6 +320,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
 | [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
+| [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16716,3 +16717,93 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task BC-2, 2026-10-15, transcribing
   `is_string_in_set`; its two-`*` behaviour corrected by the task review
   the same day. Derived from the source, not reproduced.
+
+## radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers
+
+- **Kind:** defect, security:
+  [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524), "HTTP
+  header injects via CORS in RGW", which Ceph rates Medium, is unfixed in
+  every release from Quincy on. Its fix, which escapes a carriage return
+  in an ExposeHeader, was made on three stable branches and never
+  forward-ported to main, so no release from v17.2.0 on carries it. Exploiting it needs a
+  client or an intermediary that ends a header line at a bare carriage
+  return, which RFC 9112, section 2.2, forbids a recipient to do, so the
+  rgw-bug-reproduction session's triage rates it low and conditional on a
+  lenient parser or intermediary. Unreproduced: derived from the source,
+  with expat's reading of the reference checked through Python's expat
+  binding.
+- **Evidence:**
+  - The fix, "rgw: sanitize \r in s3 CORSConfiguration's ExposeHeader"
+    (Casey Bodley, 2021-05-04, "Fixes: CVE-2021-3524"), exists only as
+    three stable-branch commits: 763aebb9467 on nautilus, first in
+    v14.2.21; 94f7c87a78b on octopus, first in v15.2.12; and 4f078710d39 on
+    pacific, first in v16.2.4. It makes `format_exp_headers` replace a
+    carriage return with `\r` after it replaces a line feed with `\n`
+    ([rgw_cors.cc:145-155](https://github.com/ceph/ceph/blob/v16.2.4/src/rgw/rgw_cors.cc#L145-L155)).
+  - None of the three is on main, and v16.2.4 is not an ancestor of
+    v17.2.0. At v17.2.0, v17.2.8, v18.2.0, v18.2.7, v19.2.0, v19.2.7,
+    v20.2.0 and v20.2.4, on the squid and tentacle branches and on main,
+    `format_exp_headers` replaces only a line feed, the newline half that
+    1524d3c0c5c ("rgw: sanitize newlines in s3 CORSConfiguration's
+    ExposeHeader", 2020-05-26) added
+    ([rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L175-L184),
+    [rgw_cors.cc:175-184](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L175-L184);
+    main's `format_exp_headers` at cc1dcecee08,
+    [rgw_cors.cc:231-240](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L231-L240)).
+  - The rest of the path is unchanged; each pair of links is v19.2.7's,
+    then v20.2.4's. `RGWCORSRule_S3::xml_end` stores each ExposeHeader's
+    text as it is, unchecked
+    ([rgw_cors_s3.cc:144-151](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L144-L151),
+    [rgw_cors_s3.cc:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L144-L151)),
+    the character data expat reports
+    (`xml_handle_data`,
+    [rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L83-L87),
+    [rgw_xml.cc:83-87](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L83-L87)).
+    expat reports the character reference `&#13;` as a carriage return and
+    turns only a literal one, alone or before a line feed, into a line
+    feed: Python's binding of expat 2.8.3 reads
+    `<ExposeHeader>a&#13;Set-Cookie: x\r\nb</ExposeHeader>` as
+    `a\rSet-Cookie: x\nb`.
+  - `dump_access_control` sends the value as Access-Control-Expose-Headers
+    ([rgw_rest.cc:526-554](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L526-L554),
+    [rgw_rest.cc:531-559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L531-L559))
+    through `dump_header`
+    ([rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L347-L357),
+    [rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L347-L357)),
+    and the beast frontend writes a header's name, `: `, its value and a
+    CRLF as they are (`ClientIO::send_header`,
+    [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L180),
+    [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L180)).
+- **Impact:** anyone allowed s3:PutBucketCORS on a bucket can store an
+  ExposeHeader such as `x&#13;Set-Cookie: a=b`, and every CORS response of
+  the bucket then sends `Access-Control-Expose-Headers: x`, a bare carriage
+  return and `Set-Cookie: a=b` on one line. A client or proxy that ends a
+  header line at a bare carriage return reads a header of the writer's
+  choosing, a cookie for the gateway's host among them; one that does not
+  reads an odd header value.
+- **Releases:** the carriage-return half is present at v14.2.21 and
+  v14.2.22, v15.2.12 to v15.2.17 and v16.2.4 to v16.2.15, and absent from
+  every release from v17.2.0 on, v19.2.7 and v20.2.4 among them. Ceph's
+  advisory lists "Fixed versions: Pacific v16.2.4 (and later), Octopus
+  v15.2.12 (and later), Nautilus v14.2.21 (and later)"
+  ([CVE-2021-3524.rst:14-19](https://github.com/ceph/ceph/blob/v19.2.7/doc/security/CVE-2021-3524.rst#L14-L19),
+  and https://docs.ceph.com/en/latest/security/CVE-2021-3524/), which holds
+  within those three series; it lists no later series, and every series
+  from Quincy on lacks the carriage-return half.
+- **rgw-go:** differs: `cors.Rule.ResponseHeaders` writes a carriage return
+  as `\r` after it writes a line feed as `\n`, byte for byte what the fix's
+  `format_exp_headers` writes, and every other control byte but a tab as
+  `\xHH` (`internal/cors/match.go`; `docs/exclusions.md`, "A CORS expose
+  header's control bytes are sent escaped"). Go's net/http, which writes
+  rgw-go's responses, would in any case write a carriage return or line
+  feed left in a header value as a space (`headerNewlineToSpace`,
+  `net/http/header.go:139` and `:206` at go1.27.1).
+- **Upstream:** [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524)
+  and Ceph's advisory above. The fix landed as the three commits above,
+  with no pull request; the newline half, 1524d3c0c5c, came with
+  [ceph/ceph#35773](https://github.com/ceph/ceph/pull/35773), merged
+  2020-06-25. A forward port to main and the supported branches is
+  pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-2, 2026-10-15, reading `format_exp_headers`;
+  the task review matched it to CVE-2021-3524 the same day. Derived from
+  the source, not reproduced.
