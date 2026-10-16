@@ -701,10 +701,14 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
 
 ### Task BC-22: Block and policy-status recording and gate
 
-- **Layer:** integration. **Files:** `hack/s3tests` deselect lines 111-128, both ledgers; new
+- **Layer:** integration. **Files:** `hack/s3tests`' public access block and policy-status
+  deselect lines, both ledgers, the known-differences files; new
   `test/integration/phase2_publicaccess_test.go`. **Cluster:** yes.
 - **Behaviour:**
-  1. Delete the 16 deselect lines and record both ledgers from radosgw before comparing.
+  1. Delete the public access block and policy-status deselect lines, phase 1's and those the
+     next s3-tests pin bump adds, and record both ledgers from radosgw before comparing. Add
+     the known-differences lines that `00-index.md` lists for BC-22 under Global Constraints,
+     "The next s3-tests pin bump", each under the exclusion it names.
   2. Gate case 3: each gateway's PutPublicAccessBlock read back and enforced by the other
      (BlockPublicAcls on PutBucketAcl, IgnorePublicAcls on an anonymous GET, BlockPublicPolicy
      on PutBucketPolicy, RestrictPublicBuckets on Tentacle); the attr bytes equal.
