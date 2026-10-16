@@ -2,10 +2,13 @@
 # Runs s3-tests, the suite ceph/ceph carries in src/test/rgw/s3-tests, at a
 # pinned commit against one gateway of a rooket cluster and leaves a junit
 # report for hack/parity. The parity set is
-# test_s3.py and test_headers.py minus the markers of features not
-# implemented yet and of docs/exclusions.md, and minus the tests the
-# deselect-phase<N>.txt lists name: tests that call a later phase's feature
-# without carrying such a marker. Both gateways run exactly this set.
+# test_s3.py and test_headers.py minus the tests of the markers
+# excluded-markers.txt lists, of features not implemented yet and of
+# docs/exclusions.md, and minus the tests the deselect-phase<N>.txt lists
+# name: tests that call a later phase's feature without carrying such a
+# marker. hack/s3tests's Go command, which run.sh builds into bin/s3tests,
+# decides it from those lists and pytest's collection, and pytest runs
+# exactly its node ids on both gateways.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
@@ -62,23 +65,15 @@ readonly S3TESTS_DIR=src/test/rgw/s3-tests
 [[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "the s3-tests commit ${S3TESTS_COMMIT}, from the environment, is not a full commit id"
 readonly PYTEST_TIMEOUT_VERSION=2.4.0
 
-# Features not implemented yet and docs/exclusions.md's, by s3-tests marker.
-readonly EXCLUDED_MARKERS=(lifecycle lifecycle_expiration lifecycle_transition cloud_transition cloud_restore
-	target_by_bucket versioning delete_marker object_lock object_ownership encryption bucket_encryption sse_s3
-	s3select s3website s3website_routing_rules s3website_redirect_location bucket_logging bucket_logging_cleanup
-	fails_without_logging_rollover checksum sns appendobject iam_account iam_cross_account iam_tenant iam_user
-	iam_role user_policy role_policy group group_policy session_policy abac_test test_of_sts webidentity_test
-	token_claims_trust_policy_test token_principal_tag_role_policy_test token_request_tag_trust_policy_test
-	token_resource_tags_test token_role_tags_test token_tag_keys_test s3control)
 readonly TEST_FILES=(s3tests/functional/test_s3.py s3tests/functional/test_headers.py)
-# The tests of later phases' features that no marker above removes, by pytest
-# node id, one file per phase. A phase deletes its lines as it lands its
-# features, and its file and entry here with the last of them.
-readonly DESELECT_LISTS=("${harness}/deselect-phase2.txt" "${harness}/deselect-phase3.txt")
-
-# deselected prints the node ids the lists name, without comments and blanks.
-# Once no list is left, sed reads the empty stdin rather than the caller's.
-deselected() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "${DESELECT_LISTS[@]}" </dev/null; }
+root=$(cd "${harness}/../.." && pwd)
+readonly root
+readonly s3tests=${root}/bin/s3tests
+# The command reads each of its flags from S3TESTS_ variables too, the prefix
+# run.sh's own S3TESTS_REPO and S3TESTS_COMMIT share, and from a config file
+# S3TESTS_CONFIG names. Every call gives every flag, so that no such setting
+# changes what a run runs.
+readonly s3tests_flags=(--config "" --log-level info --log-format json --lists "${harness}")
 
 case "${1:-}" in
 --print-commit)
@@ -90,11 +85,14 @@ case "${1:-}" in
 	fi
 	exit 0
 	;;
---print-deselect)
-	deselected | LC_ALL=C sort | sha256sum | cut -c1-12
-	exit 0
-	;;
 esac
+# Built from this tree on every run, so that no build older than the tree's
+# rules decides the set; go build leaves a current one as it is.
+go -C "${root}" build -o bin/s3tests ./hack/s3tests ||
+	die "cannot build ${s3tests} with go build -o bin/s3tests ./hack/s3tests in ${root}"
+if [[ "${1:-}" == --print-deselect ]]; then
+	exec "${s3tests}" hash "${s3tests_flags[@]}"
+fi
 
 use_release "${1:-}"
 gateway=${2:-}
@@ -102,12 +100,11 @@ run_id=${3:-}
 readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID [TESTS-FILE]"
 [[ "${gateway}" == radosgw || "${gateway}" == rgw-go ]] || die "${usage}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "${usage}; RUN-ID, which names the reports, is [A-Za-z0-9._-]+"
-only=()
-if [[ -n "${4:-}" ]]; then
-	[[ -f "$4" ]] || die "no tests file $4"
-	mapfile -t only < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$4")
-	((${#only[@]} > 0)) || die "the tests file $4 names no test"
-fi
+# --tests is given empty for the whole set. expr refuses a TESTS file that is
+# missing or names no test, before the run removes its outputs or fetches
+# anything.
+readonly run_flags=("${s3tests_flags[@]}" --tests "${4:-}")
+expr=$("${s3tests}" expr "${run_flags[@]}")
 
 src=${harness}/out/src
 suite=${src}/${S3TESTS_DIR}
@@ -303,51 +300,19 @@ purge_buckets() {
 unset "${!AWS_@}"
 export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
 
-expr="not ${EXCLUDED_MARKERS[0]}"
-for m in "${EXCLUDED_MARKERS[@]:1}"; do expr+=" and not ${m}"; done
-
 # test_s3.py parses the conf at import to parametrize its encryption tests,
 # so collecting needs the conf too.
 ids=$(cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" --collect-only -q -p no:cacheprovider \
 	-m "${expr}" "${TEST_FILES[@]}") || die "pytest could not collect the parity set:"$'\n'"${ids}"
-mapfile -t deselect < <(deselected)
-declare -A listed=()
-deselect_args=()
-for id in "${deselect[@]}"; do
-	listed[${id}]=1
-	deselect_args+=("--deselect=${id}")
-done
-# pytest's --deselect removes every node id that starts with the argument, so
-# a line must remove exactly the test it names, and a line that names nothing
-# the markers leave is stale.
-mapfile -t collected < <(grep -E '^s3tests/.+\.py::' <<<"${ids}")
-declare -A seen=() in_set=()
-selected=0
-for c in "${collected[@]}"; do
-	if [[ -n "${listed[${c%%\[*}]:-}" ]]; then
-		seen[${c%%\[*}]=1
-		continue
-	fi
-	for id in "${deselect[@]}"; do
-		[[ "${c}" != "${id}"* ]] || die "${id} would also deselect ${c} (pytest matches --deselect as a node-id prefix)"
-	done
-	in_set[${c}]=1 in_set[${c%%\[*}]=1
-	selected=$((selected + 1))
-done
-for id in "${deselect[@]}"; do
-	[[ -n "${seen[${id}]:-}" ]] || die "${id} names no test the markers leave: renamed, removed or marker-excluded at this commit"
-done
-targets=("${TEST_FILES[@]}")
-for id in "${only[@]}"; do
-	[[ -n "${in_set[${id}]:-}" ]] || die "${id} is not in the set: no such test, or the markers or a deselect list remove it"
-done
-((${#only[@]} == 0)) || { targets=("${only[@]}") && selected=${#only[@]}; }
+selection=$("${s3tests}" select "${run_flags[@]}" <<<"${ids}") ||
+	die "hack/s3tests selected no set from the collection; nothing ran"
+mapfile -t selected <<<"${selection}"
 
 purge_buckets
-echo "running ${selected} of the ${#collected[@]} tests the markers leave against the ${gateway} at ${endpoint}; log ${log}"
+echo "running ${#selected[@]} tests against the ${gateway} at ${endpoint}; log ${log}"
 status=0
 (cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" -v -rA -p no:cacheprovider \
-	--timeout=300 --junitxml="${report}" -m "${expr}" "${deselect_args[@]}" "${targets[@]}") >"${log}" 2>&1 || status=$?
+	--timeout=300 --junitxml="${report}" "${selected[@]}") >"${log}" 2>&1 || status=$?
 purge_buckets
 # A run deletes hundreds of megabytes of objects, whose tails radosgw leaves
 # to its garbage collector: that waits rgw_gc_obj_min_wait (2 h), and the

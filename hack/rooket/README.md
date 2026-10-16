@@ -573,12 +573,19 @@ A commit is merged into that branch before the change that pins it, and the
 branch only ever gains commits, so no rewrite can take a pinned commit away. It runs
 against the release's radosgw, or against the rgw-go whose URL
 `out/<release>/rgw-go.endpoint` holds. The set
-is `test_s3.py` and `test_headers.py` minus the s3-tests markers `run.sh`
-excludes, of features not implemented yet and of `docs/exclusions.md`, and
-minus the tests `hack/s3tests/deselect-phase2.txt` and `deselect-phase3.txt`
-name: tests that call a later phase's feature but carry none of those
-markers. Both gateways run the same set, `fails_on_rgw` tests included, since
-both must fail those alike.
+is `test_s3.py` and `test_headers.py` minus the tests of the s3-tests markers
+`hack/s3tests/excluded-markers.txt` lists, of features not implemented yet and
+of `docs/exclusions.md`, and minus the tests `hack/s3tests/deselect-phase2.txt`
+and `deselect-phase3.txt` name: tests that call a later phase's feature but
+carry none of those markers. Both gateways run the same set, `fails_on_rgw`
+tests included, since both must fail those alike. The selection is a Go
+command, `hack/s3tests`, which `run.sh` builds into `bin/s3tests` from its
+own tree each time it runs: `run.sh` collects the tests with pytest under the
+expression the command makes of the markers, the command picks the set's
+node ids from that collection and the lists, and pytest runs exactly those
+ids, in collection order (`go doc ./hack/s3tests`). `run.sh` gives the
+command every flag, so that neither an `S3TESTS_` variable the command would
+read nor a config file one names changes a run.
 
 `run.sh` creates the s3-tests users with `radosgw-admin`, with fixed keys so
 that every run writes the same conf: `s3tests-main`, `s3tests-alt`,
@@ -640,9 +647,10 @@ the tests' outcomes, and nonzero when it could not.
 
 A fourth argument, a file of pytest node ids
 (`s3tests/functional/test_s3.py::test_x`) one a line, `#` starting a comment,
-runs only those tests; `make s3tests TESTS=FILE` passes it. `run.sh` stops
-before any test runs when an id is not in the set: no such test at the pin,
-or the markers or a deselect list remove it.
+runs only those tests, and a test's id without its parametrization runs each
+of them; `make s3tests TESTS=FILE` passes it. `run.sh` stops before any test
+runs when an id is not in the set: no such test at the pin, or the markers or
+a deselect list remove it.
 
 To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
 `S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
@@ -665,15 +673,19 @@ S3TESTS_REPO=$HOME/src/ceph S3TESTS_COMMIT=$(git -C "$HOME/src/ceph" rev-parse H
 	make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1
 ```
 
-Each line of a deselect list is a pytest node id and, after `#`, the calls
-that need the feature. `run.sh` stops before any test runs when a line names
-no test the markers leave, because it was renamed, removed or marked at the
-pinned commit, or when a line would also remove a test the lists do not name,
-since pytest's `--deselect` removes every node id that starts with its
-argument. `run.sh --print-deselect` prints a digest of the listed ids, which
-each recorded entry carries in its meta; the comparison no longer checks it.
-The PR that lands a later phase's feature deletes its lines and records the
-tests they free in both ledgers, as "Adding tests" below does.
+Each line of `excluded-markers.txt` is a marker, under the comment naming
+its feature's phase or its exclusion. Each line of a deselect list is a pytest
+node id and, after `#`, the calls that need the feature; it removes every
+parametrization of that test. `run.sh` stops before any test runs when a line
+names no test the markers leave, because it was renamed, removed or marked at
+the pinned commit, or when a line would also remove a test the lists do not
+name were it given to pytest's `--deselect`, which removes every node id that
+starts with its argument; the command names every such line before it stops.
+`run.sh --print-deselect` prints a digest of the listed ids, which each
+recorded entry carries in its meta; the comparison no longer checks it. The
+PR that lands a later phase's feature deletes its lines, and its markers'
+lines, and records the tests they free in both ledgers, as "Adding tests"
+below does.
 
 ## Parity baselines
 

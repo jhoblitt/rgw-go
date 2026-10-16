@@ -11,8 +11,8 @@
 # completions that fail, the conditional completion, UploadPartCopy of
 # whole sources and ranges, valid and not, and with special names, and
 # partNumber reads of the result. The tests that enable bucket versioning
-# carry s3-tests' versioning marker, which hack/s3tests/run.sh excludes, and
-# do not run.
+# carry s3-tests' versioning marker, which hack/s3tests/excluded-markers.txt
+# lists, and do not run.
 ^s3tests\.functional\.test_s3::test_multipart_[a-z0-9_]+(:|$)
 # UploadPartCopy of a source whose key needs percent-encoding.
 ^s3tests\.functional\.test_s3::test_upload_part_copy_[a-z0-9_]+(:|$)
