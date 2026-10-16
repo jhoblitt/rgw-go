@@ -47,15 +47,10 @@ func (b BucketEntryPoint) Dump(f formatter.Formatter, rel denc.Release) {
 
 // Dump is RGWBucketInfo::dump at v19.2.7
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2515-L2545)
-// on both releases, as MarshalJSON writes it. The website configuration and
-// the sync policy are carried opaque, so a bucket with either fails the
-// formatter as MarshalJSON fails, and so does an ObjLock that does not
-// decode.
+// on both releases, as MarshalJSON writes it. The sync policy is carried
+// opaque, so a bucket with one that has groups fails the formatter as
+// MarshalJSON fails, and so does an ObjLock that does not decode.
 func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
-	if b.HasWebsite() {
-		f.Fail(fmt.Errorf("%w: website_conf", ErrOpaqueJSON))
-		return
-	}
 	if b.SyncPolicy != nil && !syncPolicyEmpty(b.SyncPolicy) {
 		f.Fail(fmt.Errorf("%w: sync_policy", ErrOpaqueJSON))
 		return
@@ -77,7 +72,10 @@ func (b BucketInfo) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpUnsigned("num_shards", uint64(current.Normal.NumShards))
 	f.DumpUnsigned("bi_shard_hash_type", uint64(current.Normal.HashType))
 	f.DumpBool("requester_pays", b.RequesterPays)
-	f.DumpBool("has_website", false)
+	f.DumpBool("has_website", b.HasWebsite())
+	if b.Website != nil {
+		dumpSection(f, "website_conf", *b.Website, rel)
+	}
 	f.DumpBool("swift_versioning", b.SwiftVersioning)
 	f.DumpString("swift_ver_location", b.SwiftVerLocation)
 	f.DumpUnsigned("index_type", uint64(current.Type))

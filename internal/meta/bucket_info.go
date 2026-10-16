@@ -67,9 +67,8 @@ func decodeRawStruct(d *denc.Decoder, maxVersion uint8) RawStruct {
 }
 
 // The DECODE_START versions of the types BucketInfo holds as RawStruct:
-// RGWBucketWebsiteConf, RGWObjectLock and rgw_sync_policy_info.
+// RGWObjectLock and rgw_sync_policy_info.
 const (
-	websiteVersion    = 2
 	objLockVersion    = 1
 	syncPolicyVersion = 1
 )
@@ -99,7 +98,7 @@ type BucketInfo struct { //nolint:recvcheck // SetObjectLock sets the encoding i
 	Layout         BucketLayout
 	RequesterPays  bool
 	// Website is the RGWBucketWebsiteConf, nil when has_website is false.
-	Website             RawStruct
+	Website             *WebsiteConf
 	SwiftVersioning     bool
 	SwiftVerLocation    string
 	MDSearchConfig      map[string]uint32
@@ -187,8 +186,8 @@ func (b BucketInfo) Encode(e *denc.Encoder, r denc.Release) {
 	e.Bool(b.RequesterPays)
 	e.String(user.Tenant)
 	e.Bool(b.HasWebsite())
-	if b.HasWebsite() {
-		e.Raw(b.Website)
+	if b.Website != nil {
+		b.Website.Encode(e, r)
 	}
 	e.Bool(b.SwiftVersioning)
 	if b.SwiftVersioning {
@@ -276,7 +275,8 @@ func decodeBucketInfoBody(d *denc.Decoder, h denc.Header) BucketInfo {
 		user.Tenant = d.String()
 	}
 	if v >= 14 && d.Bool() {
-		b.Website = decodeRawStruct(d, websiteVersion)
+		w := DecodeWebsiteConf(d)
+		b.Website = &w
 	}
 	if v >= 15 && v < newLayoutVersion {
 		b.Layout.Current.Layout.Type = IndexType(d.U32()) //nolint:gosec // C++ casts the u32 to the u8 enum
@@ -354,6 +354,7 @@ type bucketInfoDump struct {
 	BIShardHashType     uint32                      `json:"bi_shard_hash_type"`
 	RequesterPays       bool                        `json:"requester_pays"`
 	HasWebsite          bool                        `json:"has_website"`
+	WebsiteConf         *WebsiteConf                `json:"website_conf,omitzero"`
 	SwiftVersioning     bool                        `json:"swift_versioning"`
 	SwiftVerLocation    string                      `json:"swift_ver_location"`
 	IndexType           uint32                      `json:"index_type"`
@@ -369,13 +370,10 @@ type bucketInfoDump struct {
 // type and index type, and obj_lock while the flags enable object lock, which
 // v20.2.4 does not write
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2577-L2604).
-// It fails with ErrOpaqueJSON when the dump would include website_conf or
-// sync_policy, which are held as RawStruct, and with ObjectLock's error when
-// ObjLock does not decode.
+// It fails with ErrOpaqueJSON when the dump would include sync_policy, which
+// is held as RawStruct, and with ObjectLock's error when ObjLock does not
+// decode.
 func (b BucketInfo) MarshalJSON() ([]byte, error) {
-	if b.HasWebsite() {
-		return nil, fmt.Errorf("%w: website_conf", ErrOpaqueJSON)
-	}
 	if b.SyncPolicy != nil && !syncPolicyEmpty(b.SyncPolicy) {
 		return nil, fmt.Errorf("%w: sync_policy", ErrOpaqueJSON)
 	}
@@ -405,6 +403,7 @@ func (b BucketInfo) MarshalJSON() ([]byte, error) {
 		BIShardHashType:     uint32(current.Normal.HashType),
 		RequesterPays:       b.RequesterPays,
 		HasWebsite:          b.HasWebsite(),
+		WebsiteConf:         b.Website,
 		SwiftVersioning:     b.SwiftVersioning,
 		SwiftVerLocation:    b.SwiftVerLocation,
 		IndexType:           uint32(current.Type),

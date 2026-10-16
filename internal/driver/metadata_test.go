@@ -380,12 +380,29 @@ var _ = Describe("MetadataStore", func() {
 		Expect(err).To(MatchError(op.ErrNoSuchKey), "a key naming no instance")
 	})
 
-	It("answers a bucket instance carried opaque with ErrOpaqueJSON", func(ctx SpecContext) {
+	It("answers a bucket instance whose sync policy with groups is carried opaque with ErrOpaqueJSON", func(ctx SpecContext) {
 		info := plain.Info
-		info.Website = meta.RawStruct{2, 1, 0, 0, 0, 0}
+		info.SyncPolicy = meta.RawStruct{1, 1, 4, 0, 0, 0, 1, 0, 0, 0}
 		Expect(driver.WriteInstance(s, ctx, info, false, meta.ObjVersion{Ver: 9, Tag: "w"})).To(Succeed())
 		_, err := s.Get(ctx, "bucket.instance", "plain:"+plain.Info.Bucket.ID)
 		Expect(err).To(MatchError(meta.ErrOpaqueJSON))
+	})
+
+	It("renders a bucket instance's website configuration and stores a put's", func(ctx SpecContext) {
+		info := plain.Info
+		info.Website = &meta.WebsiteConf{IndexDocSuffix: "index.html", ErrorDoc: "error.html"}
+		Expect(driver.WriteInstance(s, ctx, info, false, meta.ObjVersion{Ver: 9, Tag: "w"})).To(Succeed())
+		key := "plain:" + plain.Info.Bucket.ID
+		e := get(ctx, "bucket.instance", key)
+		Expect(string(e.Data)).To(ContainSubstring(`"has_website":true,"website_conf":{"index_doc_suffix":"index.html","error_doc":"error.html","routing_rules":{"rules":[]}},`))
+		bi := docOf[meta.BucketCompleteInfo](e)
+		bi.Info.Website.ErrorDoc = "missing.html"
+		data, err := json.Marshal(bi)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(Succeed())
+		got, err := s.GetBucketInstance(ctx, plain.Info.Bucket)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Info.Website).To(Equal(&meta.WebsiteConf{IndexDocSuffix: "index.html", ErrorDoc: "missing.html"}))
 	})
 
 	Describe("a NUL byte, which go-ceph cuts an object name at", func() {

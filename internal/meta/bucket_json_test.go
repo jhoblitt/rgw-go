@@ -82,9 +82,8 @@ var _ = Describe("BucketInfo.UnmarshalJSON", func() {
 		Expect(got.Zonegroup).To(Equal("zg"))
 	})
 
-	It("refuses a website configuration and a sync policy, which it carries opaque", func() {
+	It("refuses a sync policy with groups, which it carries opaque", func() {
 		var got meta.BucketInfo
-		Expect(json.Unmarshal([]byte(`{"bucket":{"name":"b"},"has_website":true,"website_conf":{}}`), &got)).To(MatchError(meta.ErrOpaqueJSON))
 		Expect(json.Unmarshal([]byte(`{"bucket":{"name":"b"},"sync_policy":{"groups":[{"id":"g"}]}}`), &got)).To(MatchError(meta.ErrOpaqueJSON))
 		Expect(json.Unmarshal([]byte(`{"bucket":{"name":"b"},"sync_policy":{"groups":[]}}`), &got)).To(Succeed(),
 			"a policy without groups is empty, which radosgw drops")

@@ -1,6 +1,7 @@
 package meta_test
 
 import (
+	"bytes"
 	"encoding/hex"
 	"time"
 
@@ -376,13 +377,13 @@ var _ = Describe("BucketInfo", func() {
 	})
 
 	// v24 with an account owner, object lock, website and sync policy, none of
-	// which the corpus holds.
+	// which the corpus holds; the website is decoded, the other two kept opaque.
 	full := func() meta.BucketInfo {
 		b := meta.NewBucketInfo()
 		b.Bucket = meta.BucketID{Name: "b", Marker: "m", ID: "id"}
 		b.Owner = meta.AccountOwner("RGW12345678901234567")
 		b.Flags = meta.BucketObjLockEnabled | meta.BucketVersioned
-		b.Website = rawStruct(2, 1, "website")
+		b.Website = new(indexSite())
 		b.ObjLock = rawStruct(1, 1, "lock")
 		b.SyncPolicy = rawStruct(1, 1, "\x01\x00\x00\x00policy")
 		b.SwiftVersioning = true
@@ -391,7 +392,7 @@ var _ = Describe("BucketInfo", func() {
 		b.Layout.Logs = []meta.LogLayoutGen{meta.LogLayoutFromIndex(0, b.Layout.Current)}
 		return b
 	}
-	It("carries website, object lock and sync policy encodings through unchanged", func() {
+	It("carries the website, and the object lock and sync policy encodings unchanged", func() {
 		b := full()
 		enc := encodeWith(denc.Squid, b.Encode)
 		Expect(decodeWhole(enc, meta.DecodeBucketInfo)).To(Equal(b))
@@ -418,20 +419,20 @@ var _ = Describe("BucketInfo", func() {
 		Expect(got.ObjLock).To(BeNil())
 	})
 	It("rejects a website encoding newer than RGWBucketWebsiteConf::decode accepts", func() {
-		b := full()
-		b.Website = rawStruct(3, 3, "website")
-		Expect(decodeErr(encodeWith(denc.Squid, b.Encode), meta.DecodeBucketInfo)).To(MatchError(denc.ErrIncompatible))
+		enc := encodeWith(denc.Squid, full().Encode)
+		newer := encoded(func(e *denc.Encoder) { beginEnd(e, 3, 3, func() { e.Raw(indexSiteV2()[6:]) }) })
+		stored := reframe(bytes.Replace(enc, indexSiteV2(), newer, 1), 24, nil)
+		Expect(decodeErr(stored, meta.DecodeBucketInfo)).To(MatchError(denc.ErrIncompatible))
 	})
-	It("refuses to marshal JSON for a website or sync policy it holds opaque", func() {
+	It("refuses to marshal JSON for a sync policy it holds opaque, and writes the website", func() {
 		b := full()
 		b.ObjLock = nil
 		_, err := b.MarshalJSON()
 		Expect(err).To(MatchError(meta.ErrOpaqueJSON))
-		b.Website = nil
-		_, err = b.MarshalJSON()
-		Expect(err).To(MatchError(meta.ErrOpaqueJSON))
 		b.SyncPolicy = nil
-		Expect(mustMarshal(b)).To(ContainSubstring(`"owner":"RGW12345678901234567"`))
+		data := mustMarshal(b)
+		Expect(data).To(ContainSubstring(`"owner":"RGW12345678901234567"`))
+		Expect(data).To(ContainSubstring(`"has_website":true,"website_conf":{"index_doc_suffix":"index.html",`))
 	})
 
 	// The corpus starts at version 4; these are built from the C++ decode body.
@@ -584,7 +585,7 @@ func fixtureNormal(e *denc.Encoder, shards uint32, hash uint8, minShards uint32)
 }
 
 func bucketInfoFixture() ([]byte, meta.BucketInfo) {
-	website := rawStruct(2, 1, "web")
+	website := swiftSiteV2()
 	objLock := rawStruct(1, 1, "\x00\x00")
 	syncPolicy := rawStruct(1, 1, "\x01\x00\x00\x00grp")
 	judge := time.Unix(1_660_000_000, 7_000).UTC()
@@ -692,7 +693,7 @@ func bucketInfoFixture() ([]byte, meta.BucketInfo) {
 			JudgeReshardLockTime: meta.Time{Time: judge},
 		},
 		RequesterPays:       true,
-		Website:             website,
+		Website:             new(swiftSite()),
 		SwiftVersioning:     true,
 		SwiftVerLocation:    "verloc",
 		MDSearchConfig:      map[string]uint32{"k1": 11, "k2": 22},

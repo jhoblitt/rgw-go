@@ -188,19 +188,35 @@ var _ = Describe("admin metadata routes", func() {
 		Expect(b).To(ContainSubstring(`"data":{"bucket_info":{"bucket":{"name":"test",`))
 		Expect(b).To(MatchRegexp(`,"attrs":\[[^\]]*\]\}\}$`))
 	})
-	It("answers NotImplemented for a bucket instance whose website configuration is carried opaque", func() {
+	It("answers NotImplemented for a bucket instance whose sync policy with groups is carried opaque", func() {
 		ctx := context.Background()
 		doc := string(putDoc("bucket.instance", inst, 0))
 		rec, err := fx.store.GetBucket(ctx, "", "test")
 		Expect(err).NotTo(HaveOccurred())
-		rec.Info.Website = meta.RawStruct{2, 1, 0, 0, 0, 0}
+		rec.Info.SyncPolicy = meta.RawStruct{1, 1, 4, 0, 0, 0, 1, 0, 0, 0}
 		Expect(fx.store.PutBucketInfo(ctx, rec)).To(Succeed())
 		res := fx.get("/admin/metadata/bucket.instance?key="+url.QueryEscape(inst), "admin")
 		Expect(res.StatusCode).To(Equal(501))
 		Expect(body(res)).To(HavePrefix(`{"Code":"NotImplemented",`))
 		res = fx.requestBody(http.MethodPut, "/admin/metadata/bucket.instance?key="+url.QueryEscape(inst), "admin", strings.NewReader(doc))
-		Expect(res.StatusCode).To(Equal(501), "the put reads the stored record rendered, though its document names no website")
+		Expect(res.StatusCode).To(Equal(501), "the put reads the stored record rendered, though its document names no sync policy")
 		Expect(body(res)).To(HavePrefix(`{"Code":"NotImplemented",`))
+	})
+	It("renders a bucket instance's website configuration and takes it back in a put", func() {
+		ctx := context.Background()
+		rec, err := fx.store.GetBucket(ctx, "", "test")
+		Expect(err).NotTo(HaveOccurred())
+		rec.Info.Website = &meta.WebsiteConf{IndexDocSuffix: "index.html"}
+		Expect(fx.store.PutBucketInfo(ctx, rec)).To(Succeed())
+		b := get("/admin/metadata/bucket.instance?key=" + url.QueryEscape(inst))
+		Expect(b).To(ContainSubstring(`"has_website":true,"website_conf":{"index_doc_suffix":"index.html","error_doc":"","routing_rules":{"rules":[]}},`))
+		doc := strings.Replace(string(putDoc("bucket.instance", inst, 1)), `"index_doc_suffix":"index.html"`, `"index_doc_suffix":"home.html"`, 1)
+		res := fx.requestBody(http.MethodPut, "/admin/metadata/bucket.instance?key="+url.QueryEscape(inst), "admin", strings.NewReader(doc))
+		Expect(res.StatusCode).To(Equal(204), body(res))
+		Expect(res.Header.Get("RGWX_UPDATE_STATUS")).To(Equal("applied"))
+		got, err := fx.store.GetBucket(ctx, "", "test")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Info.Website).To(Equal(&meta.WebsiteConf{IndexDocSuffix: "home.html"}))
 	})
 	DescribeTable("answers 404 NoSuchKey for what no section holds",
 		func(path string) {
