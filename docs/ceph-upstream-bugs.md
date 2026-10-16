@@ -319,6 +319,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending |  |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
+| [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16635,3 +16636,83 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
   main's `match_rule`; confirmed by task BC-2, 2026-10-15, which found the
   tentacle backport. Derived from the source, not reproduced.
+
+## radosgw's CORS wildcard match allows origins and headers its pattern does not cover
+
+- **Kind:** defect, S3-correctness, possibly security-relevant at a low
+  level: where access rides on network position, an over-wide match lets a
+  page at an origin the owner did not allow read through a browser that
+  holds that position. radosgw never sends Access-Control-Allow-Credentials,
+  so such a page carries no cookies or HTTP authentication, but a browser's
+  network position is ambient authority all the same. The
+  rgw-bug-reproduction session's triage rates it conditional (low) on that
+  case. Unreproduced: derived from the source and checked against a
+  transcription of the matcher.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - AllowedOrigin and AllowedHeader share one matcher: `is_origin_present`
+    passes it the Origin, and `is_header_allowed` a lower-cased requested
+    header against the lower-cased set
+    ([rgw_cors.cc:159-173](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L159-L173),
+    [rgw_cors.cc:159-173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L159-L173)).
+  - In that matcher a member that is `*`, or the value itself, matches. For
+    a member holding a `*`, the first `*`'s offset decides whether a prefix
+    check runs (the `*` is not first) and whether a suffix check runs (it
+    is not last). The checks take the first one or two pieces of
+    `get_str_list(member, "* \t")`, which drops empty pieces, and a piece
+    left over refuses
+    (`is_string_in_set`,
+    [rgw_cors.cc:109-150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.cc#L109-L150),
+    [rgw_cors.cc:109-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.cc#L109-L150);
+    `get_str_list`,
+    [str_list.cc:22-28](https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L22-L28),
+    [str_list.cc:22-28](https://github.com/ceph/ceph/blob/v20.2.4/src/common/str_list.cc#L22-L28)).
+  - The prefix and the suffix are tested apart, so they may overlap:
+    `ab*bc` matches `abc`, and `https://a*a.example` matches
+    `https://a.example`. The prefix's length, `flen`, is only logged.
+  - A space or a tab splits the member as a `*` does and is lost:
+    `* example.com` matches `https://evilexample.com`, the header pattern
+    `x-amz *` matches `x-amzfoo`, and `a b*` matches no value but `a b*`
+    itself.
+  - A member with more than one `*` fails closed: `*a*` acts as `*a`,
+    `a*b*` acts as `a*b`, and `a*b*c`, `a**` and `*a*b` never match but
+    literally. PutBucketCors refuses such a member, so only a stored rule
+    written another way holds one, and it allows less than its pattern
+    covers.
+  - PutBucketCors refuses only an empty name and a name with a second `*`
+    (`validate_name_string`,
+    [rgw_cors.h:129-135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors.h#L129-L135),
+    [rgw_cors.h:129-135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors.h#L129-L135)),
+    so an overlapping pattern and one with whitespace reach a stored rule.
+  - A line-for-line Python transcription of `is_string_in_set` and
+    `get_str_list` gives each result above.
+- **Impact:** CORS decides which pages a browser lets read a response.
+  Where access depends on the requester's network position, under a
+  bucket policy's `aws:SourceIp`, which radosgw evaluates
+  ([rgw_op.cc:885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L885),
+  [rgw_op.cc:920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L920)),
+  or on a gateway reachable only from an internal network, the browser is
+  the client that holds the access. An outside page that an over-wide
+  match allows, opened in a browser inside that network, then reads the
+  bucket through it. Overlap admits only values that start with the
+  pattern's prefix and end with its suffix, which gains an attacker
+  nothing. Whitespace changes the suffix: `* example.com`, which as written
+  admits no origin, admits `evilexample.com`, a domain anyone may register.
+  Both need an owner to have written such a pattern. A pattern with
+  whitespace also refuses values it covers.
+- **Releases:** checked at v19.2.7 and v20.2.4; `is_string_in_set` is
+  unchanged on main at cc1dcecee08.
+- **rgw-go:** differs: it matches a member with one `*` as written, a value
+  that starts with what precedes the `*` and ends with what follows it, the
+  two not overlapping, and a member with more than one `*` only exactly,
+  for origins and headers alike (`inSet` and `requested.cover`,
+  `internal/cors/match.go`; `docs/exclusions.md`, "CORS rules are matched
+  as Amazon S3 matches them").
+- **Upstream:** related:
+  [ceph/ceph#56225](https://github.com/ceph/ceph/pull/56225), 64803e1ced5,
+  merged 2024-03-20, added `is_string_in_set`'s empty checks for a member
+  such as `" *"`, which it calls a misconfiguration; it fixed the crash
+  and left the over-match. The over-match itself is pending: sent to
+  rgw-bug-reproduction.
+- **Found:** phase 2 task BC-2, 2026-10-15, transcribing
+  `is_string_in_set`; its two-`*` behaviour corrected by the task review
+  the same day. Derived from the source, not reproduced.
