@@ -124,6 +124,25 @@ var _ = Describe("GetBucketPolicyStatus", func() {
 		Entry("for a public ACL stored before the block", "public-read", ""),
 	)
 
+	// radosgw's is_public calls each of these ACLs private on both releases
+	// (docs/exclusions.md, "IgnorePublicAcls sets aside a Swift container's
+	// grants to everyone, and an ACL holding them is public" and
+	// "BlockPublicAcls counts grants to the user anonymous and its ownership,
+	// but for an anonymous writer's own").
+	DescribeTable("is public when the bucket's private ACL holds a grant IgnorePublicAcls sets aside, on both releases",
+		func(ctx SpecContext, g acl.Grant) {
+			for _, rel := range policyStatusReleases {
+				f := newWriteFixture(ctx, rel)
+				p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+				p.ACL.AddGrant(g)
+				f.setBucketAttrs(ctx, map[string][]byte{meta.AttrACL: encodedPolicy(p)})
+				Expect(isPublic(ctx, f.req(http.MethodGet, "plain", ""))).To(BeTrue(), "%v: a private ACL and %+v", rel, g)
+			}
+		},
+		Entry("a referer grant", acl.Grant{Type: acl.GranteeReferer, URLSpec: ".example.com", Permission: acl.PermRead}),
+		Entry("a grant to the user anonymous", acl.Grant{Type: acl.GranteeCanonUser, ID: "anonymous", Permission: acl.PermRead}),
+	)
+
 	It("judges the policy as the cluster's release parses it", func(ctx SpecContext) {
 		// Squid's parse drops a Service principal, which leaves the statement
 		// none; Tentacle's keeps the wildcard service.

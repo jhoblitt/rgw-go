@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -22,27 +23,38 @@ type Identity interface {
 }
 
 // Perm is RGWAccessControlPolicy::get_perm
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L160-L199):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L160-L199 at v19.2.7 and v20.2.4):
 // the flags of mask the policy grants id. They are the user map's flags for
 // id and the ACL flags for the owner; while they fall short of mask, the
-// AllUsers group's unless ignorePublicACLs, and the AuthenticatedUsers
-// group's unless that too or id is anonymous; and while those still fall
-// short, for a request with a Referer, RefererPerm replaces them. An empty
-// referer stands for radosgw's absent header: an empty one names no host, so
-// it could change nothing.
+// AllUsers group's, and the AuthenticatedUsers group's unless id is
+// anonymous; and while those still fall short, for a request with a Referer,
+// RefererPerm replaces them. An empty referer stands for radosgw's absent
+// header: an empty one names no host, so it could change nothing.
+//
+// ignorePublicACLs, IgnorePublicAcls, sets aside every grant that admits
+// the anonymous requester: both groups, every referer grant, the user map's
+// entry for the anonymous user, and the owner's ACL flags when the
+// anonymous user owns the policy. The client chooses the Referer, so a
+// referer grant is a grant to everyone; and a negative one revokes nothing
+// from a request that leaves the header out. Every unauthenticated request
+// runs as the anonymous user, so its grants and ownership are everyone's.
+// radosgw reads the referer grants, the anonymous user's grants and its
+// ownership whatever IgnorePublicAcls says (docs/exclusions.md).
 func (p Policy) Perm(id Identity, mask Permission, referer string, ignorePublicACLs bool) Permission {
-	perm := mask & id.PermsFromACLSpec(p.ACL.UserMap)
-	if id.IsOwnerOf(p.Owner.ID) {
+	users := p.ACL.UserMap
+	if ignorePublicACLs {
+		users = withoutAnonymous(users)
+	}
+	perm := mask & id.PermsFromACLSpec(users)
+	if id.IsOwnerOf(p.Owner.ID) && (!ignorePublicACLs || !p.anonymousOwner()) {
 		perm |= mask & (PermReadACP | PermWriteACP)
 	}
-	if perm == mask {
+	if perm == mask || ignorePublicACLs {
 		return perm
 	}
-	if !ignorePublicACLs && perm&mask != mask {
-		perm |= p.ACL.GroupPerm(GroupAllUsers, mask)
-		if !id.IsAnonymous() {
-			perm |= p.ACL.GroupPerm(GroupAuthenticatedUsers, mask)
-		}
+	perm |= p.ACL.GroupPerm(GroupAllUsers, mask)
+	if !id.IsAnonymous() {
+		perm |= p.ACL.GroupPerm(GroupAuthenticatedUsers, mask)
 	}
 	if referer != "" && perm&mask != mask {
 		perm = p.ACL.RefererPerm(perm, referer, mask)
@@ -68,15 +80,59 @@ func (p Policy) Verify(id Identity, userPermMask, perm Permission, referer strin
 }
 
 // IsPublic is RGWAccessControlPolicy::is_public
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl.cc#L235-L247):
-// whether the AllUsers or the AuthenticatedUsers group holds any S3 flag.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247 at v19.2.7 and v20.2.4)
+// as Amazon S3 judges an ACL, public when "it grants any permissions to
+// members of the predefined AllUsers or AuthenticatedUsers groups"
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status):
+// whether the group map gives either group any flag, Swift's included, the
+// ACL holds a referer grant, the user map gives the anonymous user any
+// flag, or the anonymous user owns the policy. Those are what Perm sets
+// aside under IgnorePublicAcls, so an ACL this calls private is one
+// IgnorePublicAcls leaves as it is. The exception is a policy ForOwnWrite
+// marks, whose writer's own rights do not count. radosgw counts only the S3
+// flags of the two groups, and so calls a Swift container opened with .r:*
+// or to the user anonymous private (docs/exclusions.md); an ACL an S3
+// request builds for anyone but the anonymous user holds none of the rest,
+// and the two agree on it.
 func (p Policy) IsPublic() bool {
-	for _, g := range []uint32{GroupAllUsers, GroupAuthenticatedUsers} {
-		if perm := p.ACL.GroupPerm(g, PermFullControl); perm != PermNone && perm != PermInvalid {
-			return true
-		}
+	anonymous := Permission(uint32(p.ACL.UserMap[anonymousUser])) &^ p.writer.grant //nolint:gosec // C++ stores the flags as an int
+	return p.ACL.GroupMap[GroupAllUsers] != 0 || p.ACL.GroupMap[GroupAuthenticatedUsers] != 0 ||
+		len(p.ACL.RefererList) > 0 || anonymous != PermNone || p.anonymousOwner() && !p.writer.owns
+}
+
+// ForOwnWrite returns p, the policy Canned or FromHeaders built for
+// writer's own write of a new bucket, object, upload or part, with the
+// rights that write gives an anonymous writer marked as its own: Canned's
+// FULL_CONTROL grant to it, or the ownership FromHeaders gives it. IsPublic
+// does not count them, so BlockPublicAcls refuses the write only when "the
+// request includes a public ACL"
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html).
+// Any other grant to the anonymous user still counts. The mark is not
+// encoded, so the stored policy, decoded again, is public. A writer other
+// than the anonymous user leaves p as it is.
+func (p Policy) ForOwnWrite(writer Owner) Policy {
+	switch {
+	case !sameOwner(writer.ID, anonymousUser):
+	case p.anonymousOwner():
+		p.writer.owns = true
+	default:
+		p.writer.grant = PermFullControl
 	}
-	return false
+	return p
+}
+
+// anonymousOwner is whether the anonymous user owns p.
+func (p Policy) anonymousOwner() bool { return sameOwner(p.Owner.ID, anonymousUser) }
+
+// withoutAnonymous is users without the anonymous user's entry, users
+// itself when it has none.
+func withoutAnonymous(users map[string]int32) map[string]int32 {
+	if _, ok := users[anonymousUser]; !ok {
+		return users
+	}
+	users = maps.Clone(users)
+	delete(users, anonymousUser)
+	return users
 }
 
 // DefaultPolicy is RGWAccessControlPolicy::create_default

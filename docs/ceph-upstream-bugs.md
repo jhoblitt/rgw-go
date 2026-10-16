@@ -322,6 +322,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
 | [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
 | [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
+| [radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user](#radosgws-ignorepublicacls-and-acl-is_public-miss-grants-to-the-anonymous-user) | pending | pending | ✓ |
+| [radosgw lets an ACL grant change a bucket's public access block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -2941,7 +2943,10 @@ Every new entry adds its row to this table, in document order.
   shared zone alike: `acl.List.RefererPerm` replaces the flags as
   `get_referer_perm` does, and the spec "lets a matching referer grant
   replace even the owner's own grant, as radosgw does"
-  (`internal/acl/eval_test.go`) pins it.
+  (`internal/acl/eval_test.go`) pins it. Under IgnorePublicAcls rgw-go reads
+  no referer grant, so none replaces anything there (`docs/exclusions.md`,
+  "IgnorePublicAcls sets aside a Swift container's grants to everyone, and
+  an ACL holding them is public").
 - **Upstream:** intended behaviour, so there is nothing to file.
   [#18841](https://tracker.ceph.com/issues/18841) (Resolved) is the
   negative-referer report the replacement answered, through
@@ -14375,16 +14380,22 @@ Every new entry adds its row to this table, in document order.
   An ACL an S3 request writes carries no Swift flags, so the
   BlockPublicAcls checks of S3 writes are unaffected.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it today, in all three places:
-  - `acl.Policy.Perm` does not gate its referer branch on
-    `ignorePublicACLs` (`internal/acl/eval.go`);
-  - the object check's Swift fallback passes `false` for it
+- **rgw-go:** no longer reproduces it, in any of the three places
+  (`docs/exclusions.md`, "IgnorePublicAcls sets aside a Swift container's
+  grants to everyone, and an ACL holding them is public"):
+  - `acl.Policy.Perm` reads no referer grant under IgnorePublicAcls
+    (`internal/acl/eval.go`);
+  - the object check's Swift fallback passes IgnorePublicAcls on
     (`objectACL`, `internal/authz/evaluator.go`);
-  - `acl.Policy.IsPublic` keeps the mask (`internal/acl/eval.go`), and
-    GetBucketPolicyStatus's IsPublic takes it
-    (`internal/op/policystatus.go`).
+  - `acl.Policy.IsPublic` counts any flag of the two groups and any
+    referer grant (`internal/acl/eval.go`), and GetBucketPolicyStatus's
+    IsPublic takes it (`internal/op/policystatus.go`).
 
-  rgw-go's fix is a planned task.
+  On both releases' rooket clusters, with a bucket whose ACL radosgw's Swift
+  API set to `.r:*` and whose four block settings an S3 request set, rgw-go
+  refused the anonymous GetObject and ListBucket, with and without a
+  Referer, where the build before the fix served the GetObject and the
+  ListBucket that sent one. radosgw's own answer was not asked.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S3, 2026-10-15, checking `acl.Policy.IsPublic`
   against Amazon S3's rule for ACLs. Its review traced the IgnorePublicAcls
@@ -16959,3 +16970,229 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task BC-2, 2026-10-15, reading `format_exp_headers`;
   the task review matched it to CVE-2021-3524 the same day. Derived from
   the source, not reproduced.
+
+## radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user
+
+- **Kind:** defect, security-relevant: a public-access-block bypass. An ACL
+  grant to the canonical user `anonymous` is a grant to every
+  unauthenticated requester, and neither IgnorePublicAcls nor `is_public`
+  counts it. A Swift container whose read or write list names `anonymous`
+  keeps serving anonymous S3 reads, or taking anonymous S3 writes, under all
+  four block settings. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's. `rgw_acl.cc`,
+  `rgw_acl_swift.cc`, `rgw_acl_s3.cc` and `rgw_user.cc` are the same at both
+  tags.
+  - An unauthenticated request runs as the user `anonymous`.
+    `AnonymousEngine::authenticate` builds a `LocalApplier` over the info
+    `rgw_get_anon_user` fills
+    ([rgw_auth.cc:1268-1283](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1268-L1283),
+    [rgw_auth.cc:1310-1327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1310-L1327)),
+    whose `user_id` is `RGW_USER_ANON_ID`
+    ([rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_user.cc#L106-L111),
+    [rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_user.cc#L106-L111)),
+    and `LocalApplier::get_perms_from_aclspec` looks that id up in the ACL's
+    user map
+    ([rgw_auth.cc:1032-1046](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1032-L1046),
+    [rgw_auth.cc:1052-1066](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1066)).
+  - `get_perm` takes the user map's flags first and gates only the groups on
+    `ignore_public_acls`
+    ([rgw_acl.cc:169-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L169-L187),
+    [rgw_acl.cc:169-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L169-L187)),
+    and `is_public` reads only the groups
+    ([rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L235-L247),
+    [rgw_acl.cc:235-247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L235-L247)).
+  - A Swift container ACL names users by uid. `parse_grant` hands an item
+    without a colon to `user_to_grant`, which sets a canonical grant to
+    `rgw_user(uid)` even when `load_user` finds no such user, "skipping
+    silently"
+    ([rgw_acl_swift.cc:98-152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L98-L152),
+    [rgw_acl_swift.cc:98-152](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L98-L152)).
+    So `create_container_policy` stores READ_OBJS for the anonymous user from
+    `X-Container-Read: anonymous`, and WRITE_OBJS from
+    `X-Container-Write: anonymous`
+    ([rgw_acl_swift.cc:172-208](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L172-L208),
+    [rgw_acl_swift.cc:172-208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L172-L208)).
+  - `verify_permission` counts READ_OBJS as READ and READ_ACP, and
+    WRITE_OBJS as WRITE and WRITE_ACP
+    ([rgw_acl.cc:208-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L208-L221),
+    [rgw_acl.cc:208-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L208-L221)).
+    The bucket check asks the bucket's ACL with `ignore_public_acls`
+    (`verify_bucket_permission_no_policy`,
+    [rgw_common.cc:1420-1423](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1420-L1423),
+    [rgw_common.cc:1451-1454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1451-L1454)),
+    and an object read falls back to the bucket ACL's Swift flags,
+    `bucket_acl.verify_permission` for `swift_perm`, passing no
+    `ignore_public_acls` at all
+    ([rgw_common.cc:1598-1599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599),
+    [rgw_common.cc:1655-1656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656)),
+    so that `verify_permission` takes its default, false
+    ([rgw_acl.h:397-402](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.h#L397-L402),
+    [rgw_acl.h:397-402](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.h#L397-L402)).
+    Neither path sets the user map aside, so under IgnorePublicAcls the read
+    list still serves anonymous GetObject, through the fallback, and
+    ListBucket, and the write list anonymous PutObject.
+  - S3 writes such a grant without naming the user. `create_canned_acl`
+    hands the canned ACL's FULL_CONTROL to the requester, the anonymous user
+    included, and moves only the policy's owner to the bucket's owner
+    ([rgw_acl_s3.cc:678-689](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L678-L689),
+    [rgw_acl_s3.cc:678-689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L678-L689);
+    `create_canned`,
+    [rgw_acl_s3.cc:407-461](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L407-L461),
+    [rgw_acl_s3.cc:407-461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L407-L461)).
+    `create_policy_from_headers` makes the requester the policy's owner
+    ([rgw_acl_s3.cc:691-709](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L691-L709),
+    [rgw_acl_s3.cc:691-709](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L691-L709)),
+    so the object of an anonymous write with an `x-amz-grant-*` header
+    belongs to the anonymous user, and `get_perm` gives every anonymous
+    requester its READ_ACP and WRITE_ACP
+    ([rgw_acl.cc:171-173](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L171-L173),
+    [rgw_acl.cc:171-173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L171-L173)).
+    A grant an S3 request names by canonical id needs a stored user of that
+    id (`resolve_grant`,
+    [rgw_acl_s3.cc:512-521](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L512-L521),
+    [rgw_acl_s3.cc:512-521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L512-L521);
+    `parse_grantee_str`,
+    [rgw_acl_s3.cc:363-371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L363-L371),
+    [rgw_acl_s3.cc:363-371](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L363-L371)),
+    and `read_user_info` answers -ENOENT for every user whose id is
+    `anonymous`, in any tenant
+    ([svc_user_rados.cc:125-128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_user_rados.cc#L125-L128),
+    [svc_user_rados.cc:106-109](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L106-L109)),
+    as `RGWUser::check_op` refuses to create one
+    ([rgw_user.cc:1520-1523](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1520-L1523),
+    [rgw_user.cc:1525-1528](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1525-L1528)).
+    So S3 can never name `anonymous` as a grantee; only Swift and an
+    anonymous write's own rights put it in an ACL.
+  - The read list's READ_OBJS and the write list's WRITE_OBJS reach every op
+    that authorizes through the bucket's READ_ACP or WRITE_ACP, as
+    `verify_permission` adds those flags too. `op_to_perm` maps
+    s3GetBucketPublicAccessBlock to READ_ACP, and s3PutBucketPublicAccessBlock,
+    s3PutBucketPolicy and s3DeleteBucketPolicy to WRITE_ACP
+    ([rgw_iam_policy.h:284-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L284-L311),
+    [rgw_iam_policy.h:300-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L300-L328)).
+    PutBucketPublicAccessBlock and DeleteBucketPublicAccessBlock authorize
+    through `verify_bucket_permission` with s3PutBucketPublicAccessBlock
+    ([rgw_op.cc:8613-8624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8613-L8624),
+    [rgw_op.cc:8727-8738](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8727-L8738);
+    [rgw_op.cc:9581-9592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9581-L9592),
+    [rgw_op.cc:9695-9706](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9695-L9706)),
+    as PutBucketPolicy and DeleteBucketPolicy do with s3PutBucketPolicy and
+    s3DeleteBucketPolicy
+    ([rgw_op.cc:8079](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8079),
+    [rgw_op.cc:8201](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8201);
+    [rgw_op.cc:8992](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8992),
+    [rgw_op.cc:9135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9135)).
+    With no policy deciding, `verify_bucket_permission` falls back to the
+    bucket ACL with `op_to_perm`'s flag
+    ([rgw_common.cc:1370-1371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1370-L1371),
+    [rgw_common.cc:1392-1393](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1392-L1393)).
+    PutBucketPolicy refuses a public policy only under the stored block
+    (`block_public_policy`,
+    [rgw_op.cc:8117](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8117),
+    [rgw_op.cc:9030](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9030)).
+- **Impact:** on a zone that serves Swift, a Swift client opens a container
+  to anonymous S3 requests past all four block settings by naming
+  `anonymous` in its read or write list, and GetBucketPolicyStatus reports
+  the bucket not public (`isPublic`,
+  [rgw_op.cc:8610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8610),
+  [rgw_op.cc:9578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9578)).
+  The read list serves GetObject, ListBucket, GetObjectAcl, GetBucketAcl,
+  GetBucketPolicy and GetBucketPublicAccessBlock. The write list serves
+  PutObject and every object write through the fallback, such as
+  PutObjectTagging, and, worst, the bucket's WRITE_ACP: any unauthenticated
+  request can delete the bucket's public access block and then install a
+  public bucket policy, as well as rewrite the bucket's ACL and the rest of
+  its configuration ("radosgw lets an ACL grant change a bucket's public
+  access block").
+  On any zone, every anonymous requester keeps FULL_CONTROL of each object
+  an anonymous request wrote with a canned ACL while the bucket let it, and
+  READ_ACP and WRITE_ACP of each one it wrote with grant headers, after the
+  owner sets IgnorePublicAcls; BlockPublicAcls does not stop such a write,
+  whose ACL `is_public` calls private.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** closes it (`docs/exclusions.md`, "IgnorePublicAcls sets aside
+  grants to the user anonymous and its ownership" and "BlockPublicAcls counts
+  grants to the user anonymous and its ownership, but for an anonymous
+  writer's own"):
+  - under IgnorePublicAcls `acl.Policy.Perm` sets aside the user map's entry
+    for `anonymous` and, on an ACL that user owns, the owner's READ_ACP and
+    WRITE_ACP, in the bucket check, the object check and the Swift fallback
+    alike (`internal/acl/eval.go`);
+  - `acl.Policy.IsPublic` counts both as public, but for the rights an
+    anonymous writer's own write gives it, which `authz.DefaultACL` marks
+    (`acl.Policy.ForOwnWrite`).
+
+  On both releases' rooket clusters radosgw stored the ACLs the Evidence
+  derives, as `radosgw-admin policy` showed: a canonical grant to
+  `anonymous`, with no name, of READ_OBJS or WRITE_OBJS from the Swift
+  lists; FULL_CONTROL to `anonymous` under the bucket owner from an
+  anonymous canned write; and the owner `anonymous` from an anonymous write
+  with `x-amz-grant-read`. Under all four block settings rgw-go refused the
+  anonymous GetObject, GetObjectAcl, ListBucket, PutObject and PutObjectAcl
+  those ACLs open, where the build before the fix served every one.
+  radosgw's own answer was not asked.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S5, 2026-10-15, reviewing every path by which an
+  ACL grants an anonymous or cross-account requester under IgnorePublicAcls.
+  Derived from the source, not reproduced.
+
+## radosgw lets an ACL grant change a bucket's public access block
+
+- **Kind:** defect, possibly security-relevant: a bucket's public access
+  block, the guardrail meant to hold whatever its ACLs and policy say, can
+  be put or deleted by any WRITE_ACP grantee of the bucket's ACL and read
+  by any READ_ACP grantee. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `op_to_perm` maps s3GetBucketPublicAccessBlock to RGW_PERM_READ_ACP and
+    s3PutBucketPublicAccessBlock to RGW_PERM_WRITE_ACP
+    ([rgw_iam_policy.h:288-289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L288-L289),
+    [rgw_iam_policy.h:310-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L310-L311);
+    [rgw_iam_policy.h:304-305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L304-L305),
+    [rgw_iam_policy.h:327-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L327-L328)).
+  - `RGWPutBucketPublicAccessBlock::verify_permission` and
+    `RGWDeleteBucketPublicAccessBlock::verify_permission` call
+    `verify_bucket_permission` with s3PutBucketPublicAccessBlock, and
+    `RGWGetBucketPublicAccessBlock::verify_permission` with
+    s3GetBucketPublicAccessBlock
+    ([rgw_op.cc:8619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8619),
+    [rgw_op.cc:8733](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8733),
+    [rgw_op.cc:8683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8683);
+    [rgw_op.cc:9587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9587),
+    [rgw_op.cc:9701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9701),
+    [rgw_op.cc:9651](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9651)).
+  - When no policy decides, `verify_bucket_permission` falls back to
+    `verify_bucket_permission_no_policy` with `op_to_perm`'s flag
+    ([rgw_common.cc:1370-1371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1370-L1371),
+    [rgw_common.cc:1392-1393](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1392-L1393)),
+    which grants it to whoever the bucket's ACL gives that flag, through
+    `bucket_acl.verify_permission`
+    ([rgw_common.cc:1420-1423](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1420-L1423),
+    [rgw_common.cc:1451-1454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1451-L1454)).
+    So a named user the owner gave FULL_CONTROL or WRITE_ACP, an AllUsers
+    or AuthenticatedUsers WRITE_ACP grant while IgnorePublicAcls is off, and
+    a Swift write list naming `anonymous` ("radosgw's IgnorePublicAcls and
+    ACL is_public miss grants to the anonymous user") can each put or
+    delete the block.
+  - Amazon S3 maps no ACL permission to these actions: its table of ACL
+    permissions and the policy actions they correspond to gives a bucket's
+    WRITE_ACP as s3:PutBucketAcl alone
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping).
+  - The same WRITE_ACP mapping covers the other bucket-config writes, the
+    bucket policy, ACL, CORS, lifecycle, encryption, object lock,
+    replication, versioning and tagging among them
+    ([rgw_iam_policy.h:291-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L291-L311),
+    [rgw_iam_policy.h:307-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L307-L328)),
+    which is long-standing radosgw design. This entry is about the public
+    access block, the guardrail an ACL holder should not be able to remove.
+- **Impact:** an owner who gives another user FULL_CONTROL of a bucket, or
+  whose bucket ACL grants WRITE_ACP to a public group, cannot keep a public
+  access block on it: the grantee can delete it, and then make the bucket
+  public through a policy or an ACL the block no longer refuses.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** unaffected today: it serves none of Put, Get and
+  DeleteBucketPublicAccessBlock, which answer 501 NotImplemented
+  (`internal/s3/handler.go`), until BC-18 serves them. The plan's BC-18
+  authorizes them by the bucket owner and policy alone.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S5's review, 2026-10-15, tracing what the Swift
+  write list's WRITE_ACP reaches. Derived from the source, not reproduced.

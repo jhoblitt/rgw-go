@@ -2,13 +2,16 @@ package authz_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
@@ -88,6 +91,88 @@ var _ = Describe("the authorizer behind the S3 handler", func() {
 		It("is served as an admin, the override applying as to any policy denial", func(ctx SpecContext) {
 			expectListed(listAs(ctx, adminOf(member())))
 		})
+	})
+})
+
+// The anonymous writer's own rights through the S3 handler: op's
+// BlockPublicAcls check of a write judges the ACL authz.DefaultACL builds.
+var _ = Describe("an anonymous writer behind the S3 handler", func() {
+	var (
+		store *memstore.Store
+		h     *s3.Handler
+	)
+	BeforeEach(func(ctx SpecContext) {
+		store = memstore.New(memstore.Config{Release: denc.Squid})
+		bob := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "bob"}, DisplayName: "Bob", OpMask: op.OpTypeAll})
+		owner := meta.UserOwner(bob.Info.UserID)
+		pol, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{ID: "bob", DisplayName: "Bob"}, "public-read-write")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = store.CreateBucket(ctx, op.CreateBucketParams{
+			Name: "pubw", Owner: owner, Attrs: map[string][]byte{meta.AttrACL: aclAttr(pol)},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		env := &op.Env{
+			Zone: store, Users: store, Accounts: store, Buckets: store, Objects: store, Multipart: store,
+			Stats: store, Usage: store, Metadata: store, Metrics: op.NopMetrics{},
+			Authz: authz.New(authz.DefaultConfig(denc.Squid)),
+			Now:   func() time.Time { return time.Unix(0x68d7a1b2, 0) }, HostID: "4155-z-zg",
+		}
+		anonymous := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+			return &op.AuthResult{Identity: op.Anonymous()}, nil
+		})
+		h = s3.NewHandler(env, anonymous, s3.Config{TransIDSuffix: "-4155-z", ServerHeader: "Ceph Object Gateway (squid)"})
+	})
+
+	block := func(ctx context.Context, b acl.PublicAccessBlock) {
+		GinkgoHelper()
+		rec, err := store.GetBucket(ctx, "", "pubw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.PutBucketAttrs(ctx, rec, map[string][]byte{attrPublicAccess: pabAttr(b)}, nil)).To(Succeed())
+	}
+	send := func(ctx context.Context, method, target, body string, hdr ...string) *httptest.ResponseRecorder {
+		var r io.Reader
+		if body != "" {
+			r = strings.NewReader(body)
+		}
+		req := httptest.NewRequestWithContext(ctx, method, target, r)
+		for i := 0; i+1 < len(hdr); i += 2 {
+			req.Header.Set(hdr[i], hdr[i+1])
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	It("writes under BlockPublicAcls unless the request names a public ACL", func(ctx SpecContext) {
+		block(ctx, acl.PublicAccessBlock{BlockPublicACLs: true})
+		rec := send(ctx, http.MethodPut, "/pubw/canned", "x")
+		Expect(rec.Code).To(Equal(200), "no ACL header, its canned FULL_CONTROL its own: %s", rec.Body.String())
+		rec = send(ctx, http.MethodPut, "/pubw/owned", "x", "X-Amz-Grant-Read", `id="bob"`)
+		Expect(rec.Code).To(Equal(200), "a grant header, its ownership its own: %s", rec.Body.String())
+		rec = send(ctx, http.MethodPut, "/pubw/public", "x", "X-Amz-Acl", "public-read")
+		Expect(rec.Code).To(Equal(403), "a public canned ACL: %s", rec.Body.String())
+	})
+
+	It("refuses under BlockPublicAcls to rewrite the ACL of an object the anonymous user owns", func(ctx SpecContext) {
+		rec := send(ctx, http.MethodPut, "/pubw/owned", "x", "X-Amz-Grant-Read", `id="bob"`)
+		Expect(rec.Code).To(Equal(200), rec.Body.String())
+		rec = send(ctx, http.MethodPut, "/pubw/owned?acl", "", "Content-Length", "0", "X-Amz-Grant-Read", `id="bob"`)
+		Expect(rec.Code).To(Equal(200), "no block: %s", rec.Body.String())
+		block(ctx, acl.PublicAccessBlock{BlockPublicACLs: true})
+		rec = send(ctx, http.MethodPut, "/pubw/owned?acl", "", "Content-Length", "0", "X-Amz-Grant-Read", `id="bob"`)
+		Expect(rec.Code).To(Equal(403), "an ACL the anonymous user owns is public: %s", rec.Body.String())
+	})
+
+	It("refuses under IgnorePublicAcls what an anonymous write gave the anonymous user", func(ctx SpecContext) {
+		Expect(send(ctx, http.MethodPut, "/pubw/canned", "x").Code).To(Equal(200))
+		Expect(send(ctx, http.MethodPut, "/pubw/owned", "x", "X-Amz-Grant-Read", `id="bob"`).Code).To(Equal(200))
+		Expect(send(ctx, http.MethodGet, "/pubw/canned", "").Code).To(Equal(200), "GetObject before the block")
+		Expect(send(ctx, http.MethodGet, "/pubw/owned?acl", "").Code).To(Equal(200), "GetObjectAcl before the block")
+		block(ctx, acl.PublicAccessBlock{IgnorePublicACLs: true})
+		Expect(send(ctx, http.MethodGet, "/pubw/canned", "").Code).To(Equal(403), "GetObject")
+		Expect(send(ctx, http.MethodGet, "/pubw/canned?acl", "").Code).To(Equal(403), "GetObjectAcl through the canned grant")
+		Expect(send(ctx, http.MethodGet, "/pubw/owned?acl", "").Code).To(Equal(403), "GetObjectAcl through ownership")
+		Expect(send(ctx, http.MethodPut, "/pubw/another", "x").Code).To(Equal(403), "PutObject, the bucket's public grant ignored")
 	})
 })
 

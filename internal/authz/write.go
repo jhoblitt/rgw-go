@@ -172,12 +172,18 @@ func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolve
 // grant header beside a canned ACL is op.ErrInvalidRequest; grant headers
 // alone build through acl.FromHeaders for owner; otherwise acl.Canned with
 // the X-Amz-Acl value, private when it is absent or empty, bucketOwner
-// holding the bucket-owner grants and the policy of an anonymous owner. Its
-// errors are returned as acl makes them, some holding a request header's
-// text, so a caller maps them through ErrorFor before rendering.
+// holding the bucket-owner grants and the policy of an anonymous owner. The
+// policy is owner's own write's, so an anonymous owner's rights in it do not
+// make it public (acl.Policy.ForOwnWrite). Its errors are returned as acl
+// makes them, some holding a request header's text, so a caller maps them
+// through ErrorFor before rendering.
 func DefaultACL(ctx context.Context, r *op.Request, res acl.Resolver, owner, bucketOwner acl.Owner) (acl.Policy, error) {
 	canned, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
-	return createS3Policy(ctx, r, res, canned, owner, bucketOwner)
+	p, err := createS3Policy(ctx, r, res, canned, owner, bucketOwner)
+	if err != nil {
+		return acl.Policy{}, err
+	}
+	return p.ForOwnWrite(owner), nil
 }
 
 // BuildDefaultACL is DefaultACL for an op that reaches it through the
