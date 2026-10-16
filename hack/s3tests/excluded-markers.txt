@@ -1,0 +1,78 @@
+# The s3-tests markers whose tests the parity set leaves out on both
+# gateways: the markers of features a later phase serves, and of
+# docs/exclusions.md's. Each sits under the comment naming its phase or its
+# exclusion. The PR that serves a marker's feature deletes its line and
+# records the tests that frees in the radosgw ledgers. fails_on_rgw is not
+# here: both gateways must fail those tests alike.
+# Format: one marker a line; "#" starts a comment.
+
+# phase 2: lifecycle
+lifecycle
+lifecycle_expiration
+lifecycle_transition
+
+# excluded: Cloud transition and restore
+cloud_transition
+cloud_restore
+target_by_bucket
+
+# phase 2: versioning
+versioning
+delete_marker
+
+# phase 2: object lock
+object_lock
+
+# phase 2: ownership controls
+object_ownership
+
+# phase 4: SSE-C; excluded: Key management: SSE-KMS and SSE-S3 with every backend
+encryption
+bucket_encryption
+sse_s3
+
+# excluded: S3 Select
+s3select
+
+# phase 2: static website
+s3website
+s3website_routing_rules
+s3website_redirect_location
+
+# phase 3: bucket logging
+bucket_logging
+bucket_logging_cleanup
+fails_without_logging_rollover
+
+# phase 2: checksums at Tentacle level
+checksum
+
+# phase 3: bucket notifications
+sns
+
+# excluded: appends answer 501 ("Object write differences")
+appendobject
+
+# phase 3: IAM and STS
+iam_account
+iam_cross_account
+iam_tenant
+iam_user
+iam_role
+user_policy
+role_policy
+group
+group_policy
+session_policy
+abac_test
+test_of_sts
+webidentity_test
+token_claims_trust_policy_test
+token_principal_tag_role_policy_test
+token_request_tag_trust_policy_test
+token_resource_tags_test
+token_role_tags_test
+token_tag_keys_test
+
+# phase 3: S3 Control
+s3control

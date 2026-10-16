@@ -14039,8 +14039,8 @@ Every new entry adds its row to this table, in document order.
   ([test_s3.py:16560](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16560)
   and
   [test_s3.py:17558](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L17558),
-  at main, as at rgw-go's pin f6f2529dd9e). `hack/s3tests/run.sh:66-72` lists
-  that marker among the excluded ones, and `hack/s3tests/run.sh:306-312`
+  at main, as at rgw-go's pin f6f2529dd9e). `hack/s3tests/excluded-markers.txt:43` lists
+  that marker among the excluded ones, and `hack/s3tests/internal/selection/selection.go:72-78`
   turns the list into the `-m` expression it collects with, so both tests
   are deselected and no ledger outcome changes:
   `test/s3tests/baseline/squid.json`, `test/s3tests/baseline/tentacle.json`
