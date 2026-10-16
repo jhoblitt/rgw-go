@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": " ",
+        "instance": "iSE.Ii6TQIEd9a6F84W4yPz2dbTx0.Q"
+    },
+    "delete_marker": false,
+    "epoch": 16,
+    "pending_log": [
+        {
+            "key": 16,
+            "val": [
+                {
+                    "epoch": 16,
+                    "op": "remove_instance",
+                    "op_tag": "00000000607435abyh635zqpqf4j3bh0",
+                    "key": {
+                        "name": " ",
+                        "instance": "53cJTHRuCL6-ZrKgBXRVjAt715Td3V9"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "h6qnd3s2o9xcnuzq99tjn8klf8bw418e",
+    "exists": true,
+    "pending_removal": false
+}
+

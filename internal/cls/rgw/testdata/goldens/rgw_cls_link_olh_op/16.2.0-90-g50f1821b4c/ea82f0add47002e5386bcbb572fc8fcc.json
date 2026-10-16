@@ -1,0 +1,33 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": "AWa2eF29WMrZGrg.UVD4co7JX5jAHQZ"
+    },
+    "olh_tag": "vmgkh97b4kg4ny6idh46u0sw8r0s1cwt",
+    "delete_marker": false,
+    "op_tag": "000000006074359eb61yvbl2h8upha3w",
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "unmod_since": "0.000000",
+    "high_precision_time": false,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-lei6t89dwkij5eit-348:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.362"
+        }
+    ]
+}
+

@@ -1,0 +1,11 @@
+{
+    "epoch": 2,
+    "op": "link_olh",
+    "op_tag": "0000000064cf833b9f612mnevu6u7bl4",
+    "key": {
+        "name": "dstmultipart",
+        "instance": "IzWtF7yQZDYxyzHg5dSeYA5q3AJzIMz"
+    },
+    "delete_marker": false
+}
+

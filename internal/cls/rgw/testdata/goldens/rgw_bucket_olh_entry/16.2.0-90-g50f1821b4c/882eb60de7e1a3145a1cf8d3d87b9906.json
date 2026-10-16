@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "xyz",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 11,
+    "pending_log": [],
+    "tag": "47neeaufoa7bq2enkn9n1t9pd0u3r357",
+    "exists": false,
+    "pending_removal": true
+}
+

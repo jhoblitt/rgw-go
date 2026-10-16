@@ -1,0 +1,33 @@
+{
+    "key": {
+        "name": ":",
+        "instance": "FJlvXfq2Byjo7ZYteelUiBSX256gv7n"
+    },
+    "olh_tag": "0lecx4g2ireeydwqb4l9yb1s5gfwca9x",
+    "delete_marker": true,
+    "op_tag": "000000005cc03469fzbrbjwr3jqad769",
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "2019-04-24T10:03:21.310574Z",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "s3test1",
+        "owner_display_name": "tester1",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "unmod_since": "0.000000",
+    "high_precision_time": false,
+    "zones_trace": [
+        {
+            "entry": "54f2466a-525e-4322-bc71-fc998e987f2f"
+        }
+    ]
+}
+

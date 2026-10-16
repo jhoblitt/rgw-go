@@ -1,0 +1,11 @@
+{
+    "epoch": 21,
+    "op": "link_olh",
+    "op_tag": "000000005cc030f6dm93t023mpm9y4q7",
+    "key": {
+        "name": "__testobj",
+        "instance": "FtiCtHdu5.Xtknxahl4z7jKxs21sqLM"
+    },
+    "delete_marker": true
+}
+

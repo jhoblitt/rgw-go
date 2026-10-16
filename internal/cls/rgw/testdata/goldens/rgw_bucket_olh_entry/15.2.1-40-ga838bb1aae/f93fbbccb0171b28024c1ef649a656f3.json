@@ -1,0 +1,39 @@
+{
+    "key": {
+        "name": "",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 11,
+    "pending_log": [
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005e9779f5fqqmlcqvfnqx22z6",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "000000005e9779f5fqqmlcqvfnqx22z6",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "56ftLIZMv6bnWym7rGPPacrMV2hV2aC"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "8b47f51kqahtcpow82dsmkzb7egxoqlv",
+    "exists": false,
+    "pending_removal": true
+}
+

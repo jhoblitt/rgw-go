@@ -1,0 +1,11 @@
+{
+    "epoch": 3,
+    "op": "unlink_olh",
+    "op_tag": "0000000066f924bepl5dn3hhuu51gjb2",
+    "key": {
+        "name": "foo?bar",
+        "instance": ""
+    },
+    "delete_marker": false
+}
+

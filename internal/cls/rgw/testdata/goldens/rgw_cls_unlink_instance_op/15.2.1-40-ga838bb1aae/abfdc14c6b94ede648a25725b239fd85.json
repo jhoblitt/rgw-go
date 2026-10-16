@@ -1,0 +1,12 @@
+{
+    "key": {
+        "name": "",
+        "instance": ""
+    },
+    "op_tag": "",
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "zones_trace": []
+}
+

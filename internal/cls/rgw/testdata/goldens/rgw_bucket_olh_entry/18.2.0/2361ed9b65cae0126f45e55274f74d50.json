@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 0,
+    "pending_log": [],
+    "tag": "",
+    "exists": false,
+    "pending_removal": false
+}
+

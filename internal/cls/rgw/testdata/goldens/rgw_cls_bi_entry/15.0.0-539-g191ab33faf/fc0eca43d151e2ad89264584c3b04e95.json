@@ -1,0 +1,32 @@
+{
+    "type": "instance",
+    "idx": "€1000_foo\u0000iZaoO-.XbSdif3Lv-TjuLaS1MX6G-l60",
+    "entry": {
+        "name": "foo",
+        "instance": "ZaoO-.XbSdif3Lv-TjuLaS1MX6G-l60",
+        "ver": {
+            "pool": 292,
+            "epoch": 1244
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 3,
+            "mtime": "2019-04-24T10:09:34.228598Z",
+            "etag": "acbd18db4cc2f85cedef654fccc4a4d8",
+            "storage_class": "STANDARD",
+            "owner": "s3test1",
+            "owner_display_name": "tester1",
+            "content_type": "application/octet-stream",
+            "accounted_size": 3,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.18276",
+        "flags": 3,
+        "pending_map": [],
+        "versioned_epoch": 2
+    }
+}
+

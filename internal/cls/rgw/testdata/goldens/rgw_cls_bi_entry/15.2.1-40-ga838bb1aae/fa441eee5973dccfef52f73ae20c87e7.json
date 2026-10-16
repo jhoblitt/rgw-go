@@ -1,0 +1,33 @@
+{
+    "type": "olh",
+    "idx": "€1001_obj-7",
+    "entry": {
+        "key": {
+            "name": "obj-7",
+            "instance": "inst"
+        },
+        "delete_marker": false,
+        "epoch": 1,
+        "pending_log": [
+            {
+                "key": 1,
+                "val": [
+                    {
+                        "epoch": 1,
+                        "op": "link_olh",
+                        "op_tag": "tag-7",
+                        "key": {
+                            "name": "obj-7",
+                            "instance": "inst"
+                        },
+                        "delete_marker": false
+                    }
+                ]
+            }
+        ],
+        "tag": "tag-7",
+        "exists": true,
+        "pending_removal": false
+    }
+}
+

@@ -1,0 +1,31 @@
+{
+    "log": [
+        {
+            "key": 2,
+            "val": [
+                {
+                    "epoch": 2,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005cc030ebzc9mozowbidbyrxr",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 2,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc030ebzc9mozowbidbyrxr",
+                    "key": {
+                        "name": "testobj",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

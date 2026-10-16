@@ -1,0 +1,33 @@
+{
+    "key": {
+        "name": " ",
+        "instance": "xlpkoShwbcrZk60gL0sGCnNORvOQiQe"
+    },
+    "olh_tag": "h6qnd3s2o9xcnuzq99tjn8klf8bw418e",
+    "delete_marker": false,
+    "op_tag": "00000000607435aap4jvt0vui8vwz1bs",
+    "meta": {
+        "category": 0,
+        "size": 0,
+        "mtime": "0.000000",
+        "etag": "",
+        "storage_class": "STANDARD",
+        "owner": "",
+        "owner_display_name": "",
+        "content_type": "",
+        "accounted_size": 0,
+        "user_data": "",
+        "appendable": false
+    },
+    "olh_epoch": 0,
+    "log_op": false,
+    "bilog_flags": 0,
+    "unmod_since": "0.000000",
+    "high_precision_time": false,
+    "zones_trace": [
+        {
+            "entry": "1051b1de-3e94-4c6c-b7d6-145cf6c35933:yournamehere-lei6t89dwkij5eit-354:1051b1de-3e94-4c6c-b7d6-145cf6c35933.4405.368"
+        }
+    ]
+}
+

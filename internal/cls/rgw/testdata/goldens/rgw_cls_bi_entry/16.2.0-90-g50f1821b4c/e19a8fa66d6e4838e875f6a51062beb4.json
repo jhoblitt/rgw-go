@@ -1,0 +1,32 @@
+{
+    "type": "plain",
+    "idx": "obj-22",
+    "entry": {
+        "name": "obj-22",
+        "instance": "",
+        "ver": {
+            "pool": 69,
+            "epoch": 1
+        },
+        "locator": "loc-22",
+        "exists": true,
+        "meta": {
+            "category": 0,
+            "size": 1024,
+            "mtime": "0.000000",
+            "etag": "",
+            "storage_class": "STANDARD",
+            "owner": "",
+            "owner_display_name": "",
+            "content_type": "",
+            "accounted_size": 1024,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "tag-22",
+        "flags": 0,
+        "pending_map": [],
+        "versioned_epoch": 0
+    }
+}
+

@@ -1,0 +1,32 @@
+{
+    "type": "instance",
+    "idx": "€1000_key\u0000iRzu45w6xqoAi6L34stfESSYVU2nvTI.",
+    "entry": {
+        "name": "key",
+        "instance": "Rzu45w6xqoAi6L34stfESSYVU2nvTI.",
+        "ver": {
+            "pool": 292,
+            "epoch": 181
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 3,
+            "mtime": "2019-04-24T09:48:56.041685Z",
+            "etag": "acbd18db4cc2f85cedef654fccc4a4d8",
+            "storage_class": "STANDARD",
+            "owner": "s3test1",
+            "owner_display_name": "tester1",
+            "content_type": "application/octet-stream",
+            "accounted_size": 3,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "54f2466a-525e-4322-bc71-fc998e987f2f.4341.3855",
+        "flags": 1,
+        "pending_map": [],
+        "versioned_epoch": 2
+    }
+}
+

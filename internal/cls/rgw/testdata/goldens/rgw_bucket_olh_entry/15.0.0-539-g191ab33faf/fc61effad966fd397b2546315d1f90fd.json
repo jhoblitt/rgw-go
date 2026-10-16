@@ -1,0 +1,54 @@
+{
+    "key": {
+        "name": "",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 11,
+    "pending_log": [
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310bjd96j6di10gb2ouw",
+                    "key": {
+                        "name": "myobj",
+                        "instance": ".Aw57e5iD3.aoU7dkxqK3gcFt-DHF0g"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005cc0310b40u43i0ft8zqqvoe",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc0310b40u43i0ft8zqqvoe",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "C-FKq.wVkzrR1kngbjW4uKc6z6TkvmU"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "fpxxwohhiosbwzdsfa90sqr7d67ovqs9",
+    "exists": false,
+    "pending_removal": true
+}
+

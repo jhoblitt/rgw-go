@@ -1,0 +1,129 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 11,
+    "pending_log": [
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f91ce00bo6rjwj3omjkehj",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "Vrp1sels0kopguw-pZhDILj3OhsRFCt"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 7,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91ce00bo6rjwj3omjkehj",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "0jKNlKRM7m.XUj5T-yQiPfcUz6yZlZg"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f91ce0zemi7wg38p1zf3hu",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "ICu6lkC0RO5rlaVyeStd8q.ppB8oW-R"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91ce0zemi7wg38p1zf3hu",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "Vrp1sels0kopguw-pZhDILj3OhsRFCt"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 9,
+            "val": [
+                {
+                    "epoch": 9,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91ce0z55oem86o07wle4e",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "gPrRNPLwv7dMXAv162ZzPT06DF5aChH"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "link_olh",
+                    "op_tag": "0000000066f91ce0c9c60a1ben4d2aom",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "usVB7B4yc.9sgfNGNmBe9j4mr1MPkZe"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 10,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91ce0c9c60a1ben4d2aom",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "ICu6lkC0RO5rlaVyeStd8q.ppB8oW-R"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "unlink_olh",
+                    "op_tag": "0000000066f91ce02hiokdlrbb958dd5",
+                    "key": {
+                        "name": "testobj",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "0000000066f91ce02hiokdlrbb958dd5",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "usVB7B4yc.9sgfNGNmBe9j4mr1MPkZe"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "xq2nsgulbobjgvsvgxg93eugukcf097b",
+    "exists": false,
+    "pending_removal": true
+}
+

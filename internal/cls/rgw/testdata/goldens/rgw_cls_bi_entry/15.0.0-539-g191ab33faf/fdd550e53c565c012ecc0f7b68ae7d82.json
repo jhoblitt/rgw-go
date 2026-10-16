@@ -1,0 +1,32 @@
+{
+    "type": "instance",
+    "idx": "€1000___testobj\u0000iE9VN6OEMnD0KKFXIE4ZO7VTdC4jPLFf",
+    "entry": {
+        "name": "__testobj",
+        "instance": "E9VN6OEMnD0KKFXIE4ZO7VTdC4jPLFf",
+        "ver": {
+            "pool": -1,
+            "epoch": 0
+        },
+        "locator": "",
+        "exists": false,
+        "meta": {
+            "category": 0,
+            "size": 0,
+            "mtime": "2019-04-24T10:03:14.981511Z",
+            "etag": "",
+            "storage_class": "STANDARD",
+            "owner": "s3test1",
+            "owner_display_name": "tester1",
+            "content_type": "",
+            "accounted_size": 0,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "delete-marker",
+        "flags": 7,
+        "pending_map": [],
+        "versioned_epoch": 21
+    }
+}
+

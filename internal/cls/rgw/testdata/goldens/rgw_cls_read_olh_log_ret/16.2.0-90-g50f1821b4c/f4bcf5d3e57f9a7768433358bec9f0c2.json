@@ -1,0 +1,51 @@
+{
+    "log": [
+        {
+            "key": 6,
+            "val": [
+                {
+                    "epoch": 6,
+                    "op": "link_olh",
+                    "op_tag": "00000000607435b2u5rbkm8z7b0z5srz",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "pHM9DATrMssy.md78TglrIlApD79sZN"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "00000000607435b2c1ure7ougz649k8e",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "ckhM.Qhvyvm9-u3O1J4a5IZQQbgvbvw"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "00000000607435b2zq099az1fbiml0uq",
+                    "key": {
+                        "name": "myobj",
+                        "instance": ".aecNpMdqNm0U5aM4Xf4p4QjTZfPAXD"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

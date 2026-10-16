@@ -1,0 +1,31 @@
+{
+    "log": [
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "link_olh",
+                    "op_tag": "000000005e9779deaxfflumxilwoy68k",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "BkZFfelYRjSljwphmLsTfEccayzJVkB"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "000000005e9779deaxfflumxilwoy68k",
+                    "key": {
+                        "name": "testobj",
+                        "instance": "AophAMBlSztKT5YB.qHHVOIKAiUgR89"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

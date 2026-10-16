@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "foo",
+        "instance": "C.Xs8b7.eWS0MToXKE6KkBiliNklirB"
+    },
+    "delete_marker": false,
+    "epoch": 2,
+    "pending_log": [
+        {
+            "key": 2,
+            "val": [
+                {
+                    "epoch": 2,
+                    "op": "link_olh",
+                    "op_tag": "0000000064cf8340d0nnnsdwpl26u7y4",
+                    "key": {
+                        "name": "foo",
+                        "instance": "C.Xs8b7.eWS0MToXKE6KkBiliNklirB"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "yp64kwud9qgfblhu8yungqtohcmuq59q",
+    "exists": true,
+    "pending_removal": false
+}
+

@@ -1,0 +1,59 @@
+{
+    "key": {
+        "name": "myobj",
+        "instance": "etzeVEtbRfks2PSN4ftIPltn919zU-e"
+    },
+    "delete_marker": false,
+    "epoch": 10,
+    "pending_log": [
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "00000000607435b2zq099az1fbiml0uq",
+                    "key": {
+                        "name": "myobj",
+                        "instance": ".aecNpMdqNm0U5aM4Xf4p4QjTZfPAXD"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 9,
+            "val": [
+                {
+                    "epoch": 9,
+                    "op": "link_olh",
+                    "op_tag": "00000000607435b2o075o47cta54dakc",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "64PjCI63EStoGRSjh7KCY-4a6QIVrKm"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "link_olh",
+                    "op_tag": "00000000607435b2notgl1bj26n9q7xl",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "etzeVEtbRfks2PSN4ftIPltn919zU-e"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "8qmp1n65vdrio5pt8stqlnqjseyxu0ky",
+    "exists": true,
+    "pending_removal": false
+}
+

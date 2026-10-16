@@ -1,0 +1,29 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": ""
+    },
+    "delete_marker": false,
+    "epoch": 10,
+    "pending_log": [
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "link_olh",
+                    "op_tag": "0000000064cf836b338jibuvzuo1vpo5",
+                    "key": {
+                        "name": "testobj",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "tag": "0dvcrou0op1b2c68yxi72agj77w79nnc",
+    "exists": true,
+    "pending_removal": false
+}
+

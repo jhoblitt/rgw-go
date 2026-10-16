@@ -1,0 +1,121 @@
+{
+    "log": [
+        {
+            "key": 7,
+            "val": [
+                {
+                    "epoch": 7,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc032bdv3jr8mpz4ymlr45b",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "fkgzDM5qTRtzTX7PkeMd1S3w7YzAap3"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 7,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc032bdv3jr8mpz4ymlr45b",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "OCV35PbRo5WwZTL0.V7s7gLL0VNmI50"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 8,
+            "val": [
+                {
+                    "epoch": 8,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc032bda34yrftla8fj1dxw",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "ImbEHEhrf3s5X2At8h9AxofZSXPhUtU"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 8,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc032bda34yrftla8fj1dxw",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "fkgzDM5qTRtzTX7PkeMd1S3w7YzAap3"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 9,
+            "val": [
+                {
+                    "epoch": 9,
+                    "op": "link_olh",
+                    "op_tag": "000000005cc032bdw6ni84ejyj4s6df6",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "D3DJjgM.5SB9NNmY02PJ6d3jU354Jg-"
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 9,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc032bdw6ni84ejyj4s6df6",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "ImbEHEhrf3s5X2At8h9AxofZSXPhUtU"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 10,
+            "val": [
+                {
+                    "epoch": 10,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc032bd1dn0ep43g6b797kn",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "iMevFMACiFLi-w5bMXBkdod0leVX467"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        },
+        {
+            "key": 11,
+            "val": [
+                {
+                    "epoch": 11,
+                    "op": "unlink_olh",
+                    "op_tag": "000000005cc032bdqg1c1fzams100jrh",
+                    "key": {
+                        "name": "",
+                        "instance": ""
+                    },
+                    "delete_marker": false
+                },
+                {
+                    "epoch": 11,
+                    "op": "remove_instance",
+                    "op_tag": "000000005cc032bdqg1c1fzams100jrh",
+                    "key": {
+                        "name": "myobj",
+                        "instance": "D3DJjgM.5SB9NNmY02PJ6d3jU354Jg-"
+                    },
+                    "delete_marker": false
+                }
+            ]
+        }
+    ],
+    "is_truncated": false
+}
+

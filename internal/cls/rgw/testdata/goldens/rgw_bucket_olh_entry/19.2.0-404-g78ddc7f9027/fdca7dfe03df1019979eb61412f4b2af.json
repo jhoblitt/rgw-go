@@ -1,0 +1,13 @@
+{
+    "key": {
+        "name": "testobj",
+        "instance": "KIOzDr1SeRXvcqmd0tYoH3byRcMjyR3"
+    },
+    "delete_marker": false,
+    "epoch": 12,
+    "pending_log": [],
+    "tag": "an7d491sdsqmnqiyo6c4q147y0w1im56",
+    "exists": true,
+    "pending_removal": false
+}
+

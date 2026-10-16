@@ -1,0 +1,41 @@
+{
+    "type": "plain",
+    "idx": "2PLBK52DJ1V4",
+    "entry": {
+        "name": "2PLBK52DJ1V4",
+        "instance": "",
+        "ver": {
+            "pool": 77,
+            "epoch": 3697
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 307424,
+            "mtime": "0.000000",
+            "etag": "",
+            "storage_class": "STANDARD",
+            "owner": "",
+            "owner_display_name": "",
+            "content_type": "",
+            "accounted_size": 307424,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "GA008HGWJ91N",
+        "flags": 0,
+        "pending_map": [
+            {
+                "key": "9E1T3YQI8CSY",
+                "val": {
+                    "state": 0,
+                    "timestamp": "2023-08-06T10:55:26.623371Z",
+                    "op": 0
+                }
+            }
+        ],
+        "versioned_epoch": 0
+    }
+}
+

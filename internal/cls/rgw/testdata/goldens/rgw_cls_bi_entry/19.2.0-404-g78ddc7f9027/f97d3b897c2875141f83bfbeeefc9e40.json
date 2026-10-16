@@ -1,0 +1,32 @@
+{
+    "type": "instance",
+    "idx": "€1000_baz\u0000i218LYC1O5NLWl6vTLilmMUywRvqEEFJ",
+    "entry": {
+        "name": "baz",
+        "instance": "218LYC1O5NLWl6vTLilmMUywRvqEEFJ",
+        "ver": {
+            "pool": 10,
+            "epoch": 0
+        },
+        "locator": "",
+        "exists": true,
+        "meta": {
+            "category": 1,
+            "size": 3,
+            "mtime": "2024-09-29T09:57:13.918065Z",
+            "etag": "73feffa4b7f6bb68e44cf984c85f6e88",
+            "storage_class": "STANDARD",
+            "owner": "testid",
+            "owner_display_name": "M. Tester",
+            "content_type": "",
+            "accounted_size": 3,
+            "user_data": "",
+            "appendable": false
+        },
+        "tag": "b9d33d85-8234-4f36-92ce-fe80e2223e0d.4533.11947354982779156211",
+        "flags": 3,
+        "pending_map": [],
+        "versioned_epoch": 2
+    }
+}
+
