@@ -108,7 +108,12 @@ func NewWriteOp() *WriteOp { return &WriteOp{} }
 func (o *WriteOp) Steps() []Step { return slices.Clone(o.steps) }
 
 // SetMtime sets the modification time the op stamps on the object. It
-// applies to the whole op, so it is not a step.
+// applies to the whole op, so it is not a step. A zero t, or the Unix epoch
+// itself, keeps the object's stored mtime: both reach the OSD as the zero
+// timespec, and its finish_ctx keeps the mtime for an op whose mtime is zero
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8984 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9090 at v20.2.4);
+// an op that never calls SetMtime is stamped with the client's clock.
 func (o *WriteOp) SetMtime(t time.Time) { o.mtime = &t }
 
 // Mtime returns the time SetMtime recorded, and whether it was called.
