@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math/rand/v2"
+	"runtime"
 	"sync"
 
 	"github.com/klauspost/compress/snappy"
@@ -289,12 +290,13 @@ var _ = Describe("Encoder", func() {
 	// v20.2.4); klauspost's EncoderLevelFromZstd maps the rest.
 	DescribeTable("compresses zstd at the level klauspost maps compressor_zstd_level to",
 		func(level int, want zstd.EncoderLevel) {
-			src := text()
-			block, _ := mustEncode(compression.Zstd, zstdOptions(level), src)
 			ref, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(want), zstd.WithEncoderCRC(false))
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(ref.Close)
-			Expect(block[4:]).To(Equal(ref.EncodeAll(src, nil)))
+			for _, src := range [][]byte{text(), plaintext(chunk)} {
+				block, _ := mustEncode(compression.Zstd, zstdOptions(level), src)
+				Expect(block[4:]).To(Equal(ref.EncodeAll(src, nil)), "a block of %d bytes", len(src))
+			}
 		},
 		Entry("1, radosgw's default: fastest", 1, zstd.SpeedFastest),
 		Entry("a negative level: fastest", -5, zstd.SpeedFastest),
@@ -426,4 +428,59 @@ var _ = Describe("Encoder", func() {
 			Expect(err).To(MatchError(compression.ErrUnknownCodec), "codec %q", codec)
 		}
 	})
+
+	// At compressor_zstd_level 10 and up, klauspost's best level, each encoder
+	// holds a 2 MiB and a 32 MiB match table, so one encoder left resident is
+	// far above the bound. radosgw's ZstdCompressor::compress frees its stream
+	// after each block
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L29-L62 at v19.2.7
+	// and v20.2.4).
+	DescribeTable("holds a zstd encoder only while a block compresses",
+		func(writers int) {
+			src := text()
+			enc := mustEncoder(compression.Zstd, zstdOptions(10))
+			base := heapInUse()
+			made := compression.ZstdEncodersMadeForTest()
+			start := make(chan struct{})
+			errs := make([]error, writers)
+			var wg sync.WaitGroup
+			for i := range writers {
+				wg.Go(func() {
+					<-start
+					_, _, errs[i] = enc.Encode(nil, src)
+				})
+			}
+			close(start)
+			wg.Wait()
+			for i := range writers {
+				Expect(errs[i]).NotTo(HaveOccurred(), "writer %d", i)
+			}
+			Expect(compression.ZstdEncodersMadeForTest()-made).To(BeNumerically("<=", writers),
+				"no more encoders than compressions at once")
+			// One collection leaves the pool's idle encoders alive; each holds
+			// the tables of one compression, about 50 MiB at level 10.
+			runtime.GC()
+			Expect(int64(heapNow())-int64(base)).To(BeNumerically("<", int64(writers)*(64<<20)),
+				"no idle encoder holds the tables of more than one compression")
+			Expect(int64(heapInUse())-int64(base)).To(BeNumerically("<", 8<<20), "nothing of them is kept once they are idle")
+		},
+		Entry("after one level-10 write", 1),
+		Entry("after four level-10 writes at once", 4),
+	)
 })
+
+// heapInUse is the heap in use after three collections: sync.Pool keeps an
+// idle value through one, and frees it at the next.
+func heapInUse() uint64 {
+	for range 3 {
+		runtime.GC()
+	}
+	return heapNow()
+}
+
+// heapNow is the heap in use.
+func heapNow() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.HeapInuse
+}

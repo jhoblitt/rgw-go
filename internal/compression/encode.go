@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
@@ -170,42 +171,63 @@ const zstdDefaultLevel = 3
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L29-L62 at v19.2.7
 // and v20.2.4). Like libzstd's, the frame states its content size and carries
 // no checksum.
-type zstdEncoder struct{ e *zstd.Encoder }
+type zstdEncoder struct{ pool *zstdPool }
 
-// sharedZstdEncoders hold one encoder per klauspost level, made on first use.
-// EncodeAll is safe for concurrent use, and an encoder keeps match tables for
-// each call it runs at once, too many to build per object. WithZeroFrames
-// writes a frame for an empty input too.
-var sharedZstdEncoders = map[zstd.EncoderLevel]func() (*zstd.Encoder, error){
-	zstd.SpeedFastest:           zstdEncoderAt(zstd.SpeedFastest),
-	zstd.SpeedDefault:           zstdEncoderAt(zstd.SpeedDefault),
-	zstd.SpeedBetterCompression: zstdEncoderAt(zstd.SpeedBetterCompression),
-	zstd.SpeedBestCompression:   zstdEncoderAt(zstd.SpeedBestCompression),
+// zstdPool holds the idle encoders of one klauspost level, each made to run
+// one compression at a time. ZstdCompressor::compress creates and frees a
+// stream for each block, so radosgw holds zstd state only while a block
+// compresses; the pool keeps an encoder for each compression running at once
+// and lets the GC free the idle ones, which at level 10 and up hold 34 MiB of
+// match tables each. EncodeAll's frames do not depend on an encoder's
+// concurrency. WithZeroFrames writes a frame for an empty input too.
+type zstdPool struct {
+	level zstd.EncoderLevel
+	idle  sync.Pool
 }
 
-func zstdEncoderAt(level zstd.EncoderLevel) func() (*zstd.Encoder, error) {
-	return sync.OnceValues(func() (*zstd.Encoder, error) {
-		return zstd.NewWriter(nil, zstd.WithEncoderLevel(level), zstd.WithEncoderCRC(false), zstd.WithZeroFrames(true))
-	})
+var zstdPools = map[zstd.EncoderLevel]*zstdPool{
+	zstd.SpeedFastest:           {level: zstd.SpeedFastest},
+	zstd.SpeedDefault:           {level: zstd.SpeedDefault},
+	zstd.SpeedBetterCompression: {level: zstd.SpeedBetterCompression},
+	zstd.SpeedBestCompression:   {level: zstd.SpeedBestCompression},
+}
+
+// zstdEncodersMade counts the encoders the pools have made.
+var zstdEncodersMade atomic.Int64
+
+// get is an idle encoder, or a new one.
+func (p *zstdPool) get() (*zstd.Encoder, error) {
+	if e, ok := p.idle.Get().(*zstd.Encoder); ok {
+		return e, nil
+	}
+	e, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(p.level), zstd.WithEncoderConcurrency(1),
+		zstd.WithEncoderCRC(false), zstd.WithZeroFrames(true))
+	if err != nil {
+		return nil, fmt.Errorf("creating a zstd encoder: %w", err)
+	}
+	zstdEncodersMade.Add(1)
+	return e, nil
 }
 
 func newZstdEncoder(level int) (Encoder, error) {
 	if level == 0 {
 		level = zstdDefaultLevel
 	}
-	e, err := sharedZstdEncoders[zstd.EncoderLevelFromZstd(level)]()
-	if err != nil {
-		return nil, fmt.Errorf("creating the zstd encoder: %w", err)
-	}
-	return zstdEncoder{e: e}, nil
+	return zstdEncoder{pool: zstdPools[zstd.EncoderLevelFromZstd(level)]}, nil
 }
 
 func (z zstdEncoder) Encode(dst, src []byte) (block []byte, message *int32, err error) {
 	if uint64(len(src)) > math.MaxUint32 {
 		return nil, nil, tooLong("zstd", len(src))
 	}
+	e, err := z.pool.get()
+	if err != nil {
+		return nil, nil, err
+	}
 	out := binary.LittleEndian.AppendUint32(dst[:0], uint32(len(src))) //nolint:gosec // at most MaxUint32, checked above
-	return z.e.EncodeAll(src, out), nil, nil
+	block = e.EncodeAll(src, out)
+	z.pool.idle.Put(e)
+	return block, nil, nil
 }
 
 // lz4Encoder is LZ4Compressor::compress, which makes its input contiguous
