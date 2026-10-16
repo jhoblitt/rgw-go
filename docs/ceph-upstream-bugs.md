@@ -285,6 +285,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [s3-tests' TargetObjectKeyFormat probe always answers True](#s3-tests-targetobjectkeyformat-probe-always-answers-true) | pending | pending | ✓ |
 | [radosgw logs an upload id without a part number as a part number without an upload id](#radosgw-logs-an-upload-id-without-a-part-number-as-a-part-number-without-an-upload-id) | pending | pending | ✓ |
 | [radosgw's IgnorePublicAcls and ACL is_public miss Swift's grants to everyone](#radosgws-ignorepublicacls-and-acl-is_public-miss-swifts-grants-to-everyone) | pending | pending | ✓ |
+| [radosgw's version instances are 31 characters, one short of their buffer](#radosgws-version-instances-are-31-characters-one-short-of-their-buffer) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14167,3 +14168,41 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S3, 2026-10-15, checking `acl.Policy.IsPublic`
   against Amazon S3's rule for ACLs. Its review traced the IgnorePublicAcls
   escape the same day. Derived from the source, not reproduced.
+
+## radosgw's version instances are 31 characters, one short of their buffer
+
+- **Kind:** defect, cosmetic: an off-by-one in a buffer size makes every
+  version instance one character shorter than `OBJ_INSTANCE_LEN`. Not
+  security-relevant. Unreproduced on a floor release: derived from the
+  source, and seen in older releases' captures.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWRados::gen_rand_obj_instance_name` defines `OBJ_INSTANCE_LEN` as 32,
+    declares `char buf[OBJ_INSTANCE_LEN + 1]`, room for 32 characters and
+    the NUL, and passes `OBJ_INSTANCE_LEN` as the size
+    ([rgw_rados.cc:8868-8877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8868-L8877),
+    [rgw_rados.cc:9614-9623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9614-L9623)).
+  - `gen_rand_alphanumeric_no_underscore` takes "the required string size
+    + 1", draws `size-1` characters and puts the NUL at `size-1`
+    ([random_string.cc:96-101](https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L96-L101),
+    [random_string.cc:96-101](https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L96-L101)).
+    The instance is 31 characters, and `buf[32]` is never written.
+  - Every non-empty instance in the 50 RGWOLHInfo objects of the
+    ceph-object-corpus, captured from radosgw in archives 15.0.0-539 to
+    19.2.0-404, is 31 characters long
+    (`internal/meta/testdata/goldens/RGWOLHInfo/`).
+  - The other drivers repeat the pattern at both tags: dbstore, daos, motr
+    and posix (`dbstore/common/dbstore.cc`, `rgw_sal_daos.cc`,
+    `rgw_sal_motr.cc`, `rgw_sal_posix.cc` under `src/rgw/driver/`), and, at
+    v20.2.4 only, the d4n filter's three version strings
+    (`rgw_sal_d4n.cc`).
+- **Impact:** none on behaviour. S3 fixes no version id length, and
+  clients treat it as opaque. An instance carries 186 random bits, from 31
+  draws of a 64-character table, where 32 draws would carry 192.
+- **Releases:** checked at v19.2.7 and v20.2.4; the corpus shows it in
+  every archive from 15.0.0-539 to 19.2.0-404.
+- **rgw-go:** reproduces it, for parity with the version ids radosgw
+  issues: `NewInstance` draws 31 characters (`internal/meta/olh.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V2, 2026-10-15, writing `meta.NewInstance`; its
+  review classed it a defect. Derived from the source, not reproduced on a
+  floor release.
