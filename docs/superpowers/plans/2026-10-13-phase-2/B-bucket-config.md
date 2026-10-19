@@ -950,8 +950,9 @@ byte-identical at the two tags.
 
 - **Layer:** op. **Files:** create `internal/op/bucketencryption.go`. **Cluster:** no.
 - **Consumes:** BC-23; `op.AttrBucketEncryption` (`internal/op/putobject.go:17-19`).
-  **Produces:** `GetBucketEncryption{Config}`, `PutBucketEncryption{Params}`,
-  `DeleteBucketEncryption`, and the key-id attr name `user.rgw.sse-s3.key-id`.
+  **Produces:** `GetBucketEncryption{Config}`; `PutBucketEncryption`, which reads its own
+  body, as `DeleteObjects` does, and takes no handler hook; `DeleteBucketEncryption`; and the
+  key-id attr name `user.rgw.sse-s3.key-id`.
 - **Behaviour:**
   1. **Put.** Action s3:PutBucketEncryption with no tag loading; it stores the validated
      configuration in `user.rgw.sse-s3.policy` alone on each try
@@ -962,15 +963,21 @@ byte-identical at the two tags.
        ([rgw_op.cc:8757-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8762),
        [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730);
        [rgw_op.cc:8780](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8780),
-       [rgw_op.cc:9748](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9748)): no
-       Content-Length is 411 MissingContentLength, and one over that `max_len` is 416
-       InvalidRange, unread
-       ([rgw_rest.cc:1550-1558](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1550-L1558),
-       [rgw_rest.cc:1550-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1550-L1558);
-       [rgw_common.cc:87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L87),
-       [rgw_common.cc:88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L88);
+       [rgw_op.cc:9748](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9748)). A
+       declared length over that `max_len` is 416 InvalidRange (`ERANGE`), unread
+       ([rgw_rest.cc:1556-1557](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1556-L1557),
+       [rgw_rest.cc:1556-1557](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1557);
        [rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
-       [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)).
+       [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)). With no
+       Content-Length the body is read as chunked, because `read_all_input` drops the
+       `allow_chunked=false` that `get_params` passes
+       ([rgw_op.h:216-228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L216-L228),
+       [rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241)), and a body that
+       is not chunked either is 411 MissingContentLength (`ERR_LENGTH_REQUIRED`)
+       ([rgw_rest.cc:1571-1574](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1571-L1574),
+       [rgw_rest.cc:1571-1574](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1571-L1574);
+       [rgw_common.cc:87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L87),
+       [rgw_common.cc:88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L88)).
        `sse.MaxConfigXML` is a backstop only.
      - `sse.ErrMalformedXML` from `sse.ParseXML`, which already runs `Validate`, is 400
        MalformedXML.
