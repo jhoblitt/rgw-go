@@ -41,3 +41,7 @@
 
 # A header-signed SigV2 PutObject's unsigned query meta, not stored; radosgw stores it beside the signed meta (exclusions: "A SigV2 request's unsigned query meta and encryption settings are not read")
 ^s3tests\.functional\.test_headers::test_sigv2_header_put_unsigned_meta_in_query$
+
+# A PutBucketVersioning Status or MfaDelete outside S3's values, answered 400 MalformedXML; radosgw answers 400 InvalidArgument (exclusions: "PutBucketVersioning answers MalformedXML for a document that does not parse")
+^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_status$
+^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_mfa_delete$
