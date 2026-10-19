@@ -4922,8 +4922,9 @@ differ, rgw-go does the following.
 - **A retried bucket write stops when the name names another bucket.**
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
-  PutPublicAccessBlock and DeletePublicAccessBlock retry a
-  write that lost a race up to fifteen times, each after reading the bucket
+  PutPublicAccessBlock, DeletePublicAccessBlock,
+  PutBucketEncryption and DeleteBucketEncryption retry a write that lost a
+  race up to fifteen times, each after reading the bucket
   again by name (`retry_raced_bucket_write`, `rgw_op.h:183-196` at v19.2.6,
   `:197-210` at v20.2.4), and so does rgw-go's PutBucketAcl ("A PutBucketAcl
   that loses a race is retried", below). The re-read drops the bucket's
@@ -4946,7 +4947,15 @@ differ, rgw-go does the following.
   [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
   [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)
   and
-  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)).
+  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)),
+  and the encryption writes set or remove the default encryption of that
+  bucket
+  ([rgw_op.cc:8807-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8807-L8811)
+  and
+  [rgw_op.cc:8860-8866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8860-L8866),
+  [rgw_op.cc:9775-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9775-L9779)
+  and
+  [rgw_op.cc:9828-9834](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9828-L9834)).
   When the bucket
   was deleted and a bucket of the same name created in between, radosgw
   writes into the new bucket, another owner's included
@@ -5014,8 +5023,9 @@ differ, rgw-go does the following.
   first check, and through nothing else. Every retried bucket write,
   PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
-  PutPublicAccessBlock and DeletePublicAccessBlock, is
-  authorized again the same way before each retry, against the bucket that
+  PutPublicAccessBlock, DeletePublicAccessBlock,
+  PutBucketEncryption and DeleteBucketEncryption, is authorized again the
+  same way before each retry, against the bucket that
   retry read: its ACL, of which the block writes read the owner alone, its
   policy and its public-access block, with the same admin rule. radosgw retries all but PutBucketAcl through
   `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`, `:8110` and `:8204`
@@ -5033,7 +5043,14 @@ differ, rgw-go does the following.
   [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
   [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)
   and
-  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)),
+  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722);
+  the encryption writes at
+  [rgw_op.cc:8807-8811](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8807-L8811)
+  and
+  [rgw_op.cc:8860-8866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8860-L8866),
+  [rgw_op.cc:9775-9779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9775-L9779)
+  and
+  [rgw_op.cc:9828-9834](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9828-L9834)),
   which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
