@@ -324,6 +324,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
 | [radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user](#radosgws-ignorepublicacls-and-acl-is_public-miss-grants-to-the-anonymous-user) | pending | pending | ✓ |
 | [radosgw lets an ACL grant change a bucket's public access block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block) | pending | pending | ✓ |
+| [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14716,7 +14717,8 @@ Every new entry adds its row to this table, in document order.
   - A version whose epoch is 2^32 or more is in no bucket listing,
     ListObjectVersions included.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. v21.0.0
-  and later are fixed.
+  and later are fixed for the keys they write, not for the keys these
+  releases wrote ("cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more").
 - **rgw-go:** reproduces it, since the class writes these keys.
   `DecreasingStr`, `ListIndexKey` and `DecodeListIndexKey` in
   `internal/cls/rgw/indexkey.go` carry the class's bands and its refusal, and
@@ -17196,3 +17198,87 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S5's review, 2026-10-15, tracing what the Swift
   write list's WRITE_ACP reaches. Derived from the source, not reproduced.
+
+## cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more
+
+- **Kind:** defect, S3-correctness of versioning after an upgrade from
+  Squid or Tentacle to v21.0.0 or later, for the versions those releases
+  wrote at epochs of 2^32 or more. v21 changes how a version's list key
+  encodes its epoch and re-keys nothing already stored, so it no longer
+  derives those versions' stored keys: it lists them again, in the old
+  order, and leaves their keys behind when it rewrites or removes them. No
+  object data is damaged. Not security-relevant. Prior art not searched.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/cls/rgw/` unless named.
+  - Squid and Tentacle key an epoch from 2^32 up as `4` and the digits of
+    `(long long)-num` ("cls_rgw mis-sorts and cannot list versions whose
+    epoch is 2^32 or more"): `4-` and nineteen digits through 2^63, `4` and
+    twenty digits above. Their `decode_list_index_key` parses from the band
+    digit, so it refuses both forms
+    ([cls_rgw.cc:452-453](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L452-L453),
+    [cls_rgw.cc:502-503](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L502-L503)).
+  - Ceph commit 4195486c8ed
+    ([ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), first tagged
+    in v21.0.0) gives `decreasing_str` new bands above 2^32, the last `2` and
+    twenty digits from 2^48 up
+    ([cls_rgw.cc:308-332](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L308-L332)),
+    and parses from after the band digit with `strict_strtoull`
+    ([cls_rgw.cc:506-507](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L506-L507)).
+    `strtoull` accepts a leading `-`
+    ([strtol.cc:62-79](https://github.com/ceph/ceph/blob/v21.0.0/src/common/strtol.cc#L62-L79)), so both
+    old forms now decode, and `rgw_bucket_list`, which reads only the
+    decode's result, lists them
+    ([cls_rgw.cc:653-660](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L653-L660)).
+  - The class finds a version's list key by encoding its stored epoch again
+    (`get_list_index_key`). It removes the old key so when it rewrites a
+    version (`BIVerObjEntry::write` through `unlink_list_entry`,
+    [cls_rgw.cc:1498-1509](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L1498-L1509),
+    [cls_rgw.cc:1545-1562](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L1545-L1562))
+    and when it removes one, as `rgw_bucket_unlink_instance` does
+    ([cls_rgw.cc:2141-2147](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L2141-L2147)),
+    and `find_next_key` seeks from it
+    ([cls_rgw.cc:1572-1581](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L1572-L1581)).
+    For an epoch of 2^32 or more the new encoding is not the stored key,
+    and removing an omap key that is not there succeeds (`remove_entry`,
+    [cls_rgw.cc:780-795](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L780-L795);
+    the OSD's `CEPH_OSD_OP_OMAPRMKEYS`,
+    [PrimaryLogPG.cc:8069-8098](https://github.com/ceph/ceph/blob/v21.0.0/src/osd/PrimaryLogPG.cc#L8069-L8098)),
+    so the stored key stays.
+  - A new version takes the epoch a multisite request names or the object's
+    mtime in nanoseconds since 1970
+    ([cls_rgw.cc:1902-1903](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L1902-L1903),
+    [cls_rgw.cc:2088-2089](https://github.com/ceph/ceph/blob/v21.0.0/src/cls/rgw/cls_rgw.cc#L2088-L2089)),
+    which keys every version v21 writes today in band `2`, before every key
+    the older releases wrote.
+  - v21.3.0 encodes and decodes the same way
+    ([cls_rgw.cc:331](https://github.com/ceph/ceph/blob/v21.3.0/src/cls/rgw/cls_rgw.cc#L331),
+    [cls_rgw.cc:509-510](https://github.com/ceph/ceph/blob/v21.3.0/src/cls/rgw/cls_rgw.cc#L509-L510)),
+    and no code in the class at v21.0.0 or v21.3.0 re-keys a stored
+    version.
+- **Impact:**
+  - After the upgrade those versions, which the older releases left out of
+    every listing, are listed again, but not by epoch: among the `4-` keys a
+    newer version sorts later, and every key above 2^63 sorts after them.
+  - Rewriting such a version, as promoting it to current does, leaves its
+    old list key beside the new one, and removing it leaves the old key in
+    the index, holding the entry as it was. What a listing then shows for
+    the leftover key depends on radosgw's check of each listed entry
+    against its object, which this entry has not traced.
+  - Deleting the current version, when it is such a version, promotes from
+    where its key would sit in the new encoding, not from where it is
+    stored.
+  - Only epochs of 2^32 or more are affected. One name reaches them only
+    after about four billion changes, or through a system request's
+    negative `rgwx-versioned-epoch`.
+- **Releases:** the keys are written by Squid and Tentacle, checked at
+  v19.2.7 and v20.2.4, and read by v21.0.0 and later, checked at v21.0.0
+  and v21.3.0.
+- **rgw-go:** writes these releases' keys (`DecreasingStr` in
+  `internal/cls/rgw/indexkey.go`), so a bucket it wrote meets this once its
+  cluster moves to v21. rgw-go serves Squid and Tentacle only.
+- **Upstream:** pending: sent to rgw-bug-reproduction
+  (V1-3-OLH-LEGACY-4DASH-KEYS-AFTER-UPGRADE). Prior art not searched.
+- **Found:** phase 2 task V1's triage by rgw-bug-reproduction, 2026-10-15;
+  checked against v21.0.0 and v21.3.0, and widened to the list keys the
+  class cannot find, on 2026-10-19. Derived from the source, not
+  reproduced.
