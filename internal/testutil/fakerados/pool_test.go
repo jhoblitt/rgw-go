@@ -367,6 +367,19 @@ var _ = Describe("a write op", func() {
 		Expect(stored("obj")).To(BeNil())
 	})
 
+	It("reports a failing class call by its return value alone, as librados's C write op has no output buffer", func(ctx SpecContext) {
+		c.RegisterClass("probe", func(*fakerados.ClassCall) ([]byte, int32) {
+			return []byte("marker"), -int32(syscall.EFBIG)
+		}, "m")
+		var res *radosclient.ExecResult
+		err := writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) { res = op.Exec("probe", "m", nil) })
+		Expect(err).To(MatchError(radosclient.ErrTooBig))
+		out, rval, err := res.Reply()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(BeNil(), "output")
+		Expect(rval).To(Equal(-int32(syscall.EFBIG)), "return value")
+	})
+
 	It("reports a write op's class call by its return value alone, as librados's C write op does", func(ctx SpecContext) {
 		c.RegisterClass("probe", func(call *fakerados.ClassCall) ([]byte, int32) {
 			call.Create().Data = []byte(call.Method)
@@ -895,6 +908,35 @@ var _ = Describe("a read op", func() {
 		out, err := res.Bytes()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(Equal([]byte("m:in:abc")))
+	})
+
+	It("keeps the output of the class call that failed the op, beside its errno", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("abc"))
+		c.RegisterClass("probe", func(call *fakerados.ClassCall) ([]byte, int32) {
+			if call.Method == "retry" {
+				return []byte("marker"), -int32(syscall.EFBIG)
+			}
+			return []byte("listed"), 0
+		})
+		op := radosclient.NewReadOp()
+		before := op.Exec("probe", "list", nil)
+		failed := op.Exec("probe", "retry", nil)
+		after := op.Exec("probe", "list", nil)
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(radosclient.ErrTooBig))
+
+		out, rval, err := failed.Reply()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(Equal([]byte("marker")), "the failing call's output")
+		Expect(rval).To(Equal(-int32(syscall.EFBIG)), "the failing call's return value")
+		_, err = failed.Bytes()
+		Expect(err).To(MatchError(radosclient.ErrTooBig), "Bytes refuses it")
+		for name, res := range map[string]*radosclient.ExecResult{"before": before, "after": after} {
+			out, rval, err := res.Reply()
+			Expect(err).NotTo(HaveOccurred(), name)
+			Expect(out).To(BeNil(), "%s the failing call: output", name)
+			Expect(rval).To(Equal(-int32(syscall.EFBIG)), "%s the failing call: the op's errno", name)
+		}
 	})
 
 	Describe("an op whose class call writes, which the OSD serves as a write", func() {

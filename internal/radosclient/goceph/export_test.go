@@ -42,6 +42,15 @@ func CompleteWrite(b writeBuilder, op *radosclient.WriteOp, err error) error {
 	return o.err
 }
 
+// ExecOutput is the part of go-ceph's read exec step a read exec's finisher reads.
+type ExecOutput = execOutput
+
+// FinishReadExec fills r from st, the go-ceph step at index idx, as a read
+// exec's finisher does after go-ceph's Operate returned err.
+func FinishReadExec(st ExecOutput, r *radosclient.ExecResult, idx int, err error) {
+	execFinisher(st, r, idx)(newOutcome("read obj", err))
+}
+
 // WatchStopped returns a channel closed once w's dispatch goroutine exits.
 func WatchStopped(w radosclient.Watch) <-chan struct{} {
 	gw, ok := w.(*watch)
