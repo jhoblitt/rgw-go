@@ -16,6 +16,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -434,6 +435,25 @@ var _ = Describe("GetObjectAttributes", func() {
 			_, rec, _ := objects.StatObjectArgsForCall(1)
 			Expect(rec.Info.Bucket.ID).To(Equal("e7bceed5-d2a6-4b0b-b484-cac20e0beb53.4156.1"), "a copy's parts live in its source bucket")
 			Expect(rec.Info.PlacementRule).To(Equal(f.rec.Info.PlacementRule), "under the request bucket's placement")
+		})
+		It("gives each part its own head's checksum, and none to a part whose head has none", func(ctx SpecContext) {
+			var parts []*op.ObjectState
+			for _, c := range []*cksum.Cksum{
+				{Type: cksum.CRC32C, Digest: []byte{1, 2, 3, 4}, Flags: cksum.FlagFullObject},
+				nil,
+				{Type: cksum.CRC32C, Digest: []byte{5, 6, 7, 8}, Flags: cksum.FlagFullObject},
+			} {
+				p := partHead()
+				p.Checksum = c
+				parts = append(parts, p)
+			}
+			o := &op.GetObjectAttributes{Requested: op.AttrObjectParts}
+			Expect(serve(ctx, o, mpHead(), parts...)).To(Succeed())
+			Expect(o.Parts).To(HaveExactElements(
+				HaveField("Checksum", Equal(parts[0].Checksum)),
+				HaveField("Checksum", BeNil()),
+				HaveField("Checksum", Equal(parts[2].Checksum)),
+			), "never the part's before it")
 		})
 		It("lists nothing, and reads no part head, unless ObjectParts is asked for", func(ctx SpecContext) {
 			o := &op.GetObjectAttributes{Requested: op.AttrETag | op.AttrObjectSize}

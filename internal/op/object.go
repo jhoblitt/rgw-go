@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
@@ -21,7 +22,10 @@ type ObjectState struct {
 	// Manifest is nil for an object held entirely in its head.
 	Manifest    *meta.Manifest
 	Compression *meta.CompressionInfo
-	ETag        string
+	// Checksum is the head's user.rgw.cksum, nil when it has none or the
+	// record does not decode (cksum.DecodeCksum).
+	Checksum *cksum.Cksum
+	ETag     string
 	// WriteTag is user.rgw.idtag.
 	WriteTag     string
 	StorageClass string
@@ -83,6 +87,15 @@ type PutParams struct {
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4483-L4486 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4715-L4718 at v20.2.4).
 	ContentMD5 []byte
+	// Checksum, when set, is computed over the body and stored as the head's
+	// user.rgw.cksum. A body whose checksum is not the value Expected
+	// supplies is ErrBadDigest, checked after ContentMD5 and before anything
+	// is written (RGWPutObj::execute,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790 at v20.2.4).
+	// A type that is not cksum.Type.Writable is ErrInvalidArgument before
+	// anything is written, so no store records a type a v20.2.4 radosgw
+	// cannot read.
+	Checksum *ChecksumRequest
 }
 
 // PutResult describes the object a write produced.
@@ -92,6 +105,10 @@ type PutResult struct {
 	Mtime   time.Time
 	Epoch   uint64
 	Version string
+	// Checksum is the checksum PutObject computed or Complete combined, as
+	// the head's user.rgw.cksum stores it, and for a retried completion the
+	// one the first stored; nil when the write computed none.
+	Checksum *cksum.Cksum
 }
 
 // DeleteParams shapes a delete.

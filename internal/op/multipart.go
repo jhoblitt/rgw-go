@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
 
@@ -36,6 +37,19 @@ type Upload struct {
 	// and rgw-go honors on both releases (docs/exclusions.md, "Write
 	// conditions are Tentacle's on Squid too"); empty means unset.
 	IfMatch, IfNoneMatch string
+	// Checksum is the upload's checksum type and flags, zero when it has
+	// none, as every Squid upload has.
+	Checksum UploadChecksum
+	// SuppliedChecksum is the combined checksum CompleteMultipartUpload's
+	// request supplies, request-scoped as WriteTag is; nil supplies none.
+	// Complete compares the value Expected returns with the combination's
+	// armored form, which for a composite of N parts ends in "-N", or with
+	// a composite's without the "-N". Any other value, or one whose Type is
+	// not the upload's, is ErrBadDigest before anything is written. An
+	// upload without a checksum type combines nothing and ignores it, as
+	// radosgw compares only a checksum it combined
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4).
+	SuppliedChecksum *ChecksumRequest
 }
 
 // UploadParams shapes CreateUpload.
@@ -44,6 +58,9 @@ type UploadParams struct {
 	OwnerName string
 	Placement meta.PlacementRule
 	Attrs     map[string][]byte
+	// Checksum is the upload's checksum type and flags, which only a
+	// Tentacle upload stores (UploadChecksum).
+	Checksum UploadChecksum
 }
 
 // Part is one uploaded part.
@@ -52,6 +69,12 @@ type Part struct {
 	ETag   string
 	Size   uint64
 	Mtime  time.Time
+	// Checksum is the part's checksum as its RGWUploadPartInfo holds it, nil
+	// when it has none. Only Tentacle's record, at version 6, has one
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L270-L322 at v20.2.4;
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_basic_types.h#L253-L300 at v19.2.7),
+	// so a Squid part's is nil.
+	Checksum *cksum.Cksum
 }
 
 // PartResult describes a written part.
@@ -59,6 +82,10 @@ type PartResult struct {
 	ETag  string
 	Size  uint64
 	Mtime time.Time
+	// Checksum is the checksum PutPart or CopyPart computed for the part, as
+	// its head's user.rgw.cksum stores it on either release; nil when it
+	// computed none.
+	Checksum *cksum.Cksum
 }
 
 // ListPartsResult is one page of ListParts.
@@ -206,6 +233,11 @@ type MultipartStore interface {
 	CreateUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p UploadParams) (*Upload, error)
 	GetUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, uploadID string) (*Upload, error)
 	PutPart(ctx context.Context, up *Upload, n int, body io.Reader, p PutParams) (*PartResult, error)
+	// CopyPart computes the upload's checksum type over the copied bytes,
+	// with the upload's flags, as radosgw's part override has it
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472 at v20.2.4);
+	// an upload type that is not cksum.Type.Writable is ErrNotImplemented
+	// before anything is written.
 	CopyPart(ctx context.Context, up *Upload, n int, src *ObjectState, rng ByteRange) (*PartResult, error)
 	ListParts(ctx context.Context, up *Upload, marker, maxParts int) (ListPartsResult, error)
 	ListUploads(ctx context.Context, rec *BucketRecord, p ListUploadsParams) (ListUploadsResult, error)
@@ -215,6 +247,17 @@ type MultipartStore interface {
 	// number kept, as radosgw's std::map<int, string> keeps them
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_multi.cc#L44-L53 at v19.2.6
 	// and v20.2.4), so no order error exists.
+	//
+	// An upload with a checksum type combines the checksums of exactly the
+	// parts named, in number order (cksum.NewCombiner), into the head's
+	// user.rgw.cksum and the result's Checksum, once the named parts are
+	// matched to the uploaded ones. A named part without a checksum, or with
+	// one of another type, is ErrInvalidRequest, as try_sum_part_cksums
+	// answers it
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7104-L7131 at v20.2.4),
+	// and an upload type that is not cksum.Type.Writable is
+	// ErrNotImplemented; both before anything is written. up.SuppliedChecksum
+	// is compared as its doc says.
 	Complete(ctx context.Context, up *Upload, parts []CompletePart) (*PutResult, error)
 	Abort(ctx context.Context, up *Upload) error
 }

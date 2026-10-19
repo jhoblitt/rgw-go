@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -64,6 +66,7 @@ func (s *Store) stat(rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, *o
 	st := o.state
 	st.Bucket, st.Key = rec, key
 	st.Attrs = cloneAttrs(o.state.Attrs)
+	st.Checksum = storedChecksum(st.Attrs)
 	return &st, o, nil
 }
 
@@ -90,8 +93,12 @@ func (s *Store) ReadObject(_ context.Context, st *op.ObjectState, rng op.ByteRan
 	return nil
 }
 
-// PutObject implements op.ObjectStore.
+// PutObject implements op.ObjectStore. p.Checksum's type is checked before
+// the body is read, and its value once the body and its MD5 are.
 func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams) (*op.PutResult, error) {
+	if err := checkChecksumType(p.Checksum); err != nil {
+		return nil, fmt.Errorf("object %s: %w", key.Name, err)
+	}
 	data, err := readBody(body, p.Size)
 	if err != nil {
 		return nil, err
@@ -99,6 +106,10 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	sum := md5.Sum(data) //nolint:gosec // an S3 ETag is the MD5 of the data
 	if p.ContentMD5 != nil && !bytes.Equal(sum[:], p.ContentMD5) {
 		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrBadDigest)
+	}
+	ck, err := bodyChecksum(p.Checksum, data)
+	if err != nil {
+		return nil, fmt.Errorf("object %s: %w", key.Name, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -110,7 +121,8 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	if err := checkWrite(b.objects[k], p.IfMatch, p.IfNoneMatch); err != nil {
 		return nil, err
 	}
-	o := s.newObject(k, data, cmp.Or(p.ETag, hex.EncodeToString(sum[:])), cloneAttrs(p.Attrs), p.Mtime, p.StorageClass)
+	attrs := withChecksum(cloneAttrs(p.Attrs), ck, s.cfg.Release)
+	o := s.newObject(k, data, cmp.Or(p.ETag, hex.EncodeToString(sum[:])), attrs, p.Mtime, p.StorageClass)
 	o.state.WriteTag = p.Tag
 	if p.Tag == "" {
 		// append_rand_alpha(cct, "", tag, 32),
@@ -119,7 +131,79 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 		o.state.WriteTag = "_" + randomAlphanumeric(31)
 	}
 	b.objects[k] = o
-	return putResult(o), nil
+	return putResult(o, ck), nil
+}
+
+// checkChecksumType refuses a checksum request whose type rgw-go does not
+// compute, before anything is read or written, so that no stored record
+// carries a type a v20.2.4 radosgw cannot read.
+func checkChecksumType(req *op.ChecksumRequest) error {
+	if req != nil && !req.Type.Writable() {
+		return fmt.Errorf("%w: rgw-go computes no checksum of type %d", op.ErrInvalidArgument, req.Type)
+	}
+	return nil
+}
+
+// bodyChecksum is req's checksum of data, with req's flags, or nil for no
+// request. A value Expected supplies must be its armored form, compared as
+// RGWPutObj_Cksum::verify compares the strings
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L202-L211 at v20.2.4),
+// or it is ErrBadDigest.
+func bodyChecksum(req *op.ChecksumRequest, data []byte) (*cksum.Cksum, error) {
+	if req == nil {
+		return nil, nil
+	}
+	h, err := cksum.NewHash(req.Type)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", op.ErrInvalidArgument, err)
+	}
+	h.Write(data)
+	c := cksum.Finish(req.Type, h, req.Flags)
+	if req.Expected != nil {
+		if want, ok := req.Expected(); ok && want != c.Armor() {
+			return nil, fmt.Errorf("%w: the %s checksum is %s, not %q", op.ErrBadDigest, req.Type.Info().Name, c.Armor(), want)
+		}
+	}
+	return &c, nil
+}
+
+// withChecksum is attrs with c as user.rgw.cksum, attrs unchanged for no c.
+func withChecksum(attrs map[string][]byte, c *cksum.Cksum, rel denc.Release) map[string][]byte {
+	if c == nil {
+		return attrs
+	}
+	if attrs == nil {
+		attrs = map[string][]byte{}
+	}
+	e := denc.NewEncoder()
+	c.Encode(e, rel)
+	attrs[meta.AttrCksum] = e.Bytes()
+	return attrs
+}
+
+// storedChecksum decodes attrs' user.rgw.cksum: nil when there is none or
+// it does not decode.
+func storedChecksum(attrs map[string][]byte) *cksum.Cksum {
+	b, ok := attrs[meta.AttrCksum]
+	if !ok {
+		return nil
+	}
+	d := denc.NewDecoder(b)
+	c := cksum.DecodeCksum(d)
+	if d.Err() != nil {
+		return nil
+	}
+	return &c
+}
+
+// cloneCksum is a copy of c that shares no digest bytes with it.
+func cloneCksum(c *cksum.Cksum) *cksum.Cksum {
+	if c == nil {
+		return nil
+	}
+	d := *c
+	d.Digest = bytes.Clone(c.Digest)
+	return &d
 }
 
 // DeleteObject implements op.ObjectStore. A bucket whose versioning is or
@@ -203,7 +287,7 @@ func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.Bucke
 		o.state.WriteTag = "_" + randomAlphanumeric(31)
 	}
 	db.objects[k] = o
-	return putResult(o), nil
+	return putResult(o, nil), nil
 }
 
 // SetObjectAttrs implements op.ObjectStore: set, then rm.
@@ -259,8 +343,9 @@ func (s *Store) newObject(key meta.ObjKey, data []byte, etag string, attrs map[s
 	}
 }
 
-func putResult(o *object) *op.PutResult {
-	return &op.PutResult{ETag: o.state.ETag, Size: o.state.Size, Mtime: o.state.Mtime, Epoch: o.state.Epoch}
+// putResult describes o, whose write computed ck, or nil.
+func putResult(o *object, ck *cksum.Cksum) *op.PutResult {
+	return &op.PutResult{ETag: o.state.ETag, Size: o.state.Size, Mtime: o.state.Mtime, Epoch: o.state.Epoch, Checksum: ck}
 }
 
 // readBody reads a write's body. A body longer than its declared size is

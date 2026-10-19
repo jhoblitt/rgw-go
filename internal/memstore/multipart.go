@@ -8,8 +8,11 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -36,11 +39,17 @@ func copyUpload(u *upload, rec *op.BucketRecord) *op.Upload {
 // CreateUpload implements op.MultipartStore. The id is radosgw's v2 form,
 // "2~" and 31 characters of gen_rand_alphanumeric
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3278-L3283 at v19.2.6).
+// The checksum type is kept on Tentacle alone, whose multipart_upload_info
+// has one (op.UploadChecksum).
 func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.UploadParams) (*op.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.instance(rec); err != nil {
 		return nil, err
+	}
+	var uc op.UploadChecksum
+	if s.cfg.Release >= denc.Tentacle {
+		uc = p.Checksum
 	}
 	u := &upload{
 		up: op.Upload{
@@ -51,6 +60,7 @@ func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.O
 			Initiated: s.now(),
 			Placement: p.Placement,
 			Attrs:     cloneAttrs(p.Attrs),
+			Checksum:  uc,
 		},
 		bucketID: rec.Info.Bucket.ID,
 		parts:    map[int]*part{},
@@ -81,15 +91,19 @@ func (s *Store) upload(up *op.Upload) (*upload, error) {
 }
 
 // PutPart implements op.MultipartStore; a part replaces one of its number.
-// As the driver does, it answers NoSuchUpload for an unknown upload before
-// reading the body, and refuses a body whose MD5 is not p.ContentMD5 with
-// BadDigest.
+// As the driver does, it answers NoSuchUpload for an unknown upload, and
+// then a checksum type it does not compute, before reading the body; a
+// body whose MD5 is not p.ContentMD5, and then one whose checksum is not
+// the value p.Checksum expects, is BadDigest.
 func (s *Store) PutPart(_ context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams) (*op.PartResult, error) {
 	s.mu.RLock()
 	_, err := s.upload(up)
 	s.mu.RUnlock()
 	if err != nil {
 		return nil, err
+	}
+	if err = checkChecksumType(p.Checksum); err != nil {
+		return nil, fmt.Errorf("part %d: %w", n, err)
 	}
 	data, err := readBody(body, p.Size)
 	if err != nil {
@@ -100,23 +114,31 @@ func (s *Store) PutPart(_ context.Context, up *op.Upload, n int, body io.Reader,
 			return nil, fmt.Errorf("part %d: %w", n, op.ErrBadDigest)
 		}
 	}
+	ck, err := bodyChecksum(p.Checksum, data)
+	if err != nil {
+		return nil, fmt.Errorf("part %d: %w", n, err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, err := s.upload(up)
 	if err != nil {
 		return nil, err
 	}
-	return s.storePart(u, n, data), nil
+	return s.storePart(u, n, data, ck), nil
 }
 
 // CopyPart implements op.MultipartStore: rng of src, its end clamped to the
-// object, becomes part n.
+// object, becomes part n, with the upload's checksum type computed over it.
 func (s *Store) CopyPart(_ context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, err := s.upload(up)
 	if err != nil {
 		return nil, err
+	}
+	req, err := uploadChecksumRequest(u.up.Checksum)
+	if err != nil {
+		return nil, fmt.Errorf("part %d: %w", n, err)
 	}
 	so, err := s.object(src.Bucket, src.Key)
 	if err != nil {
@@ -126,13 +148,46 @@ func (s *Store) CopyPart(_ context.Context, up *op.Upload, n int, src *op.Object
 	if rng.Offset > size {
 		return nil, fmt.Errorf("copy range at %d of %d bytes: %w", rng.Offset, size, op.ErrInvalidRange)
 	}
-	return s.storePart(u, n, so.data[rng.Offset:rng.Offset+min(rng.Length, size-rng.Offset)]), nil
+	data := so.data[rng.Offset : rng.Offset+min(rng.Length, size-rng.Offset)]
+	ck, err := bodyChecksum(req, data)
+	if err != nil {
+		return nil, fmt.Errorf("part %d: %w", n, err)
+	}
+	return s.storePart(u, n, data, ck), nil
 }
 
-func (s *Store) storePart(u *upload, n int, data []byte) *op.PartResult {
+// uploadChecksumRequest is the request that computes uc over a part, nil
+// for an upload without a type, and ErrNotImplemented for a type rgw-go
+// does not compute.
+func uploadChecksumRequest(uc op.UploadChecksum) (*op.ChecksumRequest, error) {
+	if err := checkUploadChecksum(uc); err != nil {
+		return nil, err
+	}
+	if uc.Type == cksum.None {
+		return nil, nil
+	}
+	return &op.ChecksumRequest{Type: uc.Type, Flags: uc.Flags}, nil
+}
+
+// checkUploadChecksum refuses an upload whose stored checksum type rgw-go
+// does not compute: xxh3 or blake3, which a radosgw may have stored, or a
+// type a newer radosgw added.
+func checkUploadChecksum(uc op.UploadChecksum) error {
+	if uc.Type != cksum.None && !uc.Type.Writable() {
+		return fmt.Errorf("%w: the upload's checksum type %d is not one rgw-go computes", op.ErrNotImplemented, uc.Type)
+	}
+	return nil
+}
+
+// storePart stores data as part n, whose PutPart or CopyPart computed ck.
+// The part's record keeps ck on Tentacle alone (op.Part).
+func (s *Store) storePart(u *upload, n int, data []byte, ck *cksum.Cksum) *op.PartResult {
 	pt := &part{Number: n, ETag: md5Hex(data), Size: uint64(len(data)), Mtime: s.now(), data: data}
+	if s.cfg.Release >= denc.Tentacle {
+		pt.Checksum = cloneCksum(ck)
+	}
 	u.parts[n] = pt
-	return &op.PartResult{ETag: pt.ETag, Size: pt.Size, Mtime: pt.Mtime}
+	return &op.PartResult{ETag: pt.ETag, Size: pt.Size, Mtime: pt.Mtime, Checksum: ck}
 }
 
 // ListParts implements op.MultipartStore: the parts numbered past marker, in
@@ -155,7 +210,9 @@ func (s *Store) ListParts(_ context.Context, up *op.Upload, marker, maxParts int
 	slices.Sort(numbers)
 	var res op.ListPartsResult
 	for _, n := range numbers[:min(max(maxParts, 0), len(numbers))] {
-		res.Parts = append(res.Parts, u.parts[n].Part)
+		p := u.parts[n].Part
+		p.Checksum = cloneCksum(p.Checksum)
+		res.Parts = append(res.Parts, p)
 		res.NextMarker = n
 	}
 	res.Truncated = len(numbers) > len(res.Parts)
@@ -187,6 +244,11 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 // driver answers it, unless the key's object carries the ETag the parts make:
 // a completion retried after it succeeded is answered 200 as radosgw's
 // check_previously_completed answers it (previouslyCompleted).
+//
+// An upload with a checksum type combines its matched parts' checksums once
+// every listed part has passed those checks (combineParts), then checks
+// up.SuppliedChecksum against the combination (checkSupplied), before the
+// conditions.
 func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePart) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,12 +265,16 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 		}
 		return nil, fmt.Errorf("%w: upload %s of %s is gone", op.ErrCompletionInProgress, up.ID, up.Key.Name)
 	}
+	if err = checkUploadChecksum(u.up.Checksum); err != nil {
+		return nil, fmt.Errorf("completing upload %s: %w", u.up.ID, err)
+	}
 	uploaded := slices.Sorted(maps.Keys(u.parts))
 	if len(uploaded) != len(parts) {
 		return nil, fmt.Errorf("%d parts listed of %d uploaded: %w", len(parts), len(uploaded), op.ErrInvalidPart)
 	}
 	var data bytes.Buffer
 	etags := make([]string, 0, len(parts))
+	named := make([]*part, 0, len(parts))
 	for i, cp := range parts {
 		pt := u.parts[uploaded[i]]
 		if i < len(parts)-1 && pt.Size < minPartSize {
@@ -218,10 +284,18 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 			return nil, fmt.Errorf("part %d: %w", cp.Number, op.ErrInvalidPart)
 		}
 		etags = append(etags, pt.ETag)
+		named = append(named, pt)
 		data.Write(pt.data)
 	}
 	etag, err := op.MultipartETag(etags)
 	if err != nil {
+		return nil, err
+	}
+	ck, err := combineParts(u.up.Checksum, named)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSupplied(ck, up.SuppliedChecksum, len(parts)); err != nil {
 		return nil, err
 	}
 	b, ok := s.instances[u.bucketID]
@@ -232,13 +306,66 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	if err := checkWrite(b.objects[k], up.IfMatch, up.IfNoneMatch); err != nil {
 		return nil, err
 	}
-	o := s.newObject(k, data.Bytes(), etag, cloneAttrs(u.up.Attrs), time.Time{}, u.up.Placement.StorageClass)
+	attrs := withChecksum(cloneAttrs(u.up.Attrs), ck, s.cfg.Release)
+	o := s.newObject(k, data.Bytes(), etag, attrs, time.Time{}, u.up.Placement.StorageClass)
 	if up.WriteTag != "" {
 		o.state.WriteTag = up.WriteTag
 	}
 	b.objects[k] = o
 	delete(s.uploads, uploadKey(u.bucketID, u.up.Key.Name, u.up.ID))
-	return putResult(o), nil
+	return putResult(o, ck), nil
+}
+
+// combineParts is the checksum of an upload of type uc over parts, the
+// parts a completion names in number order, through cksum.NewCombiner;
+// nil for an upload without a type. A part without a checksum, or with one
+// of another type, is ErrInvalidRequest, as try_sum_part_cksums answers it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7104-L7131 at v20.2.4).
+// That function combines the last page list_parts returns rather than the
+// parts named
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7068-L7092 at v20.2.4).
+func combineParts(uc op.UploadChecksum, parts []*part) (*cksum.Cksum, error) {
+	if uc.Type == cksum.None {
+		return nil, nil
+	}
+	c := cksum.NewCombiner(uc.Type, uc.Flags)
+	for _, pt := range parts {
+		if pt.Checksum == nil {
+			return nil, fmt.Errorf("%w: part %d has no checksum", op.ErrInvalidRequest, pt.Number)
+		}
+		if err := c.Append(*pt.Checksum, pt.Size); err != nil {
+			return nil, fmt.Errorf("%w: part %d: %w", op.ErrInvalidRequest, pt.Number, err)
+		}
+	}
+	sum := c.Final()
+	return &sum, nil
+}
+
+// checkSupplied compares the value req supplies for a completion with ck,
+// the combination of its n parts: it must be ck's armored form, with "-n"
+// when ck is composite, or a composite's without it, which radosgw accepts
+// for minio's clients
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4).
+// Any other value, or one of another type, is ErrBadDigest. Nothing is
+// compared without ck.
+func checkSupplied(ck *cksum.Cksum, req *op.ChecksumRequest, n int) error {
+	if ck == nil || req == nil || req.Expected == nil {
+		return nil
+	}
+	got, ok := req.Expected()
+	if !ok {
+		return nil
+	}
+	armor := ck.Armor()
+	want := armor
+	if ck.Composite() {
+		want += "-" + strconv.Itoa(n)
+	}
+	if req.Type == ck.Type && (got == want || ck.Composite() && got == armor) {
+		return nil
+	}
+	return fmt.Errorf("%w: the supplied %s checksum %q is not the combined %s %s", op.ErrBadDigest,
+		req.Type.Info().Name, got, ck.Type.Info().Name, want)
 }
 
 // previouslyCompleted is RGWCompleteMultipart::check_previously_completed
@@ -271,7 +398,7 @@ func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op
 	if err != nil || o.state.ETag != want {
 		return nil, false
 	}
-	return putResult(o), true
+	return putResult(o, storedChecksum(o.state.Attrs)), true
 }
 
 // Abort implements op.MultipartStore.
