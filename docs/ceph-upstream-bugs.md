@@ -326,6 +326,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw lets an ACL grant change a bucket's public access block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block) | pending | pending | ✓ |
 | [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | pending | pending |  |
 | [radosgw's otp metadata put keeps a dropped device's id in the otp header](#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header) | pending | pending |  |
+| [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17414,3 +17415,64 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task WP-17, 2026-10-19, while emulating `otp_set`'s
   reads at both tags. The `mfa list` and sync consequences come from WP-17's
   task review. Derived from the source, not reproduced.
+
+## radosgw's otp replay state stays in the zone that recorded it
+
+- **Kind:** defect, security (possible), low. Each zone keeps its own record
+  of which TOTP codes were used. So a code accepted at one zone is accepted
+  once more at each other zone, inside its window.
+  - A replay needs the user's credentials and a recently used `x-amz-mfa`
+    value.
+  - Prior art not searched. Unreproduced: derived from the source, and a
+    reproduction needs two zones.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The class keeps a device's replay state, `last_checks` and
+    `last_success`, beside its `otp_info_t` in the device's `otp_instance`
+    ([cls_otp.cc:66-95](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L66-L95),
+    [cls_otp.cc:66-95](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L66-L95)).
+  - A check refuses a code whose TOTP counter is at or below
+    `last_success`, and on success stores the new counter
+    ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+    [cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L153)).
+  - The otp metadata document holds only `devices`
+    ([rgw_otp.cc:47-49](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L47-L49),
+    [rgw_otp.cc:24-26](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L24-L26)).
+    Each device is an `otp_info_t`, whose dump and `decode_json` carry no
+    replay state
+    ([cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L30-L71),
+    [cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L30-L71)).
+  - `otp_get`, which the metadata get reads, returns only each device's
+    `otp_info_t`
+    ([cls_otp.cc:426-440](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L426-L440),
+    [cls_otp.cc:426-440](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L426-L440)).
+  - `RGWSI_Cls::MFA::check_mfa` runs the check on the user's object in the
+    local zone's `otp_pool`, and writes no metadata log entry
+    ([svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L32-L63),
+    [svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L32-L63)).
+    `RadosUser::verify_mfa` calls it for the serial and code of
+    `x-amz-mfa`, once the serial is one of the user's `mfa_ids`
+    ([rgw_sal_rados.cc:298-310](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L310),
+    [rgw_sal_rados.cc:315-327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L327)).
+  - So no check reaches metadata sync, and the entry that sync carries has
+    no replay state. A peer zone's put of the entry keeps the peer's own replay
+    state, as `otp_set` reads the stored records ("radosgw's otp metadata put
+    keeps a dropped device's id in the otp header", above).
+- **Impact:**
+  - RFC 6238 section 5.2 requires a verifier to refuse a second use of a
+    code it has accepted. A multi-zone deployment accepts one more use per
+    other zone, inside the code's window.
+  - An attacker who holds the user's credentials and sees a recently used
+    `x-amz-mfa` value can replay it at another zone. An MFA-protected
+    request, such as a versioned delete under MFA delete, then succeeds
+    without the device.
+  - A single zone is unaffected: its gateways share one otp object.
+- **Releases:** checked at v19.2.7 and v20.2.4, where the class, the
+  document, the check and the sync are the same.
+- **rgw-go:** serves no MFA check yet. Its planned check reads the local
+  zone's otp object, as radosgw's does, so it is affected the same way until
+  a task decides otherwise.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
+  plan's otp put reset could mean; checked at both tags in its fix round.
+  Derived from the source, not reproduced.
