@@ -6282,9 +6282,9 @@ Every new entry adds its row to this table, in document order.
   `rgw_auth_s3.cc:1501-1529`).
 - **rgw-go:** not affected. `trailers` (`internal/auth/chunked.go`) reads
   the section line by line, takes each listed name once and reads nothing
-  past the section, and only for a payload that expects a trailer
-  signature; `docs/exclusions.md` records the difference ("aws-chunked
-  trailer sections are read line by line").
+  past the section, and only for a payload whose `x-amz-content-sha256`
+  ends in `TRAILER`; `docs/exclusions.md` records the difference
+  ("aws-chunked trailer sections are read line by line").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `complete()`'s
   trailer parse to implement rgw-go's; derived from the source, not

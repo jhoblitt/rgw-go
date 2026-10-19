@@ -456,6 +456,33 @@ var _ = Describe("Verifier", func() {
 			Expect(io.ReadAll(res.Body)).To(Equal([]byte("hello world")))
 		})
 
+		It("offers an aws-chunked trailer payload's CRC32 trailer once its body has ended, and no trailers for other payloads", func(ctx SpecContext) {
+			crc32 := func(t op.Trailers) string {
+				v, ok := t.Trailer("x-amz-checksum-crc32")
+				return fmt.Sprintf("%q %t", v, ok)
+			}
+			req := unsignedPut(ctx, streamingUnsignedTrailer, helloWorldTrailerBody)
+			req.Header.Set("X-Amz-Decoded-Content-Length", "11")
+			req.Header.Set("X-Amz-Trailer", "x-amz-checksum-crc32")
+			res, err := v.Authenticate(ctx, signedAs(ctx, req, "alice"), anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Trailers).NotTo(BeNil())
+			Expect(crc32(res.Trailers)).To(Equal(`"" false`), "before the body has ended")
+			Expect(io.ReadAll(res.Body)).To(Equal([]byte("hello world")))
+			Expect(crc32(res.Trailers)).To(Equal(`"DUoRhQ==" true`), "once the body has ended")
+
+			signed := signedChunkedPut(ctx, func() *http.Request {
+				return httptest.NewRequestWithContext(ctx, http.MethodPut, "http://s3.example.com/b/k", nil)
+			}, "alice", []byte("hello world"), 4, fixedNow())
+			res, err = v.Authenticate(ctx, signed, anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			// BeNil passes a typed nil; an untyped nil interface prints as <nil>.
+			Expect(fmt.Sprintf("%T", res.Trailers)).To(Equal("<nil>"), "plain aws-chunked")
+			res, err = v.Authenticate(ctx, put(ctx, helloSHA256, "hello"), anyPayload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fmt.Sprintf("%T", res.Trailers)).To(Equal("<nil>"), "a signed single chunk")
+		})
+
 		It("hands over no body for an unsigned payload", func(ctx SpecContext) {
 			res, err := v.Authenticate(ctx, put(ctx, "UNSIGNED-PAYLOAD", "hello"), anyPayload)
 			Expect(err).NotTo(HaveOccurred())

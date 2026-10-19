@@ -171,7 +171,7 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L541-L543 at v20.2.4),
 		// so a missing x-amz-decoded-content-length is reported after the
 		// signature has verified.
-		if res.Body, res.ContentLength, err = d.completer(rv, key.Secret); err != nil {
+		if res.Body, res.ContentLength, res.Trailers, err = d.completer(rv, key.Secret); err != nil {
 			return nil, err
 		}
 	}

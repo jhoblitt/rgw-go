@@ -564,7 +564,7 @@ var _ = Describe("authData.completer for an aws-chunked payload", func() {
 		data := []byte("hello world")
 		stream, _ := signedChunks(ctx, data, 5, streamSeed)
 		rv, d := chunkedPut(ctx, stream, "11")
-		body, n, err := d.completer(rv, testSecret)
+		body, n, _, err := d.completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(Equal(int64(11)))
 		got, err := io.ReadAll(body)
@@ -575,7 +575,7 @@ var _ = Describe("authData.completer for an aws-chunked payload", func() {
 	It("checks the chunk signatures with the secret it is given", func(ctx SpecContext) {
 		stream, _ := signedChunks(ctx, []byte("hello world"), 5, streamSeed)
 		rv, d := chunkedPut(ctx, stream, "11")
-		body, _, err := d.completer(rv, "not-the-secret")
+		body, _, _, err := d.completer(rv, "not-the-secret")
 		Expect(err).NotTo(HaveOccurred())
 		got, err := io.ReadAll(body)
 		Expect(err).To(MatchError(op.ErrSignatureDoesNotMatch))
@@ -585,7 +585,7 @@ var _ = Describe("authData.completer for an aws-chunked payload", func() {
 	It("takes an empty x-amz-decoded-content-length for a zero-length payload, as parse_content_length does", func(ctx SpecContext) {
 		stream, _ := signedChunks(ctx, nil, 5, streamSeed)
 		rv, d := chunkedPut(ctx, stream, "")
-		body, n, err := d.completer(rv, testSecret)
+		body, n, _, err := d.completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(BeZero())
 		got, err := io.ReadAll(body)

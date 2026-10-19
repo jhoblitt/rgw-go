@@ -143,40 +143,45 @@ func (r *hashReader) Read(p []byte) (int, error) {
 }
 
 // completer builds the reader an op reads the body through once the
-// signature has verified, and the length the op is to take for it. A payload
-// without a completer is read as it came, with the request's length, -1 for
-// a chunked transfer encoding; a single chunk is read through a hashReader.
-// An aws-chunked payload is read through a chunkedReader, which checks the
-// chunk signatures with secret, and its length is
-// x-amz-decoded-content-length, which radosgw requires and refuses with
-// EINVAL when it is missing or parse_content_length makes it negative
-// (AWSv4ComplMulti::modify_request_state,
+// signature has verified, the length the op is to take for it, and the
+// trailers that reader keeps. A payload without a completer is read as it
+// came, with the request's length, -1 for a chunked transfer encoding; a
+// single chunk is read through a hashReader. An aws-chunked payload is read
+// through a chunkedReader, which checks the chunk signatures with secret,
+// and its length is x-amz-decoded-content-length, which radosgw requires and
+// refuses with EINVAL when it is missing or parse_content_length makes it
+// negative (AWSv4ComplMulti::modify_request_state,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1532-L1548 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1509-L1525 at v20.2.4).
-func (d *authData) completer(rv *requestView, secret string) (body io.Reader, contentLength int64, err error) {
+// Only a payload whose x-amz-content-sha256 ends in TRAILER has trailers.
+func (d *authData) completer(rv *requestView, secret string) (body io.Reader, contentLength int64, trailers op.Trailers, err error) {
 	switch d.payload.kind {
 	case payloadSingle:
-		return newHashReader(rv.req.Body, d.payloadHash), rv.contentLength(), nil
+		return newHashReader(rv.req.Body, d.payloadHash), rv.contentLength(), nil, nil
 	case payloadChunked:
 		v, ok := rv.header(decodedContentLengthHeader)
 		if !ok {
-			return nil, 0, fmt.Errorf("%w: aws-chunked payload without %s", op.ErrInvalidArgument, decodedContentLengthHeader)
+			return nil, 0, nil, fmt.Errorf("%w: aws-chunked payload without %s", op.ErrInvalidArgument, decodedContentLengthHeader)
 		}
 		decoded := parseContentLength(v)
 		if decoded < 0 {
-			return nil, 0, fmt.Errorf("%w: malformed %s", op.ErrInvalidArgument, decodedContentLengthHeader)
+			return nil, 0, nil, fmt.Errorf("%w: malformed %s", op.ErrInvalidArgument, decodedContentLengthHeader)
 		}
 		var trailerNames []string
 		if t, ok := rv.header("x-amz-trailer"); ok {
 			trailerNames = strings.Split(t, ",")
 		}
-		return newChunkedReader(rv.req.Body, chunkedParams{
+		r := newChunkedReader(rv.req.Body, chunkedParams{
 			date: d.v4.date, scope: d.v4.scope, seedSignature: d.signature,
 			signingKey: signingKeyV4(secret, d.v4.scope), class: d.payload, trailerNames: trailerNames,
 			decoded: uint64(decoded),
-		}), decoded, nil
+		})
+		if d.payload.trailingChecksum {
+			trailers = r
+		}
+		return r, decoded, trailers, nil
 	default:
-		return nil, rv.contentLength(), nil
+		return nil, rv.contentLength(), nil, nil
 	}
 }
 

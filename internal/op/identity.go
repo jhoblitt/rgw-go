@@ -126,6 +126,29 @@ type AuthResult struct {
 	// result; one left unset is RouteUnknown, which reads nothing from the
 	// query that a signature may leave out.
 	Route AuthRoute
+	// Trailers holds the trailers of an aws-chunked payload whose
+	// x-amz-content-sha256 ends in TRAILER, which Body reads; nil for every
+	// other payload. radosgw puts each trailer x-amz-trailer lists into the
+	// request's environment as it completes the body
+	// (extract_trailing_headers,
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1504-L1532 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1487 at v20.2.4);
+	// here they never reach the request's headers, so only a reader that
+	// asks for a trailer sees it.
+	Trailers Trailers
+}
+
+// Trailers holds the trailers an aws-chunked payload carries after its data.
+type Trailers interface {
+	// Trailer returns the value of the trailer x-amz-trailer lists as name,
+	// matched in any ASCII case. It answers only once the payload's reader
+	// has returned io.EOF, so after every check of the payload has passed,
+	// its trailer signature among them when it has one: only
+	// STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER signs its trailers, and any
+	// other payload's are unsigned. Before that, once the reader has returned
+	// an error, and for a name whose line never arrived, it answers "",
+	// false. It is not safe for use concurrently with that reader's Read.
+	Trailer(name string) (string, bool)
 }
 
 // AuthRoute is the signature route a request authenticated on. Its zero
