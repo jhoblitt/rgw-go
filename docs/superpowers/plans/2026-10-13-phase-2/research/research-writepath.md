@@ -313,8 +313,11 @@ It is one write op ([svc_cls.cc:65-87](https://github.com/ceph/ceph/blob/v19.2.6
 - `mtime2`, the document's mtime;
 - `otp.otp_set` with the device list. That call reads each id's instance, replaces its
   `otp_info_t`, parses the seed (hex, or base32, else EINVAL) and records the id in the
-  `header` omap key ([cls_otp.cc:268-348](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/otp/cls_otp.cc#L268-L348)). The object's removal first
-  resets every device's replay state.
+  `header` omap key ([cls_otp.cc:268-348](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/otp/cls_otp.cc#L268-L348)). The OSD serves that
+  call's reads from the committed omap, which the op's remove does not hide ([PrimaryLogPG.cc:7779-7800](https://github.com/ceph/ceph/blob/v19.2.6/src/osd/PrimaryLogPG.cc#L7779-L7800), [PrimaryLogPG.cc:7856-7877](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7856-L7877)).
+  So every device the document keeps keeps its replay state, and a dropped device's id stays
+  in the header (registry, "radosgw's otp metadata put keeps a dropped device's id in the otp
+  header").
 
 **put's status differs between the tags.** Squid answers 204 with `RGWX_UPDATE_STATUS:
 applied` (`STATUS_APPLIED`). Tentacle answers 200 without that header, as its handler returns
@@ -702,7 +705,7 @@ searched yet. All are v20.2.4 unless stated, since Squid has no checksum code.
 | 9 | `Cksum::decode` copies a stored digest size of up to 65535 bytes into a 64-byte array ([rgw_cksum.h:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L268-L281)). A v20.2.4 gateway also indexes its 9-entry table with any stored type ([rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149)), which main's types 9-11 overrun in a mixed v20/v21 zone. | security (memory safety), privileged: needs a RADOS writer of the attr, or a newer radosgw | unreproduced | Refuse a size other than the type's and a type above 8. Never write either. Registry entry; no exclusion (WP-1). |
 | 10 | `?layout` ignores `dump_obj_layout`'s error and answers 200 with a truncated `{"result":{...}}` ([rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896), [rgw_rest_s3.cc:4338-4355](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4338-L4355)). | cosmetic | unreproduced | Answer the error. New exclusion (WP-21). |
 | 11 | An otp put with `step_size` 0 makes every later check fault the OSD on a divide (registry, "cls_otp divides by a stored step_size that is never validated", tracker #80948). | security (DoS, admin-only) | reproduced in userspace only (registry) | Refuse `step_size` 0 with 400 InvalidArgument; update the registry's rgw-go line (WP-19). |
-| 12 | An otp put removes and recreates the object ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_cls.cc#L188-L216)), so every device's replay state (`last_checks`, `last_success`) restarts, and a TOTP just used can be used again within its window. | security, low (admin-triggered); intended by multisite's design | unreproduced | Reproduce: the op is radosgw's and the stored form is the class's. Record it in the registry as intended behaviour that surprises (WP-19). |
+| 12 | A device's replay state (`last_checks`, `last_success`) lives in each zone's otp object and is never synced: the metadata document holds only `devices` ([rgw_otp.cc:47-49](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_otp.cc#L47-L49), [rgw_otp.cc:24-26](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L24-L26)), each an `otp_info_t`. A check, `RGWSI_Cls::MFA::check_mfa`, writes no metadata log entry ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_cls.cc#L46-L63), [svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46-L63)). So a TOTP accepted at one zone is accepted once more at each other zone within its window. An otp put itself keeps the replay state, as `otp_set` reads the stored records across its remove. | security (possible), low: a replay needs the user's credentials and an observed code | unreproduced: it needs two zones | Keep it: the stored form and the sync are radosgw's. Record it in the registry (WP-19). |
 
 Not defects, recorded so no task re-derives them:
 - `?layout` checks only the `admin` cap, by design.
