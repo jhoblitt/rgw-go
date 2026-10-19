@@ -93,7 +93,9 @@ var (
 
 // ParseError is a failure with the message radosgw sets in s->err.message,
 // empty where it sets none: ParseS3XML's, whose Err is ErrInvalid or
-// ErrUnresolvableEmail, and a PutACLs refusal's.
+// ErrUnresolvableEmail; a PutACLs refusal's; ParseOwnership's, whose Err
+// wraps ErrInvalid; and ParseOwnershipXML's, whose Err wraps
+// ErrMalformedXML.
 type ParseError struct {
 	Message string
 	Err     error

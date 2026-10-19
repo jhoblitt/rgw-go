@@ -57,7 +57,8 @@ func DecodePublicAccessBlock(d *denc.Decoder) PublicAccessBlock {
 const MaxPublicAccessBlockXML = 1 << 20
 
 // ErrMalformedXML is radosgw's -ERR_MALFORMED_XML, 400 MalformedXML: a
-// PutPublicAccessBlock body ParsePublicAccessBlockXML refuses.
+// PutPublicAccessBlock body ParsePublicAccessBlockXML refuses, or a
+// PutBucketOwnershipControls body ParseOwnershipXML refuses.
 var ErrMalformedXML = errors.New("acl: malformed xml")
 
 // blockRoot is the element PutPublicAccessBlock looks up as mandatory.
