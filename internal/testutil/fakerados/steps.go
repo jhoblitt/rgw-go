@@ -80,8 +80,37 @@ type ClassCall struct {
 	// exist, as the call's own copy. The OSD serves a class's reads
 	// (cls_cxx_getxattr, cls_cxx_read, cls_cxx_map_get_val) from the store
 	// rather than from the op's earlier steps, so an emulator reads here.
+	// After an OmapClear earlier in the op, and no omap write since, Stored
+	// holds no omap and no omap header, as the OSD then reads none. It is
+	// the object as the call began; StoredOmap follows the call's own map
+	// writes.
 	Stored *Object
 	x      *execution
+	// start is the op's object as the call began, against which
+	// StoredOmap tells the call's own map writes.
+	start *Object
+	// omap and hdr are the call's own copy of the stored omap and omap
+	// header, made when StoredOmap first serves them.
+	omap   map[string][]byte
+	hdr    []byte
+	copied bool
+}
+
+// StoredOmap returns the stored omap and omap header as a class's map
+// read (cls_cxx_map_get_val, cls_cxx_map_read_header) sees them at this
+// point of the call: none for an object that did not exist, and none
+// while an OmapClear earlier in the op keeps them out of reach. Any omap
+// write since brings them back, the call's own setting of a key or of
+// the header included, as each such write sets the object's FLAG_OMAP
+// again. They are the call's own copy.
+func (c *ClassCall) StoredOmap() (omap map[string][]byte, hdr []byte) {
+	if c.x.stored == nil || (c.x.omapCleared && !omapWritten(c.start, c.x.obj)) {
+		return nil, nil
+	}
+	if !c.copied {
+		c.omap, c.hdr, c.copied = cloneMap(c.x.stored.Omap), slices.Clone(c.x.stored.OmapHdr), true
+	}
+	return c.omap, c.hdr
 }
 
 // Object returns the object as the op has left it so far, nil when it does
@@ -172,6 +201,20 @@ type execution struct {
 	mayWrite bool
 	modified bool
 	removed  bool
+	// omapCleared is whether an OmapClear has cleared the object's
+	// FLAG_OMAP with no omap write setting it again since. The OSD reads
+	// the stored omap for an omap comparison and a class's map reads only
+	// while that flag is set, which a remove does not change, and
+	// CEPH_OSD_OP_OMAPCLEAR clears it
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7936-L7957 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8013-L8034 at v20.2.4).
+	// An OmapSet sets it again, and so does a class call setting a key or
+	// the omap header, which cls_cxx_map_set_val, cls_cxx_map_set_vals and
+	// cls_cxx_map_write_header send as CEPH_OSD_OP_OMAPSETVALS and
+	// CEPH_OSD_OP_OMAPSETHEADER
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/objclass.cc#L505-L556 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/objclass.cc#L505-L556 at v20.2.4).
+	omapCleared bool
 	// maxReply is the longest output a step put in the OSD's reply.
 	maxReply int
 }
@@ -452,6 +495,7 @@ func (x *execution) step(st radosclient.Step, flags radosclient.StepFlags) (func
 			o.Omap[k] = slices.Clone(v)
 		}
 		x.modified = true
+		x.omapCleared = false
 	case *radosclient.OmapRmKeysStep:
 		if x.obj == nil {
 			return nil, x.errno(syscall.ENOENT)
@@ -469,6 +513,7 @@ func (x *execution) step(st radosclient.Step, flags radosclient.StepFlags) (func
 			x.obj.OmapHdr = nil
 			x.modified = true
 		}
+		x.omapCleared = true
 	case *radosclient.SetAllocHintStep:
 		x.create()
 		x.modified = true
@@ -566,7 +611,7 @@ func (x *execution) omapCmp(s *radosclient.OmapCmpStep) error {
 		return x.errno(syscall.EINVAL)
 	}
 	var stored []byte
-	if x.stored != nil {
+	if x.stored != nil && !x.omapCleared {
 		stored = x.stored.Omap[s.Key]
 	}
 	if !compare(s.Op, stored, s.Value) {
@@ -721,12 +766,53 @@ func omapKeys(omap map[string][]byte, startAfter string, maxKeys uint64) ([]stri
 	return keys, false
 }
 
+// classStored is the stored object a class call reads, its own copy:
+// without its omap and omap header while an OmapClear keeps them out of
+// the op's reach.
+func (x *execution) classStored() *Object {
+	o := x.stored.clone()
+	if o != nil && x.omapCleared {
+		o.Omap = map[string][]byte{}
+		o.OmapHdr = nil
+	}
+	return o
+}
+
+// omapWritten reports whether now holds an omap key, or an omap header,
+// that start lacks: what a write of a key or of the header leaves, and a
+// removal never does. It is asked only while an OmapClear keeps the stored
+// omap out of reach, when the op's omap holds nothing but what such writes
+// added since.
+func omapWritten(start, now *Object) bool {
+	if now == nil {
+		return false
+	}
+	var omap map[string][]byte
+	var hdr []byte
+	if start != nil {
+		omap, hdr = start.Omap, start.OmapHdr
+	}
+	if len(now.OmapHdr) > 0 && !bytes.Equal(now.OmapHdr, hdr) {
+		return true
+	}
+	for k := range now.Omap {
+		if _, ok := omap[k]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 // exec runs a class call; what it changes in the object is a change to it.
 func (x *execution) exec(s *radosclient.ExecStep) (func(), error) {
 	cls := x.cluster.classes[s.Class]
-	call := &ClassCall{Method: s.Method, In: slices.Clone(s.In), Stored: x.stored.clone(), x: x}
+	call := &ClassCall{Method: s.Method, In: slices.Clone(s.In), Stored: x.classStored(), x: x}
 	before := x.obj.clone()
+	call.start = before
 	out, rval := cls.fn(call)
+	if x.omapCleared && omapWritten(before, x.obj) {
+		x.omapCleared = false
+	}
 	if !sameContent(before, x.obj) {
 		x.modified = true
 		if !cls.writes[s.Method] {
