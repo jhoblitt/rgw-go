@@ -4,11 +4,13 @@
 # report for hack/parity. The parity set is
 # test_s3.py and test_headers.py minus the tests of the markers
 # excluded-markers.txt lists, of features not implemented yet and of
-# docs/exclusions.md, and minus the tests the deselect-phase<N>.txt lists
-# name: tests that call a later phase's feature without carrying such a
-# marker. hack/s3tests's Go command, which run.sh builds into bin/s3tests,
-# decides it from those lists and pytest's collection, and pytest runs
-# exactly its node ids on both gateways.
+# docs/exclusions.md, plus the tests the include-phase<N>.txt lists name:
+# tests such a marker removes that a phase serves already, and minus the
+# tests the deselect-phase<N>.txt lists name: tests that call a later
+# phase's feature without carrying such a marker. hack/s3tests's Go command,
+# which run.sh builds into bin/s3tests, decides it from those lists and
+# pytest's collections with and without the markers, and pytest runs exactly
+# its node ids on both gateways.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
@@ -301,11 +303,18 @@ unset "${!AWS_@}"
 export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
 
 # test_s3.py parses the conf at import to parametrize its encryption tests,
-# so collecting needs the conf too.
-ids=$(cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" --collect-only -q -p no:cacheprovider \
-	-m "${expr}" "${TEST_FILES[@]}") || die "pytest could not collect the parity set:"$'\n'"${ids}"
-selection=$("${s3tests}" select "${run_flags[@]}" <<<"${ids}") ||
-	die "hack/s3tests selected no set from the collection; nothing ran"
+# so collecting needs the conf too. The include lists name tests the markers
+# remove, which only the collection without them holds.
+collect() {
+	(cd "${suite}" && S3TEST_CONF="${conf}" "${venv}/bin/pytest" --collect-only -q -p no:cacheprovider \
+		"$@" "${TEST_FILES[@]}")
+}
+ids=$(collect -m "${expr}") || die "pytest could not collect the parity set:"$'\n'"${ids}"
+unfiltered=$(collect) || die "pytest could not collect the tests without the markers:"$'\n'"${unfiltered}"
+# --unfiltered is given here rather than in run_flags, which expr takes too,
+# and on every call, so that no S3TESTS_UNFILTERED reaches the selection.
+selection=$("${s3tests}" select "${run_flags[@]}" --unfiltered <(printf '%s\n' "${unfiltered}") <<<"${ids}") ||
+	die "hack/s3tests selected no set from the collections; nothing ran"
 mapfile -t selected <<<"${selection}"
 
 purge_buckets

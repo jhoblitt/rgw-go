@@ -1,6 +1,7 @@
 // Package selection decides which s3-tests the parity set runs: the tests
 // pytest collects from test_s3.py and test_headers.py under the excluded
-// markers' expression, less those the deselect lists name.
+// markers' expression and the tests the include lists name, less those the
+// deselect lists name.
 package selection
 
 import (
@@ -23,6 +24,13 @@ const MarkersFile = "excluded-markers.txt"
 // lists directory. A phase deletes its lines as it lands its features, and
 // its file and entry here with the last of them.
 var DeselectLists = []string{"deselect-phase2.txt", "deselect-phase3.txt"}
+
+// IncludeLists are the lists of the tests an excluded marker removes that a
+// phase serves, by pytest node id, one file per phase, in the lists
+// directory: a marker stays excluded while it also marks tests of a feature
+// not served yet. A line goes once its test's markers leave MarkersFile,
+// since Select then refuses it.
+var IncludeLists = []string{"include-phase2.txt"}
 
 // ListLine is a line of a list that names something, a marker or a pytest
 // node id, and where it stands.
@@ -55,8 +63,17 @@ func ReadList(path string) ([]ListLine, error) {
 
 // ReadDeselect reads DeselectLists from dir, in order.
 func ReadDeselect(dir string) ([]ListLine, error) {
+	return readLists(dir, DeselectLists)
+}
+
+// ReadInclude reads IncludeLists from dir, in order.
+func ReadInclude(dir string) ([]ListLine, error) {
+	return readLists(dir, IncludeLists)
+}
+
+func readLists(dir string, names []string) ([]ListLine, error) {
 	var out []ListLine
-	for _, name := range DeselectLists {
+	for _, name := range names {
 		l, err := ReadList(filepath.Join(dir, name))
 		if err != nil {
 			return nil, err
@@ -82,8 +99,14 @@ type Input struct {
 	// Collected is pytest --collect-only -q's output under MarkerExpr's
 	// expression, a line each. Select reads the lines that are node ids.
 	Collected []string
+	// Unfiltered is pytest's output for the same files without the
+	// expression, which holds the tests the include lines name. Nothing
+	// needs it while they name none.
+	Unfiltered []string
 	// Deselect is the deselect lists' lines.
 	Deselect []ListLine
+	// Include is the include lists' lines.
+	Include []ListLine
 	// TestsFile names the file whose lines Tests holds, each a node id or a
 	// base id to run alone; empty runs the whole set.
 	TestsFile string
@@ -131,31 +154,56 @@ func uniqueIDs(lines []ListLine) []string {
 }
 
 // Select returns the node ids of the set, in collection order: the collected
-// ids less each one whose base id a deselect line names, and with a TESTS
-// file only those it names by id or base id. It returns Refusals instead
-// when anything in its input is wrong, listing each.
+// ids and the tests the include lines name, less each one whose base id a
+// deselect line names, and with a TESTS file only those it names by id or
+// base id. Collection order is Unfiltered's when it holds a node id, and
+// Collected's otherwise. It returns Refusals instead when anything in its
+// input is wrong, listing each.
 //
 // A deselect line removes its tests by their base id. It is refused when it
-// is also the start of another collected test's id, since the line, read as
-// the pytest --deselect argument it is written as, would remove that test
-// too: --deselect removes every node id that starts with its argument. It is
+// is also the start of another id in the set, since the line, read as the
+// pytest --deselect argument it is written as, would remove that test too:
+// --deselect removes every node id that starts with its argument. It is
 // refused when it names no test the markers leave, since it is then stale.
+//
+// An include line adds the test of its id, or every parametrization of a
+// base id, from Unfiltered. It is refused when it names no test there or one
+// the markers leave, since it is then stale, and when it names a test a
+// deselect line removes. Unfiltered must hold every collected id, since the
+// set, taken in its order, would lose the others.
+//
 // A set left empty is refused too: pytest given no node id runs every test it
 // finds.
 func Select(in Input) ([]string, error) {
-	refusals := testsRefusals(in)
+	collected := collectedIDs(in.Collected)
+	unfiltered := collectedIDs(in.Unfiltered)
+	marked := make(map[string]bool, len(collected))
+	for _, c := range collected {
+		marked[c] = true
+	}
 	deselect := uniqueIDs(in.Deselect)
 	listed := make(map[string]bool, len(deselect))
 	for _, id := range deselect {
 		listed[id] = true
 	}
+	included, includeRefusals := includeTests(uniqueIDs(in.Include), unfiltered, marked, listed)
+	order, orderRefusals := collected, Refusals(nil)
+	if len(unfiltered) > 0 {
+		order, orderRefusals = unfiltered, lacking(collected, unfiltered)
+	}
+
+	refusals := testsRefusals(in)
 	seen, inSet := map[string]bool{}, map[string]bool{}
 	var set []string
-	collected := collectedIDs(in.Collected)
-	for _, c := range collected {
+	for _, c := range order {
+		if !marked[c] && !included[c] {
+			continue
+		}
 		base := baseID(c)
 		if listed[base] {
-			seen[base] = true
+			if marked[c] {
+				seen[base] = true
+			}
 			continue
 		}
 		for _, id := range deselect {
@@ -173,6 +221,7 @@ func Select(in Input) ([]string, error) {
 				id+" names no test the markers leave: renamed, removed or marker-excluded at this commit")
 		}
 	}
+	refusals = append(append(refusals, orderRefusals...), includeRefusals...)
 	tests := uniqueIDs(in.Tests)
 	for _, id := range tests {
 		if !inSet[id] {
@@ -200,6 +249,76 @@ func Select(in Input) ([]string, error) {
 	return set, nil
 }
 
+// includeTests returns the unfiltered ids the include lines ids name, and the
+// refusals of the lines that are stale or that a deselect line contradicts.
+func includeTests(ids, unfiltered []string, marked, listed map[string]bool) (map[string]bool, Refusals) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(unfiltered) == 0 {
+		return nil, Refusals{"include lines name tests, and the collection without the marker expression holds no node id"}
+	}
+	exact := make(map[string]bool, len(unfiltered))
+	byBase := map[string][]string{}
+	for _, c := range unfiltered {
+		exact[c] = true
+		byBase[baseID(c)] = append(byBase[baseID(c)], c)
+	}
+	included := map[string]bool{}
+	var refusals Refusals
+	for _, id := range ids {
+		named := byBase[id]
+		if exact[id] {
+			named = []string{id}
+		}
+		if len(named) == 0 {
+			refusals = append(refusals, id+" names no collected test: renamed or removed at this commit")
+			continue
+		}
+		if i := slices.IndexFunc(named, func(c string) bool { return marked[c] }); i >= 0 {
+			refusals = append(refusals,
+				naming(id, named[i])+" a test the markers leave: include lines add only tests they exclude")
+		}
+		if i := slices.IndexFunc(named, func(c string) bool { return listed[baseID(c)] }); i >= 0 {
+			refusals = append(refusals, naming(id, named[i])+" a test the deselect line "+baseID(named[i])+
+				" removes: a test is included or deselected, not both")
+		}
+		for _, c := range named {
+			included[c] = true
+		}
+	}
+	return included, refusals
+}
+
+// naming returns how a refusal of the include line id names the test c it
+// names: by the line alone when that is the test's id.
+func naming(id, c string) string {
+	if id == c {
+		return id + " is"
+	}
+	return id + " names " + c + ","
+}
+
+// lacking returns the refusal of an unfiltered collection that lacks some of
+// the collected ids.
+func lacking(collected, unfiltered []string) Refusals {
+	held := make(map[string]bool, len(unfiltered))
+	for _, c := range unfiltered {
+		held[c] = true
+	}
+	var lacks []string
+	for _, c := range collected {
+		if !held[c] {
+			lacks = append(lacks, c)
+		}
+	}
+	if len(lacks) == 0 {
+		return nil
+	}
+	return Refusals{fmt.Sprintf("the collection without the marker expression lacks %d of the tests the markers "+
+		"leave, %s first: the two are not of the same tests", len(lacks), lacks[0])}
+}
+
 // testsRefusals returns the refusal of a TESTS file that names no test.
 func testsRefusals(in Input) Refusals {
 	if in.TestsFile != "" && len(in.Tests) == 0 {
@@ -209,12 +328,18 @@ func testsRefusals(in Input) Refusals {
 }
 
 // Hash returns the digest a recorded result carries in its deselect meta:
-// the first 12 hex digits of the sha256 of the lines' ids sorted by byte,
-// each followed by a newline.
-func Hash(deselect []ListLine) string {
-	ids := make([]string, len(deselect))
-	for i, l := range deselect {
-		ids[i] = l.ID
+// the first 12 hex digits of the sha256 of the deselect lines' ids and the
+// include lines' ids, each of those after a "+", sorted by byte together,
+// each followed by a newline. The "+" keeps an include line from hashing as
+// the deselect line of the same test; with no include line, the digest is
+// the deselect lines' alone.
+func Hash(deselect, include []ListLine) string {
+	ids := make([]string, 0, len(deselect)+len(include))
+	for _, l := range deselect {
+		ids = append(ids, l.ID)
+	}
+	for _, l := range include {
+		ids = append(ids, "+"+l.ID)
 	}
 	slices.Sort(ids)
 	var b strings.Builder

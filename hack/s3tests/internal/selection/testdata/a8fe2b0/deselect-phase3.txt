@@ -1,0 +1,11 @@
+# Tests of the phase 1 s3-tests parity set that call a phase 3 feature and
+# carry no marker excluded-markers.txt lists, at the s3-tests pin, PIN. The
+# selection, hack/s3tests, removes every parametrization of each line's test
+# on both gateways, and refuses a line that names no collected test or that,
+# as a pytest --deselect prefix, would also remove a test the lists do not
+# name. The PR that lands a feature deletes its lines and records the tests
+# they free in the radosgw ledgers with make s3tests-record-tests.
+# Format: a pytest node id, then "#" and the calls that need the feature.
+
+# the ?usage extension
+s3tests/functional/test_s3.py::test_account_usage # ListBuckets with ?usage

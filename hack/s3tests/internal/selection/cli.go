@@ -22,7 +22,8 @@ const defaultLists = "hack/s3tests"
 
 // ExitStatus returns the exit status for an error Run returned: 0 for none,
 // 1 when select refuses the set or expr the TESTS file, and 2 for anything
-// else: a refused command line, or a list or a TESTS file it cannot read.
+// else: a refused command line, or a list, a TESTS file or a collection file
+// it cannot read.
 func ExitStatus(err error) int {
 	var refusals Refusals
 	switch {
@@ -67,7 +68,8 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (S3TESTS_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (S3TESTS_LOG_FORMAT)")
-	pf.String("lists", defaultLists, "the directory of "+MarkersFile+" and the deselect lists (S3TESTS_LISTS)")
+	pf.String("lists", defaultLists, "the directory of "+MarkersFile+", the deselect lists and the include lists "+
+		"(S3TESTS_LISTS)")
 	cmd.AddCommand(newExprCmd(v), newSelectCmd(v), newHashCmd(v))
 	return cmd
 }
@@ -100,21 +102,25 @@ func newExprCmd(v *viper.Viper) *cobra.Command {
 func newHashCmd(v *viper.Viper) *cobra.Command {
 	return &cobra.Command{
 		Use:   "hash [--lists DIR]",
-		Short: "Print the digest of the deselect lists a recorded result carries",
+		Short: "Print the digest of the deselect and include lists a recorded result carries",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deselect, err := ReadDeselect(v.GetString("lists"))
 			if err != nil {
 				return err
 			}
-			return write(cmd.OutOrStdout(), Hash(deselect))
+			include, err := ReadInclude(v.GetString("lists"))
+			if err != nil {
+				return err
+			}
+			return write(cmd.OutOrStdout(), Hash(deselect, include))
 		},
 	}
 }
 
 func newSelectCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "select [--lists DIR] [--tests FILE] <COLLECTION",
+		Use:   "select [--lists DIR] [--tests FILE] [--unfiltered FILE] <COLLECTION",
 		Short: "Print the node ids of the set, from pytest --collect-only -q's output on stdin",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -122,11 +128,18 @@ func newSelectCmd(v *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			include, err := ReadInclude(v.GetString("lists"))
+			if err != nil {
+				return err
+			}
 			in, err := readTestsInput(v)
 			if err != nil {
 				return err
 			}
-			in.Deselect = deselect
+			in.Deselect, in.Include = deselect, include
+			if in.Unfiltered, err = readUnfiltered(v); err != nil {
+				return err
+			}
 			collection, err := io.ReadAll(cmd.InOrStdin())
 			if err != nil {
 				return fmt.Errorf("reading the collection: %w", err)
@@ -143,7 +156,23 @@ func newSelectCmd(v *viper.Viper) *cobra.Command {
 	}
 	cmd.Flags().String("tests", "", "a file of the node ids or base ids to run alone, a line each, "+
 		"each of which the set must hold (S3TESTS_TESTS)")
+	cmd.Flags().String("unfiltered", "", "a file of pytest --collect-only -q's output without the marker "+
+		"expression, which holds the tests the include lists name (S3TESTS_UNFILTERED)")
 	return cmd
+}
+
+// readUnfiltered returns the lines of the collection file the unfiltered key
+// names, or none for an empty key.
+func readUnfiltered(v *viper.Viper) ([]string, error) {
+	path := v.GetString("unfiltered")
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // reading the collection named is the command's work
+	if err != nil {
+		return nil, fmt.Errorf("reading the collection without the marker expression: %w", err)
+	}
+	return strings.Split(string(data), "\n"), nil
 }
 
 // readTestsInput returns an Input holding the TESTS file the tests key names

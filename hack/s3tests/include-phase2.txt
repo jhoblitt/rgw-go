@@ -1,0 +1,13 @@
+# Tests that a marker excluded-markers.txt lists removes and that phase 2
+# serves, at the s3-tests pin, PIN. A marker stays listed while it also marks
+# tests of a feature not served yet, as sse_s3 and encryption mark the six
+# bucket encryption configuration tests, test_put_bucket_encryption_s3 and
+# _kms and their get and delete pairs, beside the SSE write tests that stay
+# out; this list runs such tests once phase 2 serves them. The selection,
+# hack/s3tests, adds each line's test, or every parametrization of a base id,
+# on both gateways, and refuses a line that names no collected test, one the
+# markers select already, or one a deselect list names too. Each line sits
+# under its area's comment and lands with the PR that records its area's
+# tests in the radosgw ledgers with make s3tests-record-tests.
+# Format: a pytest node id, or a base id for every parametrization, then "#"
+# and why phase 2 runs it.

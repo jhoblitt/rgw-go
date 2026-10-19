@@ -23,10 +23,10 @@ var moduleSources = []string{"go.mod", "go.sum", "hack/s3tests/main.go", "hack/s
 
 // runShTree copies the repository's run.sh, the lib.sh it sources and its
 // PIN into a tree of their own laid out as the repository is, with run.sh's
-// markers and the lines of the deselect lists at 0239625 beside run.sh. With
-// the module, the tree links the sources run.sh builds the command from. It
-// returns the tree's root.
-func runShTree(withModule bool) string {
+// markers, the lines of the frozen deselect lists in lists and an empty
+// include list beside run.sh. With the module, the tree links the sources
+// run.sh builds the command from. It returns the tree's root.
+func runShTree(withModule bool, lists string) string {
 	root := GinkgoT().TempDir()
 	files := map[string]string{
 		filepath.Join(repoRoot, "hack/s3tests/run.sh"):     "hack/s3tests/run.sh",
@@ -39,7 +39,7 @@ func runShTree(withModule bool) string {
 		Expect(os.MkdirAll(filepath.Join(root, filepath.Dir(to)), 0o750)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(root, to), []byte(data), 0o600)).To(Succeed())
 	}
-	layFrozenLists(filepath.Join(root, "hack/s3tests"))
+	layFrozenLists(filepath.Join(root, "hack/s3tests"), lists)
 	if withModule {
 		for _, path := range moduleSources {
 			from, err := filepath.Abs(filepath.Join(repoRoot, path))
@@ -62,13 +62,13 @@ func runSh(ctx context.Context, root string, env []string, args ...string) (ok b
 }
 
 // ambient are S3TESTS_ settings each of which would fail the command, were
-// it to read them: a lists directory, TESTS file and config file that are
-// not there, and log settings it does not know.
+// it to read them: a lists directory, TESTS file, collection and config file
+// that are not there, and log settings it does not know.
 func ambient() []string {
 	missing := filepath.Join(GinkgoT().TempDir(), "missing")
 	return []string{
-		"S3TESTS_LISTS=" + missing, "S3TESTS_TESTS=" + missing, "S3TESTS_CONFIG=" + missing,
-		"S3TESTS_LOG_LEVEL=bogus", "S3TESTS_LOG_FORMAT=bogus",
+		"S3TESTS_LISTS=" + missing, "S3TESTS_TESTS=" + missing, "S3TESTS_UNFILTERED=" + missing,
+		"S3TESTS_CONFIG=" + missing, "S3TESTS_LOG_LEVEL=bogus", "S3TESTS_LOG_FORMAT=bogus",
 	}
 }
 
@@ -84,13 +84,13 @@ func writeRunConf(root string) string {
 var _ = Describe("run.sh", func() {
 	Describe("--print-deselect", func() {
 		It("prints the digest the command makes of the lists beside run.sh", func(ctx SpecContext) {
-			ok, stdout, stderr := runSh(ctx, runShTree(true), nil, "--print-deselect")
+			ok, stdout, stderr := runSh(ctx, runShTree(true, lists0239625), nil, "--print-deselect")
 			Expect(ok).To(BeTrue(), stderr)
 			Expect(stdout).To(Equal("999e22cc41a0\n"))
 		}, SpecTimeout(5*time.Minute))
 
 		It("rebuilds a command older than the tree's sources", func(ctx SpecContext) {
-			root := runShTree(true)
+			root := runShTree(true, lists0239625)
 			stale, err := exec.LookPath("true")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(os.MkdirAll(filepath.Join(root, "bin"), 0o750)).To(Succeed())
@@ -101,22 +101,29 @@ var _ = Describe("run.sh", func() {
 		}, SpecTimeout(5*time.Minute))
 
 		It("names the command that builds the command when it cannot build it", func(ctx SpecContext) {
-			ok, _, stderr := runSh(ctx, runShTree(false), nil, "--print-deselect")
+			ok, _, stderr := runSh(ctx, runShTree(false, lists0239625), nil, "--print-deselect")
 			Expect(ok).To(BeFalse())
 			Expect(stderr).To(ContainSubstring("go build -o bin/s3tests ./hack/s3tests"))
 		}, SpecTimeout(5*time.Minute))
 
 		It("takes no S3TESTS_ setting from the environment, nor a config file one names", func(ctx SpecContext) {
-			ok, stdout, stderr := runSh(ctx, runShTree(true), ambient(), "--print-deselect")
+			ok, stdout, stderr := runSh(ctx, runShTree(true, lists0239625), ambient(), "--print-deselect")
 			Expect(ok).To(BeTrue(), stderr)
 			Expect(stdout).To(Equal("999e22cc41a0\n"))
 		}, SpecTimeout(5*time.Minute))
+
+		It("prints, for the a8fe2b0 lists and an empty include list, the digest both ledgers record at 7cfa64a",
+			func(ctx SpecContext) {
+				ok, stdout, stderr := runSh(ctx, runShTree(true, listsA8FE2B0), nil, "--print-deselect")
+				Expect(ok).To(BeTrue(), stderr)
+				Expect(stdout).To(Equal("499666025fc3\n"))
+			}, SpecTimeout(5*time.Minute))
 	})
 
 	Describe("a run", func() {
 		It("takes no S3TESTS_ setting from the environment, nor a config file one names, for its arguments",
 			func(ctx SpecContext) {
-				root := runShTree(true)
+				root := runShTree(true, lists0239625)
 				conf := writeRunConf(root)
 				ok, _, stderr := runSh(ctx, root, ambient(), "squid", "radosgw", "r1")
 				Expect(ok).To(BeFalse(), "the fetch from an empty directory fails")
@@ -126,7 +133,7 @@ var _ = Describe("run.sh", func() {
 
 		DescribeTable("refuses a TESTS file before it removes the run's outputs or fetches anything",
 			func(ctx SpecContext, text *string, want string) {
-				root := runShTree(true)
+				root := runShTree(true, lists0239625)
 				conf := writeRunConf(root)
 				tests := filepath.Join(GinkgoT().TempDir(), "tests.txt")
 				if text != nil {
