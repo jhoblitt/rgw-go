@@ -40,6 +40,14 @@ func mergeMethodTables(tables ...methodTable) methodTable {
 	return all
 }
 
+// assembleClass is the class the tables make: their methods merged, which
+// panics on a name two tables hold, and the method and write lists those
+// derive.
+func assembleClass(tables ...methodTable) (methods methodTable, names, writes []string) {
+	methods = mergeMethodTables(tables...)
+	return methods, methods.names(), methods.writeMethods()
+}
+
 // dispatch returns the ClassFunc that runs each call through the emulator of
 // its method, and answers EOPNOTSUPP for a method the table lacks. The OSD
 // refuses such a call at op setup, where OpInfo::set_from_op's

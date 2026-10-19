@@ -105,7 +105,7 @@ var _ = Describe("RGWClass's method tables", func() {
 
 	It("derives the class's write list from the write flags of every registered table", func() {
 		tables := append(slices.Clip(rgwTables), methodTable{"spec_area_write": {fn: nopClassMethod, write: true}})
-		_, _, writes := assembleRGWClass(tables)
+		_, _, writes := assembleClass(tables...)
 		Expect(writes).To(ConsistOf(append(slices.Clone(RGWWriteMethods), "spec_area_write")))
 	})
 
@@ -115,7 +115,7 @@ var _ = Describe("RGWClass's method tables", func() {
 		Expect(RGWMethods).To(ContainElements(RGWWriteMethods))
 		Expect(RGWMethods).To(HaveCap(len(RGWMethods)), "a caller's append copies the list rather than writing into it")
 		tables := append(slices.Clip(rgwTables), methodTable{"a_spec_area_read": {fn: nopClassMethod}})
-		_, names, _ := assembleRGWClass(tables)
+		_, names, _ := assembleClass(tables...)
 		Expect(names).To(Equal(append([]string{"a_spec_area_read"}, RGWMethods...)))
 	})
 

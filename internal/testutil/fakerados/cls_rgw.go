@@ -44,15 +44,8 @@ var RGWWriteMethods []string
 // init assembles the class: Go initializes every package variable before any
 // init runs, so every area's table is registered, whatever file declares it.
 func init() {
-	rgwClassMethods, RGWMethods, RGWWriteMethods = assembleRGWClass(rgwTables)
+	rgwClassMethods, RGWMethods, RGWWriteMethods = assembleClass(rgwTables...)
 	tableClasses["rgw"] = true
-}
-
-// assembleRGWClass is the class the tables make: their methods merged, and
-// the method and write lists those derive.
-func assembleRGWClass(tables []methodTable) (methods methodTable, names, writes []string) {
-	methods = mergeMethodTables(tables...)
-	return methods, methods.names(), methods.writeMethods()
 }
 
 // RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
