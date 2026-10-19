@@ -18,8 +18,8 @@ before writing Go here.
   and `CGO_LDFLAGS=-L$HOME/.local/lib/rgw-go` where that directory holds
   `librados.so -> /usr/lib64/librados.so.2`. CI installs `librados-dev`.
 - go-ceph comes from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to a
-  commit on the fork's `rgw-go` integration branch (currently cbf97f85fcf5); Dependabot does
-  not follow a replace, so it is bumped by hand. Every pinned ref must be on `rgw-go`, and
+  commit on the fork's `rgw-go` integration branch; Dependabot does not follow a replace, so it
+  is bumped by hand. Every pinned ref must be on `rgw-go`, and
   every change reaches `rgw-go` by PR into the fork, merged on green fork CI. Any PR opened
   on upstream ceph/go-ceph is merged into `rgw-go` first, unmodified, so its SHAs match. The fork's APIs sit behind the `ceph_preview` build tag,
   which every build, test and lint passes (Makefile `GO_TAGS`, .golangci.yml, CI).
