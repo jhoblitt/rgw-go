@@ -115,9 +115,17 @@ s3tests/functional/test_s3.py::test_block_public_put_bucket_acls # PutPublicAcce
 s3tests/functional/test_s3.py::test_block_public_object_canned_acls # PutPublicAccessBlock
 s3tests/functional/test_s3.py::test_block_public_policy # PutPublicAccessBlock
 s3tests/functional/test_s3.py::test_block_public_policy_with_principal # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_condition_on_unlisted_key # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_block_public_anonymous_root_principal # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_restrict_public_anonymous_root_principal # PutPublicAccessBlock
 s3tests/functional/test_s3.py::test_block_public_restrict_public_buckets # PutPublicAccessBlock, DeletePublicAccessBlock
 s3tests/functional/test_s3.py::test_ignore_public_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_anon_canned_write_ignore_public_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_anon_owned_object_acl_ignore_public_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_anon_owned_object_acl_block_public_acls # PutPublicAccessBlock
+s3tests/functional/test_s3.py::test_anon_put_object_block_public_acls # PutPublicAccessBlock
 s3tests/functional/test_s3.py::test_put_get_delete_public_block # PutPublicAccessBlock, GetPublicAccessBlock, DeletePublicAccessBlock
+s3tests/functional/test_s3.py::test_public_block_misspelled_setting_refused # PutPublicAccessBlock, GetPublicAccessBlock, DeletePublicAccessBlock
 
 # policy status
 s3tests/functional/test_s3.py::test_get_bucket_policy_status # GetBucketPolicyStatus
@@ -126,6 +134,7 @@ s3tests/functional/test_s3.py::test_get_authpublic_acl_bucket_policy_status # Ge
 s3tests/functional/test_s3.py::test_get_publicpolicy_acl_bucket_policy_status # GetBucketPolicyStatus
 s3tests/functional/test_s3.py::test_get_nonpublicpolicy_acl_bucket_policy_status # GetBucketPolicyStatus
 s3tests/functional/test_s3.py::test_get_nonpublicpolicy_principal_bucket_policy_status # GetBucketPolicyStatus
+s3tests/functional/test_s3.py::test_get_fixed_source_ip_bucket_policy_status # GetBucketPolicyStatus
 
 # client checksums at the Tentacle level
 s3tests/functional/test_s3.py::test_get_checksum_object_attributes # x-amz-checksum-sha256 on PutObject
