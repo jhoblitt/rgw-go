@@ -62,7 +62,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-16 | An instructed action was turned into a question at its trigger | Major | subagent-driven-development; project CLAUDE.md | fixed |
 | PP-17 | Phase 2 planning cited Ceph in a form the owner never agreed | Major | writing-plans; project CLAUDE.md; hack/citecheck | open |
 | PP-18 | The controller stopped at a failed step of an unattended run | Major | subagent-driven-development; the benchmark run procedure | open |
-| PP-19 | A change the plan called "its own" had no task, so notes piled up instead | Minor | writing-plans | open |
+| PP-19 | A change the plan called "its own" had no task, so notes piled up instead | Major | writing-plans; project CLAUDE.md | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -296,7 +296,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 
 ## PP-19: A change the plan called "its own" had no task, so notes piled up instead
 
-- **Severity:** Minor. **Status:** open.
+- **Severity:** Major: it recurred, and each time it cost the owner an ack (2026-10-16). **Status:** open.
 - **Observed:**
   - Phase 2's plan says every rgw-go fix carries an s3-test merged into jhoblitt/ceph's `rgw-go-s3tests` branch,
     and "the pin bump is its own change". No task owned that change.
@@ -307,13 +307,25 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - The bump (PB1, #325) found that `make s3tests-pin` refused this move as not additive: it adds module-level
     imports and X38's helpers to test_headers.py, and T5 changes a helper in test_s3.py. So both ledgers were
     recorded in full, on both releases.
+  - It recurred on 2026-10-16. Fork PRs jhoblitt/ceph#10 to #13 sat past the pin, ab228b1, and #355 again wrote the
+    next bump's lines into the plan instead of bumping it: deselect lines for nine tests whose ops rgw-go does not
+    route yet, known-differences lines for V10's two PutBucketVersioning tests, and BC-22's later replacement of
+    both. Code PRs #353, #354 and #367 waited on #355's LGTM.
+  - The owner, 2026-10-16: "I want to be clear that going forward, tasks which change s3-tests need to do their own
+    version bump". The owner added that the problem had come up several times and needed too many owner acks.
 - **Cost:**
   - #317 was written, revised and closed unmerged, and the owner had to step in.
   - CI's s3-tests parity did not run the 39 new tests until #325, so the fixes they cover had no regression test in
     CI in that time.
+  - #355 was written and needed the owner's LGTM, three code PRs waited on it, and jhoblitt/ceph#10's test has not
+    run in CI since it merged on 2026-10-15.
 - **Improvement:**
   - Work that a rule calls its own change gets a task at plan time, with its trigger, such as a pin bump at the end
     of each unit. A note describing future work does not replace the work.
   - A pin move is planned as a full record unless `make s3tests-pin` proves it additive, and a full record is a
     cluster task on both releases.
-- **Candidate home:** writing-plans; phase 2's plan.
+  - The owner's rule of 2026-10-16: a task that adds or changes an s3-test moves the s3-tests pin itself, in its own
+    rgw-go PR, with every known-differences and deselect line the move needs. The plan carries no note for a later
+    bump, and no later task owns the move. Where the move is not additive, the task's full record on both releases is
+    part of the task.
+- **Candidate home:** writing-plans; phase 2's plan; project CLAUDE.md.
