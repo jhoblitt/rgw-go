@@ -2695,6 +2695,109 @@ following.
   `BlockedEncryptionTypes` when asked to, as s3-tests'
   `_put_bucket_blocked_encryption_types` does: radosgw stores the first
   and drops the second, and rgw-go refuses both.
+- **A PutBucketOwnershipControls document is held to S3's schema.** Neither
+  floor has the op, so v21.1.2, the first release line to carry it, is the
+  reading compared. radosgw looks up a mandatory `OwnershipControls` root,
+  its first `Rule` and that `Rule`'s first `ObjectOwnership`, whose text
+  must be `BucketOwnerEnforced`, `BucketOwnerPreferred` or `ObjectWriter`
+  as written. It answers 400 MalformedXML with no message to a body expat
+  cannot parse, and, once expat has accepted the whole body, to a missing
+  root, `Rule` or `ObjectOwnership`, or another name, each with its own
+  message
+  ([rgw_rest_s3.cc:4553-4579](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4553-L4579);
+  [rgw_object_ownership.cc:36-69](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.cc#L36-L69)).
+  Past that it reads the body leniently. It ignores an element it does not
+  look up, and of a repeated `Rule` or `ObjectOwnership` it reads the first
+  ([rgw_xml.cc:147-153](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_xml.cc#L147-L153)).
+  It keeps attributes, `xmlns` among them, without reading them
+  ([rgw_xml.cc:66-75](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_xml.cc#L66-L75)),
+  so any namespace is taken; it ignores text between the elements; and it
+  expands the entities a document type declaration declares
+  (docs/ceph-upstream-bugs.md, "[radosgw's XML parser expands the entities
+  a request body
+  declares](ceph-upstream-bugs.md#radosgws-xml-parser-expands-the-entities-a-request-body-declares)").
+  Amazon S3 answers MalformedXML to "XML that doesn't conform to the
+  published XSD" for a configuration, and its PutBucketOwnershipControls
+  takes a required root in S3's namespace holding a required list of
+  `Rule` elements, each with a required `ObjectOwnership` (S3's error list
+  and the operation's input as the AWS SDK for Go carries them,
+  [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221),
+  [api.go:35881](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L35881),
+  [api.go:33255-33262](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L33255-L33262),
+  [api.go:33312-33342](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L33312-L33342)).
+  AWS's answer to each case below was not checked against Amazon S3
+  itself. rgw-go answers 400 MalformedXML (`acl.ParseOwnershipXML`,
+  `internal/acl/ownership.go`) to:
+  - a document type declaration, or any other `<!` declaration;
+  - under the root, an element other than `Rule`; under `Rule`, one other
+    than `ObjectOwnership`; any element inside `ObjectOwnership`; and a
+    prefixed one, even when its prefix is bound to S3's namespace;
+  - a repeated `ObjectOwnership`, and a second `Rule`, though AWS's model
+    types `Rule` as a list, so a document an SDK builds with two rules is
+    refused where radosgw reads the first;
+  - an attribute other than an `xmlns` naming S3's namespace or none,
+    prefix declarations included;
+  - text other than XML whitespace (space, tab, carriage return and line
+    feed) outside `ObjectOwnership`;
+  - a body longer than 1 MiB, `rgw_max_put_param_size`'s default
+    ([rgw.yaml.in:164-171](https://github.com/ceph/ceph/blob/v21.1.2/src/common/options/rgw.yaml.in#L164-L171)).
+    radosgw's op reads the body with that option as its `max_len` and
+    refuses a Content-Length over it unread, `-ERANGE`
+    ([rgw_rest.cc:1527-1529](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest.cc#L1527-L1529)),
+    which it answers 416 InvalidRange
+    ([rgw_common.cc:125](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L125)).
+    A chunked body, which has no Content-Length, radosgw reads past the
+    option. The op asks for no chunked body, `read_all_input(s, max_size,
+    false)`
+    ([rgw_rest_s3.cc:4557](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4557)),
+    but `RGWOp::read_all_input` drops that argument and reads one
+    ([rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.h#L229-L241);
+    docs/ceph-upstream-bugs.md, "[RGWOp::read_all_input ignores its
+    allow_chunked
+    argument](ceph-upstream-bugs.md#rgwopread_all_input-ignores-its-allow_chunked-argument)"),
+    and `read_all_chunked_input` checks the option only after a read fills
+    its buffer
+    ([rgw_rest.cc:1478-1512](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest.cc#L1478-L1512)),
+    so under the 1 MiB default radosgw reads and parses a chunked body of up
+    to 1,175,551 bytes. rgw-go's `op.ReadParamBody` reads such a body as
+    radosgw does (`internal/op/parambody.go`), and `acl.ParseOwnershipXML`
+    then refuses one over 1 MiB. Under a raised option radosgw reads a
+    longer document of either kind, and rgw-go refuses it.
+
+  Two of rgw-go's refusals carry another message than radosgw's, under the
+  same 400 MalformedXML:
+  - a refusal for one of the rules above carries no message, also where
+    radosgw refuses the same body with one: an unknown element standing
+    where `Rule` or `ObjectOwnership` belongs, such as `<Rules>` or
+    `<Rule><ID>x</ID></Rule>`, is refused as outside the schema, where
+    radosgw sends "Missing required element Rule" or "Missing required
+    element ObjectOwnership";
+  - a root other than an unprefixed `OwnershipControls` is refused at its
+    start tag with radosgw's "Missing required element OwnershipControls",
+    even when expat would refuse the body, where radosgw sets that message
+    only once expat has accepted the whole body
+    ([rgw_rest_s3.cc:4566-4574](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4566-L4574)).
+    The scan stops at the root's start tag so as not to read a foreign
+    root's content, so the message is sent once Go's decoder has read
+    that tag, whatever expat makes of the body: a malformation after the
+    root, as in `<Foo/>junk` or an unclosed `<Foo>`; one before it that
+    Go's decoder passes, as an XML declaration after whitespace,
+    ` <?xml version="1.0"?><Foo/>`, or a processing instruction with a bad
+    target, `<?p*?><Foo/>`; and one on the root tag that it passes, as a
+    repeated attribute, `<Foo a="1" a="1"/>`. A malformation Go's decoder
+    meets first, before or on the root's start tag, is refused with no
+    message, as radosgw refuses it: a comment holding two hyphens,
+    `<!-- a -- b --><Foo/>`; a NUL byte before the root; an unquoted
+    attribute value, `<Foo a=1/>`, or one holding a less-than sign,
+    `<Foo a="<"/>`; and a root name that starts with a digit, `<1Foo/>`.
+
+  rgw-go keeps radosgw's reading of the name: compared as written, nothing
+  trimmed, its references and CDATA decoded and its comments and
+  processing instructions dropped. The refusal comes at the first token
+  that breaks a rule, so a hostile document costs no more than its
+  offending prefix. A document an SDK sends with one rule reads alike on
+  both gateways, and both store the setting in the same
+  `user.rgw.ownership-controls` bytes.
 - **A NUL in a request argument that names a RADOS object is refused.**
   radosgw refuses a NUL only in the decoded path (`ERR_ZERO_IN_URL`,
   `rgw_rest.cc:2182-2186` at v19.2.6, `:2204-2208` at v20.2.4). A `%00`
