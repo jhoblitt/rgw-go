@@ -15994,9 +15994,14 @@ Every new entry adds its row to this table, in document order.
   method with the type named for it sends a request the class refuses, and
   an emulation of the class built the same way refuses radosgw's.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** sends no check yet (`internal/cls/otp`). Its check must send
-  `otp_get_result` the `otp_check` request, as radosgw does, and the class
-  emulation must decode that request.
+- **rgw-go:** sends the check op to both methods, as radosgw does: `Check`
+  sends `otp_check` a `cls_otp_check_otp_op`, and `LookupCheck` sends
+  `otp_get_result` the same bytes, encoded from the same `CheckOp`
+  (`internal/cls/otp/ops_check.go:142-144`,
+  `internal/cls/otp/ops_check.go:158-160`). The package defines no
+  `cls_otp_get_result_op`, so that no one "fixes" `LookupCheck` to send it:
+  the class answers it EINVAL, and every MFA check would fail. The class
+  emulation must decode the check op for both methods.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task WP-16, 2026-10-16, verifying the otp client's
   calls at both tags; derived from the source, not reproduced.
