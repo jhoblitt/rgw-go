@@ -325,6 +325,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user](#radosgws-ignorepublicacls-and-acl-is_public-miss-grants-to-the-anonymous-user) | pending | pending | ✓ |
 | [radosgw lets an ACL grant change a bucket's public access block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block) | pending | pending | ✓ |
 | [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | pending | pending |  |
+| [radosgw's otp metadata put keeps a dropped device's id in the otp header](#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17282,3 +17283,134 @@ Every new entry adds its row to this table, in document order.
   checked against v21.0.0 and v21.3.0, and widened to the list keys the
   class cannot find, on 2026-10-19. Derived from the source, not
   reproduced.
+
+## radosgw's otp metadata put keeps a dropped device's id in the otp header
+
+- **Kind:** defect, data corruption. A put whose document drops a device
+  leaves the user's otp object listing an id it holds no device for. Every
+  later `get_all` read of the object then fails, until that id is removed.
+  Through metadata sync, the failure removes the user's otp object on the
+  peer zones.
+  - Not security-relevant: no check is granted that the class would refuse.
+    The dropped device's record is gone, so a code for it checks as a
+    missing device, and a removed object fails every check.
+  - Prior art not searched. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The otp metadata put is `RGWSI_Cls::MFA::set_mfa` with `reset_obj`. It
+    is one write op: it removes the object, failure allowed, creates it
+    again, sets its version and mtime, and sends the document's devices to
+    `otp_set`
+    ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216),
+    [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L188-L216)).
+    - At v19.2.7 the put reaches it through
+      `RGWSI_MetaBackend_OTP::put_entry`
+      ([svc_meta_be_otp.cc:62-72](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.cc#L62-L72)).
+    - At v20.2.4 it reaches it through the otp handler's `put`
+      ([rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82)).
+    - Metadata sync applies a zone's otp entry to another zone through the
+      same put (`RGWAsyncMetaStoreEntry`,
+      [rgw_sync.cc:1111-1124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync.cc#L1111-L1124),
+      [rgw_sync.cc:1111-1124](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync.cc#L1111-L1124)).
+  - `otp_set` reads the header and each device's stored record with
+    `cls_cxx_map_get_val`. It adds the request's ids to the header's set,
+    and writes the records and the header back
+    ([cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348),
+    [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348)).
+  - `cls_cxx_map_get_val` runs `CEPH_OSD_OP_OMAPGETVALSBYKEYS`
+    ([objclass.cc:447-478](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/objclass.cc#L447-L478),
+    [objclass.cc:447-478](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/objclass.cc#L447-L478)).
+    - That op reads the object store's committed omap whenever the op's
+      object info says the object has one (`oi.is_omap()`), never the op's
+      own transaction
+      ([PrimaryLogPG.cc:7779-7800](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7779-L7800),
+      [PrimaryLogPG.cc:7856-7877](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7856-L7877)).
+    - The op's remove leaves `FLAG_OMAP`, which `is_omap` reads, set.
+      `_delete_oid` calls `object_info_t::new_object()`, which clears only
+      the data and omap digests
+      ([PrimaryLogPG.cc:8196-8294](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8196-L8294),
+      [PrimaryLogPG.cc:8273-8371](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8273-L8371);
+      [osd_types.h:6167-6170](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_types.h#L6167-L6170),
+      [osd_types.h:6370-6373](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.h#L6370-L6373)).
+  - So `otp_set` reads the header and the records as they were before the
+    put. When the op commits, the remove drops every stored key. What the op
+    then writes is the records of the document's devices, and a header
+    listing the stored ids as well as the document's.
+  - `otp_get` with `get_all` reads the record of every id the header lists.
+    When one has no record, `get_otp_instance` answers ENOENT and the whole
+    call fails. A request that names ids reads only those ids' records
+    ([cls_otp.cc:396-445](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L396-L445),
+    [cls_otp.cc:396-445](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L396-L445)).
+  - `otp_check` reads only the record of the id it checks
+    ([cls_otp.cc:447-481](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L447-L481),
+    [cls_otp.cc:447-481](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L447-L481)).
+  - `otp_remove` of the id clears the header, since it removes whatever the
+    header lists
+    ([cls_otp.cc:350-394](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L350-L394),
+    [cls_otp.cc:350-394](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L350-L394)).
+  - `RGWSI_Cls::MFA::list_mfa` reads the devices with `get_all`, both for a
+    user
+    ([svc_cls.cc:152-168](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L152-L168),
+    [svc_cls.cc:152-168](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L152-L168))
+    and for the metadata get
+    ([svc_cls.cc:218-245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L218-L245),
+    [svc_cls.cc:218-245](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L218-L245)).
+    - At v19.2.7 the metadata get reaches it through
+      `RGWSI_MetaBackend_OTP::get_entry`
+      ([svc_meta_be_otp.cc:44-60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.cc#L44-L60)).
+    - At v20.2.4 it reaches it through the otp handler's `get`
+      ([rgw_otp.cc:54-67](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L54-L67)).
+  - `radosgw-admin mfa list` fails only on an error other than ENOENT. On
+    ENOENT it prints an empty `entries` list and exits 0
+    ([rgw_admin.cc:10927-10935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10927-L10935),
+    [radosgw-admin.cc:11520-11528](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11520-L11528)).
+  - When a peer zone's fetch of a metadata entry answers ENOENT,
+    `RGWMetaSyncSingleEntryCR` stops fetching and removes its local entry
+    ([rgw_sync.cc:1324-1326](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync.cc#L1324-L1326),
+    [rgw_sync.cc:1324-1326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync.cc#L1324-L1326);
+    [rgw_sync.cc:1346-1356](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync.cc#L1346-L1356),
+    [rgw_sync.cc:1346-1356](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync.cc#L1346-L1356)).
+    `RGWMetadataManager::remove` reads the local entry and then removes it
+    ([rgw_metadata.cc:554-574](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L554-L574),
+    [rgw_metadata.cc:349-369](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L349-L369)).
+    For otp, removing it deletes the object: at v19.2.7 through
+    `RGWSI_MetaBackend_SObj::remove_entry`
+    ([svc_meta_be_sobj.cc:167-184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_sobj.cc#L167-L184)),
+    and at v20.2.4 through the otp handler's `remove`
+    ([rgw_otp.cc:84-92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L84-L92)).
+- **Impact:**
+  - After a put whose document lacks a device the object held, every
+    `get_all` of the object fails with ENOENT. That lasts until an
+    `otp_remove` of the dropped id (`radosgw-admin mfa remove`), or a put
+    that names it again. Reads of named ids and MFA checks of the remaining
+    devices still work: `radosgw-admin mfa get`, and `otp_check` for each
+    remaining device.
+  - The zone's metadata get of the user's otp entry fails with ENOENT, so
+    the entry reads as missing. `radosgw-admin mfa list` raises no error: it
+    prints no devices and exits 0, hiding the remaining devices too.
+  - Metadata sync turns that ENOENT into a removal.
+    - Take a put that drops a device on the zone the peers sync from, the
+      metadata master. It breaks the master's entry.
+    - The next sync of that key fetches ENOENT and removes the user's otp
+      object, with every device, on each peer zone. The user's `mfa_ids`
+      still name the devices there, so every MFA check on a peer fails.
+    - Derived from the source, unreproduced.
+  - Peer zones also apply each change to the entry as such a put. So a
+    device removed on the master by `radosgw-admin mfa remove`, which leaves
+    the master's object whole, leaves each peer's copy listing the dropped
+    id.
+  - The same reads keep every remaining device's `last_checks` and
+    `last_success` through the put: the remove does not reset a device's
+    replay state.
+- **Releases:** checked at v19.2.7 and v20.2.4, where the class, the put,
+  the sync and the OSD's handling are the same.
+- **rgw-go:** writes no otp devices yet. fakerados's otp class reads the
+  stored object as the OSD serves the class, and so reproduces this. That
+  is pinned by the spec "reads the header and devices as stored across
+  radosgw's reset put, so replay state survives and a dropped device's id
+  stays listed" in `internal/testutil/fakerados/cls_otp_test.go`. An otp
+  metadata put that composes radosgw's op would reproduce it on a cluster.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task WP-17, 2026-10-19, while emulating `otp_set`'s
+  reads at both tags. The `mfa list` and sync consequences come from WP-17's
+  task review. Derived from the source, not reproduced.
