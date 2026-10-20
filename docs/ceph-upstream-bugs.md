@@ -339,6 +339,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
+| [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17508,9 +17509,8 @@ Every new entry adds its row to this table, in document order.
   them
   (`authz.Evaluator.VerifyBucketOwnerOrPolicy`, `internal/authz/evaluator.go`;
   `internal/op/publicaccess.go`; `docs/exclusions.md`, "No ACL grant
-  authorizes the public access block's ops"). Until BC-19 routes the three
-  ops, the S3 handler answers them 501 NotImplemented
-  (`internal/s3/handler.go`).
+  authorizes the public access block's ops"). The S3 routes add no check
+  of their own (`internal/s3/publicaccess.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S5's review, 2026-10-15, tracing what the Swift
   write list's WRITE_ACP reaches; the other account's root by BC-18's
@@ -18565,3 +18565,120 @@ Every new entry adds its row to this table, in document order.
   Reef's, #66821, was Rejected (checked 2026-10-20).
 - **Found:** phase 2 unit B, Task BC-13's review, 2026-10-20; derived from
   the source, not reproduced.
+
+## radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length
+
+- **Kind:** defect, S3-correctness (HTTP framing), possibly
+  security-relevant, conditionally. A GetPublicAccessBlock whose execute
+  fails, as it does on every bucket without a block, sends its error
+  document with that document's Content-Length and then a block document
+  after it, so the response runs past its length. Behind a reverse proxy
+  that pools its upstream keep-alive connections, such as haproxy, nginx or
+  Envoy, the surplus bytes desynchronize a shared connection, and the proxy
+  can then hand a later response to another client's request: response
+  queue poisoning, with a trigger the attacker chooses, a
+  GetPublicAccessBlock on any bucket without a block. That needs radosgw to
+  keep the connection open after the response, which no running release
+  has shown yet. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_public_access.h`, `rgw_public_access.cc` and
+  `rgw_client_io_filters.h` are identical at the two tags.
+  - On a bucket without the attr, execute sets
+    `-ERR_NO_SUCH_PUBLIC_ACCESS_BLOCK_CONFIGURATION` and returns before
+    decoding anything; on an attr that does not decode it sets `-EIO`
+    ([rgw_op.cc:8690-8712](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8690-L8712),
+    [rgw_op.cc:9658-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9658-L9680)).
+    `complete` then calls `send_response`
+    ([rgw_process.cc:255-260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L255-L260),
+    [rgw_process.cc:258-263](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L258-L263);
+    [rgw_op.h:294-296](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L294-L296),
+    [rgw_op.h:307-309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L307-L309)).
+    A refusal from `verify_permission` returns before execute and is
+    answered by `abort_early` instead, which sends the error alone
+    ([rgw_process.cc:405-409](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L405-L409),
+    [rgw_process.cc:412-416](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L412-L416)).
+    The authorizer takes a block that does not decode for none, so every
+    requester `verify_permission` admits reaches the `-EIO`, the bucket's
+    owner included (`get_public_access_conf_from_attr`,
+    [rgw_op.cc:341-355](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L341-L355),
+    [rgw_op.cc:371-385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L371-L385)).
+  - `send_response` checks `op_ret` only to set the error: it calls
+    `end_header`, then `dump_start` and the block's `dump_xml`, and flushes
+    the formatter
+    ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624),
+    [rgw_rest_s3.cc:5124-5135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5124-L5135)).
+  - For an error, `end_header` writes the error document into the
+    formatter, sends its length as the Content-Length
+    ([rgw_rest.cc:620-625](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L625),
+    [rgw_rest.cc:625-630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L630)),
+    and flushes it as the body
+    ([rgw_rest.cc:652-654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L652-L654),
+    [rgw_rest.cc:657-659](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L657-L659)).
+    The error branch's `dump_start` has set `content_started`, so the second
+    `dump_start` writes nothing
+    ([rgw_rest.cc:571-577](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L571-L577),
+    [rgw_rest.cc:576-582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L576-L582)),
+    and the flush sends the `PublicAccessBlockConfiguration` section as more
+    body for anything but a HEAD
+    ([rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L303-L314),
+    [rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L303-L314)).
+    For the missing block that section is the constructor's, every setting
+    false
+    ([rgw_public_access.h:27-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.h#L27-L30),
+    [rgw_public_access.h:27-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.h#L27-L30);
+    [rgw_public_access.cc:11-20](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.cc#L11-L20),
+    [rgw_public_access.cc:11-20](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.cc#L11-L20)).
+    After the `-EIO` it holds what `PublicAccessBlockConfiguration::decode`
+    wrote before it threw, which is all four stored settings when the
+    struct's length is shorter than its fields and `DECODE_FINISH` is what
+    throws
+    ([rgw_public_access.h:54-61](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.h#L54-L61),
+    [rgw_public_access.h:54-61](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.h#L54-L61);
+    `DECODE_FINISH`,
+    [encoding.h:1635-1642](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1635-L1642),
+    [encoding.h:1651-1658](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1651-L1658)).
+  - The neighbouring send_responses show the correct forms. PUT's, just
+    above it, ends the response at its header
+    (`RGWPutBucketPublicAccessBlock_ObjStore_S3::send_response`,
+    [rgw_rest_s3.cc:4604-4611](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4604-L4611),
+    [rgw_rest_s3.cc:5115-5122](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5115-L5122)),
+    and GetObjLegalHold's returns once `op_ret` is set, before it writes its
+    document (`RGWGetObjLegalHold_ObjStore_S3::send_response`,
+    [rgw_rest_s3.cc:4568-4582](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4568-L4582),
+    [rgw_rest_s3.cc:5079-5093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5079-L5093)).
+  - No layer below cuts the extra bytes. The buffering filter defers a
+    body only for a response without a length, and this one has one
+    ([rgw_client_io_filters.h:178-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L178-L219),
+    [rgw_client_io_filters.h:178-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L178-L219));
+    the length-controlling filter acts on the Content-Length header of a
+    204 or 304 and never on a body
+    ([rgw_client_io_filters.h:327-365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L327-L365),
+    [rgw_client_io_filters.h:327-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L327-L365));
+    and beast's `write_data` writes what it is given
+    ([rgw_asio_frontend.cc:131-149](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L131-L149),
+    [rgw_asio_frontend.cc:132-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L132-L150)).
+- **Impact:** GetPublicAccessBlock on a bucket that never had a block is
+  an ordinary request: a client asks it to learn whether a bucket has one,
+  and a requester can send it on any bucket whose block the permission
+  check lets it read, its own among them. A client that reads the 404's body
+  by its Content-Length leaves the block on the connection. A Go client is
+  not affected as far as its source shows: Go's Transport closes an idle
+  connection on which unsolicited bytes arrive, and logs them
+  (`net/http/transport.go:2630-2640` at go1.27.1). Clients that reuse a
+  connection without such a check can read the bytes as the start of the
+  next response. A pooling reverse proxy, the case the Kind describes, can
+  pass them to another client. Neither was examined, and proxies may
+  differ. A client that closes the connection after an error is
+  unaffected.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** differs: a GetPublicAccessBlock error is its error document
+  alone, so the response ends at its Content-Length
+  (`getPublicAccessBlock`, `internal/s3/publicaccess.go`;
+  `docs/exclusions.md`, "A GetPublicAccessBlock error is its error document
+  alone").
+- **Upstream:** pending: logged by rgw-bug-reproduction (BC19-1).
+- **Found:** phase 2 planning, 2026-10-13, reading
+  `RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`; checked at
+  v19.2.7 and v20.2.4 by task BC-19, 2026-10-20, and rated possibly
+  security-relevant, conditionally, by rgw-bug-reproduction's triage,
+  2026-10-20. Derived from the source, not reproduced.
