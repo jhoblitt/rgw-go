@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -220,7 +221,7 @@ var _ = Describe("completer", func() {
 
 	It("returns no reader and the request length for an unsigned payload", func(ctx SpecContext) {
 		rv := signedPut(ctx, "hello", "", nil)
-		body, n, err := authDataFor(rv).completer(rv, testSecret)
+		body, n, _, err := authDataFor(rv).completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(body).To(BeNil())
 		Expect(n).To(Equal(int64(5)))
@@ -228,7 +229,7 @@ var _ = Describe("completer", func() {
 
 	It("returns no reader for an empty body signed with the empty hash", func(ctx SpecContext) {
 		rv := signedPut(ctx, "", emptyPayloadHash, nil)
-		body, n, err := authDataFor(rv).completer(rv, testSecret)
+		body, n, _, err := authDataFor(rv).completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(body).To(BeNil())
 		Expect(n).To(BeZero())
@@ -236,7 +237,7 @@ var _ = Describe("completer", func() {
 
 	It("returns a hash reader over the request body for a signed single chunk", func(ctx SpecContext) {
 		rv := signedPut(ctx, "hello", helloSHA256, nil)
-		body, n, err := authDataFor(rv).completer(rv, testSecret)
+		body, n, _, err := authDataFor(rv).completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(Equal(int64(5)))
 		got, err := io.ReadAll(body)
@@ -246,7 +247,7 @@ var _ = Describe("completer", func() {
 
 	It("holds a signed single chunk to the hash the request carried", func(ctx SpecContext) {
 		rv := signedPut(ctx, "hellp", helloSHA256, nil)
-		body, _, err := authDataFor(rv).completer(rv, testSecret)
+		body, _, _, err := authDataFor(rv).completer(rv, testSecret)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = io.ReadAll(body)
 		Expect(err).To(MatchError(op.ErrContentSHA256Mismatch))
@@ -259,11 +260,39 @@ var _ = Describe("completer", func() {
 				extra["X-Amz-Decoded-Content-Length"] = decoded
 			}
 			rv := signedPut(ctx, "0;chunk-signature=x\r\n\r\n", streamingPayload, extra)
-			_, _, err := authDataFor(rv).completer(rv, testSecret)
+			_, _, _, err := authDataFor(rv).completer(rv, testSecret)
 			Expect(err).To(MatchError(wantErr))
 		},
 		Entry("missing", absent, op.ErrInvalidArgument),
 		Entry("negative", "-1", op.ErrInvalidArgument),
 		Entry("not a number", "abc", op.ErrInvalidArgument),
+	)
+
+	// The trailers are compared by their dynamic type, which an untyped nil
+	// interface prints as <nil> and a nil *chunkedReader would not.
+	DescribeTable("returns the chunked reader as the trailers of a payload whose hash ends in TRAILER, and none for any other",
+		func(ctx SpecContext, hash, body, trailer, want string) {
+			extra := map[string]string{}
+			if trailer != absent {
+				extra["X-Amz-Trailer"] = trailer
+			}
+			if strings.HasPrefix(hash, "STREAMING-") {
+				extra["X-Amz-Decoded-Content-Length"] = "0"
+			}
+			rv := signedPut(ctx, body, hash, extra)
+			got, _, trailers, err := authDataFor(rv).completer(rv, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fmt.Sprintf("%T", trailers)).To(Equal(want))
+			if want != "<nil>" {
+				Expect(fmt.Sprintf("%p", trailers)).To(Equal(fmt.Sprintf("%p", got)), "the reader that reads the section keeps its trailers")
+			}
+		},
+		Entry("an unsigned payload", "", "hello", "x-amz-checksum-crc32", "<nil>"),
+		Entry("an empty body signed with the empty hash", emptyPayloadHash, "", "x-amz-checksum-crc32", "<nil>"),
+		Entry("a signed single chunk", helloSHA256, "hello", "x-amz-checksum-crc32", "<nil>"),
+		Entry("plain aws-chunked, even with x-amz-trailer", streamingPayload, "0;chunk-signature=x\r\n\r\n", "x-amz-checksum-crc32", "<nil>"),
+		Entry("unsigned aws-chunked with a trailer", streamingUnsignedTrailer, "0\r\n\r\n", "x-amz-checksum-crc32", "*auth.chunkedReader"),
+		Entry("signed aws-chunked with a signed trailer", streamingPayloadTrailer, "0;chunk-signature=x\r\n\r\n", "x-amz-checksum-crc32", "*auth.chunkedReader"),
+		Entry("unsigned aws-chunked with no x-amz-trailer", streamingUnsignedTrailer, "0\r\n\r\n", absent, "*auth.chunkedReader"),
 	)
 })

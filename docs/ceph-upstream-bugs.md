@@ -328,6 +328,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | pending | pending |  |
 | [radosgw's otp metadata put keeps a dropped device's id in the otp header](#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header) | pending | pending |  |
 | [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | pending | pending |  |
+| [radosgw adds any header an aws-chunked trailer names to the request after its body](#radosgw-adds-any-header-an-aws-chunked-trailer-names-to-the-request-after-its-body) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6282,9 +6283,9 @@ Every new entry adds its row to this table, in document order.
   `rgw_auth_s3.cc:1501-1529`).
 - **rgw-go:** not affected. `trailers` (`internal/auth/chunked.go`) reads
   the section line by line, takes each listed name once and reads nothing
-  past the section, and only for a payload that expects a trailer
-  signature; `docs/exclusions.md` records the difference ("aws-chunked
-  trailer sections are read line by line").
+  past the section, and only for a payload whose `x-amz-content-sha256`
+  ends in `TRAILER`; `docs/exclusions.md` records the difference
+  ("aws-chunked trailer sections are read line by line").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `complete()`'s
   trailer parse to implement rgw-go's; derived from the source, not
@@ -17586,3 +17587,151 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
   plan's otp put reset could mean; checked at both tags in its fix round.
   Derived from the source, not reproduced.
+
+## radosgw adds any header an aws-chunked trailer names to the request after its body
+
+- **Kind:** possible security defect (low). A key holder's aws-chunked body
+  can add, after authorization and past any proxy that filters headers,
+  request headers its request lacked; on Squid it can add any environment
+  variable the request lacked. radosgw's ops log reads them. On Tentacle so
+  does the bucket owner's S3 access log, into which a trailer's bare LF
+  writes lines of the writer's choosing. It stays low:
+  - the writer needs a key that may write to the bucket;
+  - what it adds decides no authorization and alters no stored object;
+  - a forged line holds no colon and fits in the 255 bytes radosgw reads of
+    the section.
+
+  Prior art not searched. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.7's,
+  then v20.2.4's, unless one tag is named.
+  - `AWSv4ComplMulti` takes `x-amz-trailer` as sent, whatever names it
+    lists
+    ([rgw_auth_s3.h:425-428](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L425-L428),
+    [rgw_auth_s3.h:427-430](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L427-L430)),
+    and `complete()` calls `extract_trailing_headers` whenever
+    `x_amz_trailer` is set, for every aws-chunked payload
+    ([rgw_auth_s3.cc:1681-1683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1681-L1683),
+    [rgw_auth_s3.cc:1636-1638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1636-L1638)).
+    It does so before `expect_trailer_signature` is checked against the
+    trailer signature
+    ([rgw_auth_s3.cc:1708-1712](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1708-L1712),
+    [rgw_auth_s3.cc:1663-1667](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1663-L1667)),
+    so a payload refused for that signature has already filled the
+    environment.
+  - A trailer's value is the section text from the listed name to the next
+    CRLF, cut at its colons by `split_header`
+    ([rgw_auth_s3.cc:1492-1502](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1492-L1502),
+    [rgw_auth_s3.cc:1447-1457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1447-L1457)).
+    It can therefore hold a bare LF or CR, which an HTTP field value may
+    not (RFC 9110, section 5.5); whether each frontend refuses one in a
+    header is not checked here.
+  - `complete()` reads at most 255 bytes of the section into its 256-byte
+    `trailer_buf_size` buffer. Each receive asks for at most
+    `trailer_buf_size - tbuf_pos - 1` bytes, and the loop ends on a receive
+    of 0
+    ([rgw_auth_s3.cc:1618-1628](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1618-L1628),
+    [rgw_auth_s3.cc:1573-1583](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1573-L1583)).
+    So its `ERR_LIMIT_EXCEEDED` branch, `if (tbuf_pos == trailer_buf_size)`,
+    never fires
+    ([rgw_auth_s3.cc:1630-1636](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1630-L1636),
+    [rgw_auth_s3.cc:1585-1591](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1585-L1591)),
+    and a longer section is cut there rather than refused ("radosgw
+    truncates a long aws-chunked trailer section instead of rejecting it").
+  - `extract_trailing_headers` hands each listed trailer it finds in the
+    section to `put_prop`, keyed `ys_header_mangle(k)` on Squid and
+    `ys_header_mangle("HTTP-" + k)` on Tentacle
+    ([rgw_auth_s3.cc:1525](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1525),
+    [rgw_auth_s3.cc:1480](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1480)).
+    `put_prop` inserts the pair into `s->info.env`, keeping an entry already
+    there
+    ([rgw_auth_s3.h:379-383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L379-L383),
+    [rgw_auth_s3.h:381-385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L381-L385)),
+    in a map whose `ltstr_nocase` compares names without regard to case
+    ([rgw_common.h:470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L470),
+    [rgw_common.h:494](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L494)).
+    So on Tentacle a trailer adds exactly the headers the request did not
+    send, under their `HTTP_` names. On Squid, whose key has no `HTTP-`
+    prefix, it adds any environment variable the request lacked: a header
+    when its name starts `http-`, or any other variable the frontend did
+    not set.
+  - PutObject, which serves UploadPart too, runs `do_aws4_auth_completion`
+    inside its `execute`, after `verify_permission`
+    ([rgw_op.cc:4439](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4439),
+    [rgw_op.cc:4671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4671);
+    `verify_permission` at
+    [rgw_process.cc:225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225)
+    and
+    [rgw_process.cc:225](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225)).
+    `rgw_log_op` runs after the op whatever its result
+    ([rgw_process.cc:461-462](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L461-L462),
+    [rgw_process.cc:468-469](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L468-L469)).
+    It reads from the environment the remote address `rgw_remote_addr_param`
+    names, `HTTP_USER_AGENT`, and `HTTP_REFERRER` in preference to
+    `HTTP_REFERER`
+    ([rgw_log.cc:593-603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L593-L603),
+    [rgw_log.cc:593-603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L593-L603)),
+    and every header `log_x_header` takes
+    ([rgw_log.cc:645-652](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L645-L652),
+    [rgw_log.cc:645-652](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L645-L652)).
+  - Bucket logging, Tentacle only: `rgw_bucket_logging.cc` does not exist at
+    v19.2.7, where GetBucketLogging answers an empty `BucketLoggingStatus`
+    ([rgw_rest_s3.cc:2126-2135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2126-L2135)).
+    - At v20.2.4 PutObject returns when `do_aws4_auth_completion` fails
+      ([rgw_op.cc:4671-4674](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4671-L4674)).
+      After a successful write it calls `log_record` with the Standard type
+      ([rgw_op.cc:4842-4856](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4842-L4856)).
+      Its `always_do_bucket_logging` returns false
+      ([rgw_op.h:1401](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1401)),
+      which keeps out the second record `process_request` writes after other
+      ops
+      ([rgw_process.cc:472-483](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L472-L483)).
+    - The Standard record formats `HTTP_REFERER` and `HTTP_USER_AGENT` from
+      the environment into one text line, unescaped
+      ([rgw_bucket_logging.cc:581-611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_logging.cc#L581-L611);
+      the reads of `HTTP_REFERER` and `HTTP_USER_AGENT` at
+      [rgw_bucket_logging.cc:601-602](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_bucket_logging.cc#L601-L602)).
+    - `log_record` appends the record to the log object with a `"\n"`:
+      `bl.append(record); bl.append("\n");`
+      ([rgw_sal_rados.cc:1587-1589](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L1587-L1589)).
+- **Impact:**
+  - **The ops log.** A key holder's aws-chunked PutObject or UploadPart can
+    set, in its ops log entry:
+    - a remote address, when `rgw_remote_addr_param` names a header such as
+      X-Forwarded-For that the request lacks;
+    - a referrer that replaces the Referer it sent;
+    - a user agent;
+    - any logged header.
+
+    On Tentacle the trailer bears the header's name, `x-forwarded-for`. On
+    Squid it bears the variable's, `http-x-forwarded-for`. A payload that
+    fails its trailer signature still logs them.
+  - **The S3 access log.** On Tentacle a successful upload's record in the
+    bucket owner's access log takes its Referer or User-Agent from a
+    trailer when the request sent none.
+    - A bare LF in that value ends the record's line early. The text after
+      it becomes lines of the writer's choosing in the owner's log, and the
+      record's own `"\n"` ends the last of them.
+    - The writer need not be the owner, only someone the bucket lets
+      write.
+    - A forged line holds no colon, since `split_header` ends the value
+      at the next one, so it cannot carry the record's timestamp. It fits
+      in the 255 bytes radosgw reads of the section, a cap that holds
+      because the limit check behind it never fires (Evidence).
+  - **Why the headers alone would not do it.** A client could send these
+    headers itself, unless a proxy in front of radosgw strips them. The
+    proxy does not read the trailer section, which is in the body. A header
+    may not hold the bare LF at all.
+  - **What is not affected.** Authorization runs before the body, so policy
+    conditions such as `aws:SourceIp` are unaffected. Tentacle's checksum
+    check reads its expected value the same way, the path the trailers are
+    kept for.
+- **Releases:** checked at v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** not affected. Its trailers never reach the request's
+  headers: `op.AuthResult.Trailers` answers only the name a reader asks
+  for (`internal/op/identity.go`, `internal/auth/chunked.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 task WP-3, 2026-10-19, reading
+  `extract_trailing_headers` to keep rgw-go's trailer values. The task's
+  adversarial review the same day added the bucket log, the bare LF and
+  Squid's unprefixed keys. Derived from the source, not reproduced.

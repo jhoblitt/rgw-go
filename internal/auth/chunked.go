@@ -80,10 +80,12 @@ type chunkedParams struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1370-L1371 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1607-L1608 at v20.2.4).
 // That Read then reads what follows, as complete describes, and reports the
-// verdict in place of io.EOF. Every error is sticky. Memory is O(1): a fixed
-// bufio buffer, chunk headers sliced from it, one SHA-256 state and, once the
-// final chunk line is read, a maxTrailerSection+1-byte array for the trailer
-// section; chunk sizes and the decoded length are counters, never allocation
+// verdict in place of io.EOF; only a Read that returns io.EOF makes the
+// trailers it kept answer through Trailer. Every error is sticky. Memory is
+// O(1): a fixed bufio buffer, chunk headers sliced from it, one SHA-256 state
+// and, once the final chunk line is read, a maxTrailerSection+1-byte array
+// for the trailer section, from a copy of which the kept trailer values are
+// sliced; chunk sizes and the decoded length are counters, never allocation
 // sizes.
 type chunkedReader struct {
 	br      *bufio.Reader
@@ -101,6 +103,8 @@ type chunkedReader struct {
 	done  bool
 	h     hash.Hash
 	err   error
+	// values is what trailers returned, set together with done.
+	values map[string]string
 }
 
 func newChunkedReader(src io.Reader, p chunkedParams) *chunkedReader {
@@ -142,10 +146,11 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 		}
 	}
 	if r.left == 0 {
-		if err := r.complete(); err != nil {
+		values, err := r.complete()
+		if err != nil {
 			return r.fail(err)
 		}
-		r.done = true
+		r.values, r.done = values, true
 		return 0, io.EOF
 	}
 	if want := min(r.remaining, r.left); uint64(len(p)) > want {
@@ -204,23 +209,23 @@ func (r *chunkedReader) nextChunk() error {
 // the chunk in progress is verified first. What follows is either more
 // data or the end of the body, which endAtLength answers, or the CRLF and
 // the final chunk line, parsed as strictly as any chunk header and
-// followed by the trailer section. The final chunk's declared signature is
-// not compared.
-func (r *chunkedReader) complete() error {
+// followed by the trailer section, whose trailers it returns. The final
+// chunk's declared signature is not compared.
+func (r *chunkedReader) complete() (map[string]string, error) {
 	if !r.verifyPending() {
-		return fmt.Errorf("%w: aws-chunked last chunk signature mismatch", op.ErrContentSHA256Mismatch)
+		return nil, fmt.Errorf("%w: aws-chunked last chunk signature mismatch", op.ErrContentSHA256Mismatch)
 	}
 	if r.remaining > 0 {
-		return r.endAtLength()
+		return nil, r.endAtLength()
 	}
 	size, _, consumed, err := r.nextHeader()
 	switch {
 	case errors.Is(err, io.EOF):
-		return r.endAtLength()
+		return nil, r.endAtLength()
 	case err != nil:
-		return unexpected(err)
+		return nil, unexpected(err)
 	case size != 0:
-		return r.endAtLength()
+		return nil, r.endAtLength()
 	}
 	return r.finish(consumed)
 }
@@ -368,15 +373,15 @@ func parseChunkSize(s []byte) (uint64, bool) {
 // verified chunk's or the seed, as complete() computes it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1565-L1575,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1542-L1552).
-func (r *chunkedReader) finish(consumed int) error {
+func (r *chunkedReader) finish(consumed int) (map[string]string, error) {
 	budget := maxTrailerSection - consumed
 	var buf [maxTrailerSection + 1]byte
 	n, err := readToEnd(r.br, buf[:budget+1])
 	switch {
 	case n > budget:
-		return fmt.Errorf("%w: aws-chunked trailer section exceeds %d bytes", op.ErrLimitExceeded, maxTrailerSection)
+		return nil, fmt.Errorf("%w: aws-chunked trailer section exceeds %d bytes", op.ErrLimitExceeded, maxTrailerSection)
 	case err != nil:
-		return err
+		return nil, err
 	}
 	return r.trailers(buf[:n], r.chunkSignature(emptyPayloadHash))
 }
@@ -411,28 +416,39 @@ func trailerStringToSign(date, scope, finalChunkSig, canonicalTrailers string) s
 	return strings.Join([]string{trailerAlgorithm, date, scope, finalChunkSig, sha256Hex(canonicalTrailers)}, "\n")
 }
 
-// trailers checks the trailer section of a payload that expects a trailer
-// signature; radosgw requires nothing of any other payload's section
-// (complete(),
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L1686-L1690 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1663-L1667 at v20.2.4).
+// trailers reads the trailer section of a payload whose x-amz-content-sha256
+// ends in TRAILER and returns the trailers x-amz-trailer lists, as radosgw
+// puts each into the request's environment
+// (extract_trailing_headers,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1504-L1532 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1487 at v20.2.4).
+// It reads no other payload's section, of which radosgw requires nothing
+// (complete()'s expect_trailer_signature,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1708-L1712 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1663-L1667 at v20.2.4),
+// though radosgw takes the listed trailers from any payload's section when
+// x_amz_trailer is set
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1681-L1683 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1636-L1638 at v20.2.4).
 // The section is read as lines that end in CRLF, each split at its first
 // colon into a name and an untrimmed value. The first line named
 // x-amz-trailer-signature declares the signature, and the first line bearing
-// each name x-amz-trailer lists is a signed trailer; every other line, and
-// any bytes after the last CRLF, are ignored. radosgw instead finds the
-// signature and each listed name anywhere in the section
-// (docs/exclusions.md, "aws-chunked trailer sections are read line by
-// line"). A declared signature that is missing or differs from the one
-// computed over the signed trailers is SignatureDoesNotMatch. The checksum
-// values are neither validated nor kept.
-func (r *chunkedReader) trailers(section []byte, finalChunkSig string) error {
-	if !r.p.class.trailerSignature {
-		return nil
+// each name x-amz-trailer lists is that trailer, which the trailer signature
+// covers when the payload has one; every other line, and any bytes after the
+// last CRLF, are ignored.
+// radosgw instead finds the signature and each listed name anywhere in the
+// section (docs/exclusions.md, "aws-chunked trailer sections are read line by
+// line"). For a payload that expects a trailer signature, a declared
+// signature that is missing or differs from the one computed over the
+// trailers is SignatureDoesNotMatch, and no trailer is returned. The checksum
+// values are kept, not validated.
+func (r *chunkedReader) trailers(section []byte, finalChunkSig string) (map[string]string, error) {
+	if !r.p.class.trailingChecksum && !r.p.class.trailerSignature {
+		return nil, nil
 	}
 	var declared string
 	haveDeclared := false
-	signed := map[string]string{}
+	listed := map[string]string{}
 	rest := string(section)
 	for {
 		line, after, ok := strings.Cut(rest, "\r\n")
@@ -451,18 +467,50 @@ func (r *chunkedReader) trailers(section []byte, finalChunkSig string) error {
 		// x-amz-trailer, which ceph::split drops (common/split.h at both
 		// tags).
 		case name != "" && slices.Contains(r.p.trailerNames, name):
-			if _, seen := signed[name]; !seen {
-				signed[name] = value
+			if _, seen := listed[name]; !seen {
+				listed[name] = value
 			}
 		}
 	}
-	var canonical strings.Builder
-	for _, name := range slices.Sorted(maps.Keys(signed)) {
-		canonical.WriteString(name + ":" + signed[name] + "\n")
+	if r.p.class.trailerSignature {
+		var canonical strings.Builder
+		for _, name := range slices.Sorted(maps.Keys(listed)) {
+			canonical.WriteString(name + ":" + listed[name] + "\n")
+		}
+		want := signatureV4(r.p.signingKey, trailerStringToSign(r.p.date, r.p.scope, finalChunkSig, canonical.String()))
+		if !sigEqual(declared, want) {
+			return nil, fmt.Errorf("%w: aws-chunked trailer signature mismatch", op.ErrSignatureDoesNotMatch)
+		}
 	}
-	want := signatureV4(r.p.signingKey, trailerStringToSign(r.p.date, r.p.scope, finalChunkSig, canonical.String()))
-	if !sigEqual(declared, want) {
-		return fmt.Errorf("%w: aws-chunked trailer signature mismatch", op.ErrSignatureDoesNotMatch)
+	return foldTrailers(r.p.trailerNames, listed), nil
+}
+
+// foldTrailers keys each listed trailer's value by its name in lower case,
+// the first name x-amz-trailer lists winning among those that fold together.
+// radosgw keys its environment by the name upper-cased (ys_header_mangle,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L2086-L2096 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L2080-L2090 at v20.2.4),
+// and inserts the listed names in order, keeping the first.
+func foldTrailers(names []string, listed map[string]string) map[string]string {
+	folded := make(map[string]string, len(listed))
+	for _, name := range names {
+		v, ok := listed[name]
+		if !ok {
+			continue
+		}
+		key := asciiLower(name)
+		if _, taken := folded[key]; !taken {
+			folded[key] = v
+		}
 	}
-	return nil
+	return folded
+}
+
+var _ op.Trailers = (*chunkedReader)(nil)
+
+// Trailer answers op.Trailers from the trailers the Read that returned
+// io.EOF kept, matching name in any ASCII case.
+func (r *chunkedReader) Trailer(name string) (string, bool) {
+	v, ok := r.values[asciiLower(name)]
+	return v, ok
 }

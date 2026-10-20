@@ -1866,9 +1866,10 @@ review and verified against the tree.
   (290 bytes) included, and on Tentacle an unsigned section whose checksum
   line falls past the cut is accepted without that checksum being compared
   (tracker #81122). rgw-go counts the section the same way, accepts up to
-  1024 bytes, which holds a signed SHA512 trailer with room to spare, and
-  answers 409 LimitExceeded above that. A signed trailer that radosgw
-  refuses with 403 therefore succeeds through rgw-go.
+  1024 bytes, which holds a signed SHA512 trailer with room to spare, keeps
+  the trailers of all of it, and answers 409 LimitExceeded above that,
+  keeping none. A signed trailer that radosgw refuses with 403 therefore
+  succeeds through rgw-go.
 - **aws-chunked chunk sizes are one to sixteen hex digits.** radosgw parses
   a chunk size with an unchecked `strtoull` (`rgw_auth_s3.cc:1127-1132` at
   v19.2.6), which skips blanks and accepts a sign, a `0x` prefix, trailing
@@ -1896,8 +1897,10 @@ review and verified against the tree.
     v19.2.6, `:4715-4718` at v20.2.4), and on Tentacle it answers 400
     BadDigest for a trailing checksum it finds after the length
     (`rgw_op.cc:4757-4790` at v20.2.4). The Content-MD5 is rgw-go's op's to
-    compare, and phase 1 compares no trailing checksum, so rgw-go accepts
-    the payload where Tentacle answers BadDigest for a checksum.
+    compare. rgw-go keeps a trailing checksum only from the trailer section
+    after the final chunk, which it never reads past a length the chunks
+    overrun, so it keeps none from such a payload and accepts it where
+    Tentacle answers BadDigest for a checksum.
   - Chunks that carry less data than the length: radosgw answers 403
     SignatureDoesNotMatch when the final chunk's signature is wrong and 400
     InvalidArgument otherwise, as rgw-go does, except when the payload's
@@ -1942,23 +1945,31 @@ review and verified against the tree.
     refuses a malformed line with 400 InvalidArgument, reports an unexpected
     EOF for a body that ends inside it, and does not compare the signature
     either.
-- **aws-chunked trailer sections are read line by line.** For a payload
-  that expects a trailer signature, rgw-go reads the trailer section as
-  lines that end in CRLF, in any order, each split at its first colon into
-  a name and an untrimmed value. The declared signature is the value of
-  the first line named `x-amz-trailer-signature`, and the signature rgw-go
-  computes covers, for each name `x-amz-trailer` lists, the first line
-  bearing exactly that name; a declared signature that is missing or
-  differs is 403 SignatureDoesNotMatch. radosgw instead searches the up to
-  255 bytes it reads after the chunk at the decoded length for
-  `x-amz-trailer-signature:` and for each listed name anywhere, takes the
-  text from the first match of each to the next CRLF as its line, and
-  splits that line at every colon (`extract_helper`, `split_header`,
-  `extract_trailing_headers` and `complete()`, `rgw_auth_s3.cc:1436-1510`
-  and `:1583-1690` at v19.2.6, `:1413-1487` and `:1560-1667` at v20.2.4).
-  A section as the AWS SDKs write it, one line per listed trailer and the
-  signature line last, with `x-amz-trailer` naming each trailer once, gets
-  the same answer from both when it fits radosgw's buffer. They differ as
+- **aws-chunked trailer sections are read line by line.** For every
+  aws-chunked payload whose `x-amz-content-sha256` ends in `TRAILER`,
+  rgw-go reads the trailer section as lines that end in CRLF, in any order,
+  each split at its first colon into a name and an untrimmed value. For
+  each name `x-amz-trailer` lists, the first line bearing exactly that name
+  is that trailer, and rgw-go keeps its value, which a lookup matches in
+  any ASCII case. Only `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` has a
+  trailer signature, and for it the signature rgw-go computes covers each
+  trailer it keeps. Any other such payload's trailers are kept unsigned, as
+  radosgw takes them. The declared signature is the value of the first
+  line named `x-amz-trailer-signature`, never a trailer; a declared
+  signature that is missing or differs is 403 SignatureDoesNotMatch, and no
+  trailer is kept.
+  radosgw instead searches the up to 255 bytes it reads after the chunk at
+  the decoded length for `x-amz-trailer-signature:` and for each listed
+  name anywhere, takes the text from the first match of each to the next
+  CRLF as its line, splits that line at every colon, and puts each trailer
+  line it finds into its trailer signature and into the request's
+  environment, where a Tentacle radosgw's checksum check reads it
+  (`extract_helper`, `split_header`, `extract_trailing_headers` and
+  `complete()`, `rgw_auth_s3.cc:1436-1510` and `:1583-1690` at v19.2.6,
+  `:1413-1487` and `:1560-1667` at v20.2.4). A section as the AWS SDKs
+  write it, one line per listed trailer and the signature line last, with
+  `x-amz-trailer` naming each trailer once, gets the same answer and the
+  same trailers from both when it fits radosgw's buffer. They differ as
   follows.
   - A signature whose first occurrence is not on a line of its own but in
     another line's value, at the end of a longer name, or in a following
@@ -1970,10 +1981,11 @@ review and verified against the tree.
     the length.
   - A listed name whose first occurrence is inside another line, in its
     value or as the start or the end of a longer name: radosgw's trailer
-    signature covers the text from that occurrence to the line's CRLF,
-    split at its colons, even when the name also has a line of its own
-    further on. rgw-go's covers the first line that bears exactly the
-    name, or no line for it.
+    signature covers, and its environment takes as a trailer, the text
+    from that occurrence to the line's CRLF, split at its colons, even when
+    the name also has a line of its own further on. rgw-go's signature
+    covers, and rgw-go keeps, the first line that bears exactly the name,
+    or no line for it.
   - The bytes radosgw drops before it looks for the signature: it drops
     from the start of the section the summed length of the lines it found,
     CRLFs included, counting a line once for each listed name that finds
@@ -1996,11 +2008,28 @@ review and verified against the tree.
   - A line whose value holds a second colon, or is empty: radosgw takes
     only the text between the first two colons as the value, skipping
     empty fields, and leaves a trailer line with an empty value out of its
-    trailer signature; rgw-go takes the whole value after the first colon,
-    an empty one included, both for the declared signature and for the
-    trailers its signature covers (`docs/ceph-upstream-bugs.md`, "radosgw
-    reads an aws-chunked trailer line's value only up to a second colon,
-    and drops an empty one").
+    trailer signature and its environment; rgw-go takes the whole value
+    after the first colon, an empty one included, both for the declared
+    signature and for the trailers it keeps and its signature covers
+    (`docs/ceph-upstream-bugs.md`, "radosgw reads an aws-chunked trailer
+    line's value only up to a second colon, and drops an empty one").
+  - A payload whose `x-amz-content-sha256` does not end in `TRAILER`, such
+    as `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, sent with `x-amz-trailer`:
+    radosgw takes the listed trailers from its section all the same, since
+    `complete()` calls `extract_trailing_headers` whenever `x_amz_trailer`
+    is set
+    ([rgw_auth_s3.cc:1681-1683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1681-L1683)
+    at v19.2.7,
+    [rgw_auth_s3.cc:1636-1638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1636-L1638)
+    at v20.2.4). A Tentacle radosgw then verifies the checksum an algorithm
+    header, or a part's upload type, names against such a trailer, which
+    neither the payload's form nor any signature covers. It does so in the
+    filter `RGWPutObj_Cksum::Factory` builds
+    ([rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611)),
+    which a part with no algorithm header bases on the upload's
+    `multipart_cksum_type`
+    ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472)).
+    rgw-go reads no trailer from such a payload.
 - **Some bucket sub-records are carried opaque in phase 0.**
   RGWBucketInfo's object-lock configuration and sync policy are kept as
   the encoded bytes radosgw wrote and written back unchanged; the compat
