@@ -183,7 +183,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A negative or overlong rgw_gc_obj_min_wait makes radosgw's gc free overwritten tails at its next pass](#a-negative-or-overlong-rgw_gc_obj_min_wait-makes-radosgws-gc-free-overwritten-tails-at-its-next-pass) | none | none | ✓ |
 | [radosgw's gc can remove a queue page twice when a pass outlives its shard lock](#radosgws-gc-can-remove-a-queue-page-twice-when-a-pass-outlives-its-shard-lock) | none | none | ✓ |
 | [Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync pipe's source read goes unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked) | none | none | ✓ |
-| [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) | ✓ (the rate-limit charge) |
+| [radosgw grants a signed CORS preflight without comparing its signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature) | [#64308](https://tracker.ceph.com/issues/64308) | [ceph/ceph#55458](https://github.com/ceph/ceph/pull/55458), [ceph/ceph#59977](https://github.com/ceph/ceph/pull/59977) | ✓ (the rate-limit charge and the answers by key kind) |
 | [radosgw's signed CORS preflight takes a system key's rgwx-uid unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified) | pending | pending | ✓ |
 | [radosgw's copy drops its tail references after a head write that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out) | [#80899](https://tracker.ceph.com/issues/80899) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
 | [radosgw's copy keeps its tail references when its head write loses a race](#radosgws-copy-keeps-its-tail-references-when-its-head-write-loses-a-race) | [#80899](https://tracker.ceph.com/issues/80899), [#80902](https://tracker.ceph.com/issues/80902) | [ceph/ceph#72098](https://github.com/ceph/ceph/pull/72098) |  |
@@ -336,6 +336,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's POST policy excepts a field whose name holds a NUL after a checksum algorithm's](#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms) | pending | pending |  |
 | [radosgw's JSON parser recurses without limit on a POST policy's nesting](#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting) | pending | pending |  |
 | [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending |  |
+| [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -8919,7 +8920,7 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw grants a signed CORS preflight without comparing its signature
 
-- **Kind:** two parts.
+- **Kind:** three parts.
   - The skip itself is a quirk, benign and not found by us: it is
     deliberate, for presigned URLs whose signed headers a browser's
     preflight cannot carry (fe15b52edb5, "rgw/auth: ignoring signatures for
@@ -8932,6 +8933,13 @@ Every new entry adds its row to this table, in document order.
     defect, security-relevant and found by us: a targeted denial of
     service, gated on a per-user or global per-user write-op limit (triage
     estimate CVSS 5.9-7.5).
+  - The forged preflight's answers by the kind of its key are a defect,
+    security-relevant and found by us: an information disclosure to anyone
+    who holds only a key's id. The answer tells the sender whether the key
+    is a system user's, most cheaply through `rgwx-bucket-instance`, and
+    through the bucket load's lifts and `init_quota`; whether its user's op
+    mask lacks the read bit; and whether that user owns a requester-pays
+    bucket.
 
   Unreproduced: derived from the source and a logic-level model.
 - **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
@@ -8988,6 +8996,81 @@ Every new entry adds its row to this table, in document order.
     bucket is requester-pays and the identity does not own it
     ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601) at v19.2.7,
     [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606) at v20.2.4).
+  - For a system user, `SysReqApplier::modify_request_state`, which
+    `Strategy::apply` runs for the preflight's grant as for any other, makes
+    the request's `rgwx-` query parameters visible and the request a system
+    one
+    ([rgw_auth_filters.h:320-331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L320-L331)
+    and
+    [rgw_auth.cc:525](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L525) at v19.2.7,
+    [rgw_auth_filters.h:348-359](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L348-L359)
+    and
+    [rgw_auth.cc:540](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L540) at v20.2.4).
+    `RGWHTTPArgs` files every `rgwx-` argument apart, where `get` does not
+    look, until `set_system` copies them into the map it reads
+    ([rgw_common.cc:920-921](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L920-L921),
+    [rgw_common.cc:978-987](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L978-L987) and
+    [rgw_common.h:438-443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L438-L443) at v19.2.7,
+    [rgw_common.cc:933-934](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L933-L934),
+    [rgw_common.cc:991-1000](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L991-L1000) and
+    [rgw_common.h:462-467](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L462-L467) at v20.2.4).
+  - The bucket load, which runs for the preflight as for every op, reads
+    `rgwx-bucket-instance` before anything else and fails the request with
+    its parse error
+    ([rgw_op.cc:498-505](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L498-L505) at v19.2.7,
+    [rgw_op.cc:528-535](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L528-L535) at v20.2.4;
+    called through `do_init_permissions`,
+    [rgw_op.cc:8003-8005](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8003-L8005) and
+    [rgw_op.cc:8908-8910](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8908-L8910)).
+    A value without a colon is -EINVAL, 400 InvalidArgument
+    ([rgw_common.cc:3156-3161](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L3156-L3161) at v19.2.7,
+    [rgw_common.cc:3212-3217](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3212-L3217) at v20.2.4);
+    a value with one replaces the bucket name and instance id the request
+    loads. So `OPTIONS /b?rgwx-bucket-instance=x`, with a key's id and any
+    signature, is 400 for a system key and the CORS answer, or the
+    preflight's own refusal, for any other key, on any bucket and on a
+    single zone.
+  - The same load lets a system request through three of its refusals. A
+    bucket of another zonegroup is -ERR_PERMANENT_REDIRECT unless this
+    zonegroup is the master and the request a system one
+    ([rgw_op.cc:558-574](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L558-L574) at v19.2.7,
+    [rgw_op.cc:588-604](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L588-L604) at v20.2.4).
+    A suspended bucket is -ERR_USER_SUSPENDED, 403 UserSuspended, and a
+    bucket policy that does not parse -EACCES, 403 AccessDenied, for all but
+    a system request at v19.2.7
+    ([rgw_op.cc:366-370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L366-L370) and
+    [rgw_op.cc:612-614](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L612-L614))
+    and for all but an admin's or a system user's key at v20.2.4
+    ([rgw_op.cc:396-400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L396-L400) and
+    [rgw_op.cc:642-644](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L642-L644);
+    `LocalApplier::is_admin`,
+    [rgw_auth.cc:1068-1071](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1068-L1071)).
+  - `RGWOptionsCORS` keeps `RGWOp::init_processing`, which runs
+    `init_quota` before the op mask check
+    ([rgw_op.h:253-261](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L253-L261) and
+    [rgw_process.cc:201-205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L201-L205) at v19.2.7,
+    [rgw_op.h:266-274](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L266-L274) and
+    [rgw_process.cc:201-205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L201-L205) at v20.2.4).
+    `init_quota` loads the user or account of `s->bucket_owner`, the owner
+    the bucket's ACL names
+    ([rgw_op.cc:552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L552) at v19.2.7,
+    [rgw_op.cc:582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L582) at v20.2.4),
+    and fails the request when that load fails, but skips it for a system
+    request and for a user whose op mask lacks both the write and the delete
+    bit
+    ([rgw_op.cc:1411-1434](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1411-L1434) and
+    `get_owner_quota_info`,
+    [rgw_op.cc:1383-1409](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1383-L1409) at v19.2.7,
+    [rgw_op.cc:1648-1671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1648-L1671) and
+    [rgw_op.cc:1620-1646](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1620-L1646) at v20.2.4).
+    The anonymous user's op mask is `RGWUserInfo`'s default, every bit
+    ([rgw_common.h:605-610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L605-L610) at v19.2.7,
+    [rgw_common.h:629-634](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L629-L634) at v20.2.4),
+    which `rgw_get_anon_user` leaves as it is
+    ([rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_user.cc#L106-L111) at v19.2.7,
+    [rgw_user.cc:106-111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_user.cc#L106-L111) at v20.2.4),
+    so on a bucket whose ACL names an owner that does not load an anonymous
+    preflight is refused with the rest.
   - `log_usage` files the preflight as any request
     ([rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L203-L219) at v19.2.7,
     [rgw_log.cc:203-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L203-L219) at v20.2.4):
@@ -9017,6 +9100,29 @@ Every new entry adds its row to this table, in document order.
   one. A preflight also answers 403 AccessDenied when the key user's op
   mask lacks the read bit, and on a requester-pays bucket its
   x-amz-request-charged says whether the key's user owns that bucket.
+
+  The bucket load tells the sender whether a key is a system user's. The
+  cheapest way needs only a bucket on a single zone: a preflight naming an
+  `rgwx-bucket-instance` without a colon is 400 for a system key and
+  answered for any other, one request per key. On a suspended bucket, on
+  one whose policy does not parse and, from the master zonegroup, on
+  another zonegroup's bucket, a forged preflight is served for a system
+  key, and on Tentacle for an admin's on the first two, where any other
+  key's is refused. `init_quota` adds breadth in a degenerate state rather
+  than severity: on a bucket whose ACL names an owner whose record does not
+  load, a forged preflight is served for a system key or a key without the
+  modify bits and refused for every other key, and for an anonymous
+  preflight.
+
+  Every one of these follows from the preflight running as the key's user
+  once it is granted on the key's id alone. A remedy on the `rgwx-uid` path
+  alone ("radosgw's signed CORS preflight takes a system key's rgwx-uid
+  unverified", below) leaves `rgwx-bucket-instance` and the others open, and
+  so does a patch to any one parameter or check: the remedy belongs where
+  the preflight is granted without its signature compared, which should
+  give it the key's tenant and nothing else of the key's user, its system
+  flag and `rgwx-` parameters included.
+
   Forged preflights inflate usage records the skip makes the key user's:
   that user's as payer on a requester-pays bucket and, with no bucket named,
   that user's or its account's. With a bucket named the record is the
@@ -9024,7 +9130,8 @@ Every new entry adds its row to this table, in document order.
   skip. What the preflight reads is no more than an anonymous preflight
   reads.
 - **Releases:** v19.1.0 on; checked at v19.2.6, v20.2.4 and main
-  6cafff02b39.
+  6cafff02b39, and the bucket load, `init_quota` and `rgwx-` parameters at
+  v19.2.7 and v20.2.4.
 - **rgw-go:** takes the skip, as radosgw does
   ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401) at v19.2.7,
   [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931) at v20.2.4).
@@ -9044,8 +9151,16 @@ Every new entry adds its row to this table, in document order.
   - Unlike radosgw, it answers every preflight whose key resolves alike, so
     the preflight tells its sender no more than a forged request of another
     method does: it runs a suspended user's preflight where radosgw answers
-    403 UserSuspended, and takes no `rgwx-uid` on one (`docs/exclusions.md`,
-    "A preflight's answer says nothing of its key's user").
+    403 UserSuspended, takes no `rgwx-uid` on one, and reads
+    `rgwx-bucket-instance` on no request. Its preflight op, which the S3
+    handler does not route yet, is written so that once it does the answer
+    depends on no key: it asks for no op mask, loads the bucket with no
+    system exemption, makes of the bucket load's refusals only those radosgw
+    gives every key alike (an ACL that does not decode is 500 for all),
+    loads no owner for a quota, and its answer is to carry no
+    x-amz-request-charged (`op.OptionsCORS`, `internal/op/cors.go`;
+    `docs/exclusions.md`, "A preflight's answer says nothing of its key's
+    user").
   - Unlike radosgw, it accounts a preflight's usage as an anonymous
     request's, so a forged one files nothing under the key's user or account
     and charges that user nothing as payer (`internal/op/usagelog.go:32-42`;
@@ -9071,10 +9186,16 @@ Every new entry adds its row to this table, in document order.
   [#64308](https://tracker.ceph.com/issues/64308)'s, named by fe15b52edb5's
   message. For the rate-limit charge, rgw-bug-reproduction's prior-art
   search found no report or fix; the fix would exempt `RGW_OP_OPTIONS_CORS`
-  from `rate_limit()`. It is unfiled while filing is paused.
+  from `rate_limit()`. It is unfiled while filing is paused. For the
+  answers by key kind, rgw-bug-reproduction verified the
+  `rgwx-bucket-instance` path end to end at v20.2.4; the `init_quota` tell
+  is ours and unverified by it. Both are unfiled while filing is paused.
 - **Found:** phase 1 unit A, Task 9, 2026-10-04, transcribing
   `LocalEngine::authenticate`; confirmed by the Task 9 review. Not
-  reproduced.
+  reproduced. The bucket load's exemptions: phase 2 task BC-3, 2026-10-19,
+  tracing what a forged preflight's answer depends on before the preflight
+  op runs, and `rgwx-bucket-instance` and `init_quota` by that task's
+  review; derived from the source, not reproduced.
 
 ## radosgw's signed CORS preflight takes a system key's rgwx-uid unverified
 
@@ -9120,7 +9241,11 @@ Every new entry adds its row to this table, in document order.
   forged request of any other method is refused with SignatureDoesNotMatch
   before `load_acct_info` runs, so only the preflight discloses this. The
   sender needs only a system key's id, which every request signed with that
-  key and every URL presigned with it carries in the clear.
+  key and every URL presigned with it carries in the clear. A fix to
+  `rgwx-uid` alone does not stop the preflight telling that the key is a
+  system user's: `rgwx-bucket-instance` and the bucket load's other answers
+  by key kind tell it too ("radosgw grants a signed CORS preflight without
+  comparing its signature", above).
 - **Releases:** v19.1.0 on, with the preflight's signature skip; checked
   at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: a preflight's identity takes no `rgwx-uid`
@@ -11002,7 +11127,8 @@ Every new entry adds its row to this table, in document order.
   PutBucketPolicy keeps what the write it lost to changed"). Each try of
   PutPublicAccessBlock likewise sets only the block attr over the bucket as
   that try read it (`op.PutPublicAccessBlock`, `internal/op/publicaccess.go`).
-  rgw-go does not serve PutBucketCors yet.
+  PutBucketCors sets only the CORS attr the same way (`op.PutBucketCORS`,
+  `internal/op/cors.go`).
   Each try of PutBucketVersioning writes the attrs that try read
   (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
   `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
@@ -11972,7 +12098,9 @@ Every new entry adds its row to this table, in document order.
   PutBucketVersioning, another retried bucket write, is authorized again
   the same way (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`),
   and so are Put and DeleteBucketEncryption (`op.PutBucketEncryption` and
-  `op.DeleteBucketEncryption`, `internal/op/bucketencryption.go`).
+  `op.DeleteBucketEncryption`, `internal/op/bucketencryption.go`) and Put
+  and DeleteBucketCors (`op.PutBucketCORS` and `op.DeleteBucketCORS`,
+  `internal/op/cors.go`).
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit X, Task 5, 2026-10-07, re-authorizing
   rgw-go's retried bucket writes; derived from the source, not reproduced.
@@ -18289,3 +18417,51 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-30, 2026-10-19, transcribing the expiry
   check. Not reproduced on a running system.
+
+## radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode
+
+- **Kind:** defect, S3-correctness, low: the one request meant to remove a
+  bucket's CORS configuration cannot remove one that does not decode. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Every try of `RGWDeleteCORS::execute` first runs `read_bucket_cors` and
+    returns its error before it touches the attrs
+    ([rgw_op.cc:6133-6137](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6133-L6137),
+    [rgw_op.cc:6800-6804](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6804)).
+  - `read_bucket_cors` answers a `user.rgw.cors` that does not decode with
+    -EIO
+    ([rgw_op.cc:1498-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1498-L1504),
+    [rgw_op.cc:1735-1741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1735-L1741)),
+    which no row of the error table holds, so `set_req_state_err` answers it
+    500 UnknownError
+    ([rgw_common.cc:349-353](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L349-L353),
+    [rgw_common.cc:362-366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L362-L366)).
+  - The decode decides nothing else the client sees: `send_response`
+    answers a configuration that was there and one that was not alike, 204
+    ([rgw_rest_s3.cc:3846-3847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3846-L3847),
+    [rgw_rest_s3.cc:4297-4298](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4297-L4298)).
+  - GetBucketCors and every preflight of the bucket read the attr through
+    the same `read_bucket_cors` and answer 500 too
+    ([rgw_op.cc:6062-6066](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6062-L6066) and
+    [rgw_op.cc:6177-6181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6177-L6181),
+    [rgw_op.cc:6729-6733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6729-L6733) and
+    [rgw_op.cc:6844-6848](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6844-L6848)).
+    Only a PutBucketCors, which replaces the attr without reading it, clears
+    the state.
+  - Amazon S3's DeleteBucketCors names no such refusal: it deletes the
+    bucket's configuration and answers 204.
+- **Impact:** a bucket whose CORS attr was damaged, or written in an
+  encoding these releases cannot read, answers every CORS request 500, and
+  its owner's DeleteBucketCors fails with 500 as well. The owner must know
+  to overwrite it with a PutBucketCors first.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. `op.DeleteBucketCORS` removes the attr
+  whatever it holds, through the retried and re-authorized write the other
+  bucket-config writes take, and succeeds; a bucket without the attr
+  succeeds with nothing written, as radosgw's does (`internal/op/cors.go`;
+  `docs/exclusions.md`, "DeleteBucketCors removes a CORS configuration that
+  does not decode").
+- **Upstream:** none. rgw-bug-reproduction logged it as non-security; it is
+  unfiled while filing is paused.
+- **Found:** phase 2 task BC-3's review, 2026-10-19, reading
+  `RGWDeleteCORS::execute`. Derived from the source, not reproduced.
