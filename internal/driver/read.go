@@ -245,12 +245,17 @@ func (s *Store) walk(st *op.ObjectState, ofs, n uint64, issue func(piece) error)
 	return nil
 }
 
-// checkWalkBound refuses a range whose walk would pass meta.MaxWalkStripes
-// stripes before any of it is read: the bytes of [ofs, end] past the head,
-// cut into the largest stripes any rule allows, are fewer stripes than the
-// walk visits. An explicit manifest's walk is bounded by its pieces, which
-// are already in memory.
+// checkWalkBound is checkStripeBound at meta.MaxWalkStripes.
 func checkWalkBound(m *meta.Manifest, ofs, end uint64) error {
+	return checkStripeBound(m, ofs, end, meta.MaxWalkStripes)
+}
+
+// checkStripeBound refuses a range whose walk would pass limit stripes
+// before any of it is read: the bytes of [ofs, end] past the head, cut into
+// the largest stripes any rule allows, are fewer stripes than the walk
+// visits. An explicit manifest's walk is bounded by its pieces, which are
+// already in memory.
+func checkStripeBound(m *meta.Manifest, ofs, end, limit uint64) error {
 	if m.ExplicitObjs {
 		return nil
 	}
@@ -263,8 +268,8 @@ func checkWalkBound(m *meta.Manifest, ofs, end uint64) error {
 		return nil
 	}
 	span := end - start + 1
-	if least := span/largest + min(span%largest, 1); least > meta.MaxWalkStripes {
-		return fmt.Errorf("%w: at least %d, more than %d", meta.ErrTooManyStripes, least, meta.MaxWalkStripes)
+	if least := span/largest + min(span%largest, 1); least > limit {
+		return fmt.Errorf("%w: at least %d, more than %d", meta.ErrTooManyStripes, least, limit)
 	}
 	return nil
 }
