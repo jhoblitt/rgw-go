@@ -1,11 +1,11 @@
 # Phase 2 unit B: bucket configuration
 
 Threat model: a client adversary at the security boundaries PP-14 names, which get adversarial
-review: authentication (BC-3's preflight, BC-5, BC-6's options_cors route, BC-31), authorization
-(BC-4, BC-18, BC-28c, BC-28e, BC-32) and the parsers of a client's documents (BC-2, BC-10, BC-17,
-BC-23, BC-28a, BC-29, BC-30, BC-30b); everything else here, the configuration storage, the website renderer
-and the recording tasks, defends against honest mistakes, and every write keeps the bucket instance
-radosgw-readable.
+review: authentication (BC-3's preflight, BC-5, BC-6's options_cors route, BC-13c's SigV2 bucket,
+BC-31), authorization (BC-4, BC-18, BC-28c, BC-28e, BC-32) and the parsers of a client's documents
+(BC-2, BC-10, BC-17, BC-23, BC-28a, BC-29, BC-30, BC-30b); everything else here, the configuration
+storage, the website renderer and the recording tasks, defends against honest mistakes, and every
+write keeps the bucket instance radosgw-readable.
 
 ## Scope
 
@@ -16,7 +16,7 @@ public access block, policy status, POST object".
 | Item | S3 surface | Tasks | Stored form |
 |---|---|---|---|
 | CORS | Get/Put/DeleteBucketCors (`?cors`); preflight `OPTIONS` at bucket and object scope; `Access-Control-*` and `Vary` on ordinary responses; the non-preflight refusal | BC-2 to BC-8 | bucket attr `user.rgw.cors`, RGWCORSConfiguration (1,1) |
-| Static website | Get/Put/DeleteBucketWebsite (`?website`, gated by `rgw_enable_static_website`); the website endpoint: index and error documents, routing rules, RedirectAllRequestsTo, `x-amz-website-redirect-location`, HTML errors | BC-9 to BC-16 | `RGWBucketInfo.website_conf` and `has_website`, RGWBucketWebsiteConf (2,1) |
+| Static website | Get/Put/DeleteBucketWebsite (`?website`, gated by `rgw_enable_static_website`); the website endpoint: index and error documents, routing rules, RedirectAllRequestsTo, `x-amz-website-redirect-location`, HTML errors | BC-9 to BC-16, BC-13c | `RGWBucketInfo.website_conf` and `has_website`, RGWBucketWebsiteConf (2,1) |
 | Public access block, policy status | Get/Put/DeletePublicAccessBlock; GetBucketPolicyStatus | BC-17 to BC-22 | bucket attr `user.rgw.public-access` (1,1); policy status is computed |
 | Encryption configuration | Get/Put/DeleteBucketEncryption; the bucket default's effect on PutObject, CopyObject, CreateMultipartUpload, UploadPart and POST object | BC-23 to BC-27 | bucket attr `user.rgw.sse-s3.policy`, RGWBucketEncryptionConfig (1,1) |
 | Ownership controls | Get/Put/DeleteBucketOwnershipControls; CreateBucket's `x-amz-object-ownership`; enforcement | BC-28a to BC-28f | bucket attr `user.rgw.ownership-controls`, v21.1.2's (1,1){u8} |
@@ -114,13 +114,13 @@ and BC-34.
 | `internal/op/getobject.go` | BC-14 (one hook field, one call; the body in `website_get.go`) | versioning, WP-12 | line-local |
 | `internal/op/{putobject,initmultipart,uploadpart}.go` | BC-26 | WP-6, V11, L5b | BC-26 after WP-6 (index Order 3) |
 | `internal/op/copyobject.go` | BC-26 (b) | V11 | never in parallel |
-| `internal/s3/{putobject,copyobject}.go`, `internal/s3/multipart.go` | BC-26; BC-13 (b) (`completeLocation`) | WP-7, WP-13, versioning, L5b, C8 | One call line per site, so whichever lands first, the later rebases; BC-26's op-file changes keep their order after WP-6 and V11, which share function bodies (index Order) |
+| `internal/s3/{putobject,copyobject}.go`, `internal/s3/multipart.go` | BC-26 | WP-7, WP-13, versioning, L5b, C8 | One call line per site, so whichever lands first, the later rebases; BC-26's op-file changes keep their order after WP-6 and V11, which share function bodies (index Order) |
 | `internal/authz/{env,load,write,evaluator}.go` | BC-18 (the block ops' check in `evaluator.go`), BC-26 (`cryptKeys` in `env.go`), BC-28e | S3 (the `IsPublic` callers), S5 (the ACL checks) | BC-18 and BC-28e after S3; BC-18 after S5 |
 | `internal/op/bucketsubres.go`, `objectattrs.go`, `bucketops.go` | BC-28c | C6 (moves GetBucketLifecycle out of `bucketsubres.go`), L2 (b) (CreateBucket) | BC-28c (b) after L2 (b); line-local otherwise |
 | `internal/s3/bucket.go` (the CreateBucket handler) | BC-28d (one header read) | L2 (b) | BC-28d after L2 (b). S2 moves no existing binding; each feature task moves its own into its route set |
 | `internal/op/postobject.go` | BC-32 (owner), BC-28e (b) (the canned ACL call) | V11 (`VersionForWrite`) | BC-28e (b) after BC-32; whichever of V11 and BC-32 lands second switches the versioned-bucket refusal to `VersionForWrite` |
 | `internal/meta/{bucket_info,bucket_json,dump_bucket}.go` | BC-9 | L1 leaves them unedited | single owner |
-| `internal/auth/{sigv4,sigv2,verifier}.go`; `internal/s3/auth.go` | BC-5; BC-31 (the interface, and a new `browserupload.go`) | WP-3 (`chunked.go`, `payload.go`) | one owner each |
+| `internal/auth/{sigv4,sigv2,verifier}.go`; `internal/s3/auth.go` | BC-5; BC-13c (`sigv2.go`'s canonical resource); BC-31 (the interface, and a new `browserupload.go`) | WP-3 (`chunked.go`, `payload.go`) | one owner each at a time; `sigv2.go` has two owners in order, BC-5 (merged), then BC-13c |
 | `hack/s3tests` lists, ledgers, known-differences files | BC-8, BC-22, BC-27, BC-28f, BC-34 | every unit's recording; WP-22, WP-23 | one at a time through the controller; after WP-22 each edits only its own lines in the Go selection's lists |
 | `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | nearly every task | every unit | the controller's merge order |
 
@@ -518,7 +518,7 @@ relies on fakerados behaviour beyond what it serves today.
 - **Depends on:** BC-3 to BC-7. **PR:** one per release's recording, landed one at a time by
   the controller. **Brief:** about 80 lines.
 
-**Static website: BC-9 to BC-16.** The ceph files `rgw_website.h` and `rgw_website.cc` are
+**Static website: BC-9 to BC-16, with BC-13c.** The ceph files `rgw_website.h` and `rgw_website.cc` are
 byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a later
 `canonical_name` line, so their citations hold at both.
 
@@ -664,37 +664,73 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 
 ### Task BC-13: Website requests
 
-- **Layer:** request parsing. **Files:** modify `internal/cephconf/apis.go`, `internal/vhost/`,
-  `internal/s3/request.go`, `internal/op/request.go`, `internal/s3/multipart.go`
-  (`completeLocation`). **Cluster:** no.
+- **Layer:** request parsing. **Files:** modify `internal/cephconf/apis.go` and `options.go`,
+  `internal/vhost/`, `internal/s3/request.go`, `internal/op/request.go`, and
+  `internal/cli/serve.go` (the one call that reads `rgw_dns_name`). **Cluster:** no.
+- **Lands inert:** no client or operator sees a website change. Nothing fills `s3.Config`'s
+  website fields until BC-13c, which owns the wiring, the startup log and the exclusions,
+  because SigV2 and the admin API must read the Host the same way the router does in the
+  change that turns the website names on. The list fix alone changes answers, each toward
+  radosgw: a value holding a newline in `rgw_enable_apis`, `rgw_extended_http_attrs` or
+  `rgw_dns_name`, and an `rgw_dns_name` joined with a separator other than a comma or a
+  space.
 - **Produces:** `cephconf.EnabledAPIs` reporting `s3website` and its priority against `s3`;
-  `op.Request.Website bool` and `op.Request.Redirect string`.
+  `vhost.Resolve`, the one reading of a Host that BC-13c gives SigV2 and the admin API;
+  `s3.Config`'s website fields; `op.Request.Website bool`, and `op.Request.Redirect string`,
+  which BC-14 fills.
 - **Behaviour:**
   1. `s3website` in `rgw_enable_apis` enables the website handler, as it enables S3
-     ([rgw_appmain.cc:301-312](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_appmain.cc#L301-L312), [rgw_appmain.cc:310-321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L310-L321));
-     today it is logged as ignored (`internal/cephconf/apis.go:18-41`).
-  2. The s3website hostnames are `rgw_dns_s3website_name` and the zonegroup's
-     `hostnames_s3website`, empty names dropped ([rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L235-L238),
-     [rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L235-L238)). A Host in them, directly or through the CNAME
-     fallback, is a website request whose domain is the s3website one
+     ([rgw_appmain.cc:301-312](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_appmain.cc#L301-L312), [rgw_appmain.cc:310-321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L310-L321)).
+     `EnabledAPIs` reports it as `Website` and keeps it among the ignored names the startup log
+     reports, until BC-13c. `Options.List` splits on `get_str_list`'s `;,= \t` alone
+     ([str_list.cc:30-54](https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L30-L54),
+     [str_list.cc:30-54](https://github.com/ceph/ceph/blob/v20.2.4/src/common/str_list.cc#L30-L54)), not main's newline as well, and `rgw_dns_name` is split
+     on `get_str_list`'s `", "`, a comma or a space
+     ([rgw_rest.cc:217](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L217),
+     [rgw_rest.cc:217](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L217)).
+  2. The s3website hostnames are `rgw_dns_s3website_name`, one name and never split, and the
+     zonegroup's `hostnames_s3website`, empty names dropped ([rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L235-L238),
+     [rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L235-L238)). With `s3website` enabled, a Host
+     `rgw_find_host_in_domains` finds in `hostnames_s3website_set` is a website request whose
+     domain and bucket are the s3website ones, in place of an S3 match
      ([rgw_rest.cc:2075-2081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2075-L2081),
-     [rgw_rest.cc:2087-2093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2087-L2093)).
-  3. `s3website` listed before `s3` makes every request with a Host a website request
+     [rgw_rest.cc:2087-2093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2087-L2093)); so is one whose CNAME is in them, through
+     `rgw_resolve_cname`'s DNS lookup, which rgw-go does not make. The Host-as-bucket fallback,
+     the one `validate_bucket_name` guards, counts `hostnames_s3website_set` toward its
+     configured names whether or not `s3website` is enabled, and never makes a website
+     request: a Host it takes whole is one only by 3
+     ([rgw_rest.cc:2141-2148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2141-L2148),
+     [rgw_rest.cc:2153-2160](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2153-L2160)).
+  3. `s3website` ranked above `s3`, by each name's first place, with an absent name ranked
+     below every named one ([rgw_rest.cc:2038-2051](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2038-L2051),
+     [rgw_rest.cc:2050-2063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2050-L2063)), makes every request with a Host a website request
      ([rgw_rest.cc:2150-2156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
      [rgw_rest.cc:2162-2168](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2162-L2168)). **Differs:** v20.2.4 also
      makes a request with no Host one ([rgw_rest.cc:2193-2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198));
      rgw-go applies that on both releases (B14).
-  4. CompleteMultipartUpload's Location takes the s3website domain when the request came in
-     on one, as `compute_domain_uri` reads the domain preprocess set
-     ([rgw_rest.h:805-818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L805-L818), [rgw_rest.h:817-830](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830)).
+  4. CompleteMultipartUpload's Location needs no change: `compute_domain_uri` reads the domain
+     preprocess set
+     ([rgw_rest.h:805-818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L805-L818), [rgw_rest.h:817-830](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830)),
+     which `op.Request.Domain` carries. radosgw never builds a Location under a website
+     domain. A Host in a website name always makes a website request, and the website
+     handler's `op_post` is NULL
+     ([rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L34),
+     [rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L34)), which `process_request` answers 405
+     MethodNotAllowed
+     ([rgw_process.cc:325-329](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L325-L329),
+     [rgw_process.cc:327-331](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L331)).
 - **Specs:** each Host form (a website host, a bucket subdomain of one, a CNAME to one, a plain
-  S3 host, no Host) against each `rgw_enable_apis` order, on both releases.
-- **Exclusions and registry:** updates the website halves of "The CNAME fallback resolves no
-  CNAME and knows no s3website hostnames." and "CompleteMultipartUpload's Location finds its
-  domain without CNAME lookups or website hostnames."; new exclusion for the no-Host rule on
-  Squid (B14).
-- **Depends on:** nothing. **PR split:** (a) `cephconf` and `vhost`; (b) the request flag and
-  the Location. **Brief:** about 200 lines.
+  S3 host, no Host) against each `rgw_enable_apis` order. The parser takes no release: B14
+  makes both read a Host alike.
+- **Exclusions and registry:** (b) corrects "CompleteMultipartUpload's Location finds its
+  domain without CNAME lookups or website hostnames.", whose claim that radosgw takes the
+  domain from a website hostname describes a path behaviour 4 shows never runs. (b) adds the
+  registry entry for Squid's missing no-Host website flag, tracker #66748, fixed by ceph
+  5913f584cba in v20.0.0 and not on squid. BC-13c makes the other exclusion changes in the
+  change that makes them true.
+- **Depends on:** nothing. **PR split:** (a) the list fix, `cephconf` and `vhost`; (b) the
+  request flag, then the Location entry's correction, then the registry entry.
+  **Brief:** about 200 lines.
 
 ### Task BC-14: Website retarget
 
@@ -793,6 +829,48 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
 - **Depends on:** S2, BC-12, BC-14. **PR split:** (a) the HTML renderer and website-mode
   refusals; (b) serving and the error handler. **Brief:** about 230 lines.
 
+### Task BC-13c: Website wiring
+
+- **Layer:** configuration and authentication. **Files:** modify `internal/cli/serve.go` and
+  `serve_test.go`, `internal/auth/config.go`, `internal/auth/sigv2.go`,
+  `internal/auth/route_test.go`, `internal/admin/handler.go`, `internal/cephconf/apis.go` and
+  `apis_test.go` (the startup log), and `internal/s3/request.go` if `Config.hostNames` must be
+  exported for auth and admin. **Cluster:** no.
+- **Consumes:** BC-13's `vhost.Resolve`, `cephconf.APIs`'s `Website` and `WebsiteFirst`, and
+  `s3.Config`'s website fields; BC-15's website dispatch.
+- **Behaviour:**
+  1. **One reading of the Host.** SigV2's canonical resource names its bucket by the same
+     `vhost.Resolve` over the same names as the router and `ParseRequest`, for every Host
+     form, and the admin API's `DecodedURI` reads the Host the same way. The invariant: with
+     the S3 name `example.com` and the website name `web.example.com`, a
+     Host `b.web.example.com` is routed to bucket `b`, and a SigV2 check over `/b.web/...`
+     would let a presigned URL for bucket `b.web` reach `b` under its signer's identity.
+  2. **The names.** `s3Config` fills `s3.Config` with `rgw_dns_s3website_name`, read whole
+     rather than split, and the zonegroup's `hostnames_s3website`, and with `Website` and
+     `WebsiteFirst` from `cephconf.EnabledAPIs`. The auth and admin configurations take the
+     same names.
+  3. **The startup log** stops reporting `s3website` among the ignored APIs.
+  4. **The exclusions and registry BC-13 deferred.**
+     - "The CNAME fallback resolves no CNAME and knows no s3website hostnames." becomes "The
+       CNAME fallback resolves no CNAME.", since rgw-go then counts the website names toward
+       the Host-as-bucket fallback, and makes a Host whose CNAME radosgw finds in a website
+       name a website request only by the rank rule.
+     - "CompleteMultipartUpload's Location finds its domain without CNAME lookups or website
+       hostnames." becomes "...without CNAME lookups.", since rgw-go then knows the website
+       hostnames and, through BC-15, answers a website request's POST 405 as radosgw does.
+     - A new exclusion, "On Squid, a request with no Host is a website request when
+       `s3website` outranks `s3`.", records that rgw-go applies v20.2.4's rule on both
+       releases (B14).
+     - BC-13's registry entry for tracker #66748 names that exclusion on its rgw-go line.
+- **Specs:** for each Host form and `rgw_enable_apis` order of BC-13's table, the bucket SigV2
+  signs is the bucket the request is routed to, as `route_test.go` compares them, now under
+  website names; `s3Config` reads `rgw_dns_s3website_name` whole; the admin API routes a
+  website Host's path as the router does; the startup log's ignored names.
+- **Exclusions and registry:** the four in behaviour 4.
+- **Review:** adversarial, since SigV2's canonical resource is an authentication seam (PP-14).
+- **Depends on:** BC-13; BC-15, so that no website request is ever served as S3. **PR:** one.
+  **Brief:** about 120 lines.
+
 ### Task BC-16: Website gate
 
 - **Layer:** integration. **Files:** new `test/integration/phase2_website_test.go`.
@@ -804,7 +882,7 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   bucket.instance` equal to rgw-go's admin get. It also captures the RGWBucketInfo vectors BC-9's
   specs then pin. No s3-test at the pin carries the website markers.
 - **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, website`.
-- **Depends on:** BC-9 to BC-15. **PR:** one. **Brief:** about 70 lines.
+- **Depends on:** BC-9 to BC-15, BC-13c. **PR:** one. **Brief:** about 70 lines.
 
 **Public access block and policy status: BC-17 to BC-22.** Enforcement of a stored block is
 phase 1's and unchanged: `authz.publicAccess` decodes the attr and refuses an undecodable one
@@ -1820,7 +1898,7 @@ WP-23 for BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 | 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a), BC-30b | BC-2 and BC-5; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a; BC-30 |
 | 3 | BC-4, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
 | 4 | BC-6, BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-3, BC-5 and BC-7; BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
-| 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
+| 5 | BC-33, BC-28e, BC-13c | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32; BC-13 and BC-15 |
 
 The cluster tasks run one at a time, and the recording ones land through the controller, as
 the ledgers are append-only. BC-27 (a) records radosgw alone and goes first, since BC-26 (a)

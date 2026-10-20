@@ -17,14 +17,14 @@ flowchart LR
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
-  u_B["B: bucket config<br/>40 tasks"]
+  u_B["B: bucket config<br/>41 tasks"]
   u_WP["WP: write path<br/>22 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
   u_S -->|4| u_V
   u_S -->|2| u_L
   u_S -->|3| u_C
-  u_S -->|12| u_B
+  u_S -->|13| u_B
   u_S -->|3| u_WP
   u_V -->|2| u_S
   u_V -->|9| u_L
@@ -558,6 +558,7 @@ flowchart LR
   t_BC_13["BC-13"]
   t_BC_14["BC-14"]
   t_BC_15["BC-15"]
+  t_BC_13c["BC-13c"]
   t_BC_16["BC-16"]
   t_BC_17["BC-17"]
   t_BC_18["BC-18"]
@@ -622,6 +623,9 @@ flowchart LR
   t_S2 --> t_BC_15
   t_BC_12 --> t_BC_15
   t_BC_14 --> t_BC_15
+  t_S3 --> t_BC_13c
+  t_BC_13 --> t_BC_13c
+  t_BC_15 --> t_BC_13c
   t_BC_9 --> t_BC_16
   t_BC_10 --> t_BC_16
   t_BC_11 --> t_BC_16
@@ -629,6 +633,7 @@ flowchart LR
   t_BC_13 --> t_BC_16
   t_BC_14 --> t_BC_16
   t_BC_15 --> t_BC_16
+  t_BC_13c --> t_BC_16
   t_S3 --> t_BC_18
   t_S5 --> t_BC_18
   t_BC_17 --> t_BC_18
@@ -703,6 +708,7 @@ flowchart LR
   click t_BC_13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-13-website-requests" "BC-13: Website requests"
   click t_BC_14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-14-website-retarget" "BC-14: Website retarget"
   click t_BC_15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-15-website-serving-and-errors" "BC-15: Website serving and errors"
+  click t_BC_13c href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-13c-website-wiring" "BC-13c: Website wiring"
   click t_BC_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-16-website-gate" "BC-16: Website gate"
   click t_BC_17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-17-block-xml" "BC-17: Block XML"
   click t_BC_18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-18-block-ops" "BC-18: Block ops"
@@ -759,6 +765,7 @@ flowchart LR
 - [BC-13](B-bucket-config.md#task-bc-13-website-requests): Website requests
 - [BC-14](B-bucket-config.md#task-bc-14-website-retarget): Website retarget
 - [BC-15](B-bucket-config.md#task-bc-15-website-serving-and-errors): Website serving and errors
+- [BC-13c](B-bucket-config.md#task-bc-13c-website-wiring): Website wiring
 - [BC-16](B-bucket-config.md#task-bc-16-website-gate): Website gate
 - [BC-17](B-bucket-config.md#task-bc-17-block-xml): Block XML
 - [BC-18](B-bucket-config.md#task-bc-18-block-ops): Block ops
