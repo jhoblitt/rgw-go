@@ -35,11 +35,15 @@ var _ = Describe("OwnerOnly", func() {
 	})
 	It("allows the bucket owner", func(ctx SpecContext) {
 		Expect(op.VerifyBucketPermission(ctx, req, policy.S3ListBucket, acl.PermRead)).To(Succeed(), "bucket")
+		Expect(op.VerifyBucketPermissionOwnerOrPolicy(ctx, req, policy.S3PutBucketPublicAccessBlock, acl.PermWriteACP)).
+			To(Succeed(), "bucket without the ACL fallback")
 		Expect(op.VerifyObjectPermission(ctx, req, policy.S3GetObject, acl.PermRead)).To(Succeed(), "object")
 	})
 	It("denies another user", func(ctx SpecContext) {
 		req.Identity = userIdentity("bob")
 		Expect(op.VerifyBucketPermission(ctx, req, policy.S3ListBucket, acl.PermRead)).To(MatchError(op.ErrAccessDenied), "bucket")
+		Expect(op.VerifyBucketPermissionOwnerOrPolicy(ctx, req, policy.S3PutBucketPublicAccessBlock, acl.PermWriteACP)).
+			To(MatchError(op.ErrAccessDenied), "bucket without the ACL fallback")
 		Expect(op.VerifyObjectPermission(ctx, req, policy.S3GetObject, acl.PermRead)).To(MatchError(op.ErrAccessDenied), "object")
 	})
 	It("denies an anonymous identity, whatever owns the bucket", func(ctx SpecContext) {
@@ -80,6 +84,14 @@ var _ = Describe("the Verify*Permission helpers", func() {
 		Expect(op.VerifyBucketPermission(ctx, req, policy.S3PutBucketAcl, acl.PermWriteACP)).To(Succeed())
 		_, _, a, perm := authz.VerifyBucketArgsForCall(0)
 		Expect([]any{a, perm}).To(Equal([]any{policy.S3PutBucketAcl, acl.PermWriteACP}))
+
+		authz.VerifyBucketOwnerOrPolicyReturns(op.ErrNoSuchBucket)
+		Expect(op.VerifyBucketPermissionOwnerOrPolicy(ctx, req, policy.S3GetBucketPublicAccessBlock, acl.PermReadACP)).
+			To(MatchError(op.ErrNoSuchBucket))
+		_, gotReq, a, perm = authz.VerifyBucketOwnerOrPolicyArgsForCall(0)
+		Expect(gotReq).To(BeIdenticalTo(req))
+		Expect([]any{a, perm}).To(Equal([]any{policy.S3GetBucketPublicAccessBlock, acl.PermReadACP}))
+		Expect(authz.VerifyBucketCallCount()).To(Equal(1), "it asks for no check with the ACL fallback")
 
 		Expect(op.VerifyObjectPermission(ctx, req, policy.S3PutObject, acl.PermWrite)).To(Succeed())
 		_, _, a, perm = authz.VerifyObjectArgsForCall(0)

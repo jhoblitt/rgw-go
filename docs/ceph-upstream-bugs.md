@@ -7821,7 +7821,12 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it: a block that does not decode refuses
   the request with AccessDenied (`publicAccess`, `internal/authz/load.go`;
   `docs/exclusions.md`, "A public-access block that does not decode refuses
-  the request").
+  the request"). GetPublicAccessBlock, which on such a bucket only an admin
+  reaches, answers it 500 UnknownError, radosgw's own answer: its execute
+  fails the decode with -EIO, which the S3 error table lacks
+  ([rgw_op.cc:8703-8710](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8703-L8710),
+  [rgw_op.cc:9671-9678](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9671-L9678);
+  `op.GetPublicAccessBlock`, `internal/op/publicaccess.go`).
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no report or
   fix. The fix would fail closed on `buffer::error`. The block came with
   [ceph/ceph#30033](https://github.com/ceph/ceph/pull/30033); related:
@@ -10806,11 +10811,29 @@ Every new entry adds its row to this table, in document order.
     bucket ("radosgw's PutBucketPolicy retry writes back the bucket attrs
     its request started with", below); DeleteBucketPolicy and
     DeleteBucketTagging remove the new bucket's policy or tags.
+  - The public access block's two retried writes, checked at v19.2.7 and
+    v20.2.4, show the helper's contract failing in opposite ways, so the
+    defect is that contract, a retry that re-reads the bucket by name and
+    writes again whatever instance it finds, and not either call site.
+    PutPublicAccessBlock's write copies `s->bucket_attrs`, the attrs the
+    request loaded, by value on each try (`rgw::sal::Attrs
+    attrs(s->bucket_attrs)`,
+    [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673),
+    [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)), so a retry merges
+    the old bucket's whole attr set, its ACL, policy and tags, into the
+    re-created bucket. DeletePublicAccessBlock's takes a live reference to
+    the refreshed bucket's attrs (`rgw::sal::Attrs& attrs =
+    s->bucket->get_attrs()`,
+    [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
+    [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)), so a retry removes
+    the new owner's block, which the request was never authorized against.
 - **Impact:** in that window a requester authorized on its own bucket can
   set the policy, and the ACL, of a bucket another owner just created under
-  the name, or remove its policy or tags. The window is short, and needs
-  the requester's bucket to be deleted and the name taken while its write
-  is in flight, which the requester cannot arrange. The retry is not
+  the name, or remove its policy or tags; a PutPublicAccessBlock gives it
+  the old bucket's ACL, policy and tags with the block, and a
+  DeletePublicAccessBlock strips its owner's block. The window is short,
+  and needs the requester's bucket to be deleted and the name taken while
+  its write is in flight, which the requester cannot arrange. The retry is not
   authorized again either ("radosgw's retried bucket writes are not
   authorized again", below), so it writes for a requester the new bucket's
   owner never allowed.
@@ -10819,7 +10842,8 @@ Every new entry adds its row to this table, in document order.
   bucket by name, as radosgw does, and stops with 409 ConcurrentModification,
   writing nothing, when the name now names another instance
   (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried bucket
-  write stops when the name names another bucket").
+  write stops when the name names another bucket"). The block writes of
+  `internal/op/publicaccess.go` retry through it.
 - **Upstream:** none. rgw-bug-reproduction's triage on 2026-10-07 found no
   report or fix; [#51572](https://tracker.ceph.com/issues/51572) reports a
   distinct defect of the same retry ("radosgw's PutBucketPolicy retry
@@ -10877,8 +10901,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Each try sets only the policy attr over
   the bucket as last read (`op.PutBucketPolicy`,
   `internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried
-  PutBucketPolicy keeps what the write it lost to changed"). rgw-go does not
-  serve PutBucketPublicAccessBlock or PutBucketCors yet.
+  PutBucketPolicy keeps what the write it lost to changed"). Each try of
+  PutPublicAccessBlock likewise sets only the block attr over the bucket as
+  that try read it (`op.PutPublicAccessBlock`, `internal/op/publicaccess.go`).
+  rgw-go does not serve PutBucketCors yet.
   Each try of PutBucketVersioning writes the attrs that try read
   (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
   `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
@@ -11815,13 +11841,15 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Before each retry it runs the op's
   permission check again, for every retried bucket write it serves
   (PutBucketAcl, Put and DeleteBucketPolicy, Put and DeleteBucketTagging,
-  and Put and DeleteBucketWebsite) and for PutObjectAcl, which it retries
+  Put and DeleteBucketWebsite, and Put and DeletePublicAccessBlock) and for
+  PutObjectAcl, which it retries
   where radosgw does not: against the bucket that retry read and, for
   PutObjectAcl, the object's head read again. A refusal ends the write
   with 403 AccessDenied and nothing written
   (`RetryRacedWriteReauthorized`, `internal/op/objectattrs.go`;
   `retryBucketWrite`, `internal/op/bucketsubres.go`, through which the
-  website writes of `internal/op/website.go` retry; `docs/exclusions.md`,
+  website writes of `internal/op/website.go` and the block writes of
+  `internal/op/publicaccess.go` retry; `docs/exclusions.md`,
   "A PutBucketAcl that loses a race is retried, and every retried ACL,
   policy or tagging write is authorized again"), since jhoblitt/rgw-go#184
   and #185. The identity's own policies are not read again: each check
@@ -16086,11 +16114,10 @@ Every new entry adds its row to this table, in document order.
   finds none.
 - **Releases:** v19.2.7 and v20.2.4; `dump_xml` is unchanged on main at
   7ed73efc1be.
-- **rgw-go:** mirrors it, so the two gateways' documents stay
-  byte-comparable: `acl.PublicAccessBlock.MarshalS3XML`
-  (`internal/acl/publicaccess.go`) writes the section with no namespace and
-  each boolean lower-case. rgw-go does not serve GetPublicAccessBlock or
-  GetBucketPolicyStatus yet.
+- **rgw-go:** mirrors it for the block's document, so the two gateways'
+  documents stay byte-comparable: the document rgw-go writes for a block,
+  `acl.PublicAccessBlock.MarshalS3XML` (`internal/acl/publicaccess.go`), is
+  the section with no namespace and each boolean lower-case.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 planning, 2026-10-13, from the source; confirmed by
   task BC-17, 2026-10-15. Not reproduced.
@@ -17140,11 +17167,31 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw lets an ACL grant change a bucket's public access block
 
-- **Kind:** defect, possibly security-relevant: a bucket's public access
-  block, the guardrail meant to hold whatever its ACLs and policy say, can
-  be put or deleted by any WRITE_ACP grantee of the bucket's ACL and read
-  by any READ_ACP grantee. Unreproduced: derived from the source.
+- **Kind:** defect, possibly security-relevant. Granting another account
+  WRITE_ACP on a bucket's ACL hands that account's root the bucket's whole
+  configuration-write set, the public access block among it, with no
+  identity policy written in either account. More widely, the block, the
+  guardrail meant to hold whatever a bucket's ACLs and policy say, can be
+  put or deleted by any WRITE_ACP grantee of the bucket's ACL and read by
+  any READ_ACP grantee. Unreproduced: derived from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - For an identity of another account, `verify_bucket_permission`
+    evaluates the identity-based and the resource-based side separately and
+    needs an Allow from both, with `account_root` set for a TYPE_ROOT
+    identity
+    ([rgw_common.cc:1387-1396](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1387-L1396),
+    [rgw_common.cc:1415-1426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1415-L1426)). The
+    identity side returns Allow on `account_root` alone, logged "granted to
+    account root"
+    ([rgw_common.cc:1241-1243](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1241-L1243),
+    [rgw_common.cc:1254-1256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1254-L1256)), and the
+    resource side's ACL fallback, below, matches a grant to the account id
+    (`LocalApplier::get_perms_from_aclspec`,
+    [rgw_auth.cc:1032-1046](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1032-L1046),
+    [rgw_auth.cc:1052-1066](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1066)), so the ACL's
+    WRITE_ACP satisfies it. The other account's root therefore puts and
+    deletes the block, and makes every other write `op_to_perm` maps to
+    WRITE_ACP, below, with no identity policy anywhere.
   - `op_to_perm` maps s3GetBucketPublicAccessBlock to RGW_PERM_READ_ACP and
     s3PutBucketPublicAccessBlock to RGW_PERM_WRITE_ACP
     ([rgw_iam_policy.h:288-289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L288-L289),
@@ -17174,7 +17221,11 @@ Every new entry adds its row to this table, in document order.
     or AuthenticatedUsers WRITE_ACP grant while IgnorePublicAcls is off, and
     a Swift write list naming `anonymous` ("radosgw's IgnorePublicAcls and
     ACL is_public miss grants to the anonymous user") can each put or
-    delete the block.
+    delete the block. A Swift read list's grantees read it: its READ_OBJS
+    counts as READ and READ_ACP
+    ([rgw_acl.cc:219-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L219-L221),
+    [rgw_acl.cc:219-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L219-L221)), for its named users,
+    `.r:*` and any referer grant.
   - Amazon S3 maps no ACL permission to these actions: its table of ACL
     permissions and the policy actions they correspond to gives a bucket's
     WRITE_ACP as s3:PutBucketAcl alone
@@ -17186,18 +17237,30 @@ Every new entry adds its row to this table, in document order.
     [rgw_iam_policy.h:307-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L307-L328)),
     which is long-standing radosgw design. This entry is about the public
     access block, the guardrail an ACL holder should not be able to remove.
-- **Impact:** an owner who gives another user FULL_CONTROL of a bucket, or
-  whose bucket ACL grants WRITE_ACP to a public group, cannot keep a public
-  access block on it: the grantee can delete it, and then make the bucket
-  public through a policy or an ACL the block no longer refuses.
+- **Impact:** an account that grants another account WRITE_ACP, which
+  Amazon S3 confines to s3:PutBucketAcl, gives that account's root the
+  block and every other configuration write of the bucket without the root's
+  own account writing any policy. An owner who gives another user
+  FULL_CONTROL of a bucket, or whose bucket ACL grants WRITE_ACP to a public
+  group, cannot keep a public access block on it: the grantee can delete it,
+  and then make the bucket public through a policy or an ACL the block no
+  longer refuses.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** unaffected today: it serves none of Put, Get and
-  DeleteBucketPublicAccessBlock, which answer 501 NotImplemented
-  (`internal/s3/handler.go`), until BC-18 serves them. The plan's BC-18
-  authorizes them by the bucket owner and policy alone.
+- **rgw-go:** does not reproduce it. Put, Get and DeletePublicAccessBlock
+  are authorized by identity and bucket policy, and where no policy decides
+  by the bucket's owner alone, within its permission mask; every ACL
+  grantee above is refused with 403 AccessDenied, another account's root
+  and the Swift write list's `anonymous` under every block setting among
+  them
+  (`authz.Evaluator.VerifyBucketOwnerOrPolicy`, `internal/authz/evaluator.go`;
+  `internal/op/publicaccess.go`; `docs/exclusions.md`, "No ACL grant
+  authorizes the public access block's ops"). Until BC-19 routes the three
+  ops, the S3 handler answers them 501 NotImplemented
+  (`internal/s3/handler.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S5's review, 2026-10-15, tracing what the Swift
-  write list's WRITE_ACP reaches. Derived from the source, not reproduced.
+  write list's WRITE_ACP reaches; the other account's root by BC-18's
+  review, 2026-10-19. Derived from the source, not reproduced.
 
 ## cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more
 
