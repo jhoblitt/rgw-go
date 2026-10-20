@@ -5998,6 +5998,49 @@ differ, rgw-go does the following.
   so it sends `1970-08-22T19:08:21Z` and `1970-08-23T00:55:27Z`, which
   neither takes, not being at midnight. AWS's answer to each case was not
   checked against Amazon S3 itself.
+- **The lifecycle prefix map reads a stored negative object size by its
+  sign, and no Date past real_time.** radosgw's lifecycle worker reads a
+  stored object size with `std::stoull`
+  ([rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L264-L278),
+  [rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L264-L278)),
+  so a negative size, which its PutBucketLifecycleConfiguration stores, is
+  2^64 less its magnitude, and `pass_size_limit_checks`
+  ([rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+  [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552))
+  applies a rule whose ObjectSizeLessThan is `-1` to every object and one
+  whose ObjectSizeGreaterThan is `-1` to none (docs/ceph-upstream-bugs.md,
+  "[radosgw's lifecycle grammar reads its numbers as
+  text](ceph-upstream-bugs.md#radosgws-lifecycle-grammar-reads-its-numbers-as-text)").
+  It reads a stored Date with `from_iso_8601`, whose real_time wraps a time
+  past 2554-07-21T23:34:33.709551615Z into another instant, and acts once
+  that instant has passed
+  ([rgw_lc.cc:1145-1154](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1145-L1154),
+  [rgw_lc.cc:1334-1343](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1334-L1343)
+  at v19.2.7;
+  [rgw_lc.cc:1165-1174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1165-L1174),
+  [rgw_lc.cc:1356-1365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1356-L1365)
+  at v20.2.4), so a stored `2600-01-01T23:34:33.709551616Z` acts at once
+  (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle Date wraps past 2554
+  and expires at
+  once](ceph-upstream-bugs.md#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)").
+  As the design's compatibility rule asks, reading correctly whatever
+  state the defect leaves
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  rgw-go's prefix map (`Configuration.PrefixMap`,
+  `internal/lifecycle/prefixmap.go`):
+  - keeps a stored size's sign, so `Op.SizeMatches` applies an
+    ObjectSizeLessThan of 0 or less to no object and a negative
+    ObjectSizeGreaterThan to every object, as the sender meant them, a size
+    past int64's range held at its bound;
+  - holds no date for a stored Date that real_time cannot hold, so it names
+    no instant to act at.
+
+  rgw-go's PutBucketLifecycleConfiguration stores neither (the two entries
+  above). What stays radosgw's: day counts read with atoi, a size that is
+  not negative read with stoull, a negative NewerNoncurrentVersions, which
+  never acts, and one of 0, which acts as if none were set, a Date that
+  `from_iso_8601` rolls forward, such as `2026-13-01`, read as the instant
+  it rolls to, and a bare date or a year, read as its first midnight.
 
 ### Object read differences
 
