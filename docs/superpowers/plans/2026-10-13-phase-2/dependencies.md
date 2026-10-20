@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at f5c3266. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 1089af3. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -35,7 +35,7 @@ flowchart LR
   u_L -->|6| u_C
   u_L -->|1| u_B
   u_C -->|1| u_B
-  u_B -->|3| u_S
+  u_B -->|4| u_S
   u_B -->|1| u_WP
   u_WP -->|2| u_V
   u_WP -->|2| u_L
@@ -64,12 +64,14 @@ flowchart LR
   t_BC_10["BC-10"]:::ext
   t_BC_17["BC-17"]:::ext
   t_BC_23["BC-23"]:::ext
+  t_BC_28a["BC-28a"]:::ext
   t_S1 --> t_S4
   t_V2 --> t_S6
   t_V10 --> t_S7
   t_BC_10 --> t_S7
   t_BC_17 --> t_S7
   t_BC_23 --> t_S7
+  t_BC_28a --> t_S7
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -82,6 +84,7 @@ flowchart LR
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
   click t_BC_17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-17-block-xml" "BC-17: Block XML"
   click t_BC_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-23-encryption-configuration-type" "BC-23: Encryption configuration type"
+  click t_BC_28a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-28a-ownership-type" "BC-28a: Ownership type"
   classDef ext stroke-dasharray: 5 4
 ```
 

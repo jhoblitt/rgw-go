@@ -1173,6 +1173,7 @@ first release line to carry it (b3733296c8e), cited at that tag.
 - **Produces:** `type Ownership uint8` with `BucketOwnerEnforced` 0, `BucketOwnerPreferred` 1,
   `ObjectWriter` 2; `AttrOwnershipControls` (`user.rgw.ownership-controls`); Encode and Decode;
   `ParseOwnershipXML(body []byte) (Ownership, error)` and its rendering;
+  `ParseOwnership(s string) (Ownership, error)`, the name lookup BC-28d's header uses;
   `OwnershipOf(attrs map[string][]byte) Ownership`.
 - **Behaviour:**
   1. The enum is a u8 inside ENCODE_START(1,1)
@@ -1183,7 +1184,8 @@ first release line to carry it (b3733296c8e), cited at that tag.
      ObjectOwnership, or another name, is refused with v21's message
      ([rgw_object_ownership.cc:22-75](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_object_ownership.cc#L22-L75)). The document renders in the S3 namespace.
 - **Specs:** the three values' bytes; a truncated attr read as ObjectWriter; each XML refusal.
-- **Exclusions and registry:** none.
+- **Exclusions and registry:** new exclusion "A PutBucketOwnershipControls document is held to S3's
+  schema" (the strict parse's departures from v21.1.2); no registry entry.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 90 lines.
 
 ### Task BC-28b: Ownership dispatch
@@ -1205,7 +1207,8 @@ first release line to carry it (b3733296c8e), cited at that tag.
   empty bucket leaves it in place.
 - **Exclusions and registry:** new registry entry for defect 11 (S3-correctness, a bucket lost;
   unreproduced; the feature lands in v21.0.0); new exclusion "ownershipControls requests are
-  served as v21 serves them".
+  served as v21 serves them", but for the PUT body's parse, which BC-28a's exclusion "A
+  PutBucketOwnershipControls document is held to S3's schema" records and this one points to.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 60 lines.
 
 ### Task BC-28c: Ownership ops
@@ -1250,13 +1253,22 @@ first release line to carry it (b3733296c8e), cited at that tag.
 
 - **Layer:** handler. **Files:** S2's `internal/s3/ownership.go`; modify the CreateBucket
   handler in `internal/s3/bucket.go` (one header read). **Cluster:** no.
-- **Consumes:** BC-28a's XML, BC-28c's ops and `CreateBucket.ObjectOwnership`.
+- **Consumes:** BC-28a's `acl.ParseOwnershipXML(body []byte) (acl.Ownership, error)`,
+  `(acl.Ownership).MarshalS3XML() []byte` and the exported name lookup
+  `acl.ParseOwnership(s string) (acl.Ownership, error)`; BC-28c's ops and
+  `CreateBucket.ObjectOwnership`.
 - **Behaviour** ([rgw_rest_s3.cc:4553-4618](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4553-L4618)):
   1. PUT reads the body up to `rgw_max_put_param_size`; a parse failure, no `OwnershipControls`
-     or a refused rule is 400 MalformedXML; 200 with an empty body.
+     or a refused rule is 400 MalformedXML with the Message of the refusal's `*acl.ParseError`,
+     v21's text or none; 200 with an empty body. The handler makes that `op.ErrMalformedXML`
+     itself: `authz.ErrorFor` maps no `acl.ErrMalformedXML` (`internal/authz/errors.go:36-63`),
+     and the same name lookup is InvalidArgument in the header (3).
   2. GET 200 with the document; DELETE 204.
-  3. CreateBucket's `x-amz-object-ownership` header becomes the op's value; a value v21 does not
-     parse is 400 InvalidArgument with its message ([rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816)).
+  3. CreateBucket's `x-amz-object-ownership` header becomes the op's value through
+     `acl.ParseOwnership`; a value v21 does not parse is 400 InvalidArgument with its message
+     ([rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816)),
+     which the refusal's `*acl.ParseError` carries with `acl.ErrInvalid`, as `authz.ErrorFor`
+     maps it (`internal/authz/errors.go:52-53`).
 - **Specs:** each route's status, headers and body, from the eight `object_ownership` s3-tests.
 - **Exclusions and registry:** none.
 - **Depends on:** S2, BC-28b, BC-28c. **PR:** one, after L2's PR (b) on `internal/s3/bucket.go`.
