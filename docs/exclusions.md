@@ -4597,7 +4597,8 @@ rgw-go does the following.
   and then install a public bucket policy (`docs/ceph-upstream-bugs.md`,
   "radosgw lets an ACL grant change a bucket's public access block"). rgw-go
   refuses that bucket policy write, and every other op it serves, to such a
-  grant. A grant to a tenant's user named
+  grant, and no ACL grant authorizes the block's own ops ("No ACL grant
+  authorizes the public access block's ops", below). A grant to a tenant's user named
   `anonymous` admits no one in either gateway: neither can load or create a
   user with that id in any tenant.
 - **BlockPublicAcls counts grants to the user anonymous and its ownership,
@@ -4630,6 +4631,86 @@ rgw-go does the following.
   ([rgw_op.cc:8608-8611](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8608-L8611),
   [rgw_op.cc:9576-9579](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9576-L9579)),
   reports false.
+- **No ACL grant authorizes the public access block's ops.** radosgw
+  authorizes PutPublicAccessBlock and DeletePublicAccessBlock as
+  s3:PutBucketPublicAccessBlock, and GetPublicAccessBlock as
+  s3:GetBucketPublicAccessBlock, through `verify_bucket_permission`
+  ([rgw_op.cc:8619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8619),
+  [rgw_op.cc:8733](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8733),
+  [rgw_op.cc:8683](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8683);
+  [rgw_op.cc:9587](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9587),
+  [rgw_op.cc:9701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9701),
+  [rgw_op.cc:9651](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9651)), which, where no policy decides,
+  falls back to the bucket's ACL with the permission `op_to_perm` maps the
+  action to
+  ([rgw_common.cc:1370-1371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1370-L1371),
+  [rgw_common.cc:1392-1393](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1392-L1393)): WRITE_ACP for
+  the two writes and READ_ACP for the read
+  ([rgw_iam_policy.h:310-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L310-L311),
+  [rgw_iam_policy.h:288-289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L288-L289);
+  [rgw_iam_policy.h:327-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L327-L328),
+  [rgw_iam_policy.h:304-305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L304-L305)). So any
+  WRITE_ACP grantee can change or remove the block, and any READ_ACP
+  grantee can read it: a named user granted either or FULL_CONTROL; another
+  account granted them, for its root with no identity policy, whose
+  cross-account check's identity side allows an account root on its own
+  ([rgw_common.cc:1241-1243](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1241-L1243),
+  [rgw_common.cc:1387-1396](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1387-L1396);
+  [rgw_common.cc:1254-1256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1254-L1256),
+  [rgw_common.cc:1415-1426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1415-L1426)) while the
+  resource side matches the grant to the account
+  ([rgw_auth.cc:1032-1046](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1032-L1046),
+  [rgw_auth.cc:1052-1066](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1066)), and for its other
+  users with an identity policy that allows the action; AllUsers or
+  AuthenticatedUsers granted them while IgnorePublicAcls is off
+  ([rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L180-L187),
+  [rgw_acl.cc:180-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L180-L187)); for the read, the
+  grantees of a Swift read list, whose READ_OBJS the ACL check counts as READ
+  and READ_ACP
+  ([rgw_acl.cc:219-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L219-L221),
+  [rgw_acl.cc:219-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L219-L221)): its named users, `.r:*`,
+  which is everyone, and a referer grant, which any client matches with its
+  own Referer and which IgnorePublicAcls does not set aside
+  ([rgw_acl.cc:190-191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L190-L191),
+  [rgw_acl.cc:190-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L190-L191)); and under all four
+  settings the user `anonymous` through a Swift
+  `X-Container-Write: anonymous` list, whose WRITE_OBJS
+  ([rgw_acl_swift.cc:22](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L22),
+  [rgw_acl_swift.cc:22](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_swift.cc#L22)) the ACL check counts as
+  WRITE and WRITE_ACP
+  ([rgw_acl.cc:216-218](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L216-L218),
+  [rgw_acl.cc:216-218](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L216-L218))
+  (`docs/ceph-upstream-bugs.md`, "radosgw lets an ACL grant change a
+  bucket's public access block"). Amazon S3 maps a bucket's WRITE_ACP to
+  s3:PutBucketAcl alone and its READ_ACP to s3:GetBucketAcl alone
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping),
+  so no ACL grant reaches the block's actions. rgw-go authorizes the three
+  ops by identity and bucket policy, evaluated as for any other bucket op,
+  and where no policy decides lets through the bucket's owner, the owner of
+  its ACL, within the key's permission mask, and refuses everyone else with
+  403 AccessDenied (`authz.Evaluator.VerifyBucketOwnerOrPolicy`,
+  `internal/authz/evaluator.go`; `internal/op/publicaccess.go`). The
+  owner's pass is the one radosgw's ACL gives its owner, READ_ACP and
+  WRITE_ACP whatever its grants say
+  ([rgw_acl.cc:171-173](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L171-L173),
+  [rgw_acl.cc:171-173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl.cc#L171-L173)), with two differences.
+  IgnorePublicAcls sets an anonymous owner's aside, as every rgw-go check
+  does ("IgnorePublicAcls sets aside grants to the user anonymous and its
+  ownership", above). And no referer grant replaces it, where radosgw
+  refuses the owner whenever a referer grant matching the request's Referer
+  lacks the permission: a write under any matching referer grant, a read
+  under a negative one (`docs/ceph-upstream-bugs.md`, "radosgw lets a
+  matching referer grant replace the requester's own ACL grants"). An
+  account's own users are decided by policy alone in both gateways, and an
+  admin is let through as after any access denial. So every grantee above
+  is refused where radosgw serves it. Beyond the policy judgments other
+  exclusions record, the one request rgw-go serves that radosgw refuses is
+  the owner's under such a referer grant. One such judgment reaches these
+  ops too: on Tentacle, under RestrictPublicBuckets, rgw-go serves a
+  non-owner through a policy Amazon S3 calls not public and radosgw's
+  is_public calls public, such as a grant to everyone from 1.1.1.1/32 alone,
+  which radosgw refuses ("A bucket policy is public as Amazon S3 judges it",
+  above).
 - **Deletes that need MFA are refused.** rgw-go verifies no `x-amz-mfa`
   header. On a bucket with MFA delete enabled, radosgw refuses a
   DeleteObject that names a version with 403 AccessDenied unless the
@@ -4838,7 +4919,8 @@ differ, rgw-go does the following.
     delete reach it only for a head without a visible index entry.
 - **A retried bucket write stops when the name names another bucket.**
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
-  DeleteBucketTagging, PutBucketWebsite and DeleteBucketWebsite retry a
+  DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
+  PutPublicAccessBlock and DeletePublicAccessBlock retry a
   write that lost a race up to fifteen times, each after reading the bucket
   again by name (`retry_raced_bucket_write`, `rgw_op.h:183-196` at v19.2.6,
   `:197-210` at v20.2.4), and so does rgw-go's PutBucketAcl ("A PutBucketAcl
@@ -4853,7 +4935,16 @@ differ, rgw-go does the following.
   [rgw_op.cc:2970-2975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2970-L2975),
   [rgw_op.cc:3156-3161](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3156-L3161)
   and
-  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207)).
+  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207)),
+  as PutPublicAccessBlock merges into whatever bucket it found the attrs
+  its request started with, the old bucket's ACL, policy and tags among
+  them, and DeletePublicAccessBlock removes that bucket's block
+  ([rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673)
+  and
+  [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
+  [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)
+  and
+  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)).
   When the bucket
   was deleted and a bucket of the same name created in between, radosgw
   writes into the new bucket, another owner's included
@@ -4873,8 +4964,14 @@ differ, rgw-go does the following.
   with](ceph-upstream-bugs.md#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with)").
   rgw-go sets only the policy over the bucket as it read it last, as
   radosgw's PutBucketTagging does with its tags, so the other write's
-  change stays. radosgw judges BlockPublicPolicy once, against the block
-  its request loaded; rgw-go judges it again on each retry against the block
+  change stays. radosgw's PutPublicAccessBlock merges the same
+  request-start attrs into each try
+  ([rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673),
+  [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)),
+  so its retry writes back the ACL, tags or policy another write had just
+  changed; rgw-go's PutPublicAccessBlock likewise sets only the block over
+  the bucket as each try read it. radosgw judges BlockPublicPolicy once,
+  against the block its request loaded; rgw-go judges it again on each retry against the block
   that try read, a block that does not decode blocking, so a public policy
   whose first write lost to a write that blocks public policies is refused
   with 403 AccessDenied where radosgw stores it.
@@ -4914,10 +5011,11 @@ differ, rgw-go does the following.
   let through a retry's unmarked access denial as Run lets one through the
   first check, and through nothing else. Every retried bucket write,
   PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
-  DeleteBucketTagging, PutBucketWebsite and DeleteBucketWebsite, is
+  DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
+  PutPublicAccessBlock and DeletePublicAccessBlock, is
   authorized again the same way before each retry, against the bucket that
-  retry read: its ACL, its policy and its public-access block, with the same
-  admin rule. radosgw retries all but PutBucketAcl through
+  retry read: its ACL, of which the block writes read the owner alone, its
+  policy and its public-access block, with the same admin rule. radosgw retries all but PutBucketAcl through
   `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`, `:8110` and `:8204`
   at v19.2.6, `:1434`, `:1469`, `:9036` and `:9151` at v20.2.4; the website
   writes at
@@ -4926,7 +5024,14 @@ differ, rgw-go does the following.
   [rgw_op.cc:2970-2975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2970-L2975),
   [rgw_op.cc:3156-3161](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3156-L3161)
   and
-  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207)),
+  [rgw_op.cc:3202-3207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3202-L3207);
+  the block writes at
+  [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673)
+  and
+  [rgw_op.cc:8749-8754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8749-L8754),
+  [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)
+  and
+  [rgw_op.cc:9717-9722](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9717-L9722)),
   which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
