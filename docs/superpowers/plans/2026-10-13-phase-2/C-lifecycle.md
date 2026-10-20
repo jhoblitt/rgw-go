@@ -172,8 +172,9 @@ the controller's ruling that splits C10 (C-D16).
        [rgw_lc.h:510-562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L510-L562)).
   2. **Grammar** ([rgw_lc_s3.cc:19-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L19-L308), the same blob as
      [rgw_lc_s3.cc:19-308](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L19-L308)); every error is the package's malformed-XML error:
-     - the root `LifecycleConfiguration` is not mandatory, so a wrong root is an empty
-       configuration; the `Rule` array is mandatory;
+     - a root other than an unprefixed `LifecycleConfiguration` is refused as malformed XML,
+       where radosgw, whose root is not mandatory, stores an empty configuration; the `Rule`
+       array is mandatory;
      - a rule needs `Status` Enabled or Disabled, and a `Filter` or else a top-level `Prefix`,
        and at least one action; an empty `ID` gets 48 random lowercase alphanumerics;
      - `Expiration` takes exactly one of `Days`, `Date` and `ExpiredObjectDeleteMarker`; a
@@ -216,7 +217,14 @@ the controller's ruling that splits C10 (C-D16).
   - the prefix map's order and its canonical class (`""` is STANDARD);
   - Rook's `bucket/lifecycle` documents (Prefix `""` outside Filter, Abort, Expiration Days)
     parsed and dumped as Rook's comparison expects.
-- **Exclusions and registry:** none.
+- **Exclusions and registry:** the exclusions "PutBucketLifecycleConfiguration refuses a
+  document whose root is not LifecycleConfiguration", "PutBucketLifecycleConfiguration holds a
+  rule's numbers to S3's types", "PutBucketLifecycleConfiguration holds a Date and
+  ExpiredObjectDeleteMarker to S3's types" and "The lifecycle prefix map reads a stored
+  negative object size by its sign, and no Date past real_time"; the registry entries
+  "radosgw stores an empty lifecycle configuration for a body whose root is not
+  LifecycleConfiguration", "radosgw's lifecycle grammar reads its numbers as text" and
+  "radosgw's lifecycle Date wraps past 2554 and expires at once".
 - **Depends on:** nothing. **PR split:** (a) the encodings; (b) the XML and validation.
   **Brief:** about 230 lines.
 
@@ -237,10 +245,16 @@ the controller's ruling that splits C10 (C-D16).
      the interval. A date is due once now reaches it.
   2. **The rule's actions,** built in `LCOpRule::build`'s order
      ([rgw_lc.cc:1582-1608](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1582-L1608), [rgw_lc.cc:1638-1664](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1638-L1664)):
-     current expiration when Days is positive or a Date is set, delete-marker expiration,
+     current expiration when Days is positive or the op holds a date, delete-marker expiration,
      noncurrent expiration, a current transition per class, a noncurrent transition per class.
      A rule that is disabled, has no object action, or fails the ArchiveZone check is skipped
      ([rgw_lc.cc:1009-1028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1009-L1028), [rgw_lc.cc:1029-1048](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1029-L1048)).
+     A date C1's prefix map holds as nil is no date: an op whose only action is one has no
+     object action and is skipped (`is_valid_op` and `LCOpRule::build`,
+     [rgw_lc.cc:1009-1018](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1009-L1018),
+     [rgw_lc.cc:1588-1591](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1588-L1591);
+     [rgw_lc.cc:1029-1038](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1029-L1038),
+     [rgw_lc.cc:1644-1647](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1644-L1647)).
   3. **Selection** ([rgw_lc.cc:1617-1677](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1617-L1677),
      [rgw_lc.cc:1673-1733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1673-L1733)): of the actions whose check
      holds, the one whose due time is strictly latest, so an earlier action wins a tie; a
@@ -255,8 +269,20 @@ the controller's ruling that splits C10 (C-D16).
      an empty-instance noncurrent entry named `null`
      ([rgw_lc.cc:467-513](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L467-L513), [rgw_lc.cc:475-521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L475-L521)).
   5. **The checks.** The size filter is size > gt and size < lt from the head stat
-     ([rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
-     [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552)). Then:
+     (`pass_size_limit_checks`, [rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+     [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552)), through C1's
+     `Op.SizeMatches`, which reads a stored negative size by its sign: an ObjectSizeLessThan of 0
+     or less matches no object and a negative ObjectSizeGreaterThan every object, where
+     radosgw's stoull reads -1 as 2^64 - 1 (`docs/exclusions.md`, "The lifecycle prefix map
+     reads a stored negative object size by its sign, and no Date past real_time"). A nil date,
+     which C1's prefix map holds where `from_iso_8601` refuses the stored text or real_time
+     cannot hold it, never counts as now or as the zero time: current expiration with
+     Expiration of 0 or less and a nil `ExpirationDate` skips the object, and so does a
+     transition with Days -1 and a nil Date (`LCOpAction_CurrentExpiration::check`,
+     [rgw_lc.cc:1145-1150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1145-L1150),
+     [rgw_lc.cc:1165-1170](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1165-L1170); `LCOpAction_Transition::check`,
+     [rgw_lc.cc:1334-1339](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1334-L1339),
+     [rgw_lc.cc:1356-1361](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1356-L1361)). Then:
      - **Current expiration** ([rgw_lc.cc:1116-1207](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1116-L1207),
        [rgw_lc.cc:1136-1227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1136-L1227)): current entries
        only; a current delete marker followed by an entry of its name is skipped, otherwise
@@ -279,7 +305,8 @@ the controller's ruling that splits C10 (C-D16).
      noncurrent rule, [rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952), so the
      exclusion is Tentacle's only, P5): over enabled rules matching
      the key's prefix and the object's tags, the current Expiration only; Days count from
-     midnight UTC after the mtime; the earliest wins;
+     midnight UTC after the mtime; a Date read as C1's prefix map reads it, so a nil one gives
+     no date for its rule (C8's exclusion); the earliest wins;
      `expiry-date="<RFC 1123 in GMT>", rule-id="<id>"`; nothing when the request names a
      version.
   7. **`AbortHeader`** ([rgw_lc.cc:2890-2954](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2890-L2954),
@@ -293,6 +320,11 @@ the controller's ruling that splits C10 (C-D16).
   - a lock bucket whose flags lack `BUCKET_VERSIONED`: a retained current object is kept;
   - NewerNoncurrentVersions 0, 1 and 2; size and tag filters; a tie of due times; a
     same-class transition dropped;
+  - a stored ObjectSizeLessThan of -1, which matches no object, and an ObjectSizeGreaterThan of
+    -1, which matches every object;
+  - a nil date: Expiration 0 with a nil `ExpirationDate` skips the object, a transition of Days
+    -1 with a nil Date skips it, an op whose only action is a nil date is skipped, and no
+    object, however old, is acted on by a nil date;
   - `Expired` around local midnight in a non-UTC location, and in debug mode;
   - the header around midnight UTC; a noncurrent-only rule gives no header for a current
     object; a versioned request gives none; the abort header ignores tags.
@@ -430,8 +462,14 @@ the controller's ruling that splits C10 (C-D16).
      - The answer is send_response's status with dump_start
        ([rgw_rest_s3.cc:3728-3735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3728-L3735),
        [rgw_rest_s3.cc:4179-4186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4179-L4186)).
-  2. **GET:** s3:GetLifecycleConfiguration; no attr is 404 NoSuchLifecycleConfiguration; an
-     attr that does not decode is 500; otherwise C1's dump under
+  2. **GET:** s3:GetLifecycleConfiguration; no attr is 404 NoSuchLifecycleConfiguration, and so
+     is an attr holding no rules, which radosgw's PUT stores for a body whose root is not
+     LifecycleConfiguration and its GET renders as a LifecycleConfiguration with no Rule
+     (`docs/ceph-upstream-bugs.md`, "radosgw stores an empty lifecycle configuration for a body
+     whose root is not LifecycleConfiguration"). S3 never holds a configuration without a Rule
+     ([api.go:13051-13057](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L13051-L13057)),
+     and the design's compatibility rule asks for the correct reading of what the defect
+     leaves (spec §8). An attr that does not decode is 500; otherwise C1's dump under
      `<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`
      ([rgw_rest_s3.cc:3688-3726](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3688-L3726), [rgw_rest_s3.cc:4139-4177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4177)).
      Phase 1's 501 goes.
@@ -447,14 +485,27 @@ the controller's ruling that splits C10 (C-D16).
   - on counterfeiter fakes, each error in order, the 405 under both releases' `Semantics`;
   - Content-MD5 absent, right, wrong, decoding short, and all `=` (registry, "radosgw's
     from_base64 reads before an all-'=' input");
-  - a wrong root stores an empty configuration, which GET renders;
+  - a wrong root is 400 MalformedXML and stores nothing; an attr holding no rules, as
+    radosgw's PUT stores for a wrong root, is 404 NoSuchLifecycleConfiguration on GET;
   - the attr written before the entry, and kept when the entry's lock fails;
   - a racing bucket write retried, and a permission revoked between attempts refused;
   - DELETE's 204 without a configuration; a body over `rgw_max_put_param_size`;
   - Rook's `bucket/lifecycle` sequence: put, read back, update, delete.
+- **s3-tests,** in C6 (a): tests for C1's refusals, merged into jhoblitt/ceph's `rgw-go-s3tests`
+  branch by PR, with C6 (a) moving the s3-tests pin itself in its own rgw-go PR, with every
+  known-differences and deselect line the move needs, and a full record on both releases
+  where `make s3tests-pin` finds the move not additive (PP-19):
+  - a negative ObjectSizeGreaterThan and a negative ObjectSizeLessThan, 400 InvalidArgument;
+  - NewerNoncurrentVersions 0 and 101, 400 InvalidArgument;
+  - ExpiredObjectDeleteMarker `1`, taken as true, and `yes`, 400 MalformedXML;
+  - a Date not at midnight, one that is not a calendar date (`2026-04-31T00:00:00Z`), and a
+    bare date (`2026-01-01`), 400 MalformedXML.
 - **Exclusions and registry:** retires "A stored lifecycle configuration answers 501 until
   phase 2". The exclusions for C-D8 and C-D9, and the registry entries for defects LL-7 and
-  LL-9, unreproduced (reproductions in C13 (b)); LL-10's entry with no exclusion.
+  LL-9, unreproduced (reproductions in C13 (b)); LL-10's entry with no exclusion. C6 (b)'s
+  exclusion for an attr holding no rules, 404 where radosgw answers 200, and the rgw-go line
+  of the registry's "radosgw stores an empty lifecycle configuration for a body whose root is
+  not LifecycleConfiguration" updated to it.
 - **Depends on:** C1, C5, S2. **PR split:** (a) PUT and DELETE; (b) GET and the move.
   **Brief:** about 200 lines.
 
@@ -502,9 +553,16 @@ the controller's ruling that splits C10 (C-D16).
      [rgw_rest_s3.cc:4535-4538](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4535-L4538)).
 - **Specs:** s3-tests' `test_lifecycle_expiration_header_put`, `_head`, `_tags_head` and
   `_and_tags_head` as unit cases; a versioned GET with no header; a noncurrent-only rule with
-  no header on a current object; the abort headers by prefix, tags ignored.
+  no header on a current object; the abort headers by prefix, tags ignored; a rule whose
+  stored Date is `2600-01-01T23:34:33.709551616Z` gives no header, and a second rule's Days
+  then give it.
 - **Exclusions and registry:** retires "No x-amz-expiration" and "No x-amz-expiration on a
-  write"; C-D7's exclusion is C2's.
+  write"; C-D7's exclusion is C2's. The wrapped date's exclusion: a stored Date real_time
+  cannot hold gives its rule no `x-amz-expiration`, where radosgw's `from_iso_8601` wraps it,
+  `2600-01-01T23:34:33.709551616Z` to 2015-06-14, and names that instant
+  ([rgw_lc.cc:2854-2857](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2854-L2857),
+  [rgw_lc.cc:2918-2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2918-L2921); `docs/ceph-upstream-bugs.md`,
+  "radosgw's lifecycle Date wraps past 2554 and expires at once").
 - **Depends on:** C2, C6; after L5b and writepath's header tasks (hot files). **PR:** one.
   **Brief:** about 140 lines.
 
@@ -676,6 +734,8 @@ the controller's ruling that splits C10 (C-D16).
   - `AssertEpoch` zero on an S3 delete changes no op step (a recording pool);
   - an upload aborted; an upload with a completion record leaves its parts (#80896);
   - pages of 1000 with the delay; the workpool bound; the skip option;
+  - a stored Expiration Date of `2600-01-01T23:34:33.709551616Z`, which radosgw wraps to
+    2015-06-14 and expires at once: the object is kept;
   - a pass whose claim was reclaimed stops at its next page;
   - **the interim claim rule (C-D16):** on two workers on two RADOS clients, one running
     radosgw's protocol unchanged:
@@ -686,7 +746,11 @@ the controller's ruling that splits C10 (C-D16).
     - a cloud-tier bucket is likewise left (C-D4).
 - **Exclusions and registry:**
   - C-D4's exclusion: an rgw-go-only zone never processes a bucket with cloud-tier rules;
-  - C-D16's interim exclusion, rewritten by C10b and C11 and retired when C11 lands.
+  - C-D16's interim exclusion, rewritten by C10b and C11 and retired when C11 lands;
+  - the wrapped date's exclusion: current expiration never acts on a stored Date real_time
+    cannot hold, which C1's prefix map holds as nil, where radosgw's worker acts at the
+    wrapped instant (`docs/ceph-upstream-bugs.md`, "radosgw's lifecycle Date wraps past 2554
+    and expires at once").
   The unversioned path's window needs none: the version assert closes it.
 - **Depends on:** C9, C2, L1 (c). **PR split:** (a) the bucket pass, the predicate and current
   expiration; (b) the multipart abort. **Brief:** about 210 lines.
@@ -801,9 +865,13 @@ the controller's ruling that splits C10 (C-D16).
   attr left on the OLH head, so an `If-None-Match: *` PUT straight after does not wait; the
   current version transitioned stays current; a racing overwrite and a racing retention write each leave
   the object untouched; a class the placement lacks fails the action; the default retention
-  added when absent.
-- **Exclusions and registry:** none of its own; cloud transition stays under "Cloud transition
-  and restore".
+  added when absent; a stored Transition Date of `2600-01-01T23:34:33.709551616Z`, which
+  radosgw wraps to 2015-06-14 and transitions at once: the object stays in its class.
+- **Exclusions and registry:** the wrapped date's exclusion: a transition never acts on a
+  stored Date real_time cannot hold, which C1's prefix map holds as nil, where radosgw's worker
+  acts at the wrapped instant (`docs/ceph-upstream-bugs.md`, "radosgw's lifecycle Date wraps
+  past 2554 and expires at once"). Cloud transition stays under "Cloud transition and
+  restore".
 - **Depends on:** C10a, V5b, V7a, V9, WP-11, L5a; versioned transitions also C10b. **PR:**
   one.
   **Brief:** about 190 lines.
