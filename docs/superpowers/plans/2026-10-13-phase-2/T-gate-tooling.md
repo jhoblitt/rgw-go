@@ -98,7 +98,8 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
 | `hack/s3tests/{excluded-markers,deselect-phase2,deselect-phase3,include-phase2,gate-only}.txt` | WP-22, WP-23, T-1 create or move them; T-3 adds lines | every recording task | each task edits only its own lines; recordings land one at a time through the controller |
 | `test/s3tests/baseline/*.json`, `test/s3tests/known-differences-*.txt` | T-3 | every recording task | appended through the controller, one recording at a time |
 | `hack/parity/internal/parity/` (diff), `hack/parity/main.go` (its doc) | T-1 | none | single owner |
-| `hack/rooket/lib.sh`, `hack/rooket/{squid,tentacle}/values/rook-ceph-cluster.yaml`, `hack/rooket/README.md` | T-2 (b) | none | single owner |
+| `hack/rooket/lib.sh`, `hack/rooket/{squid,tentacle}/values/rook-ceph-cluster.yaml` | T-2 (b) | none | single owner |
+| `hack/rooket/README.md` | WP-22, WP-23, T-1, T-2 (b) | none | in that order; each describes what it changes |
 | `hack/bench/internal/harness` | T-2 (a) moves it | T-4 | T-2 (a) before T-4 |
 | `hack/admin/deselect-phase2.txt`, `hack/admin/run.sh` | T-gate (a) | V's and C12's recordings delete the lines | T-gate (a) last, once the file is empty |
 
@@ -148,7 +149,8 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
 
 - **Layer:** test tooling. **Cluster:** no.
 - **Files:** the command's selection; create `hack/s3tests/include-phase2.txt` with its header
-  alone; `hack/s3tests/run.sh` (a second collection).
+  alone; `hack/s3tests/run.sh` (a second collection); the s3-tests section of
+  `hack/rooket/README.md` (the set, the two collections, the include list's lines and the digest).
 - **Consumes:** WP-22. **Produces:** the include list's machinery (D20).
 - **Behaviour:**
   1. **Two collections:** with the marker expression and without it. Both need the conf, since
@@ -180,7 +182,9 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
 - **Layer:** test tooling. **Cluster:** no.
 - **Files:** the command's sets; create `hack/s3tests/gate-only.txt` with its header alone;
   modify `hack/parity/internal/parity/` (`diff --selection`), `hack/parity/main.go`'s package
-  doc, and the `Makefile`'s s3-tests targets.
+  doc, the `Makefile`'s s3-tests targets, and the s3-tests and comparison sections of
+  `hack/rooket/README.md` for what it adds (the PR and gate sets, `gate-only.txt`, the `.ids`
+  files and `parity diff --selection`).
 - **Consumes:** WP-23. **Produces:** `SET=pr|gate`, `gate-only.txt`, `parity diff --selection`
   (Seams).
 - **Behaviour:**
