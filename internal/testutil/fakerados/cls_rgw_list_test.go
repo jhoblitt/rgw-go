@@ -136,6 +136,20 @@ var _ = Describe("RGWClass's listing and suggestions", func() {
 			Expect(h.Ver).To(BeEquivalentTo(4))
 			Expect(c.Suggestions(index, "", shard)).To(ConsistOf(HaveField("Op", rgwcls.SuggestRemove)))
 		})
+		// The class takes the change category's rgw_bucket_category_stats
+		// with std::map's operator[] before its switch, so a removal writes a
+		// zero entry for the change's category
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2316-L2330 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2486-L2500 at v20.2.4).
+		It("leaves a zero stats entry for the category of a removal it applies", func(ctx SpecContext) {
+			seed(entry("gone", 5))
+			change := entry("gone", 5)
+			change.Meta.Category = rgwcls.CategoryMultiMeta
+			Expect(suggest(ctx, rgwcls.Suggestion{Op: rgwcls.SuggestRemove, Entry: change})).To(Succeed())
+			Expect(c.Header(index, "", shard).Stats).To(Equal(map[uint8]rgwcls.CategoryStats{
+				rgwcls.CategoryMain: {}, rgwcls.CategoryMultiMeta: {},
+			}))
+		})
 		It("updates an entry and accounts the suggested size", func(ctx SpecContext) {
 			seed(entry("k", 5))
 			upd := entry("k", 7)

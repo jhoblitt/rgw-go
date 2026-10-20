@@ -230,10 +230,8 @@ var _ = Describe("RGWClass's index transaction", func() {
 		Expect(header().Stats[rgwcls.CategoryMain]).To(Equal(rgwcls.CategoryStats{NumEntries: 1, TotalSize: 5, TotalSizeRounded: 4096, ActualSize: 5}))
 	})
 
-	It("refuses a prepare without a tag with EINVAL, and a versioned key, which it does not emulate", func(ctx SpecContext) {
+	It("refuses a prepare without a tag with EINVAL", func(ctx SpecContext) {
 		Expect(prepare(ctx, "")).To(MatchError(radosclient.ErrInvalid), "cls_rgw.cc:826-829")
-		err := prepareKey(ctx, rgwcls.ObjKey{Name: "k", Instance: "v1"}, "t", rgwcls.OpAdd)
-		Expect(err).To(MatchError(radosclient.ErrNotSupported))
 	})
 
 	It("refuses a completion with EINVAL when the header does not decode", func(ctx SpecContext) {

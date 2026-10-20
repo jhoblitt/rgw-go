@@ -6,7 +6,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,15 +47,13 @@ func init() {
 	tableClasses["rgw"] = true
 }
 
-// RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.6 and
+// RGWClass emulates the rgw class (src/cls/rgw/cls_rgw.cc at v19.2.7 and
 // v20.2.4): it runs the methods of the area tables merged into
 // rgwClassMethods, and every other method is EOPNOTSUPP.
 //
 // It is Squid's class, whatever the release: the guard refuses every reshard
 // status but not-resharding, and neither index method guards itself or keeps
-// a reshard log, as Tentacle's do. It keeps no bucket index log, and its
-// prepare and complete do not emulate versioned keys: one naming an instance
-// is EOPNOTSUPP.
+// a reshard log, as Tentacle's do. It keeps no bucket index log.
 func RGWClass() ClassFunc { return rgwClassMethods.dispatch() }
 
 // The bucket index, reshard status, head object, gc, usage log and multipart
@@ -382,30 +379,6 @@ func rgwBucketList(call *ClassCall) (out []byte, rval int32) {
 	return encodeSquid(rgwcls.ListRet{Dir: rgwcls.Dir{Header: h}}), 0
 }
 
-// rgwStoredEntry is read_key_entry for a key without an instance
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L946-L978 at v19.2.6):
-// the stored entry under idx, whether it is there, and EIO when it does not
-// decode. An entry flagged as a version marker is EOPNOTSUPP, since the
-// class would follow it to a versioned key.
-func rgwStoredEntry(call *ClassCall, idx string) (en rgwcls.DirEntry, found bool, rval int32) {
-	if call.Stored == nil {
-		return rgwcls.DirEntry{}, false, 0
-	}
-	b, ok := call.Stored.Omap[idx]
-	if !ok {
-		return rgwcls.DirEntry{}, false, 0
-	}
-	d := denc.NewDecoder(b)
-	en = rgwcls.DecodeDirEntry(d)
-	if d.Err() != nil {
-		return rgwcls.DirEntry{}, false, -int32(syscall.EIO)
-	}
-	if en.Flags&rgwcls.FlagVerMarker != 0 {
-		return rgwcls.DirEntry{}, false, -int32(syscall.EOPNOTSUPP)
-	}
-	return en, true, 0
-}
-
 // rgwPutEntry stores en under idx in the op's object, creating it, as
 // cls_cxx_map_set_val does.
 func rgwPutEntry(call *ClassCall, idx string, en rgwcls.DirEntry) {
@@ -443,13 +416,17 @@ func rgwUnaccount(h *rgwcls.DirHeader, en rgwcls.DirEntry) {
 }
 
 // rgwBucketPrepareOp is rgw_bucket_prepare_op
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L803-L885 at v19.2.6):
-// a request without a tag is EINVAL; a key with no entry gets an unset one
-// carrying the request's locator; the tag joins the entry's pending_map in
-// state PENDING_MODIFY with the op and the time. Tentacle's
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L803-L885 at v19.2.7):
+// a request without a tag is EINVAL; the entry is the one rgwReadKeyEntry
+// reads, so a version's under its instance key and, for a name whose plain
+// entry is a version marker, the null version's data; a key with no entry
+// gets an unset one carrying the request's locator, under the last key the
+// read tried; the tag joins the entry's pending_map in state PENDING_MODIFY
+// with the op and the time. Tentacle's
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L923-L1015)
-// also guards itself, which the guard call radosgw sends ahead of it
-// already does here.
+// also reads the header first, failing on one that does not decode, and
+// guards itself, which the guard call radosgw sends ahead of it already does
+// here.
 func rgwBucketPrepareOp(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodePrepareOp)
 	if rval < 0 {
@@ -458,17 +435,13 @@ func rgwBucketPrepareOp(call *ClassCall) int32 {
 	if op.Tag == "" {
 		return -int32(syscall.EINVAL)
 	}
-	if op.Key.Instance != "" {
-		return -int32(syscall.EOPNOTSUPP)
-	}
-	idx := op.Key.Name
-	en, found, rval := rgwStoredEntry(call, idx)
-	if rval < 0 {
-		return rval
-	}
-	if !found {
+	idx, en, rval := rgwReadKeyEntry(call, op.Key, false)
+	switch {
+	case rval == -int32(syscall.ENOENT):
 		en = rgwcls.NewDirEntry()
 		en.Key, en.Locator = op.Key, op.Locator
+	case rval < 0:
+		return rval
 	}
 	en.PendingMap = append(en.PendingMap, rgwcls.PendingEntry{Tag: op.Tag, Info: rgwcls.PendingInfo{
 		State: rgwcls.PendingModify, Timestamp: call.Now(), Op: uint8(op.Op),
@@ -478,18 +451,21 @@ func rgwBucketPrepareOp(call *ClassCall) int32 {
 }
 
 // rgwBucketCompleteOp is rgw_bucket_complete_op
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L1006-L1241 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1006-L1241 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1136-L1372 at v20.2.4).
 // A header that cannot be read is EINVAL, and a tag that is not pending is
-// EINVAL. A completion whose epoch is not above the entry's on the same
-// pool becomes a cancel, but the request's version is copied onto the
-// entry first, so a cancel writes it back (tracker #80894, reproduced on
-// purpose). A cancel drops the tag and removes an entry left neither
-// existing nor pending; a DEL unaccounts the entry and removes it, or
-// keeps it as not existing while another tag is pending; an ADD replaces
-// the entry's meta and accounts it. Every completion then removes and
-// unaccounts the entries remove_objs names, skipping one it cannot read,
-// and writes the header with its version counted.
+// EINVAL. The entry is the one rgwReadKeyEntry reads, and the completion
+// writes only the key that read stopped at, so a version's instance entry
+// and never its list entry, its flags cut to FLAG_VER. A completion whose
+// epoch is not above the entry's on the same pool becomes a cancel, but the
+// request's version is copied onto the entry first, so a cancel writes it
+// back (tracker #80894, reproduced on purpose). A cancel drops the tag and
+// removes an entry left neither existing nor pending; a DEL unaccounts the
+// entry and removes it, or keeps it as not existing while another tag is
+// pending; an ADD replaces the entry's meta and accounts it. Every
+// completion then removes and unaccounts the entries remove_objs names, each
+// read as rgwReadKeyEntry reads it, skipping one it cannot read, and writes
+// the header with its version counted.
 func rgwBucketCompleteOp(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeCompleteOp)
 	if rval < 0 {
@@ -499,17 +475,14 @@ func rgwBucketCompleteOp(call *ClassCall) int32 {
 	if rval < 0 {
 		return -int32(syscall.EINVAL)
 	}
-	if op.Key.Instance != "" {
-		return -int32(syscall.EOPNOTSUPP)
-	}
-	idx := op.Key.Name
-	en, ondisk, rval := rgwStoredEntry(call, idx)
-	if rval < 0 {
-		return rval
-	}
-	if !ondisk {
+	idx, en, rval := rgwReadKeyEntry(call, op.Key, false)
+	ondisk := rval == 0
+	switch {
+	case rval == -int32(syscall.ENOENT):
 		en = rgwcls.NewDirEntry()
 		en.Key, en.Ver, en.Meta, en.Locator = op.Key, op.Ver, op.Meta, op.Locator
+	case rval < 0:
+		return rval
 	}
 	en.IndexVer = h.Ver
 	en.Flags &= rgwcls.FlagVer
@@ -561,15 +534,12 @@ func rgwBucketCompleteOp(call *ClassCall) int32 {
 		rgwPutEntry(call, idx, en)
 	}
 	for _, k := range op.RemoveObjs {
-		if k.Instance != "" {
-			continue
-		}
-		old, found, rval := rgwStoredEntry(call, k.Name)
-		if rval < 0 || !found {
+		ridx, old, rval := rgwReadKeyEntry(call, k, false)
+		if rval < 0 {
 			continue
 		}
 		rgwUnaccount(&h, old)
-		rgwRemoveEntry(call, k.Name)
+		rgwRemoveEntry(call, ridx)
 	}
 	h.Ver++
 	call.Create().OmapHdr = encodeSquid(h)
@@ -647,20 +617,65 @@ func rgwSetBucketResharding(call *ClassCall) int32 {
 func (c *Cluster) Entry(pool, ns, oid, key string) (rgwcls.DirEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return storedOmap(c.store(pool, ns).objects[oid], pool, ns, oid, key, "index entry", rgwcls.DecodeDirEntry)
+}
+
+// InstanceEntry decodes the instance entry the stored shard keeps for key,
+// under rgwcls.InstanceIndexKey: for an empty instance the null version's
+// data entry, never its delete marker's. It reports false when the shard or
+// the entry is missing. An entry that does not decode panics, failing the
+// spec.
+func (c *Cluster) InstanceEntry(pool, ns, oid string, key rgwcls.ObjKey) (rgwcls.DirEntry, bool) {
+	return c.Entry(pool, ns, oid, rgwcls.InstanceIndexKey(key, false))
+}
+
+// ListEntries decodes the list entries the stored shard keeps for name's
+// versions, the keys after its plain key that rgwcls.ListIndexKey gives, in
+// key order, which for epochs below 2^32 is newest first. It is nil when
+// there are none. An entry that does not decode panics, failing the spec.
+func (c *Cluster) ListEntries(pool, ns, oid, name string) []rgwcls.DirEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	obj := c.store(pool, ns).objects[oid]
 	if obj == nil {
-		return rgwcls.DirEntry{}, false
+		return nil
+	}
+	var out []rgwcls.DirEntry
+	for _, k := range slices.Sorted(maps.Keys(obj.Omap)) {
+		if strings.HasPrefix(k, name+"\x00") {
+			en, _ := storedOmap(obj, pool, ns, oid, k, "list entry", rgwcls.DecodeDirEntry)
+			out = append(out, en)
+		}
+	}
+	return out
+}
+
+// OLHEntry decodes the OLH entry the stored shard keeps for name, under
+// rgwcls.OLHDataKey, reporting false when the shard or the entry is missing.
+// An entry that does not decode panics, failing the spec.
+func (c *Cluster) OLHEntry(pool, ns, oid, name string) (rgwcls.OLHEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return storedOmap(c.store(pool, ns).objects[oid], pool, ns, oid, rgwcls.OLHDataKey(name), "OLH entry", rgwcls.DecodeOLHEntry)
+}
+
+// storedOmap decodes the value obj keeps under key with dec, reporting false
+// when obj or the key is missing, and panics, naming what it read, when the
+// value does not decode. The cluster's lock is held.
+func storedOmap[T any](obj *Object, pool, ns, oid, key, what string, dec func(*denc.Decoder) T) (v T, found bool) {
+	if obj == nil {
+		return v, false
 	}
 	b, ok := obj.Omap[key]
 	if !ok {
-		return rgwcls.DirEntry{}, false
+		return v, false
 	}
 	d := denc.NewDecoder(b)
-	en := rgwcls.DecodeDirEntry(d)
+	v = dec(d)
 	if err := d.Err(); err != nil {
-		panic(fmt.Sprintf("fakerados: index entry %q of %s/%s/%s does not decode: %v", key, pool, ns, oid, err))
+		panic(fmt.Sprintf("fakerados: %s %q of %s/%s/%s does not decode: %v", what, key, pool, ns, oid, err))
 	}
-	return en, true
+	return v, true
 }
 
 // Header decodes the bucket index header the stored object keeps, the zero
@@ -1026,20 +1041,19 @@ const rgwBIAdvanceAndRetry = -int32(syscall.EFBIG)
 const rgwListMaxAttempts = 8
 
 // rgwBucketListEntries is the rest of rgw_bucket_list
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L525-L694 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L525-L694 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L575-L744 at v20.2.4)
-// for a request of entries. It starts after the start key, past the
-// subdirectory a delimiter-terminated start key names, and makes up to eight
-// omap reads of the entries still wanted. Each entry is decoded, EINVAL when
-// it does not decode; a key decode_list_index_key refuses and a version
-// marker are skipped; without list_versions an entry that is not visible, or
-// named as the start key, is skipped with every version of its name. With a
-// delimiter a name holding it after the prefix becomes one common-prefix
-// entry and the listing skips past the subdirectory. The reply is truncated
-// when the last read left keys and found some, with the last key visited as
-// its marker, and a truncated reply of no entries is
-// RGWBIAdvanceAndRetryError. The fake stores no key in the 0x80 "ugly
-// namespace" get_obj_vals skips.
+// for a request of entries. It starts after the key rgwListStart resolves,
+// past the subdirectory a delimiter-terminated start key names, and makes up
+// to eight reads of the entries still wanted, each as rgwGetObjVals reads.
+// Each entry is decoded, EINVAL when it does not decode; a key
+// decode_list_index_key refuses and a version marker are skipped; without
+// list_versions an entry that is not visible, or named as the start key, is
+// skipped with every version of its name. With a delimiter a name holding it
+// after the prefix becomes one common-prefix entry and the listing skips past
+// the subdirectory. The reply is truncated when the last read left keys and
+// found some, with the last key visited as its marker, and a truncated reply
+// of no entries is RGWBIAdvanceAndRetryError, the reply still encoded.
 func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader) (out []byte, rval int32) {
 	var keys []string
 	if call.Stored != nil {
@@ -1047,14 +1061,7 @@ func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader)
 	}
 	ret := rgwcls.ListRet{Dir: rgwcls.Dir{Header: h, Entries: map[string]rgwcls.DirEntry{}}}
 	m := ret.Dir.Entries
-	start := op.StartObj.Name
-	if op.StartObj.Instance != "" {
-		// encode_list_index_key
-		// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L358-L390)
-		// finds no versioned instance entry, which the fake never stores, and
-		// starts after every version of the name.
-		start += "\x01"
-	}
+	start := rgwListStart(call, op.StartObj)
 	var startEntry rgwcls.ObjKey
 	var prevKey, prevPrefix string
 	done, more := false, true
@@ -1063,7 +1070,7 @@ func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader)
 	}
 	for attempt := 0; attempt < rgwListMaxAttempts && more && !done && uint32(len(m)) < op.NumEntries; attempt++ { //nolint:gosec // an entry count fits a u32
 		var page []string
-		page, more = rgwObjVals(keys, start, op.FilterPrefix, int(op.NumEntries)-len(m))
+		page, more = rgwGetObjVals(keys, start, op.FilterPrefix, int(op.NumEntries)-len(m))
 		done = len(page) == 0
 		for i := 0; i < len(page); i++ {
 			k := page[i]
@@ -1073,12 +1080,12 @@ func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader)
 				return nil, -int32(syscall.EINVAL)
 			}
 			start, startEntry = k, en.Key
-			key, ok := rgwDecodeListIndexKey(k)
-			if !ok || en.Flags&rgwcls.FlagVerMarker != 0 {
+			key, err := rgwcls.DecodeListIndexKey(k)
+			if err != nil || en.Flags&rgwcls.FlagVerMarker != 0 {
 				continue
 			}
 			if !op.ListVersions && (!rgwVisible(en) || op.StartObj.Name == key.Name) {
-				start = key.Name + "\x01"
+				start = rgwcls.AfterVersions(key.Name)
 				startEntry = rgwcls.ObjKey{Name: start}
 				i = sort.SearchStrings(page, start) - 1
 				continue
@@ -1119,6 +1126,36 @@ func rgwBucketListEntries(call *ClassCall, op rgwcls.ListOp, h rgwcls.DirHeader)
 	return out, 0
 }
 
+// rgwListStart is encode_list_index_key
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4):
+// the omap key a listing starts after. A key without an instance is its name.
+// For an instance, "null" read as the empty one, it is the list key of the
+// version's stored instance entry, from that entry's own key and epoch, and
+// with no such entry the name's AfterVersions. When the instance entry cannot
+// be read the key stays empty, since rgw_bucket_list ignores the failure
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L528-L529 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L578-L579 at v20.2.4),
+// so the listing starts at the shard's first key, or its filter prefix's
+// (docs/ceph-upstream-bugs.md).
+func rgwListStart(call *ClassCall, key rgwcls.ObjKey) string {
+	if key.Instance == "" {
+		return key.Name
+	}
+	inst := key
+	if inst.Instance == "null" {
+		inst.Instance = ""
+	}
+	en, rval := rgwReadOmap(call, rgwcls.InstanceIndexKey(inst, false), rgwcls.DecodeDirEntry)
+	switch {
+	case rval == -int32(syscall.ENOENT):
+		return rgwcls.AfterVersions(key.Name)
+	case rval < 0:
+		return ""
+	}
+	return rgwcls.ListIndexKey(en.Key, en.VersionedEpoch)
+}
+
 // rgwObjVals is cls_cxx_map_get_vals as the OSD serves it (OMAPGETVALS):
 // the keys after start, from the filter prefix on when it sorts later, while
 // they carry the prefix, at most n, with more set when another would follow.
@@ -1138,32 +1175,36 @@ func rgwObjVals(keys []string, start, prefix string, n int) (page []string, more
 	return page, false
 }
 
-// rgwDecodeListIndexKey is decode_list_index_key
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L417-L462 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L467-L512 at v20.2.4):
-// a key without a NUL is the name; a longer one is the name, then
-// NUL-separated values, "i<instance>" and "v<ver>". A key with no value
-// after its NUL, or a version that does not parse, is refused.
-func rgwDecodeListIndexKey(k string) (rgwcls.ObjKey, bool) {
-	name, rest, found := strings.Cut(k, "\x00")
-	if !found {
-		return rgwcls.ObjKey{Name: k}, true
+// The bounds of the 0x80 namespace, BI_PREFIX_CHAR and the byte after it:
+// every key from biPrefixBegin up to biPrefixAfter starts with 0x80.
+const (
+	biPrefixBegin = "\x80"
+	biPrefixAfter = "\x81"
+)
+
+// rgwGetObjVals is get_obj_vals
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L188-L265 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L238-L315 at v20.2.4):
+// rgwObjVals, the keys in the 0x80 namespace dropped. A read whose keys all
+// sort below 0x80, or all from 0x81 on, is kept whole. When it dropped keys,
+// was truncated and kept fewer than n, a second read of the rest, after 0x81
+// or the last key kept when that sorts later, tops it up and gives more.
+func rgwGetObjVals(keys []string, start, prefix string, n int) (page []string, more bool) {
+	page, more = rgwObjVals(keys, start, prefix, n)
+	if len(page) == 0 || page[len(page)-1] < biPrefixBegin || page[0] >= biPrefixAfter {
+		return page, more
 	}
-	if rest == "" {
-		return rgwcls.ObjKey{}, false
+	page = slices.DeleteFunc(page, func(k string) bool { return k >= biPrefixBegin && k < biPrefixAfter })
+	if len(page) == n || !more {
+		return page, more
 	}
-	key := rgwcls.ObjKey{Name: name}
-	for v := range strings.SplitSeq(rest, "\x00") {
-		switch {
-		case strings.HasPrefix(v, "i"):
-			key.Instance = v[1:]
-		case strings.HasPrefix(v, "v"):
-			if _, err := strconv.ParseInt(v[1:], 10, 64); err != nil {
-				return rgwcls.ObjKey{}, false
-			}
-		}
+	next := biPrefixAfter
+	if len(page) > 0 && next < page[len(page)-1] {
+		next = page[len(page)-1]
 	}
-	return key, true
+	var rest []string
+	rest, more = rgwObjVals(keys, next, prefix, n-len(page))
+	return append(page, rest...), more
 }
 
 // rgwVisible is rgw_bucket_dir_entry::is_visible
@@ -1180,14 +1221,17 @@ func rgwVisible(en rgwcls.DirEntry) bool {
 const rgwDefaultTagTimeout = 120 * time.Second
 
 // rgwDirSuggestChanges is Squid's rgw_dir_suggest_changes
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L2192-L2408 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2192-L2408 at v19.2.7).
 // A shard that does not exist is ENOENT, and a header that does not decode EIO.
 // Each change is an op byte, its log flag stripped, and an entry; one that does
-// not decode is EINVAL. A key the shard does not hold is skipped. The stored
+// not decode is EINVAL. The change applies under its key's rgwObjIndexKey, so
+// a version's reaches its instance entry and never the list entry a listing
+// found it under. A key the shard does not hold is skipped. The stored
 // entry's pending ops older than the header's tag timeout, or 120 s, are
 // dropped; a change made against an older index version than the entry's is
 // skipped; while a pending op remains nothing changes. Otherwise the stored
-// entry is unaccounted when it exists, and a removal removes it while an update
+// entry is unaccounted when it exists, the change's category gets a stats
+// entry, zero when it had none, and a removal removes the entry while an update
 // stores the suggested entry at the header's version and accounts it. The
 // header is written, its version counted, when its stats changed. The fake
 // keeps no bucket index log, so the log flag changes nothing, and Tentacle's
@@ -1215,10 +1259,7 @@ func rgwDirSuggestChanges(call *ClassCall) int32 {
 		if d.Err() != nil {
 			return -int32(syscall.EINVAL)
 		}
-		idx := change.Key.Name
-		if change.Key.Instance != "" {
-			return -int32(syscall.EOPNOTSUPP)
-		}
+		idx := rgwObjIndexKey(change.Key)
 		b, ok := call.Stored.Omap[idx]
 		if !ok {
 			continue
@@ -1241,6 +1282,14 @@ func rgwDirSuggestChanges(call *ClassCall) int32 {
 		if disk.Exists {
 			rgwUnaccount(&h, disk)
 			changed = true
+		}
+		// The class takes the change category's rgw_bucket_category_stats
+		// with std::map's operator[] before it looks at the op, so a removal
+		// also leaves a zero entry for that category in the header it writes
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2328 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2498 at v20.2.4).
+		if _, ok := h.Stats[change.Meta.Category]; !ok {
+			h.Stats[change.Meta.Category] = rgwcls.CategoryStats{}
 		}
 		switch op {
 		case rgwcls.SuggestRemove:
