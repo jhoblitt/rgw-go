@@ -1,6 +1,6 @@
 # Phase 2 task dependencies
 
-Generated from every task's **Depends on:** line in the unit files at 1089af3. An arrow runs from a
+Generated from every task's **Depends on:** line in the unit files at 33720b1. An arrow runs from a
 prerequisite to the task that waits for it. In a unit's graph, a solid box is one of that unit's
 tasks and a dashed box is a prerequisite from another unit; no colour carries meaning. Each box
 links to its task where the Mermaid renderer allows clicks, and the list under each graph links
@@ -17,7 +17,7 @@ flowchart LR
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
-  u_B["B: bucket config<br/>39 tasks"]
+  u_B["B: bucket config<br/>40 tasks"]
   u_WP["WP: write path<br/>22 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
@@ -33,7 +33,7 @@ flowchart LR
   u_V -->|4| u_WP
   u_V -->|2| u_T
   u_L -->|6| u_C
-  u_L -->|1| u_B
+  u_L -->|2| u_B
   u_C -->|1| u_B
   u_B -->|4| u_S
   u_B -->|1| u_WP
@@ -578,6 +578,7 @@ flowchart LR
   t_BC_28f["BC-28f"]
   t_BC_29["BC-29"]
   t_BC_30["BC-30"]
+  t_BC_30b["BC-30b"]
   t_BC_31["BC-31"]
   t_BC_32["BC-32"]
   t_BC_33["BC-33"]
@@ -587,6 +588,7 @@ flowchart LR
   t_S3["S3"]:::ext
   t_S5["S5"]:::ext
   t_V11["V11"]:::ext
+  t_L1["L1"]:::ext
   t_L5b["L5b"]:::ext
   t_C8["C8"]:::ext
   t_WP_1["WP-1"]:::ext
@@ -665,7 +667,10 @@ flowchart LR
   t_BC_32 --> t_BC_28e
   t_BC_28a --> t_BC_28f
   t_BC_28e --> t_BC_28f
+  t_BC_30 --> t_BC_29
   t_WP_1 --> t_BC_30
+  t_L1 --> t_BC_30b
+  t_BC_30 --> t_BC_30b
   t_BC_26 --> t_BC_32
   t_BC_30 --> t_BC_32
   t_BC_31 --> t_BC_32
@@ -718,6 +723,7 @@ flowchart LR
   click t_BC_28f href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-28f-ownership-recording" "BC-28f: Ownership recording"
   click t_BC_29 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-29-form-reader" "BC-29: Form reader"
   click t_BC_30 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-30-post-policy-document" "BC-30: POST policy document"
+  click t_BC_30b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-30b-one-parse_iso8601-and-one-json_spirit-reader" "BC-30b: One parse_iso8601 and one json_spirit reader"
   click t_BC_31 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-31-browser-upload-credentials" "BC-31: Browser-upload credentials"
   click t_BC_32 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-32-post-object-op" "BC-32: POST object op"
   click t_BC_33 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-33-post-object-routes" "BC-33: POST object routes"
@@ -727,6 +733,7 @@ flowchart LR
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
   click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
+  click t_L1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l1-object-lock-types-xml-dates-and-evaluation" "L1: object-lock types, XML, dates and evaluation"
   click t_L5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5b-the-lock-headers-op-and-s3" "L5b: the lock headers, op and S3"
   click t_C8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c8-the-lifecycle-response-headers" "C8: the lifecycle response headers"
   click t_WP_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-1-checksum-types-and-record" "WP-1: checksum types and record"
@@ -772,6 +779,7 @@ flowchart LR
 - [BC-28f](B-bucket-config.md#task-bc-28f-ownership-recording): Ownership recording
 - [BC-29](B-bucket-config.md#task-bc-29-form-reader): Form reader
 - [BC-30](B-bucket-config.md#task-bc-30-post-policy-document): POST policy document
+- [BC-30b](B-bucket-config.md#task-bc-30b-one-parse_iso8601-and-one-json_spirit-reader): One parse_iso8601 and one json_spirit reader
 - [BC-31](B-bucket-config.md#task-bc-31-browser-upload-credentials): Browser-upload credentials
 - [BC-32](B-bucket-config.md#task-bc-32-post-object-op): POST object op
 - [BC-33](B-bucket-config.md#task-bc-33-post-object-routes): POST object routes
