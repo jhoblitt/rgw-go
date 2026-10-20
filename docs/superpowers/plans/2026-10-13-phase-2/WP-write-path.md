@@ -28,7 +28,7 @@ field of a struct the cluster's radosgw would re-encode without it".
 
 | Item | Surface | Tasks | Stored form |
 |---|---|---|---|
-| Checksums at Tentacle level | PutObject, UploadPart and UploadPartCopy with `x-amz-checksum-algorithm`, `x-amz-sdk-checksum-algorithm`, `x-amz-checksum-<alg>` as a header or an aws-chunked trailer; CreateMultipartUpload's algorithm and `x-amz-checksum-type`; CompleteMultipartUpload's combined checksum; GET and HEAD with `x-amz-checksum-mode`; GetObjectAttributes' `Checksum` and parts; ListParts; the seam POST object (B) writes through | WP-1 to WP-3, WP-5 to WP-9, WP-12 to WP-15 | head attr `user.rgw.cksum` (`rgw::cksum::Cksum` v2); Tentacle's `multipart_upload_info` v4 type and flags and `RGWUploadPartInfo` v6 `cksum` |
+| Checksums at Tentacle level | PutObject and UploadPart with `x-amz-checksum-algorithm`, `x-amz-sdk-checksum-algorithm`, `x-amz-checksum-<alg>` as a header or an aws-chunked trailer; UploadPartCopy, which answers its upload's checksum and takes no checksum request header; CreateMultipartUpload's algorithm and `x-amz-checksum-type`; CompleteMultipartUpload's combined checksum; GET and HEAD with `x-amz-checksum-mode`; GetObjectAttributes' `Checksum` and parts; ListParts; the seam POST object (B) writes through | WP-1 to WP-3, WP-5 to WP-9, WP-12 to WP-15 | head attr `user.rgw.cksum` (`rgw::cksum::Cksum` v2); Tentacle's `multipart_upload_info` v4 type and flags and `RGWUploadPartInfo` v6 `cksum` |
 | Compression on the write path | the placement's per-class `compression_type` on PutObject, UploadPart, UploadPartCopy, POST object and a streamed CopyObject; the INCOMPRESSIBLE hint | WP-4, WP-10, WP-11, WP-15 | head attr `user.rgw.compression` (`RGWCompressionInfo` v2); the part record's `cs_info`; Ceph's per-codec block framing |
 | Placement on the write path | phase 1 serves the rule, the class, the pools and the label. Phase 2 adds the class's compression type and the raw-copy seam lifecycle's transition consumes | WP-10, WP-11 | none new |
 | `?layout` | `GET /{bucket}/{key}?layout`, RGWGetObjLayout (D25) | WP-20, WP-21, WP-24 | none: it reads what is stored |
@@ -65,7 +65,7 @@ from radosgw below is an exclusion, written by the task named in the last column
 | Id | Decision | Reason | Tasks |
 |---|---|---|---|
 | D21 | Writes accept CRC32, CRC32C, CRC64NVME, SHA1, SHA256 and SHA512 under AWS's names. They refuse MD5, XXHASH64 and XXHASH128 (no Tentacle type id; main's 9 to 11), BLAKE3 and XXHASH3 with 400 InvalidArgument, before the body. XXHASH3 carries an exclusion: phase 2 takes no XXH3 dependency. Any stored type 0 to 8 is read and rendered, since rendering computes nothing. An UploadPart or a completion of an upload whose stored type rgw-go cannot compute answers 501. | The AWS set where the stored form stays one a v20.2.4 radosgw reads: it indexes its nine-entry table with the stored type ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99), [rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149)). Review Focus 4. | WP-1, WP-6, WP-8 |
-| D22 | Squid serves single-object checksums (PutObject, POST object) and verifies and stores a part's own supplied value on its part head. CreateMultipartUpload's algorithm is ignored on Squid, as Squid's radosgw ignores it, so no upload type, part-record checksum or combined checksum is stored. | The upload's type and the part record's checksum are struct fields Squid's radosgw re-encodes without ([rgw_common.h:1508-1538](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1538)); `user.rgw.cksum` is a separate attr (spec §8). | WP-6, WP-8, WP-9, WP-12 |
+| D22 | Squid serves single-object checksums (PutObject, POST object) and verifies and stores a part's own supplied value on its part head. CreateMultipartUpload's algorithm is ignored on Squid, as Squid's radosgw ignores it, so no upload type, part-record checksum or combined checksum is stored. | The upload's type and the part record's checksum are struct fields Squid's radosgw re-encodes without ([rgw_common.h:1508-1552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1552)); `user.rgw.cksum` is a separate attr (spec §8). | WP-6, WP-8, WP-9, WP-12 |
 | D23 | A streamed copy of an uncompressed source into a compressing placement is compressed, on both releases. A compressed source's copy stays raw (owner decision 4). | Tentacle's `RGWCopyObjDPF` compresses it ([rgw_op.cc:5825-5884](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5825-L5884)); either gateway reads both forms. The exclusion text of the earlier copy decision is rewritten. | WP-11 |
 | D24 | Tentacle's CreateBucketConfiguration `BucketIndex` stays 501, with its exclusion. | It sits in no phase (spec §9). | none |
 | D25 | `?layout` is the object op RGWGetObjLayout, for a user with the `admin=read` cap. | It exists only as the object op at both tags (§2.4). | WP-20, WP-21 |
@@ -140,7 +140,7 @@ func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error)
 | `internal/op/{object,multipart,objectread}.go`, `internal/memstore/{object,multipart}.go`, the fakes | WP-5 | V6, V8a, L5a | WP-5 adds every field this unit needs, in one PR, early. Other units' fields are line-local. The task that changes an interface regenerates the fakes and updates memstore. |
 | `internal/driver/put.go`, `stripe.go` (`putStream`, the tail writer) | WP-10 (a), WP-10 (b), WP-8 | V7a works in `headwrite.go` | in that order: WP-10 (a) splits the body into a plaintext stage and a stored stage; WP-10 (b) and then WP-8 each add one stage |
 | `internal/driver/headwrite.go` | WP-10 (a) (the head's hint) | V7a, L5a | one line-local hint argument; merged apart from V7a, never in parallel |
-| `internal/driver/mp_part.go`, `mp_upload.go`, `mp_complete.go` | WP-10 (b), WP-8, WP-9 | V7b (versioned completion), L5a (the upload's lock fields) | WP-10 (b), then WP-8, then WP-9 on `mp_part.go`. `CreateUpload`'s info literal is line-local. The combination lives in a new `mp_cksum.go`, called once from completion's assembly loop. |
+| `internal/driver/mp_part.go`, `mp_upload.go`, `mp_complete.go` | WP-10 (b), WP-8, WP-9 | V7b (versioned completion), L5a (the upload's lock fields) | WP-10 (b), then WP-8, then WP-9 on `mp_part.go`. `CreateUpload`'s info literal is line-local. The combination lives in a new `mp_cksum.go`, called once after completion's assembly loop has matched every named part, never inside it. |
 | `internal/driver/copy.go` | WP-11 | V7b | merged one after the other |
 | `internal/op/{putobject,uploadpart,initmultipart,completemultipart}.go` | WP-6 (one call each; the parsing in `internal/op/checksumreq.go`) | V11, BC-26 | the controller merges WP-6, V11 and BC-26 one after the other, never in parallel on one op |
 | `internal/op/getobject.go`, `objectread.go`, `listparts.go` | WP-12 | V6, V14a, BC-14 | line-local; never in parallel |
@@ -338,8 +338,10 @@ client's `otp_check`.
   - `ObjectState.Checksum *cksum.Cksum`, nil when absent or undecodable;
   - `ObjectPart.Checksum *cksum.Cksum`.
 - **Behaviour:** memstore computes, verifies and stores as the driver will (WP-8, WP-9), so the
-  op tasks' specs run against it. Its conformance cases run against both stores once the
-  driver tasks land:
+  op tasks' specs run against it. Its conformance cases sit in two entry points of their own,
+  since the driver's integration suite calls `Run` before the driver computes a checksum:
+  `conformance.RunObjectChecksums` (cases 1 and 2), which the driver joins in WP-8, and
+  `conformance.RunMultipartChecksums` (cases 3 and 4), which it joins in WP-9:
   1. a verified checksum is stored and returned on stat;
   2. a mismatch is BadDigest, with nothing written;
   3. a part's type must match its upload's;
@@ -363,6 +365,17 @@ client's `otp_check`.
      3. else the checksum `x-amz-trailer` names (WD-2);
      4. else, for a part, its upload's type and flags ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472));
      5. else none: nothing is computed.
+
+     UploadPartCopy takes none of these headers, and its copy part takes its upload's type and
+     flags (WP-8 rule 5). AWS's API model defines no checksum request header for it: aws-sdk-go
+     v1.55.8's `UploadPartCopyInput` has none, where `UploadPartInput` has
+     `x-amz-sdk-checksum-algorithm` and `x-amz-checksum-*`. A v20.2.4 radosgw honours them: its
+     Factory reads the copy request's own headers, and an algorithm header wins over the upload's
+     type ([rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611), [rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73)). It verifies a
+     value header ([rgw_op.cc:4759-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4759-L4790)), so it can answer BadDigest to a header the
+     model does not define for the operation, and it lets a copy part store a type its completion
+     then refuses with InvalidRequest ([rgw_op.cc:7121-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7121-L7131)). v19.2.7 computes nothing
+     for a copy part. rgw-go follows AWS's model and ignores the headers; that is an exclusion.
   2. **Names** go through `cksum.ParseName`. Each refusal is 400 InvalidArgument, radosgw's
      EINVAL ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73),
      [rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611)):
@@ -406,12 +419,16 @@ client's `otp_check`.
     9, 10 or 11 answer 501 with `PutPart` and `Complete` never called;
   - the same shape for XXHASH3 and BLAKE3;
   - the refusals reach no body read: the fake's body reader is untouched;
-  - CompleteMultipartUpload with a CRC64NVME value, and with a value of another type.
+  - CompleteMultipartUpload with a CRC64NVME value, and with a value of another type;
+  - an UploadPartCopy with an algorithm header of another type than its upload's and a wrong
+    value header succeeds, its part computed under its upload's type, and so does one whose
+    algorithm header names an algorithm rule 2 refuses on UploadPart, MD5 or BLAKE3 (rule 1).
 - **Exclusions and registry:**
   - retires "Client checksums are ignored until phase 2" (`docs/exclusions.md:2152`), with
     WP-14 confirming the recorded outcomes;
   - new: D21's refusals with XXHASH3's no-dependency reason; WD-2's inference and conflicts;
-    WD-3; D22's Squid limits; CreateMultipartUpload's refused algorithm;
+    WD-3; D22's Squid limits; CreateMultipartUpload's refused algorithm; UploadPartCopy's
+    checksum request headers ignored (rule 1);
   - the registry entries for defects 4 (the part half) and 6: S3-correctness, unreproduced;
     WP-14 reproduces them.
 - **Review:** adversarial (a client-facing parser).
@@ -442,8 +459,9 @@ client's `otp_check`.
 
 ### Task WP-8: PUT and part checksums
 
-- **Layer:** driver. **Files:** modify `internal/driver/put.go`, `mp_part.go`, `stat.go`.
-  **Cluster:** no.
+- **Layer:** driver. **Files:** modify `internal/driver/put.go`, `mp_part.go`, `stat.go`, and
+  `test/integration/metadata_test.go`. **Cluster:** no; its integration spec runs in the nightly
+  workflow and in WP-15's cluster run.
 - **Consumes:** WP-2, WP-5, WP-10 (b)'s stages. **Produces:** the stored `user.rgw.cksum` on
   heads and part heads, the part record's checksum, and `ObjectState.Checksum`.
 - **Behaviour:**
@@ -461,7 +479,9 @@ client's `otp_check`.
   4. A part head carries the part's `user.rgw.cksum` on both releases. The part record carries it
      as `RGWUploadPartInfo.cksum` at version 6 on Tentacle only
      ([rgw_putobj_processor.cc:525-584](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L525-L584)).
-  5. `CopyPart` hashes the decoded source with its upload's type through the same stage.
+  5. `CopyPart` hashes the decoded source with its upload's type and flags through the same
+     stage, and takes no checksum request header, as AWS defines none for UploadPartCopy (WP-6
+     rule 1).
   6. `StatObject` decodes the attr into `ObjectState.Checksum`; a record WP-1 refuses gives nil.
   7. **The store's own guard.** A `ChecksumRequest` whose type is not `Writable` is refused with
      InvalidArgument before any write, and `Cksum.Valid` is checked before the attr is set, so no
@@ -476,28 +496,38 @@ client's `otp_check`.
     the Content-MD5 BadDigest;
   - the part record on each release;
   - a stat of a v1 record, a type-9 record and a truncated one: nil, with no error;
-  - the emulator needs nothing new: the attr rides the head write's existing xattr step.
-- **Exclusions and registry:** none of its own (WP-6 writes the request rules).
+  - the emulator needs nothing new: the attr rides the head write's existing xattr step;
+  - the driver's integration suite in `test/integration/metadata_test.go` calls
+    `conformance.RunObjectChecksums` (WP-5) beside `Run`, and its cases pass on both releases in
+    the nightly integration workflow and in WP-15's cluster run.
+- **Exclusions and registry:** no exclusion of its own (WP-6 writes the request rules). It
+  updates the rgw-go line of the registry entry "radosgw aborts on a checksum-mode GET of an
+  object whose checksum attr has bytes past its record", which says rgw-go reads no checksum
+  attr, to say how `StatObject` reads a record with bytes past it (rule 6).
 - **Depends on:** WP-2, WP-5, WP-10 (b). **PR:** one. **Brief:** about 180 lines.
 
 ### Task WP-9: multipart checksums
 
 - **Layer:** driver. **Files:** modify `internal/driver/mp_upload.go`, `mp_list.go`,
-  `mp_complete.go`; create `internal/driver/mp_cksum.go`. **Cluster:** no.
+  `mp_complete.go`, and `test/integration/metadata_test.go`; create
+  `internal/driver/mp_cksum.go`. **Cluster:** no; its integration spec runs in the nightly
+  workflow and in WP-15's cluster run.
 - **Consumes:** WP-2, WP-5, WP-8. **Produces:** the upload's stored type and flags, ListParts'
   part checksums, and the combined checksum.
 - **Behaviour:**
   1. **CreateUpload** writes the type and flags into `multipart_upload_info` at v4 on Tentacle,
-     and at v2 without them on Squid ([rgw_common.h:1552-1592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1552-L1592),
-     [rgw_common.h:1508-1538](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1538)), as radosgw's init does
+     and at v2 without them on Squid ([rgw_common.h:1552-1609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1552-L1609),
+     [rgw_common.h:1508-1552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1552)), as radosgw's init does
      ([rgw_op.cc:7003-7010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7003-L7010), [rgw_sal_rados.cc:4150-4154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4150-L4154)).
   2. **GetUpload** decodes them into `Upload.Checksum`. **ListParts** returns each part's
      checksum from its record.
   3. **Complete**, on Tentacle, for an upload with a type ([rgw_op.cc:7211-7341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7211-L7341)):
-     1. Under the completion lock, it combines exactly the parts the request names, in its order,
-        from the part records the assembly already reads, through WP-2's combiner (WD-4,
-        defect 1). The combination is one function in `mp_cksum.go`, called once from the
-        assembly loop.
+     1. Under the completion lock, once every named part is matched to an uploaded one, it
+        combines exactly the parts the request names, in its order, from the part records the
+        assembly read, through WP-2's combiner (WD-4, defect 1). The combination is one function
+        in `mp_cksum.go`, called once after the assembly loop, never per part inside it, as
+        `MultipartStore.Complete` documents (WP-5): a completion with both a part fault and a
+        checksum fault answers the part fault, InvalidPart or EntityTooSmall.
      2. A named part without a checksum, or of another type, is 400 InvalidRequest
         ([rgw_op.cc:7105-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7105-L7131)).
      3. The armored value carries `-<parts named>` when the result is composite.
@@ -508,7 +538,12 @@ client's `otp_check`.
   4. **Squid** writes v2 info and combines nothing (D22).
 - **Specs** (fakerados):
   - two- and three-part uploads, composite and full-object, each CRC and digest type;
-  - an upload holding a part the request omits (defect 1);
+  - an upload holding a part the request omits: InvalidPart with nothing written, never
+    InvalidRequest or BadDigest from the omitted part (defect 1's precedence form);
+  - a part fault beside a checksum fault answers the part fault (rule 3.1);
+  - the driver's integration suite in `test/integration/metadata_test.go` calls
+    `conformance.RunMultipartChecksums` (WP-5) beside `Run`, and its cases pass on both
+    releases in the nightly integration workflow and in WP-15's cluster run;
   - the supplied value exact, without `-N`, with a trailing byte (BadDigest, defect 7), and as
     CRC64NVME (defect 4);
   - a part record written as radosgw writes it, at the upload's flags without V2;
@@ -517,9 +552,15 @@ client's `otp_check`.
   - rewrites the checksum line of "Multipart uploads in flight are shared"
     (`docs/exclusions.md:686-687`): either gateway may extend an upload the other began, and
     their types must agree, or completion refuses with 400 InvalidRequest, as radosgw does;
-  - WD-4's exclusion;
+  - WD-4's exclusion, which also records the precedence that differs from radosgw: rgw-go
+    answers a completion's part faults (InvalidPart, EntityTooSmall) before its checksum faults
+    (InvalidRequest, BadDigest), where radosgw runs `try_sum_part_cksums` and the supplied-value
+    check before `complete` matches the parts ([rgw_op.cc:7273-7336](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7273-L7336),
+    [rgw_op.cc:7366-7369](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7366-L7369));
   - the registry entries for defects 1, 4 (the completion half) and 7: S3-correctness,
-    unreproduced; WP-14 reproduces them.
+    unreproduced; WP-14 reproduces them. Defect 1's entry states its reachable form (Defects):
+    error precedence on a completion naming fewer or other parts than were uploaded, and a
+    wrong stored checksum only under a part upload racing the completion.
 - **Depends on:** WP-2, WP-5, WP-8. **PR:** one. **Brief:** about 200 lines.
 
 ### Task WP-10: compression on PUT and parts
@@ -696,7 +737,22 @@ client's `otp_check`.
   6. Capture `user.rgw.cksum` from radosgw-written Tentacle objects, xxh3 and blake3 records
      among them, and parts' and combined records, as WP-1's goldens.
   7. Reproduce defects 1 to 8 on Tentacle, record each result in the registry with its release,
-     and run the prior-art search before any filing (Global Constraints).
+     and run the prior-art search before any filing (Global Constraints). Defect 1 reproduces on
+     demand only in its precedence form (Defects), on an upload with a checksum type and a
+     completion naming fewer parts than were uploaded, under one of its two conditions:
+     - a part of `try_sum_part_cksums`' last page has no checksum or another type, which answers
+       InvalidRequest: three parts uploaded, the third under an algorithm header naming another
+       type, which radosgw's Factory lets win over the upload's, and a completion naming the
+       first two;
+     - every part has the upload's type and the completion supplies a value that is not a prefix
+       match of the last page's combination, which answers BadDigest: three parts of the upload's
+       type, a completion naming the first two, and the first two's combined value supplied. The
+       type is not CRC64NVME, whose supplied value radosgw never reads (defect 4).
+
+     With every part checksummed and no supplied value the completion answers `complete`'s
+     InvalidPart, which does not show the defect, so such a run records nothing about it. The
+     stored-checksum form needs a part upload racing the completion, and stays unreproduced
+     unless the race is staged.
 - **Specs:** the ledger checks pass; `make s3tests-parity` on each release has no unexpected
   difference; WP-1's suite passes with the captured goldens.
 - **Depends on:** WP-6 to WP-13; WP-22 and T-1 (the lists and the sets); BC-34, or the POST
@@ -1024,7 +1080,7 @@ search before any filing.
 
 | # | Defect | Class | Status | rgw-go's choice | Tasks |
 |---|---|---|---|---|---|
-| 1 | CompleteMultipartUpload combines the wrong parts: `try_sum_part_cksums` pages `list_parts` by the request's part count and keeps only the last page ([rgw_op.cc:7068-7092](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7068-L7092), [rgw_sal_rados.cc:4193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4193)), then combines every part of it. A FULL_OBJECT CRC that SDKs validate on GET then fails the download. | S3-correctness (integrity metadata wrong; data intact) | unreproduced | WD-4: exactly the named parts | WP-9, WP-14 |
+| 1 | CompleteMultipartUpload combines the wrong parts: `try_sum_part_cksums` pages `list_parts` by the request's part count and keeps only the last page ([rgw_op.cc:7068-7092](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7068-L7092), [rgw_sal_rados.cc:4193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4193)), then combines every part of it. `complete` refuses any completion whose parts are not the uploaded ones ([rgw_sal_rados.cc:4319-4342](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4319-L4342)), so a successful one names every part and the page holds them all. Without a race the effect is error precedence, on an upload with a checksum type and a completion naming fewer or other parts than were uploaded: InvalidRequest when a part of the last page has no checksum or another type ([rgw_op.cc:7108-7114](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7108-L7114), [rgw_op.cc:7121-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7121-L7131)); else BadDigest when a supplied value is present and is not a prefix match of the last page's combination ([rgw_op.cc:7317-7336](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317-L7336)); otherwise `complete`'s InvalidPart, which is due in every case ([rgw_sal_rados.cc:4319-4324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4319-L4324)). A stored wrong FULL_OBJECT checksum, which an SDK validating on GET refuses, needs a part upload racing the completion between `try_sum_part_cksums` and `complete` ([rgw_op.cc:7273-7282](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7273-L7282), [rgw_op.cc:7366-7369](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7366-L7369)). Squid has no checksum code. | S3-correctness (error precedence; integrity metadata wrong only under a race; data intact) | unreproduced | WD-4: exactly the named parts, matched before they are combined | WP-9, WP-14 |
 | 2 | `CombinerFactory` ignores the upload's flags ([rgw_cksum.cc:145-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L145-L155)), so a CRC upload created COMPOSITE gets a full-object CRC. Also on main at the pin ([rgw_cksum.cc:147-157](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.cc#L147-L157)). | S3-correctness | unreproduced | WD-1: the composite | WP-2, WP-9, WP-14 |
 | 3 | A single-part CRC upload is reported COMPOSITE: its combined record keeps the part's flags without V2 ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191), [rgw_cksum.cc:129-142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L129-L142)). | S3-correctness | unreproduced | WD-1: `V2\|COMBINED\|FULL_OBJECT` | WP-2, WP-14 |
 | 4 | Two CRC64NVME checks are skipped: completion's supplied value is never compared ([rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136)), nor a part's value sent without an algorithm header ([rgw_cksum_pipe.h:33-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L33-L63)). main adds no case (to verify in WP-14). | S3-correctness (integrity check skipped) | unreproduced | compare for every type (WD-4, rule 7 of WP-6) | WP-6, WP-9, WP-14 |
