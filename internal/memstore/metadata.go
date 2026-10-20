@@ -69,6 +69,9 @@ func instanceKey(id meta.BucketID) string {
 	return id.Name + ":" + id.ID
 }
 
+// Sections implements op.MetadataStore with the RADOS driver's sections.
+func (s *Store) Sections() []string { return []string{"bucket", "bucket.instance", "user"} }
+
 // Get implements op.MetadataStore with the RADOS driver's sections.
 func (s *Store) Get(ctx context.Context, section, key string) (op.MetadataEntry, error) {
 	if err := op.RefuseNULKey(key); err != nil {

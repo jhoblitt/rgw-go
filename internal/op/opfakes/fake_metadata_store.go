@@ -72,6 +72,16 @@ type FakeMetadataStore struct {
 	removeReturnsOnCall map[int]struct {
 		result1 error
 	}
+	SectionsStub        func() []string
+	sectionsMutex       sync.RWMutex
+	sectionsArgsForCall []struct {
+	}
+	sectionsReturns struct {
+		result1 []string
+	}
+	sectionsReturnsOnCall map[int]struct {
+		result1 []string
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -340,6 +350,59 @@ func (fake *FakeMetadataStore) RemoveReturnsOnCall(i int, result1 error) {
 	}
 	fake.removeReturnsOnCall[i] = struct {
 		result1 error
+	}{result1}
+}
+
+func (fake *FakeMetadataStore) Sections() []string {
+	fake.sectionsMutex.Lock()
+	ret, specificReturn := fake.sectionsReturnsOnCall[len(fake.sectionsArgsForCall)]
+	fake.sectionsArgsForCall = append(fake.sectionsArgsForCall, struct {
+	}{})
+	stub := fake.SectionsStub
+	fakeReturns := fake.sectionsReturns
+	fake.recordInvocation("Sections", []interface{}{})
+	fake.sectionsMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeMetadataStore) SectionsCallCount() int {
+	fake.sectionsMutex.RLock()
+	defer fake.sectionsMutex.RUnlock()
+	return len(fake.sectionsArgsForCall)
+}
+
+func (fake *FakeMetadataStore) SectionsCalls(stub func() []string) {
+	fake.sectionsMutex.Lock()
+	defer fake.sectionsMutex.Unlock()
+	fake.SectionsStub = stub
+}
+
+func (fake *FakeMetadataStore) SectionsReturns(result1 []string) {
+	fake.sectionsMutex.Lock()
+	defer fake.sectionsMutex.Unlock()
+	fake.SectionsStub = nil
+	fake.sectionsReturns = struct {
+		result1 []string
+	}{result1}
+}
+
+func (fake *FakeMetadataStore) SectionsReturnsOnCall(i int, result1 []string) {
+	fake.sectionsMutex.Lock()
+	defer fake.sectionsMutex.Unlock()
+	fake.SectionsStub = nil
+	if fake.sectionsReturnsOnCall == nil {
+		fake.sectionsReturnsOnCall = make(map[int]struct {
+			result1 []string
+		})
+	}
+	fake.sectionsReturnsOnCall[i] = struct {
+		result1 []string
 	}{result1}
 }
 

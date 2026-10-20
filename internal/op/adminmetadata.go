@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
@@ -28,10 +29,12 @@ import (
 // which set_req_state_err finds no row for and answers UnknownError.
 var errTopLevel = &Error{Code: "UnknownError", Status: 500, Errno: int(syscall.ENOTSUP)}
 
-// metadataSections are the sections Env.Metadata serves, in std::set order,
-// which the top-level listing lists as RGWMetadataTopHandler lists the
+// metadataSections are the sections store serves, in std::set order and each
+// once, which the top-level listing lists as RGWMetadataTopHandler lists the
 // registered handlers.
-var metadataSections = []string{"bucket", "bucket.instance", "user"}
+func metadataSections(store MetadataStore) []string {
+	return slices.Compact(slices.Sorted(slices.Values(store.Sections())))
+}
 
 // SyncType is RGWMDLogSyncType as update-type names it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L221-L232):
@@ -128,7 +131,7 @@ func (o *ListMetadata) VerifyPermission(_ context.Context, r *Request) error {
 func (o *ListMetadata) Execute(ctx context.Context, r *Request) error {
 	list := r.Env.Metadata.List
 	if o.Section == "" {
-		list = listSections
+		list = listSections(metadataSections(r.Env.Metadata))
 	}
 	marker := ""
 	if b, ok := fromBase64(o.Marker); ok {
@@ -167,19 +170,21 @@ func (o *ListMetadata) Execute(ctx context.Context, r *Request) error {
 // maxListInt bounds a page so it converts to int on any platform.
 const maxListInt = 1<<31 - 1
 
-// listSections is RGWMetadataTopHandler's listing
+// listSections is RGWMetadataTopHandler's listing over sections, sorted
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L352-L388 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L150-L186 at v20.2.4):
 // the sections from the first not below marker, and as the next marker the
 // first section not returned.
-func listSections(_ context.Context, _, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
-	i, _ := slices.BinarySearch(metadataSections, marker)
-	end := min(i+max(maxEntries, 0), len(metadataSections))
-	keys = slices.Clone(metadataSections[i:end])
-	if end < len(metadataSections) {
-		return keys, metadataSections[end], true, nil
+func listSections(sections []string) func(context.Context, string, string, int) ([]string, string, bool, error) {
+	return func(_ context.Context, _, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
+		i, _ := slices.BinarySearch(sections, marker)
+		end := min(i+max(maxEntries, 0), len(sections))
+		keys = slices.Clone(sections[i:end])
+		if end < len(sections) {
+			return keys, sections[end], true, nil
+		}
+		return keys, "", false, nil
 	}
-	return keys, "", false, nil
 }
 
 // PutMetadata is RGWOp_Metadata_Put::execute past its body read
@@ -207,8 +212,58 @@ type PutMetadata struct {
 	// Applied is false for a put check_versions refused, STATUS_NO_APPLY.
 	Applied bool
 	// OnDisk is the version put_pre read, what RGWX_UPDATE_VERSION reports:
-	// zero until check_versions has passed, as put_pre records it only then.
+	// zero until check_versions has passed, as put_pre records it only then,
+	// and for a section whose put rule reads none (putRule.zeroVersion).
 	OnDisk meta.ObjVersion
+	// release is the zone's, which the section's put rule is given.
+	release denc.Release
+}
+
+// A putRule is how a section's put answers, as RGWOp_Metadata_Put turns
+// what its handler returned into the response
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.cc#L269-L288 at v19.2.7 and v20.2.4).
+type putRule struct {
+	// status is the RGWX_UPDATE_STATUS of a put that applied, or that
+	// check_versions refused, on release rel: "applied" for STATUS_APPLIED
+	// and "skipped" for STATUS_NO_APPLY, which radosgw answers 204, or ""
+	// for a handler answering 0, which it answers 200 without the header.
+	status func(applied bool, rel denc.Release) string
+	// zeroVersion is true for a handler that reads no version through
+	// put_pre, whose RGWX_UPDATE_VERSION is ver:0,tag:.
+	zeroVersion bool
+}
+
+// metadataPutRules are the put rules of the sections, by name. A section
+// the store serves takes puts only once it has a row here, so a put to any
+// other is ErrNoSuchKey before its body is read. A row lands with the
+// store's section: one for a section the store does not serve lets a put
+// past the gate, to be answered only after its body is read.
+var metadataPutRules = map[string]putRule{
+	"bucket":          {status: entryPointStatus},
+	"bucket.instance": {status: appliedStatus},
+	"user":            {status: appliedStatus},
+}
+
+// appliedStatus is the status of a section whose handler answers an
+// applied put STATUS_APPLIED.
+func appliedStatus(applied bool, _ denc.Release) string {
+	if !applied {
+		return "skipped"
+	}
+	return "applied"
+}
+
+// entryPointStatus is the bucket entry point's status, whose handler answers
+// an applied put 0 rather than STATUS_APPLIED at both releases
+// (RGWMetadataHandlerPut_Bucket::put_post,
+// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2289-L2317 at v19.2.6;
+// RGWBucketMetadataHandler::put,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2355-L2401 at v20.2.4).
+func entryPointStatus(applied bool, _ denc.Release) string {
+	if !applied {
+		return "skipped"
+	}
+	return ""
 }
 
 // Name is set_metadata.
@@ -219,22 +274,14 @@ func (o *PutMetadata) VerifyPermission(_ context.Context, r *Request) error {
 	return CheckCaps(r, "metadata", meta.CapWrite)
 }
 
-// UpdateStatus is the RGWX_UPDATE_STATUS the put reports: "skipped" for
-// STATUS_NO_APPLY, "applied" for STATUS_APPLIED, and "" for an applied
-// bucket entry point, whose handler answers 0 rather than STATUS_APPLIED
-// at both releases (RGWMetadataHandlerPut_Bucket::put_post,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L2289-L2317 at v19.2.6;
-// RGWBucketMetadataHandler::put,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2355-L2401 at v20.2.4),
-// so radosgw answers it 200 without the header.
+// UpdateStatus is the RGWX_UPDATE_STATUS the put reports, its section's
+// putRule.status: "" for none, which radosgw answers 200 rather than 204.
 func (o *PutMetadata) UpdateStatus() string {
-	switch {
-	case !o.Applied:
-		return "skipped"
-	case o.Section == "bucket":
-		return ""
+	status := appliedStatus
+	if rule, ok := metadataPutRules[o.Section]; ok {
+		status = rule.status
 	}
-	return "applied"
+	return status(o.Applied, o.release)
 }
 
 // Execute decodes the body, reads the stored entry, and writes the body's
@@ -244,8 +291,11 @@ func (o *PutMetadata) Execute(ctx context.Context, r *Request) error {
 	// find_handler runs before the body is parsed
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L511-L514 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L306-L309 at v20.2.4):
-	// a section without a handler is ENOENT whatever the body holds.
-	if o.Section != "" && !slices.Contains(metadataSections, o.Section) {
+	// a section without a handler, here one without a put rule, is ENOENT
+	// whatever the body holds. The rows of metadataPutRules and the store's
+	// sections land together, so the two name the same sections.
+	rule, served := metadataPutRules[o.Section]
+	if o.Section != "" && !served {
 		return fmt.Errorf("metadata section %q: %w", o.Section, ErrNoSuchKey)
 	}
 	incoming, mtime, data, err := decodeMetadataPut(o.Body)
@@ -255,6 +305,7 @@ func (o *PutMetadata) Execute(ctx context.Context, r *Request) error {
 	if o.Section == "" {
 		return errTopLevel
 	}
+	o.release = r.Env.Zone.Release()
 	cur, err := r.Env.Metadata.Get(ctx, o.Section, o.Key)
 	switch {
 	case errors.Is(err, ErrNoSuchKey):
@@ -265,7 +316,9 @@ func (o *PutMetadata) Execute(ctx context.Context, r *Request) error {
 	if !checkVersions(cur.Version, cur.Mtime, incoming, mtime, o.Sync) {
 		return nil
 	}
-	o.OnDisk = cur.Version
+	if !rule.zeroVersion {
+		o.OnDisk = cur.Version
+	}
 	err = r.Env.Metadata.Put(ctx, o.Section, o.Key,
 		MetadataEntry{Key: o.Key, Data: data, Version: incoming, Mtime: mtime},
 		PutMetadataOptions{IfVersion: new(cur.Version)})
