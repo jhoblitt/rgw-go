@@ -5812,6 +5812,192 @@ differ, rgw-go does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketWebsite answers
   InvalidArgument for a document that does not
   parse](ceph-upstream-bugs.md#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse)").
+- **PutBucketLifecycleConfiguration refuses a document whose root is not
+  LifecycleConfiguration.** radosgw's `RGWPutLC::execute` looks the root
+  up as an optional field
+  ([rgw_op.cc:5996-6002](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5996-L6002),
+  [rgw_op.cc:6662-6668](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6662-L6668);
+  `RGWXMLDecoder::decode_xml`,
+  [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+  [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)),
+  so a root of another name, or a prefixed one, which expat without
+  namespace processing, `XML_ParserCreate(nullptr)`, reads as another name
+  ([rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+  [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)),
+  is read as the empty configuration, which it stores over the bucket's
+  rules and answers 200 (docs/ceph-upstream-bugs.md, "[radosgw stores an
+  empty lifecycle configuration for a body whose root is not
+  LifecycleConfiguration](ceph-upstream-bugs.md#radosgw-stores-an-empty-lifecycle-configuration-for-a-body-whose-root-is-not-lifecycleconfiguration)").
+  S3's model takes the body as a `LifecycleConfiguration` in S3's
+  namespace holding a required list of rules, and S3 answers MalformedXML
+  to configuration XML "that doesn't conform to the published XSD" (the
+  AWS SDK for Go's model,
+  [api.go:34969](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L34969),
+  [api.go:13051-13057](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L13051-L13057),
+  [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
+  rgw-go answers 400 MalformedXML (`lifecycle.Parse`,
+  `internal/lifecycle/xml.go`) to a root other than an unprefixed
+  `LifecycleConfiguration`, a prefixed one included even when its prefix
+  is bound to S3's namespace, as its other S3 documents do. It does not
+  check the root's namespace declaration, which radosgw ignores too. A
+  correct client's document, under the right root, is answered alike by
+  both. This is the correct S3 answer that the design's compatibility rule
+  asks for
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`).
+  AWS's answer was not checked against Amazon S3 itself. How
+  GetBucketLifecycleConfiguration answers the empty configuration radosgw
+  stores for such a body is task C6's to decide
+  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+- **PutBucketLifecycleConfiguration holds a rule's numbers to S3's
+  types.** radosgw keeps every number of a lifecycle rule as its
+  element's text (`decode_xml_obj(std::string&)`,
+  [rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L179-L182),
+  [rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L179-L182))
+  and reads it only where it uses it: a day count with `atoi`
+  ([rgw_lc.h:76](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L76),
+  [rgw_lc.h:76](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L76)),
+  an object size with `std::stoull`
+  ([rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L264-L278),
+  [rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L264-L278)).
+  `LCFilter_S3::decode_xml` refuses a filter whose `ObjectSizeLessThan` is
+  at or below its `ObjectSizeGreaterThan` by comparing the two texts
+  bytewise
+  ([rgw_lc_s3.cc:169-174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L169-L174),
+  [rgw_lc_s3.cc:169-174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L169-L174)).
+  So radosgw stores Days of `5x` or ` 7`, answers InvalidArgument to
+  `thirty`, which atoi reads as 0, refuses ObjectSizeGreaterThan 9 with
+  ObjectSizeLessThan 10 and takes 10 with 9 (docs/ceph-upstream-bugs.md,
+  "[radosgw's lifecycle grammar reads its numbers as
+  text](ceph-upstream-bugs.md#radosgws-lifecycle-grammar-reads-its-numbers-as-text)").
+  S3's model types the day counts and NewerNoncurrentVersions as integers
+  and the object sizes as longs (the AWS SDK for Go's model:
+  DaysAfterInitiation,
+  [api.go:12222](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L12222);
+  Expiration's Days,
+  [api.go:28328](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L28328);
+  the sizes in And and in the Filter,
+  [api.go:28530-28533](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L28530-L28533),
+  [api.go:28618-28621](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L28618-L28621);
+  NoncurrentVersionExpiration's,
+  [api.go:32242-32249](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L32242-L32249);
+  NoncurrentVersionTransition's NoncurrentDays,
+  [api.go:32305](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L32305);
+  Transition's Days,
+  [api.go:42703](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L42703)),
+  and S3 answers MalformedXML to configuration XML that does not conform
+  to its schema
+  ([api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
+  As the design's compatibility rule asks
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  rgw-go (`lifecycle.Parse`, `internal/lifecycle/xml.go`):
+  - reads Expiration's Days, Transition's Days, the NoncurrentDays of
+    NoncurrentVersionExpiration and of NoncurrentVersionTransition,
+    NoncurrentVersionExpiration's NewerNoncurrentVersions and
+    DaysAfterInitiation as an xs:int, and ObjectSizeGreaterThan and
+    ObjectSizeLessThan as an xs:long: an optional sign, then decimal
+    digits, XML whitespace around them collapsed, within the type's range.
+    Anything else, an empty element included, is 400 MalformedXML, where
+    radosgw stores the text, or answers InvalidArgument to one atoi reads
+    as 0 or less;
+  - compares the two sizes as numbers, and answers MalformedXML, radosgw's
+    code for that refusal, when ObjectSizeLessThan is at or below
+    ObjectSizeGreaterThan, so it takes 9 with 10 and refuses 10 with 9;
+  - answers 400 InvalidArgument to a negative ObjectSizeGreaterThan or
+    ObjectSizeLessThan, once the document has no MalformedXML: S3's sizes
+    are byte counts ("Object size values are in bytes", the S3 User
+    Guide's "Adding filters to Lifecycle rules"). radosgw stores one, and
+    its worker reads it with stoull as 2^64 less its magnitude, so a rule
+    whose ObjectSizeLessThan is `-1` applies to every object and one whose
+    ObjectSizeGreaterThan is `-1` to none;
+  - answers 400 InvalidArgument to a NewerNoncurrentVersions outside 1 to
+    100, the range S3 documents ("up to 100",
+    [api.go:32236-32242](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L32236-L32242);
+    "between 1 and 100", the S3 User Guide's "Lifecycle configuration
+    elements"). radosgw stores any count, and its worker holds atoi's int
+    in a uint64_t, so a negative count never acts, 0 acts as if no count
+    were set, and one above 100 keeps that many versions;
+  - stores each number in decimal, without sign or leading zero, where
+    radosgw stores the text as written, so GetBucketLifecycleConfiguration
+    returns `7` for a Days of ` +007 `. Either gateway's worker reads the
+    stored decimal as the client meant it.
+
+  What stays radosgw's: day counts of 0 or less, and the rule's other
+  checks, are its InvalidArgument; a NewerNoncurrentVersions inside a
+  NoncurrentVersionTransition, which radosgw does not store, is ignored;
+  and a NewerNoncurrentVersions in a rule without a Filter is taken, as
+  radosgw takes it, where the S3 User Guide states that it needs one, a
+  rule the SDK's model does not carry. A configuration radosgw stored with
+  other text is written back by GetBucketLifecycleConfiguration as stored.
+  The status codes Amazon S3 answers for a negative size and a count
+  outside 1 to 100 were not checked against Amazon S3 itself;
+  InvalidArgument is radosgw's code for a value out of range.
+- **PutBucketLifecycleConfiguration holds a Date and
+  ExpiredObjectDeleteMarker to S3's types.** radosgw's `check_date` asks of
+  a Date only that `from_iso_8601`'s instant be at midnight UTC
+  ([rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L19-L30),
+  [rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L19-L30)).
+  `from_iso_8601` stops at white space and carries a field past its range
+  into the next
+  ([iso_8601.cc:39-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L151),
+  [iso_8601.cc:39-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L39-L151)),
+  and `from_time_t`, counting u64 nanoseconds, wraps a time past
+  2554-07-21T23:34:33.709551615Z into another instant
+  ([ceph_time.h:149-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L149-L151),
+  [ceph_time.h:146-148](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L146-L148)).
+  So radosgw stores a bare date such as `2026-01-01`, a year alone,
+  `2026-01-01 later`, `2026-13-01` and `2026-04-31` as written, which
+  GetBucketLifecycleConfiguration sends back in a form aws-sdk-go-v2
+  cannot read (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle grammar
+  reads its numbers as
+  text](ceph-upstream-bugs.md#radosgws-lifecycle-grammar-reads-its-numbers-as-text)"),
+  and stores `2600-01-01T23:34:33.709551616Z`, whose wrap is
+  2015-06-14T00:00:00Z, which its worker treats as long past and acts on at
+  once (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle Date wraps past
+  2554 and expires at
+  once](ceph-upstream-bugs.md#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)").
+  It sets the delete-marker action, `dm_expiration`, only for the exact
+  text `true`
+  ([rgw_lc_s3.cc:46-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L46-L62),
+  [rgw_lc_s3.cc:46-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L46-L62)),
+  so a rule whose ExpiredObjectDeleteMarker is `1`, ` true `, `True` or
+  `yes` has no delete-marker action: radosgw answers InvalidArgument when
+  the rule has no other action and stores it without one otherwise
+  (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle grammar reads its
+  numbers as
+  text](ceph-upstream-bugs.md#radosgws-lifecycle-grammar-reads-its-numbers-as-text)").
+  S3's model makes a Date an ISO 8601 timestamp at midnight UTC and
+  ExpiredObjectDeleteMarker a boolean (the AWS SDK for Go's model,
+  [api.go:28322-28334](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L28322-L28334),
+  [api.go:42697-42699](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L42697-L42699)).
+  As the design's compatibility rule asks
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  rgw-go (`lifecycle.Parse`, `internal/lifecycle/xml.go`):
+  - takes the Date of an Expiration or a Transition only when it is
+    written as a full date-time, `YYYY-MM-DDThh:mm:ss` with an optional
+    fraction and then `Z`, and `from_iso_8601`'s reading of it, with
+    nothing but XML whitespace after it, is a calendar date none of whose
+    fields is carried, at 00:00:00 UTC, which real_time holds. It answers
+    400 MalformedXML to any other: a bare date, a year or a year and month
+    alone, and a time to the hour or the minute, which radosgw takes, so a
+    client that sends one gets 400 where radosgw stores it; and a missing
+    `Z` or a `+00:00` offset, a form S3 may take, which `from_iso_8601`
+    cannot read and radosgw refuses too. It stores the Date as written, the
+    bytes radosgw would store;
+  - reads ExpiredObjectDeleteMarker as an xs:boolean, `true`, `false`, `1`
+    or `0` with XML whitespace around it collapsed, `1` setting the action,
+    and answers 400 MalformedXML to anything else.
+
+  s3-tests' date tests keep radosgw's answers, as botocore 1.43.90 sends
+  every Date as a full date-time: `test_lifecycle_set_date`'s
+  `2017-09-27` as `2017-09-27T00:00:00Z`, and
+  `test_lifecycle_expiration_date`'s `2015-01-01` and `2030-01-01` as
+  `2015-01-01T00:00:00Z` and `2030-01-01T00:00:00Z`, which both take. It
+  reads the all-digit `20200101` of
+  `test_lifecycle_set_invalid_date` and `20220927` of
+  `test_lifecycle_transition_set_invalid_date` as seconds since the epoch,
+  so it sends `1970-08-22T19:08:21Z` and `1970-08-23T00:55:27Z`, which
+  neither takes, not being at midnight. AWS's answer to each case was not
+  checked against Amazon S3 itself.
 
 ### Object read differences
 

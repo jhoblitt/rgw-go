@@ -175,19 +175,25 @@ func DecodeRule(d *denc.Decoder) Rule {
 
 func byID(a, b Rule) int { return cmp.Compare(a.ID, b.ID) }
 
+// ordered is c's rules in rule_map order, sorting a copy when a caller built
+// Rules out of it.
+func (c Configuration) ordered() []Rule {
+	if slices.IsSortedFunc(c.Rules, byID) {
+		return c.Rules
+	}
+	rules := slices.Clone(c.Rules)
+	slices.SortStableFunc(rules, byID)
+	return rules
+}
+
 // Encode is RGWLifecycleConfiguration::encode
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L529-L533 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L529-L533 at v20.2.4),
 // the bytes radosgw stores under user.rgw.lc: ENCODE_START(1, 1) around the
 // rule_map, a u32 count then each rule under its ID, in multimap order.
 func (c Configuration) Encode(e *denc.Encoder, rel denc.Release) {
-	rules := c.Rules
-	if !slices.IsSortedFunc(rules, byID) {
-		rules = slices.Clone(rules)
-		slices.SortStableFunc(rules, byID)
-	}
 	f := e.BeginStruct(1, 1)
-	denc.EncodeSlice(e, rules, func(e *denc.Encoder, r Rule) {
+	denc.EncodeSlice(e, c.ordered(), func(e *denc.Encoder, r Rule) {
 		e.String(r.ID)
 		r.Encode(e, rel)
 	})
