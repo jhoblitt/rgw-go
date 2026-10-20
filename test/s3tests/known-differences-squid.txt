@@ -45,3 +45,20 @@
 # A PutBucketVersioning Status or MfaDelete outside S3's values, answered 400 MalformedXML; radosgw answers 400 InvalidArgument (exclusions: "PutBucketVersioning answers MalformedXML for a document that does not parse")
 ^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_status$
 ^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_mfa_delete$
+
+# DeleteBucketOwnershipControls answered 501, the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (exclusions: "ownershipControls requests are served as v21 serves them")
+^s3tests\.functional\.test_s3::test_bucket_delete_ownership_controls_keeps_bucket$
+
+# A DELETE of a bucket's analytics, intelligent-tiering, inventory, metrics, metadata or metadata table configuration, answered 501 with the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (exclusions: "A bucket or object request radosgw has no op for answers 501")
+^s3tests\.functional\.test_s3::test_bucket_delete_analytics_configuration_keeps_bucket$
+^s3tests\.functional\.test_s3::test_bucket_delete_intelligent_tiering_configuration_keeps_bucket$
+^s3tests\.functional\.test_s3::test_bucket_delete_inventory_configuration_keeps_bucket$
+^s3tests\.functional\.test_s3::test_bucket_delete_metrics_configuration_keeps_bucket$
+^s3tests\.functional\.test_s3::test_bucket_delete_metadata_configuration_keeps_bucket$
+^s3tests\.functional\.test_s3::test_bucket_delete_metadata_table_configuration_keeps_bucket$
+
+# PutObjectAnnotation, DeleteObjectAnnotation, RenameObject and UpdateObjectEncryption, answered 501 with the object kept; radosgw serves them as PutObject or DeleteObject and replaces or deletes the object (exclusions: "A bucket or object request radosgw has no op for answers 501")
+^s3tests\.functional\.test_s3::test_object_put_annotation_keeps_object$
+^s3tests\.functional\.test_s3::test_object_delete_annotation_keeps_object$
+^s3tests\.functional\.test_s3::test_object_rename_missing_source_keeps_object$
+^s3tests\.functional\.test_s3::test_object_update_encryption_keeps_object$
