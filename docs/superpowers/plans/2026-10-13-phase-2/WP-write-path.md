@@ -116,7 +116,7 @@ from radosgw below is an exclusion, written by the task named in the last column
 |---|---|---|
 | `cksum.ParseName(name string) (cksum.Type, bool)`, case-insensitive over Tentacle's nine names and main's `xxhash3`; `cksum.ForeignName(name string) bool` for main's MD5, XXHASH64 and XXHASH128 | WP-1 | BC-30 (which form fields are checksum fields), WP-6 |
 | `op.ChecksumRequest{Type cksum.Type; Flags uint16; Expected func() (string, bool)}`, `PutParams.Checksum *ChecksumRequest` | WP-5 | BC-32 (POST object's write) |
-| the checksum request parser over a field lookup, so POST object passes its form fields where a request passes headers: `op.ChecksumInput{Field func(name string) (string, bool); Trailers Trailers}` | WP-6 | BC-32 |
+| the checksum request parser over a field lookup, so POST object passes its form fields where a request passes headers: `op.ChecksumInput{Field func(name string) (string, bool); Trailers Trailers; Body io.Reader}`. The put and part parsers return the body the op hands to the store, wrapped to record its io.EOF Read. BC-32 passes its form's file part as Body | WP-6 | BC-32 |
 | `internal/cls/otp`: `OTPInfo` (`otp_info_t` v1) with its JSON, `OTPCheck` (`otp_check_t`), the check-result constants, `OTPObject(uid meta.UserID) string` (`"user:" + uid.String()`, in `ZoneParams.OTPPool`), and the admin calls `Set`, `GetAll`, `Remove`, `GetCurrentTime` | WP-16 | V13a, which adds `ops_check.go` (`Check`, `LookupCheck`) |
 | fakerados `OTPClassAt(now func() time.Time) ClassFunc` and `OTPClass()`, assembled from `otpAdminMethods(now)` and `otpCheckMethods(now)`, an empty table in `cls_otp_check.go`, on the clock `now`, which stands for the OSD's; each device's `last_checks` and `last_success` kept in the instance type | WP-17 | V13b, which fills `cls_otp_check.go` |
 | the placement lookup for a transition's target class: phase 1's `op.ZoneInfo.Placement(rule)`, which is `valid_placement` plus the pools and compression type. WP adds no new placement seam | existing | C11 |
@@ -127,9 +127,10 @@ The parser seam sketch, for BC-32's use (names are the implementer's; the shape 
 
 ```go
 type Trailers interface{ Trailer(name string) (string, bool) }
+type ChecksumInput struct{ Field func(name string) (string, bool); Trailers Trailers; Body io.Reader }
 type UploadChecksum struct{ Type cksum.Type; Flags uint16 }
-func ChecksumForPut(in ChecksumInput, rel denc.Release) (*ChecksumRequest, error)
-func ChecksumForPart(in ChecksumInput, up UploadChecksum, rel denc.Release) (*ChecksumRequest, error)
+func ChecksumForPut(in ChecksumInput, rel denc.Release) (*ChecksumRequest, io.Reader, error)
+func ChecksumForPart(in ChecksumInput, up UploadChecksum, rel denc.Release) (*ChecksumRequest, io.Reader, error)
 func ChecksumForCreate(in ChecksumInput, rel denc.Release) (UploadChecksum, error)
 func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error)
 ```
@@ -357,7 +358,8 @@ client's `otp_check`.
 - **Layer:** op. **Files:** create `internal/op/checksumreq.go` and specs; one call each in
   `internal/op/{putobject,uploadpart,initmultipart,completemultipart}.go`. **Cluster:** no.
 - **Consumes:** WP-1, WP-3's `Trailers`, WP-5. **Produces:** `ChecksumInput` and the four
-  parser functions (Seams), which BC-32 calls with POST object's form fields.
+  parser functions (Seams), which BC-32 calls with POST object's form fields and its file part
+  as the body.
 - **Behaviour:**
   1. **The algorithm** of a PutObject or UploadPart, first match wins:
      1. `x-amz-checksum-algorithm`, else `x-amz-sdk-checksum-algorithm`, radosgw's order
@@ -388,6 +390,15 @@ client's `otp_check`.
   4. **The expected value** is the value header's, or the trailer's through `Trailers` once the
      body is read. With neither, the computed checksum is stored unverified, as radosgw and the
      AWS SDKs' flow expect.
+     - `Trailer` answers not found both before Body has returned io.EOF and for a trailer never
+       sent (WP-3's review), so WP-6 records the io.EOF itself. `ChecksumInput` carries the body.
+       `ChecksumForPut` and `ChecksumForPart` return it wrapped so that the wrapper records the
+       Read that returns io.EOF, and the op hands the store that wrapped body.
+     - A trailer's `Expected` called before that Read answers `("", true)`, a value no armored
+       checksum equals. WP-5's `bodyChecksum` turns it into 400 BadDigest with nothing written,
+       so an early ask fails closed and cannot store a checksum unverified.
+     - Both stores make that Read on every correct upload (`internal/memstore/object.go:278`,
+       `internal/driver/stripe.go:357-370`), so a correct upload is unaffected.
   5. **A part.**
      - A part naming another algorithm than its upload's is 400 InvalidRequest (WD-3).
      - A part, or a completion, of an upload whose stored type rgw-go cannot compute is 501
@@ -420,6 +431,9 @@ client's `otp_check`.
     9, 10 or 11 answer 501 with `PutPart` and `Complete` never called;
   - the same shape for XXHASH3 and BLAKE3;
   - the refusals reach no body read: the fake's body reader is untouched;
+  - an early ask: a trailer's `Expected` called before the wrapped body has returned io.EOF
+    answers `("", true)`, so the store answers 400 BadDigest and writes nothing; called after,
+    it answers the trailer's value. No early ask stores a checksum unverified;
   - CompleteMultipartUpload with a CRC64NVME value, and with a value of another type;
   - an UploadPartCopy with an algorithm header of another type than its upload's and a wrong
     value header succeeds, its part computed under its upload's type, and so does one whose
@@ -430,6 +444,17 @@ client's `otp_check`.
   - new: D21's refusals with XXHASH3's no-dependency reason; WD-2's inference and conflicts;
     WD-3; D22's Squid limits; CreateMultipartUpload's refused algorithm; UploadPartCopy's
     checksum request headers ignored (rule 1);
+  - new: the plain `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` sent with `x-amz-trailer` keeps no
+    trailers (WP-3; `docs/exclusions.md`, "aws-chunked trailer sections are read line by line").
+    A Tentacle radosgw verifies the checksum an algorithm header, or a part's upload type, names
+    against such a trailer:
+    - the filter `RGWPutObj_Cksum::Factory` builds
+      ([rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611)),
+      for a part with no algorithm header from the upload's `multipart_cksum_type`
+      ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472)),
+      reads its value through `RGWPutObj_Cksum::expected`
+      ([rgw_cksum_pipe.h:193-200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L200));
+    - rgw-go stores that checksum unverified, the part's included (rule 1.4, behaviour 4);
   - the registry entries for defects 4 (the part half) and 6: S3-correctness, unreproduced;
     WP-14 reproduces them.
 - **Review:** adversarial (a client-facing parser).
