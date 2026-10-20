@@ -337,6 +337,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's JSON parser recurses without limit on a POST policy's nesting](#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting) | pending | pending |  |
 | [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending |  |
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
+| [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18465,3 +18466,62 @@ Every new entry adds its row to this table, in document order.
   unfiled while filing is paused.
 - **Found:** phase 2 task BC-3's review, 2026-10-19, reading
   `RGWDeleteCORS::execute`. Derived from the source, not reproduced.
+
+## cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry
+
+- **Kind:** defect, S3-correctness, latent: an ignored error. A listing whose
+  start key names a version whose instance entry the class cannot read
+  starts from the beginning of the range it lists rather than after that
+  version. Not security-relevant. Unreproduced: derived from the source and
+  from fakerados's emulation of the class.
+- **Evidence:** paths are under `src/cls/rgw/`.
+  - `rgw_bucket_list` declares its start key empty and fills it through
+    `encode_list_index_key`, whose return it discards
+    ([cls_rgw.cc:528-529](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L528-L529),
+    [cls_rgw.cc:578-579](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L578-L579)).
+  - For a start key with an instance, `encode_list_index_key` reads the
+    version's instance entry and, on any failure but ENOENT, returns the
+    error without setting the key
+    ([cls_rgw.cc:358-390](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390),
+    [cls_rgw.cc:408-440](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440)).
+    The read fails with EIO for an entry that does not decode, and with
+    whatever else `cls_cxx_map_get_val` returns
+    ([cls_rgw.cc:914-932](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L914-L932),
+    [cls_rgw.cc:1044-1062](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1044-L1062)).
+  - `encode_list_index_key` handles its own ENOENT on purpose, building the
+    name and 0x01, which sorts after every version of the name
+    ([cls_rgw.cc:375-381](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L375-L381),
+    [cls_rgw.cc:425-431](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L425-L431)),
+    so dropping the other errors reads as an oversight
+    (rgw-bug-reproduction's triage).
+  - The listing's first `get_obj_vals` then reads after the empty key
+    ([cls_rgw.cc:556-569](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L556-L569),
+    [cls_rgw.cc:606-619](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L606-L619)):
+    from the shard's first key, or, for a listing with a filter prefix, the
+    first key that carries the prefix, since `get_obj_vals` passes the
+    prefix to `cls_cxx_map_get_vals`
+    ([cls_rgw.cc:201-202](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L201-L202),
+    [cls_rgw.cc:251-252](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L251-L252)).
+  - Main is unchanged: its `encode_list_index_key` call still discards the
+    return
+    ([cls_rgw.cc:589-590](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L589-L590),
+    with `encode_list_index_key` at
+    [cls_rgw.cc:409-441](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/cls/rgw/cls_rgw.cc#L409-L441),
+    at 7ed73efc1be).
+- **Impact:** the shard holding the version answers from the start of its
+  range rather than after the marker, so a listing that resumes at that
+  version, as ListObjectVersions does from a `version-id-marker`, is handed
+  that shard's entries from before the marker again. What radosgw makes of
+  them when it merges the shards' answers, and whether a client paging by
+  the returned markers then loops, was not traced. It needs an instance
+  entry the class cannot read, which radosgw's own writes do not leave.
+- **Releases:** checked at v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
+  (`rgwListStart`, `internal/testutil/fakerados/cls_rgw.go`; pinned in
+  `internal/testutil/fakerados/cls_rgw_versioned_test.go`). The gateway
+  lists no versions yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction, whose triage logged
+  it as V3A-1 and verified the discarded return at the three call sites
+  cited above, at v19.2.7, v20.2.4 and main.
+- **Found:** phase 2 Task V3a, 2026-10-19, emulating the class's start key
+  in fakerados; derived from the source, not reproduced.
