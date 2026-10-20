@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/auth"
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -642,6 +643,8 @@ var _ = Describe("Verifier through the s3 handler", func() {
 		func(ctx SpecContext, rel denc.Release, method, target, hash string, wantStatus int, wantCode string) {
 			rs := memstore.New(memstore.Config{Release: rel})
 			env := &op.Env{Zone: rs, Users: rs, Accounts: rs, Buckets: rs, Objects: rs, Multipart: rs, Stats: rs, Usage: rs, Metadata: rs, Authz: op.OwnerOnly{}, Metrics: op.NopMetrics{}}
+			// Dispatch refuses ?website before authentication while the website API is off.
+			env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_static_website": "true"})
 			rh := s3.NewHandler(env, auth.New(auth.DefaultConfig(), rs, rs), s3.Config{})
 			req := withPayloadHash(newBodyRequest(ctx, method, "http://s3.example.com"+target, "hello"), hash)
 			if strings.HasPrefix(hash, "STREAMING-") {

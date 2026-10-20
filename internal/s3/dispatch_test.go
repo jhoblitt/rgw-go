@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -29,9 +30,16 @@ func request(method, target string, hdr ...string) sent {
 }
 
 // dispatch builds s's request, parses it path-style as the handler does
-// before it dispatches, and dispatches it at rel. Every route carries the
-// request's scope.
+// before it dispatches, and dispatches it at rel with
+// rgw_enable_static_website on, so that the website rows are routed. Every
+// route carries the request's scope.
 func dispatch(ctx context.Context, s sent, rel denc.Release) (s3.Route, error) {
+	GinkgoHelper()
+	return dispatchWith(ctx, s, rel, &op.Env{Conf: cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_static_website": "true"})})
+}
+
+// dispatchWith is dispatch under env.
+func dispatchWith(ctx context.Context, s sent, rel denc.Release, env *op.Env) (s3.Route, error) {
 	GinkgoHelper()
 	req := httptest.NewRequestWithContext(ctx, s.method, s.target, nil)
 	for i := 0; i+1 < len(s.hdr); i += 2 {
@@ -39,6 +47,7 @@ func dispatch(ctx context.Context, s sent, rel denc.Release) (s3.Route, error) {
 	}
 	p, err := s3.ParseRequest(req, s3.Config{}, time.Now())
 	Expect(err).NotTo(HaveOccurred())
+	p.Req.Env = env
 	route, err := s3.Dispatch(p.Req, rel)
 	if err == nil {
 		Expect(route.Scope).To(Equal(p.Req.Scope()), "route scope")
@@ -442,6 +451,22 @@ var _ = Describe("Dispatch", func() {
 		Entry("DELETE bucket ?logging on Squid", request("DELETE", "/b?logging")),
 		Entry("an object subresource on a bucket, before its bad tenant", request("GET", "/t-1:b?uploadId=u")),
 		Entry("PUT bucket ?logging on Squid, before the bad tenant", request("PUT", "/t-1:b?logging")),
+	)
+	// op_get, op_put and op_delete return nullptr for ?website while
+	// rgw_enable_static_website is off
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4674-L4679 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5186-L5191 at v20.2.4),
+	// and each website branch returns there, so nothing falls through to a
+	// later branch.
+	DescribeTable("answers MethodNotAllowed for the website configuration routes while rgw_enable_static_website is off",
+		func(ctx SpecContext, req sent, rel denc.Release, env *op.Env) {
+			_, err := dispatchWith(ctx, req, rel, env)
+			Expect(err).To(MatchError(op.ErrMethodNotAllowed))
+		},
+		Entry("GET with the option false, before ?acl", request("GET", "/b?website&acl"), denc.Squid,
+			&op.Env{Conf: cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_static_website": "false"})}),
+		Entry("PUT with the option unset, its default", request("PUT", "/b?website"), denc.Tentacle, &op.Env{}),
+		Entry("DELETE with no environment", request("DELETE", "/b?website"), denc.Squid, nil),
 	)
 	It("reads a key without values in a hand-built query as an empty one", func() {
 		del := &op.Request{Method: "DELETE", Bucket: "b", Object: meta.ObjKey{Name: "k"}, Query: url.Values{"uploadId": {}}}

@@ -23,8 +23,10 @@ type Route struct {
 // Dispatch selects the route for r in radosgw's method, scope and subresource
 // precedence at release rel: a table row that exists at one release only is
 // skipped on the other, so the request falls through as that release's op_*
-// does. A method or subresource radosgw has no op for is ErrMethodNotAllowed.
-// The route carries its payload forms at rel.
+// does. A method or subresource radosgw has no op for is ErrMethodNotAllowed,
+// a website configuration route while rgw_enable_static_website is off
+// among them (websiteConfigDisabled). The route carries its payload forms at
+// rel.
 func Dispatch(r *op.Request, rel denc.Release) (Route, error) {
 	scope := r.Scope()
 	// RGWRESTMgr_S3::get_handler returns no handler for a bucket request that
@@ -47,7 +49,7 @@ func Dispatch(r *op.Request, rel denc.Release) (Route, error) {
 			name = "copy_obj"
 		}
 	}
-	if name == "" {
+	if name == "" || websiteConfigDisabled(r, name) {
 		return Route{}, op.ErrMethodNotAllowed
 	}
 	return Route{Name: name, Scope: scope, Payloads: payloads(name, rel)}, nil
@@ -117,10 +119,11 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 // so ?encryption reaches its own branch. is_notification_op is false unless
 // rgw_enable_apis names notifications or pubsub, as its default does; the
 // table routes ?notification regardless (docs/exclusions.md). The website
-// branches (both releases) and the mdsearch ones (v20.2.4 only) return
-// nullptr when rgw_enable_static_website or rgw_enable_mdsearch is off, and
-// PUT ?replication when the bucket's sync policy is legacy; those routes'
-// handlers apply the options.
+// branches (both releases) return nullptr when rgw_enable_static_website is
+// off, which Dispatch applies after the walk. The mdsearch ones (v20.2.4
+// only) return nullptr when rgw_enable_mdsearch is off, and PUT ?replication
+// when the bucket's sync policy is legacy; no handler serves those routes, so
+// they answer 501 NotImplemented whatever the option and the policy say.
 var table = map[methodKey]method{
 	{op.ScopeService, http.MethodGet}: {
 		rows: []row{{key: "usage", name: "get_usage"}},
