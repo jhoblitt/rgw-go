@@ -336,11 +336,13 @@ func configUint(c radosclient.Cluster, name string) (uint32, error) {
 
 var _ = Describe("the driver against the coexisting radosgw", Label("integration"), func() {
 	Describe("on the shared store", func() {
-		conformance.Run(func(context.Context) (*op.Env, func()) {
+		newEnv := func(context.Context) (*op.Env, func()) {
 			env := store.Env()
 			env.Usage = usageLog{usageStore}
 			return env, func() {}
-		})
+		}
+		conformance.Run(newEnv)
+		conformance.RunObjectChecksums(newEnv)
 	})
 
 	It("resolves Rook's zoned site as radosgw-admin reads it", func(ctx SpecContext) {

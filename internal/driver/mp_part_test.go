@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"errors"
+	"hash/crc32"
 	"io"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/compression"
@@ -482,6 +484,80 @@ var _ = Describe("PutPart", func() {
 		Expect(upd.Info[0]).To(Equal(byte(6)))
 		Expect(upd.Info[len(upd.Info)-1]).To(Equal(byte(0)), "no checksum")
 	})
+
+	Describe("a part's checksum", func() {
+		AfterEach(func() { expectReadableChecksums(c) })
+
+		DescribeTable("stores the part's checksum with the upload's flags on its head, and in the part record only at Tentacle's version 6",
+			func(ctx SpecContext, rel denc.Release, t cksum.Type, flags uint16, version byte) {
+				s2 := openPutStore(ctx, c, rel, nil, mtime)
+				digest := check9Digests()[t]
+				var asked int
+				req := &op.ChecksumRequest{Type: t, Flags: flags, Expected: suppliedArmor(digest, &asked)}
+				res, err := s2.PutPart(ctx, up, 1, bytes.NewReader(check9), op.PutParams{Attrs: partAttrs(), Size: int64(len(check9)), Checksum: req})
+				Expect(err).NotTo(HaveOccurred())
+				want := cksum.Cksum{Type: t, Digest: digest, Flags: flags}
+				Expect(res.Checksum).To(Equal(&want))
+				Expect(asked).To(Equal(1))
+				record := cksumRecord(t, digest, flags)
+				Expect(c.LastWrite(testDataPool, "", partHeadOID(prefix, 1)).Steps()).To(ContainElement(
+					&radosclient.SetXattrStep{Name: meta.AttrCksum, Value: record}), "the part head's write_meta")
+				upd := execIn(c.LastWrite(extraPoolName, "", metaObj), 1, "mp_upload_part_info_update", rgwcls.DecodeMPUploadPartInfoUpdateOp)
+				Expect(upd.Info[0]).To(Equal(version), "RGWUploadPartInfo's version")
+				d := denc.NewDecoder(upd.Info)
+				info := meta.DecodeUploadPartInfo(d)
+				Expect(d.Err()).NotTo(HaveOccurred())
+				if version < 6 {
+					Expect(info.Cksum).To(BeNil(), "Squid's record has no checksum field")
+				} else {
+					Expect(info.Cksum).To(Equal(slices.Concat([]byte{1}, record)), "the optional's presence byte, then the record")
+				}
+			},
+			Entry("a CRC32C part of a FULL_OBJECT upload on Squid", denc.Squid, cksum.CRC32C, cksum.FlagFullObject, byte(5)),
+			Entry("a SHA256 part of a COMPOSITE upload on Tentacle", denc.Tentacle, cksum.SHA256, cksum.FlagComposite, byte(6)),
+			Entry("a CRC64NVME part on Tentacle, its supplied value verified", denc.Tentacle, cksum.CRC64NVME, cksum.FlagFullObject, byte(6)),
+			Entry("a CRC32 part of a FULL_OBJECT upload on Tentacle", denc.Tentacle, cksum.CRC32, cksum.FlagFullObject, byte(6)),
+			Entry("a SHA1 part of a COMPOSITE upload on Squid", denc.Squid, cksum.SHA1, cksum.FlagComposite, byte(5)),
+			Entry("a SHA512 part of a COMPOSITE upload on Tentacle", denc.Tentacle, cksum.SHA512, cksum.FlagComposite, byte(6)),
+		)
+
+		It("refuses a part whose checksum is not the value supplied with BadDigest, registering nothing and removing its head and stripes", func(ctx SpecContext) {
+			var asked int
+			req := &op.ChecksumRequest{Type: cksum.CRC32, Flags: cksum.FlagFullObject, Expected: suppliedArmor(be32(0xcbf43926), &asked)}
+			_, err := s.PutPart(ctx, up, 5, bytes.NewReader(mibPattern(9)), op.PutParams{Attrs: partAttrs(), Size: 9 << 20, Checksum: req})
+			Expect(err).To(MatchError(op.ErrBadDigest))
+			Expect(asked).To(Equal(1))
+			settle(s)
+			Expect(c.Object(extraPoolName, "", metaObj).Omap).NotTo(HaveKey("part.00000005"))
+			Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "~RadosWriter removes the head and the stripes")
+			Expect(indexOps(c, shard)).To(Equal([]string{"prepare add", "complete add", "prepare del", "complete del"}),
+				"the upload's own pair and delete_obj's: no part prepare went out")
+
+			asked = 0
+			_, err = s.PutPart(ctx, up, 5, bytes.NewReader(check9), op.PutParams{Attrs: partAttrs(), Size: int64(len(check9)), ContentMD5: md5sumOf("other"), Checksum: req})
+			Expect(err).To(BeIdenticalTo(op.ErrBadDigest), "the Content-MD5's, checked first")
+			Expect(asked).To(BeZero())
+		})
+
+		DescribeTable("refuses a type a v20.2.4 radosgw cannot read with InvalidArgument, before it reads the body or writes anything",
+			func(ctx SpecContext, t cksum.Type) {
+				c.ResetCounters()
+				var read atomic.Int64
+				body := &countingReader{r: bytes.NewReader(mibPattern(5)), n: &read}
+				_, err := s.PutPart(ctx, up, 1, body, op.PutParams{Attrs: partAttrs(), Size: 5 << 20, Checksum: &op.ChecksumRequest{Type: t}})
+				Expect(err).To(MatchError(op.ErrInvalidArgument))
+				Expect(read.Load()).To(BeZero(), "the body")
+				Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "a part head or a stripe")
+				Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero(), "the index")
+				Expect(c.Writes(extraPoolName, "", metaObj)).To(BeZero(), "the part record")
+			},
+			Entry("type 9, main's md5", cksum.Type(9)),
+			Entry("type 10, main's xxhash64", cksum.Type(10)),
+			Entry("type 11, main's xxhash128", cksum.Type(11)),
+			Entry("type 65535", cksum.Type(65535)),
+			Entry("blake3, which rgw-go does not compute", cksum.BLAKE3),
+		)
+	})
 })
 
 var _ = Describe("CopyPart", func() {
@@ -540,7 +616,42 @@ var _ = Describe("CopyPart", func() {
 		stored := storedPart(c, metaObj, "part.00000001")
 		Expect(stored.Size).To(BeEquivalentTo(6 << 20))
 		Expect(stored.ETag).To(Equal(res.ETag))
+		Expect(res.Checksum).To(BeNil(), "an upload without a checksum type")
+		Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCksum))
 	})
+
+	It("checksums the copied range with its upload's type and flags, on the part head and in Tentacle's part record", func(ctx SpecContext) {
+		s = openPutStore(ctx, c, denc.Tentacle, nil, time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC))
+		src := mibPattern(10)
+		st := source(ctx, src)
+		upc := *up
+		upc.Checksum = op.UploadChecksum{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}
+		res, err := s.CopyPart(ctx, &upc, 1, st, op.ByteRange{Offset: 1 << 20, Length: 6 << 20})
+		Expect(err).NotTo(HaveOccurred())
+		digest := be32(crc32.Checksum(src[1<<20:7<<20], crc32.MakeTable(crc32.Castagnoli)))
+		Expect(res.Checksum).To(Equal(&cksum.Cksum{Type: cksum.CRC32C, Digest: digest, Flags: cksum.FlagFullObject}))
+		record := cksumRecord(cksum.CRC32C, digest, cksum.FlagFullObject)
+		Expect(c.Object(testDataPool, "", partHeadOID(prefix, 1)).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, record))
+		upd := execIn(c.LastWrite(extraPoolName, "", metaObj), 1, "mp_upload_part_info_update", rgwcls.DecodeMPUploadPartInfoUpdateOp)
+		Expect(meta.DecodeUploadPartInfo(denc.NewDecoder(upd.Info)).Cksum).To(Equal(slices.Concat([]byte{1}, record)), "the part record sent")
+		expectReadableChecksums(c)
+	})
+
+	DescribeTable("answers NotImplemented for an upload type it does not compute, before it reads the source or writes anything",
+		func(ctx SpecContext, uc op.UploadChecksum) {
+			st := source(ctx, mibPattern(5))
+			c.ResetCounters()
+			upc := *up
+			upc.Checksum = uc
+			_, err := s.CopyPart(ctx, &upc, 1, st, op.ByteRange{Length: 5 << 20})
+			Expect(err).To(MatchError(op.ErrNotImplemented))
+			Expect(c.Reads(testDataPool, "", tailOID(secondPrefix, 1))).To(BeZero(), "the source")
+			Expect(c.Object(testDataPool, "", partHeadOID(prefix, 1))).To(BeNil())
+			Expect(c.Writes(extraPoolName, "", metaObj)).To(BeZero(), "the part record")
+		},
+		Entry("xxhash3, which a v20.2.4 radosgw computes", op.UploadChecksum{Type: cksum.XXH3, Flags: cksum.FlagComposite}),
+		Entry("type 9, which no v20.2.4 radosgw reads", op.UploadChecksum{Type: 9, Flags: cksum.FlagComposite}),
+	)
 
 	It("copies the version it was given when the source is overwritten during the copy", func(ctx SpecContext) {
 		old := mibPattern(10)

@@ -10,10 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -79,14 +81,15 @@ func (s *Store) partLayout(ctx context.Context, rec *op.BucketRecord, dest meta.
 
 // partResult is what one part's data write leaves: the manifest as written,
 // the ETag, the stored size and the plaintext's, which is accounted, the
-// compression info when the part compressed, and the writer holding its
-// stripes.
+// compression info when the part compressed, the checksum when the part
+// computed one, and the writer holding its stripes.
 type partResult struct {
 	m         meta.Manifest
 	etag      string
 	size      uint64
 	accounted uint64
 	cs        *meta.CompressionInfo
+	sum       checksumResult
 	tw        *tailWriter
 }
 
@@ -103,14 +106,20 @@ type partResult struct {
 // the quota on the bytes received
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4444-L4448),
 // the Content-MD5
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4483-L4486)
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4483-L4486),
+// the checksum ck computes, when it is set
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790 at v20.2.4),
 // and the drain that MultipartObjectProcessor::complete starts with. It
 // returns with every stripe drained, or with what it wrote removed, as
 // ~RadosWriter removes it.
-func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte) (partResult, error) {
+func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte, ck *checksumSink) (partResult, error) {
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
 	h := md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
-	plain := newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize, h)
+	sinks := []io.Writer{h}
+	if ck != nil {
+		sinks = append(sinks, ck)
+	}
+	plain := newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize, sinks...)
 	stored := s.storeFor(ctx, plain, size, pl.compression, false)
 	m := meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, uploadID), n, pl.stripe)
 	tw := s.partWriter(&m, pl, n, stored.incompressible)
@@ -133,6 +142,10 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 	if err == nil && contentMD5 != nil && !bytes.Equal(sum, contentMD5) {
 		err = op.ErrBadDigest
 	}
+	var ckSum checksumResult
+	if err == nil && ck != nil {
+		ckSum, err = ck.finish(s.release)
+	}
 	if err == nil {
 		err = tw.drain()
 	}
@@ -145,7 +158,7 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 		return partResult{}, err
 	}
 	m.SetObjSize(got)
-	pr := partResult{m: m, etag: hex.EncodeToString(sum), size: got, accounted: plain.n, tw: tw}
+	pr := partResult{m: m, etag: hex.EncodeToString(sum), size: got, accounted: plain.n, sum: ckSum, tw: tw}
 	if ci, ok := stored.compression(); ok {
 		pr.cs = &ci
 	}
@@ -174,6 +187,9 @@ func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32, incompress
 // RGWPutObj::execute hands write_meta, and its record the same cs_info
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L552-L556 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L591-L595 at v20.2.4).
+// A part's checksum is its head's user.rgw.cksum on both releases, and its
+// record's cksum only in Tentacle's version 6, which Squid's has no field for
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L525-L584 at v20.2.4).
 // It returns the part head's mtime. On a failure the part's objects are
 // removed, as ~RadosWriter removes them, except when the meta object's op
 // timed out and may yet land
@@ -196,6 +212,12 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 	if pr.cs != nil {
 		cs = *pr.cs
 		a[meta.AttrCompression] = encodeAt(cs, s.release)
+	}
+	var recordCksum []byte
+	if pr.sum.attr != nil {
+		a[meta.AttrCksum] = pr.sum.attr
+		// RGWUploadPartInfo's std::optional: its presence byte, then the record.
+		recordCksum = slices.Concat([]byte{1}, pr.sum.attr)
 	}
 	pool := pl.tailPool
 	if loc := stripe.Locator(); loc != "" {
@@ -225,7 +247,7 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 	}
 	info := meta.UploadPartInfo{
 		Num: n, Size: pr.size, AccountedSize: pr.accounted, ETag: pr.etag, Modified: s.now(),
-		Manifest: pr.m, Compression: cs,
+		Manifest: pr.m, Compression: cs, Cksum: recordCksum,
 	}
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
@@ -303,8 +325,15 @@ func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key me
 // conditions: Squid's MultipartObjectProcessor sets none, while Tentacle's
 // checks them against the part head the request has just created
 // (docs/exclusions.md, "UploadPart ignores If-Match and If-None-Match").
+// p.Checksum is computed with its flags, which the op takes from the upload,
+// and a type rgw-go does not compute is refused before anything is read
+// (newChecksumSink).
 func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams) (*op.PartResult, error) {
 	rec, key := up.Bucket, up.Key
+	ck, err := newChecksumSink(p.Checksum, p.Size)
+	if err != nil {
+		return nil, fmt.Errorf("putting part %d of %s/%s: %w", n, rec.Info.Bucket.Name, key.Name, err)
+	}
 	ref, err := s.metaRef(ctx, rec, key, up.ID)
 	if err != nil {
 		return nil, err
@@ -319,7 +348,7 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 	}
 	// part_num is an int, which the manifest and the part key print as one.
 	num := uint32(n) //nolint:gosec // the low 32 bits, as radosgw's int keeps them
-	pr, err := s.streamPart(ctx, rec, key, up.ID, num, body, pl, p.Size, p.ContentMD5)
+	pr, err := s.streamPart(ctx, rec, key, up.ID, num, body, pl, p.Size, p.ContentMD5, ck)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +356,7 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 	if err != nil {
 		return nil, err
 	}
-	return &op.PartResult{ETag: pr.etag, Size: pr.size, Mtime: mtime}, nil
+	return &op.PartResult{ETag: pr.etag, Size: pr.size, Mtime: mtime, Checksum: pr.sum.cksum}, nil
 }
 
 // CopyPart implements op.MultipartStore as RGWPutObj::execute copies a part
@@ -339,10 +368,24 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // read once the upload is known, and from the one state src holds, where
 // radosgw prepares a read of the source again for each rgw_max_chunk_size
 // of the range (docs/exclusions.md, "UploadPartCopy reads one version of
-// its source").
+// its source"). The decoded bytes take the upload's checksum type and
+// flags, as RGWPutObj::execute's filter takes them for a part whose request
+// names no algorithm
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L72 at v20.2.4),
+// and UploadPartCopy has no checksum request header; a type rgw-go does not
+// compute is NotImplemented before anything is read or written.
 func (s *Store) CopyPart(ctx context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
+	var req *op.ChecksumRequest
+	if t := up.Checksum.Type; t != cksum.None {
+		if !t.Writable() {
+			return nil, fmt.Errorf("%w: copying part %d of %s/%s: rgw-go computes no checksum of type %d, the upload's",
+				op.ErrNotImplemented, n, up.Bucket.Info.Bucket.Name, up.Key.Name, t)
+		}
+		req = &op.ChecksumRequest{Type: t, Flags: up.Checksum.Flags}
+	}
 	cs := &copySource{read: func(w io.Writer) error { return s.ReadObject(ctx, src, rng, w) }}
-	res, err := s.PutPart(ctx, up, n, cs, op.PutParams{Attrs: up.Attrs, Size: int64(rng.Length)}) //nolint:gosec // a range length is far below 2^63
+	res, err := s.PutPart(ctx, up, n, cs, op.PutParams{Attrs: up.Attrs, Size: int64(rng.Length), Checksum: req}) //nolint:gosec // a range length is far below 2^63
 	cs.stop()
 	return res, err
 }

@@ -7077,6 +7077,22 @@ does the following.
   source has not passed answers 304 NotModified, and a date `parse_time`
   does not read answers 400 InvalidArgument, each before anything is
   copied, where radosgw copies the part.
+- **UploadPartCopy into an upload of a checksum type rgw-go does not compute
+  answers 501.** A Tentacle radosgw can create an upload whose checksum type
+  is XXH3 or BLAKE3, and checksums each of its parts, a copied one included,
+  with the upload's type and flags
+  ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472),
+  [rgw_op.cc:4601-4645](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4645)
+  and
+  [rgw_cksum_digest.h:97-128](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_digest.h#L97-L128)
+  at v20.2.4). rgw-go computes only CRC32, CRC32C, CRC64NVME, SHA1, SHA256
+  and SHA512, and answers a copy into an upload of any other type 501
+  NotImplemented before it reads the source or writes anything (`CopyPart`,
+  `internal/driver/mp_part.go`). The 501 is reached once rgw-go reads an
+  upload's checksum type; until then its GetUpload reads none, and a copied
+  part stores no checksum ("Client checksums are ignored until phase 2"). A
+  Squid cluster's uploads have no checksum type, so the entry concerns
+  Tentacle only.
 - **A copy-source range past 2^63 answers 416.** radosgw holds
   `x-amz-copy-source-range`'s bounds in an `off_t` (`rgw_op.h:1227-1228` at
   v19.2.6, `:1297-1298` at v20.2.4), so a bound of 2^63 or more turns
