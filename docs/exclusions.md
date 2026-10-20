@@ -5032,7 +5032,10 @@ rgw-go does the following.
   algorithm's name, where Tentacle finds the prefix anywhere in the name
   and reads what follows its first fifteen bytes as a C string: a field
   whose name has a NUL byte after the algorithm's, which Tentacle excepts,
-  needs a condition in rgw-go. Both match the prefixes in lower case only.
+  needs a condition in rgw-go (docs/ceph-upstream-bugs.md, "[Tentacle's
+  POST policy excepts a field whose name holds a NUL after a checksum
+  algorithm's](ceph-upstream-bugs.md#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)").
+  Both match the prefixes in lower case only.
 - **A POST policy is read as RFC 8259 JSON.** radosgw reads a POST
   upload's policy document with json_spirit's grammar
   ([json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L462-L519),
@@ -5049,7 +5052,11 @@ rgw-go does the following.
   well a string that is not UTF-8, which Go's decoder would repair; an
   escaped UTF-16 surrogate that is not half of a pair, which json_spirit
   writes as three bytes that are no character; arrays and objects nested
-  deeper than 10000, where json_spirit recurses without limit; and a
+  deeper than 10000, where json_spirit recurses without limit
+  (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser recurses without
+  limit on a POST policy's
+  nesting](ceph-upstream-bugs.md#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting)");
+  and a
   number whose value json_spirit takes from the host's libm: an exponent
   past 300, a fraction of more than 300 digits, the exponent 126, or a
   value that is not finite, which it writes as `inf` or `nan`. An escaped
@@ -5076,7 +5083,10 @@ rgw-go does the following.
   expired
   ([rgw_policy_s3.cc:189-196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L189-L196),
   [rgw_policy_s3.cc:198-205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L198-L205)).
-  rgw-go answers such a policy 403 AccessDenied, "Policy expired".
+  rgw-go answers such a policy 403 AccessDenied, "Policy expired"
+  (docs/ceph-upstream-bugs.md, "[radosgw's POST policy never expires when
+  its expiration is before
+  1970](ceph-upstream-bugs.md#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970)").
 - **POST policy names are compared over all their bytes.** radosgw
   matches a POST form's field names, and the names a policy gives them,
   in any ASCII case with strcasecmp on C strings, `ltstr_nocase`
