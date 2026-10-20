@@ -19495,9 +19495,8 @@ Every new entry adds its row to this table, in document order.
   registry's "[radosgw's date conditions wrap past 2554 and before
   1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970)" is the
   same unsigned 64-bit overflow in a bucket policy's date conditions, and
-  object lock's lock-until date wraps the same way (defect LL-4 of
-  `docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md`, which task
-  L1 registers).
+  object lock's lock-until date wraps the same way ("[radosgw's object-lock
+  dates wrap past 2554](#radosgws-object-lock-dates-wrap-past-2554)").
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
 - **rgw-go:** refuses it on PUT: `lifecycle.Parse` takes a Date only when
   real_time holds it, and answers this one with 400 MalformedXML, which
