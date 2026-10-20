@@ -134,7 +134,7 @@ the controller's ruling that splits C10 (C-D16).
 | `internal/s3/bucket.go` (the `get_lifecycle` binding) | S2, BC tasks, C6 (b) | C6 (b) removes that one binding when its route set takes it |
 | `internal/driver/options.go` | C5, writepath | line-local additions |
 | `internal/driver/store.go` (`Env`) | C5 | one binding line |
-| `internal/driver/bucket.go`, `internal/driver/metadata.go` | C7, V8b | C7's additions are line-local calls |
+| `internal/driver/bucket.go`, `internal/driver/metadata_instance.go` | C7, V8b | C7's additions are line-local calls |
 | `internal/driver/lc_bucket.go`, `lc_actions.go` (the claim predicate) | C10a, C10b, C11 | C10a creates them; C10b and C11 each widen the predicate in their own PR |
 | `internal/op/object.go` (`DeleteParams`), `internal/driver/delete.go`, `internal/memstore/object.go` | V6, V8a; C10a | C10a adds one line-local field and its use in the unversioned path; V8a changes the signature around it. Whichever lands first, the later rebases (index Order, hot-file rule) |
 | `internal/s3/getobject.go`, `putobject.go`, `multipart.go` | V, WP-7, WP-13, L5b, C8 | each task adds its headers in its own helper, one call line per site; whichever lands first, the later rebases |
@@ -462,7 +462,9 @@ the controller's ruling that splits C10 (C-D16).
 
 - **Layer:** driver. **Cluster:** no.
 - **Files:** modify `internal/driver/bucket.go` (bucket removal) and
-  `internal/driver/metadata.go` (the instance put, `internal/driver/metadata.go:454-455,566`).
+  `internal/driver/metadata_instance.go`, which holds the bucket instance section since WP-18
+  (the instance put, `putInstance`: its doc and debug log,
+  `internal/driver/metadata_instance.go:181-182,294`).
 - **Consumes:** C5's `SetEntry` and `RemoveEntry`. **Produces:** no new seam.
 - **Behaviour:**
   1. **Bucket removal** drops the entry when the bucket carried `user.rgw.lc`, after the
