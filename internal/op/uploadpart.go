@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
@@ -57,6 +58,11 @@ type UploadPart struct {
 	// the bucket's default encryption, the storage class and a public canned
 	// ACL refused. It fills the inputs it reads, the ACL among them.
 	Authorized func(ctx context.Context, o *UploadPart) error
+	// ChecksumField is the request's checksum fields, which ChecksumForPart
+	// reads with the request's Trailers (ChecksumInput). A copy reads
+	// neither: AWS defines no checksum request header for UploadPartCopy,
+	// and its part takes its upload's type (MultipartStore.CopyPart).
+	ChecksumField func(name string) (string, bool)
 
 	// SourceErr is the protocol's refusal of an x-amz-copy-source it cannot
 	// parse, which Init returns where init_processing parses the source.
@@ -78,6 +84,9 @@ type UploadPart struct {
 
 	ETag  string
 	Mtime time.Time
+	// Checksum is the checksum the store computed for the part, nil for
+	// none.
+	Checksum *cksum.Cksum
 
 	srcRec      *BucketRecord
 	src         *ObjectState
@@ -212,8 +221,10 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4560 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4867 at v20.2.4):
 // the key; the quota for the request's length, unless it is chunked or the
-// request is a system request; then the part, whose head's attrs are the
-// request's with the policy, written under the request id. First come the
+// request is a system request; for a part with a body, the upload's
+// checksum type and then the part's checksum request (partChecksum); then
+// the part, whose head's attrs are the request's with the policy, written
+// under the request id. First come the
 // checks of stored state that radosgw makes before verify_permission, which
 // rgw-go makes once the requester is authorized: the request's storage class
 // must be one the zone has
@@ -275,22 +286,40 @@ func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 	)
 	if o.CopySource {
 		res, err = o.copyPart(ctx, r, up)
-	} else if err = aliasedUpload(o.UploadID); err == nil {
-		res, err = r.Env.Multipart.PutPart(ctx, up, o.PartNumber, o.Body, PutParams{Attrs: attrs, Size: o.Size, ContentMD5: o.ContentMD5, Tag: r.ID})
+	} else {
+		res, err = o.putPart(ctx, r, up)
 	}
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Mtime = res.ETag, res.Mtime
+	o.ETag, o.Mtime, o.Checksum = res.ETag, res.Mtime, res.Checksum
 	return nil
+}
+
+// putPart is execute's write of a part from the request's body: an upload id
+// holding a "." is NoSuchUpload, then the part's checksum request is read
+// (partChecksum) and the part written under the request id with the head
+// attrs up holds.
+func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*PartResult, error) {
+	if err := aliasedUpload(o.UploadID); err != nil {
+		return nil, err
+	}
+	ck, body, err := partChecksum(ctx, r, up, ChecksumInput{Field: o.ChecksumField, Trailers: r.Trailers, Body: o.Body})
+	if err != nil {
+		return nil, err
+	}
+	return r.Env.Multipart.PutPart(ctx, up, o.PartNumber, body, PutParams{
+		Attrs: up.Attrs, Size: o.Size, ContentMD5: o.ContentMD5, Tag: r.ID, Checksum: ck,
+	})
 }
 
 // copyPart is execute's copy of a part from its source in its order: the
 // upload's info, which get_info reads before anything of the source
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4244-L4260 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4469 at v20.2.4),
-// a NoSuchUpload ahead of every source error; the source's cloud tier and
-// its existence
+// a NoSuchUpload ahead of every source error, whose checksum type and flags
+// up takes for MultipartStore.CopyPart to compute; the source's cloud tier
+// and its existence
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4297-L4331 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4510-L4544 at v20.2.4);
 // then the range against the source's accounted size, and the copy of
@@ -312,7 +341,7 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 	if err := aliasedUpload(o.UploadID); err != nil {
 		return nil, err
 	}
-	if _, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, o.UploadID); err != nil {
+	if err := readUpload(ctx, r, up); err != nil {
 		return nil, err
 	}
 	if err := o.checkCloudTier(r); err != nil {

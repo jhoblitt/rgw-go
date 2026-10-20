@@ -11,6 +11,14 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/s3"
 )
 
+// keptTrailers answers op.Trailers from its values.
+type keptTrailers map[string]string
+
+func (k keptTrailers) Trailer(name string) (string, bool) {
+	v, ok := k[name]
+	return v, ok
+}
+
 var _ = Describe("ApplyAuth", func() {
 	It("moves a SigV2 presigned request's signed query meta into a copy of its headers and out of its query", func() {
 		hdr := http.Header{"X-Amz-Meta-A": {"1"}}
@@ -36,6 +44,15 @@ var _ = Describe("ApplyAuth", func() {
 		Expect(r.Header).To(Equal(http.Header{"X-Amz-Meta-A": {"1"}}))
 		Expect(r.Query).To(Equal(url.Values{"x-amz-meta-b": {"2"}}))
 		Expect(r.AuthRoute).To(Equal(op.RouteUnknown), "a result that names no route")
+	})
+
+	It("gives the request the trailers its payload's reader keeps, and none for a payload that keeps none", func() {
+		kept := keptTrailers{"x-amz-checksum-crc32": "AAAAAA=="}
+		r := &op.Request{}
+		s3.ApplyAuth(r, &op.AuthResult{Body: http.NoBody, Trailers: kept})
+		Expect(r.Trailers).To(Equal(op.Trailers(kept)))
+		s3.ApplyAuth(r, &op.AuthResult{Body: http.NoBody})
+		Expect(r.Trailers).To(BeNil())
 	})
 
 	It("gives the request its route, and leaves a header-signed SigV2 request's query as it is", func() {

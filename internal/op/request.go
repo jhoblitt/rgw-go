@@ -57,6 +57,10 @@ type Request struct {
 	Header   http.Header
 	// Body is the request body; auth may replace it with a chunk-verifying reader.
 	Body io.Reader
+	// Trailers are the trailers of the aws-chunked payload Body reads, which
+	// auth sets with Body (AuthResult.Trailers); nil for a payload that keeps
+	// none.
+	Trailers Trailers
 	// ContentLength is the declared length, -1 when unknown.
 	ContentLength int64
 	// RemoteAddr is the client's address as net/http gives it, host and port.

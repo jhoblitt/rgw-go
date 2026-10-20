@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
@@ -30,12 +31,17 @@ type CompleteMultipart struct {
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573 at v20.2.4).
 	// rgw-go applies them on both releases (Upload.IfMatch).
 	IfMatch, IfNoneMatch *string
+	// ChecksumField is the request's checksum fields, which
+	// SuppliedForComplete reads (ChecksumInput).
+	ChecksumField func(name string) (string, bool)
 
 	// Parts is the document's parts as ParseCompleteMultipart reads them.
 	Parts []CompletePart
 	ETag  string
 	Size  uint64
 	Mtime time.Time
+	// Checksum is the combined checksum the store stored, nil for none.
+	Checksum *cksum.Cksum
 }
 
 var _ Op = (*CompleteMultipart)(nil)
@@ -76,8 +82,9 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // body is read as ReadParamBody reads it under rgw_max_put_param_size; an
 // empty body, a document that does not parse or holds no part, MalformedXML;
 // more parts than rgw_multipart_part_upload_limit once repeats collapse,
-// InvalidRange (-ERANGE); then the completion, whose head takes the request
-// id as its tag.
+// InvalidRange (-ERANGE); then, where execute reads the upload's info, the
+// checksum the request supplies (completeChecksum); then the completion,
+// whose head takes the request id as its tag.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
@@ -101,14 +108,18 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if aerr := aliasedUpload(o.UploadID); aerr != nil {
 		return aerr
 	}
+	supplied, err := completeChecksum(ctx, r, o.UploadID, ChecksumInput{Field: o.ChecksumField})
+	if err != nil {
+		return err
+	}
 	res, err := r.Env.Multipart.Complete(ctx, &Upload{
 		ID: o.UploadID, Bucket: r.BucketRec, Key: r.Object, WriteTag: r.ID,
-		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch),
+		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch), SuppliedChecksum: supplied,
 	}, o.Parts)
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Size, o.Mtime = res.ETag, res.Size, res.Mtime
+	o.ETag, o.Size, o.Mtime, o.Checksum = res.ETag, res.Size, res.Mtime, res.Checksum
 	return nil
 }
 
