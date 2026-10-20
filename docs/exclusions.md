@@ -1488,10 +1488,12 @@ review and verified against the tree.
     memstore holds none of these resources.
 - **The metadata sections write only what keeps a user or bucket whole.**
   The `user`, `bucket` and `bucket.instance` sections of the metadata store
-  (`internal/driver/metadata.go`, `internal/op/metadata.go`, and the
-  memstore's) are radosgw's handlers (`driver/rados/rgw_user.cc` and
-  `rgw_bucket.cc`, `rgw_metadata.cc` at v19.2.6 and v20.2.4) with these
-  differences, each refusal coming before anything is written:
+  (`internal/driver/metadata.go` with a file per section beside it,
+  `metadata_user.go`, `metadata_bucket.go` and `metadata_instance.go`;
+  `internal/op/metadata.go`; and the memstore's) are radosgw's handlers
+  (`driver/rados/rgw_user.cc` and `rgw_bucket.cc`, `rgw_metadata.cc` at
+  v19.2.6 and v20.2.4) with these differences, each refusal coming before
+  anything is written:
   - Every put reads its object by the key and writes under the version it
     read, or creates the object exclusively when it read none. radosgw's
     puts on Squid write under the version read too, but over an object

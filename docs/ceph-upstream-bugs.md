@@ -12758,8 +12758,9 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4; v19.2.6 checks the version it read.
 - **rgw-go:** does not reproduce it. Every metadata put writes under the
   version it read, or creates the object exclusively
-  (`putInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`,
-  "The metadata sections write only what keeps a user or bucket whole").
+  (`putInstance`, `internal/driver/metadata_instance.go`;
+  `docs/exclusions.md`, "The metadata sections write only what keeps a
+  user or bucket whole").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
 - **Found:** phase 1 unit N, Task 8, 2026-10-08, comparing the two
@@ -12832,10 +12833,10 @@ Every new entry adds its row to this table, in document order.
   releases. A put whose document carries none keeps a stored instance's
   configuration, where v19.2.7 and v20.2.4 reset it to the default, and
   gives a new instance the default, as both do (`keepInstance` and
-  `newInstance`, `internal/driver/metadata.go`; `docs/exclusions.md`, "The
-  metadata sections write only what keeps a user or bucket whole"). A put
-  that would turn a stored instance's object lock off answers 400
-  InvalidArgument (`keepInstance`).
+  `newInstance`, `internal/driver/metadata_instance.go`;
+  `docs/exclusions.md`, "The metadata sections write only what keeps a
+  user or bucket whole"). A put that would turn a stored instance's
+  object lock off answers 400 InvalidArgument (`keepInstance`).
 - **Upstream:** [#71157](https://tracker.ceph.com/issues/71157)
   (Resolved), "rgw-multisite: object lock rule applied on a bucket doesn't
   sync", reported 2025-04-30, is this defect met through multisite sync.
