@@ -11215,7 +11215,10 @@ Every new entry adds its row to this table, in document order.
     `:1489`, `:1496`, `:1672` at v19.2.6; `:1479`, `:1487`, `:1494`,
     `:1501`, `:1677` at v20.2.4), therefore read a chunked body, up to
     `rgw_max_put_param_size` as `read_all_chunked_input` bounds it, where
-    they ask for 411 MissingContentLength.
+    they ask for 411 MissingContentLength. PutBucketEncryption's
+    `get_params` passes false too
+    ([rgw_op.cc:8757-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8762),
+    [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730)).
 - **Impact:** none known: those ops accept a chunked request their code
   means to refuse, and read it within the same bound, which
   `read_all_chunked_input` still enforces (`rgw_rest.cc:1501-1535`, the
@@ -11223,8 +11226,8 @@ Every new entry adds its row to this table, in document order.
   routine upstream cleanup.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** reproduces it on purpose: `op.ReadParamBody` reads a chunked
-  body for CompleteMultipartUpload and DeleteObjects as radosgw does
-  (`internal/op/parambody.go`).
+  body for CompleteMultipartUpload, DeleteObjects and PutBucketEncryption as
+  radosgw does (`internal/op/parambody.go`).
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; [#81230](https://tracker.ceph.com/issues/81230), on the
   same function's payload hash, is unrelated. The fix is a cleanup that
@@ -11895,7 +11898,9 @@ Every new entry adds its row to this table, in document order.
   authenticated (`identityPolicies`, `internal/authz/load.go`), so a retry
   does not see a change to them.
   PutBucketVersioning, another retried bucket write, is authorized again
-  the same way (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`).
+  the same way (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`),
+  and so are Put and DeleteBucketEncryption (`op.PutBucketEncryption` and
+  `op.DeleteBucketEncryption`, `internal/op/bucketencryption.go`).
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit X, Task 5, 2026-10-07, re-authorizing
   rgw-go's retried bucket writes; derived from the source, not reproduced.
