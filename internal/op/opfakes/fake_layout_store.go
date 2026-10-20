@@ -3,32 +3,31 @@ package opfakes
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
 type FakeLayoutStore struct {
-	ObjectLayoutStub        func(context.Context, *op.ObjectState) (json.RawMessage, error)
+	ObjectLayoutStub        func(context.Context, *op.ObjectState) (op.LayoutDocument, error)
 	objectLayoutMutex       sync.RWMutex
 	objectLayoutArgsForCall []struct {
 		arg1 context.Context
 		arg2 *op.ObjectState
 	}
 	objectLayoutReturns struct {
-		result1 json.RawMessage
+		result1 op.LayoutDocument
 		result2 error
 	}
 	objectLayoutReturnsOnCall map[int]struct {
-		result1 json.RawMessage
+		result1 op.LayoutDocument
 		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *FakeLayoutStore) ObjectLayout(arg1 context.Context, arg2 *op.ObjectState) (json.RawMessage, error) {
+func (fake *FakeLayoutStore) ObjectLayout(arg1 context.Context, arg2 *op.ObjectState) (op.LayoutDocument, error) {
 	fake.objectLayoutMutex.Lock()
 	ret, specificReturn := fake.objectLayoutReturnsOnCall[len(fake.objectLayoutArgsForCall)]
 	fake.objectLayoutArgsForCall = append(fake.objectLayoutArgsForCall, struct {
@@ -54,7 +53,7 @@ func (fake *FakeLayoutStore) ObjectLayoutCallCount() int {
 	return len(fake.objectLayoutArgsForCall)
 }
 
-func (fake *FakeLayoutStore) ObjectLayoutCalls(stub func(context.Context, *op.ObjectState) (json.RawMessage, error)) {
+func (fake *FakeLayoutStore) ObjectLayoutCalls(stub func(context.Context, *op.ObjectState) (op.LayoutDocument, error)) {
 	fake.objectLayoutMutex.Lock()
 	defer fake.objectLayoutMutex.Unlock()
 	fake.ObjectLayoutStub = stub
@@ -67,28 +66,28 @@ func (fake *FakeLayoutStore) ObjectLayoutArgsForCall(i int) (context.Context, *o
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *FakeLayoutStore) ObjectLayoutReturns(result1 json.RawMessage, result2 error) {
+func (fake *FakeLayoutStore) ObjectLayoutReturns(result1 op.LayoutDocument, result2 error) {
 	fake.objectLayoutMutex.Lock()
 	defer fake.objectLayoutMutex.Unlock()
 	fake.ObjectLayoutStub = nil
 	fake.objectLayoutReturns = struct {
-		result1 json.RawMessage
+		result1 op.LayoutDocument
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeLayoutStore) ObjectLayoutReturnsOnCall(i int, result1 json.RawMessage, result2 error) {
+func (fake *FakeLayoutStore) ObjectLayoutReturnsOnCall(i int, result1 op.LayoutDocument, result2 error) {
 	fake.objectLayoutMutex.Lock()
 	defer fake.objectLayoutMutex.Unlock()
 	fake.ObjectLayoutStub = nil
 	if fake.objectLayoutReturnsOnCall == nil {
 		fake.objectLayoutReturnsOnCall = make(map[int]struct {
-			result1 json.RawMessage
+			result1 op.LayoutDocument
 			result2 error
 		})
 	}
 	fake.objectLayoutReturnsOnCall[i] = struct {
-		result1 json.RawMessage
+		result1 op.LayoutDocument
 		result2 error
 	}{result1, result2}
 }
