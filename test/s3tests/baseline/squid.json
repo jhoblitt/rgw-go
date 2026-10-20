@@ -5,7 +5,8 @@
   "pins": [
     {"source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","admitted":"base"},
     {"source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","admitted":"base","reason":"s3-tests ab228b1b9f0 merges jhoblitt/ceph PRs 1 to 9, whose module-level imports and helpers in test_headers.py and change to test_s3.py's _has_target_object_key_format the additive proof does not admit"},
-    {"source":"7cfa64a52af0070f454b0709cf76f3db03604c98","admitted":"base","reason":"s3-tests 7cfa64a52af merges jhoblitt/ceph PRs 10 to 14, whose module-level imports, comments and helpers in test_s3.py the additive proof does not admit"}
+    {"source":"7cfa64a52af0070f454b0709cf76f3db03604c98","admitted":"base","reason":"s3-tests 7cfa64a52af merges jhoblitt/ceph PRs 10 to 14, whose module-level imports, comments and helpers in test_s3.py the additive proof does not admit"},
+    {"source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [
@@ -930,6 +931,24 @@
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"passed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
     ],
+    "s3tests.functional.test_s3::test_bucket_delete_analytics_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_intelligent_tiering_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_inventory_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_metadata_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_metadata_table_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_metrics_configuration_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
     "s3tests.functional.test_s3::test_bucket_delete_nonempty": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
@@ -941,6 +960,9 @@
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"passed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_delete_ownership_controls_keeps_bucket": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
     ],
     "s3tests.functional.test_s3::test_bucket_get_location": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
@@ -2266,6 +2288,9 @@
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"passed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
     ],
+    "s3tests.functional.test_s3::test_object_delete_annotation_keeps_object": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
     "s3tests.functional.test_s3::test_object_delete_key_bucket_gone": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
@@ -2301,6 +2326,9 @@
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"passed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
+    ],
+    "s3tests.functional.test_s3::test_object_put_annotation_keeps_object": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
     ],
     "s3tests.functional.test_s3::test_object_put_authenticated": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
@@ -2410,6 +2438,9 @@
       {"outcome":"failed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"failed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
     ],
+    "s3tests.functional.test_s3::test_object_rename_missing_source_keeps_object": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
+    ],
     "s3tests.functional.test_s3::test_object_requestid_matches_header_on_error": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
@@ -2439,6 +2470,9 @@
       {"outcome":"failed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.7","recorded":"2026-10-14T23:27:08Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"b6912b9df46f"}},
       {"outcome":"failed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
       {"outcome":"failed","source":"7cfa64a52af0070f454b0709cf76f3db03604c98","ceph_version":"19.2.7","recorded":"2026-10-19T21:43:17Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"1a635f54c5a2"}}
+    ],
+    "s3tests.functional.test_s3::test_object_update_encryption_keeps_object": [
+      {"outcome":"failed","source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","ceph_version":"19.2.7","recorded":"2026-10-20T23:19:36Z","runs":2,"unstable":false,"meta":{"deselect":"499666025fc3","gateway":"radosgw","pytest_freeze":"8dbc5a84da77"}}
     ],
     "s3tests.functional.test_s3::test_object_write_bad_part_number": [
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"19.2.7","recorded":"2026-10-15T15:38:23Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},

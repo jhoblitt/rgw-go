@@ -18067,7 +18067,12 @@ Every new entry adds its row to this table, in document order.
   authorized as a bucket's deletion, `s3DeleteBucket`
   ([rgw_op.cc:3715](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3715),
   [rgw_op.cc:3943](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3943)).
-  Unreproduced: derived from the source.
+  The DELETEs are reproduced on running radosgw v19.2.7 and v20.2.4 on
+  2026-10-20 by seven s3-tests in jhoblitt/ceph 7a946ba5086, merged into
+  `rgw-go-s3tests` by
+  [jhoblitt/ceph#15](https://github.com/jhoblitt/ceph/pull/15): each
+  deleted the empty bucket (Evidence). The GET and PUT fall-throughs are
+  derived from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends each
     configuration's requests to the bucket with one query key
@@ -18112,6 +18117,23 @@ Every new entry adds its row to this table, in document order.
     reshard stage, so they still fall through to ListObjects, CreateBucket
     and `RGWDeleteBucket_ObjStore_S3` there
     ([rgw_rest_s3.cc:5396-5577](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5396-L5577)).
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20. Each test sends its operation through
+    boto3 1.43.115 to an empty bucket, then to the same bucket holding an
+    object, and checks that the bucket is still there:
+    `test_bucket_delete_ownership_controls_keeps_bucket`
+    (DeleteBucketOwnershipControls), and
+    `test_bucket_delete_analytics_configuration_keeps_bucket`,
+    `test_bucket_delete_intelligent_tiering_configuration_keeps_bucket`,
+    `test_bucket_delete_inventory_configuration_keeps_bucket`,
+    `test_bucket_delete_metrics_configuration_keeps_bucket`,
+    `test_bucket_delete_metadata_configuration_keeps_bucket` and
+    `test_bucket_delete_metadata_table_configuration_keeps_bucket`, each
+    configuration's Delete. On both releases radosgw deleted the empty
+    bucket for all seven, and the HeadBucket after the request answered
+    404. Each test failed in both recording runs at the s3-tests pin
+    462c9b03344 (`test/s3tests/baseline/squid.json` and `tentacle.json`).
+    rgw-go passes all seven on both releases, answering each request 501.
 - **Impact:** a client that removes one of these configurations from an
   empty bucket loses the bucket with all of its own settings, its policy,
   ACL, lifecycle, CORS, tags, versioning, website and the rest, and its
@@ -18142,7 +18164,9 @@ Every new entry adds its row to this table, in document order.
   defect 11); recorded by phase 2 unit B, Task BC-28b, 2026-10-20, which
   checked it at v19.2.7, v20.2.4 and v21.1.2 and found the analytics,
   intelligent-tiering, inventory and metrics keys; the metadata keys by
-  BC-28b's review, 2026-10-20. Derived from the source, not reproduced.
+  BC-28b's review, 2026-10-20. Derived from the source; the DELETEs
+  reproduced on running v19.2.7 and v20.2.4 by BC-28b's s3-tests,
+  2026-10-20.
 
 ## radosgw serves PutObjectAnnotation and DeleteObjectAnnotation as PutObject and DeleteObject, overwriting or deleting the object
 
@@ -18158,7 +18182,12 @@ Every new entry adds its row to this table, in document order.
   [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192);
   [rgw_op.cc:5144-5147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5144-L5147),
   [rgw_op.cc:5534-5537](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5534-L5537)).
-  Unreproduced: derived from the source.
+  The Put and the Delete without a version are reproduced on running
+  radosgw v19.2.7 and v20.2.4 on 2026-10-20 by two s3-tests in
+  jhoblitt/ceph 7a946ba5086, merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#15](https://github.com/jhoblitt/ceph/pull/15)
+  (Evidence). The Get, the List and a Delete naming a version are derived
+  from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends
     PutObjectAnnotation as a PUT of `/{Key+}?annotation` with the annotation
@@ -18189,6 +18218,16 @@ Every new entry adds its row to this table, in document order.
     `op_get`, `op_put` and `op_delete` test the same keys, `attributes`
     included
     ([rgw_rest_s3.cc:5611-5670](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5611-L5670)).
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20, through boto3 1.43.115, each on an object
+    holding `bar`, a content type and user metadata in an unversioned
+    bucket. `test_object_put_annotation_keeps_object` sends
+    PutObjectAnnotation with the payload `soup`, and on both releases the
+    object then read `soup`. `test_object_delete_annotation_keeps_object`
+    sends DeleteObjectAnnotation, and on both releases the GetObject after
+    it answered NoSuchKey: the object was deleted. Each test failed in both
+    recording runs at the s3-tests pin 462c9b03344, and rgw-go passes both
+    on both releases, answering each request 501.
 - **Impact:** a client annotating an object loses the object's data, and
   one removing an annotation loses the object, or one of its versions, on a
   bucket of any versioning state. A client reading an annotation gets the
@@ -18203,7 +18242,8 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, BC-28b's review, 2026-10-20, from aws-sdk-go-v2's
   operations; checked at v19.2.7, v20.2.4 and v21.1.2. Derived from the
-  source, not reproduced.
+  source; the unversioned Put and Delete reproduced on running v19.2.7 and
+  v20.2.4 by BC-28b's s3-tests, 2026-10-20.
 
 ## radosgw serves RenameObject and UpdateObjectEncryption as PutObject, overwriting the object
 
@@ -18216,7 +18256,10 @@ Every new entry adds its row to this table, in document order.
   `s3PutObject` on the key it writes, as a plain PutObject is
   ([rgw_op.cc:3982-3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3982-L3983),
   [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192)).
-  Unreproduced: derived from the source.
+  Reproduced on running radosgw v19.2.7 and v20.2.4 on 2026-10-20 by two
+  s3-tests in jhoblitt/ceph 7a946ba5086, merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#15](https://github.com/jhoblitt/ceph/pull/15)
+  (Evidence).
 - **Evidence:**
   - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends
     RenameObject as a PUT of `/{Key+}?renameObject`, the new name, with no
@@ -18238,6 +18281,16 @@ Every new entry adds its row to this table, in document order.
   - Nor does v21.1.2 name either, and its object `op_put` tests the same
     keys
     ([rgw_rest_s3.cc:5641-5657](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5641-L5657)).
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20, through boto3 1.43.115, each on an object
+    holding `bar`, a content type and user metadata.
+    `test_object_rename_missing_source_keeps_object` renames a source that
+    does not exist onto that object, and on both releases the object then
+    read empty. `test_object_update_encryption_keeps_object` sends
+    UpdateObjectEncryption naming an SSE-KMS key, and on both releases the
+    object then read the request's `ObjectEncryption` document. Each test
+    failed in both recording runs at the s3-tests pin 462c9b03344, and
+    rgw-go passes both on both releases, answering each request 501.
 - **Impact:** a client renaming an object finds an empty object under the
   new name, and loses any object that held that name before; one changing
   an object's encryption loses the object's data. Each is answered 200, as
@@ -18251,7 +18304,8 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, BC-28b's fix round, 2026-10-20, listing
   aws-sdk-go-v2's operations against the dispatch table; checked at
-  v19.2.7, v20.2.4 and v21.1.2. Derived from the source, not reproduced.
+  v19.2.7, v20.2.4 and v21.1.2. Derived from the source, and reproduced on
+  running v19.2.7 and v20.2.4 by BC-28b's s3-tests, 2026-10-20.
 
 ## Tentacle's POST policy excepts a field whose name holds a NUL after a checksum algorithm's
 
