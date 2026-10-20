@@ -16118,7 +16118,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** mirrors it for the block's document, so the two gateways'
   documents stay byte-comparable: the document rgw-go writes for a block,
   `acl.PublicAccessBlock.MarshalS3XML` (`internal/acl/publicaccess.go`), is
-  the section with no namespace and each boolean lower-case.
+  the section with no namespace and each boolean lower-case. The document
+  it writes for GetBucketPolicyStatus, `getBucketPolicyStatus`
+  (`internal/s3/policystatus.go`), is radosgw's too: `PolicyStatus` in S3's
+  namespace, holding `IsPublic` lower-case.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 planning, 2026-10-13, from the source; confirmed by
   task BC-17, 2026-10-15. Not reproduced.
