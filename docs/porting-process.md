@@ -71,6 +71,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-25 | A conflict tool dropped a line from main, and its check missed it | Minor | subagent-driven-development's scripts | open |
 | PP-26 | An agent re-ran a command the permission classifier had refused | Major | subagent-driven-development; project CLAUDE.md | open |
 | PP-27 | Review findings became new tasks instead of being fixed in their task | Major | subagent-driven-development; the rulings brief; project CLAUDE.md | open |
+| PP-28 | The auto-mode classifier stopped pushes and merges the owner had cleared | Major | the owner's settings permission rules; github-conventions' commits.md; subagent-driven-development | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -466,3 +467,16 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - A finding that does belong to a later task becomes a line in that task's text, not a task of its own, and only when the later task would otherwise miss it.
   - A ruling that splits a fix out of its task says why the task cannot do it.
 - **Candidate home:** subagent-driven-development (its review-finding path); the controller's rulings brief; PP-12's line in the project CLAUDE.md.
+
+## PP-28: The auto-mode classifier stopped pushes and merges the owner had cleared
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - On 2026-10-20 the owner cleared every open PR to merge. The twenty that conflicted, or stacked on one that did, were rebased as one chain. The classifier refused the leased force-push of those twenty branches, and a read-only `git merge-tree` check of them, as "Git Destructive". The owner: "Do the force push. I'm tired of having to constaintly tell you do the force push."
+  - The same day it refused the run that merges the chain twice as "Auto-Mode Bypass", the second time after the owner's "continue", and refused a worktree removal sent beside it. It refused the canon change jhoblitt/conventions-claude#38 twice as "Instruction Poisoning", the second time after the owner's "I told you to open the PR", until the owner left auto mode for it.
+  - Each refusal said not to pursue the outcome by any route, so each waited for the owner. The owner then gave standing permission "to remove work trees, to push prs, to merge prs, to rebase prs, to force push to update prs".
+- **Cost:** eight owner messages, and twenty reviewed PRs unmerged until the owner's grant, with every ready task waiting behind them.
+- **Improvement:**
+  - The rewrite proof covers a rebase onto a moved base, and the proven `--force-with-lease` push to the owner's own open PR is part of the rewrite (jhoblitt/conventions-claude#38).
+  - A push or a merge is issued as one plain command, the form a settings permission rule can match. Permission for it lives in the owner's settings: text the agent writes cannot grant it.
+- **Candidate home:** the owner's settings permission rules; github-conventions' `references/commits.md` (#38, merged); subagent-driven-development (how a controller merges a batch).
