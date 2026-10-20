@@ -347,6 +347,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's object-lock dates wrap past 2554](#radosgws-object-lock-dates-wrap-past-2554) | pending | pending |  |
 | [radosgw's PutObjectRetention holds a lapsed retention's mode and date](#radosgws-putobjectretention-holds-a-lapsed-retentions-mode-and-date) | pending | pending |  |
 | [radosgw aborts on an object-lock attr with bytes past its encoding](#radosgw-aborts-on-an-object-lock-attr-with-bytes-past-its-encoding) | pending | pending |  |
+| [radosgw stores an empty lifecycle configuration for a body whose root is not LifecycleConfiguration](#radosgw-stores-an-empty-lifecycle-configuration-for-a-body-whose-root-is-not-lifecycleconfiguration) | pending | pending | ✓ |
+| [radosgw's lifecycle grammar reads its numbers as text](#radosgws-lifecycle-grammar-reads-its-numbers-as-text) | pending | pending | ✓ |
+| [radosgw's lifecycle Date wraps past 2554 and expires at once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -19209,3 +19212,306 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-3).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing
   `verify_object_lock`; derived from the source, not reproduced.
+
+## radosgw stores an empty lifecycle configuration for a body whose root is not LifecycleConfiguration
+
+- **Kind:** defect, S3-correctness, not security-relevant: a
+  PutBucketLifecycleConfiguration whose root has another name, or a prefix,
+  replaces the bucket's rules with none and answers 200. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_xml.h`, `rgw_xml.cc` and `rgw_lc_s3.cc` are identical at the two
+  tags.
+  - RGWPutLC::execute looks the root up with
+    `RGWXMLDecoder::decode_xml("LifecycleConfiguration", config, &parser)`,
+    leaving `mandatory` at its default, false, and ignoring the return
+    ([rgw_op.cc:5996-6002](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5996-L6002),
+    [rgw_op.cc:6662-6668](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6662-L6668)).
+    When the parser holds no root of that name, `decode_xml` sets the
+    configuration to a default-constructed one and returns false
+    ([rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241),
+    [rgw_xml.h:218-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L218-L241)).
+    expat runs without namespace processing, `XML_ParserCreate(nullptr)`
+    ([rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158),
+    [rgw_xml.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L158)),
+    so a prefixed `s3:LifecycleConfiguration` is such a root too.
+  - `RGWLifecycleConfiguration_S3::rebuild` of the empty rule map adds
+    nothing and returns 0
+    ([rgw_lc_s3.cc:346-360](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L346-L360),
+    [rgw_lc_s3.cc:346-360](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L346-L360)),
+    and `set_bucket_config` encodes the empty configuration over the
+    bucket's `user.rgw.lc` and sets the bucket's lc entry
+    ([rgw_lc.cc:2636-2666](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2636-L2666),
+    [rgw_lc.cc:2703-2733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2703-L2733)).
+  - Under the right root a Rule is mandatory,
+    `decode_xml("Rule", rules, obj, true)`
+    ([rgw_lc_s3.cc:96](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L96),
+    [rgw_lc_s3.cc:96](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L96)),
+    so an empty LifecycleConfiguration answers MalformedXML; only the wrong
+    root stores no rules.
+  - GetBucketLifecycleConfiguration then finds the attr and answers 200
+    with a LifecycleConfiguration holding no Rule, not 404
+    NoSuchLifecycleConfiguration
+    ([rgw_rest_s3.cc:3688-3726](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3688-L3726),
+    [rgw_rest_s3.cc:4139-4177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4177)).
+- **Impact:** a client that sends its lifecycle document under another root
+  name, or under a prefix, erases every rule of the bucket and is told it
+  succeeded. S3's model takes the body as a `LifecycleConfiguration` in
+  S3's namespace holding a required list of rules, and S3 answers
+  MalformedXML to configuration XML "that doesn't conform to the published
+  XSD" (the AWS SDK for Go's model,
+  [api.go:34969](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L34969),
+  [api.go:13051-13057](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L13051-L13057),
+  [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221));
+  that Amazon S3 itself refuses such a body is not verified here. The
+  registry's tagging entry, "radosgw reads a tagging body whose root is not
+  Tagging as an empty tag set", is the same optional root lookup.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** refuses it: `lifecycle.Parse` (`internal/lifecycle/xml.go`)
+  answers a root other than an unprefixed `LifecycleConfiguration` with 400
+  MalformedXML, which the specs "a root other than LifecycleConfiguration,
+  which radosgw reads as the empty configuration" and "a prefixed root"
+  (`internal/lifecycle/xml_test.go`) pin (`docs/exclusions.md`,
+  "PutBucketLifecycleConfiguration refuses a document whose root is not
+  LifecycleConfiguration"). The prefix map of the empty configuration
+  radosgw stores this way holds no rule, so the worker finds nothing to do.
+  How GetBucketLifecycleConfiguration answers it is task C6's to decide
+  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C1, 2026-10-20, transcribing
+  PutBucketLifecycleConfiguration's parse. Derived from the source, not
+  reproduced.
+
+## radosgw's lifecycle grammar reads its numbers as text
+
+- **Kind:** defect, S3-correctness, not security-relevant: the
+  configuration is the bucket owner's own. radosgw keeps every number,
+  date and flag of a lifecycle rule as the text the document held, and
+  checks little of it. It refuses an object-size filter S3 takes; it stores
+  a negative size and a NewerNoncurrentVersions outside 1 to 100, and its
+  worker reads a negative one of either against the sender's meaning; it
+  stores a Date that is no calendar date, and drops an
+  ExpiredObjectDeleteMarker of `1`;
+  and GetBucketLifecycleConfiguration sends each back as it was written.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_xml.h` and `rgw_lc_s3.cc` are identical at the two tags.
+  - Days, Date and NewerNoncurrentVersions, a transition's days and date,
+    and a filter's sizes are `std::string` members
+    ([rgw_lc.h:41-47](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L41-L47),
+    [rgw_lc.h:41-47](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L41-L47);
+    [rgw_lc.h:107-112](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L107-L112),
+    [rgw_lc.h:107-112](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L107-L112);
+    [rgw_lc.h:207-212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L207-L212),
+    [rgw_lc.h:207-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L207-L212)),
+    each decoded as its element's text, untouched, by
+    `decode_xml_obj(std::string& val, XMLObj *obj)`
+    ([rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L179-L182),
+    [rgw_xml.h:179-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L179-L182)).
+  - LCFilter_S3::decode_xml refuses a filter whose `size_lt <= size_gt`,
+    which compares the two strings bytewise
+    ([rgw_lc_s3.cc:169-174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L169-L174),
+    [rgw_lc_s3.cc:169-174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L169-L174)).
+    So ObjectSizeGreaterThan 9 with ObjectSizeLessThan 10 answers
+    MalformedXML, "10" sorting before "9", and ObjectSizeGreaterThan 10
+    with ObjectSizeLessThan 9 is stored. The worker reads both sizes with
+    `std::stoull`
+    ([rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L264-L278),
+    [rgw_lc.h:264-278](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L264-L278)),
+    so the stored filter matches no object.
+  - A negative size is stored, and `std::stoull` negates it in unsigned
+    arithmetic, so the worker's bound is 2^64 less its magnitude, and
+    `pass_size_limit_checks`
+    ([rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+    [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552))
+    applies a rule whose ObjectSizeLessThan is `-1` to every object and one
+    whose ObjectSizeGreaterThan is `-1` to none.
+  - Days are read with `atoi`
+    ([rgw_lc.h:76](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L76),
+    [rgw_lc.h:76](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L76);
+    [rgw_lc.h:115-117](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L115-L117),
+    [rgw_lc.h:115-117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L115-L117)),
+    which skips leading white space and stops at the first non-digit, so
+    LCRule::valid takes Days of `5x` or ` 5`
+    ([rgw_lc.cc:60-95](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L60-L95),
+    [rgw_lc.cc:60-95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L60-L95)),
+    and a Date passes `check_date` when `from_iso_8601` reads it at
+    midnight
+    ([rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L19-L30),
+    [rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L19-L30)).
+    `from_iso_8601` stops at white space and carries a field past its
+    range into the next
+    ([iso_8601.cc:39-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L151),
+    [iso_8601.cc:39-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L39-L151)),
+    so `2026-01-01 later`, `2026-13-01`, read as 2027-01-01, and
+    `2026-04-31`, read as 2026-05-01, are stored as written. A date past
+    2554 is "[radosgw's lifecycle Date wraps past 2554 and expires at
+    once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)".
+    `LCExpiration_S3::dump_xml` writes each back as stored
+    ([rgw_lc_s3.cc:32-40](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L32-L40),
+    [rgw_lc_s3.cc:32-40](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L32-L40)).
+    aws-sdk-go-v2's s3 v1.114.3 reads an Expiration's Days with
+    `strconv.ParseInt` and its Date with `smithytime.ParseDateTime`, an RFC
+    3339 date-time
+    ([deserializers.go:23527-23559](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.3/service/s3/deserializers.go#L23527-L23559)),
+    so it fails on the response for either.
+  - `LCNoncurExpiration_S3::decode_xml` stores any NewerNoncurrentVersions
+    ([rgw_lc_s3.cc:65-69](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L65-L69),
+    [rgw_lc_s3.cc:65-69](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L65-L69)).
+    `get_newer` reads it with `atoi`
+    ([rgw_lc.h:81](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L81),
+    [rgw_lc.h:81](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L81)) into
+    `lc_op`'s `uint64_t newer_noncurrent`
+    ([rgw_lc.h:491](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.h#L491),
+    [rgw_lc.h:491](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.h#L491)), and the
+    worker expires a noncurrent version only while `num_noncurrent` is
+    above it
+    ([rgw_lc.cc:1237-1239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1237-L1239),
+    [rgw_lc.cc:1257-1259](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1257-L1259)).
+    So a negative count is 2^64 less its magnitude and the action never
+    runs, 0, atoi's reading of an unset count too, holds back no version,
+    and nothing holds the count to the 100 S3 documents (the AWS SDK
+    for Go's model,
+    [api.go:32236-32242](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L32236-L32242)).
+  - ExpiredObjectDeleteMarker is the delete-marker action, `dm_expiration`,
+    only when its text is exactly `true`
+    ([rgw_lc_s3.cc:46-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L46-L62),
+    [rgw_lc_s3.cc:46-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L46-L62)).
+    An xs:boolean `1`, ` true ` with its white space, `True` and `yes`
+    set no action, so `LCRule::valid` refuses the rule as InvalidArgument
+    when it has no other action and it is stored without one otherwise.
+- **Impact:** an object-size range whose bounds differ in digit count is
+  refused, or stored so that it matches nothing. A negative size is taken
+  and read against its sender's meaning: `ObjectSizeLessThan -1`, which
+  can match no object, applies the rule to every one. A negative
+  NewerNoncurrentVersions silently disables the noncurrent expiration it
+  guards, and an ExpiredObjectDeleteMarker of `1` leaves the bucket's
+  delete markers in place. A hand-written document with a malformed number
+  or a bare date is stored, and the bucket's
+  GetBucketLifecycleConfiguration answer is then one SDKs fail to read.
+  SDK-built documents write every number and date in S3's form and meet
+  only the size comparison and the values they are given. That AWS refuses
+  the malformed forms and the values out of range is expected, not
+  verified here.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** holds a PUT to S3's model and reads stored state as
+  radosgw's worker does, a negative size aside. `lifecycle.Parse`
+  (`internal/lifecycle/xml.go`):
+  - holds Expiration's Days, Transition's Days, both NoncurrentDays,
+    NewerNoncurrentVersions and DaysAfterInitiation to S3's xs:int and the
+    object sizes to its xs:long, answering anything else with 400
+    MalformedXML, compares the sizes as numbers, so ObjectSizeGreaterThan
+    9 with ObjectSizeLessThan 10 is taken, answers 400 InvalidArgument to a
+    negative size and to a NewerNoncurrentVersions outside 1 to 100, and
+    stores each number in decimal (`docs/exclusions.md`,
+    "PutBucketLifecycleConfiguration holds a rule's numbers to S3's
+    types");
+  - takes a Date only when it is written as a full date-time,
+    `YYYY-MM-DDThh:mm:ss` with an optional fraction and then `Z`, at
+    midnight UTC on a calendar date that real_time holds, stored as
+    written, so a bare date or a year, which radosgw stores and gives back
+    in a form aws-sdk-go-v2 cannot read, is refused; and reads
+    ExpiredObjectDeleteMarker as an xs:boolean (`docs/exclusions.md`,
+    "PutBucketLifecycleConfiguration holds a Date and
+    ExpiredObjectDeleteMarker to S3's types").
+
+  The prefix map reads a configuration radosgw stored with other text as
+  radosgw's worker does, its numbers with atoi and stoull, a Date as
+  `from_iso_8601` rolls it forward, a negative NewerNoncurrentVersions as
+  one that never acts and one of 0 as one never set, but a negative size
+  by its sign (`docs/exclusions.md`, "The lifecycle prefix map reads a
+  stored negative object size by its sign, and no Date past real_time"),
+  and `Marshal`
+  writes the text back as stored. The specs "refuses a number S3's schema
+  refuses as MalformedXML, where radosgw stores the text", "compares a
+  Filter's sizes as numbers, where radosgw compares their text", "refuses
+  a negative object size as InvalidArgument, after the grammar's
+  refusals", "refuses a NewerNoncurrentVersions outside 1 to 100 as
+  InvalidArgument", "takes a Date written as a full date-time at midnight
+  UTC on a calendar date, and keeps it as written", "reads
+  ExpiredObjectDeleteMarker as an xs:boolean", "reads a stored
+  configuration's numbers as radosgw's worker
+  does, though Parse would refuse them" and "reads a stored size by its
+  sign, where radosgw's stoull reads -n as 2^64 - n" pin it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C1, 2026-10-20, transcribing LCFilter_S3's
+  decode. Derived from the source, not reproduced.
+
+## radosgw's lifecycle Date wraps past 2554 and expires at once
+
+- **Kind:** defect, data loss, not security-relevant: whoever may set the
+  date may as well set Days of 1. A lifecycle Date past
+  2554-07-21T23:34:33.709551615Z whose wrap lands on a midnight is stored,
+  and the worker acts at the wrapped instant, long past, so the rule
+  expires or transitions its objects at once. Unreproduced on a running
+  radosgw: derived from the source, with the parse compiled and run.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `rgw_lc_s3.cc` and `iso_8601.cc` are identical at the two tags, and
+  `ceph_time.h` differs only in its includes.
+  - `check_date` asks only that `from_iso_8601`'s instant be at midnight
+    UTC, its `tv_sec` a whole number of days and its `tv_nsec` 0
+    ([rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L19-L30),
+    [rgw_lc_s3.cc:19-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L19-L30)),
+    and `LCExpiration_S3::decode_xml` and `LCTransition_S3::decode_xml`
+    store the Date it takes as written
+    ([rgw_lc_s3.cc:42-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L42-L63),
+    [rgw_lc_s3.cc:42-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L42-L63);
+    [rgw_lc_s3.cc:186-202](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc_s3.cc#L186-L202),
+    [rgw_lc_s3.cc:186-202](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc_s3.cc#L186-L202)).
+  - `from_iso_8601` makes the instant in `calculate`, the seconds
+    `internal_timegm` gives through `real_clock::from_time_t`, plus the
+    fraction's nanoseconds
+    ([iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L48),
+    [iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L39-L48)),
+    and `from_time_t` converts the seconds to real_time's unsigned 64-bit
+    nanoseconds
+    ([ceph_time.h:149-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L149-L151),
+    [ceph_time.h:146-148](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L146-L148)),
+    so an instant past 2^64 nanoseconds wraps modulo 2^64.
+    `2600-01-01T23:34:33.709551616Z` wraps to 2015-06-14T00:00:00Z, which
+    `check_date` takes. `2600-01-01` and `2600-01-01T00:00:00Z` wrap to
+    instants 0.290448384 seconds past a whole second, which it refuses:
+    2^64 nanoseconds is 709551616 nanoseconds past a whole second, and k
+    times that is a whole number of milliseconds for no k from 1 to 13, the
+    most wraps a year of four digits allows, so no whole-second or
+    millisecond timestamp lands a wrap on a midnight.
+  - `_add_rule` reads the stored Date with `from_iso_8601`
+    ([rgw_lc.cc:114-171](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L114-L171),
+    [rgw_lc.cc:114-171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L114-L171)),
+    and the worker expires or transitions an object by date once
+    `ceph_clock_now()` is at or past it, as it is past a 2015 date
+    ([rgw_lc.cc:1145-1154](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1145-L1154),
+    [rgw_lc.cc:1334-1343](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1334-L1343)
+    at v19.2.7;
+    [rgw_lc.cc:1165-1174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1165-L1174),
+    [rgw_lc.cc:1356-1365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1356-L1365)
+    at v20.2.4).
+  - v19.2.7's `iso_8601.cc`, with `check_date` copied verbatim from its
+    `rgw_lc_s3.cc`, compiled with g++ in C++20 and run, gives the instants
+    and answers above.
+- **Impact:** a rule meant to act in 2600 deletes or transitions every
+  object it matches on the next lifecycle run. Only a crafted date meets
+  it; an SDK sending a whole-second or millisecond timestamp does not. The
+  registry's "[radosgw's date conditions wrap past 2554 and before
+  1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970)" is the
+  same unsigned 64-bit overflow in a bucket policy's date conditions, and
+  object lock's lock-until date wraps the same way (defect LL-4 of
+  `docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md`, which task
+  L1 registers).
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** refuses it on PUT: `lifecycle.Parse` takes a Date only when
+  real_time holds it, and answers this one with 400 MalformedXML, which
+  the spec "an Expiration Date crafted so that from_iso_8601's wrap lands
+  at midnight, which radosgw stores" (`internal/lifecycle/xml_test.go`)
+  pins (`docs/exclusions.md`, "PutBucketLifecycleConfiguration holds a
+  Date and ExpiredObjectDeleteMarker to S3's types"). For such a date
+  radosgw stored, the prefix map holds no date, so it names no instant to
+  act at, which "holds no date for a stored date from_iso_8601 refuses or
+  real_time cannot hold" (`internal/lifecycle/prefixmap_test.go`) pins
+  (`docs/exclusions.md`, "The lifecycle prefix map reads a stored negative
+  object size by its sign, and no Date past real_time"). Tasks C8, C10a
+  and C11 record their worker's answer
+  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C1's review, 2026-10-20, which compiled
+  `from_iso_8601` and `check_date`. Not reproduced on a running radosgw.
