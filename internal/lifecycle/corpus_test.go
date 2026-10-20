@@ -48,6 +48,62 @@ func upgraded(b []byte, v uint8, grow int) []byte {
 	return append(out, make([]byte, grow)...)
 }
 
+// upgradedRule is a corpus LCRule, v6, as radosgw re-encodes it, built from
+// its parts by hand rather than through the decoder: its ID, prefix and
+// status as they are; each of its three expirations through upgraded to v4;
+// its delete-marker byte as it is; its filter through upgraded to v4; its
+// two transition maps, whose LCTransition is v1 at every release, as they
+// are; and the rule's length set to the new payload's.
+func upgradedRule(b []byte) []byte {
+	GinkgoHelper()
+	Expect(b[0]).To(Equal(byte(6)), "a corpus LCRule is v6")
+	off := 6
+	str := func() []byte {
+		n := int(binary.LittleEndian.Uint32(b[off:]))
+		part := b[off : off+4+n]
+		off += 4 + n
+		return part
+	}
+	structPart := func() []byte {
+		n := int(binary.LittleEndian.Uint32(b[off+2:]))
+		part := b[off : off+6+n]
+		off += 6 + n
+		return part
+	}
+	var body []byte
+	for range 3 {
+		body = append(body, str()...)
+	}
+	for range 3 {
+		x := structPart()
+		switch x[0] {
+		case 3:
+			x = upgraded(x, 4, 4)
+		case 4:
+		default:
+			Fail("an LCExpiration version the corpus was not expected to hold")
+		}
+		body = append(body, x...)
+	}
+	body = append(body, b[off])
+	off++
+	f := structPart()
+	switch f[0] {
+	case 2:
+		f = upgraded(f, 4, 12)
+	case 3:
+		f = upgraded(f, 4, 8)
+	case 4:
+	default:
+		Fail("an LCFilter version the corpus was not expected to hold")
+	}
+	body = append(body, f...)
+	body = append(body, b[off:]...)
+	head := []byte{6, b[1], 0, 0, 0, 0}
+	binary.LittleEndian.PutUint32(head[2:], uint32(len(body))) //nolint:gosec // a corpus object is a few hundred bytes
+	return append(head, body...)
+}
+
 var _ = Describe("ceph-object-corpus", func() {
 	It("reads every LCExpiration and writes it back as v4", func() {
 		for _, o := range loadCorpus("LCExpiration") {
@@ -83,19 +139,16 @@ var _ = Describe("ceph-object-corpus", func() {
 
 	// Every corpus LCRule is v6. Those from 15.0.0 to 16.2.0 hold v3
 	// expirations and a v2 filter, those from 18.2.0 v3 expirations and a
-	// v3 filter, and those from 19.2.0 are current throughout.
+	// v3 filter, and those from 19.2.0 are current throughout, so upgradedRule
+	// leaves them as they are.
 	It("reads every LCRule and writes it back with its parts at their current versions", func() {
 		for _, o := range loadCorpus("LCRule") {
 			r := decodeAll(o.bin, lifecycle.DecodeRule)
 			got := encode(r, lifecycle.Rule.Encode, denc.Squid)
 			Expect(decodeAll(got, lifecycle.DecodeRule)).To(Equal(r), o.id)
-			switch filepath.Dir(o.id) {
-			case "19.2.0-404-g78ddc7f9027":
+			Expect(got).To(Equal(upgradedRule(o.bin)), o.id)
+			if filepath.Dir(o.id) == "19.2.0-404-g78ddc7f9027" {
 				Expect(got).To(Equal(o.bin), o.id)
-			case "18.2.0":
-				Expect(got).To(HaveLen(len(o.bin)+3*4+8), o.id)
-			default:
-				Expect(got).To(HaveLen(len(o.bin)+3*4+12), o.id)
 			}
 		}
 	})
