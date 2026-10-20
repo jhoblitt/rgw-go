@@ -110,12 +110,21 @@ func encodePublicAccess(b acl.PublicAccessBlock) []byte {
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L997-L1017 at v20.2.4;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L655 at v19.2.6).
+// A 200 also carries the Content-Length: 0 the frontend completes it with. A
+// 204 carries no length from either gateway, whatever the recorder holds:
+// radosgw's ConLenControllingFilter drops the frontend's
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L342-L364 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L342-L364 at v20.2.4),
+// and net/http deletes the one writeEmpty sets (net/http/server.go:1488-1490
+// at go1.27.1), so a 204's is not checked.
 func expectEmptyXML(rec *httptest.ResponseRecorder, status int) {
 	GinkgoHelper()
 	Expect(rec.Code).To(Equal(status), rec.Body.String())
 	Expect(rec.Body.String()).To(BeEmpty())
 	Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
-	Expect(rec.Header().Get("Content-Length")).To(Equal("0"))
+	if status != http.StatusNoContent {
+		Expect(rec.Header().Get("Content-Length")).To(Equal("0"))
+	}
 	Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"))
 }
 

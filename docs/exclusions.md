@@ -3569,6 +3569,36 @@ v20.2.4 tags, rgw-go does the following.
   status (`net/http/server.go:1372-1382`), as RFC 9110, section 8.6,
   requires, so rgw-go matches radosgw's default and ignores the option set
   to true.
+- **A GetPublicAccessBlock error is its error document alone.** radosgw's
+  GetPublicAccessBlock writes the block document whatever its op returned
+  (`RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`,
+  [rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624),
+  [rgw_rest_s3.cc:5124-5135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5124-L5135)).
+  On a bucket without a block, `end_header` has already sent the 404
+  NoSuchPublicAccessBlockConfiguration error document under that
+  document's Content-Length
+  ([rgw_rest.cc:620-625](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L625),
+  [rgw_rest.cc:625-630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L630)),
+  so a block with every setting false follows it past that length, and no
+  frontend filter cuts it (docs/ceph-upstream-bugs.md, "[radosgw sends a
+  public access block after GetPublicAccessBlock's error document, past its
+  Content-Length](ceph-upstream-bugs.md#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length)").
+  A block follows the 500 UnknownError too, which radosgw answers for a
+  block that does not decode to every requester `verify_permission`
+  admits, the owner included, as its authorizer takes such a block for none
+  (`get_public_access_conf_from_attr`,
+  [rgw_op.cc:341-355](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L341-L355),
+  [rgw_op.cc:371-385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L371-L385)).
+  That block holds the settings decoded before the throw, all four stored
+  ones when `DECODE_FINISH` is what throws (`PublicAccessBlockConfiguration::decode`,
+  [rgw_public_access.h:54-61](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_public_access.h#L54-L61),
+  [rgw_public_access.h:54-61](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_public_access.h#L54-L61)).
+  In rgw-go only an admin reaches that 500 ("A public-access block that
+  does not decode refuses the request", below).
+  rgw-go sends the error document alone, so the response ends at its
+  Content-Length (`getPublicAccessBlock`, `internal/s3/publicaccess.go`).
+  A client reading by the length sees the same error from both gateways;
+  on radosgw it also finds the block left on the connection.
 - **A client that went away gets nothing more.** radosgw notices such a
   client only when a read or write on its socket fails: an op that reads
   no more of the request runs to its end, and the response it then writes
