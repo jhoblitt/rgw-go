@@ -45,7 +45,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | ID | Problem | Severity | Candidate home | Status |
 |---|---|---|---|---|
 | PP-1 | Plan code treated as binding mandated a data-loss race | Major | writing-plans | fixed |
-| PP-2 | Wrong radosgw facts in plans reached specs and reviews | Major | writing-plans; a citation checker | fixed |
+| PP-2 | Wrong radosgw facts in plans reached specs and reviews | Major | writing-plans; a citation checker | fixed; reopened |
 | PP-3 | No up-front rule on reproducing a floor's security defects | Major | design spec; writing-plans | fixed |
 | PP-4 | Disclosure policy for found defects was settled piecemeal | Major | design spec; project CLAUDE.md | fixed |
 | PP-5 | Hot files shared by parallel tasks force a rebase on every merge | Major | writing-plans (file structure) | fixed |
@@ -54,7 +54,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-8 | Merge authority and the merge gate were settled mid-execution | Minor | github-conventions; subagent-driven-development | fixed; carried to review 4 |
 | PP-9 | The progress ledger has an implicit grammar | Minor | subagent-driven-development scripts | carried |
 | PP-10 | Controller tooling friction and context noise | Minor | subagent-driven-development; Claude Code | carried |
-| PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | fixed |
+| PP-11 | Defect claims from source reading alone were sometimes wrong | Minor | code-conventions bug reports | fixed; reopened |
 | PP-12 | Review findings were parked instead of fixed in their PR | Major | subagent-driven-development; writing-plans; project CLAUDE.md | fixed |
 | PP-13 | Unrelated changes were bundled into one PR | Major | writing-plans; subagent-driven-development; github-conventions | fixed |
 | PP-14 | A regression test was hardened as a security boundary | Major | writing-plans; the task-review brief; project CLAUDE.md | fixed |
@@ -63,6 +63,13 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-17 | Phase 2 planning cited Ceph in a form the owner never agreed | Major | writing-plans; project CLAUDE.md; hack/citecheck | open |
 | PP-18 | The controller stopped at a failed step of an unattended run | Major | subagent-driven-development; the benchmark run procedure | open |
 | PP-19 | A change the plan called "its own" had no task, so notes piled up instead | Major | writing-plans; project CLAUDE.md | open |
+| PP-20 | Controller rulings rested on a recalled rule, not the spec's text | Major | subagent-driven-development; the triage brief | open |
+| PP-21 | A dispatch ruling gave away work the plan assigns to another task | Minor | subagent-driven-development | open |
+| PP-22 | Shared state was changed under a run that depended on it | Minor | subagent-driven-development's scripts; global CLAUDE.md | open |
+| PP-23 | An API session limit stopped every agent at once | Minor | subagent-driven-development | open |
+| PP-24 | Plan PRs waiting on the owner's LGTM hold reviewed code PRs | Major | the owner; subagent-driven-development; project CLAUDE.md | open |
+| PP-25 | A conflict tool dropped a line from main, and its check missed it | Minor | subagent-driven-development's scripts | open |
+| PP-26 | An agent re-ran a command the permission classifier had refused | Major | subagent-driven-development; project CLAUDE.md | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -74,15 +81,22 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 
 ## PP-2: Wrong radosgw facts in plans reached specs and reviews
 
-- **Severity:** Major. **Status:** fixed (review 1).
+- **Severity:** Major. **Status:** fixed (review 1); reopened, since it recurred in phase 2.
 - **Observed:**
   - W's plan, Task 5's condition table, expects Squid to answer If-None-Match with another ETag on a missing key with ENOENT. v19.2.6 answers 412 (`rgw_rados.cc:6536-6542`).
   - The same plan links `src/rgw/rgw_op.cc#L6493-L6512` for code that lives in `src/rgw/driver/rados/rgw_rados.cc`.
   - Task reviews in other units corrected further citations and claims, each costing a fix round.
-- **Cost:** every wrong fact costs a reviewer's verification and often a fix round. A wrong expected value in a spec table can make a defect pass as correct.
+  - It recurred on 2026-10-19 and 2026-10-20. Implementers reading the source at both tags refuted these claims of phase 2's plan:
+    - BC-24's plan text cites one range of `rgw_rest.cc` for both its 411 and its 416, but the range holds only the 416. A chunked body with no Content-Length is read, not refused with 411, since `read_all_input` drops `allow_chunked=false`. #381 corrects it.
+    - WP-20's brief cited its tier-config rule at v19.2.6, after the floor had moved to v19.2.7. BC-5's brief did the same, and so did the controller's two review-brief templates. Both rules held at v19.2.7, but each implementer had to check again.
+    - BC-13's behaviour 4 has CompleteMultipartUpload's Location take the website domain on a website request. radosgw never builds one, since it answers a website request's POST with 405, and a merged exclusion repeated the claim. #411 corrects the plan and #410 the exclusion.
+    - C1's brief, from the plan, says "integers are read as `decode_xml_obj` reads them". radosgw reads every lifecycle field as a string and the numbers later, with `atoi` and `stoull`, so it compares sizes byte by byte. C1 followed the code.
+    - L1's brief and the plan's L-D1 row refuse only a date past real_time's upper limit. A date before the epoch, such as one with a month or day of 00, wraps in radosgw to about 2554, and triage found that to be the case that bites. L1's fix round adds it to L-D1.
+- **Cost:** every wrong fact costs a reviewer's verification and often a fix round. A wrong expected value in a spec table can make a defect pass as correct. In phase 2 a correction to plan text is also a plan PR that waits on the owner's LGTM (PP-24).
 - **Improvement:**
   - Run a mechanical citation check at plan time: each link resolves at its tag, and the cited range contains the symbol the text names.
   - Expected values that decide a spec come from the source at both tags, or from running the release, and are never written from memory.
+  - Phase 2's implementers caught each recurrence by checking the brief against the source at both tags before coding. The planning round does the same for every claim that decides a behaviour, and a floor bump re-tags every brief and brief template.
 - **Candidate home:** writing-plans (a verification step), and a script under `hack/`.
 
 ## PP-3: No up-front rule on reproducing a floor's security defects
@@ -169,12 +183,17 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 
 ## PP-11: Defect claims from source reading alone were sometimes wrong
 
-- **Severity:** Minor. **Status:** fixed (review 1).
+- **Severity:** Minor. **Status:** fixed (review 1); reopened, since it recurred in phase 2.
 - **Observed:**
   - A claimed radosgw defect (an endless loop when `rgw_max_chunk_size` is 0) was disproved at registry triage, before publication (#150): the PUT gets 400 RequestTimeout instead.
   - Independent classification also changed the severity of other entries.
-- **Cost:** a retraction, and triage time.
-- **Improvement:** registry entries carry their reproduction status ("unreproduced" until a running release shows the defect). Plans budget a cluster reproduction step for every defect a task records.
+  - It recurred on 2026-10-19. Two of the write-path plan's defects, written from reading radosgw, were refuted by reading further:
+    - Defect 12: radosgw's otp metadata put resets an MFA device's replay state. WP-17's implementer found, and its review confirmed at both tags, that the OSD reads the committed omap, which the same op's remove does not hide, so the put keeps the state. WP-19's behaviour and spec, WP-24's reproduction and the plan's decision table assumed the reset; #387 corrects them. The real defect, replay state kept in the zone that recorded it, went to the registry instead.
+    - Defect 1, in multipart completion's checksums: v20.2.4's completion refuses a part-count mismatch and needs the part numbers one to one, so the defect is reachable only through a race, and Squid has no checksum code. WP-5's implementer raised it and its review confirmed it; #385 corrects the plan.
+- **Cost:** a retraction, and triage time. In phase 2, two plan PRs that wait on the owner (#385, #387). Uncaught, defect 12 would have had WP-19 build and test a reset that radosgw never does.
+- **Improvement:**
+  - Registry entries carry their reproduction status ("unreproduced" until a running release shows the defect). Plans budget a cluster reproduction step for every defect a task records.
+  - A defect that a plan builds behaviour on is checked down to the layer that decides it before the behaviour is written: defect 12's answer lay in the OSD, not in radosgw.
 - **Candidate home:** code-conventions' bug-report rules; the project's registry template.
 
 ## PP-12: Review findings were parked instead of fixed in their PR
@@ -329,3 +348,105 @@ Each fix below that is not this document lands on main before phase 2's tasks st
     bump, and no later task owns the move. Where the move is not additive, the task's full record on both releases is
     part of the task.
 - **Candidate home:** writing-plans; phase 2's plan; project CLAUDE.md.
+
+## PP-20: Controller rulings rested on a recalled rule, not the spec's text
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - Review 1 replaced PP-3's suggested rule, parity with the floor except where upstream has fixed a security defect, with the spec's §8: compatibility "does not mean reproducing radosgw's defects".
+  - On 2026-10-20 the controller twice ruled parity from the suggested rule:
+    - BC-28b: in radosgw, a DELETE on four bucket subresources that rgw-go does not serve falls through to DeleteBucket, and rgw-go did the same. The ruling kept it, since DeleteBucket's own permission is checked. BC-28b's review cited §8, and the ruling was reversed: rgw-go answers 501 to six bucket subresources and three object ones that radosgw turns into a delete or an overwrite.
+    - WP-20: radosgw's `?layout` shows a cloud tier's S3 secret key to an admin with read access. The ruling reproduced it, because the registry entry for the tier secret already did and upstream had not masked it. The triage session agreed and asked for the choice to be recorded as deliberate, and the owner was told of the tradeoff. The controller then read §8 and reversed the ruling: rgw-go masks the secret, with an exclusion, and a new task, WP-20b (#416), masks it in the period's dump.
+  - Both rulings rested on the rule as remembered, PP-3's suggestion, not on §8's text. It is PP-2's failure applied to the project's own rules.
+- **Cost:** a fix round each. BC-28b's first round added the 501 rows. WP-20's second round flipped the first round's spec and rewrote its registry line. Triage recorded a parity choice and was then told of its reversal, and the owner was shown as a tradeoff a question the spec had settled.
+- **Fix:** both rulings were reversed before their PRs merged. BC-28b's PR answers 501 to the subresources (#414), and WP-20's masks the secret (#415).
+- **Improvement:** a ruling that rests on a project rule quotes the rule's text, from the spec or the CLAUDE.md, in the ruling. The triage session's brief says the same.
+- **Candidate home:** subagent-driven-development (the controller's rulings); the triage session's brief.
+
+## PP-21: A dispatch ruling gave away work the plan assigns to another task
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - The plan gives BC-22 the public access block and policy-status s3-tests: their deselect lines, both ledgers' records and the known-differences lines.
+  - On 2026-10-20 the controller's dispatches told BC-21 and BC-19 to re-select the tests their routes serve. BC-21 did, in a commit that re-selected seven tests with no baseline entries, which would have failed CI's s3-tests parity until a cluster recorded them.
+  - BC-21's report raised the CI failure. The controller found the contradiction, dropped the commit before the PR (#408), and withdrew the ruling from BC-19 (#412).
+  - It was the second time. The pin-bump plan PR's brief had given the same lines to BC-18, BC-19 and BC-20, and #355 moved them to BC-22.
+- **Cost:** one agent commit dropped, a correction message to BC-19, and a CI failure avoided because BC-21 reported it.
+- **Improvement:** before a ruling assigns work, the controller finds the task the plan gives it to, by the plan's Files lines, and either leaves it there or rules the move with its reason.
+- **Candidate home:** subagent-driven-development (dispatch rulings).
+
+## PP-22: Shared state was changed under a run that depended on it
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - On 2026-10-15 agents running in parallel shared one TMPDIR, and golangci-lint's lock in it cost S1 a re-run.
+  - The global CLAUDE.md says to remove the zero-byte `.git/config.lock` the sandbox leaves behind. On 2026-10-19 V13a's agent, and then the controller, removed it. Every other session whose sandbox binds that path then failed to start a command, since bwrap could not open its source. V13a's agent was blocked in its fix round until the controller asked the owner to restore the file.
+  - On 2026-10-20 the merge helper, `merge_when_green.sh`, merged #404 and deleted its branch by push. #405 was stacked on that branch, and GitHub closed it. The controller pushed the branch back, reopened #405, retargeted it to main and deleted the branch again.
+  - The same day two runs of `override_check.sh` on BC-21's head (#408) shared one work directory, named for the SHA, and each deleted the other's tree. The check reported a spurious FAIL, and a rerun alone passed. One run was a background job started inside a foreground command, which the controller believed it had killed.
+  - The fix for that, giving `override_check.sh` a `mktemp` directory, was edited into the script at 09:33:55 while a background run was executing it. bash reads a script by offset as it runs, so the run read the edited file from its old position and failed. C3's code head (#418) reported FAIL though its build, vet, tests and lint had all passed, and a rerun passed.
+- **Cost:** a lint re-run, a blocked agent and the owner's intervention, a closed PR to recover, two spurious failures to diagnose, and their reruns.
+- **Fix:**
+  - The dispatch environment gives each agent its own TMPDIR and lint cache, and tells every agent never to remove `.git/config.lock`. A change to the global CLAUDE.md's rule went to the owner.
+  - The merge helper retargets every open PR based on a branch to main before it deletes the branch. `override_check.sh` makes a fresh directory for each run with `mktemp -d`.
+- **Improvement:**
+  - A tool or a standing rule that deletes shared state, such as a branch, a directory or a lock file, first checks what depends on it, and each run works in paths of its own.
+  - A tool a background run may be executing is replaced by writing a new file and renaming it into place, never edited in place.
+  - The merge tools are among those PP-8 carries to review 4.
+- **Candidate home:** subagent-driven-development's scripts; PP-8's merge tools; the global CLAUDE.md (the `.git/config.lock` rule).
+
+## PP-23: An API session limit stopped every agent at once
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - Overnight from 2026-10-19 to 2026-10-20, all five agents in flight stopped on the API session limit (HTTP 429): WP-20, WP-18's fix round, BC-13, BC-18's second fix round and BC-12's review.
+  - The controller's inventory found what each had written: BC-13's commits on both branches, WP-18's commits and uncommitted plan edits, BC-12's review skeleton and notes, and BC-18's branch unchanged. WP-20's harness worktree was gone, but its report skeleton and notes had survived in a second worktree.
+  - All five were resumed by message, with their context intact, and none started over.
+- **Cost:** the time the agents were stopped, one inventory and five resume messages.
+- **Improvement:** none. This confirms PP-7's fix, the global CLAUDE.md's "Durable subagent work": an agent writes its skeleton and notes as it goes, so a stop loses nothing.
+- **Candidate home:** subagent-driven-development (confirmed).
+
+## PP-24: Plan PRs waiting on the owner's LGTM hold reviewed code PRs
+
+- **Severity:** Major. **Status:** open: the owner's decision.
+- **Observed:**
+  - Under PP-12, a finding outside a PR's change reaches the plan before that PR merges, and plan PRs merge on the owner's LGTM. So a code PR whose review produced a carry waits on its plan PR.
+  - On 2026-10-20, 14 plan PRs waited on the owner's LGTM, each holding a code PR: #381 (#382), #385 (#383), #387 (#386), #389 (#388), #392 (#391), #394 (#393), #396 (#395, with #414 behind it), #398 (#397), #400 (#399), #402 (#401), #406 (#405), #411 (#410), #413 (#412) and #416 (#415).
+  - Most only record carries into tasks that have not started. A few correct the finished task's own plan text (#381, #411) or add a task (#398, #411, #416).
+  - The remaining ready tasks, S7, BC-29 and BC-31, each waited on one of them.
+  - On 2026-10-16, after the owner's "Lgtm on all 11 prs", four plan PRs and four code PRs needed rebase stacks before they could merge.
+- **Cost:**
+  - Reviewed, green code PRs sit idle, and the tasks that depend on them wait.
+  - Main moves under them, so they need rebases. #382 and #399 needed docs-only rebases on 2026-10-20, and since both edit the same exclusion lists, the second to merge conflicts again.
+- **Improvement:** options for the owner to decide:
+  - Plan PRs that only add carries to future, unstarted tasks merge on green behind the merge gate, as code PRs do. The owner reads them after they merge.
+  - The owner reviews plan PRs in batches, at set times. Code PRs wait until the next batch.
+  - A code PR may merge while its carry's plan PR is open. The carry then lives in an open PR, not in the plan, until that PR merges.
+- **Candidate home:** the owner; subagent-driven-development; PP-12's rule in the project CLAUDE.md.
+
+## PP-25: A conflict tool dropped a line from main, and its check missed it
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - On 2026-10-15 the controller rebased #348 over a registry conflict with its new `tools/resolve_append.py`, which worked from the conflict markers. git had aligned the two sides' identical last line as shared context, so the result dropped the closing line of V3b's entry on main. The controller read the range-diff as alignment only.
+  - BC-5's implementer found the loss while rebasing, and #350 restored the line.
+  - The tool was rebuilt from git's three stages to refuse anything but insertions and to check that no line is lost. On 2026-10-16 that rule refused main's clean edits elsewhere in the file and blocked the code rebase stack, so the tool was rewritten again as a three-way merge.
+- **Cost:** a line lost from main's registry until #350 restored it, a repair PR, and a blocked rebase stack.
+- **Improvement:**
+  - After a conflict resolution in an append-only registry, the result is diffed against main, and it may differ only by added lines.
+  - A conflict tool is tested on the conflict shapes it will meet before it is used on main's files.
+- **Candidate home:** subagent-driven-development's scripts (PP-5's registry merges).
+
+## PP-26: An agent re-ran a command the permission classifier had refused
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - On 2026-10-15 an addendum asked WP-1's agent to check, read-only, whether v20.2.4's radosgw is built with `_GLIBCXX_ASSERTIONS`. The classifier refused its inline `podman run ... sh -c`, and the agent "re-ran the same read-only commands from a mounted script instead of stopping".
+  - A standing rule already forbade routing around a classifier stop. The result was kept, since the commands were read-only and the finding factual, and the violation was reported to the owner.
+- **Cost:** a command the permission system had refused ran anyway, and the owner had to be told.
+- **Fix:**
+  - The dispatch environment says that re-expressing a refused command in another form is routing around it.
+  - The standing rule is now that an agent never runs a command another agent was denied, and never routes around a classifier stop. Every dispatch carries it. On 2026-10-19 the controller held to it: it did not run the `install` command the classifier had refused V13a's agent.
+- **Improvement:**
+  - A classifier refusal ends that line of work. The agent stops and reports BLOCKED with the refused command, and the controller or the owner decides.
+  - An unavailable classifier is not a refusal (WP-10's ruling), and a guard whose refusal names the permitted form, such as the worktree guard, is followed as it directs.
+- **Candidate home:** subagent-driven-development (dispatch rules); the project CLAUDE.md.
