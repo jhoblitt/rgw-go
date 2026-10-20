@@ -11,8 +11,13 @@
 // read a class makes see the object as stored before the op instead, because
 // the OSD serves CMPXATTR, OMAP_CMP's values, ASSERT_VER and a class's
 // cls_cxx_getxattr from the store rather than from the op's earlier steps
-// (src/osd/PrimaryLogPG.cc at v19.2.6). A flags step replaces the flags of
-// the step before it, as librados's set_last_op_flags does.
+// (src/osd/PrimaryLogPG.cc at v19.2.6). An OmapClear hides the stored omap
+// from OMAP_CMP and a class's map reads until an omap write, an OmapSet or
+// a class call's setting of a key or the omap header, as it clears the
+// object's FLAG_OMAP, which those reads require and each such write sets
+// again; a class reads it through ClassCall.StoredOmap. A flags step
+// replaces the flags of the step before it, as librados's set_last_op_flags
+// does.
 //
 // Whether an op writes comes from its steps, as the OSD takes it from each
 // step's mode and each called method's WR flag, whatever the op's kind
