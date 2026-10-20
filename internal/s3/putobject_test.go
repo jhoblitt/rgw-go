@@ -256,6 +256,44 @@ var _ = Describe("put_obj", func() {
 			Entry("a date from_iso_8601 refuses", "X-Amz-Object-Lock-Mode", "GOVERNANCE", "X-Amz-Object-Lock-Retain-Until-Date", "2030-1-01"),
 			Entry("an unknown mode", "X-Amz-Object-Lock-Mode", "governance", "X-Amz-Object-Lock-Retain-Until-Date", "2030-01-01T00:00:00Z"),
 		)
+		// A date get_params takes reaches the bucket's check, which a bucket
+		// without object lock refuses as InvalidRequest; one it refuses is
+		// InvalidArgument. The clock is testEnv's, 2025-09-27T08:34:58Z.
+		DescribeTable("read the retain-until date as from_iso_8601 reads it, later than the clock's whole second",
+			func(date, code string) {
+				expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Mode", "GOVERNANCE",
+					"X-Amz-Object-Lock-Retain-Until-Date", date), 400, code)
+			},
+			Entry("a year alone, its first midnight", "2030", "InvalidRequest"),
+			Entry("a year and a month", "2030-06", "InvalidRequest"),
+			Entry("a date ended by white space, whatever follows", "2030-06-15\tx", "InvalidRequest"),
+			Entry("an hour and Z", "2030-06-15T12Z", "InvalidRequest"),
+			Entry("an hour and minutes and Z", "2030-06-15T12:30Z", "InvalidRequest"),
+			Entry("a Z ended by white space, whatever follows", "2030-06-15T12:30:45Z x", "InvalidRequest"),
+			Entry("one fractional digit", "2030-06-15T12:30:45.1Z", "InvalidRequest"),
+			Entry("nine fractional digits", "2030-06-15T12:30:45.123456789Z", "InvalidRequest"),
+			Entry("a thirteenth month, carried into the next year", "2030-13-01", "InvalidRequest"),
+			Entry("the 31st of February, carried into March", "2030-02-31", "InvalidRequest"),
+			Entry("the second after the clock's", "2025-09-27T08:34:59Z", "InvalidRequest"),
+			Entry("real_time's last nanosecond", "2554-07-21T23:34:33.709551615Z", "InvalidRequest"),
+			Entry("a date past real_time's range, which wraps to a later one", "3000-01-01T00:00:00Z", "InvalidRequest"),
+			Entry("day 00 of 1970, before the epoch, which wraps to 2554", "1970-01-00", "InvalidRequest"),
+			Entry("an hour without Z", "2030-06-15T12", "InvalidArgument"),
+			Entry("a whole second without Z", "2030-06-15T12:30:45", "InvalidArgument"),
+			Entry("a zone offset", "2030-06-15T12:30:45+01:00", "InvalidArgument"),
+			Entry("a dot without digits", "2030-06-15T12:30:45.Z", "InvalidArgument"),
+			Entry("ten fractional digits", "2030-06-15T12:30:45.1234567890Z", "InvalidArgument"),
+			Entry("a Z followed by more than white space", "2030-06-15T12:30:45Zx", "InvalidArgument"),
+			Entry("leading white space", " 2030-06-15", "InvalidArgument"),
+			Entry("an empty value", "", "InvalidArgument"),
+			Entry("a year before 1970", "1969-12-31", "InvalidArgument"),
+			Entry("the clock's own second", "2025-09-27T08:34:58Z", "InvalidArgument"),
+			Entry("the clock's own second, nanoseconds before its end", "2025-09-27T08:34:58.999999999Z", "InvalidArgument"),
+			Entry("the epoch", "1970-01-01T00:00:00Z", "InvalidArgument"),
+			Entry("the second before the epoch, which internal_timegm makes -1", "1970-01-00T23:59:59Z", "InvalidArgument"),
+			Entry("a nanosecond past real_time's range, which wraps to the epoch", "2554-07-21T23:34:33.709551616Z", "InvalidArgument"),
+			Entry("a date past real_time's range, which wraps to an earlier one", "2600-01-01T00:00:00Z", "InvalidArgument"),
+		)
 		It("refuse a retention or a legal hold on a bucket without object lock as InvalidRequest", func() {
 			expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Legal-Hold", "ON"), 400, "InvalidRequest")
 			expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Mode", "GOVERNANCE",
