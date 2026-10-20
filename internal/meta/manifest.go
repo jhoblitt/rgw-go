@@ -1,9 +1,8 @@
 package meta
 
 import (
-	"encoding/json"
-
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/formatter"
 )
 
 // Manifest is RGWObjManifest, the user.rgw.manifest attr of an object's head:
@@ -50,55 +49,17 @@ func isSupportedTierType(t string) bool {
 	return t == TierTypeCloudS3 || t == TierTypeCloudS3Glacier
 }
 
-// MarshalJSON renders RGWObjManifest::dump as v20.2.4 writes it, the form
-// radosgw-admin object stat prints: objs alternates each offset with its part,
-// as a formatter drops names inside an array, tier_config appears for either
-// cloud tier type, and begin_iter and end_iter are the states of the
-// iterators obj_begin and obj_end return.
+// MarshalJSON is Dump at Tentacle, the form v20.2.4's radosgw-admin object
+// stat prints, written as JSONFormatter writes it.
 func (m Manifest) MarshalJSON() ([]byte, error) {
-	objs := make([]any, 0, 2*len(m.Objs))
-	for _, k := range sortedKeys(m.Objs) {
-		objs = append(objs, k, m.Objs[k])
-	}
-	out := struct {
-		Objs          []any                            `json:"objs"`
-		ObjSize       uint64                           `json:"obj_size"`
-		ExplicitObjs  bool                             `json:"explicit_objs"`
-		HeadSize      uint64                           `json:"head_size"`
-		MaxHeadSize   uint64                           `json:"max_head_size"`
-		Prefix        string                           `json:"prefix"`
-		Rules         []mapEntry[uint64, ManifestRule] `json:"rules"`
-		TailInstance  string                           `json:"tail_instance"`
-		TailPlacement BucketPlacement                  `json:"tail_placement"`
-		TierType      string                           `json:"tier_type"`
-		TierConfig    *ObjTier                         `json:"tier_config,omitempty"`
-		BeginIter     iterDump                         `json:"begin_iter"`
-		EndIter       iterDump                         `json:"end_iter"`
-	}{
-		Objs:          objs,
-		ObjSize:       m.ObjSize,
-		ExplicitObjs:  m.ExplicitObjs,
-		HeadSize:      m.HeadSize,
-		MaxHeadSize:   m.MaxHeadSize,
-		Prefix:        m.Prefix,
-		Rules:         mapEntries(m.Rules),
-		TailInstance:  m.TailInstance,
-		TailPlacement: m.TailPlacement,
-		TierType:      m.TierType,
-	}
-	if isSupportedTierType(m.TierType) {
-		out.TierConfig = &m.TierConfig
-	}
-	begin, err := newManifestIter(&m, 0)
-	if err != nil {
+	f := formatter.NewJSON(false)
+	f.OpenObjectSection("manifest")
+	m.Dump(f, denc.Tentacle)
+	f.CloseSection()
+	if err := f.Err(); err != nil {
 		return nil, err
 	}
-	end, err := newManifestIter(&m, m.ObjSize)
-	if err != nil {
-		return nil, err
-	}
-	out.BeginIter, out.EndIter = begin.dump(), end.dump()
-	return json.Marshal(out)
+	return f.Bytes(), nil
 }
 
 // Encode mirrors RGWObjManifest::encode, ENCODE_START(8, 6). The tail bucket
