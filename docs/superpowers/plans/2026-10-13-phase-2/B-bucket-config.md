@@ -903,12 +903,34 @@ removing `user.rgw.public-access`. `rgw_public_access.cc` is byte-identical at t
      next s3-tests pin bump adds, and record both ledgers from radosgw before comparing. Add
      the known-differences lines that `00-index.md` lists for BC-22 under Global Constraints,
      "The next s3-tests pin bump", each under the exclusion it names.
+     - The public access block lines re-select the 18 tests under `# public access block` in
+       `hack/s3tests/deselect-phase2.txt`, which call Put, Get and DeletePublicAccessBlock alone,
+       directly or through their helpers, and never GetBucketPolicyStatus (s3-tests at the pin
+       7cfa64a5, BC-19's report): `test_get_undefined_public_block`,
+       `test_get_public_block_deny_bucket_policy`, `test_put_public_block`,
+       `test_block_public_put_bucket_acls`, `test_block_public_object_canned_acls`,
+       `test_block_public_policy`, `test_block_public_policy_with_principal`,
+       `test_block_public_condition_on_unlisted_key`, `test_block_public_anonymous_root_principal`,
+       `test_restrict_public_anonymous_root_principal`, `test_block_public_restrict_public_buckets`,
+       `test_ignore_public_acls`, `test_anon_canned_write_ignore_public_acls`,
+       `test_anon_owned_object_acl_ignore_public_acls`, `test_anon_owned_object_acl_block_public_acls`,
+       `test_anon_put_object_block_public_acls`, `test_put_get_delete_public_block` and
+       `test_public_block_misspelled_setting_refused`.
   2. Gate case 3: each gateway's PutPublicAccessBlock read back and enforced by the other
      (BlockPublicAcls on PutBucketAcl, IgnorePublicAcls on an anonymous GET, BlockPublicPolicy
      on PutBucketPolicy, RestrictPublicBuckets on Tentacle); the attr bytes equal.
   3. Gate case 5: the same IsPublic from both for public-read ACLs, a public policy and a
      private bucket, with a known-differences line wherever S3's judgment departs from a floor's.
   4. Reproduce defect 6 from the raw response bytes on both releases.
+     - After the 404, send a second request on the same connection. Record whether radosgw
+       closes the connection after the 404, by a `Connection: close` header or by closing the
+       socket, or the surplus block arrives ahead of the second response.
+     - The result settles defect 6's security rating. A connection left open keeps the entry
+       "possibly security-relevant": a proxy that pools upstream connections can then hand the
+       surplus bytes to another client. A connection radosgw closes leaves it S3-correctness
+       alone. Update the registry entry, "radosgw sends a public access block after
+       GetPublicAccessBlock's error document, past its Content-Length", with the bytes recorded
+       and the rating that follows.
 - **Specs:** the gate cases above, labelled `integration, rgw-go, phase2, publicaccess`.
 - **Depends on:** BC-17 to BC-21. **PR:** one, landed by the controller. **Brief:** about 70
   lines.
@@ -1601,7 +1623,7 @@ task budgets the cluster reproduction.
 | 3 | A signed preflight's signature is never compared | quirk, as AWS checks none; its rate-limit charge is security | unreproduced | reported to security@ceph.io 2026-10-05 | take the skip; phase 3 must not charge OPTIONS CORS to the key's user (BC-5, B4) |
 | 4 | PutBucketCors and PutPublicAccessBlock retries write back the attrs the request started with ([rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107), [rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673)) | data corruption (a lost update of shared bucket state) | unreproduced | none found; the registry's PutBucketPolicy entry | set only the op's own attr (BC-3, BC-18) |
 | 5 | Retried bucket writes are not authorized again (registry) | security | unreproduced | registry | re-authorize each retry (BC-3, BC-11, BC-18, BC-24, BC-28c); retitle its exclusion once they land (BC-35) |
-| 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624)) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection) | unreproduced; BC-22 captures the bytes | none found | the error document alone (BC-19) |
+| 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624)) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection); possibly security-relevant, conditional on radosgw keeping the connection open (rgw-bug-reproduction's triage, BC19-1) | unreproduced; BC-22 captures the bytes and whether the connection stays open | none found | the error document alone (BC-19) |
 | 7 | A public-access block that does not decode is ignored (registry) | security, low | unreproduced | registry | phase 1 fails closed; Get answers 500 (BC-18) |
 | 8 | POST object is never checked for a suspended user: the check precedes the form's authentication | security (fail-open) | unreproduced | none found; prior-art search pending | 403 UserSuspended; reported upstream once reproduced (BC-32) |
 | 9 | POST object stores a public canned `acl` under BlockPublicAcls | security (an owner's block bypassed) | unreproduced | extends the registry's PutObject, CopyObject and CreateMultipartUpload entry | 403 AccessDenied (BC-32) |
