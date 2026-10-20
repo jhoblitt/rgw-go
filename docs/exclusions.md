@@ -6575,7 +6575,122 @@ does the following.
   earlier than a retention in force, 403 AccessDenied
   ([rgw_op.cc:8413-8418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8418),
   [rgw_op.cc:9348-9353](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9348-L9353));
-  and otherwise it stores the wrapped date.
+  and otherwise it stores the wrapped date. And the default retention a bucket's rule
+  gives each object written to it, radosgw's `get_lock_until_date`, adds
+  the rule's days or years to the mtime in the same u64 and wraps
+  ([rgw_object_lock.cc:103-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L103-L111),
+  [rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L87-L95)):
+  a rule of `Years` 528, written in October 2026, locks each new object
+  until 1970-04-01, so not at all, and one of `Years` 600 until 2042.
+  `objectlock.LockUntil` clamps the date to the last instant, which radosgw
+  reads back as a lock until 2554, and to the epoch for a negative period
+  that reaches before it, which PutObjectLockConfiguration never stores.
+  `objectlock.PeriodFits` tells whether a rule's period
+  from now ends inside the range, for PutObjectLockConfiguration to refuse
+  one that does not as 400 InvalidRetentionPeriod, where radosgw stores it.
+- **An object-lock attr with bytes past its encoding does not decode.**
+  radosgw decodes a version's `user.rgw.object-retention` and
+  `user.rgw.object-legal-hold` in two ways. Four callers use the convenience
+  overload `decode(T&, const bufferlist&)`, which after the struct's decode
+  asserts that it read every byte
+  ([encoding.h:631-637](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L631-L637),
+  [encoding.h:632-638](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L632-L638)),
+  ending the process on bytes past the encoding. Only an attr too short to
+  decode reaches the caller's `catch`, and each caller answers it its own
+  way. A delete's `verify_object_lock` returns -EIO
+  ([rgw_common.cc:1639-1667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1639-L1667),
+  [rgw_common.cc:1702-1730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1702-L1730)),
+  and so does PutObjectRetention's read of the existing retention
+  ([rgw_op.cc:8403-8412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8403-L8412),
+  [rgw_op.cc:9338-9347](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9338-L9347)).
+  Lifecycle's `pass_object_lock_check` returns false, so the version is not
+  expired
+  ([rgw_lc.cc:318-345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L318-L345),
+  [rgw_lc.cc:318-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L318-L345)).
+  The lock headers of GET and HEAD log the error and leave the header out
+  of a response that otherwise succeeds
+  ([rgw_rest_s3.cc:603-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621),
+  [rgw_rest_s3.cc:712-730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730)).
+  GetObjectRetention and GetObjectLegalHold decode through an iterator,
+  `obj_retention.decode(iter)` and `obj_legal_hold.decode(iter)`, which
+  leaves such bytes unread
+  ([rgw_op.cc:8475-8482](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8475-L8482),
+  [rgw_op.cc:9423-9430](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9423-L9430);
+  [rgw_op.cc:8579-8586](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8579-L8586),
+  [rgw_op.cc:9547-9554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9547-L9554))
+  (`docs/ceph-upstream-bugs.md`, "[radosgw aborts on an object-lock attr
+  with bytes past its
+  encoding](ceph-upstream-bugs.md#radosgw-aborts-on-an-object-lock-attr-with-bytes-past-its-encoding)").
+  rgw-go's strict `objectlock.DecodeRetention` and
+  `objectlock.DecodeLegalHold`, for the four, take such an attr for one that
+  does not decode, so `objectlock.VerifyDelete` refuses the delete with the
+  error radosgw gives a short attr, -EIO; the lenient
+  `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
+  read it as the two Get ops do. radosgw writes these attrs cleanly, and
+  copy_obj takes them from the request, not the source
+  ([rgw_rados.cc:4800-4807](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4800-L4807),
+  [rgw_rados.cc:5013-5020](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5013-L5020)),
+  so only corruption or a writer with RADOS access leaves such bytes.
+- **A lapsed retention binds no retention change.** radosgw's
+  PutObjectRetention checks the version's existing retention whatever its
+  date: a proposed retain-until date earlier than the existing one needs
+  the existing mode GOVERNANCE and the bypass, and COMPLIANCE cannot become
+  GOVERNANCE
+  ([rgw_op.cc:8413-8429](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8429),
+  [rgw_op.cc:9348-9364](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9348-L9364)).
+  So a version whose COMPLIANCE retention has lapsed can never be given a
+  GOVERNANCE retention, nor one ending before the lapsed date, though the
+  lapsed retention protects nothing: radosgw's `verify_object_lock` lets
+  a delete through once the date's second is not after now's
+  ([rgw_common.cc:1649-1653](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1649-L1653),
+  [rgw_common.cc:1712-1716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1712-L1716))
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's PutObjectRetention holds a
+  lapsed retention's mode and
+  date](ceph-upstream-bugs.md#radosgws-putobjectretention-holds-a-lapsed-retentions-mode-and-date)").
+  rgw-go's `objectlock.RetentionChange` takes an existing retention whose
+  retain-until second is not after now's for none, so the new retention is
+  checked as on a version without one; one still in force is checked as
+  radosgw checks it, in whole seconds. The retention then stored is the
+  RGWObjectRetention radosgw stores for the same document on a version
+  without one.
+- **A retain-until second is compared with the clock exactly.** radosgw
+  compares a retain-until date's whole seconds, `to_time_t`, with
+  `ceph_clock_now()`, a `utime_t`, which C++ converts through `utime_t`'s
+  `operator double`
+  ([utime.h:230-232](https://github.com/ceph/ceph/blob/v19.2.7/src/include/utime.h#L230-L232),
+  [utime.h:230-232](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L230-L232)).
+  It does so at six sites. A delete's `verify_object_lock`
+  ([rgw_common.cc:1649-1653](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1649-L1653),
+  [rgw_common.cc:1712-1716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1712-L1716))
+  and lifecycle's `pass_object_lock_check`
+  ([rgw_lc.cc:328-329](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L328-L329),
+  [rgw_lc.cc:328-329](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L328-L329))
+  hold a version while the date's second is after the clock. The checks
+  that an `x-amz-object-lock-retain-until-date` is in the future refuse a
+  date whose second is not after the clock: PutObject's
+  `RGWPutObj_ObjStore_S3::get_params`
+  ([rgw_rest_s3.cc:2652-2656](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2652-L2656),
+  [rgw_rest_s3.cc:2805-2809](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2805-L2809)),
+  CopyObject's `RGWCopyObj_ObjStore_S3::get_params`
+  ([rgw_rest_s3.cc:3515-3519](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3515-L3519),
+  [rgw_rest_s3.cc:3765-3769](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3765-L3769))
+  and CreateMultipartUpload's `RGWInitMultipart_ObjStore_S3::get_params`
+  ([rgw_rest_s3.cc:4030-4033](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4030-L4033),
+  [rgw_rest_s3.cc:4481-4484](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4481-L4484)).
+  PutObjectRetention's check of its body's date, in
+  `RGWPutObjRetention::execute`, refuses one whose second is before the
+  clock
+  ([rgw_op.cc:8387-8392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8387-L8392),
+  [rgw_op.cc:9322-9327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9322-L9327)).
+  At today's clock a double holds the fraction of a second to 2^-22 s, so
+  a clock within about 119 ns of a whole second reads as that second:
+  radosgw then lets a delete or an expiry through a retention ending at
+  that second, refuses a header date of that second, and refuses a body
+  date of the second before it. rgw-go compares the clock's whole seconds
+  exactly (`objectlock.VerifyDelete`, for a delete and for lifecycle;
+  `objectLockHeaders` in `internal/s3/putobject.go`, for the three headers;
+  `objectlock.RetentionChange`), so in that window it keeps the version
+  and takes the header date.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
