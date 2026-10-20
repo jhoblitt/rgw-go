@@ -340,6 +340,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
 | [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending |  |
+| [radosgw's ?layout dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest) | pending | pending | ✓ |
+| [radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4489,6 +4491,19 @@ Every new entry adds its row to this table, in document order.
     the head appends that stripe's object to the chain
     (`cls/rgw/cls_rgw_types.h:1161-1172` at v19.2.6, `:1200-1209` at
     v20.2.4), so the stuck walk also grows memory without bound.
+  - `?layout`'s op, `RGWGetObjLayout`, checks the requester's `admin=read`
+    cap alone
+    ([rgw_op.h:2371-2376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2371-L2376),
+    [rgw_op.h:2542-2547](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2542-L2547)), and its
+    `RadosObject::dump_obj_layout` walks the whole manifest from
+    `obj_begin` to `obj_end`, writing an entry to the request's
+    JSONFormatter at every step
+    ([rgw_sal_rados.cc:2808-2822](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2808-L2822),
+    [rgw_sal_rados.cc:3643-3657](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3643-L3657)). That walk
+    never ends on such a rule once the object passes its head, and on a
+    manifest without rules that is not explicit whenever the object is not
+    empty, and the formatter's buffer grows at every step, so memory grows
+    without bound.
   - radosgw's writers take a rule's stripe size from `rgw_obj_stripe_size`,
     and `generator::create_begin` refuses a manifest without a rule
     (`driver/rados/rgw_obj_manifest.cc:250-254`). With a stripe size of 0,
@@ -4510,8 +4525,10 @@ Every new entry adds its row to this table, in document order.
   - at v20.2.4 does the same to a GetObjectAttributes request for
     ObjectParts, which also spins in `list_parts`' own walk after a part
     that starts in the head;
-  - and spins one on an overwrite or delete of the object, in
-    `update_gc_chain`, whose chain grows until memory runs out.
+  - spins one on an overwrite or delete of the object, in
+    `update_gc_chain`, whose chain grows until memory runs out;
+  - and spins one on a `?layout` request from a holder of `admin=read`, in
+    `dump_obj_layout`, whose document grows until memory runs out.
 - **Reachability:** a peer zone needs no access to this zone's pools. For an
   encrypted object, multisite fetch decodes the manifest the source zone
   sends and walks it in `read_manifest_parts` with the same `operator++`
@@ -4532,7 +4549,9 @@ Every new entry adds its row to this table, in document order.
   the head rgw-go refuses a HEAD that radosgw answers. A listing's sweep of
   a reconciled head's multipart parts (`sweepParts`,
   `internal/driver/list.go`) stops there with a warning, where radosgw's
-  `check_disk_state` walk never ends. `docs/exclusions.md` records the
+  `check_disk_state` walk never ends. `?layout`'s document
+  (`driver.Store.ObjectLayout`, `internal/driver/layout.go`) fails at the
+  same step, before any of it is sent. `docs/exclusions.md` records the
   difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search on 2026-10-01 found no
@@ -4542,9 +4561,11 @@ Every new entry adds its row to this table, in document order.
   which [ceph/ceph#58288](https://github.com/ceph/ceph/pull/58288) fixed;
   that fix does not reach a stripe-0 rule, whose iterator never gets to the
   end. Though a crash and a cross-zone hang, it is disclosed publicly, as
-  every defect here is.
+  every defect here is. The `dump_obj_layout` path: pending: sent to
+  rgw-bug-reproduction. Prior art not searched.
 - **Found:** phase 1 object read work (unit R, Task 1), 2026-10-01, in
   review of rgw-go's part lookup; derived from the source, not reproduced.
+  The `dump_obj_layout` path: phase 2 task WP-20's review, 2026-10-20.
 
 ## radosgw divides by zero writing with an rgw_obj_stripe_size of 0
 
@@ -14006,11 +14027,14 @@ Every new entry adds its row to this table, in document order.
   `zone=read` before any read and writes the tier's key as radosgw does
   (`internal/meta/dump_period.go`, `internal/admin/realm.go`); a refused
   caller gets the error document alone. No other rgw-go path renders a
-  zonegroup or period, and none logs one.
-- **Upstream:** [#76359](https://tracker.ceph.com/issues/76359) (Fix Under
-  Review), "rgw/cloud-transition: obfuscate secret key in
-  ZoneTierPlacement config display", filed 2026-04-30, reports the
-  unmasked tier secret in the CLI and admin ops output. Its fix,
+  zonegroup or period, and none logs one. The `?layout` document renders a
+  cloud tier's key from an object's manifest, where rgw-go masks the secret
+  ("[radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread)").
+- **Upstream:** [#76359](https://tracker.ceph.com/issues/76359),
+  "rgw/cloud-transition: obfuscate secret key in ZoneTierPlacement config
+  display", filed 2026-04-30, reports the unmasked tier secret in the CLI
+  and admin ops output. Its tracker status still reads Fix Under Review,
+  which is stale. Its fix,
   [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690), would have
   masked the secret on `GET /admin/realm/period` unless the caller passes
   `mask_secrets=false`, as a period pull does, but it was closed unmerged
@@ -18682,3 +18706,167 @@ Every new entry adds its row to this table, in document order.
   v19.2.7 and v20.2.4 by task BC-19, 2026-10-20, and rated possibly
   security-relevant, conditionally, by rgw-bug-reproduction's triage,
   2026-10-20. Derived from the source, not reproduced.
+
+## radosgw's ?layout dereferences a null manifest
+
+- **Kind:** defect, possibly security-relevant (denial of service), found by
+  us. Unfixed at v19.2.7 and v20.2.4. Derived from the source, not
+  reproduced.
+- **Evidence:**
+  - `?layout` is the object GET `RGWGetObjLayout`, whose permission check is
+    the requester's `admin=read` cap alone
+    ([rgw_op.h:2371-2376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2371-L2376),
+    [rgw_op.h:2542-2547](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2542-L2547)). Its response calls
+    `dump_obj_layout` inside a JSONFormatter section
+    ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+    [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896)).
+  - `dump_obj_layout` prepares a read, which succeeds on a head without
+    `user.rgw.manifest`, takes the manifest `get_manifest` returns, and dumps
+    `*amanifest` without checking it
+    ([rgw_sal_rados.cc:2793-2806](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2793-L2806),
+    [rgw_sal_rados.cc:3628-3641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3628-L3641)).
+  - `get_obj_state_impl` fills the state's manifest only from that attr
+    ([rgw_rados.cc:6354-6362](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6354-L6362),
+    [rgw_rados.cc:6968-6976](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6968-L6976)), and `get_state`
+    hands out nullptr when there is none
+    ([rgw_rados.cc:6468-6474](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6468-L6474),
+    [rgw_rados.cc:7082-7088](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7082-L7088)).
+- **Impact:** the dereference is undefined behaviour. `RGWObjManifest::dump`
+  reads the manifest's members through the null pointer, which would fault
+  and end the radosgw process, and with it every request the process
+  serves; not reproduced. Only a requester with the `admin=read` cap
+  reaches it, and only on a head without a manifest.
+  - Neither gateway leaves such a head under a key an S3 request names.
+    Every radosgw write that creates one sets the manifest at both tags: the
+    atomic and append processors
+    ([rgw_putobj_processor.cc:376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L376) and
+    [rgw_putobj_processor.cc:736-738](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L736-L738) at
+    v19.2.7, [rgw_putobj_processor.cc:406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L406) and
+    [rgw_putobj_processor.cc:780-782](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L780-L782) at
+    v20.2.4), `copy_obj`
+    ([rgw_rados.cc:5003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5003),
+    [rgw_rados.cc:5231](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5231)), multipart completion
+    ([rgw_sal_rados.cc:3627](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3627),
+    [rgw_sal_rados.cc:4471](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4471)), the cloud tier's
+    head ([rgw_sal_rados.cc:2735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2735),
+    [rgw_sal_rados.cc:3556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3556)), and at v20.2.4 a
+    temporary restore's expiry
+    ([rgw_sal_rados.cc:3461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3461)) and the bucket
+    logging commit ([rgw_sal_rados.cc:1498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L1498)).
+    The heads written without one are a multipart part's
+    ([rgw_putobj_processor.cc:528](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L528),
+    [rgw_putobj_processor.cc:566](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L566)) and an
+    upload's meta object
+    ([rgw_sal_rados.cc:3327](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3327),
+    [rgw_sal_rados.cc:4169](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4169)), both in the
+    multipart namespace, whose names no key's oid takes. rgw-go writes the
+    same way (`headWrite.manifest`, `internal/driver/headwrite.go`). So the
+    head comes from another writer to the data pool, or is one whose
+    manifest attr was removed.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. Its layout fails with InternalError
+  for an object without a manifest (`driver.Store.ObjectLayout`,
+  `internal/driver/layout.go`), and `?layout` answers that as an error
+  (`docs/exclusions.md`, "`?layout` of an object without a manifest fails").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 task WP-20, 2026-10-19, reading `dump_obj_layout` for
+  the layout document. Derived from the source, not reproduced.
+
+## radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read
+
+- **Kind:** defect, possibly security-relevant, conditional on the tier's
+  non-default `retain_head_object`; found by us. Unfixed at v19.2.7, v20.2.4
+  and main. Derived from the source, not reproduced.
+- **Evidence:**
+  - `?layout` is the object GET `RGWGetObjLayout`, whose permission check is
+    the requester's `admin=read` cap alone
+    ([rgw_op.h:2371-2376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2371-L2376),
+    [rgw_op.h:2542-2547](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2542-L2547)); no other op checks that cap at
+    either tag.
+  - A cloud transition keeps the object's head only where the tier's
+    `retain_head_object` is set, which defaults to false
+    ([rgw_zone_types.h:548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone_types.h#L548),
+    [rgw_zone_types.h:596](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L596)). Lifecycle's
+    `transition_obj_to_cloud` sets `delete_object` unless the tier retains
+    the head, and always for a versioning-enabled bucket's current version
+    ([rgw_lc.cc:1403-1404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1403-L1404),
+    [rgw_lc.cc:1423-1424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1423-L1424)); it passes `!delete_object` to
+    `transition_to_cloud` ([rgw_lc.cc:1438-1441](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1438-L1441),
+    [rgw_lc.cc:1441-1444](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1441-L1444)) and otherwise deletes the head
+    ([rgw_lc.cc:1458-1459](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1458-L1459),
+    [rgw_lc.cc:1461-1462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1461-L1462)). `transition_to_cloud` rewrites
+    the head only when that flag is set
+    ([rgw_sal_rados.cc:2654-2678](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2654-L2678),
+    [rgw_sal_rados.cc:3351-3375](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3351-L3375)).
+  - The rewritten head's manifest has a tier config holding the tier's
+    placement, its S3 key included
+    ([rgw_sal_rados.cc:2723-2729](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2723-L2729),
+    [rgw_sal_rados.cc:3544-3550](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3544-L3550)), and
+    `RGWZoneGroupPlacementTierS3` encodes the key
+    ([rgw_zone_types.h:509-521](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone_types.h#L509-L521),
+    [rgw_zone_types.h:509-521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L509-L521)).
+  - `dump_obj_layout` dumps that manifest
+    ([rgw_sal_rados.cc:2806](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2806),
+    [rgw_sal_rados.cc:3641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3641)).
+    `RGWObjManifest::dump` writes `tier_config` for a cloud tier
+    ([rgw_obj_manifest.cc:350-352](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_obj_manifest.cc#L350-L352),
+    [rgw_obj_manifest.cc:350-352](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_obj_manifest.cc#L350-L352)),
+    `RGWObjTier::dump` its `tier_placement`
+    ([rgw_obj_manifest.cc:390-395](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_obj_manifest.cc#L390-L395),
+    [rgw_obj_manifest.cc:390-395](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_obj_manifest.cc#L390-L395)),
+    `RGWZoneGroupPlacementTier::dump` its `s3`
+    ([rgw_zone.cc:901-903](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L901-L903) for cloud-s3,
+    [rgw_zone.cc:934-936](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L934-L936) for either cloud type), and
+    `RGWZoneGroupPlacementTierS3::dump` writes `access_key` and `secret`
+    unmasked
+    ([rgw_zone.cc:966-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979),
+    [rgw_zone.cc:1006-1019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019)).
+- **Impact:** a credential for the external S3 endpoint, which radosgw needs
+  only to transition objects, reaches any user granted `admin=read`, the cap
+  that exists for this one op, through any object a tier with
+  `retain_head_object` set has transitioned with its head kept. Even with
+  the flag set, the current version of a versioning-enabled bucket loses
+  its head, so only objects that are not that carry the key: non-current
+  versions, objects in unversioned buckets, and a versioning-suspended
+  bucket's current version, as `versioning_enabled()` is false once
+  versioning is suspended
+  ([rgw_common.h:1076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1076),
+  [rgw_common.h:1118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1118)), so lifecycle keeps the
+  head. It requires a non-default flag; how often the flag is set
+  is unknown. `retain_head_object` is what keeps a transitioned object
+  listable, as S3 Glacier does, so an operator who wants S3's semantics
+  would plausibly set it.
+- **Note:** `?layout` is implicated in three defects, all reached with
+  `admin=read` alone: this one, "[radosgw's ?layout dereferences a null
+  manifest](#radosgws-layout-dereferences-a-null-manifest)", and the `dump_obj_layout` path of
+  "[radosgw hangs or faults walking a manifest whose rule has a stripe size
+  of 0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0)". The op's `admin=read`-only gate is their common
+  factor.
+- **Releases:** v19.2.7 and v20.2.4. Main's `RGWZoneGroupPlacementTierS3::dump`
+  still writes the secret ([rgw_zone.cc:777-781](https://github.com/ceph/ceph/blob/4fd0af757f7/src/rgw/rgw_zone.cc#L777-L781)).
+- **rgw-go:** masks it (exclusion: "`?layout` masks a cloud tier's S3
+  secret", `docs/exclusions.md`). `?layout`'s document
+  (`driver.Store.ObjectLayout`, `internal/driver/layout.go`) dumps the
+  manifest through `meta.MaskTierSecrets` (`internal/meta/dump_manifest.go`),
+  which writes a set secret as `******` and an empty one as empty, the form
+  #68690's `dump_mask_keys` used, and keeps the access key. The stored
+  manifest is unchanged. The spec "masks a cloud tier's S3 secret and keeps
+  its access key" (`internal/driver/layout_test.go`) pins it, for cloud-s3
+  on Squid and Tentacle and for cloud-s3-glacier on Tentacle.
+- **Upstream:** pending: logged by rgw-bug-reproduction (WP20-2). Related
+  prior art covers other paths only:
+  - [#76359](https://tracker.ceph.com/issues/76359) reports the unmasked tier
+    secret in the CLI and admin ops output. Its tracker status still reads
+    Fix Under Review, last updated 2026-04-30, which is stale.
+  - Its fix, [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690), was
+    closed without merge on 2026-08-16, so nothing landed.
+  - Even merged, it would not have covered `?layout`. It masked per
+    display, through wrapper formatters in `rgw_rest_realm.cc` and in
+    radosgw-admin's output that call a new
+    `RGWZoneGroupPlacementTierS3::dump_mask_keys`, and left `dump()`
+    untouched.
+- **Found:** phase 2 task WP-20's review, 2026-10-20; the chain was verified
+  end to end at v20.2.4, and the `retain_head_object` precondition at both
+  tags, by rgw-bug-reproduction's triage. Derived from the source, not
+  reproduced.

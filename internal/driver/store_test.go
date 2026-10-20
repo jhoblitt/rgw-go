@@ -251,7 +251,7 @@ var _ = Describe("the driver", func() {
 			env := s.Env()
 			Expect([]any{
 				env.Zone, env.Users, env.Accounts, env.UsageReader, env.BucketAdmin, env.Realms,
-				env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata,
+				env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata, env.Layout,
 			}).To(HaveEach(BeIdenticalTo(s)))
 			Expect(env.Conf).To(BeIdenticalTo(opts))
 			Expect(env.Authz).To(BeNil(), "authz is the caller's")

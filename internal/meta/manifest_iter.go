@@ -405,36 +405,3 @@ func implicitLocation(m *Manifest, partID, stripe int32, ofs uint64, overridePre
 	}
 	return objSelect{placement: m.TailPlacement.PlacementRule, obj: loc}
 }
-
-// iterDump is obj_iterator::dump.
-type iterDump struct {
-	PartOfs           uint64     `json:"part_ofs"`
-	StripeOfs         uint64     `json:"stripe_ofs"`
-	Ofs               uint64     `json:"ofs"`
-	StripeSize        uint64     `json:"stripe_size"`
-	CurPartID         int32      `json:"cur_part_id"`
-	CurStripe         int32      `json:"cur_stripe"`
-	CurOverridePrefix string     `json:"cur_override_prefix"`
-	Location          selectDump `json:"location"`
-}
-
-// selectDump is rgw_obj_select::dump; the iterator never sets the raw object.
-type selectDump struct {
-	PlacementRule PlacementRule `json:"placement_rule"`
-	Obj           Obj           `json:"obj"`
-	RawObj        RawObj        `json:"raw_obj"`
-	IsRaw         bool          `json:"is_raw"`
-}
-
-func (it *manifestIter) dump() iterDump {
-	return iterDump{
-		PartOfs:           it.partOfs,
-		StripeOfs:         it.stripeOfs,
-		Ofs:               it.ofs,
-		StripeSize:        it.stripeSize,
-		CurPartID:         it.curPartID,
-		CurStripe:         it.curStripe,
-		CurOverridePrefix: it.curOverridePrefix,
-		Location:          selectDump{PlacementRule: it.location.placement, Obj: it.location.obj},
-	}
-}

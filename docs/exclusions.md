@@ -2231,6 +2231,65 @@ review and verified against the tree.
     next stripe's object at an offset and length computed from a negative
     difference, and on the third ends the response short of its
     Content-Length without an error; it has no stripe bound.
+  - Beyond those three, the layout document `?layout` sends walks the
+    manifest from `obj_begin` to `obj_end` as `dump_obj_layout` does
+    ([rgw_sal_rados.cc:2807-2823](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2807-L2823),
+    [rgw_sal_rados.cc:3642-3658](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3642-L3658)), under `Stripes`'
+    bound. It fails with UnknownError at the first step that does not move
+    past the previous offset and past `meta.MaxStripes` stripes, and refuses
+    at once a manifest whose tail needs more stripes than that in the
+    largest stripes the rules allow (`driver.Store.ObjectLayout`). So it
+    refuses an object over about 8 TiB in the default 4 MiB stripes, which
+    radosgw lays out. radosgw's loop has neither check: on a walk that stops
+    moving it never ends, and the document it builds grows without bound.
+    - The driver renders the document twice: once to measure it, which is
+      where it fails, before any of it is sent, and once as it writes it.
+      So a request holds the head, the manifest and one stripe's entry at a
+      time. An entry is about 200 bytes for a short key, and up to about
+      6.6 KB for a 1024-byte key whose every byte `json_stream_escaper`
+      writes as `\u00xx`, so a document at the bound runs from about
+      400 MB to about 13 GB.
+    - radosgw holds the document whole: in its JSONFormatter until
+      `send_response` flushes it once
+      ([rgw_rest_s3.cc:4381-4384](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4381-L4384),
+      [rgw_rest_s3.cc:4892-4895](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4892-L4895)), then in
+      the buffering filter that measures its Content-Length
+      ([rgw_client_io_filters.h:179-237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L179-L237),
+      [rgw_client_io_filters.h:179-237](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L179-L237)).
+- **`?layout` of an object without a manifest fails.** radosgw's
+  `dump_obj_layout` dereferences the null manifest `get_state` hands out for
+  a head without `user.rgw.manifest`
+  ([rgw_sal_rados.cc:2806](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2806),
+  [rgw_sal_rados.cc:3641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3641)), which would end the radosgw
+  process (`docs/ceph-upstream-bugs.md`, "[radosgw's ?layout dereferences
+  a null manifest](ceph-upstream-bugs.md#radosgws-layout-dereferences-a-null-manifest)").
+  rgw-go's layout fails with InternalError instead
+  (`driver.Store.ObjectLayout`), which `?layout` answers as a 500. Neither
+  gateway writes such a head under a key an S3 request names, so only a
+  head another writer stored, or one whose manifest attr was removed, meets
+  the difference.
+- **`?layout` masks a cloud tier's S3 secret.** radosgw's `?layout` dumps a
+  cloud-transitioned head's manifest, whose tier config holds the tier's S3
+  key, and `RGWZoneGroupPlacementTierS3::dump` writes the secret in the clear
+  ([rgw_zone.cc:966-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979),
+  [rgw_zone.cc:1006-1019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019)), to any holder of
+  `admin=read` (`docs/ceph-upstream-bugs.md`, "[radosgw's ?layout hands a
+  cloud tier's S3 secret to any holder of
+  admin=read](ceph-upstream-bugs.md#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread)").
+  rgw-go writes `"secret":"******"` for a set secret and `""` for an empty
+  one, the form `dump_mask_keys` in
+  [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690) used, and
+  keeps the access key and the document's shape
+  (`driver.Store.ObjectLayout`, through `meta.MaskTierSecrets`). Compatibility does not mean reproducing
+  radosgw's defects (spec §8): the stored manifest is unchanged, and only
+  the rendered document differs.
+  - No s3-tests test reads `?layout`, so the parity check's known-differences
+    files carry no line for it. WP-24's golden captures of `?layout` bodies
+    must carry the masked bytes for a tiered object.
+  - The head reaches `?layout` only where lifecycle keeps it, which needs
+    the tier's non-default `retain_head_object`, and never for a
+    versioning-enabled bucket's current version; a versioning-suspended
+    bucket's current version keeps it, as the registry entry states.
 - **A stripe shorter than its manifest says fails the read.** radosgw hands
   on the bytes such a read returned and then waits for an offset no later
   read starts at, so the GET ends without an error, its body short of its
