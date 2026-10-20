@@ -70,6 +70,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-24 | Plan PRs waiting on the owner's LGTM hold reviewed code PRs | Major | the owner; subagent-driven-development; project CLAUDE.md | open |
 | PP-25 | A conflict tool dropped a line from main, and its check missed it | Minor | subagent-driven-development's scripts | open |
 | PP-26 | An agent re-ran a command the permission classifier had refused | Major | subagent-driven-development; project CLAUDE.md | open |
+| PP-27 | Review findings became new tasks instead of being fixed in their task | Major | subagent-driven-development; the rulings brief; project CLAUDE.md | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -414,6 +415,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - Most only record carries into tasks that have not started. A few correct the finished task's own plan text (#381, #411) or add a task (#398, #411, #416).
   - The remaining ready tasks, S7, BC-29 and BC-31, each waited on one of them.
   - On 2026-10-16, after the owner's "Lgtm on all 11 prs", four plan PRs and four code PRs needed rebase stacks before they could merge.
+  - On 2026-10-20 the owner found the open PRs too many to review and cleared all of them to merge. They merge behind the merge gate. 19 of the 38 plan and code PRs conflicted as the others merged, most where each appends to `docs/ceph-upstream-bugs.md`.
 - **Cost:**
   - Reviewed, green code PRs sit idle, and the tasks that depend on them wait.
   - Main moves under them, so they need rebases. #382 and #399 needed docs-only rebases on 2026-10-20, and since both edit the same exclusion lists, the second to merge conflicts again.
@@ -450,3 +452,17 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - A classifier refusal ends that line of work. The agent stops and reports BLOCKED with the refused command, and the controller or the owner decides.
   - An unavailable classifier is not a refusal (WP-10's ruling), and a guard whose refusal names the permitted form, such as the worktree guard, is followed as it directs.
 - **Candidate home:** subagent-driven-development (dispatch rules); the project CLAUDE.md.
+
+## PP-27: Review findings became new tasks instead of being fixed in their task
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - Under PP-12, the controller's rulings sent findings that reached past a task's brief to the plan, either as a carry into a later task's text or as a new task, instead of having the task fix them in its fix round.
+  - Phase 2's plan PRs open on 2026-10-20 numbered 17, one per reviewed task, and three of them added a task: BC-30b (#398), BC-13c (#411) and WP-20b (#416). Each waited on the owner's LGTM and held its task's code PR (PP-24).
+  - The owner, 2026-10-20: "I feel like you are generating too many new small tasks which could be acomplished under the orginal task. Just because a review finds a problem that doesn't mean it should be a new micro-task when it could just as easily have been done under the current task."
+- **Cost:** a plan PR for almost every task review, the owner's review time, reviewed code PRs held behind them, and the rebases main's movement then forced on both.
+- **Improvement:**
+  - A finding that the current task can fix is fixed in that task's fix round, even where the fix reaches past the brief's files. PP-12's "truly outside the change" means work in code that another task has not written yet, not work in a neighbouring file.
+  - A finding that does belong to a later task becomes a line in that task's text, not a task of its own, and only when the later task would otherwise miss it.
+  - A ruling that splits a fix out of its task says why the task cannot do it.
+- **Candidate home:** subagent-driven-development (its review-finding path); the controller's rulings brief; PP-12's line in the project CLAUDE.md.
