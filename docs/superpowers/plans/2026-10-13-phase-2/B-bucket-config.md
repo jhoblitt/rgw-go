@@ -1529,10 +1529,12 @@ BC-29's and BC-32's specs.
 ### Task BC-30b: One parse_iso8601 and one json_spirit reader
 
 - **Layer:** library. **Files:** create `internal/jsonspirit/` from `internal/meta/json_spirit.go`;
-  move `parse_iso8601`'s extended format out of `internal/op/readconds.go` into
-  `internal/strptime` or `internal/rgwtext`, whichever adds no import cycle (strptime imports
-  only `time`, rgwtext only `math` and `strings`); modify `internal/meta/json_spirit.go`,
-  `internal/meta/jsonformattable.go`, `internal/op/readconds.go` and
+  switch the date readers to L1 (a)'s `internal/iso8601` and delete their copies:
+  `internal/op/readconds.go:318-348` and `internal/postpolicy/expiration.go:23-43` to
+  `ParseExtended`, `internal/auth/encoding.go:139-155` to `ParseBasic`, and
+  `internal/policy/convert.go:609`'s `from_iso_8601` to a new `ParseWrapped`; modify
+  `internal/iso8601/`, `internal/meta/json_spirit.go`, `internal/meta/jsonformattable.go`,
+  `internal/op/readconds.go`, `internal/auth/encoding.go`, `internal/policy/convert.go` and
   `internal/postpolicy/{expiration,json,number}.go`. **Cluster:** no.
 - **Why:** BC-30's Files line confined it to `internal/postpolicy/`, so it transcribed two things
   rgw-go already had: `parse_iso8601`'s extended format (`internal/postpolicy/expiration.go:23-43`
@@ -1542,17 +1544,23 @@ BC-29's and BC-32's specs.
   whose integer part has more than 300 digits, where postpolicy, closer to radosgw, accumulates
   it as boost's `positive_accumulate` does until the double overflows, which involves no libm
   call (BC-30's review).
-- **Produces:** an exported `parse_iso8601` (extended format) returning the `strptime.Tm` and the
-  fraction's nanoseconds, which `op.ParseHTTPTime` and `postpolicy.Parse` call on their own
-  C-string-cut input; `internal/jsonspirit`, json_spirit's reader as JSONParser reads it, with a
-  node's `get_data` text and its children in JSONObj's order, which `meta` and `postpolicy` call.
+- **Produces:** `op.ParseHTTPTime` and `postpolicy.Parse` on `iso8601.ParseExtended`, `auth`
+  on `iso8601.ParseBasic` and `policy` on a new `iso8601.ParseWrapped(s string) (uint64, bool)`;
+  `internal/jsonspirit`, json_spirit's reader as JSONParser reads it, with a node's `get_data`
+  text and its children in JSONObj's order, which `meta` and `postpolicy` call.
 - **Behaviour:**
-  1. **One parse_iso8601**, identical at both tags
+  1. **One parse_iso8601 and one from_iso_8601**, L1 (a)'s, identical at both tags
      ([rgw_common.cc:599-659](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L599-L659),
      [rgw_common.cc:612-672](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672)).
      Each caller keeps its own use of the result: `op` its nanoseconds and `utime`'s 32-bit
-     seconds, `postpolicy` the whole seconds `internal_timegm` gives. `auth`'s basic-format
-     reader is a different format and stays.
+     seconds, `postpolicy` the whole seconds `internal_timegm` gives, `auth` those seconds and
+     the year strptime read. `policy`'s `from_iso_8601`
+     ([iso_8601.cc:51-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L51-L151),
+     [iso_8601.cc:51-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L51-L151)) is `ws_terminates`
+     false and wraps modulo 2^64 nanoseconds, where `Parse` is `ws_terminates` true and refuses
+     a time real_time cannot hold, so the switch keeps policy's answers as well as `Parse`'s:
+     `ParseWrapped` is that form, a new export of `iso8601` beside `Parse`, returning
+     real_time's u64 nanoseconds since the epoch, wrapped as policy's copy wraps them.
   2. **One number reader**, `number_` as `meta` transcribes it, with postpolicy's rule for an
      integer part: any length until the accumulated double passes DBL_MAX. The limits that
      depend on the host's libm stay: an exponent past 300, a fraction of more than 300 digits,
@@ -1573,10 +1581,12 @@ BC-29's and BC-32's specs.
   changes it: `meta` takes a real with a 301-digit integer part; each of BC-30's grammar
   refusals becomes a spec of json_spirit's reading of the same document; 10000 levels read and
   10001 refused on the shared reader, and a 4 MiB nesting refused without its stack growing past
-  a fixed bound; BC-30's `FuzzParse` kept, with a seed for each grammar case.
+  a fixed bound; BC-30's `FuzzParse` kept, with a seed for each grammar case; `ParseWrapped`
+  pinned to policy's copy before the copy goes, with a date past 2554 that wraps and a date
+  followed by white space, which it refuses and `Parse` takes.
 - **Exclusions and registry:** shrink "A POST policy is read as RFC 8259 JSON" to what remains,
   retitled to match; no registry change.
-- **Depends on:** BC-30. **PR:** one. **Brief:** about 130 lines.
+- **Depends on:** BC-30, L1. **PR:** one. **Brief:** about 130 lines.
 
 ### Task BC-31: Browser-upload credentials
 

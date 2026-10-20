@@ -33,7 +33,7 @@ flowchart LR
   u_V -->|4| u_WP
   u_V -->|2| u_T
   u_L -->|6| u_C
-  u_L -->|1| u_B
+  u_L -->|2| u_B
   u_C -->|1| u_B
   u_B -->|4| u_S
   u_B -->|1| u_WP
@@ -588,6 +588,7 @@ flowchart LR
   t_S3["S3"]:::ext
   t_S5["S5"]:::ext
   t_V11["V11"]:::ext
+  t_L1["L1"]:::ext
   t_L5b["L5b"]:::ext
   t_C8["C8"]:::ext
   t_WP_1["WP-1"]:::ext
@@ -668,6 +669,7 @@ flowchart LR
   t_BC_28e --> t_BC_28f
   t_BC_30 --> t_BC_29
   t_WP_1 --> t_BC_30
+  t_L1 --> t_BC_30b
   t_BC_30 --> t_BC_30b
   t_BC_26 --> t_BC_32
   t_BC_30 --> t_BC_32
@@ -731,6 +733,7 @@ flowchart LR
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
   click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
+  click t_L1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l1-object-lock-types-xml-dates-and-evaluation" "L1: object-lock types, XML, dates and evaluation"
   click t_L5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5b-the-lock-headers-op-and-s3" "L5b: the lock headers, op and S3"
   click t_C8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c8-the-lifecycle-response-headers" "C8: the lifecycle response headers"
   click t_WP_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-1-checksum-types-and-record" "WP-1: checksum types and record"
