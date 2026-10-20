@@ -83,8 +83,9 @@ var _ = Describe("RGWClass's index transaction", func() {
 		Expect(fakerados.RGWWriteMethods).To(ConsistOf("bucket_init_index", "bucket_prepare_op", "bucket_complete_op", "set_bucket_resharding",
 			"mp_upload_part_info_update", "obj_remove", "obj_store_pg_ver", "gc_set_entry", "gc_remove",
 			"user_usage_log_add", "dir_suggest_changes", "bucket_rebuild_index", "user_usage_log_trim", "usage_log_clear",
-			"bucket_link_olh", "bucket_unlink_instance", "bucket_trim_olh_log", "bucket_clear_olh"),
-			"CLS_METHOD_WR, cls_rgw.cc:4691, :4695, :4697-4700, :4702-4703, :4705-4706, :4716, :4722, :4724-4725, :4728, :4731, :4743 and :4752-4753 at v19.2.6")
+			"bucket_link_olh", "bucket_unlink_instance", "bucket_trim_olh_log", "bucket_clear_olh",
+			"lc_set_entry", "lc_rm_entry", "lc_put_head"),
+			"CLS_METHOD_WR, cls_rgw.cc:4691, :4695, :4697-4700, :4702-4703, :4705-4706, :4716, :4722, :4724-4725, :4728, :4731, :4735-4736, :4738, :4743 and :4752-4753 at v19.2.6")
 	})
 
 	It("reads the reshard status without the WR flag: a read op calling it on a missing shard is ENOENT", func(ctx SpecContext) {

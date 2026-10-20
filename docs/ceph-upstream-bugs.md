@@ -350,6 +350,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores an empty lifecycle configuration for a body whose root is not LifecycleConfiguration](#radosgw-stores-an-empty-lifecycle-configuration-for-a-body-whose-root-is-not-lifecycleconfiguration) | pending | pending | ✓ |
 | [radosgw's lifecycle grammar reads its numbers as text](#radosgws-lifecycle-grammar-reads-its-numbers-as-text) | pending | pending | ✓ |
 | [radosgw's lifecycle Date wraps past 2554 and expires at once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once) | pending | pending | ✓ |
+| [radosgw-admin lc list omits a shard's entries past its first 1024 when max-entries is above 1024](#radosgw-admin-lc-list-omits-a-shards-entries-past-its-first-1024-when-max-entries-is-above-1024) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -19514,3 +19515,60 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1's review, 2026-10-20, which compiled
   `from_iso_8601` and `check_date`. Not reproduced on a running radosgw.
+
+## radosgw-admin lc list omits a shard's entries past its first 1024 when max-entries is above 1024
+
+- **Kind:** defect, cosmetic, not security-relevant: `radosgw-admin lc list`
+  with a `--max-entries` above osd_max_omap_entries_per_request, 1024 by
+  default, lists at most the first 1024 entries of each lifecycle shard and
+  silently skips the rest. Only the listing is wrong; the shards and the
+  worker are not touched. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWLC::list_lc_progress` asks each shard for `max_entries` entries
+    after its marker, and whenever the page so far holds fewer than
+    `max_entries` it goes on to the next shard with the marker ""
+    ([rgw_lc.cc:1922-1951](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1922-L1951),
+    [rgw_lc.cc:1978-2008](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1978-L2008)).
+  - The shard's answer carries no truncation. At v19.2.7 `cls_rgw_lc_list`
+    keeps the reply's entries and drops its `is_truncated`
+    ([cls_rgw_client.cc:1041-1073](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L1041-L1073)),
+    and `RadosLifecycle::list_entries` hands on the entries alone
+    ([rgw_sal_rados.cc:3827-3844](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3827-L3844)).
+    At v20.2.4 `cls_rgw_lc_list_decode` does the same
+    ([cls_rgw_client.cc:864-879](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_client.cc#L864-L879)),
+    and so does `RadosLifecycle::list_entries`
+    ([rgw_sal_rados.cc:4708-4735](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4708-L4735)).
+  - `rgw_cls_lc_list_entries` reads its page with `cls_cxx_map_get_vals`,
+    which CEPH_OSD_OP_OMAPGETVALS caps at osd_max_omap_entries_per_request
+    ([PrimaryLogPG.cc:7702-7763](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7702-L7763),
+    [PrimaryLogPG.cc:7779-7840](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7779-L7840)),
+    and `osd_max_omap_entries_per_request` defaults to 1_K
+    ([global.yaml.in:3756-3760](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L3756-L3760),
+    [global.yaml.in:3813-3817](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L3813-L3817)).
+    So a shard of more than 1024 entries, asked for more, answers 1024,
+    `list_lc_progress` takes that short page for the shard's end, and the
+    entries after the 1024th are never listed.
+  - The `lc list` command, `OPT::LC_LIST`, is the only caller. It calls
+    `list_lc_progress` until a call returns nothing, asking for 100 entries
+    unless `--max-entries` says otherwise
+    ([rgw_admin.cc:8835-8872](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L8835-L8872),
+    [radosgw-admin.cc:9355-9390](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L9355-L9390)).
+- **Impact:**
+  - An operator who lists lifecycle progress with a `--max-entries` above
+    1024 sees no entry past the first 1024 of a shard. The buckets after
+    them, and their lifecycle status, are missing from the listing without
+    an error.
+  - The default of 100, or any value of at most 1024, lists every entry:
+    below the cap, a page shorter than the maximum does mean the shard has
+    no more, since the OSD's byte cap, osd_max_omap_bytes_per_request, is
+    1_G by default and no page of 1024 lc entries reaches it.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** unaffected. It has no radosgw-admin, and its lc client keeps
+  the reply's truncation flag (`LCListEntriesRet.Truncated`,
+  `internal/cls/rgw/types_lc.go`), so a caller pages on Truncated rather
+  than on the page's length, as `LCListEntries`'s doc
+  (`internal/cls/rgw/ops_lc.go`) says to. No behaviour differs from
+  radosgw's, so no exclusion is needed.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C4's review, 2026-10-20, checking lc_list_entries'
+  page cap. Derived from the source, not reproduced.
