@@ -11213,7 +11213,11 @@ Every new entry adds its row to this table, in document order.
   - `RGWOp::read_all_input(s, max_len, allow_chunked)` calls
     `rgw_rest_read_all_input(s, max_len)` without its third argument, whose
     default is true (`rgw_op.h:215-227` and `:127-129` at v19.2.6,
-    `:229-241` at v20.2.4).
+    `:229-241` at v20.2.4;
+    [rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.h#L229-L241)
+    and
+    [rgw_op.h:140-142](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.h#L140-L142)
+    at v21.1.2).
   - The callers that pass false, among them the ACL, lifecycle, object
     lock, legal hold and DeleteObjects bodies (`rgw_rest.cc:1474`, `:1482`,
     `:1489`, `:1496`, `:1672` at v19.2.6; `:1479`, `:1487`, `:1494`,
@@ -11223,12 +11227,20 @@ Every new entry adds its row to this table, in document order.
     `get_params` passes false too
     ([rgw_op.cc:8757-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8762),
     [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730)).
+    v21.1.2 adds another, the
+    PutBucketOwnershipControls body
+    ([rgw_rest_s3.cc:4557](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4557)).
 - **Impact:** none known: those ops accept a chunked request their code
   means to refuse, and read it within the same bound, which
   `read_all_chunked_input` still enforces (`rgw_rest.cc:1501-1535`, the
-  check at `:1525`, at v19.2.6; `:1506-1540`, `:1530`, at v20.2.4). A
-  routine upstream cleanup.
-- **Releases:** v19.2.6 and v20.2.4.
+  check at `:1525`, at v19.2.6; `:1506-1540`, `:1530`, at v20.2.4;
+  [rgw_rest.cc:1478-1512](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest.cc#L1478-L1512),
+  the check at
+  [rgw_rest.cc:1502](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest.cc#L1502),
+  at v21.1.2). That bound is loose: the check comes only after a read
+  fills its buffer, so under the option's 1 MiB default a chunked body of
+  up to 1,175,551 bytes is read. A routine upstream cleanup.
+- **Releases:** v19.2.6, v20.2.4 and v21.1.2.
 - **rgw-go:** reproduces it on purpose: `op.ReadParamBody` reads a chunked
   body for CompleteMultipartUpload, DeleteObjects and PutBucketEncryption as
   radosgw does (`internal/op/parambody.go`).
